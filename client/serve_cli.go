@@ -211,6 +211,9 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 				t = "PowerShell"
 				allowed = append(allowed, t)
 			case t != "Bash" || runtime.GOOS == "windows": // Bash v sandboxu dovoli autoAllowBashIfSandboxed
+				if n := strings.SplitN(t, "(", 2)[0]; (n == "WebFetch" || n == "WebSearch") && !webToolEntry.MatchString(t) {
+					t = n // V6: only a plain web entry is kept as written (a space could make Claude Code read a second entry)
+				}
 				allowed = append(allowed, t)
 			}
 			tools = append(tools, t)
@@ -240,11 +243,12 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 
 var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees"}
 
-// submoduleDenies (V1): of .git/modules/<sub>/ only what the owner's git runs (config, hooks, info); objects, index and HEAD stay writable.
-var submoduleDenies = []string{"config", "config.worktree", "hooks", "info"}
+// submoduleDenies (V1, V5): a submodule's git directory (.git/modules/<sub>/) is read by the owner's git like the top-level one, so the same list
+// (config, hooks, info, and commondir or worktrees, which redirect git to another directory's config and hooks); objects, index, HEAD and refs stay writable.
+var submoduleDenies = gitDenies
 
-// submoduleGitPaths: the submodule config, hooks and info paths that exist under a .git folder (for profiles that take literal paths).
-func submoduleGitPaths(git string) []string {
+// submoduleGitDirs (V7): the existing git directories of the submodules under a .git folder (a directory with a HEAD file; nested ones too).
+func submoduleGitDirs(git string) []string {
 	var out []string
 	var walk func(dir string, depth int)
 	walk = func(dir string, depth int) {
@@ -254,12 +258,13 @@ func submoduleGitPaths(git string) []string {
 		}
 		for _, e := range ents {
 			p := filepath.Join(dir, e.Name())
-			if e.Type()&os.ModeSymlink != 0 {
+			if !e.IsDir() { // no links, no files
 				continue
 			}
-			if slices.Contains(submoduleDenies, e.Name()) {
+			if _, err := os.Lstat(filepath.Join(p, "HEAD")); err == nil {
 				out = append(out, p)
-			} else if e.IsDir() && e.Name() != "objects" && e.Name() != "refs" {
+				walk(filepath.Join(p, "modules"), depth+1)
+			} else {
 				walk(p, depth+1)
 			}
 		}
@@ -281,10 +286,11 @@ func enforcingMode(m string) string {
 	return "dontAsk"
 }
 
-// readsFolderSettings: Claude Code reads .claude/settings*.json of the folder only with the setting sources project or local (user is the owner's home).
+// readsFolderSettings (V8): Claude Code reads .claude/settings*.json of the folder with the setting sources project or local: denied unless the sources are
+// empty or exactly `user` (trimmed as Claude Code does, whitespace and newlines).
 func readsFolderSettings(sources string) bool {
 	for _, x := range strings.Split(sources, ",") {
-		if x = strings.TrimSpace(x); x == "project" || x == "local" {
+		if x = strings.TrimSpace(x); x != "" && x != "user" {
 			return true
 		}
 	}
@@ -311,6 +317,9 @@ func ruleSafe(p string) bool {
 	}
 	return true
 }
+
+// webToolEntry: a WebFetch or WebSearch entry that may be passed as written.
+var webToolEntry = regexp.MustCompile(`^(WebFetch|WebSearch)(\(domain:[A-Za-z0-9.*-]+\))?$`)
 
 // restrictedOK (sec-fix F3): without "Allow local tools" only tools whose file access the Read/Edit deny rules cover, the web
 // tools and Bash (which the sandbox above confines; the Mac refuses it because it has no sandbox there). Task, MCP tools and the
