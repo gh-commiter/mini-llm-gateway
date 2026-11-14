@@ -15,7 +15,7 @@ CHECK=0; [[ ${1:-} == --check ]] && CHECK=1
 
 # Modules whose module zip has no licence file: the licence their README states (checked by hand).
 typeset -A NOTE
-NOTE[github.com/mattn/go-localereader]="MIT (stated in the README; the module ships no licence file)"
+NOTE[github.com/mattn/go-localereader]="MIT (stated in the README of https://github.com/mattn/go-localereader; the module ships no licence file)"
 
 mods=$(cd client; for t in darwin/arm64 windows/amd64 windows/arm64 linux/amd64 linux/arm64; do
   GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}} {{.Dir}}{{end}}{{end}}' . ./cmd/minigw-tui ./cmd/minigw-core

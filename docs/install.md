@@ -182,7 +182,7 @@ for running agent requests. Then it stops every Mini Gateway program still runni
 gateway, in the background. A repair restarts the tray if it was running.
 - **Uninstall:** Settings → Apps → **Uninstall** removes the parts (tray start, PATH entry, Start menu, the plugin
   entries that `minigw plugin install` added; a `false` you set stays) and keeps the settings and profiles for a later
-  install. To remove them too: **Modify** → tick *also remove settings, profiles and the device key* → **Remove**, or
+  install. To remove them too: **Modify** → tick *also remove settings, profiles, the device key and the project database (projects, members, notes, usage; cannot be undone)* → **Remove**, or
   `msiexec /x <the installed version's MSI> PURGE=1 /passive`, or `minigw uninstall --purge` before **Uninstall**. PURGE runs `minigw uninstall --purge --yes` before the files
   go (profiles and keys in Credential Manager, `%AppData%\minigw`). Not with `minigw serve uninstall`. Uninstalling, or
   unticking Gateway, also removes the sign-in start, even if the tray menu set it; running `minigw` programs from the
@@ -215,7 +215,7 @@ minigw plugin status      # versions of minigw, Claude Code, the plugin and the 
                           # (a plugin older than minigw: it prints the two claude commands that update it)
 minigw plugin uninstall   # remove only what plugin install added ("minigw@mini-gateway": false stays)
 minigw uninstall          # list, then remove what minigw added here: plugin, sign-in start, scratch folders
-minigw uninstall --purge  # also profiles (Keychain, Credential Manager) and the settings folder
+minigw uninstall --purge  # also profiles (Keychain, Credential Manager) and the settings folder, with the project database (cannot be undone)
 ```
 
 `minigw plugin install` adds the `mini-gateway` marketplace from the `release` branch (`"ref": "release"`, moved only
@@ -245,14 +245,16 @@ the MSI, or `rm ~/.local/bin/minigw`.
   asking (`--zap` is the explicit request; brew cannot show a prompt reliably). It removes the plugin's entries in
   `~/.claude/settings.json` and the `mini-gateway` marketplace, `~/.claude/plugins/data/minigw-mini-gateway`, the
   scratch folder `~/Library/Caches/minigw`, the minigw profiles and device key in the Keychain,
-  `~/Library/Application Support/minigw`, and an old `minigw serve` LaunchAgent if there is one.
+  `~/Library/Application Support/minigw`, and an old `minigw serve` LaunchAgent if there is one. A client has no project
+  database, so nothing of that kind is lost here.
 - Run `brew uninstall --zap --cask mini-gateway` while logged in at the Mac: the app's confirmation needs the desktop
   session. Over SSH the dialog cannot show, so the Keychain items stay (the files still go).
 - `brew uninstall --zap --cask mini-gateway` quits the app, lets the app itself delete its Keychain items and its
   login item (`MiniGateway --zap`: it asks you first, Cancel is the default; Keychain asks nothing, because the app
   created them), then moves
   `~/Library/Application Support/Mini Gateway`, `~/Library/Caches/dev.trojar.minigateway` (scratch), its preferences,
-  HTTP storage and saved window state to the Trash.
+  HTTP storage and saved window state to the Trash. That includes the project database (`core`: projects, members, notes,
+  usage): `--zap` deletes it and it cannot be undone; take a `minigw gw core backup <file>` first.
 - Linux: `install.sh` puts `minigw` and `minigw-tui` in `~/.local/bin`; with `--gateway`, `minigw serve install` adds
   the systemd user unit. `install.sh --uninstall` runs `minigw uninstall`, which removes the unit, the plugin entries
   and scratch folders, then removes the two files.
@@ -269,8 +271,9 @@ the MSI, or `rm ~/.local/bin/minigw`.
   inside `core`. Nothing is backed up elsewhere.
 - **Licences:** `THIRD-PARTY-NOTICES.md` (the Go modules inside the binaries and their licences) is in the app
   (`Contents/Resources`), in `minigw.zip`, in the MSI install folder, and a release file next to the Linux binaries.
-- **Uninstall leaves the core folder** on every system; only `--purge`/`PURGE=1`/`brew uninstall --zap` remove it (on the
-  Mac the app folder goes to the Trash). Details and removal by hand: [Gateway: the core database](gateway.md#the-core-database-060-minigw-serve).
+- **Uninstall leaves the core folder** on every system; only `--purge`/`PURGE=1`/`brew uninstall --zap` remove it, and
+  that also deletes the project database (projects, members, notes, usage) and cannot be undone (on the Mac `--zap` moves
+  the app folder to the Trash; `minigw uninstall --purge` names the folder before it removes it). Details and removal by hand: [Gateway: the core database](gateway.md#the-core-database-060-minigw-serve).
 
 ## Build from source
 

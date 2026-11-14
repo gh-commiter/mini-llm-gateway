@@ -20,7 +20,7 @@ are linked into minigw, minigw-tui and minigw-core (Windows, Linux and macOS bui
 | github.com/google/uuid | v1.6.0 | BSD-3-Clause |
 | github.com/lucasb-eyer/go-colorful | v1.2.0 | MIT |
 | github.com/mattn/go-isatty | v0.0.24 | MIT |
-| github.com/mattn/go-localereader | v0.0.1 | MIT (stated in the README; the module ships no licence file) |
+| github.com/mattn/go-localereader | v0.0.1 | MIT (stated in the README of https://github.com/mattn/go-localereader; the module ships no licence file) |
 | github.com/mattn/go-runewidth | v0.0.16 | MIT |
 | github.com/muesli/ansi | v0.0.0-20230316100256-276c6243b2f6 | MIT |
 | github.com/muesli/cancelreader | v0.2.2 | MIT |
@@ -390,7 +390,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~~
 
-## github.com/mattn/go-localereader v0.0.1 (MIT (stated in the README; the module ships no licence file))
+## github.com/mattn/go-localereader v0.0.1 (MIT (stated in the README of https://github.com/mattn/go-localereader; the module ships no licence file))
 
 The module has no licence file.
 

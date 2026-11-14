@@ -287,6 +287,17 @@ func TestUninstallSteps(t *testing.T) {
 	if len(kept) != 0 || !slices.Contains(what, "profiles default ("+storeName+")") || !slices.Contains(what, "settings folder "+filepath.Join(cfg, "minigw")) {
 		t.Fatalf("purge %v %v", what, kept)
 	}
+	// --purge names a non-empty core folder (the project database) before it is removed.
+	core := filepath.Join(cfg, "minigw", coreDirName)
+	if slices.Contains(nonEmptyCoreDirs(), core) {
+		t.Fatalf("empty core folder %s listed", core)
+	}
+	if err := os.MkdirAll(core, 0o700); err != nil || os.WriteFile(filepath.Join(core, "core.db"), []byte("x"), 0o600) != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(nonEmptyCoreDirs(), core) {
+		t.Fatalf("core folder %s not listed: %v", core, nonEmptyCoreDirs())
+	}
 }
 
 func TestPluginDataSafeAndUnsafeDir(t *testing.T) {
