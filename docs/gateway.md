@@ -292,6 +292,41 @@ holds a lock on it, so only one process uses it at a time.
 
 Members, projects and grants are managed with `minigw gw user|bind|project|member|grant` (see `minigw gw help`).
 
+## Usage events and quota (0.6.0, `minigw serve`)
+
+**What is counted.** Every model invocation is one event: a request to `POST /v1/messages` that reaches a model (a
+provider, Claude CLI, Codex, Grok, Copilot, Foundry Local) and every call an agent makes to another model through its
+run port (it has the asking event as its parent). Requests that are refused before a model (400, 401, 403, 404, 413)
+are not counted; a client's retry is a new event. An event stores the start and end time, the user (the user the
+device is bound to), the device, the project of the run, the provider, the model, the outcome (`ok`, `error`,
+`cancelled` when the client went away, `interrupted` when the gateway stopped or crashed meanwhile) and the tokens.
+User, device and project are frozen when the request is admitted and never changed afterwards. A request without a
+proven device is recorded with no user, and without a project with none.
+
+**Tokens and their source.** `reported`: the counts of the provider's own stream or of Claude Code's result (Claude CLI
+and provider models; Claude Code reports the output of its own turns and the input of its last result). `estimated`:
+Codex, Grok and Copilot give no counts; the gateway estimates the output from its length (bytes / 4) and leaves the
+input empty. `unknown`: no counts at all. Totals add every event once: an agent's own tokens do not include the models it
+asked, because each of those calls is its own event (shown as "nested", and already in the totals).
+
+**Never blocks.** A request only puts its event into a queue (4096 events); one writer stores the events. If the queue
+is full the event is counted as lost. If the core cannot be used, events go to the file `usage.spool` in the config
+folder (the same protection as the core): at most 10 000 events or 10 MiB, the oldest are dropped and a gap record (how
+many, from when to when) is kept. The spool is replayed at the next start and every 30 seconds; replaying twice stores
+every event once. `minigw usage` and the usage routes show the gaps ("N events lost between A and B"). Events that were
+only *begun* in the core when the process died become `interrupted`.
+
+**Retention.** Detail rows older than 400 days are folded into daily totals (at start and once a day).
+
+**Quota (owner only, `minigw gw quota`).** Codex: the last `rate_limits` record in the session log of the Codex run the
+gateway started (5-hour window and week; as fresh as the last run). Claude: `claude -p /usage` run in an empty private
+folder with settings sources off, 0 turns, 30 s timeout (checked with Claude Code 2.1.322: no inference and no cost; the
+result is refused and the feature switched off if a run ever shows turns, cost or tokens), cached for 10 minutes; the text
+format is Claude Code's, so another version may show `unavailable`. OpenRouter credit (`/api/v1/credits`) and LiteLLM
+spend (`/key/info`) with the provider's key, never logged or returned, cached for 10 minutes. Every value shows its
+source, when it was observed and when its window resets; `stale` when the window has reset since or the observation is
+older than a day, or a refresh failed.
+
 ## Where things are stored
 
 | What | Mac app | Windows | Linux |
@@ -300,6 +335,7 @@ Members, projects and grants are managed with `minigw gw user|bind|project|membe
 | Token, gateway key | Keychain | `serve.json` | `serve.json` |
 | Provider API keys | Keychain | Credential Manager | Secret Service (`secret-tool`), else `gateway-keys.json` (mode 0600) next to `serve.json` |
 | Lock for changes of `serve.json` | – | `serve.json.lock` next to `serve.json` (a change waits up to 5 s for another process) | same |
+| Usage spool (0.6.0) | – | `usage.spool` next to `serve.json` | same |
 | Core database (0.6.0) | – | `core\` next to `serve.json` | `core/` next to `serve.json` |
 | Admin secret | Keychain | `admin.secret` in the config folder | `admin.secret` in the config folder |
 | Log | – | `minigw-serve.log` in the config folder (tray) | the systemd journal |

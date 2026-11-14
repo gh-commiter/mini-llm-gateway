@@ -83,7 +83,7 @@ func nullStr(v string) any {
 
 // FinishEvent completes an event; it inserts the whole row if Begin never reached the database (spool replay). It is
 // idempotent: a row that is already finished is left as it is (the first finish wins), so a replay counts once.
-// Only the end, outcome, tokens and the project of the admitted request are set; user, device, start and parent
+// Only the end, outcome, tokens, provider and the project of the admitted request are set; user, device, start and parent
 // stay as they were frozen.
 func (s *Store) FinishEvent(ctx context.Context, e UsageEvent) error {
 	return s.write(ctx, func(tx *sql.Tx) error { return finishEvent(tx, e) })
@@ -94,8 +94,8 @@ func finishEvent(tx *sql.Tx, e UsageEvent) error {
 VALUES(?,?,?,?,?,?,?,?,'open','unknown')`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), e.DeviceID, nullID(e.ProjectID), e.Provider, e.Model); err != nil {
 		return err
 	}
-	_, err := tx.Exec(`UPDATE usage_events SET end=?, outcome=?, tokens_in=?, tokens_out=?, token_source=?, project_id=COALESCE(project_id,?)
-WHERE id=? AND outcome IN('open','interrupted')`, ms(e.End), e.Outcome, nullTok(e.TokensIn), nullTok(e.TokensOut), e.TokenSource, nullID(e.ProjectID), e.ID)
+	_, err := tx.Exec(`UPDATE usage_events SET end=?, outcome=?, tokens_in=?, tokens_out=?, token_source=?, project_id=COALESCE(project_id,?), provider=CASE WHEN provider='' THEN ? ELSE provider END
+WHERE id=? AND outcome IN('open','interrupted')`, ms(e.End), e.Outcome, nullTok(e.TokensIn), nullTok(e.TokensOut), e.TokenSource, nullID(e.ProjectID), e.Provider, e.ID)
 	return err
 }
 
@@ -293,8 +293,11 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 
 // BoundUser is the user a device is bound to (0 = none), whether or not the user is active: attribution of a model
 // request, not an access decision.
-func (s *Store) BoundUser(ctx context.Context, deviceID string) (id int64) {
-	s.rdb.QueryRowContext(ctx, `SELECT user_id FROM device_bindings WHERE device_id=?`, deviceID).Scan(&id)
+func (s *Store) BoundUser(ctx context.Context, deviceID string) (id int64, err error) {
+	err = s.rdb.QueryRowContext(ctx, `SELECT user_id FROM device_bindings WHERE device_id=?`, deviceID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
 	return
 }
 

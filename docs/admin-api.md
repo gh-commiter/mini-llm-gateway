@@ -221,6 +221,16 @@ conversations of a project end), in the same transaction.
 
 Errors of these routes use the envelope above (`400` invalid, `404` not found, `503` core unavailable).
 
+### Usage events and quota (Go gateway, 0.6.0)
+
+| Method and path | Body | Response |
+|---|---|---|
+| `GET /usage/events?days=&user=&project=&model=` | – | `{"days": [{"day", "model", "user"?, "userName"?, "project"?, "events", "tokensIn", "tokensOut", "eventsWithoutTokens", "nestedEvents", "failedEvents"}], "gaps": [{"count", "from", "to"}]}`: every model invocation, per day (UTC), model, user and project, newest first; days 1-3650 (default 7), detail rows older than 400 days are daily totals; also events without a user or project. **Not** `GET /usage` (0.5.x folder counters, unchanged) |
+| `GET /quota` | – | `{"quota": [{"name", "unit", "value"?, "source", "observedAt"?, "resetsAt"?, "resetsText"?, "stale", "note"?}]}`: Codex windows (`codex-session-log`), the Claude subscription (`claude-usage`), OpenRouter credit (`openrouter-api`), LiteLLM spend (`litellm-api`); `source: "unavailable"` with a `note` when a value cannot be had; works without the core |
+
+Members read their own usage on the member route `GET /minigw/v1/usage?project=<id or slug>&days=<1-400>` (same
+shape; a reader, a grant-only user or a stranger gets 404).
+
 ### Member routes (not admin routes)
 
 Under `/minigw/v1/projects` the gateway serves the members' own API on the encrypted device connection (token

@@ -486,6 +486,19 @@ project and per minute apply.
 grants with `minigw gw member` and `minigw gw grant` (see [gateway.md](gateway.md)). These commands are not
 available inside an agent run, except `note list` and `note read`: when you start `minigw` in a linked folder, the agent run can read that project's notes (never `private` ones) and nothing of your other projects. If the gateway changes who may see what, the next read of a running agent fails; see [how-it-works.md](how-it-works.md#projects-notes-and-agents-minigw-serve-060).
 
+### Your model usage
+
+```
+minigw usage                      this folder's project (or, with no link, your own events in all projects), last 7 days
+minigw usage --project fakture --days 30
+minigw usage --json
+```
+
+One line per day, model and user, with the totals. A developer sees the events of the project that are their own, a
+project admin sees all of them, readers and people who only have a grant see nothing (the project's usage is not
+visible to them). Without a project you see your own events over all your projects. If the gateway lost events
+(its project store was down for a long time), the output says `N events lost between A and B`.
+
 ## Several gateways (profiles)
 
 One client can use several gateways in the same session, for example a Mac and a Windows gateway:

@@ -56,6 +56,8 @@ type usageRecorder struct {
 	lostA   time.Time
 	lostB   time.Time
 	dropped atomic.Int64
+	once    sync.Once
+	bound   sync.Map // device id -> last user seen
 }
 
 // startUsage starts the recorder (always, also when the core could not be opened: events then go to the spool).
@@ -69,7 +71,7 @@ func (s *server) startUsage() {
 // stopUsage drains the queue and ends the writer (before the core is closed).
 func (s *server) stopUsage() {
 	if u := s.usage; u != nil {
-		close(u.quit)
+		u.once.Do(func() { close(u.quit) })
 		<-u.stopped
 	}
 }
@@ -259,36 +261,54 @@ func (sp *usageSpool) add(e core.UsageEvent) {
 
 func (sp *usageSpool) addGap(g core.UsageGapRecord) { sp.appendLine(spoolLine{T: "gap", Gap: &g}) }
 
-// compact drops the oldest tenth of the events (at least one), and writes one gap record for them: count and time span.
+// compact drops the oldest events until the spool is at 90% of both limits, and writes one gap record for them
+// (count and time span).
 func (sp *usageSpool) compact() {
 	lines := sp.readLines()
+	enc := make([][]byte, len(lines))
 	var evIdx []int
+	var total int64
 	for i, l := range lines {
+		enc[i], _ = json.Marshal(l)
+		total += int64(len(enc[i]) + 1)
 		if l.T == "event" {
 			evIdx = append(evIdx, i)
 		}
 	}
-	drop := max(1, len(evIdx)/10)
-	for len(evIdx)-drop > spoolMaxEvents-1 { // also when the limit itself was lowered
+	keepEvents, keepBytes := max(1, spoolMaxEvents*9/10), spoolMaxBytes*9/10
+	drop, left := 0, len(evIdx)
+	for drop < len(evIdx) && (left > keepEvents || total > keepBytes || drop == 0) {
+		total -= int64(len(enc[evIdx[drop]]) + 1)
 		drop++
+		left--
 	}
-	drop = min(drop, len(evIdx))
 	if drop == 0 {
 		return
 	}
-	from, to := lines[evIdx[0]].Event.Start, lines[evIdx[drop-1]].Event.Start
+	merged := core.UsageGapRecord{ID: "gap_" + randomToken()[:12], Count: int64(drop), From: lines[evIdx[0]].Event.Start, To: lines[evIdx[drop-1]].Event.Start}
 	cut := map[int]bool{}
 	for _, i := range evIdx[:drop] {
 		cut[i] = true
 	}
-	var b bytes.Buffer
-	for i, l := range lines {
-		if !cut[i] {
-			x, _ := json.Marshal(l)
-			b.Write(append(x, '\n'))
+	for i, l := range lines { // earlier gaps of this spool fold into the new one: one record, never a growing list
+		if l.T == "gap" && l.Gap != nil {
+			cut[i] = true
+			merged.Count += l.Gap.Count
+			if l.Gap.From.Before(merged.From) {
+				merged.From = l.Gap.From
+			}
+			if l.Gap.To.After(merged.To) {
+				merged.To = l.Gap.To
+			}
 		}
 	}
-	g, _ := json.Marshal(spoolLine{T: "gap", Gap: &core.UsageGapRecord{ID: "gap_" + randomToken()[:12], Count: int64(drop), From: from, To: to}})
+	var b bytes.Buffer
+	for i := range lines {
+		if !cut[i] {
+			b.Write(append(enc[i], '\n'))
+		}
+	}
+	g, _ := json.Marshal(spoolLine{T: "gap", Gap: &merged})
 	b.Write(append(g, '\n'))
 	if writeFileAtomic(sp.path, b.Bytes()) == nil {
 		sp.events -= drop
@@ -312,15 +332,28 @@ func (s *server) beginEvent(r *req, model string) {
 	e := core.UsageEvent{ID: "ev_" + randomToken()[:16], Start: time.Now(), Model: model, TokensIn: -1, TokensOut: -1, TokenSource: "unknown", Outcome: core.OutcomeOpen}
 	if d := r.conn.device; d != nil {
 		e.DeviceID = d.ID
-		if s.core != nil {
-			e.UserID = s.core.BoundUser(r.Context(), d.ID)
-		}
+		e.UserID = s.usage.userOf(s, r.Context(), d.ID)
 	}
 	if run := runOf(r); run != nil { // a nested call: the caller's event is the parent, the caller's user stays
 		e.ParentID, e.UserID = run.evID, run.evUser
 	}
 	r.event = &e
 	s.usage.enqueue(usageMsg{kind: evBegin, ev: e})
+}
+
+// userOf: the user a device is bound to, from the core; when the core cannot answer, the last binding seen for the
+// device (attribution of an event only, never an access decision). 0 = none.
+func (u *usageRecorder) userOf(s *server, ctx context.Context, device string) int64 {
+	if s.core != nil {
+		if id, err := s.core.BoundUser(ctx, device); err == nil {
+			u.bound.Store(device, id)
+			return id
+		}
+	}
+	if v, ok := u.bound.Load(device); ok {
+		return v.(int64)
+	}
+	return 0
 }
 
 // refusal statuses: the request never became a model invocation (not counted).
