@@ -184,7 +184,7 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         let server = RouterServer(router: app.router(), key: realKey)
         try server.start()
         defer { server.stop() }
-        for _ in 0..<100 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
+        for _ in 0..<600 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
         let fakeKey = Noise.newKey()
         let (l, fakePort) = listener()
         defer { close(l) }

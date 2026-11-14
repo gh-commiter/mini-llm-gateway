@@ -210,7 +210,7 @@ public enum Codex {
                 let pipes = [events.fileHandleForReading, errors.fileHandleForReading]
                 p.terminationHandler = { p in
                     let g = p.processIdentifier
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) { Native.killTree(g, pipes: pipes) }
+                    Thread { Thread.sleep(forTimeInterval: 2); Native.killTree(g, pipes: pipes) }.start()
                 }
                 let held = try checked.open()
                 defer { for handle in held { try? handle.close() } }
