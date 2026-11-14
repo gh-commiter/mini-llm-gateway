@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +19,25 @@ import (
 )
 
 func updateFixtures() bool { return os.Getenv("MGW_UPDATE_FIXTURES") != "" }
+
+var rootPath = regexp.MustCompile(`\{root\}[^\s"]*`)
+
+// portable: the fixture is written with "/" and the Unix error text; the program prints native separators and the OS's
+// own words (Windows: "\" in paths, "The system cannot find the file specified."), which are correct there.
+func portable(s string) string {
+	s = rootPath.ReplaceAllStringFunc(s, func(m string) string { return strings.ReplaceAll(m, `\`, "/") })
+	return strings.ReplaceAll(s, "The system cannot find the file specified.", "no such file or directory")
+}
+
+func TestPortableNormalisesWindowsOutput(t *testing.T) {
+	got := portable(`linked {root}\proj\src to x; open {root}\nope.txt: The system cannot find the file specified.`)
+	if want := `linked {root}/proj/src to x; open {root}/nope.txt: no such file or directory`; got != want {
+		t.Fatalf("%q", got)
+	}
+	if s := `a\b {root}/x`; portable(s) != s {
+		t.Fatal("a backslash outside a root path must stay")
+	}
+}
 
 func readFixture(t *testing.T, name string, v any) {
 	t.Helper()
@@ -128,9 +148,7 @@ func TestProjectParityResolutionAndHeader(t *testing.T) {
 				os.WriteFile(filepath.Join(root, d, hintFile), []byte(h), 0o644)
 			}
 			for from, to := range c.Symlinks {
-				if err := os.Symlink(filepath.Join(root, to), filepath.Join(root, from)); err != nil {
-					t.Fatal(err)
-				}
+				dirLink(t, filepath.Join(root, to), filepath.Join(root, from)) // a junction on Windows without the symlink privilege
 			}
 			st := projectState{}
 			for _, l := range c.Links {
@@ -289,10 +307,11 @@ func TestProjectParityCommands(t *testing.T) {
 			if st, _ := loadProjectState(statePath); true {
 				for _, l := range st.Links {
 					rel, _ := filepath.Rel(root, l.Path)
+					rel = filepath.ToSlash(rel)
 					got.Links = append(got.Links, l.Slug+":"+strconv.FormatInt(l.Project, 10)+"@"+rel)
 				}
 			}
-			unsub := func(s string) string { return strings.ReplaceAll(s, root, "{root}") }
+			unsub := func(s string) string { return portable(strings.ReplaceAll(s, root, "{root}")) }
 			got.Out, got.Err, got.Error = unsub(got.Out), unsub(got.Err), unsub(got.Error)
 			for i := range got.Requests {
 				got.Requests[i][2] = unsub(got.Requests[i][2])
