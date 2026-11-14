@@ -264,6 +264,9 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             for g in Self.directGitDenies { out += [d + "/.git/" + g, d + "/**/.git/" + g] }
             out.append(d + "/**/.git")  // the entry itself (a glob names the entry only: nested contents are the client guard's, see directGitDenies)
             for g in Self.directModuleDenies { out += [d + "/.git/modules/**/" + g, d + "/**/.git/modules/**/" + g] }
+            // #113: the globs name the entries only, so `mv .git/modules m`, a write in m/sub/config and a move back got past them (a real run); a literal path also
+            // makes the sandbox refuse a rename of the folders above it. The submodules' closed paths that exist now, literally.
+            out += Self.submoduleGitPaths(d + "/.git", deny: Self.directModuleDenies)
             if readsFolderSettings { out += [d + "/.claude", d + "/**/.claude"] }
         }
         return out
@@ -272,6 +275,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// N3: the same git paths as Edit and Write deny rules (nested too, `.git` itself, the submodules' config, hooks and info).
     static func nestedGitEditWriteDenies(dirs: [String]) -> [String] {
         var rules: [String] = []
+        let dirs = dirs.filter { ruleSafe($0) }  // #113: a folder with a character that cannot go into a rule is skipped, as in the restricted branch
         for d in dirs {
             for g in directGitDenies { rules += ["/\(d)/**/.git/\(g)", "/\(d)/**/.git/\(g)/**"] }
             rules.append("/\(d)/**/.git")
@@ -300,7 +304,8 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // Nič iz DARWIN_USER_TEMP_DIR (peskovnik Claude Code ne zna »le znotraj mape«): swift build in xcodebuild
             // agenta lahko ne uspeta (gradnja z minigw run ali v načinu sync); Maven deluje.
             "filesystem": ["denyRead": ["~"] + (scratch.map(RouterConfig.hiddenScratch) ?? []), "allowRead": dirs + Self.mavenConfig() + read.map(\.path), "allowWrite": dirs,
-                           "denyWrite": (gits.isEmpty ? [root.path + "/.git"] : gits).flatMap { g in ["config", "hooks", "info", "commondir"].map { g + "/" + $0 } }
+                           "denyWrite": (gits.isEmpty ? [root.path + "/.git"] : gits).flatMap { g in  // #113: the one shared list (gitDenies) and the submodule git folders, as the Codex profile
+                                   Self.gitDenies.map { g + "/" + $0 } + Self.submoduleGitPaths(g) + Self.submoduleDenies.map { g + "/modules/**/" + $0 } }
                                + [(Worktree.tmpLink(root) as NSString).deletingLastPathComponent]  // #67 M2: koren povezav TMPDIR
                                + Native.buildCacheDenies().paths + Self.scratchPaths(RouterConfig.copilotCache)],
         ], "permissions": Self.toolDenySettings(scratch: scratch)]

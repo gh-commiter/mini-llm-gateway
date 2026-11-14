@@ -363,6 +363,8 @@ public enum Native {
             + "(deny file-write*" + rules("subpath", [dir + "/.git"] + denies.paths)
             // tudi ugnezdeni repozitoriji (nastavitve in hooki zunanjega git); ».git« sam ne (preimenovanje, zamenjava z datoteko gitdir)
             + " (regex #\"/\\.git/(config|config\\.worktree|hooks|info|commondir|worktrees|modules/.*/(config|config\\.worktree|hooks|info))(/|$)\") (regex #\"/\\.git$\")"
+            // #113: the rules above check the two paths of a rename, not the folders above them (`mv n/.git/modules n/m`, write m/sub/config, move back)
+            + " (regex #\"/\\.git/modules(/[^/]+)?$\")"
             + denies.regexes.map { " (regex #\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\")" }.joined() + ")\n"
             + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
             // Nastavitve aplikacije: datoteka in domena cfprefsd skupaj (le ena od obeh branja ne prepreči).

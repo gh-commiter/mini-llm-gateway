@@ -60,3 +60,19 @@ private func sh(_ cmd: String, cwd: String, profile: String? = nil) -> (status: 
     #expect(!((try? String(contentsOf: repo.appendingPathComponent("nested/.git/config"), encoding: .utf8)) ?? "").hasSuffix("x\n"))
     #expect(!fm.fileExists(atPath: repo.appendingPathComponent("nested/.git/hooks/pre-commit").path))
 }
+
+// #113: the profile checked the two paths of a rename only: moving the folder above a denied path away, writing there and moving it back got past it.
+@Test func renamingTheFoldersAboveASubmodulesConfigIsDeniedInTheSeatbeltProfile() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("ren-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: base) }
+    let repo = base.appendingPathComponent("repo"), home = base.appendingPathComponent("home")
+    for d in [repo.appendingPathComponent("n/.git/modules/sub/hooks"), home] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+    try Data("c".utf8).write(to: repo.appendingPathComponent("n/.git/modules/sub/config"))
+    let profile = try #require(Native.sandboxProfile(dir: repo.path, home: home.path, network: false, hidden: [], writable: [repo.path]))
+    for cmd in ["mv n/.git/modules n/m", "mv n/.git/modules/sub n/s2", "mv n/.git n/.g"] {
+        let r = sh(cmd, cwd: repo.path, profile: profile)
+        #expect(r.status != 0, "\(cmd): \(r)")
+    }
+    #expect(fm.fileExists(atPath: repo.appendingPathComponent("n/.git/modules/sub/config").path))
+}

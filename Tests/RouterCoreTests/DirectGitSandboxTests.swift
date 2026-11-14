@@ -78,6 +78,12 @@ private struct Repo {
     if FileManager.default.fileExists(atPath: r.repo.appendingPathComponent(".GIT").path) {
         #expect(under(w, "echo '[core]' >> .GIT/config").status != 0 && under(w, "echo x > .Git/hooks/pre-commit").status != 0)
     }
+    // #113: renaming a folder that holds a refused path (to write there and move it back) is refused too
+    for cmd in ["mv .git .g", "mv .git/modules .git/m", "mv .git/modules/sub .git/modules/sub2", "mv .git/hooks .git/hooks2", "mv .git/info .git/info2"] {
+        let o = under(w, cmd)
+        #expect(o.status != 0, "\(cmd): \(o)")
+        #expect(FileManager.default.fileExists(atPath: git.appendingPathComponent("modules/sub/config").path), "\(cmd)")
+    }
     // read-only (--minigw-ro): nothing is writable, not even git's own data
     #expect(under(cfg(write: false), "git add a.txt").status != 0 && under(cfg(write: false), "echo x > .git/refs/heads/z").status != 0)
     // without direct mode (a sync copy, the default): .git stays read-only as it was
@@ -106,4 +112,27 @@ private struct Repo {
     let ra = restricted.agentArgs(cwd: d, allTools: [], folders: AllowedFolders(), checkedPaths: [])
     let rtools = try arg(ra, "--disallowedTools")
     #expect(rtools.contains("Edit(/\(d.path)/.git/**)") && rtools.contains("Edit(/\(d.path)/**/.git/**)"))
+}
+
+@Test func claudeRulesCoverTheFoldersAboveTheClosedGitPaths() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("rules-" + UUID().uuidString, isDirectory: true)
+    defer { try? fm.removeItem(at: base) }
+    let git = base.appendingPathComponent(".git")
+    for d in ["modules/sub/hooks", "modules/sub/info"] { try fm.createDirectory(at: git.appendingPathComponent(d), withIntermediateDirectories: true) }
+    try Data("c".utf8).write(to: git.appendingPathComponent("modules/sub/config"))
+    var local = ClaudeCLIConfig(); local.allowLocalTools = true
+    let a = local.agentArgs(cwd: base, allTools: [], folders: AllowedFolders(), checkedPaths: [])
+    let json = try #require(a.firstIndex(of: "--settings").map { a[$0 + 1] })
+    let st = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    let deny = try #require(((st["sandbox"] as? [String: Any])?["filesystem"] as? [String: Any])?["denyWrite"] as? [String])
+    // literal paths: Claude's sandbox then also refuses `mv .git/modules m` (a real run: the globs alone did not)
+    for p in ["config", "hooks", "info"] { #expect(deny.contains(git.path + "/modules/sub/" + p), "\(p)") }
+    // worktree mode: the one shared list, config.worktree, worktrees and the submodule folders included
+    let wt = local.worktreeArgs(root: base, maven: base, cwd: base, allTools: [], network: false)
+    let wjson = try #require(wt.firstIndex(of: "--settings").map { wt[$0 + 1] })
+    let wst = try #require(try JSONSerialization.jsonObject(with: Data(wjson.utf8)) as? [String: Any])
+    let wdeny = try #require(((wst["sandbox"] as? [String: Any])?["filesystem"] as? [String: Any])?["denyWrite"] as? [String])
+    for g in ClaudeCLIConfig.gitDenies { #expect(wdeny.contains(git.path + "/" + g), "\(g)") }
+    #expect(wdeny.contains(git.path + "/modules/sub/config") && wdeny.contains(git.path + "/modules/**/hooks"))
 }

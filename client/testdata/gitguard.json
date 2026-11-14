@@ -979,6 +979,47 @@ true
 "m": "LOCK",
 "p": ".GIT/hooks/new",
 "ok": false
+},
+{
+"m": "MOVE",
+"p": ".git/modules",
+"d": ".git/m",
+"ok": false
+},
+{
+"m": "MOVE",
+"p": ".git/modules/sub",
+"d": "m",
+"ok": false
+},
+{
+"m": "MOVE",
+"p": ".git",
+"d": ".g",
+"ok": false
+},
+{
+"m": "MOVE",
+"p": ".git/hooks",
+"d": "h",
+"ok": false
+},
+{
+"m": "MOVE",
+"p": ".git/info",
+"d": ".git/info2",
+"ok": false
+},
+{
+"m": "MOVE",
+"p": "nest/.git",
+"d": "nest/.g",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git/modules",
+"ok": false
 }
 ]
 }
