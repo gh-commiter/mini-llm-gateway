@@ -317,7 +317,7 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 			why = "its real path changed to " + r
 		case missed && !samePath(r, f):
 			why = "it is reached through a link to " + r
-		case !ownedByMe(r) || (missed && !ownedByMe(f)):
+		case !folderOwnerOK(r, f, missed):
 			why = "it is a link or owned by another user"
 		case ridErr == nil && !rec.matches(rid): // A1: on every run, not only at start
 			why = "its identity changed (another folder is there now)"
@@ -363,6 +363,22 @@ func (s *server) adoptFolderIdentity(f string, id fileID) {
 	if err := saveFolderIdentity(s.cfgPath, f, id); err != nil {
 		s.log.Printf("WARNING: cannot save the identity of %s (%v): it is adopted again at the next start", f, err)
 	}
+}
+
+var (
+	ownedByMeFn    = ownedByMe      // tests
+	remoteVolumeFn = isRemoteVolume // tests
+)
+
+// folderOwnerOK: the folder (real path r; f = the configured name, also checked when the folder was missing) belongs to
+// this user. Not on a remote volume (Windows: a mapped or UNC drive): there the owner is the server's account (a NAS
+// SID), never this user, and 0.5.25 did not check it there either (only for folders that had been missing). Path and
+// identity are still checked for such a folder; a local volume keeps the owner check.
+func folderOwnerOK(r, f string, missed bool) bool {
+	if remoteVolumeFn(r) {
+		return true
+	}
+	return ownedByMeFn(r) && (!missed || ownedByMeFn(f))
 }
 
 // realPath (#83): kanonična pot (finalPath: na Windows tudi stičišča, preslikan pogon → UNC); za pot, ki je še ni, prek

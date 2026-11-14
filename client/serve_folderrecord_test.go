@@ -271,3 +271,61 @@ func TestFolderRecordSaveDoesNotLoseConcurrentChange(t *testing.T) {
 		t.Fatalf("lost update: port %d, records %+v", got.Port, got.AllowedRecords)
 	}
 }
+
+// W2: the owner check is applied to a folder on a local volume, never to one on a remote volume (a NAS owner is the
+// server's account); a remote folder is still compared by path and identity.
+func TestFolderOwnerOKRemoteVolume(t *testing.T) {
+	oldOwned, oldRemote := ownedByMeFn, remoteVolumeFn
+	t.Cleanup(func() { ownedByMeFn, remoteVolumeFn = oldOwned, oldRemote })
+	foreign := func(string) bool { return false }
+	mine := func(string) bool { return true }
+	for _, c := range []struct {
+		name          string
+		remote, owned bool
+		missed        bool
+		want          bool
+	}{
+		{"local, mine", false, true, false, true},
+		{"local, foreign", false, false, false, false},
+		{"local, missing before, foreign name", false, false, true, false},
+		{"remote, foreign owner", true, false, false, true},
+		{"remote, missed, foreign owner", true, false, true, true},
+	} {
+		remoteVolumeFn = func(string) bool { return c.remote }
+		ownedByMeFn = foreign
+		if c.owned {
+			ownedByMeFn = mine
+		}
+		if got := folderOwnerOK(`Q:\x`, `Q:\x`, c.missed); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// W2/W3: a remote folder with a foreign owner is used; a local one is refused and listed in `refused` right after the
+// start, as the log says (no agent run needed).
+func TestRefusedAgreesWithLogAtStart(t *testing.T) {
+	base := realOf(t, t.TempDir())
+	folder := filepath.Join(base, "folder")
+	if err := os.Mkdir(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := testServer(t, func(c *serveConfig) { c.AllowedFolders = []string{folder} })
+	path := s.cfgPath
+	releaseScratch()
+	oldOwned, oldRemote := ownedByMeFn, remoteVolumeFn
+	t.Cleanup(func() { ownedByMeFn, remoteVolumeFn = oldOwned, oldRemote })
+	ownedByMeFn = func(string) bool { return false }
+
+	remoteVolumeFn = func(string) bool { return false }
+	s, logs := startFrom(t, path)
+	if !strings.Contains(logs, "is not used: it is a link or owned by another user") || !slices.Equal(s.claudeInfo().Refused, []string{folder}) {
+		t.Fatalf("local foreign folder: log %q refused %v", logs, s.claudeInfo().Refused)
+	}
+	releaseScratch()
+	remoteVolumeFn = func(string) bool { return true }
+	s, logs = startFrom(t, path)
+	if strings.Contains(logs, "is not used") || len(s.claudeInfo().Refused) != 0 || len(s.agentFolders(s.conf(), base)) != 1 {
+		t.Fatalf("remote folder: log %q refused %v", logs, s.claudeInfo().Refused)
+	}
+}

@@ -700,6 +700,7 @@ func (s *server) checkFolderRecords(had map[string]folderRecord, missing []strin
 			s.log.Printf("WARNING: cannot save the folder records (%v): they are recorded again at the next start", err)
 		}
 	}
+	s.checkedAgentFolders(s.cfg, "") // W3: the run-time checks (owner, link) also at start: log and `refused` agree
 }
 
 // saveFolderRecords: adds the records of folders that have none in the config file (nothing else changes).

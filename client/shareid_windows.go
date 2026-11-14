@@ -75,3 +75,12 @@ func mountRoot(dir string, _ fileID, home string) (bool, error) {
 
 // recordIDOf (B1): volume serial number and file ID are stable across restarts.
 func recordIDOf(p string) (fileID, error) { return fileIDOf(p) }
+
+// isRemoteVolume (W2): p (final or drive path) is on a network volume: a UNC path or a drive of type DRIVE_REMOTE.
+func isRemoteVolume(p string) bool {
+	if strings.HasPrefix(p, `\\`) && !strings.HasPrefix(p, `\\?\`) && !strings.HasPrefix(p, `\\.\`) {
+		return true
+	}
+	root, err := windows.UTF16PtrFromString(filepath.VolumeName(trimFinalPrefix(p)) + `\`)
+	return err == nil && windows.GetDriveType(root) == windows.DRIVE_REMOTE
+}
