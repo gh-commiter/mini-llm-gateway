@@ -124,6 +124,7 @@ type runFx struct {
 	nps    map[string]*noiseProxy
 	addr   string
 	shares map[string]*shareClient
+	model  string // the model of agent(); default claude-cli-haiku
 }
 
 // newRunFx: the gateway with the core fixture, a fake claude (and codex when withCodex) and a real TCP listener,
@@ -225,7 +226,11 @@ func (x *runFx) agent(user, dir, sid string, project int64, history ...string) (
 	for i, h := range history {
 		msgs = append(msgs, fmt.Sprintf(`{"role":%q,"content":%q}`, roles[i%2], h))
 	}
-	body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[` + strings.Join(msgs, ",") + `]}`
+	model := x.model
+	if model == "" {
+		model = "claude-cli-haiku"
+	}
+	body := `{"model":"` + model + `","tools":[{"name":"x"}],"messages":[` + strings.Join(msgs, ",") + `]}`
 	h := map[string]string{"x-claude-mini-session": sid, "x-claude-mini-cwd": dir, "content-type": "application/json"}
 	x.nps[user].project = "" // minigw's proxy sets the project header (L1); a header from the client would be dropped
 	if project != 0 {

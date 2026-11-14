@@ -86,6 +86,9 @@ type serveConfig struct {
 	// unavailable, failed write). Written in the same update that removes the device; cleared after the bump; the
 	// next core open does the bump before the project routes are enabled.
 	PendingRevocations []string `json:"pendingRevocations,omitempty"`
+
+	// 0.6.0 (review A4): the Claude quota probe (`claude -p /usage`) is off unless the owner turns it on.
+	ClaudeQuotaProbe bool `json:"claudeQuotaProbe,omitempty"`
 }
 
 // folderRecord: the final path and identity of an allowed folder: a stable volume id (Linux statfs f_fsid, Windows volume

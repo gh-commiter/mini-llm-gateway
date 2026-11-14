@@ -1065,7 +1065,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 					}
 				}
 			})
-			s.recordCodexQuota(state, thread) // rate_limits of this run's own session log (serve_quota.go)
+			s.queueCodexQuota(state, thread) // rate_limits of this run's own session log, read off the response path (serve_quota.go)
 			b, _ := os.ReadFile(out)
 			text = strings.TrimSpace(string(b))
 			if failure != "" && (err != nil || text == "") {

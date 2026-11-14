@@ -35,10 +35,23 @@ func (s *server) coreAdmin(method string, seg []string, q url.Values, body []byt
 	}
 	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
 	if seg[0] == "quota" { // no core needed
-		if method != "GET" || len(seg) != 1 {
+		if len(seg) != 1 {
 			return fail(404, "Not found: "+method+" "+seg[0])
 		}
-		return 200, map[string]any{"quota": s.quotaReport(context.Background())}, true
+		switch method {
+		case "PATCH": // {"claudeProbe": bool}: the opt-in of the Claude probe
+			var b struct{ ClaudeProbe *bool }
+			if decodeStrict(body, &b) != nil || b.ClaudeProbe == nil {
+				return fail(400, "bad JSON body (claudeProbe)")
+			}
+			if err := s.update(func(c *serveConfig) error { c.ClaudeQuotaProbe = *b.ClaudeProbe; return nil }); err != nil {
+				return fail(500, err.Error())
+			}
+		case "GET":
+		default:
+			return fail(404, "Not found: "+method+" "+seg[0])
+		}
+		return 200, map[string]any{"quota": s.quotaReport(context.Background()), "claudeProbe": s.conf().ClaudeQuotaProbe}, true
 	}
 	if s.core == nil {
 		why := "the gateway is not running"

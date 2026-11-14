@@ -26,7 +26,7 @@ const coreHelp = `
   minigw gw core restore <file> [--yes]                 only with the gateway stopped
   minigw gw core audit                                  the audit trail of the core
   minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)
-  minigw gw quota                                       subscription quota and provider credit, with source, time and staleness
+  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
 (<user> and <project>: the name or slug, or the number.)`
 
 type coreUser struct {
@@ -72,7 +72,7 @@ func projectID(a *adminClient, ref string) int64 {
 }
 
 // coreOpts: the flags of usage-events.
-type coreOpts struct{ days, user, project, model string }
+type coreOpts struct{ days, user, project, model, claudeProbe string }
 
 func coreCommand(a *adminClient, pos []string, o coreOpts) {
 	need := func(min, max int) {
@@ -215,8 +215,18 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		printUsage(os.Stdout, r, true)
 	case "quota":
 		need(1, 1)
-		var r struct{ Quota []quotaValue }
+		if o.claudeProbe != "" {
+			if o.claudeProbe != "on" && o.claudeProbe != "off" {
+				fail("--claude-probe: on or off")
+			}
+			a.do("PATCH", "/quota", map[string]any{"claudeProbe": o.claudeProbe == "on"}, nil)
+		}
+		var r struct {
+			Quota       []quotaValue
+			ClaudeProbe bool
+		}
 		a.do("GET", "/quota", nil, &r)
+		say("claude probe: " + map[bool]string{true: "on (runs claude -p /usage, at most every 10 minutes)", false: "off (minigw gw quota --claude-probe=on turns it on)"}[r.ClaudeProbe])
 		for _, v := range r.Quota {
 			val := "-"
 			if v.Value != nil {
@@ -236,6 +246,9 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 			}
 			if v.Note != "" {
 				line += "  " + v.Note
+			}
+			if v.Reason != "" {
+				line += "  unavailable: " + v.Reason
 			}
 			say(clean(line))
 		}

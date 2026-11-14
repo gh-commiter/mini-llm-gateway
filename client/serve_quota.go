@@ -33,6 +33,7 @@ type quotaValue struct {
 	ResetsText string     `json:"resetsText,omitempty"` // as the source printed it, when it could not be turned into a time
 	Stale      bool       `json:"stale"`
 	Note       string     `json:"note,omitempty"`
+	Reason     string     `json:"reason,omitempty"` // why a value is unavailable ("probe off", "no key for …")
 }
 
 const (
@@ -40,14 +41,22 @@ const (
 	quotaStaleAge = 24 * time.Hour // an observation older than this, or one whose window has reset since, is stale
 )
 
+// quotaState: mu guards the data only and is never held across a slow call (a probe, an HTTP request, a file read);
+// the flight mutexes make the slow refreshes single-flight per source (A3).
 type quotaState struct {
 	mu        sync.Mutex
+	claudeFly sync.Mutex
+	remoteFly sync.Map // provider name -> *sync.Mutex
+	work      chan codexJob
+	startOnce sync.Once
 	codex     []quotaValue
 	claude    []quotaValue
 	claudeAt  time.Time
 	claudeOff string // set when `claude /usage` turned out to do more than it should: not run again
 	remote    map[string]cachedQuota
 }
+
+type codexJob struct{ state, thread string }
 
 type cachedQuota struct {
 	at   time.Time
@@ -166,7 +175,25 @@ func codexSessionFile(home, thread string) string {
 	return best
 }
 
-// recordCodexQuota is called after a gateway-started Codex run: the numbers of that run's own session log only.
+// queueCodexQuota hands the reading of a finished Codex run's session log to a worker: it never waits and never
+// blocks the model response (A3). A full queue drops the job (the next run records newer numbers anyway).
+func (s *server) queueCodexQuota(state, thread string) {
+	q := &s.quota
+	q.startOnce.Do(func() {
+		q.work = make(chan codexJob, 8)
+		go func() {
+			for j := range q.work {
+				s.recordCodexQuota(j.state, j.thread)
+			}
+		}()
+	})
+	select {
+	case q.work <- codexJob{state, thread}:
+	default:
+	}
+}
+
+// recordCodexQuota reads the numbers of a gateway-started Codex run's own session log (called by the worker).
 func (s *server) recordCodexQuota(state, thread string) {
 	home := state
 	if home == "" {
@@ -268,23 +295,21 @@ var claudeUsageFn = runClaudeUsage
 // the login). Checked on Claude Code 2.1.322: 0 turns, no cost, no tokens, the folder stays empty. The envelope is
 // checked again on every run (parseClaudeUsage); a run that did inference switches the feature off.
 func runClaudeUsage(ctx context.Context, exe []string, parent string) ([]byte, error) {
-	dir, err := os.MkdirTemp(parent, "quota-*")
+	if err := os.MkdirAll(parent, 0o700); err != nil { // a private folder under the config folder, not Scratch
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(parent, "probe-*")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	args := append(slicesClone(exe[1:]), "-p", "/usage", "--model", "haiku", "--setting-sources", "", "--output-format", "json", "--no-session-persistence")
+	args := append(slicesClone(exe[1:]), "-p", "/usage", "--model", "haiku", "--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`,
+		"--output-format", "json", "--no-session-persistence")
 	cmd := commandContext(ctx, exe[0], args...)
 	cmd.Dir = dir
-	for _, e := range os.Environ() {
-		k, _, _ := strings.Cut(e, "=")
-		if strings.HasPrefix(k, "ANTHROPIC_") || strings.HasPrefix(k, "CLAUDE_CODE_") && k != "CLAUDE_CODE_OAUTH_TOKEN" {
-			continue
-		}
-		cmd.Env = append(cmd.Env, e)
-	}
+	cmd.Env = probeEnv(os.Environ(), dir)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
@@ -293,31 +318,79 @@ func runClaudeUsage(ctx context.Context, exe []string, parent string) ([]byte, e
 	return out.Bytes(), nil
 }
 
+// probeEnvAllow: the only variables the quota probe gets (A4). Each one is what the CLI needs to start and find its
+// own login; nothing that routes requests elsewhere (ANTHROPIC_*), nothing that selects settings or behaviour
+// (CLAUDE_CODE_*, except the login token).
+var probeEnvAllow = map[string]string{
+	"PATH":                    "find the claude program's own helpers",
+	"HOME":                    "the user's folder, where the login (~/.claude) is",
+	"USERPROFILE":             "Windows: the same",
+	"APPDATA":                 "Windows: the same",
+	"LOCALAPPDATA":            "Windows: the same",
+	"SystemRoot":              "Windows: needed to start any program",
+	"windir":                  "Windows: the same",
+	"SystemDrive":             "Windows: the same",
+	"XDG_CONFIG_HOME":         "Linux: where ~/.claude may live",
+	"XDG_DATA_HOME":           "Linux: the same",
+	"XDG_STATE_HOME":          "Linux: the same",
+	"CLAUDE_CONFIG_DIR":       "the login folder, when the user moved it",
+	"CLAUDE_CODE_OAUTH_TOKEN": "the login by token (claude setup-token)",
+	"LANG":                    "text encoding",
+	"LC_ALL":                  "text encoding",
+	"TZ":                      "the time zone the reset times are printed in",
+}
+
+// probeEnv: the allowlisted variables plus a private temporary folder.
+func probeEnv(env []string, tmp string) []string {
+	var out []string
+	for _, e := range env {
+		k, _, _ := strings.Cut(e, "=")
+		if _, ok := probeEnvAllow[k]; ok {
+			out = append(out, e)
+		}
+	}
+	return append(out, "TMPDIR="+tmp, "TEMP="+tmp, "TMP="+tmp)
+}
+
 func slicesClone(a []string) []string { return append([]string(nil), a...) }
 
 func (s *server) claudeQuota(ctx context.Context, now time.Time) []quotaValue {
 	q := &s.quota
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.claudeOff != "" {
-		return []quotaValue{{Name: "claude", Source: "unavailable", Stale: true, Note: q.claudeOff}}
+	if !s.conf().ClaudeQuotaProbe { // opt-in (A4)
+		return []quotaValue{{Name: "claude", Source: "unavailable", Stale: true, Reason: "probe off"}}
 	}
 	exe := s.claudeExe()
 	if len(exe) == 0 || s.conf().ClaudeDisabled {
-		return []quotaValue{{Name: "claude", Source: "unavailable", Stale: true, Note: "Claude CLI is off or not installed on this gateway"}}
+		return []quotaValue{{Name: "claude", Source: "unavailable", Stale: true, Reason: "Claude CLI is off or not installed on this gateway"}}
 	}
-	if q.claude != nil && now.Sub(q.claudeAt) < quotaCacheFor {
-		return markStale(q.claude, now)
+	cached := func() ([]quotaValue, bool, string) { // data under mu, briefly
+		q.mu.Lock()
+		defer q.mu.Unlock()
+		return q.claude, q.claude != nil && now.Sub(q.claudeAt) < quotaCacheFor, q.claudeOff
 	}
-	data, err := claudeUsageFn(ctx, exe, s.conf().scratch("tmp"))
+	if vals, fresh, off := cached(); off != "" {
+		return []quotaValue{{Name: "claude", Source: "unavailable", Stale: true, Reason: off}}
+	} else if fresh {
+		return markStale(vals, now)
+	}
+	q.claudeFly.Lock() // single-flight: one probe at a time; waiters take the result
+	defer q.claudeFly.Unlock()
+	if vals, fresh, off := cached(); off != "" {
+		return []quotaValue{{Name: "claude", Source: "unavailable", Stale: true, Reason: off}}
+	} else if fresh {
+		return markStale(vals, now)
+	}
+	data, err := claudeUsageFn(ctx, exe, filepath.Join(s.cfgDir, "quota-tmp"))
 	var vals []quotaValue
 	if err == nil {
 		vals, err = parseClaudeUsage(data, now)
 	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	switch {
 	case errors.Is(err, errInference):
 		q.claudeOff = err.Error()
-		return []quotaValue{{Name: "claude", Source: "unavailable", Stale: true, Note: q.claudeOff}}
+		return []quotaValue{{Name: "claude", Source: "unavailable", Stale: true, Reason: q.claudeOff}}
 	case err != nil:
 		if q.claude != nil { // the last good values, marked stale
 			out := markStale(q.claude, now)
@@ -326,7 +399,7 @@ func (s *server) claudeQuota(ctx context.Context, now time.Time) []quotaValue {
 			}
 			return out
 		}
-		return []quotaValue{{Name: "claude", Source: "unavailable", Stale: true, Note: err.Error()}}
+		return []quotaValue{{Name: "claude", Source: "unavailable", Stale: true, Reason: err.Error()}}
 	}
 	q.claude, q.claudeAt = vals, now
 	return vals
@@ -401,21 +474,26 @@ func (s *server) remoteQuota(ctx context.Context, g serveGateway, now time.Time)
 		return nil
 	}
 	q := &s.quota
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if c, ok := q.remote[g.Name]; ok && now.Sub(c.at) < quotaCacheFor {
+	cachedRemote := func() (cachedQuota, bool) { q.mu.Lock(); defer q.mu.Unlock(); c, ok := q.remote[g.Name]; return c, ok }
+	if c, ok := cachedRemote(); ok && now.Sub(c.at) < quotaCacheFor {
+		return markStale(c.vals, now)
+	}
+	fm, _ := q.remoteFly.LoadOrStore(g.Name, &sync.Mutex{})
+	fm.(*sync.Mutex).Lock() // single-flight per provider; the data lock is not held during the request
+	defer fm.(*sync.Mutex).Unlock()
+	if c, ok := cachedRemote(); ok && now.Sub(c.at) < quotaCacheFor {
 		return markStale(c.vals, now)
 	}
 	key, _ := keyGet(s.cfgDir, g.Name) // never logged, never returned
 	fail := func(note string) []quotaValue {
-		if c, ok := q.remote[g.Name]; ok {
+		if c, ok := cachedRemote(); ok {
 			out := markStale(c.vals, now)
 			for i := range out {
 				out[i].Stale, out[i].Note = true, note
 			}
 			return out
 		}
-		return []quotaValue{{Name: kind, Source: "unavailable", Stale: true, Note: note}}
+		return []quotaValue{{Name: kind, Source: "unavailable", Stale: true, Reason: note}}
 	}
 	if key == "" {
 		return fail("no key for " + g.Name)
@@ -446,10 +524,12 @@ func (s *server) remoteQuota(ctx context.Context, g serveGateway, now time.Time)
 	if err != nil {
 		return fail(err.Error())
 	}
+	q.mu.Lock()
 	if q.remote == nil {
 		q.remote = map[string]cachedQuota{}
 	}
 	q.remote[g.Name] = cachedQuota{now, vals}
+	q.mu.Unlock()
 	return vals
 }
 

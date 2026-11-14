@@ -507,7 +507,7 @@ func TestClaudeUsageParserAndGuards(t *testing.T) {
 		}
 	}
 	// the gateway: cached for 10 minutes, stale on a failed refresh, and switched off for good after inference
-	s, _ := testServer(t, nil)
+	s, _ := testServer(t, func(c *serveConfig) { c.ClaudeQuotaProbe = true }) // opt-in (review A4)
 	calls := 0
 	reply, rerr := []byte(claudeUsageFixture), error(nil)
 	claudeUsageFn = func(context.Context, []string, string) ([]byte, error) { calls++; return reply, rerr }
@@ -527,7 +527,7 @@ func TestClaudeUsageParserAndGuards(t *testing.T) {
 	}
 	rerr, reply = nil, []byte(strings.Replace(claudeUsageFixture, `"num_turns":0`, `"num_turns":2`, 1))
 	v = s.claudeQuota(context.Background(), now.Add(30*time.Minute))
-	if len(v) != 1 || v[0].Source != "unavailable" || !strings.Contains(v[0].Note, "ran inference") {
+	if len(v) != 1 || v[0].Source != "unavailable" || !strings.Contains(v[0].Reason, "ran inference") {
 		t.Fatalf("%+v", v)
 	}
 	before := calls
@@ -699,4 +699,113 @@ func TestQueueOverflowCountsLostEventsNotMessages(t *testing.T) {
 	if u.lost != 2 {
 		t.Fatalf("lost %d", u.lost)
 	}
+}
+
+// Review A4: the probe is off unless the owner turns it on; its environment is an allowlist.
+func TestClaudeProbeIsOptInWithAnAllowlistedEnvironment(t *testing.T) {
+	s, _ := testServer(t, nil)
+	called := false
+	claudeUsageFn = func(context.Context, []string, string) ([]byte, error) {
+		called = true
+		return []byte(claudeUsageFixture), nil
+	}
+	defer func() { claudeUsageFn = runClaudeUsage }()
+	v := s.claudeQuota(context.Background(), time.Now())
+	if called || len(v) != 1 || v[0].Source != "unavailable" || v[0].Reason != "probe off" {
+		t.Fatalf("called %v %+v", called, v)
+	}
+	if st, obj := s.adminDo("PATCH", "/quota", []byte(`{"claudeProbe":true}`)); st != 200 || fmt.Sprint(obj) == "" {
+		t.Fatalf("%d %v", st, obj)
+	}
+	if v := s.claudeQuota(context.Background(), time.Now()); !called || len(v) != 2 {
+		t.Fatalf("called %v %+v", called, v)
+	}
+	if c, _ := loadServeConfig(s.cfgPath); !c.ClaudeQuotaProbe { // persisted
+		t.Fatal("the setting was not saved")
+	}
+	// the environment: only the allowlist, plus a private temp folder
+	env := probeEnv([]string{"PATH=/bin", "HOME=/h", "ANTHROPIC_BASE_URL=http://evil", "ANTHROPIC_API_KEY=k", "CLAUDE_CODE_USE_BEDROCK=1",
+		"CLAUDE_CODE_OAUTH_TOKEN=tok", "CLAUDE_CONFIG_DIR=/c", "AWS_SECRET_ACCESS_KEY=s", "HTTPS_PROXY=http://p", "MINIGW_ANYTHING=1", "TZ=UTC"}, "/probe")
+	got := strings.Join(env, "\n")
+	for _, bad := range []string{"ANTHROPIC", "BEDROCK", "AWS_", "PROXY", "MINIGW"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("%s reached the probe: %s", bad, got)
+		}
+	}
+	for _, want := range []string{"PATH=/bin", "HOME=/h", "CLAUDE_CODE_OAUTH_TOKEN=tok", "CLAUDE_CONFIG_DIR=/c", "TZ=UTC", "TMPDIR=/probe"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s missing: %s", want, got)
+		}
+	}
+	for k, why := range probeEnvAllow {
+		if why == "" {
+			t.Errorf("%s has no documented reason", k)
+		}
+	}
+}
+
+// Review A3: a stalled quota refresh never delays a model response or the recording of Codex numbers.
+func TestStalledQuotaRefreshDoesNotBlockTheModelPath(t *testing.T) {
+	s, _ := testServer(t, func(c *serveConfig) { c.ClaudeQuotaProbe = true })
+	release, started := make(chan struct{}), make(chan struct{})
+	claudeUsageFn = func(context.Context, []string, string) ([]byte, error) {
+		close(started)
+		<-release
+		return []byte(claudeUsageFixture), nil
+	}
+	defer func() { claudeUsageFn = runClaudeUsage }()
+	done := make(chan struct{})
+	go func() { s.claudeQuota(context.Background(), time.Now()); close(done) }()
+	<-started // the probe is running and stuck
+	home := t.TempDir()
+	day := filepath.Join(home, "sessions", "2026", "11", "14")
+	os.MkdirAll(day, 0o755)
+	os.WriteFile(filepath.Join(day, "rollout-2026-11-14T10-00-00-th.jsonl"), []byte(`{"payload":{"rate_limits":{"primary":{"used_percent":5,"window_minutes":300,"resets_at":4102444800}}}}`+"\n"), 0o644)
+	fin := make(chan struct{})
+	go func() { s.queueCodexQuota(home, "th"); s.recordCodexQuota(home, "th"); close(fin) }() // what a Codex completion does
+	select {
+	case <-fin:
+	case <-time.After(3 * time.Second):
+		t.Fatal("recording Codex numbers waited for the stuck probe")
+	}
+	// the report's other sources are not held up either: a second caller of the probe waits for the first, but the
+	// data lock is free, so codex values are readable at once
+	s.quota.mu.Lock()
+	n := len(s.quota.codex)
+	s.quota.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("codex values: %d", n)
+	}
+	close(release)
+	<-done
+}
+
+func TestCodexCompletionReturnsWhileAQuotaRefreshIsStuck(t *testing.T) { // review A3, through a real Codex run
+	x := newRunFx(t, false, true)
+	x.f.s.update(func(c *serveConfig) error { c.ClaudeQuotaProbe = true; return nil })
+	release, started := make(chan struct{}), make(chan struct{})
+	claudeUsageFn = func(context.Context, []string, string) ([]byte, error) {
+		close(started)
+		<-release
+		return []byte(claudeUsageFixture), nil
+	}
+	defer func() { claudeUsageFn = runClaudeUsage }()
+	done := make(chan struct{})
+	go func() { x.f.s.claudeQuota(context.Background(), time.Now()); close(done) }()
+	<-started
+	x.setPlan()
+	os.WriteFile(x.plan+".codex", []byte("[]"), 0o644)
+	x.model = "claude-codex"
+	finished := make(chan int, 1)
+	go func() { st, _ := x.agent("ana", folder(t, t.TempDir(), "w"), "s-codex", 0, "go"); finished <- st }()
+	select {
+	case st := <-finished:
+		if st != 200 {
+			t.Fatalf("codex: %d", st)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the Codex answer waited for the stuck quota refresh")
+	}
+	close(release)
+	<-done
 }

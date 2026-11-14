@@ -273,6 +273,7 @@ func routerCommand(args []string, in io.Reader) {
 	evUser := fs.String("user", "", "usage-events: only this user (name or number)")
 	evProject := fs.String("project", "", "usage-events: only this project (slug or number)")
 	evModel := fs.String("model", "", "usage-events: only this model")
+	claudeProbe := fs.String("claude-probe", "", "quota: on or off (the Claude quota probe)")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, routerHelp) }
 	var pos []string // ukazi in zastavice v poljubnem vrstnem redu
 	for {
@@ -734,7 +735,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "member", "grant", "core", "usage-events", "quota":
-		coreCommand(a, pos, coreOpts{*days, *evUser, *evProject, *evModel})
+		coreCommand(a, pos, coreOpts{*days, *evUser, *evProject, *evModel, *claudeProbe})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)
