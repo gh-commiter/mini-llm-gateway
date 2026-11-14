@@ -88,6 +88,10 @@ func Open(dir string, opts Options) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := recoverRestore(dir); err != nil {
+		lock.Close()
+		return nil, err
+	}
 	s := &Store{dir: dir, lock: lock, now: time.Now, rl: rateLimits{w: map[int64]*window{}}}
 	if err := s.open(); err != nil {
 		if s.db != nil {

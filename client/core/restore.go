@@ -2,30 +2,69 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+)
+
+const restoreTmp = ".core-restore.tmp"
+
+// Test hooks: a hook that returns an error simulates a crash at that stage (nothing is cleaned up or audited).
+var (
+	restoreHook = func(stage string) error { return nil }
+	auditWriter = appendAudit // tests replace it to fail an append
 )
 
 // Restore replaces <dir>/core.db with the backup src. The gateway must be stopped: it takes the folder lock an
-// open store holds. src is validated first (integrity, schema not newer, same gateway id). The old file is kept as
-// a snapshot, the epoch is set above both the old and the restored value, the project-id mark is the maximum of
-// all, and the result goes to core.audit.log. Any failure leaves the previous database in place.
+// open store holds. src is validated first (integrity, schema not newer, same gateway id). The epoch is set above
+// both the old and the restored value, the project-id mark is the maximum of all.
+//
+// Crash safety: core.db is never absent. The new file is prepared as a temp file, the old database is hard-linked
+// (or copied) to its snapshot, an intent line is fsynced to core.audit.log, and ONE rename puts the new file in
+// place. On Windows os.Rename replaces an existing file (MoveFileEx with REPLACE_EXISTING) but fails if another
+// process has core.db open without share-delete; the folder lock keeps our own processes out, and a failure just
+// leaves the old database in place. recoverRestore (called by Open and Restore) finishes or rolls back an
+// unfinished restore, so any failure leaves either the old or the new database, never a mix.
 func Restore(dir, src string) (err error) {
-	detail := map[string]any{"source": src}
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	if src, err = filepath.Abs(src); err != nil {
+		return err
+	}
+	id := randID()
+	detail := map[string]any{"id": id, "source": src}
+	crashed := false
+	tmp := filepath.Join(dir, restoreTmp)
 	defer func() {
-		if err != nil {
+		if err != nil && !crashed {
 			detail["error"] = err.Error()
-			appendAudit(dir, "restore.failed", detail)
+			auditWriter(dir, "restore.failed", detail) // first: after this the unfinished restore counts as resolved
+			removeFiles(tmp, tmp+"-wal", tmp+"-shm")
 		}
 	}()
+	stage := func(name string) error {
+		if err := restoreHook(name); err != nil {
+			crashed = true
+			return err
+		}
+		return nil
+	}
 	lock, err := lockDir(dir)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
+	if err := recoverRestore(dir); err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	side, err := readState(dir)
@@ -48,14 +87,14 @@ func Restore(dir, src string) (err error) {
 	detail["epoch_from"], detail["epoch_to"], detail["project_high"] = max(cur.Epoch, in.Epoch), next.Epoch, next.ProjectHigh
 
 	// Build the new file next to the old one, so the final step is a rename on the same volume.
-	tmp := filepath.Join(dir, ".core-restore.tmp")
-	cleanup := func() { os.Remove(tmp); os.Remove(tmp + "-wal"); os.Remove(tmp + "-shm") }
-	cleanup()
-	defer cleanup()
+	removeFiles(tmp, tmp+"-wal", tmp+"-shm")
 	if err := copyFile(src, tmp); err != nil {
 		return err
 	}
 	if err := stamp(ctx, tmp, next, src); err != nil {
+		return err
+	}
+	if err := stage("prepared"); err != nil {
 		return err
 	}
 	if err := writeState(dir, next); err != nil { // before the swap: ahead of the database is harmless
@@ -63,31 +102,114 @@ func Restore(dir, src string) (err error) {
 	}
 
 	db := filepath.Join(dir, dbFile)
-	snap := ""
-	if _, err := os.Lstat(db); err == nil {
-		snap = filepath.Join(dir, snapshotName(oldSchema))
+	if fi, err := os.Lstat(db); err == nil && fi.Size() > 0 {
+		snap := filepath.Join(dir, snapshotName(oldSchema))
 		detail["snapshot"] = filepath.Base(snap)
-		if err := os.Rename(db, snap); err != nil {
-			return err
+		if err := os.Link(db, snap); err != nil { // no hard links (FAT, some shares): copy
+			if err := copyFile(db, snap); err != nil {
+				return err
+			}
 		}
-		// The old WAL belongs to the old file: it goes with the snapshot, and the SHM (a cache) is dropped,
-		// so neither can ever be applied to the new file.
-		if err := os.Rename(db+"-wal", snap+"-wal"); err != nil && !errors.Is(err, os.ErrNotExist) {
-			os.Rename(snap, db)
-			return err
+		if fi, err := os.Stat(db + "-wal"); err == nil && fi.Size() > 0 { // checkpoint failed: keep the WAL with it
+			if err := copyFile(db+"-wal", snap+"-wal"); err != nil {
+				return err
+			}
 		}
-		os.Remove(db + "-shm")
+	}
+	if err := stage("snapshot"); err != nil {
+		return err
+	}
+	if err := auditWriter(dir, "restore.intent", detail); err != nil {
+		return err
+	}
+	if err := stage("intent"); err != nil {
+		return err
 	}
 	if err := os.Rename(tmp, db); err != nil {
-		if snap != "" { // put the previous database back
-			os.Rename(snap, db)
-			os.Rename(snap+"-wal", db+"-wal")
-		}
 		return err
 	}
 	syncDir(dir)
+	if err := stage("swapped"); err != nil {
+		return err
+	}
+	// The old WAL and SHM must never meet the new file.
+	if err := removeFiles(db+"-wal", db+"-shm"); err != nil {
+		return fmt.Errorf("restore applied, cleanup of the old WAL pending (Open retries it): %w", err)
+	}
 	pruneSnapshots(dir)
-	return appendAudit(dir, "restore", detail)
+	if err := stage("cleaned"); err != nil {
+		return err
+	}
+	// A failed append here does not make the restore a failure: the new database is in place, and the next Open
+	// sees the intent without a completion and writes it.
+	auditWriter(dir, "restore", detail)
+	return nil
+}
+
+func randID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// removeFiles removes the files that exist; the first real error is returned.
+func removeFiles(paths ...string) (err error) {
+	for _, p := range paths {
+		if e := os.Remove(p); e != nil && !errors.Is(e, os.ErrNotExist) && err == nil {
+			err = e
+		}
+	}
+	return err
+}
+
+// unresolvedIntent returns the id of a restore intent in the audit file that has no completion, failure or rollback.
+func unresolvedIntent(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, auditFile))
+	if err != nil {
+		return ""
+	}
+	open := ""
+	for _, line := range strings.Split(string(b), "\n") {
+		var e struct {
+			Action string
+			Detail struct{ ID string }
+		}
+		if json.Unmarshal([]byte(line), &e) != nil {
+			continue
+		}
+		switch e.Action {
+		case "restore.intent":
+			open = e.Detail.ID
+		case "restore", "restore.failed", "restore.rolledback":
+			if e.Detail.ID == open {
+				open = ""
+			}
+		}
+	}
+	return open
+}
+
+// recoverRestore settles an unfinished restore before anything else touches the folder (the lock is held).
+// Temp file still there: the swap did not happen, roll back. Temp file gone: the swap happened, so the old WAL and
+// SHM are stale; remove them and write the completion.
+func recoverRestore(dir string) error {
+	tmp := filepath.Join(dir, restoreTmp)
+	id := unresolvedIntent(dir)
+	_, err := os.Lstat(tmp)
+	tmpThere := err == nil
+	switch {
+	case id != "" && !tmpThere:
+		db := filepath.Join(dir, dbFile)
+		if err := removeFiles(db+"-wal", db+"-shm"); err != nil {
+			return err
+		}
+		return appendAudit(dir, "restore", map[string]any{"id": id, "recovered": true})
+	case id != "":
+		if err := appendAudit(dir, "restore.rolledback", map[string]any{"id": id}); err != nil {
+			return err
+		}
+	}
+	return removeFiles(tmp, tmp+"-wal", tmp+"-shm")
 }
 
 // currentState reads the state of the existing database (best effort: a damaged file is what a restore may be for)
