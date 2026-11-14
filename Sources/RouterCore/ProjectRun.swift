@@ -53,6 +53,29 @@ enum ProjectHomes {
     }
 }
 
+/// R2: one lock per real auth file for its whole lifecycle, and what the link of each home was made from.
+enum AuthLife {
+    struct Gen: Equatable { var ino: UInt64 = 0, mtimeNs: Int64 = 0, size: Int64 = 0 }
+    struct Linked { var gen: Gen; var at: Date }
+    nonisolated(unsafe) private static var table: [String: Linked] = [:]  // home auth path -> the real file's generation when its link was made
+    // reads and writes of different real files meet in the table: under guardLock
+    static func linked(_ homeAuth: String) -> Linked? { guardLock.lock(); defer { guardLock.unlock() }; return table[homeAuth] }
+    static func setLinked(_ homeAuth: String, _ v: Linked) { guardLock.lock(); table[homeAuth] = v; guardLock.unlock() }
+    nonisolated(unsafe) private static var locks: [String: NSRecursiveLock] = [:]
+    private static let guardLock = NSLock()
+    static func locked(_ realPath: String, _ body: () -> Void) {
+        guardLock.lock(); let l = locks[realPath] ?? NSRecursiveLock(); locks[realPath] = l; guardLock.unlock()
+        l.lock(); defer { l.unlock() }
+        body()
+    }
+    /// Inode, mtime and size of the file a path leads to (a login can be a link in a dotfiles folder); zeros when it is not there.
+    static func gen(_ path: String) -> Gen {
+        var st = stat()
+        guard stat(path, &st) == 0 else { return Gen() }
+        return Gen(ino: UInt64(st.st_ino), mtimeNs: Int64(st.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(st.st_mtimespec.tv_nsec), size: Int64(st.st_size))
+    }
+}
+
 enum ProjectAdmission: Equatable {
     case none                                   // no project header: the request is what it was in 0.5.26
     case admitted(ProjectRun)
@@ -151,17 +174,28 @@ extension Router {
     /// Codex: the login (auth.json) and settings are links to the real files in the run's own home, as `agentState` in Go; Codex writes
     /// auth.json in place, through the link. `restoreProjectAuth` carries a replaced file back.
     /// sec-fix F6: at every run start a name that is not the link is made one again (a config.toml an earlier run left is refreshed from the
-    /// real file; a file the CLI replaced was carried back, or refused, at the end of that run).
+    /// real file).
+    /// R2: the credential lifecycle of one real file (link, carry-back, replace) runs under one lock per real path (`AuthLife`), and a
+    /// regular auth.json that an overlapping run's CLI left in the home is carried back (all the checks of `restoreProjectAuth`) instead of
+    /// being unlinked. The generation (inode, mtime, size) of the real file is recorded when the link is made; a carry-back happens only
+    /// when the real file is still that one, otherwise a newer real file stays and ours is dropped.
     static func linkProjectAuth(home: URL, real: URL, names: [String] = ["auth.json", "config.toml"]) {
         let fm = FileManager.default
         for n in names {
             let src = real.appendingPathComponent(n).path, dst = home.appendingPathComponent(n).path
-            guard fm.fileExists(atPath: src) else { continue }
-            if (try? fm.destinationOfSymbolicLink(atPath: dst)) == src { continue }
-            var st = stat()
-            if lstat(dst, &st) == 0, st.st_mode & S_IFMT == S_IFDIR { continue }  // not ours to remove
-            unlink(dst)
-            try? fm.createSymbolicLink(atPath: dst, withDestinationPath: src)
+            AuthLife.locked(src) {
+                guard fm.fileExists(atPath: src) else { return }
+                if (try? fm.destinationOfSymbolicLink(atPath: dst)) == src { return }
+                var st = stat()
+                if lstat(dst, &st) == 0 {
+                    if st.st_mode & S_IFMT == S_IFDIR { return }  // not ours to remove
+                    if n == "auth.json", st.st_mode & S_IFMT == S_IFREG { carryBackLocked(home: home, real: real) }  // the CLI of an overlapping run replaced it
+                }
+                if (try? fm.destinationOfSymbolicLink(atPath: dst)) == src { return }  // carried back: the link is there again
+                unlink(dst)
+                try? fm.createSymbolicLink(atPath: dst, withDestinationPath: src)
+                if n == "auth.json" { AuthLife.setLinked(dst, AuthLife.Linked(gen: AuthLife.gen(src), at: Date())) }
+            }
         }
     }
 
@@ -171,17 +205,28 @@ extension Router {
     /// If the CLI replaced auth.json (a write by rename, not through the link) the new one is the newer: it goes to the real folder and
     /// the link is made again, so the real login does not go stale (refresh tokens can change).
     /// sec-fix F6: the file in the home is written by the agent's CLI, which an agent can drive, so it is carried only when it is a regular
-    /// file of this user, with no other link, not larger than `maxAuthBytes`, modified since `since` (this run) and a JSON object; it is read
-    /// without following a link and written to the real folder by a temporary file and rename (a link at the real name is never followed or
-    /// replaced). A file that fails is dropped, so that it is not the login of the next run.
+    /// file of this user, with no other link, not larger than `maxAuthBytes`, modified since `since` (and since the link was made) and a JSON
+    /// object; it is read without following a link and written to the real folder by a temporary file and rename (a link at the real name is
+    /// never followed or replaced). A file that fails is dropped, so that it is not the login of the next run.
+    /// R2: under the real file's lock, and only when the real file is still the generation the link was made from.
     static func restoreProjectAuth(home: URL, real: URL, since: Date) {
+        AuthLife.locked(real.appendingPathComponent("auth.json").path) { carryBackLocked(home: home, real: real, since: since) }
+    }
+
+    /// The carry-back; the caller holds the lock of the real auth.json.
+    private static func carryBackLocked(home: URL, real: URL, since: Date = .distantPast) {
         let fm = FileManager.default
         let dst = home.appendingPathComponent("auth.json"), src = real.appendingPathComponent("auth.json")
         var st = stat()
         guard lstat(dst.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return }  // still the link (or a link planted elsewhere): nothing to carry
-        func drop() { unlink(dst.path); try? fm.createSymbolicLink(atPath: dst.path, withDestinationPath: src.path) }
-        guard let data = Self.readCarriable(dst.path, since: since),
+        let linked = AuthLife.linked(dst.path)
+        func drop() {
+            unlink(dst.path); try? fm.createSymbolicLink(atPath: dst.path, withDestinationPath: src.path)
+            AuthLife.setLinked(dst.path, AuthLife.Linked(gen: AuthLife.gen(src.path), at: Date()))
+        }
+        guard let linked, let data = Self.readCarriable(dst.path, since: max(since, linked.at)),
               (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { return drop() }
+        if AuthLife.gen(src.path) != linked.gen { return drop() }  // R2: a newer real login (another run, another home): it stays, ours is dropped
         var real_ = stat()
         if lstat(src.path, &real_) == 0, real_.st_mode & S_IFMT != S_IFREG { return drop() }  // a link or a folder at the real name: not touched
         let tmp = real.appendingPathComponent(".auth.json-" + UUID().uuidString).path
@@ -190,7 +235,7 @@ extension Router {
         let wrote = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) } == data.count && fsync(fd) == 0
         close(fd)
         guard wrote, rename(tmp, src.path) == 0 else { unlink(tmp); return drop() }
-        drop()  // the link again (the file in the home was carried)
+        drop()  // the link again (the file in the home was carried); the generation is the one just written
     }
 
     /// The bytes of a regular file of this user (no other link, modified since `since`, small), opened without following a link.
