@@ -827,6 +827,8 @@ struct SettingsView: View {
             header
             Section {
                 Toggle("Enabled", isOn: $draft.claudeCLI.enabled)
+                Toggle("Show the subscription quota", isOn: $draft.claudeQuotaProbe)
+                    .help(String(localized: "Runs “claude -p /usage” (no model request) in an empty private folder, at most every 10 minutes, for minigw gw quota. Off by default."))
             }
             Section {
                 LabeledContent("Executable (empty = auto-detect)") {

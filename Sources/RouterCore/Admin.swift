@@ -498,6 +498,9 @@ extension Router {
             }
             await Router.foundry.forget()
             return (200, await foundryInfo(n.foundry))
+        case "GET quota", "PATCH quota":  // 0.6.0: the report and the opt-in of the Claude probe (QuotaAdmin.swift)
+            return try await quotaAdmin(method, body: body, hooks: hooks)
+
         case "PATCH agents/{}":
             switch arg {
             case "claude":

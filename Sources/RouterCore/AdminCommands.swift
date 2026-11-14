@@ -175,6 +175,27 @@ public final class AdminCommands {
             if !o.project.isEmpty { q["project"] = s(try projectID(o.project)) }
             if !o.model.isEmpty { q["model"] = o.model }
             printUsage(try request("GET", "/usage/events" + ProjectText.query(q)))
+        case "quota":
+            try need(1, 1)
+            if !o.claudeProbe.isEmpty {
+                guard o.claudeProbe == "on" || o.claudeProbe == "off" else { throw fail("--claude-probe: on or off") }
+                try request("PATCH", "/quota", ["claudeProbe": o.claudeProbe == "on"])
+            }
+            let r = try request("GET", "/quota")
+            say("claude probe: " + (r["claudeprobe"]?.bool == true ? "on (runs claude -p /usage, at most every 10 minutes)" : "off (minigw gw quota --claude-probe=on turns it on)"))
+            for q in r["quota"]?.array ?? [] {
+                let d = q.dict
+                var val = "-"
+                if case .num(let n)? = d["value"] { val = GoText.f(n.doubleValue) + " " + (d["unit"]?.string ?? "") }
+                var line = ProjectText.pad(d["name"]?.string ?? "", 28) + " " + ProjectText.pad(val, 14) + " " + (d["source"]?.string ?? "")
+                if let t = d["observedat"]?.string.flatMap(QuotaTime.parse) { line += "  observed " + ProjectText.stamp(t, zone) }
+                if let t = d["resetsat"]?.string.flatMap(QuotaTime.parse) { line += "  resets " + ProjectText.stamp(t, zone) }
+                else if let t = d["resetstext"]?.string, !t.isEmpty { line += "  resets " + t }
+                if d["stale"]?.bool == true { line += "  (stale)" }
+                if let n = d["note"]?.string, !n.isEmpty { line += "  " + n }
+                if let n = d["reason"]?.string, !n.isEmpty { line += "  unavailable: " + n }
+                say(clean(line))
+            }
         case "core":
             try need(2, 3)
             switch pos[1] {

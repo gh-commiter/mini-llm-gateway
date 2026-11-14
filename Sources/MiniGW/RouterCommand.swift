@@ -448,7 +448,7 @@ func routerCommand(_ argv: [String]) {
         let argv = [tui, "--minigw", me].map { strdup($0) } + [nil]
         execv(tui, argv)
         fail("cannot start \(tui): \(String(cString: strerror(errno)))")
-    case "user", "bind", "project", "member", "grant", "core", "usage-events":  // 0.6.0: the owner's commands of the project database
+    case "user", "bind", "project", "member", "grant", "core", "usage-events", "quota":  // 0.6.0: the owner's commands of the project database
         let cmd = AdminCommands(call: { method, path, body in
             let (status, data) = a.raw(method, Router.adminPrefix + path, body, proof: true)
             return (status, data ?? Data())

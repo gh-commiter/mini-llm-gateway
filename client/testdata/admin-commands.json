@@ -2913,6 +2913,297 @@
      ]
     ]
    }
+  },
+  {
+   "name": "quota default",
+   "args": [
+    "quota"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /quota",
+     "status": 200,
+     "body": "{\"quota\":[{\"name\":\"codex\",\"unit\":\"\",\"source\":\"unavailable\",\"stale\":true,\"note\":\"no Codex run since this gateway started\"},{\"name\":\"claude\",\"unit\":\"\",\"source\":\"unavailable\",\"stale\":true,\"reason\":\"probe off\"}],\"claudeProbe\":false}"
+    }
+   ],
+   "want": {
+    "out": "claude probe: off (minigw gw quota --claude-probe=on turns it on)\ncodex                        -              unavailable  (stale)  no Codex run since this gateway started\nclaude                       -              unavailable  (stale)  unavailable: probe off\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/quota",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "quota with values",
+   "args": [
+    "quota"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /quota",
+     "status": 200,
+     "body": "{\"quota\":[{\"name\":\"codex.5h\",\"unit\":\"percent\",\"source\":\"codex-session-log\",\"stale\":false,\"value\":12.5,\"observedAt\":\"2026-11-14T09:00:00Z\",\"resetsAt\":\"2026-11-14T14:00:00Z\"},{\"name\":\"codex.week\",\"unit\":\"percent\",\"source\":\"codex-session-log\",\"stale\":true,\"value\":0,\"observedAt\":\"2026-11-14T09:00:00Z\",\"resetsAt\":\"2026-11-20T09:00:00.123456789Z\"},{\"name\":\"claude.week.all-models\",\"unit\":\"percent\",\"source\":\"claude-usage\",\"stale\":false,\"value\":8,\"observedAt\":\"2026-11-14T09:30:00.5Z\",\"resetsText\":\"Nov 19 at 12am (Mars/Base)\"},{\"name\":\"claude.session\",\"unit\":\"percent\",\"source\":\"claude-usage\",\"stale\":true,\"value\":5,\"observedAt\":\"2026-11-14T10:00:00+02:00\",\"resetsAt\":\"2026-11-14T15:00:00+02:00\",\"note\":\"could not refresh: claude /usage failed: exit status 1\"},{\"name\":\"openrouter.credits-remaining\",\"unit\":\"usd\",\"source\":\"openrouter-api\",\"stale\":false,\"value\":37.75,\"observedAt\":\"2026-11-14T09:59:00Z\"},{\"name\":\"openrouter.credits-total\",\"unit\":\"usd\",\"source\":\"openrouter-api\",\"stale\":false,\"value\":0.19999999999999998,\"observedAt\":\"2026-11-14T09:59:00Z\"},{\"name\":\"litellm.spend\",\"unit\":\"usd\",\"source\":\"litellm-api\",\"stale\":false,\"value\":1000000,\"observedAt\":\"2026-11-14T09:59:00Z\",\"resetsAt\":\"2026-12-01T00:00:00Z\"},{\"name\":\"litellm\",\"unit\":\"\",\"source\":\"unavailable\",\"stale\":true,\"reason\":\"no key for LiteLLM\"},{\"name\":\"a\\u001b[31mb\",\"unit\":\"percent\",\"source\":\"s\\u202e\",\"stale\":false,\"value\":1,\"observedAt\":\"2026-11-14T09:59:00Z\",\"note\":\"n\\u0007\"}],\"claudeProbe\":true}"
+    }
+   ],
+   "want": {
+    "out": "claude probe: on (runs claude -p /usage, at most every 10 minutes)\ncodex.5h                     12.5 percent   codex-session-log  observed 2026-11-14 09:00  resets 2026-11-14 14:00\ncodex.week                   0 percent      codex-session-log  observed 2026-11-14 09:00  resets 2026-11-20 09:00  (stale)\nclaude.week.all-models       8 percent      claude-usage  observed 2026-11-14 09:30  resets Nov 19 at 12am (Mars/Base)\nclaude.session               5 percent      claude-usage  observed 2026-11-14 08:00  resets 2026-11-14 13:00  (stale)  could not refresh: claude /usage failed: exit status 1\nopenrouter.credits-remaining 37.75 usd      openrouter-api  observed 2026-11-14 09:59\nopenrouter.credits-total     0.19999999999999998 usd openrouter-api  observed 2026-11-14 09:59\nlitellm.spend                1000000 usd    litellm-api  observed 2026-11-14 09:59  resets 2026-12-01 00:00\nlitellm                      -              unavailable  (stale)  unavailable: no key for LiteLLM\na[31mb                      1 percent      s  observed 2026-11-14 09:59  n\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/quota",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "quota probe on",
+   "args": [
+    "quota"
+   ],
+   "opts": {
+    "claudeProbe": "on"
+   },
+   "responses": [
+    {
+     "match": "PATCH /quota",
+     "status": 200,
+     "body": "{\"quota\":[],\"claudeProbe\":true}"
+    },
+    {
+     "match": "GET /quota",
+     "status": 200,
+     "body": "{\"quota\":[{\"name\":\"claude.session\",\"unit\":\"percent\",\"source\":\"claude-usage\",\"stale\":false,\"value\":5,\"observedAt\":\"2026-11-14T10:00:00Z\"}],\"claudeProbe\":true}"
+    }
+   ],
+   "want": {
+    "out": "claude probe: on (runs claude -p /usage, at most every 10 minutes)\nclaude.session               5 percent      claude-usage  observed 2026-11-14 10:00\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "PATCH",
+      "/quota",
+      "{\"claudeProbe\":true}"
+     ],
+     [
+      "GET",
+      "/quota",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "quota probe off",
+   "args": [
+    "quota"
+   ],
+   "opts": {
+    "claudeProbe": "off"
+   },
+   "responses": [
+    {
+     "match": "PATCH /quota",
+     "status": 200,
+     "body": "{}"
+    },
+    {
+     "match": "GET /quota",
+     "status": 200,
+     "body": "{\"quota\":[{\"name\":\"claude\",\"unit\":\"\",\"source\":\"unavailable\",\"stale\":true,\"reason\":\"probe off\"}],\"claudeProbe\":false}"
+    }
+   ],
+   "want": {
+    "out": "claude probe: off (minigw gw quota --claude-probe=on turns it on)\nclaude                       -              unavailable  (stale)  unavailable: probe off\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "PATCH",
+      "/quota",
+      "{\"claudeProbe\":false}"
+     ],
+     [
+      "GET",
+      "/quota",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "quota probe bad flag",
+   "args": [
+    "quota"
+   ],
+   "opts": {
+    "claudeProbe": "maybe"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: --claude-probe: on or off\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "quota probe empty flag is no flag",
+   "args": [
+    "quota"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /quota",
+     "status": 200,
+     "body": "{\"quota\":[],\"claudeProbe\":false}"
+    }
+   ],
+   "want": {
+    "out": "claude probe: off (minigw gw quota --claude-probe=on turns it on)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/quota",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "quota probe 400",
+   "args": [
+    "quota"
+   ],
+   "opts": {
+    "claudeProbe": "on"
+   },
+   "responses": [
+    {
+     "match": "PATCH /quota",
+     "status": 400,
+     "body": "{\"error\":{\"message\":\"bad JSON body (claudeProbe)\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: bad JSON body (claudeProbe)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "PATCH",
+      "/quota",
+      "{\"claudeProbe\":true}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "quota 403",
+   "args": [
+    "quota"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /quota",
+     "status": 403,
+     "body": "{\"error\":{\"message\":\"forbidden\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: forbidden\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/quota",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "quota 503",
+   "args": [
+    "quota"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /quota",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"not available\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: not available\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/quota",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "quota empty report",
+   "args": [
+    "quota"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /quota",
+     "status": 200,
+     "body": "{\"quota\":[],\"claudeProbe\":false}"
+    }
+   ],
+   "want": {
+    "out": "claude probe: off (minigw gw quota --claude-probe=on turns it on)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/quota",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "quota extra arg",
+   "args": [
+    "quota",
+    "x"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
   }
  ]
 }

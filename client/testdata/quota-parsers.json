@@ -1,0 +1,1488 @@
+{
+ "cases": [
+  {
+   "name": "codex both windows",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 12.5, \"window_minutes\": 300, \"resets_at\": 1794000000}, \"secondary\": {\"used_percent\": 21, \"window_minutes\": 10080, \"resets_at\": 1794400000}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 12.5
+    },
+    {
+     "name": "codex.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-11T12:26:40Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 21
+    }
+   ]
+  },
+  {
+   "name": "codex 60 minutes",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 1, \"window_minutes\": 60, \"resets_at\": 1794000000}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.1h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex 1440 minutes is 24h",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 1, \"window_minutes\": 1440, \"resets_at\": 1794000000}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.24h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex 1500 minutes is 1d",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 1, \"window_minutes\": 1500, \"resets_at\": 1794000000}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.1d",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex 4320 minutes is 3d",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 1, \"window_minutes\": 4320, \"resets_at\": 1794000000}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.3d",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex 10080 minutes is week",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 1, \"window_minutes\": 10080, \"resets_at\": 1794000000}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex 20000 minutes is week",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 1, \"window_minutes\": 20000, \"resets_at\": 1794000000}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex no window minutes uses the fallback",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 7}, \"secondary\": {\"used_percent\": 9}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 7
+    },
+    {
+     "name": "codex.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 9
+    }
+   ]
+  },
+  {
+   "name": "codex window 0 uses the fallback",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 7, \"window_minutes\": 0}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 7
+    }
+   ]
+  },
+  {
+   "name": "codex window 90 minutes",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 7, \"window_minutes\": 90}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.1h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 7
+    }
+   ]
+  },
+  {
+   "name": "codex resets_in_seconds",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 7, \"window_minutes\": 300, \"resets_in_seconds\": 3600.9}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-14T11:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 7
+    }
+   ]
+  },
+  {
+   "name": "codex resets_in_seconds 0",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 7, \"window_minutes\": 300, \"resets_in_seconds\": 0}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 7
+    }
+   ]
+  },
+  {
+   "name": "codex resets_at 0 falls to resets_in_seconds",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 7, \"window_minutes\": 300, \"resets_at\": 0, \"resets_in_seconds\": 60}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-14T10:01:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 7
+    }
+   ]
+  },
+  {
+   "name": "codex no reset at all",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 7, \"window_minutes\": 300}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 7
+    }
+   ]
+  },
+  {
+   "name": "codex only secondary",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"window_minutes\": 300}, \"secondary\": {\"used_percent\": 3, \"window_minutes\": 10080, \"resets_at\": 1794400000}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-11T12:26:40Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 3
+    }
+   ]
+  },
+  {
+   "name": "codex used_percent as a string is skipped",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": \"5\", \"window_minutes\": 300}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": []
+  },
+  {
+   "name": "codex used_percent 0 counts",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 0, \"window_minutes\": 300, \"resets_at\": 1794000000}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 0
+    }
+   ]
+  },
+  {
+   "name": "codex rate_limits at the top",
+   "kind": "codex",
+   "input": "{\"rate_limits\": {\"primary\": {\"used_percent\": 4, \"window_minutes\": 300, \"resets_at\": 1794000000}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 4
+    }
+   ]
+  },
+  {
+   "name": "codex rate_limits in an array",
+   "kind": "codex",
+   "input": "{\"events\": [{\"x\": 1}, {\"rate_limits\": {\"primary\": {\"used_percent\": 4, \"window_minutes\": 300, \"resets_at\": 1794000000}}}]}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 4
+    }
+   ]
+  },
+  {
+   "name": "codex rate_limits null",
+   "kind": "codex",
+   "input": "{\"payload\": {\"rate_limits\": null}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": []
+  },
+  {
+   "name": "codex not json",
+   "kind": "codex",
+   "input": "not json",
+   "now": "2026-11-14T10:00:00Z",
+   "want": []
+  },
+  {
+   "name": "codex no rate_limits",
+   "kind": "codex",
+   "input": "{\"type\":\"turn\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": []
+  },
+  {
+   "name": "codex empty",
+   "kind": "codex",
+   "input": "",
+   "now": "2026-11-14T10:00:00Z",
+   "want": []
+  },
+  {
+   "name": "codex fractional resets_at",
+   "kind": "codex",
+   "input": "{\"timestamp\": \"t\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": {\"primary\": {\"used_percent\": 2, \"window_minutes\": 300, \"resets_at\": 1794000000.75}}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 2
+    }
+   ]
+  },
+  {
+   "name": "usage the Go fixture",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"You are currently using your subscription to power your Claude Code usage\\n\\nCurrent week (all models): 8% used \\u00b7 resets Nov 19 at 12am (Europe/Ljubljana)\\nCurrent week (Fable): 12.5% used \\u00b7 resets Nov 19 at 3:30pm (UTC)\\n\\nWhat's contributing to your usage?\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.week.all-models",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-18T23:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 8
+    },
+    {
+     "name": "claude.week.fable",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-19T15:30:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 12.5
+    }
+   ]
+  },
+  {
+   "name": "usage session without reset",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current session: 5% used\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.session",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 5
+    }
+   ]
+  },
+  {
+   "name": "usage dash separator",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current session: 5% used - resets Nov 15 at 1am (UTC)\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.session",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-15T01:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 5
+    }
+   ]
+  },
+  {
+   "name": "usage pipe separator",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current session: 5% used | resets Nov 15 at 1am (UTC)\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.session",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-15T01:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 5
+    }
+   ]
+  },
+  {
+   "name": "usage reset without zone",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current week (all models): 50% used \\u00b7 resets Nov 19 at 12am\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.week.all-models",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-19T00:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 50
+    }
+   ]
+  },
+  {
+   "name": "usage unknown zone keeps the text",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current week (all models): 50% used \\u00b7 resets Nov 19 at 12am (Mars/Base)\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.week.all-models",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsText": "Nov 19 at 12am (Mars/Base)",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 50
+    }
+   ]
+  },
+  {
+   "name": "usage unparsable reset keeps the text",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current week (all models): 50% used \\u00b7 resets tomorrow morning\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.week.all-models",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsText": "tomorrow morning",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 50
+    }
+   ]
+  },
+  {
+   "name": "usage year wrap",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current week (all models): 50% used \\u00b7 resets Jan 2 at 3pm (UTC)\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.week.all-models",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2027-01-02T15:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 50
+    }
+   ]
+  },
+  {
+   "name": "usage name with a parenthesis and spaces",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current week (Sonnet only): 3.25% used\\nCurrent 5 hour window: 99% used\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.week.sonnet-only",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 3.25
+    },
+    {
+     "name": "claude.5-hour-window",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 99
+    }
+   ]
+  },
+  {
+   "name": "usage trailing spaces and tabs",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"  Current session:\\t5% used   \\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.session",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 5
+    }
+   ]
+  },
+  {
+   "name": "usage windows line endings",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current session: 5% used\\r\\nCurrent week: 6% used\\r\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.session",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 5
+    },
+    {
+     "name": "claude.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 6
+    }
+   ]
+  },
+  {
+   "name": "usage a turn ran",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 1, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"You are currently using your subscription to power your Claude Code usage\\n\\nCurrent week (all models): 8% used \\u00b7 resets Nov 19 at 12am (Europe/Ljubljana)\\nCurrent week (Fable): 12.5% used \\u00b7 resets Nov 19 at 3:30pm (UTC)\\n\\nWhat's contributing to your usage?\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "claude /usage ran inference; it is switched off until the gateway restarts"
+   }
+  },
+  {
+   "name": "usage cost",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0.01, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"You are currently using your subscription to power your Claude Code usage\\n\\nCurrent week (all models): 8% used \\u00b7 resets Nov 19 at 12am (Europe/Ljubljana)\\nCurrent week (Fable): 12.5% used \\u00b7 resets Nov 19 at 3:30pm (UTC)\\n\\nWhat's contributing to your usage?\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "claude /usage ran inference; it is switched off until the gateway restarts"
+   }
+  },
+  {
+   "name": "usage input tokens",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 3, \"output_tokens\": 0}, \"result\": \"You are currently using your subscription to power your Claude Code usage\\n\\nCurrent week (all models): 8% used \\u00b7 resets Nov 19 at 12am (Europe/Ljubljana)\\nCurrent week (Fable): 12.5% used \\u00b7 resets Nov 19 at 3:30pm (UTC)\\n\\nWhat's contributing to your usage?\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "claude /usage ran inference; it is switched off until the gateway restarts"
+   }
+  },
+  {
+   "name": "usage output tokens",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 9}, \"result\": \"You are currently using your subscription to power your Claude Code usage\\n\\nCurrent week (all models): 8% used \\u00b7 resets Nov 19 at 12am (Europe/Ljubljana)\\nCurrent week (Fable): 12.5% used \\u00b7 resets Nov 19 at 3:30pm (UTC)\\n\\nWhat's contributing to your usage?\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "claude /usage ran inference; it is switched off until the gateway restarts"
+   }
+  },
+  {
+   "name": "usage is_error",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": true, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"You are currently using your subscription to power your Claude Code usage\\n\\nCurrent week (all models): 8% used \\u00b7 resets Nov 19 at 12am (Europe/Ljubljana)\\nCurrent week (Fable): 12.5% used \\u00b7 resets Nov 19 at 3:30pm (UTC)\\n\\nWhat's contributing to your usage?\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "claude reported an error"
+   }
+  },
+  {
+   "name": "usage not json",
+   "kind": "claude-usage",
+   "input": "Current week: 8% used",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected output"
+   }
+  },
+  {
+   "name": "usage another version",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"You are currently using your subscription to power your Claude Code usage\\n\\nThis week (all models): 8% used \\u00b7 resets Nov 19 at 12am (Europe/Ljubljana)\\nThis week (Fable): 12.5% used \\u00b7 resets Nov 19 at 3:30pm (UTC)\\n\\nWhat's contributing to your usage?\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "no usage lines in the output (another Claude Code version?)"
+   }
+  },
+  {
+   "name": "usage empty result",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"duration_api_ms\": 0, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "no usage lines in the output (another Claude Code version?)"
+   }
+  },
+  {
+   "name": "usage json null",
+   "kind": "claude-usage",
+   "input": "null",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "no usage lines in the output (another Claude Code version?)"
+   }
+  },
+  {
+   "name": "usage json array",
+   "kind": "claude-usage",
+   "input": "[]",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected output"
+   }
+  },
+  {
+   "name": "usage result is a number",
+   "kind": "claude-usage",
+   "input": "{\"result\":5}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected output"
+   }
+  },
+  {
+   "name": "usage num_turns is a string",
+   "kind": "claude-usage",
+   "input": "{\"num_turns\":\"0\",\"result\":\"Current week: 8% used\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected output"
+   }
+  },
+  {
+   "name": "usage num_turns is a fraction",
+   "kind": "claude-usage",
+   "input": "{\"num_turns\":0.5,\"result\":\"Current week: 8% used\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected output"
+   }
+  },
+  {
+   "name": "usage cost is a string",
+   "kind": "claude-usage",
+   "input": "{\"total_cost_usd\":\"0\",\"result\":\"Current week: 8% used\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected output"
+   }
+  },
+  {
+   "name": "usage is_error is a string",
+   "kind": "claude-usage",
+   "input": "{\"is_error\":\"no\",\"result\":\"Current week: 8% used\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected output"
+   }
+  },
+  {
+   "name": "usage tokens as a fraction",
+   "kind": "claude-usage",
+   "input": "{\"usage\":{\"input_tokens\":1.5},\"result\":\"Current week: 8% used\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected output"
+   }
+  },
+  {
+   "name": "usage minimal envelope",
+   "kind": "claude-usage",
+   "input": "{\"result\":\"Current week: 8% used\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 8
+    }
+   ]
+  },
+  {
+   "name": "reset ljubljana winter",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 12am (Europe/Ljubljana)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-18T23:00:00Z"
+  },
+  {
+   "name": "reset ljubljana summer",
+   "kind": "claude-reset",
+   "input": "Jul 4 at 12am (Europe/Ljubljana)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2027-07-03T22:00:00Z"
+  },
+  {
+   "name": "reset utc with minutes",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3:30pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T15:30:00Z"
+  },
+  {
+   "name": "reset new york winter",
+   "kind": "claude-reset",
+   "input": "Dec 25 at 9am (America/New_York)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-12-25T14:00:00Z"
+  },
+  {
+   "name": "reset new york summer",
+   "kind": "claude-reset",
+   "input": "Jul 4 at 3pm (America/New_York)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2027-07-04T19:00:00Z"
+  },
+  {
+   "name": "reset kolkata half hour",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3:30pm (Asia/Kolkata)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T10:00:00Z"
+  },
+  {
+   "name": "reset noon",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 12pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T12:00:00Z"
+  },
+  {
+   "name": "reset midnight",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 12am (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T00:00:00Z"
+  },
+  {
+   "name": "reset zero hour",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 0am (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T00:00:00Z"
+  },
+  {
+   "name": "reset zero pm",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 0pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T12:00:00Z"
+  },
+  {
+   "name": "reset explicit year",
+   "kind": "claude-reset",
+   "input": "Nov 19, 2027 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2027-11-19T15:00:00Z"
+  },
+  {
+   "name": "reset explicit year with minutes",
+   "kind": "claude-reset",
+   "input": "Nov 19, 2027 at 3:05pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2027-11-19T15:05:00Z"
+  },
+  {
+   "name": "reset explicit year in the past",
+   "kind": "claude-reset",
+   "input": "Nov 19, 2020 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2020-11-19T15:00:00Z"
+  },
+  {
+   "name": "reset no zone is local (UTC here)",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3pm",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T15:00:00Z"
+  },
+  {
+   "name": "reset empty zone is UTC",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3pm ()",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T15:00:00Z"
+  },
+  {
+   "name": "reset local zone name",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3pm (Local)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T15:00:00Z"
+  },
+  {
+   "name": "reset lowercase month",
+   "kind": "claude-reset",
+   "input": "nov 19 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T15:00:00Z"
+  },
+  {
+   "name": "reset uppercase month",
+   "kind": "claude-reset",
+   "input": "NOV 19 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T15:00:00Z"
+  },
+  {
+   "name": "reset zero padded day",
+   "kind": "claude-reset",
+   "input": "Nov 05 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2027-11-05T15:00:00Z"
+  },
+  {
+   "name": "reset single digit day",
+   "kind": "claude-reset",
+   "input": "Nov 5 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2027-11-05T15:00:00Z"
+  },
+  {
+   "name": "reset uppercase pm is refused",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3PM (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset hour 13 is refused",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 13pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset minute 60 is refused",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3:60pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset one digit minute is refused",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3:5pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset unknown month",
+   "kind": "claude-reset",
+   "input": "Foo 19 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset unknown zone",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3pm (Mars/Base)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset day 0",
+   "kind": "claude-reset",
+   "input": "Nov 0 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset day 32",
+   "kind": "claude-reset",
+   "input": "Nov 32 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset Feb 30",
+   "kind": "claude-reset",
+   "input": "Feb 30 at 1am (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset Nov 31",
+   "kind": "claude-reset",
+   "input": "Nov 31 at 1am (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset Feb 29 carries into March",
+   "kind": "claude-reset",
+   "input": "Feb 29 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2027-03-01T15:00:00Z"
+  },
+  {
+   "name": "reset Feb 29 explicit leap year",
+   "kind": "claude-reset",
+   "input": "Feb 29, 2028 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2028-02-29T15:00:00Z"
+  },
+  {
+   "name": "reset Feb 29 explicit common year",
+   "kind": "claude-reset",
+   "input": "Feb 29, 2027 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset just inside the day before now",
+   "kind": "claude-reset",
+   "input": "Nov 13 at 11am (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-13T11:00:00Z"
+  },
+  {
+   "name": "reset just outside the day before now",
+   "kind": "claude-reset",
+   "input": "Nov 13 at 9am (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2027-11-13T09:00:00Z"
+  },
+  {
+   "name": "reset today earlier",
+   "kind": "claude-reset",
+   "input": "Nov 14 at 1am (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-14T01:00:00Z"
+  },
+  {
+   "name": "reset a year ahead wraps",
+   "kind": "claude-reset",
+   "input": "Oct 1 at 1am (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2027-10-01T01:00:00Z"
+  },
+  {
+   "name": "reset extra text",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3pm (UTC) please",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset no at",
+   "kind": "claude-reset",
+   "input": "Nov 19 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset two spaces",
+   "kind": "claude-reset",
+   "input": "Nov  19 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T15:00:00Z"
+  },
+  {
+   "name": "reset spaces around at",
+   "kind": "claude-reset",
+   "input": "Nov 19   at   3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2026-11-19T15:00:00Z"
+  },
+  {
+   "name": "reset spaces after the comma",
+   "kind": "claude-reset",
+   "input": "Nov 19,   2027 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": "2027-11-19T15:00:00Z"
+  },
+  {
+   "name": "reset a tab is not a space",
+   "kind": "claude-reset",
+   "input": "Nov\t19 at 3pm (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset space before the zone twice",
+   "kind": "claude-reset",
+   "input": "Nov 19 at 3pm  (UTC)",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset empty",
+   "kind": "claude-reset",
+   "input": "",
+   "now": "2026-11-14T10:00:00Z",
+   "want": null
+  },
+  {
+   "name": "reset after the new year in a zone ahead of UTC",
+   "kind": "claude-reset",
+   "input": "Jan 1 at 1am (Pacific/Auckland)",
+   "now": "2026-12-31T20:00:00Z",
+   "want": "2026-12-31T12:00:00Z"
+  },
+  {
+   "name": "reset in December for January",
+   "kind": "claude-reset",
+   "input": "Jan 3 at 3pm (UTC)",
+   "now": "2026-12-31T20:00:00Z",
+   "want": "2027-01-03T15:00:00Z"
+  },
+  {
+   "name": "openrouter credits",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_credits\":50,\"total_usage\":12.25}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "openrouter.credits-remaining",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 37.75
+    },
+    {
+     "name": "openrouter.credits-total",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 50
+    }
+   ]
+  },
+  {
+   "name": "openrouter used over total",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_credits\":10,\"total_usage\":12.5}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "openrouter.credits-remaining",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": -2.5
+    },
+    {
+     "name": "openrouter.credits-total",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 10
+    }
+   ]
+  },
+  {
+   "name": "openrouter total only",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_credits\":10}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "openrouter.credits-remaining",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 10
+    },
+    {
+     "name": "openrouter.credits-total",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 10
+    }
+   ]
+  },
+  {
+   "name": "openrouter usage only",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_usage\":2}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "openrouter.credits-remaining",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": -2
+    },
+    {
+     "name": "openrouter.credits-total",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 0
+    }
+   ]
+  },
+  {
+   "name": "openrouter both zero",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_credits\":0,\"total_usage\":0}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "openrouter no data",
+   "kind": "openrouter",
+   "input": "{}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "openrouter data null",
+   "kind": "openrouter",
+   "input": "{\"data\":null}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "openrouter not json",
+   "kind": "openrouter",
+   "input": "<html>",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "openrouter array",
+   "kind": "openrouter",
+   "input": "[]",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "openrouter string number",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_credits\":\"50\",\"total_usage\":1}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "openrouter data is a string",
+   "kind": "openrouter",
+   "input": "{\"data\":\"x\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "openrouter long fraction",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_credits\":0.3,\"total_usage\":0.1}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "openrouter.credits-remaining",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 0.19999999999999998
+    },
+    {
+     "name": "openrouter.credits-total",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 0.3
+    }
+   ]
+  },
+  {
+   "name": "litellm spend budget reset",
+   "kind": "litellm",
+   "input": "{\"key\":\"sk-xxx\",\"info\":{\"spend\":3.5,\"max_budget\":10,\"budget_reset_at\":\"2026-12-01T00:00:00Z\"}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "litellm.spend",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-12-01T00:00:00Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 3.5
+    },
+    {
+     "name": "litellm.max-budget",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-12-01T00:00:00Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 10
+    }
+   ]
+  },
+  {
+   "name": "litellm spend only",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":0}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "litellm.spend",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 0
+    }
+   ]
+  },
+  {
+   "name": "litellm spend with offset reset",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":1,\"budget_reset_at\":\"2026-12-01T00:00:00+01:00\"}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "litellm.spend",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-30T23:00:00Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "litellm reset with microseconds",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":1,\"budget_reset_at\":\"2026-12-01T00:00:00.123456Z\"}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "litellm.spend",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-12-01T00:00:00.123456Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "litellm reset with milliseconds and an offset",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":1,\"budget_reset_at\":\"2026-12-01T10:30:00.5+02:00\"}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "litellm.spend",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-12-01T08:30:00.5Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "litellm invalid reset is ignored",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":1,\"max_budget\":2,\"budget_reset_at\":\"soon\"}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "litellm.spend",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 1
+    },
+    {
+     "name": "litellm.max-budget",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 2
+    }
+   ]
+  },
+  {
+   "name": "litellm null budget",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":1,\"max_budget\":null}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "litellm.spend",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "litellm spend missing",
+   "kind": "litellm",
+   "input": "{\"info\":{\"max_budget\":2}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "litellm spend null",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":null}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "litellm no info",
+   "kind": "litellm",
+   "input": "{\"key\":\"x\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "litellm spend as a string",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":\"3\"}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "litellm reset as a number",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":3,\"budget_reset_at\":5}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "litellm not json",
+   "kind": "litellm",
+   "input": "oops",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "stale fresh",
+   "kind": "stale",
+   "input": "[{\"name\": \"a\", \"source\": \"s\", \"observedAt\": \"2026-11-14T09:00:00Z\", \"resetsAt\": \"2026-11-15T00:00:00Z\", \"stale\": false}]",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    false
+   ]
+  },
+  {
+   "name": "stale older than a day",
+   "kind": "stale",
+   "input": "[{\"name\": \"a\", \"source\": \"s\", \"observedAt\": \"2026-11-13T09:59:59Z\", \"stale\": false}]",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    true
+   ]
+  },
+  {
+   "name": "stale exactly a day",
+   "kind": "stale",
+   "input": "[{\"name\": \"a\", \"source\": \"s\", \"observedAt\": \"2026-11-13T10:00:00Z\", \"stale\": false}]",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    false
+   ]
+  },
+  {
+   "name": "stale window has reset",
+   "kind": "stale",
+   "input": "[{\"name\": \"a\", \"source\": \"s\", \"observedAt\": \"2026-11-14T09:00:00Z\", \"resetsAt\": \"2026-11-14T09:30:00Z\", \"stale\": false}]",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    true
+   ]
+  },
+  {
+   "name": "stale without an observation is untouched",
+   "kind": "stale",
+   "input": "[{\"name\": \"a\", \"source\": \"s\", \"stale\": true}, {\"name\": \"b\", \"source\": \"s\", \"stale\": false}]",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    true,
+    false
+   ]
+  }
+ ]
+}

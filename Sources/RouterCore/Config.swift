@@ -127,6 +127,8 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var worktreeNetwork = true
     /// Codex v načinu worktree bere vse datoteke: omrežje privzeto izklopljeno (in le, če ga Codex sicer sme).
     public var worktreeCodexNetwork = false
+    /// 0.6.0: the owner has switched on the Claude quota probe (`claude -p /usage`, at most every 10 minutes; off by default). As ClaudeQuotaProbe in serve.json.
+    public var claudeQuotaProbe = false
 
     public init() {}
 
@@ -356,6 +358,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         runCommands = try c.decodeIfPresent(String.self, forKey: .runCommands) ?? d.runCommands
         worktreeNetwork = try c.decodeIfPresent(Bool.self, forKey: .worktreeNetwork) ?? d.worktreeNetwork
         worktreeCodexNetwork = try c.decodeIfPresent(Bool.self, forKey: .worktreeCodexNetwork) ?? d.worktreeCodexNetwork
+        claudeQuotaProbe = try c.decodeIfPresent(Bool.self, forKey: .claudeQuotaProbe) ?? d.claudeQuotaProbe
     }
 
     /// Siri ima osebni kontekst tega Maca: lokalno vedno, z drugih Macov le odobrene naprave.
@@ -377,7 +380,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
             if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
         }
         take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.allowAnyDevice); take(\.allowLocalApps); take(\.claudeCLI); take(\.appleFM)
-        take(\.siri); take(\.codex); take(\.copilot); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.scratchName); take(\.runCommands); take(\.pendingRevocations); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
+        take(\.siri); take(\.codex); take(\.copilot); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.scratchName); take(\.runCommands); take(\.pendingRevocations); take(\.worktreeNetwork); take(\.worktreeCodexNetwork); take(\.claudeQuotaProbe)
         for (p, rec) in d.claudeCLI.allowedRecords where rec.ino == 0 {  // C1: an identity adopted meanwhile is not lost to an older draft
             if let cur = new.claudeCLI.allowedRecords[p], cur.ino != 0, cur.real == rec.real { d.claudeCLI.allowedRecords[p] = cur }
         }
