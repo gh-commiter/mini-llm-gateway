@@ -315,6 +315,17 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         return d
     }
 
+    /// #111 (T1): the draft of the Settings window as it is applied. A Claude CLI configuration that cannot run without "Allow local tools" (Bash, a bad name,
+    /// an odd folder: restrictedProblem) must not hold back the other panes (an upgraded stored configuration may be one): the stored `claudeCLI` stays and
+    /// `needsAttention` is set, the Claude pane says why; nothing is checked while Claude CLI is disabled. A fix (Bash removed, local tools on) applies at once.
+    public static func guardClaude(draft: RouterConfig, stored: RouterConfig) -> (apply: RouterConfig, needsAttention: Bool) {
+        var d = draft
+        if !d.claudeCLI.allowLocalTools, !ClaudeCLIConfig.restrictedModes.contains(d.claudeCLI.permissionMode) { d.claudeCLI.permissionMode = "dontAsk" }  // auto and plan do not enforce the rules
+        guard d.claudeCLI.enabled, d.claudeCLI.restrictedProblem(mode: false) != nil else { return (d, false) }
+        d.claudeCLI = stored.claudeCLI
+        return (d, true)
+    }
+
     static func mergeList<T: Equatable & Identifiable>(_ d: [T], _ o: [T], _ n: [T]) -> [T] {
         if d == o { return n }
         func find(_ a: [T], _ id: T.ID) -> T? { a.first { $0.id == id } }

@@ -144,16 +144,21 @@ struct SettingsView: View {
 
     private struct PendingApply: Equatable { let draft: RouterConfig; let claudeOK: Bool }
 
+    /// #111 (T1): the Claude CLI settings cannot run as they are (RouterConfig.guardClaude): the other panes still save, this says so in the window.
+    private var claudeAttention: Bool { draft.claudeCLI.enabled && draft.claudeCLI.restrictedProblem(mode: false) != nil }
+
     /// Uveljavi osnutek (skupaj z morebitnimi spremembami od drugod); neveljaven vklopljen claude ga zadrži.
     private func applyDraft() {
-        // #111: without "Allow local tools" the tools and folders must fit the path rules (restrictedProblem: also tools typed with spaces, Bash, odd folder names): not applied, the pane says why
-        if !draft.claudeCLI.allowLocalTools, !ClaudeCLIConfig.restrictedModes.contains(draft.claudeCLI.permissionMode) { draft.claudeCLI.permissionMode = "dontAsk" }  // a stored auto or plan does not enforce the rules
-        guard loaded, draft != state.config, !(draft.claudeCLI.enabled && !claudeStatus.ok), draft.claudeCLI.restrictedProblem(mode: false) == nil else { return }
+        guard loaded, !(draft.claudeCLI.enabled && !claudeStatus.ok) else { return }
         // Tik pred uveljavitvijo še enkrat združi: sprememba skrbniškega API v istem koraku glavne niti ostane.
         let merged = RouterConfig.merge(draft: draft, old: base, new: state.config)
-        state.apply(merged)
-        base = merged
-        draft = merged
+        // #111: only the Claude CLI fields are held back (the stored ones stay) while they cannot run; everything else is applied
+        let (toApply, attention) = RouterConfig.guardClaude(draft: merged, stored: state.config)
+        guard toApply != state.config else { return }
+        state.apply(toApply)
+        base = toApply
+        draft = toApply
+        if attention { draft.claudeCLI = merged.claudeCLI }  // what the user typed stays in the pane
     }
 
     var body: some View {
@@ -162,6 +167,11 @@ struct SettingsView: View {
                 ForEach(items.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.about.localizedCaseInsensitiveContains(search) }) { item in
                     Label { Text(verbatim: item.title) } icon: { IconTile(symbol: item.symbol, color: item.color) }
                         .tag(item.pane)
+                }
+            }
+            .safeAreaInset(edge: .top) {
+                if claudeAttention {
+                    Text("The Claude CLI settings need attention.").font(.caption).foregroundStyle(.red).padding(.horizontal, 12).padding(.vertical, 4)
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -862,7 +872,7 @@ struct SettingsView: View {
                     .help(String(localized: "Agents get every Claude Code tool on this Mac, but files only in the allowed folders: commands run in a sandbox that cannot read your home folder or write outside these folders."))
                 if !draft.claudeCLI.allowLocalTools {
                     TextField("Tools (comma-separated; empty = none)", text: $draft.claudeCLI.tools)
-                    if let issue = draft.claudeCLI.restrictedIssue(mode: false) {
+                    if draft.claudeCLI.enabled, let issue = draft.claudeCLI.restrictedIssue(mode: false) {
                         Text(verbatim: restrictedText(issue)).font(.caption).foregroundStyle(.red)
                     }
                     Picker("Permission mode", selection: $draft.claudeCLI.permissionMode) {

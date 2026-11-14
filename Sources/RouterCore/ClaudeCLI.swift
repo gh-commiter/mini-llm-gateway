@@ -109,11 +109,23 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         return "dontAsk"
     }
 
+    /// T5: the sentence the agent gets (and tells the user) when the session folder's path has a character that cannot go into a permission rule, so its edit tools are off.
+    func editToolsOffNote(cwd: String) -> String? {
+        guard !allowLocalTools, !Self.ruleSafe(cwd), Self.toolNames(tools).contains(where: { Self.editClass.contains(Self.toolName($0)) }) else { return nil }
+        return "Edit tools are off for this folder: its path (\(cwd)) contains a character that cannot go into a permission rule (parentheses, * ? [ ] { }, comma, backslash, !, or a space at an end of a name). Tell the user: rename the folder or turn on \"Allow local tools\"."
+    }
+
     nonisolated(unsafe) private static var logged = Set<String>()
     private static let logLock = NSLock()
     static func logOnce(_ line: String) {
         logLock.lock(); defer { logLock.unlock() }
         if logged.insert(line).inserted { FileHandle.standardError.write(Data("minigw: \(line)\n".utf8)) }
+    }
+
+    /// T3: with setting sources `project` or `local` Claude Code reads `.claude/settings*.json` of the folder (hooks run unsandboxed on the next run; `allow` and
+    /// `additionalDirectories` widen the rules): the edit tools may not write `.claude` in the session folder or an allowed folder, nested too (real run: stops Write).
+    func claudeSettingsEditDenies(dirs: [String]) -> [String] {
+        settingSources.trimmingCharacters(in: .whitespaces).isEmpty ? [] : dirs.flatMap { ["Edit(/\($0)/.claude/**)", "Edit(/\($0)/**/.claude/**)"] }
     }
 
     /// Edit rules that keep the agent from planting what git of the owner runs: `.git` config, hooks, info and the redirects, in the folder
@@ -152,7 +164,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             for x in names.flatMap({ Self.pathToolSet.contains($0) ? Self.scoped($0, dirs: scopeDirs) : [$0] }) where !allowed.contains(x) { allowed.append(x) }
             // S3: what the sandbox branch denies for git (config, hooks, info, redirects) as Edit rules, and the gateway's own folders
             var deny: [String] = []
-            if names.contains(where: { Self.editClass.contains(Self.toolName($0)) }) { deny += Self.gitEditDenies(dirs: scopeDirs) }
+            if names.contains(where: { Self.editClass.contains(Self.toolName($0)) }) { deny += Self.gitEditDenies(dirs: scopeDirs) + claudeSettingsEditDenies(dirs: scopeDirs) }
             // the gateway's own folders (app support, Scratch) and the Copilot package cache: never read or edited by these tools
             let hidden = ((scratch.map(RouterConfig.hiddenScratch) ?? []) + Self.appFolders()).filter { Self.ruleSafe($0) }
             deny += hidden.flatMap { ["Read(/\($0)/**)", "Edit(/\($0)/**)"] } + Self.scratchPaths(RouterConfig.copilotCache).filter { Self.ruleSafe($0) }.map { "Edit(/\($0)/**)" }
@@ -168,7 +180,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
             "filesystem": ["denyRead": ["~"] + (scratch.map(RouterConfig.hiddenScratch) ?? []), "allowRead": dirs, "allowWrite": readOnly ? [] : dirs,
                            "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)
-                               + (readOnly ? dirs : dirs.flatMap { d in Self.gitDenies.flatMap { [d + "/.git/" + $0, d + "/**/.git/" + $0] } + [d + "/**/.git"] })],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
+                               + (readOnly ? dirs : dirs.flatMap { d in Self.gitDenies.flatMap { [d + "/.git/" + $0, d + "/**/.git/" + $0] } + [d + "/**/.git"] }) + (readOnly ? [] : dirs.flatMap { d in settingSources.trimmingCharacters(in: .whitespaces).isEmpty ? [] : [d + "/.claude", d + "/**/.claude"] })],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         // --minigw-ro: --tools le iz seznama dovoljenih (in Bash v sandboxu brez pisanja), drugih orodij agent nima.
@@ -177,7 +189,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         // N3: nastavitve, hooki in preusmeritve ugnezdenih .git tudi ne z orodji Edit/Write (kot regex v Native.sandboxProfile)
         let nestedGit = readOnly ? [] : dirs.flatMap { d in Self.gitDenies.flatMap { g in ["Edit", "Write"].map { "\($0)(/\(d)/**/.git/\(g))" } + ["Edit", "Write"].map { "\($0)(/\(d)/**/.git/\(g)/**)" } }
             + ["Edit", "Write"].map { "\($0)(/\(d)/**/.git)" } }  // tudi datoteka gitdir: (podmodul) ali .git sam
-        let denied = disabledTools + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : []) + nestedGit
+        let denied = disabledTools + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : []) + nestedGit + (readOnly ? [] : claudeSettingsEditDenies(dirs: dirs))
         return ["--tools", readOnly ? roTools.joined(separator: ",") : "default", "--permission-mode", "acceptEdits", "--settings", settings]
             + dirs.dropFirst().flatMap { ["--add-dir", $0] }
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
@@ -192,7 +204,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
 
     /// M4: .git, ki ga bere git lastnika: nastavitve, hooki, atributi in preusmeritve na drug gitdir (commondir,
     /// povezani worktree-ji z gitdir, commondir in config.worktree).
-    static let gitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees"]
+    static let gitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees", "modules"]  // modules: .git/modules/<sub>/{config,hooks} run in the owner's `git status` of the parent
 
     /// --minigw-work=worktree: vsa orodja (tudi Bash) vedno v peskovniku Claude Code (brez stikala za izklop):
     /// pisanje le v klon in predpomnilnike gradnje (Worktree.writable), branje domače mape le tam, omrežje po nastavitvi.
@@ -607,6 +619,7 @@ extension Router {
         var sessionID: String?
         var registryKey: String?
         var sharedDir: URL?
+        var editOffNote: String?  // T5: restricted run in a folder whose path cannot go into a rule
         var readOnly = false
 
         if agent {
@@ -638,6 +651,7 @@ extension Router {
                                    rid: rid, writer: writer)
             }
             cwd = dir
+            if tree == nil { editOffNote = cfg.editToolsOffNote(cwd: dir.path) }
             sharedDir = shared
             let scope = (req.header("x-claude-mini-session") ?? "") + "|" + dir.path
             registryKey = scope
@@ -683,7 +697,7 @@ extension Router {
             // (git z drugega PATH, exec-path v gitexec neberljiv: remote-https, CMake GIT_EXECUTABLE)
             let read = (askOthers("claude") || AgentRun.current != nil ? [Self.minigwExe] + (run.map { [$0.authFile.path] } ?? []) : [])
                 + (await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") != nil ? [gitexec.path] : [])
-            args = Self.withNote(args, agentNote("claude"), read: read)
+            args = Self.withNote(args, agentNote("claude") + (editOffNote.map { "\n\n" + $0 } ?? ""), read: read)
         }
         guard let exe = await ClaudeCLI.executable(cfg.executable) else {
             return await error(503, "api_error", cfg.executable.isEmpty ? "claude not found; set its path in Mini Gateway settings"
