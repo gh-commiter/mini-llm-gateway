@@ -121,6 +121,7 @@ type runFx struct {
 	plan   string
 	dump   string
 	proxy  map[string]connection
+	nps    map[string]*noiseProxy
 	addr   string
 	shares map[string]*shareClient
 }
@@ -129,7 +130,7 @@ type runFx struct {
 // so members come through Noise tunnels with their device keys.
 func newRunFx(t *testing.T, ask, withCodex bool) *runFx {
 	t.Helper()
-	x := &runFx{t: t, tmp: t.TempDir(), proxy: map[string]connection{}, shares: map[string]*shareClient{}}
+	x := &runFx{t: t, tmp: t.TempDir(), proxy: map[string]connection{}, nps: map[string]*noiseProxy{}, shares: map[string]*shareClient{}}
 	x.plan, x.dump = filepath.Join(x.tmp, "plan.json"), filepath.Join(x.tmp, "dump")
 	os.MkdirAll(x.dump, 0o755)
 	params := fakeParams{"plan": x.plan, "dump": x.dump}
@@ -199,6 +200,7 @@ func (x *runFx) conn(user string) connection {
 		x.t.Fatal(err)
 	}
 	x.t.Cleanup(np.stop)
+	x.nps[user] = np
 	c := connection{URL: np.localURL(), Token: "tok"}
 	x.proxy[user] = c
 	return c
@@ -720,4 +722,34 @@ func TestNoteReadCommandsInsideARun(t *testing.T) {
 	f.s.core.BumpEpoch(t0, "test")
 	e, _, _ = env()
 	wantErr(t, e.note([]string{"list"}), "no project access")
+}
+
+// Review L1: through minigw's proxy a header from the agent CLI's own settings never chooses the project.
+func TestProxySetsTheProjectAndIgnoresAForgedHeader(t *testing.T) {
+	x := newRunFx(t, false, false)
+	f := x.f
+	x.setPlan()
+	dir := folder(t, t.TempDir(), "w")
+	x.conn("ana")
+	send := func(forged int64) {
+		body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
+		sc := &shareClient{c: x.conn("ana"), session: fmt.Sprint("p", forged, x.nps["ana"].project), root: dir, sync: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+		if !sc.register() {
+			t.Fatal(sc.refusal)
+		}
+		sc.start(2)
+		defer sc.unregister()
+		h := map[string]string{"x-claude-mini-session": sc.session, "x-claude-mini-cwd": dir, "content-type": "application/json", "X-MINIGW-PROJECT": fmt.Sprint(forged)}
+		if st, b := call(x.conn("ana"), "POST", "/v1/messages", h, []byte(body), 30*time.Second); st != 200 {
+			t.Fatalf("%d %s", st, b)
+		}
+	}
+	x.nps["ana"].project = fmt.Sprint(f.pid["fakture"])
+	send(f.pid["import"]) // ana has no role in import: if the forged header got through, the request would be refused
+	x.nps["ana"].project = ""
+	send(f.pid["fakture"]) // ana does have a role in fakture: if it got through, the event would carry the project
+	ev := f.events()
+	if len(ev) != 2 || ev[0].Project != f.pid["fakture"] || ev[1].Project != 0 {
+		t.Fatalf("%+v", ev)
+	}
 }

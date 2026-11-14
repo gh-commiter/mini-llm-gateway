@@ -4,12 +4,14 @@ package main
 // šifrirano (Noise) do routerja. Ena lokalna povezava = ena šifrirana povezava (kot RouterCore/NoiseProxy.swift).
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -18,11 +20,15 @@ type device struct {
 	name string
 }
 
+// proxyProject: the project id the next proxy sends with its requests (set by main before route).
+var proxyProject string
+
 type noiseProxy struct {
 	router    string // host:port
 	routerKey []byte
 	dev       *device
 	ln        net.Listener
+	project   string // the project id minigw resolved for this run ("" = none); see rewriteHead
 }
 
 func newNoiseProxy(routerURL string, routerKey []byte, dev *device) (*noiseProxy, error) {
@@ -63,6 +69,33 @@ func (p *noiseProxy) start() error {
 		}
 	}()
 	return nil
+}
+
+// rewriteHead (L1): the request line and headers (without the final blank line) with every X-Minigw-Project header
+// removed, whatever its case, and, when the run has a project, the one minigw resolved. The agent CLI's own settings
+// (ANTHROPIC_CUSTOM_HEADERS from a repository) can therefore never choose the project of a request.
+func rewriteHead(head []byte, project string) []byte {
+	lines := strings.Split(string(head), "\r\n")
+	out := make([]string, 0, len(lines)+1)
+	skipping := false
+	for i, l := range lines {
+		lower := strings.ToLower(l)
+		switch {
+		case i > 0 && skipping && (strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t")): // folded continuation of a dropped header
+			continue
+		case i > 0 && strings.HasPrefix(lower, "x-minigw-project"):
+			if name, _, ok := strings.Cut(lower, ":"); ok && strings.TrimSpace(name) == "x-minigw-project" {
+				skipping = true
+				continue
+			}
+		}
+		skipping = false
+		out = append(out, l)
+		if i == 0 && project != "" {
+			out = append(out, "X-Minigw-Project: "+project)
+		}
+	}
+	return []byte(strings.Join(out, "\r\n"))
 }
 
 func (p *noiseProxy) localURL() string { return "http://" + p.ln.Addr().String() }
@@ -110,11 +143,29 @@ func (p *noiseProxy) serve(local net.Conn) {
 	// Lokalno → okvirji → router. Ob koncu lokalnega pošiljanja odgovor še teče; povezavo zapre router.
 	go func() {
 		buf := make([]byte, maxPlain)
+		var head []byte // the first request's header block, until it is complete (the gateway serves one request per connection)
+		headDone := false
 		for {
 			n, err := local.Read(buf)
 			if n > 0 {
-				if _, werr := remote.Write(frames(buf[:n], session.send)); werr != nil {
-					return
+				chunk := buf[:n]
+				if !headDone {
+					head = append(head, chunk...)
+					if i := bytes.Index(head, []byte("\r\n\r\n")); i >= 0 || len(head) > 64<<10 {
+						headDone = true
+						if i >= 0 {
+							head = append(rewriteHead(head[:i], p.project), head[i:]...)
+						}
+						chunk = head
+						head = nil
+					} else {
+						chunk = nil
+					}
+				}
+				for off := 0; off < len(chunk); off += maxPlain {
+					if _, werr := remote.Write(frames(chunk[off:min(off+maxPlain, len(chunk))], session.send)); werr != nil {
+						return
+					}
 				}
 			}
 			if err != nil {

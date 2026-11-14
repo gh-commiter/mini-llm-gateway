@@ -165,6 +165,7 @@ func routeErr(p profile) (connection, error) {
 	}
 	np, err := newNoiseProxy(c.URL, key, dev)
 	if err == nil {
+		np.project = proxyProject
 		err = np.start()
 	}
 	if err != nil {
@@ -623,8 +624,14 @@ func main() {
 	if len(ps) == 0 {
 		requireProfile()
 	}
-	saved := ps[0].conn // privzeti profil: mapa, glave in modeli brez pripone kot prej
+	saved := ps[0].conn                                                         // privzeti profil: mapa, glave in modeli brez pripone kot prej
+	if h, err := projectHeaderFor(cwd, saved, projectStatePath()); err != nil { // 0.6.0: the project of this folder (project.go)
+		fail(err.Error())
+	} else if h != "" { // the proxy sets it on every request and removes any other (L1); not in ANTHROPIC_CUSTOM_HEADERS
+		proxyProject = strings.TrimPrefix(h, "x-minigw-project: ")
+	}
 	c := route(ps[0])
+	proxyProject = "" // only the default profile's gateway knows this project id; other profiles' proxies never send it
 	env := []string{
 		"ANTHROPIC_BASE_URL=" + c.URL,
 		"ANTHROPIC_AUTH_TOKEN=" + c.Token,
@@ -709,11 +716,6 @@ sessionArgs:
 	}
 	if readOnly { // --minigw-ro velja tudi brez deljenja (prehod na tem računalniku)
 		headers += "\nx-claude-mini-ro: 1"
-	}
-	if h, err := projectHeaderFor(cwd, saved, projectStatePath()); err != nil { // 0.6.0: the project of this folder (project.go)
-		fail(err.Error())
-	} else if h != "" {
-		headers += "\n" + h
 	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 	if promptGuard(args, os.Getenv, stdinTerminal()) {
