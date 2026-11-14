@@ -26,9 +26,12 @@ type fixture struct {
 	nid map[string]int64
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T) *fixture { return newFixtureIn(t, t.TempDir()) }
+
+// newFixtureIn seeds the store in dir.
+func newFixtureIn(t *testing.T, dir string) *fixture {
 	t.Helper()
-	st, err := core.Open(t.TempDir(), core.Options{})
+	st, err := core.Open(dir, core.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
