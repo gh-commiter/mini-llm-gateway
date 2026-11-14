@@ -20,7 +20,7 @@ extension Router {
                                  providers: c.providers.map { .init(id: $0.id, name: $0.name, baseURL: $0.baseURL, enabled: $0.enabled) },
                                  key: { [secrets] in secrets.get($0) },
                                  tmpParent: GatewayHistory.defaultFile.deletingLastPathComponent().appendingPathComponent("quota-tmp", isDirectory: true))
-        let values = await Self.quota.report(inputs)
+        let values = await Self.quota.report(inputs, fetch: method == "GET")  // the PATCH that turns the probe on runs nothing; the next GET does
         return (200, ["quota": values.map(\.json), "claudeProbe": c.claudeQuotaProbe])
     }
 }

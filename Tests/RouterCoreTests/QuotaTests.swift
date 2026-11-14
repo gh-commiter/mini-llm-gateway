@@ -304,9 +304,11 @@ private func inputs(probe: Bool = false, exe: String? = "/fake/claude", enabled:
         }
         #expect(app.config.claudeQuotaProbe == false)
         let on = await admin(r, "PATCH", "/quota", body: #"{"claudeProbe":true}"#)
-        #expect(on.status == 200 && on.text.contains(#""claudeProbe":true"#) && cli.calls == 1 && on.text.contains("claude.week.all-models"), "\(on.text)")
+        #expect(on.status == 200 && on.text.contains(#""claudeProbe":true"#) && cli.calls == 0 && on.text.contains("not probed yet"), "\(on.text)")  // the PATCH runs nothing
         #expect(app.config.claudeQuotaProbe == true)  // saved with the settings
-        let again = await admin(app.router(), "GET", "/quota")  // a restarted router: the cache is the process's
+        let got = await admin(app.router(), "GET", "/quota")  // the next GET probes: a restarted router, the cache is the process's
+        #expect(got.text.contains("claude.week.all-models") && cli.calls == 1, "\(got.text)")
+        let again = await admin(app.router(), "GET", "/quota")
         #expect(again.text.contains(#""claudeProbe":true"#) && cli.calls == 1)
         #expect(await admin(r, "GET", "/quota", auth: nil).status == 401)  // the admin proof is needed
         // the older settings file has no key: off

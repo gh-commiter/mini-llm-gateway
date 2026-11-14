@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // The quota report of the gateway (client/serve_quota.go: quotaReport, claudeQuota, remoteQuota, recordCodexQuota). The data lock is never held
@@ -30,8 +31,10 @@ actor QuotaEngine {
     private var claude: [QuotaValue]?
     private var claudeAt = Date.distantPast
     private var claudeOff = ""   // set when `claude /usage` turned out to do more than it should: not run again
+    private var claudeBad = FailState()  // a failed probe is not run again before the back-off is over
     private var claudeFlight: Task<[QuotaValue], Never>?
-    private var remote: [String: (at: Date, vals: [QuotaValue])] = [:]
+    private var remote: [String: (at: Date, vals: [QuotaValue])] = [:]  // by remoteKey
+    private var remoteBad: [String: FailState] = [:]
     private var remoteFlight: [String: Task<[QuotaValue], Never>] = [:]
     private var jobs = 0
 
@@ -39,12 +42,31 @@ actor QuotaEngine {
         self.runUsage = runUsage; self.http = http; self.zone = zone
     }
 
-    /// All values, Codex first. Claude and the providers are fetched on demand, at most once per 10 minutes.
-    func report(_ i: QuotaInputs, now: Date = Date()) async -> [QuotaValue] {
+    /// A failed refresh is not tried again at once (the 10-minute throttle holds for failures too): after 1 minute, then doubling up to the cache time.
+    struct FailState {
+        var n = 0, msg = "", until = Date.distantPast
+        mutating func fail(_ now: Date, _ m: String) {
+            n += 1; msg = m
+            until = now.addingTimeInterval(min(QuotaEngine.cacheFor, 60 * Double(1 << min(n - 1, 4))))
+        }
+        func waiting(_ now: Date) -> Bool { n > 0 && now < until }
+    }
+
+    /// All values, Codex first. Claude and the providers are fetched on demand, at most once per 10 minutes. fetch false reports what is known and
+    /// starts no probe and no request (the answer of the settings change that turns the probe on). Entries of providers that are gone, or whose address or
+    /// key changed, are dropped.
+    func report(_ i: QuotaInputs, now: Date = Date(), fetch: Bool = true) async -> [QuotaValue] {
         var out = quotaMarkStale(codex, now: now)
         if out.isEmpty { out = [QuotaValue(name: "codex", source: "unavailable", stale: true, note: "no Codex run since this gateway started")] }
-        out += await claudeQuota(i, now: now)
-        for p in i.providers { out += await remoteQuota(i, p, now: now) }
+        out += await claudeQuota(i, now: now, fetch: fetch)
+        var live = Set<String>()
+        for p in i.providers {
+            let (vals, key) = await remoteQuota(i, p, now: now, fetch: fetch)
+            out += vals
+            if let key { live.insert(key) }
+        }
+        remote = remote.filter { live.contains($0.key) }
+        remoteBad = remoteBad.filter { live.contains($0.key) }
         return out
     }
 
@@ -61,25 +83,34 @@ actor QuotaEngine {
         jobs += 1
         defer { jobs -= 1 }
         let vals = await Task.detached { () -> [QuotaValue] in
-            guard let p = QuotaParse.codexSessionFile(home: home, thread: thread) else { return [] }
-            return QuotaParse.lastRateLimits(path: p, observed: Date())
+            QuotaParse.lastRateLimits(home: home, thread: thread, observed: Date())
         }.value
         if !vals.isEmpty { codex = vals }
     }
 
     // MARK: Claude
 
-    private func claudeQuota(_ i: QuotaInputs, now: Date) async -> [QuotaValue] {
+    private func claudeQuota(_ i: QuotaInputs, now: Date, fetch: Bool) async -> [QuotaValue] {
         guard i.claudeProbe else { return [.unavailable("claude", "probe off")] }  // opt-in
         guard let exe = i.claudeExe, i.claudeEnabled else { return [.unavailable("claude", "Claude CLI is off or not installed on this gateway")] }
         if !claudeOff.isEmpty { return [.unavailable("claude", claudeOff)] }
         if let c = claude, now.timeIntervalSince(claudeAt) < Self.cacheFor { return quotaMarkStale(c, now: now) }
+        if claudeBad.waiting(now) { return claudeFailed(now) }  // a failed probe is not repeated at once
         if let f = claudeFlight { return await f.value }  // single-flight: one probe at a time; waiters take the result
+        guard fetch else { return [.unavailable("claude", "not probed yet")] }
         let task = Task { await self.probeClaude(exe, i.tmpParent, now) }
         claudeFlight = task
         let r = await task.value
         claudeFlight = nil
         return r
+    }
+
+    /// The last good values marked stale with the reason, or "unavailable".
+    private func claudeFailed(_ now: Date) -> [QuotaValue] {
+        if let c = claude {
+            return quotaMarkStale(c, now: now).map { var v = $0; v.stale = true; v.note = "could not refresh: " + claudeBad.msg; return v }
+        }
+        return [.unavailable("claude", claudeBad.msg)]
     }
 
     private func probeClaude(_ exe: String, _ parent: URL, _ now: Date) async -> [QuotaValue] {
@@ -91,12 +122,10 @@ actor QuotaEngine {
                 claudeOff = msg
                 return [.unavailable("claude", msg)]
             }
-            if let c = claude {  // the last good values, marked stale
-                return quotaMarkStale(c, now: now).map { var v = $0; v.stale = true; v.note = "could not refresh: " + msg; return v }
-            }
-            return [.unavailable("claude", msg)]
+            claudeBad.fail(now, msg)
+            return claudeFailed(now)
         }
-        claude = vals; claudeAt = now
+        claude = vals; claudeAt = now; claudeBad = FailState()
         return vals
     }
 
@@ -108,23 +137,41 @@ actor QuotaEngine {
         return nil
     }
 
-    private func remoteQuota(_ i: QuotaInputs, _ p: QuotaInputs.Provider, now: Date) async -> [QuotaValue] {
-        guard let kind = Self.providerKind(p), p.enabled else { return [] }
-        if let c = remote[p.name], now.timeIntervalSince(c.at) < Self.cacheFor { return quotaMarkStale(c.vals, now: now) }
-        if let f = remoteFlight[p.name] { return await f.value }  // single-flight per provider
-        let task = Task { await self.fetchRemote(i, p, kind, now) }
-        remoteFlight[p.name] = task
-        let r = await task.value
-        remoteFlight[p.name] = nil
-        return r
+    /// The cache key of one provider: its id, where it is asked and a digest of the credential (kept in memory only, never logged or
+    /// returned). A changed address or key is another entry.
+    static func remoteKey(_ p: QuotaInputs.Provider, key: String) -> String {
+        p.id + "\n" + p.baseURL + "\n" + SHA256.hash(data: Data(key.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func fetchRemote(_ i: QuotaInputs, _ p: QuotaInputs.Provider, _ kind: String, _ now: Date) async -> [QuotaValue] {
-        func fail(_ note: String) -> [QuotaValue] {
-            if let c = remote[p.name] { return quotaMarkStale(c.vals, now: now).map { var v = $0; v.stale = true; v.note = note; return v } }
+    /// The values and the cache key used (nil = this provider has no quota).
+    private func remoteQuota(_ i: QuotaInputs, _ p: QuotaInputs.Provider, now: Date, fetch: Bool) async -> ([QuotaValue], String?) {
+        guard let kind = Self.providerKind(p), p.enabled else { return ([], nil) }
+        let key = i.key(p.id) ?? ""
+        let ck = Self.remoteKey(p, key: key)
+        func failed(_ note: String) -> [QuotaValue] {
+            if let c = remote[ck] { return quotaMarkStale(c.vals, now: now).map { var v = $0; v.stale = true; v.note = note; return v } }
             return [.unavailable(kind, note)]
         }
-        guard let key = i.key(p.id), !key.isEmpty else { return fail("no key for " + p.name) }
+        if let c = remote[ck], now.timeIntervalSince(c.at) < Self.cacheFor { return (quotaMarkStale(c.vals, now: now), ck) }
+        if let bad = remoteBad[ck], bad.waiting(now) { return (failed(bad.msg), ck) }  // a failed request is not repeated at once
+        if key.isEmpty { return (failed("no key for " + p.name), ck) }
+        if let f = remoteFlight[ck] { return (await f.value, ck) }  // single-flight per provider
+        guard fetch else { return ([.unavailable(kind, "not fetched yet")], ck) }
+        let task = Task { await self.fetchRemote(p, kind, key, ck, now) }
+        remoteFlight[ck] = task
+        let r = await task.value
+        remoteFlight[ck] = nil
+        return (r, ck)
+    }
+
+    private func fetchRemote(_ p: QuotaInputs.Provider, _ kind: String, _ key: String, _ ck: String, _ now: Date) async -> [QuotaValue] {
+        func fail(_ note: String) -> [QuotaValue] {
+            var b = remoteBad[ck] ?? FailState()
+            b.fail(now, note)
+            remoteBad[ck] = b
+            if let c = remote[ck] { return quotaMarkStale(c.vals, now: now).map { var v = $0; v.stale = true; v.note = note; return v } }
+            return [.unavailable(kind, note)]
+        }
         var base = p.baseURL
         while base.hasSuffix("/") { base.removeLast() }
         guard let url = URL(string: base + (kind == "openrouter" ? "/v1/credits" : "/key/info")) else { return fail("bad provider address") }
@@ -134,23 +181,37 @@ actor QuotaEngine {
         guard r.status == 200 else { return fail("the provider answered HTTP \(r.status)") }
         do {
             let vals = kind == "openrouter" ? try QuotaParse.openRouterCredits(r.data, now: now) : try QuotaParse.liteLLMKeyInfo(r.data, now: now)
-            remote[p.name] = (now, vals)
+            remote[ck] = (now, vals); remoteBad[ck] = nil
             return vals
         } catch { return fail((error as? QuotaError)?.description ?? "\(error)") }
     }
 }
 
-/// The providers' endpoints: GET, 10 seconds, no redirect (a redirect would carry the key elsewhere), at most 1 MB.
+/// The providers' endpoints: GET, no redirect (a redirect would carry the key elsewhere), the whole transfer within 10 seconds (the resource timeout
+/// covers the body, not only the first byte) and at most 1 MB: the body is streamed and the transfer is cancelled at the limit, nothing larger is buffered.
 enum QuotaHTTP {
     private final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         func urlSession(_ s: URLSession, task: URLSessionTask, willPerformHTTPRedirection r: HTTPURLResponse, newRequest: URLRequest,
                         completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
     }
-    private static let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
 
-    @Sendable static func get(_ req: URLRequest) async -> (status: Int, data: Data)? {
-        guard let (data, resp) = try? await session.data(for: req), let h = resp as? HTTPURLResponse else { return nil }
-        return (h.statusCode, data.prefix(1 << 20))
+    @Sendable static func get(_ req: URLRequest) async -> (status: Int, data: Data)? { await get(req, limit: 1 << 20, deadline: 10) }
+
+    static func get(_ req: URLRequest, limit: Int, deadline: TimeInterval) async -> (status: Int, data: Data)? {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = deadline
+        cfg.timeoutIntervalForResource = deadline
+        let session = URLSession(configuration: cfg, delegate: NoRedirect(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }  // also ends a transfer that was cut at the limit
+        guard let (bytes, resp) = try? await session.bytes(for: req), let h = resp as? HTTPURLResponse else { return nil }
+        var data = Data()
+        do {
+            for try await b in bytes {
+                data.append(b)
+                if data.count >= limit { break }
+            }
+        } catch { return nil }  // the deadline, or the connection broke
+        return (h.statusCode, data)
     }
 }
 
@@ -177,62 +238,65 @@ enum ClaudeUsageProbe {
         return out
     }
 
-    static let args = ["-p", "/usage", "--model", "haiku", "--setting-sources", "", "--strict-mcp-config", "--mcp-config", #"{"mcpServers":{}}"#,
-                       "--output-format", "json", "--no-session-persistence", "--tools", ""]
+    static let args = ["-p", "/usage", "--model", "haiku", "--tools", "", "--setting-sources", "", "--strict-mcp-config", "--mcp-config", #"{"mcpServers":{}}"#,
+                       "--output-format", "json", "--no-session-persistence"]
 
-    @Sendable static func run(exe: String, parent: URL) async throws -> Data { try await run(exe: exe, parent: parent, limit: 30) }
+    @Sendable static func run(exe: String, parent: URL) async throws -> Data { try await run(exe: exe, parent: parent, limit: 30, drain: 2) }
 
-    static func run(exe: String, parent: URL, limit: Double) async throws -> Data {
+    /// Starts claude with Native.spawnGroup: its own process group (the whole tree can be ended), stdin /dev/null, no inherited descriptor
+    /// (POSIX_SPAWN_CLOEXEC_DEFAULT: only the two pipes it is given). A thread of its own supervises it, so no cooperative thread ever waits. On the
+    /// limit, or when a descendant keeps the output open after claude has ended, the group and every holder of the pipes are killed, so the result is
+    /// bounded by limit + drain whatever the tree does.
+    static func run(exe: String, parent: URL, limit: Double, drain: Double = 2) async throws -> Data {
         let fm = FileManager.default
         try fm.createDirectory(at: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let dir = parent.appendingPathComponent("probe-" + UUID().uuidString.prefix(8), isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? fm.removeItem(at: dir) }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: exe)
-        p.arguments = args
-        p.currentDirectoryURL = dir
-        p.environment = env(ProcessInfo.processInfo.environment, tmp: dir.path)
-        let out = Pipe()
-        p.standardOutput = out; p.standardError = FileHandle.nullDevice; p.standardInput = FileHandle.nullDevice
-        let timedOut = Flag(), reader = Reader(out.fileHandleForReading)
-        let status: Int32 = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Int32, Error>) in
-            p.terminationHandler = { cont.resume(returning: $0.terminationStatus) }
-            do { try p.run() } catch { cont.resume(throwing: QuotaError("claude /usage failed: \(error.localizedDescription)")); return }
-            reader.start()  // concurrently: a long output must not block the process before the limit
-            let pid = p.processIdentifier
-            Task.detached {  // 30 s at most; the process is ours alone (it has no children it needs)
-                try? await Task.sleep(nanoseconds: UInt64(limit * 1e9))
-                guard p.isRunning else { return }
-                timedOut.set()
-                p.terminate()
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if p.isRunning { kill(pid, SIGKILL) }
-            }
+        guard let child = Native.spawnGroup(exe, args, dir: dir, env: env(ProcessInfo.processInfo.environment, tmp: dir.path)) else {
+            throw QuotaError("claude /usage failed: cannot start " + exe)
         }
-        let data = reader.wait()
-        guard !timedOut.value else { throw QuotaError("claude /usage failed: timed out after \(Int(limit)) s") }
-        guard status == 0 else { throw QuotaError("claude /usage failed: " + (p.terminationReason == .uncaughtSignal ? "signal \(status)" : "exit status \(status)")) }
-        return data.prefix(1 << 20)
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data, Error>) in
+            Thread { cont.resume(with: Result { try supervise(child.pid, child.out, child.err, limit: limit, drain: drain) }) }.start()
+        }
     }
 
-    /// Reads a pipe to its end on its own thread, keeping at most 1 MB.
-    private final class Reader: @unchecked Sendable {
-        private let handle: FileHandle, done = DispatchSemaphore(value: 0)
-        private var data = Data()
-        init(_ h: FileHandle) { handle = h }
-        func start() {
+    private final class Drain: @unchecked Sendable {
+        let done = DispatchSemaphore(value: 0)
+        private let lock = NSLock()
+        private var buf = Data()
+        let keep: Bool
+        init(_ h: FileHandle, keep: Bool) {
+            self.keep = keep
             Thread {
-                while let c = try? self.handle.read(upToCount: 64 << 10), !c.isEmpty { if self.data.count < 1 << 20 { self.data.append(c) } }
+                while let c = try? h.read(upToCount: 64 << 10), !c.isEmpty { if keep { self.lock.withLock { if self.buf.count < 1 << 20 { self.buf.append(c) } } } }
                 self.done.signal()
             }.start()
         }
-        func wait() -> Data { done.wait(); return data }
+        var data: Data { lock.withLock { buf } }
+        func finished(within s: Double) -> Bool { done.wait(timeout: .now() + s) == .success }
     }
 
-    private final class Flag: @unchecked Sendable {
-        private let lock = NSLock(); private var on = false
-        func set() { lock.withLock { on = true } }
-        var value: Bool { lock.withLock { on } }
+    private static func supervise(_ pid: pid_t, _ out: FileHandle, _ err: FileHandle, limit: Double, drain: Double) throws -> Data {
+        let stdout = Drain(out, keep: true), stderr = Drain(err, keep: false)  // the handles stay alive with their threads
+        var status: Int32 = 0, exited = false, timedOut = false
+        let end = Date().addingTimeInterval(limit)
+        while !exited {
+            let r = waitpid(pid, &status, WNOHANG)
+            if r == pid { exited = true } else if r < 0 && errno != EINTR { exited = true; status = 0 }
+            else if Date() >= end { timedOut = true; break }
+            else { usleep(10_000) }
+        }
+        if timedOut {  // the whole tree and every holder of the pipes
+            Native.killTree(pid, pipes: [out, err], timeout: 2)
+            while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+        } else if !stdout.finished(within: drain) {  // claude has ended, a descendant still holds the output
+            Native.killTree(pid, pipes: [out, err], timeout: 2)
+        }
+        _ = stdout.finished(within: 2); _ = stderr.finished(within: 0.2)  // EOF follows the kill; a holder that cannot be killed is given up on, its thread stays
+        if timedOut { throw QuotaError("claude /usage failed: timed out after \(Int(limit)) s") }
+        guard status & 0x7f == 0 else { throw QuotaError("claude /usage failed: signal \(status & 0x7f)") }
+        guard (status >> 8) & 0xff == 0 else { throw QuotaError("claude /usage failed: exit status \((status >> 8) & 0xff)") }
+        return stdout.data
     }
 }

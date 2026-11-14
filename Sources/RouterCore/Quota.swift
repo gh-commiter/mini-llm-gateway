@@ -68,9 +68,13 @@ enum QuotaTime {
 enum QuotaParse {
     /// A JSON number (not a boolean).
     static func number(_ x: Any?) -> Double? {
-        guard let n = x as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return nil }
+        guard let n = x as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue.isFinite else { return nil }
         return n.doubleValue
     }
+
+    /// The same bounds as Go (serve_quota.go): a reset beyond year 9999 is no time, and seconds are bounded so that no conversion can trap or wrap.
+    static let maxEpoch = 253_402_300_799.0
+    static let maxResetIn = 1e9
 
     /// The first value of `key` found in the document (maps in key order: Go's map walk is random, the Codex lines have one).
     static func findKey(_ v: Any, _ key: String) -> Any? {
@@ -99,9 +103,9 @@ enum QuotaParse {
                 name = mins < 10000 ? String(Int(mins / 1440)) + "d" : "week"
             }
             var q = QuotaValue(name: "codex." + name, unit: "percent", value: used, source: "codex-session-log", observedAt: observed)
-            if let at = number(x["resets_at"]), at > 0 {
+            if let at = number(x["resets_at"]), at > 0, at <= maxEpoch {
                 q.resetsAt = Date(timeIntervalSince1970: Double(Int64(at)))
-            } else if let inSec = number(x["resets_in_seconds"]) {
+            } else if let inSec = number(x["resets_in_seconds"]), inSec >= 0, inSec <= maxResetIn {
                 q.resetsAt = observed.addingTimeInterval(Double(Int64(inSec)))
             }
             out.append(q)
@@ -109,38 +113,100 @@ enum QuotaParse {
         return out
     }
 
-    /// The newest rate_limits record in the last 256 KiB of a session log.
+    /// The newest rate_limits record in the last 256 KiB of a session log (a path: opened without following a link, see openRegular).
     static func lastRateLimits(path: String, observed: Date) -> [QuotaValue] {
-        guard let f = FileHandle(forReadingAtPath: path) else { return [] }
-        defer { try? f.close() }
-        guard let size = try? f.seekToEnd() else { return [] }
-        let tail: UInt64 = 256 << 10
-        let off = size > tail ? size - tail : 0
-        guard (try? f.seek(toOffset: off)) != nil, let buf = try? f.readToEnd() else { return [] }
+        guard let fd = openRegular(path) else { return [] }
+        defer { close(fd) }
+        return lastRateLimits(fd: fd, observed: observed)
+    }
+
+    /// The same through an open descriptor: only the last 256 KiB are read (pread), however large the file is.
+    static func lastRateLimits(fd: Int32, observed: Date) -> [QuotaValue] {
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return [] }
+        let tail = Int64(256 << 10), off = max(0, Int64(st.st_size) - tail)
+        let want = Int(min(tail, Int64(st.st_size) - off))
+        var buf = [UInt8](repeating: 0, count: want)
+        var got = 0
+        while got < want {
+            let n = buf.withUnsafeMutableBytes { pread(fd, $0.baseAddress! + got, want - got, off + Int64(got)) }
+            if n <= 0 { break }
+            got += n
+        }
         let marker = Data(#""rate_limits""#.utf8)
-        for line in buf.split(separator: 0x0a, omittingEmptySubsequences: false).reversed() where line.range(of: marker) != nil {
+        for line in Data(buf.prefix(got)).split(separator: 0x0a, omittingEmptySubsequences: false).reversed() where line.range(of: marker) != nil {
             let vals = codexRateLimits(Data(line), observed: observed)
             if !vals.isEmpty { return vals }
         }
         return []
     }
 
-    /// The log of THIS run's thread: <home>/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl (the newest, if several).
-    static func codexSessionFile(home: String, thread: String) -> String? {
+    /// A regular file of the gateway's user, opened WITHOUT following a link (a link to /dev/zero or to another file is refused) and without
+    /// blocking (a FIFO is refused); nil otherwise. The caller closes the descriptor.
+    static func openRegular(_ path: String, at dir: Int32 = AT_FDCWD) -> Int32? {
+        let fd = openat(dir, path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_uid == getuid() else { close(fd); return nil }
+        return fd
+    }
+
+    /// Entries scanned per folder and in all: a planted folder of millions of names costs a bounded amount.
+    static let maxEntries = 4096, maxScanned = 20000
+
+    /// The names in a folder given by a descriptor (at most `cap`), nil when it is no folder of ours.
+    private static func names(_ fd: Int32, cap: Int) -> [String]? {
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFDIR, st.st_uid == getuid(), let d = fdopendir(dup(fd)) else { return nil }
+        defer { closedir(d) }
+        var out: [String] = []
+        while out.count < cap, let e = readdir(d) {
+            let n = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            if n != "." && n != ".." { out.append(n) }
+        }
+        return out.sorted()
+    }
+
+    private static func openDir(_ name: String, in parent: Int32) -> Int32? {
+        let fd = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        return fd >= 0 ? fd : nil
+    }
+
+    /// The log of THIS run's thread: <home>/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl (the newest, if several), as an open descriptor
+    /// (the caller closes it). Every folder level is opened relative to the one above it without following links, so a linked year, month or
+    /// day folder (a project CODEX_HOME is a place an agent run has touched) is not entered, and only files of the user are taken.
+    static func codexSessionLog(home: String, thread: String) -> Int32? {
         guard !thread.isEmpty, !thread.contains(where: { "*?[]/\\".contains($0) }) else { return nil }
-        let fm = FileManager.default
-        func sub(_ p: String) -> [String] { ((try? fm.contentsOfDirectory(atPath: p)) ?? []).sorted() }
-        var best: (path: String, at: Date)?
-        let root = home + "/sessions"
-        for y in sub(root) { for m in sub(root + "/" + y) { for d in sub(root + "/" + y + "/" + m) {
-            let dir = [root, y, m, d].joined(separator: "/")
-            for n in sub(dir) where n.hasPrefix("rollout-") && n.hasSuffix("-" + thread + ".jsonl") {
-                let p = dir + "/" + n
-                guard let at = (try? fm.attributesOfItem(atPath: p))?[.modificationDate] as? Date else { continue }
-                if best == nil || at > best!.at { best = (p, at) }
+        var scanned = 0
+        var best: (fd: Int32, at: timespec)?
+        func newer(_ a: timespec, _ b: timespec) -> Bool { a.tv_sec != b.tv_sec ? a.tv_sec > b.tv_sec : a.tv_nsec > b.tv_nsec }
+        let root = open(home + "/sessions", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard root >= 0 else { return nil }
+        defer { close(root) }
+        func walk(_ fd: Int32, _ depth: Int) {
+            guard let list = names(fd, cap: maxEntries) else { return }
+            scanned += list.count
+            for n in list where scanned <= maxScanned {
+                if depth < 3 {
+                    if let sub = openDir(n, in: fd) { walk(sub, depth + 1); close(sub) }
+                } else if n.hasPrefix("rollout-"), n.hasSuffix("-" + thread + ".jsonl"), let f = openRegular(n, at: fd) {
+                    var st = stat()
+                    if fstat(f, &st) == 0, best == nil || newer(st.st_mtimespec, best!.at) {
+                        if let old = best { close(old.fd) }
+                        best = (f, st.st_mtimespec)
+                    } else { close(f) }
+                }
             }
-        } } }
-        return best?.path
+        }
+        walk(root, 0)
+        return best?.fd
+    }
+
+    /// The numbers of the newest log of this run's thread.
+    static func lastRateLimits(home: String, thread: String, observed: Date) -> [QuotaValue] {
+        guard let fd = codexSessionLog(home: home, thread: thread) else { return [] }
+        defer { close(fd) }
+        return lastRateLimits(fd: fd, observed: observed)
     }
 
     static let usageLine = try! NSRegularExpression(
@@ -177,6 +243,7 @@ enum QuotaParse {
         let ns = text as NSString
         for m in usageLine.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             let used = Double(ns.substring(with: m.range(at: 2))) ?? 0
+            guard used.isFinite else { continue }  // 400 digits parse as infinity, which no JSON can carry
             var name = ns.substring(with: m.range(at: 1)).lowercased()
             if name.hasPrefix("current ") { name.removeFirst(8) }
             name = "claude." + slug(name)
@@ -260,7 +327,7 @@ enum QuotaParse {
             return n
         }
         let total = try f("total_credits"), used = try f("total_usage")
-        if total == 0 && used == 0 { throw QuotaError("unexpected answer") }
+        if (total == 0 && used == 0) || !(total - used).isFinite { throw QuotaError("unexpected answer") }
         return [QuotaValue(name: "openrouter.credits-remaining", unit: "usd", value: total - used, source: "openrouter-api", observedAt: now),
                 QuotaValue(name: "openrouter.credits-total", unit: "usd", value: total, source: "openrouter-api", observedAt: now)]
     }

@@ -56,4 +56,17 @@ private func isOpen(in fd: Int32, _ run: (_ exe: String, _ args: [String]) throw
             #expect((st >> 8) & 0xff != 0, "spawnGroup: fd \(fd) inherited")
         }
     }
+
+    /// The quota probe (ClaudeUsageProbe.run) starts claude with spawnGroup, stdin /dev/null (input: false), its own environment and an empty folder:
+    /// the same reasoning holds (POSIX_SPAWN_CLOEXEC_DEFAULT); the probe's whole run is also tested in QuotaHardeningTests.
+    @Test func theQuotaProbeSpawnDoesNotInheritIt() throws {
+        let m = marker(); defer { m.close() }
+        for fd in m.fds {
+            let r = Native.spawnGroup("/bin/test", ["-e", "/dev/fd/\(fd)"], dir: URL(fileURLWithPath: "/tmp"), env: ClaudeUsageProbe.env([:], tmp: "/tmp"), input: false)
+            let child = try #require(r)
+            #expect(child.input == nil)  // no stdin pipe: /dev/null
+            var st: Int32 = 0; waitpid(child.pid, &st, 0)
+            #expect((st >> 8) & 0xff != 0, "the probe's spawn: fd \(fd) inherited")
+        }
+    }
 }
