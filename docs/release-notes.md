@@ -3,6 +3,7 @@
 ## Unreleased
 
 - New (`minigw serve`, step 1 of 0.6.0): the gateway has a core database for users, projects, members, grants and notes (`core` next to `serve.json`), member routes under `/minigw/v1/projects`, admin routes and `minigw gw user|bind|project|member|grant|core` (backup, restore, audit). Without it nothing changes for the model routes; if it cannot be opened the gateway starts and project routes answer 503. Removing a device from the approved list now also raises the core epoch. Docs: gateway.md, admin-api.md.
+- New (client): `minigw project list|link|unlink|show` and `minigw note list|read|push|edit|rm` for the gateway projects of 0.6.0: a folder is linked to a project you are a member of (stored on your computer, per gateway); `.minigw-project` only suggests a link. Not available inside an agent run. Docs: usage.md.
 
 ## 0.5.26
 

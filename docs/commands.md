@@ -24,6 +24,10 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw share add [--work=MODE] [--ro] [folder]` | Share a folder that is not shared automatically, and/or save its default work mode |
 | `minigw share remove [folder]` | Remove a folder from the share list |
 | `minigw share list` | Show shared folders and their saved modes |
+| `minigw project list [--archived] [--json]` | The gateway projects you can see, with your role and grants (see [usage.md](usage.md#projects-and-notes)) |
+| `minigw project link <slug>` / `unlink` / `show` | Link this folder tree to a project you are a direct member of, remove the link, or show which link applies here |
+| `minigw note list [--class c] [--limit n] [--json]` / `read <id>` | Notes of the linked project |
+| `minigw note push [--class c] [--title t] <file\|->` / `edit <id> …` / `rm <id>` | Create, change or delete a note (not inside an agent run) |
 | `minigw run [--] <command> [args …]` | Run a build in this folder on the gateway Mac (native mode, allowed per device) |
 | `minigw --version` | minigw's version (`claude --version` gives Claude Code's) |
 | `minigw plugin install` | Add the Claude Code plugin `minigw@mini-gateway` to `~/.claude/settings.json` with its marketplace on the `release` branch and `"autoUpdate": true` (an entry from minigw 0.5.21 or older is updated; a `false` you set stays; invalid JSON is not changed) and point the plugin's `bin/minigw` at this minigw |

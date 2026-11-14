@@ -12,6 +12,7 @@ For the full option list see [commands.md](commands.md); for what happens on the
 - [Worktree mode: results as branches](#worktree-mode-results-as-branches)
 - [Read-only and roles](#read-only-and-roles)
 - [Which folders are shared](#which-folders-are-shared)
+- [Projects and notes](#projects-and-notes)
 - [Several gateways (profiles)](#several-gateways-profiles)
 - [Native mode and builds on the gateway Mac](#native-mode-and-builds-on-the-gateway-mac)
 - [Models](#models)
@@ -439,6 +440,51 @@ credentials out of project folders you use with a gateway, or list them in `.git
 If minigw prints that the folder "is not shared with the gateway", run `minigw share add` or `/minigw:share`.
 If it prints "not sharing …: this drive does not report real paths (network or virtual drive)" (Windows), the folder is on a
 network or virtual drive that minigw cannot check safely: share a folder on a local disk instead.
+
+## Projects and notes
+
+A **project** is a named place on the gateway where a team keeps short notes (design decisions, structure, data
+facts) that people and agents can read. The gateway owner creates projects, adds you as a member and binds your
+computer's device key to you; you see only the projects you belong to. Needs a Go gateway (`minigw serve`).
+
+```
+minigw project list                     your projects: your role, and what a grant gives you
+minigw project link fakture             link this folder (and everything under it) to the project
+minigw project show                     which link applies here and why
+minigw project unlink
+```
+
+- **Link.** The link is stored on your computer, not in the repository: per gateway, with the real path of the
+  folder. A clone, a git worktree, a copied or a moved folder has no link until you link it. Inside a linked folder
+  you may link a deeper folder to another project; the nearest linked folder wins. You can link only a project
+  you are a **direct member** of: a grant lets you read another project's notes, not work in it.
+- **Hint file.** A file `.minigw-project` with one line, the project's slug, may be committed to the repository. It
+  never links anything: without a link `minigw project show` and the note commands only suggest
+  `minigw project link <slug>`. If a linked folder has a hint with another slug, the note commands refuse until you
+  unlink, link again or fix the hint.
+- **Notes.** They use the project of the current folder (`--project <slug>` only confirms that it is the linked one):
+
+```
+minigw note list [--class data] [--limit 20]      newest first; --json for scripts
+minigw note read 12
+minigw note push --class structure notes.md       "-" reads standard input; the title is the first line
+minigw note edit 12 --title "New title" notes.md  reads the current revision first (or --revision n)
+minigw note rm 12
+```
+
+`note push` is safe to repeat after a lost answer (it uses an idempotency key and creates the note once); if no
+answer ever arrives it prints the key for `--key`. A note is text up to 64 KiB, a title up to 256 bytes; limits per
+project and per minute apply.
+
+| Class | Who reads it | Who changes it |
+|---|---|---|
+| `structure` | every member, and members of projects with a `structure` grant | developers (own notes), admins |
+| `data` | developers and admins, and members of projects with a `data` grant | developers (own notes), admins |
+| `private` | the author and the project admins | the author (developers), admins |
+
+`private` = visible to you and the project admins; no grant ever includes it. Administrators manage members and
+grants with `minigw gw member` and `minigw gw grant` (see [gateway.md](gateway.md)). These commands are not
+available inside an agent run: the gateway gives a run the notes of its project.
 
 ## Several gateways (profiles)
 
