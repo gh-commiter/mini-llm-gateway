@@ -1,0 +1,90 @@
+# The core adapter: what a gateway must do itself
+
+Everything that turns "a request and who is asking" into "status, headers, body" for projects, notes, usage and the
+core's admin routes is in the Go package `client/coreapi`. `minigw serve` calls it in-process; the Mac helper
+(`minigw-core`) hosts the same package behind a socket, and the Mac app forwards requests to it with a trusted context. A gateway
+(the **adapter**) does only what is listed under "Stays in the adapter"; everything else goes through `coreapi`.
+
+## Entry point
+
+```go
+func (a *API) Handle(ctx context.Context, c Context, r Request) Response
+```
+
+| Type | Fields (JSON) |
+|---|---|
+| `Context` | `kind` (`member`, `admin`, `run`, `internal`), `device`, `approved`, `agentPeer`, `run` (a `RunCap`) |
+| `Request` | `method`, `path`, `query`, `header` (only `Idempotency-Key` is read), `body`, `bodyTooLarge`, `bodyUnreadable` |
+| `Response` | `status`, `header`, `body` (JSON; empty for 204). Admin: `status` 0 = not a core route, the adapter goes on |
+| `RunCap` | `runId`, `userId`, `deviceId`, `projectId`, `epoch` |
+
+What the adapter vouches for in the `Context`:
+
+- **member**: `device` is the device key proven in this tunnel (empty = none); `approved` = that device is in the approved list **now**
+  (not the model routes' loopback or "allow any device" exceptions); `agentPeer` = the caller is a process of one of the gateway's agents.
+  Routes: `GET /minigw/v1/projects[?archived=1]`, `GET /minigw/v1/projects/{id-or-slug}`, `POST …/{id-or-slug}/link-check`,
+  `…/projects/{id}/notes[/{note}]` (GET, POST, PUT, DELETE), `GET /minigw/v1/usage?project=&days=`. Shapes: docs/admin-api.md.
+- **admin**: the owner has been authenticated (loopback, Host, `MGW-Admin` proof, agent peers refused). `path` is the escaped path **below**
+  the admin prefix. Core routes: users, bindings, projects, members, grants, audit, `core/backup`, `usage/events`.
+  `coreapi.IsAdminPath(method, path)` says whether a path is the core's.
+- **run**: the run port's token and peer checks passed; `run` is the capability, `approved` the device's approval now. Routes:
+  `GET /minigw/v1/notes[?class=&after=&limit=]` and `GET /minigw/v1/notes/{id}`; nothing else.
+- **internal**: a call of the gateway itself, `POST /internal/<name>` with a JSON body (below).
+
+Inside `coreapi` (not the adapter's business): the principal (binding, active user), authorization order (visible, allowed, archived,
+revision, rate limit, size), 404 before validation, the fixed `no_project_access` body, `Retry-After`, the error envelope
+`{"error":{"type","message"}}`, body limits (`coreapi.MaxBody` = 512 KiB; the adapter reads at most that and sets `bodyTooLarge`),
+idempotency, rate limits, usage reports and gap visibility, the usage recorder (queue, spool file, replay, retention).
+
+## Internal calls
+
+All answers are 200 with the JSON shown, unless noted. Errors use the member envelope.
+
+| Call | Request | Answer |
+|---|---|---|
+| `epoch` | `{}` | `{"epoch":N}` |
+| `admit` | `{"device","approved","project":"<header value or empty>"}` | `{"ok":true,"user","project","runId","epoch"}` or `{"ok":false,"status":403\|429\|503,"type","message","retryAfter"}`. Empty `project`: `{"ok":true}`. A refused agent request must **never** run without the project; the adapter shows the refusal in its own error shape |
+| `scope` | `{"site":"agent"\|"cli","fields":[…],"project":{"user","project","epoch"}?}` | `{"key"}`: the conversation key. No project: the fields joined by `\|` (the 0.5.26 key). With a project: its own namespace (`\x00project\x00` + JSON array) |
+| `agent-home` | `{"kind","user","project","epoch"}` | `{"dirName","relative":"proj/<u>-<p>-e<e>/<kind>","prefix":"<u>-<p>-e","epoch","maxHomes":20}`: the home of an agent run with a project; homes with `prefix` and a lower epoch are dead |
+| `device-revoked` | `{"device"}` | `{"ok":true}`; raises the epoch (500 if it cannot) |
+| `reconcile` | `{"devices":[…]}` | `{"done":[…]}`: epoch raised for each, in order; the first failure stops the list |
+| `ensure-owner` | `{"name":"<OS account>"}` | `{"ok":true}`: creates the owner user once, when there is no user |
+| `bound-user` | `{"device"}` | `{"user":N}`: attribution only, from an in-memory snapshot (the last binding seen when the core is down) |
+| `event-begin`, `event-finish` | `{"event":{"id","parentId","start","end","userId","projectId","deviceId","provider","model","outcome","tokensIn","tokensOut","tokenSource"}}` | `202 {"queued":true}`; never blocks. `tokensIn/out` -1 = unknown; `outcome` `ok\|error\|cancelled`; `tokenSource` `reported\|estimated\|unknown` |
+
+`coreapi.API.Call(ctx, name, in, out)` makes these calls in-process through the same path.
+
+## Wire form (helper socket)
+
+Length-prefixed JSON frames, in order, one request at a time per connection: a 4-byte big-endian length, then the JSON.
+Request frame `{"v":1,"id":N,"context":Context,"request":Request}`, response frame `{"v":1,"id":N,"response":Response,"error":""}`.
+`v` is `coreapi.ProtocolVersion`; a frame over `coreapi.MaxFrame` (4 MiB) is refused before its payload is read; the answer
+carries the id of its request. Go: `coreapi.WriteRequest/ReadRequest/WriteResponse/ReadResponse`, `API.Serve(ctx, conn)`,
+`NewClient(conn).Do(ctx, context, request)`. A body travels base64-encoded inside the JSON.
+
+## Stays in the adapter (the Mac app's list)
+
+1. **Tunnel and device proof**: the Noise tunnel, the Ed25519 device proof, so that `device` is trustworthy.
+2. **The approved-device list** and its changes; on removal call `device-revoked` before answering the admin call, and keep a
+   durable pending-revocation mark next to the device list when the core cannot be reached; at the next core open call
+   `reconcile` with the pending list **before** project routes are enabled, then clear the marks that are `done`.
+3. **Admin authentication** (loopback, Host, the proof bound to the tunnel, agents refused) and all admin routes that are not the core's
+   (devices, providers, settings, status, quota, 0.5.x counters).
+4. **The gateway token** for member routes, the exclusion of requests that come through a run port, and the detection of agent peers
+   (`agentPeer`).
+5. **Reading the body** with a limit of `coreapi.MaxBody` and a deadline, then building the `Request`; writing the `Response` (headers, status, body).
+6. **Agent runs**: launch and sandbox; the run port (listener, token, process-tree check, GET-only paths) and the run's lifetime; the
+   run's `RunCap` comes from `admit`; a nested run inherits the root's. Notes are reachable only where the sandbox allows the run port.
+7. **Project admission of an agent request**: read the client's project header (set by minigw's own proxy), call `admit`, refuse in
+   the gateway's own error shape, put the result into the run. Conversation keys through `scope`, agent homes through
+   `agent-home` (the registries and the folders themselves are the adapter's).
+8. **Usage events**: decide when a model request is *dispatched* (never for a local refusal), freeze user (`bound-user`),
+   device, project and parent at admission, and send `event-begin` and `event-finish`. Token counting and streams are the adapter's.
+9. **Quota** probes and their settings (they run CLIs and provider HTTP).
+10. **Opening the store** (`core.Open` with the private-folder and backup-file protection of the platform) and closing it; the
+    OS account name for `ensure-owner`.
+
+## What resisted the split
+
+- Tests that pause a request after admission (the revocation barrier) use `Options.AfterAdmission`, a Go hook; the helper has none.
+- The member envelope and the Anthropic-shaped refusal of an agent request differ; `admit` therefore returns the refusal as data.

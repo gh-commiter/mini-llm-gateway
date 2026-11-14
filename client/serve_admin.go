@@ -484,7 +484,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		// With a live core the epoch goes up now and the mark is cleared; otherwise (offline, core unavailable, a failed
 		// write) the mark stays and the next core open does it before any project route is enabled.
 		if s.core != nil {
-			if err := s.core.DeviceRevoked(context.Background(), gone.ID); err != nil {
+			if err := s.api.Call(context.Background(), "device-revoked", coreapi.DeviceRequest{Device: gone.ID}, nil); err != nil {
 				s.log.Printf("core: DeviceRevoked %s: %v (recorded, retried at the next core open)", gone.ID, err)
 				return fail(500, "the device was removed and its revocation is recorded, but the core epoch could not be raised yet: "+err.Error())
 			}
