@@ -70,6 +70,7 @@ func routeResult(_ p: Profile) -> Result<Connection, RouteError> {
     guard let k = c.key.flatMap(Noise.fromBase64url), let np = NoiseProxy(routerURL: c.url, routerKey: k, device: device, suite: .aesGCM) else {  // MGW2: tudi minigw serve
         return .failure(RouteError(message: "no gateway key for profile \(p.name): copy the token again (Mini Gateway → Copy Token) and run \(reconnectCmd(p.name))"))
     }
+    np.project = proxyProject  // 0.6.0: the project of this folder (Project.swift); only the default profile's proxy ever has one
     do { try np.start() } catch { return .failure(RouteError(message: "cannot start the local encrypted proxy: \(error)")) }
     proxies.append(np)
     c.url = np.localURL
@@ -866,6 +867,8 @@ if let c = agentConn(), args.first?.hasPrefix("-") == true, args.contains("-p") 
 switch args.first {
 case "share":
     shareCommand(Array(args.dropFirst()))
+case "project", "note", "usage":
+    projectCommand(args[0], Array(args.dropFirst()))
 case "plugin":
     pluginCommand(Array(args.dropFirst()))
 case "uninstall":
@@ -990,6 +993,9 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw --minigw-profile P …                 use only profile P for this command
         minigw share add|remove [folder] | list    share a system or hidden folder itself (contents are always shared)
         minigw share add --work=native|native-direct|worktree|sync|direct|auto [--ro] [folder]   default mode for that folder (flag/env wins)
+        \(ProjectEnv.projectHelp)
+        \(ProjectEnv.noteHelp)
+        \(ProjectEnv.usageHelp)
         minigw gw status|devices|provider|claude|token …    change the Mini Gateway app on this Mac (minigw gw help)
         minigw plugin install|uninstall|status       the Claude Code plugin minigw@mini-gateway, using this minigw
         minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings, profiles, device key)
@@ -1039,7 +1045,13 @@ if agentConn() == nil {  // --model …@profil: ves zagon s tem prehodom, kot --
 let profiles = loadProfiles()
 if profiles.isEmpty { _ = requireProfile() }
 let saved = profiles[0].conn  // privzeti profil: mapa, glave in modeli brez pripone kot prej
+do {  // 0.6.0: the project of this folder; the proxy sets it on every request and removes any other (not in ANTHROPIC_CUSTOM_HEADERS)
+    let h = try Projects.headerFor(cwd: FileManager.default.currentDirectoryPath, gateway: Projects.gatewayID(url: saved.url, key: saved.key),
+                                   statePath: Projects.statePath(), agent: agentConn() != nil)
+    proxyProject = h.replacingOccurrences(of: "x-minigw-project: ", with: "")
+} catch { fail((error as? ProjectError)?.message ?? "\(error)") }
 let c = route(profiles[0])
+proxyProject = ""  // only the default profile's gateway knows this project id; other profiles' proxies never send it
 let promptGuard = Profiles.promptGuard(args, env: ProcessInfo.processInfo.environment, stdinTerminal: isatty(0) == 1)  // pred #7 (CLAUDECODE)
 let mentionSettings = promptGuard && Profiles.checkClaudeArgs(ProcessInfo.processInfo.environment)  // I17, pred #7
 for k in ProcessInfo.processInfo.environment.keys where Profiles.parentClaudeVar(k) { unsetenv(k) }  // #7

@@ -10,6 +10,9 @@ public final class NoiseProxy: @unchecked Sendable {
     private let suite: Noise.Suite
     private let queue = DispatchQueue(label: "dev.trojar.minigateway.proxy")
     private var listener: NWListener?
+    /// The project id minigw resolved for this run ("" = none), set before start. Every request's X-Minigw-Project header is
+    /// replaced by it (or dropped without one), so a header from the wrapped program never chooses the project (Projects.rewriteHead).
+    public var project = ""
     public private(set) var localPort: UInt16 = 0
     public var localURL: String { "http://127.0.0.1:\(localPort)" }
 
@@ -54,6 +57,7 @@ public final class NoiseProxy: @unchecked Sendable {
     public func stop() { listener?.cancel() }
 
     private func accept(_ local: NWConnection) {
+        let rewriter = Projects.HeadRewriter(project: project)  // read once per connection
         let remote = NWConnection(host: host, port: port, using: .tcp)
         func fail() { local.cancel(); remote.cancel() }
         var hs = Noise.Initiator(routerKey: routerKey, suite: suite)
@@ -73,7 +77,7 @@ public final class NoiseProxy: @unchecked Sendable {
                         if case .failed = s { remote.cancel() }
                     }
                     local.start(queue: self!.queue)
-                    self?.pumpUp(local, remote, session.send)
+                    self?.pumpUp(local, remote, session.send, rewriter)
                     self?.pumpDown(remote, local, session.receive, Data())
                 }
             case .failed, .cancelled:
@@ -94,11 +98,13 @@ public final class NoiseProxy: @unchecked Sendable {
     }
 
     /// Lokalno (navaden HTTP) → okvirji → router.
-    private func pumpUp(_ local: NWConnection, _ remote: NWConnection, _ c: Noise.Cipher) {
+    private func pumpUp(_ local: NWConnection, _ remote: NWConnection, _ c: Noise.Cipher, _ rewriter: Projects.HeadRewriter) {
         local.receive(minimumIncompleteLength: 1, maximumLength: Noise.maxPlain) { data, _, end, error in
-            if let data, !data.isEmpty { remote.send(content: Noise.frames(data, c), completion: .contentProcessed { _ in }) }
+            if let data, !data.isEmpty, case let send = rewriter.feed(data), !send.isEmpty {  // the first request's header block is rewritten
+                remote.send(content: Noise.frames(send, c), completion: .contentProcessed { _ in })
+            }
             if end || error != nil { return }  // odgovor še teče; povezavo zapre router
-            self.pumpUp(local, remote, c)
+            self.pumpUp(local, remote, c, rewriter)
         }
     }
 
