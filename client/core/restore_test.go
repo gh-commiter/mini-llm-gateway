@@ -140,3 +140,46 @@ func TestRestoreRenameFailureKeepsOldDatabase(t *testing.T) {
 		t.Fatalf("marker %q audit %s", marker(t, s), auditLog(t, dir))
 	}
 }
+
+func TestRestoreCompetingCallKeepsTheActiveTempFile(t *testing.T) { // review A2
+	dir, bak := restoreFixture(t)
+	lock, err := lockDir(dir) // the first restore holds the folder lock
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	tmp := filepath.Join(dir, restoreTmp)
+	if err := os.WriteFile(tmp, []byte("the first restore's prepared database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(dir, bak); !errors.Is(err, ErrLocked) {
+		t.Fatalf("competing restore: %v", err)
+	}
+	if b, err := os.ReadFile(tmp); err != nil || !strings.Contains(string(b), "first restore") {
+		t.Fatalf("the active restore's temp file was removed: %v", err)
+	}
+}
+
+func TestRestoreCleanupFailureAfterTheSwapIsNotAFailure(t *testing.T) { // review A2
+	dir, bak := restoreFixture(t)
+	removeFn = func(p string) error {
+		if strings.HasSuffix(p, dbFile+"-wal") {
+			return errors.New("wal is locked")
+		}
+		return os.Remove(p)
+	}
+	defer func() { removeFn = os.Remove }()
+	err := Restore(dir, bak)
+	if !errors.Is(err, ErrRestoreApplied) {
+		t.Fatalf("got %v", err)
+	}
+	if strings.Contains(auditLog(t, dir), "restore.failed") || unresolvedIntent(dir) == "" {
+		t.Fatalf("the intent was resolved as failed: %s", auditLog(t, dir))
+	}
+	removeFn = os.Remove
+	s := openT(t, dir) // the next start finishes it
+	defer s.Close()
+	if marker(t, s) != "backup" || unresolvedIntent(dir) != "" {
+		t.Fatalf("marker %q, audit %s", marker(t, s), auditLog(t, dir))
+	}
+}

@@ -15,6 +15,11 @@ import (
 
 const restoreTmp = ".core-restore.tmp"
 
+// ErrRestoreApplied: the new database is in place, but a later step failed; the previous database is NOT in place.
+var ErrRestoreApplied = errors.New("restore applied, cleanup pending")
+
+var removeFn = os.Remove // tests make removals fail
+
 // Test hooks: a hook that returns an error simulates a crash at that stage (nothing is cleaned up or audited).
 var (
 	restoreHook = func(stage string) error { return nil }
@@ -43,10 +48,17 @@ func Restore(dir, src string) (err error) {
 	detail := map[string]any{"id": id, "source": src}
 	crashed := false
 	tmp := filepath.Join(dir, restoreTmp)
+	owned, swapped := false, false // owned: this call holds the folder lock; swapped: the new file is in place
 	defer func() {
-		if err != nil && !crashed {
-			detail["error"] = err.Error()
-			auditWriter(dir, "restore.failed", detail) // first: after this the unfinished restore counts as resolved
+		if err == nil || crashed {
+			return
+		}
+		detail["error"] = err.Error()
+		if swapped { // applied: the intent stays open, the next Open finishes the cleanup
+			return
+		}
+		auditWriter(dir, "restore.failed", detail) // first: after this the unfinished restore counts as resolved
+		if owned {                                 // the temp file is shared by name: only the lock holder may remove it
 			removeFiles(tmp, tmp+"-wal", tmp+"-shm")
 		}
 	}()
@@ -62,6 +74,7 @@ func Restore(dir, src string) (err error) {
 		return err
 	}
 	defer lock.Close()
+	owned = true
 	if err := recoverRestore(dir); err != nil {
 		return err
 	}
@@ -128,13 +141,14 @@ func Restore(dir, src string) (err error) {
 	if err := os.Rename(tmp, db); err != nil {
 		return err
 	}
+	swapped = true
 	syncDir(dir)
 	if err := stage("swapped"); err != nil {
 		return err
 	}
 	// The old WAL and SHM must never meet the new file.
 	if err := removeFiles(db+"-wal", db+"-shm"); err != nil {
-		return fmt.Errorf("restore applied, cleanup of the old WAL pending (Open retries it): %w", err)
+		return fmt.Errorf("%w: the old WAL could not be removed (the next start retries it): %v", ErrRestoreApplied, err)
 	}
 	pruneSnapshots(dir)
 	if err := stage("cleaned"); err != nil {
@@ -155,7 +169,7 @@ func randID() string {
 // removeFiles removes the files that exist; the first real error is returned.
 func removeFiles(paths ...string) (err error) {
 	for _, p := range paths {
-		if e := os.Remove(p); e != nil && !errors.Is(e, os.ErrNotExist) && err == nil {
+		if e := removeFn(p); e != nil && !errors.Is(e, os.ErrNotExist) && err == nil {
 			err = e
 		}
 	}
