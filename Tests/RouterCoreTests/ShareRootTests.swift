@@ -162,38 +162,6 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     #expect(dav(root, "HEAD", "/flink").status == 200 && dav(root, "HEAD", "/flink").headers["Content-Length"] == "11")
 }
 
-/// Starš se po preverjanju zamenja s povezavo: operacija mora zavrniti (kot Go TestDavRefusesProtectedParentSwappedBeforeMutation).
-@Test func shareParentSwappedBeforeMutationIsRefused() throws {
-    for method in ["PUT", "MKCOL", "DELETE", "LOCK", "MOVE", "COPY"] {
-        let root = try tmp("root"), out = try tmp("out")
-        let fm = FileManager.default
-        try fm.createDirectory(at: root.appendingPathComponent("d"), withIntermediateDirectories: true)
-        try fm.createDirectory(at: root.appendingPathComponent(".claude"), withIntermediateDirectories: true)
-        try put("keep", out.appendingPathComponent("x"))
-        try put("keep", root.appendingPathComponent("d/x"))
-        try put("src", root.appendingPathComponent("src"))
-        for target in [out.path, root.appendingPathComponent(".claude").path] {
-            try fm.createDirectory(at: root.appendingPathComponent("d"), withIntermediateDirectories: true)
-            try put("keep", root.appendingPathComponent("d/x"))
-            WebDAV.beforeMutation = { r in
-                guard r == root.path else { return }
-                try? fm.moveItem(at: root.appendingPathComponent("d"), to: root.appendingPathComponent("old\(UUID().uuidString)"))
-                try? fm.createSymbolicLink(atPath: root.appendingPathComponent("d").path, withDestinationPath: target)
-            }
-            defer { WebDAV.beforeMutation = nil; try? fm.removeItem(at: root.appendingPathComponent("d")) }
-            let r: DAVResponse
-            switch method {
-            case "MOVE", "COPY": r = dav(root, method, "/src", ["destination": "/s/d/moved"])
-            case "DELETE": r = dav(root, method, "/d/x")
-            default: r = dav(root, method, "/d/new", [:], "bad")
-            }
-            #expect(isLink(root.appendingPathComponent("d")), "\(method): the swap did not happen")
-            #expect(r.status >= 400, "\(method) -> \(target): \(r.status)")
-            #expect((try? fm.contentsOfDirectory(atPath: out.path)) == ["x"] && read(out.appendingPathComponent("x")) == "keep", "\(method) outside")
-            #expect((try? fm.contentsOfDirectory(atPath: root.appendingPathComponent(".claude").path)) == [], "\(method) .claude")
-        }
-    }
-}
 
 /// Neposredno prek korena (kot Go TestRootOperationsRefuseSwappedParent): pot izbrana, nato starš zamenjan s povezavo.
 @Test func shareRootOperationsRefuseSwappedParent() throws {
@@ -341,21 +309,6 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     #expect(st.st_mtimespec.tv_sec == -2 && st.st_mtimespec.tv_nsec == 500_000_000)
 }
 
-/// Mapa, preimenovana na zaščiteno ime pred pisanjem: odpiranje po prvotnem imenu ne uspe, nič ne pristane v .claude.
-/// Preverjanje F_GETPATH v `parent()` ta test ne doseže (brez povezave je pot odprte mape vedno enaka zahtevani).
-@Test func shareParentRenamedAwayBeforePutIsRefusedNearProtectedName() throws {
-    let root = try tmp("root"), fm = FileManager.default
-    try fm.createDirectory(at: root.appendingPathComponent("d"), withIntermediateDirectories: true)
-    try fm.createDirectory(at: root.appendingPathComponent(".claude"), withIntermediateDirectories: true)
-    WebDAV.beforeMutation = { r in
-        guard r == root.path else { return }
-        try? fm.moveItem(at: root.appendingPathComponent(".claude"), to: root.appendingPathComponent("aside"))
-        try? fm.moveItem(at: root.appendingPathComponent("d"), to: root.appendingPathComponent(".claude"))
-    }
-    defer { WebDAV.beforeMutation = nil }
-    #expect(dav(root, "PUT", "/d/settings.json", [:], "{}").status >= 400)
-    #expect((try? fm.contentsOfDirectory(atPath: root.appendingPathComponent(".claude").path)) == [])
-}
 
 /// G2: pregled in brisanje ne gresta globlje od `maxDepth` (zaščiteno oziroma neizbrisano).
 @Test func shareTreeDepthIsBounded() throws {
@@ -389,4 +342,56 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     #expect(!rt.removeAll("t"))  // izprazni prvotno mapo, a imena »t« (zdaj druga, polna mapa) ne odstrani
     #expect(read(root.appendingPathComponent("t/keep")) == "keep", "the folder swapped in was emptied")
     #expect(gone(root.appendingPathComponent("t-old/f")))
+}
+
+/// Testa si delita globalni `WebDAV.beforeMutation`: izvajata se zaporedno (sicer eden pobriše kavelj drugemu).
+@Suite(.serialized) struct ShareHookTests {
+    /// Starš se po preverjanju zamenja s povezavo: operacija mora zavrniti (kot Go TestDavRefusesProtectedParentSwappedBeforeMutation).
+    @Test func shareParentSwappedBeforeMutationIsRefused() throws {
+        for method in ["PUT", "MKCOL", "DELETE", "LOCK", "MOVE", "COPY"] {
+            let root = try tmp("root"), out = try tmp("out")
+            let fm = FileManager.default
+            try fm.createDirectory(at: root.appendingPathComponent("d"), withIntermediateDirectories: true)
+            try fm.createDirectory(at: root.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+            try put("keep", out.appendingPathComponent("x"))
+            try put("keep", root.appendingPathComponent("d/x"))
+            try put("src", root.appendingPathComponent("src"))
+            for target in [out.path, root.appendingPathComponent(".claude").path] {
+                try fm.createDirectory(at: root.appendingPathComponent("d"), withIntermediateDirectories: true)
+                try put("keep", root.appendingPathComponent("d/x"))
+                WebDAV.beforeMutation = { r in
+                    guard r == root.path else { return }
+                    try? fm.moveItem(at: root.appendingPathComponent("d"), to: root.appendingPathComponent("old\(UUID().uuidString)"))
+                    try? fm.createSymbolicLink(atPath: root.appendingPathComponent("d").path, withDestinationPath: target)
+                }
+                defer { WebDAV.beforeMutation = nil; try? fm.removeItem(at: root.appendingPathComponent("d")) }
+                let r: DAVResponse
+                switch method {
+                case "MOVE", "COPY": r = dav(root, method, "/src", ["destination": "/s/d/moved"])
+                case "DELETE": r = dav(root, method, "/d/x")
+                default: r = dav(root, method, "/d/new", [:], "bad")
+                }
+                #expect(isLink(root.appendingPathComponent("d")), "\(method): the swap did not happen")
+                #expect(r.status >= 400, "\(method) -> \(target): \(r.status)")
+                #expect((try? fm.contentsOfDirectory(atPath: out.path)) == ["x"] && read(out.appendingPathComponent("x")) == "keep", "\(method) outside")
+                #expect((try? fm.contentsOfDirectory(atPath: root.appendingPathComponent(".claude").path)) == [], "\(method) .claude")
+            }
+        }
+    }
+
+    /// Mapa, preimenovana na zaščiteno ime pred pisanjem: odpiranje po prvotnem imenu ne uspe, nič ne pristane v .claude.
+    /// Preverjanje F_GETPATH v `parent()` ta test ne doseže (brez povezave je pot odprte mape vedno enaka zahtevani).
+    @Test func shareParentRenamedAwayBeforePutIsRefusedNearProtectedName() throws {
+        let root = try tmp("root"), fm = FileManager.default
+        try fm.createDirectory(at: root.appendingPathComponent("d"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: root.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+        WebDAV.beforeMutation = { r in
+            guard r == root.path else { return }
+            try? fm.moveItem(at: root.appendingPathComponent(".claude"), to: root.appendingPathComponent("aside"))
+            try? fm.moveItem(at: root.appendingPathComponent("d"), to: root.appendingPathComponent(".claude"))
+        }
+        defer { WebDAV.beforeMutation = nil }
+        #expect(dav(root, "PUT", "/d/settings.json", [:], "{}").status >= 400)
+        #expect((try? fm.contentsOfDirectory(atPath: root.appendingPathComponent(".claude").path)) == [])
+    }
 }
