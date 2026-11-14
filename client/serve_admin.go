@@ -167,9 +167,12 @@ func adminSecret(cfgDir string) (string, error) {
 	return "", errors.New(p + " is invalid: delete it, minigw serve creates a new one")
 }
 
+// adminPeerCheckFn: tests replace it (the real check needs a real agent process, peer_test.go).
+var adminPeerCheckFn = adminPeerCheck
+
 // refuseAgentPeer: 403, če zahtevo pošlje proces agenta tega routerja (ali tega ni mogoče ugotoviti).
 func (s *server) refuseAgentPeer(w http.ResponseWriter, r *req) int {
-	if err := adminPeerCheck(r.conn); err != nil {
+	if err := adminPeerCheckFn(r.conn); err != nil {
 		s.log.Printf("%s admin API refused: %v", r.rid, err)
 		return writeError(w, r.rid, 403, "Admin API refused: "+err.Error())
 	}
@@ -325,6 +328,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		seg = append(seg, v)
 	}
+	if st, obj, ok := s.coreAdmin(method, seg, u.Query(), body); ok { // 0.6.0 core (serve_core_admin.go)
+		return st, obj
+	}
 	if seg[0] == "gateways" { // starejše ime (do 0.5.14), ostane kot alias
 		seg[0] = "providers"
 	}
@@ -461,6 +467,12 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		})
 		if err != nil {
 			return fail(404, "no allowed or waiting device with the ID "+arg+" (minigw gw devices lists the IDs)")
+		}
+		if s.core != nil { // the epoch grows before this call answers; the binding stays (a re-approved device is still bound)
+			if err := s.core.DeviceRevoked(context.Background(), gone.ID); err != nil {
+				s.log.Printf("core: DeviceRevoked %s: %v", gone.ID, err)
+				return fail(500, "the device was removed, but the core epoch could not be raised: "+err.Error())
+			}
 		}
 		return 200, map[string]any{"device": apiDevice{ID: gone.ID, Name: gone.Name}}
 	case "PATCH devices/{}": // preimenovanje dovoljene naprave (ime je le oznaka)

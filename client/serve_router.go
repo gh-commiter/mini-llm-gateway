@@ -59,6 +59,8 @@ runs; otherwise they go to serve.json.
   minigw gw api GET|POST|PATCH|DELETE <path>            one admin API request (docs/admin-api.md): the JSON body
                                                         on stdin, the JSON answer on stdout (used by minigw-tui)
 
+` + coreHelp + `
+
 All take --config FILE (default: the minigw serve config).`
 
 type adminClient struct {
@@ -267,6 +269,7 @@ func routerCommand(args []string, in io.Reader) {
 	localTools := fs.String("allow-local-tools", "", "claude: true or false")
 	askOthers := fs.String("ask-others", "", "claude: true or false")
 	work := fs.String("work", "", "claude, codex, grok, copilot: direct, sync or worktree")
+	yes := fs.Bool("yes", false, "core restore: do not ask")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, routerHelp) }
 	var pos []string // ukazi in zastavice v poljubnem vrstnem redu
 	for {
@@ -298,6 +301,10 @@ func routerCommand(args []string, in io.Reader) {
 			extra = []string{"--config", *cfgPath}
 		}
 		settingsTUI(extra)
+	}
+	if len(pos) == 3 && pos[0] == "core" && pos[1] == "restore" { // the gateway must be stopped: no admin client
+		coreRestore(*cfgPath, pos[2], *yes, in)
+		return
 	}
 	a := openAdmin(*cfgPath)
 	need := func(min, max int) {
@@ -723,6 +730,8 @@ func routerCommand(args []string, in io.Reader) {
 		var out json.RawMessage
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
+	case "user", "bind", "project", "member", "grant", "core":
+		coreCommand(a, pos)
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

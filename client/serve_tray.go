@@ -443,6 +443,7 @@ func startTrayRouter(cfgPath string) (s *server, ln net.Listener, logPath string
 	if s, err = newServer(c, cfgPath); err != nil {
 		return nil, nil, logPath, false, err
 	}
+	s.openCore()
 	if ln, err = listenRouter(c); err != nil {
 		return nil, nil, logPath, false, fmt.Errorf("port %d: %v (is minigw serve already running?)", c.Port, err)
 	}

@@ -19,6 +19,7 @@ import (
 	"io"
 	"log"
 	"maps"
+	"minigw/core"
 	"net"
 	"net/http"
 	"net/url"
@@ -389,6 +390,7 @@ func serveCommand(args []string) {
 	if err != nil {
 		fail(err.Error())
 	}
+	s.openCore()
 	hardenRouter() // Linux: ni dumpable (agenti ne berejo pomnilnika routerja)
 	// #81 L1, N2: žeton Copilot do 0.5.24 se ne uporablja več; izbriše se le, če je, v ozadju (zaklenjena shramba
 	// ključev ne ustavi zagona). ponytail: visi secret-tool ostane do konca procesa; rok, če bo to kdaj težava.
@@ -538,6 +540,9 @@ type server struct {
 	gateways      gwCatalog
 	limits        sync.Map    // limitKey → limitHit: omejitev agenta za ponovitev brez pretoka (noteLimit)
 	activity      activityLog // tekoče in zadnje zahteve modelom (GET /activity)
+	core          *core.Store // 0.6.0 core (serve_core.go); nil = not opened (offline) or unusable (coreErr)
+	coreErr       error
+	coreHook      func(r *req, point string) // tests: pause a member operation after admission
 }
 
 func newServer(c serveConfig, cfgPath string) (*server, error) {
@@ -1062,6 +1067,7 @@ func (s *server) serve(ln net.Listener) error {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGTERM, os.Interrupt)
 		<-sig
+		s.closeCore()
 		s.state.save()
 		s.dropTempRoot()
 		os.Exit(0)
@@ -1376,6 +1382,9 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	if r.URL.Path == "/minigw/settings" || r.URL.Path == "/minigw/settings/login" || r.URL.Path == "/minigw/settings/logout" ||
 		r.URL.Path == "/minigw/settings/pick" {
 		return s.settingsHTTP(w, r), ""
+	}
+	if r.URL.Path == projectsPrefix || strings.HasPrefix(r.URL.Path, projectsPrefix+"/") {
+		return s.projectHTTP(w, r), "" // its own token, device and principal rules (serve_core.go)
 	}
 	if r.h(agentChainHeader) != "" && runOf(r) == nil { // veriga agentov je le v prehodu; od zunaj je ponarejena
 		return writeError(w, r.rid, 400, "The "+agentChainHeader+" header is not accepted"), ""
