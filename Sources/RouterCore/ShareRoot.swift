@@ -13,8 +13,12 @@ final class ShareRoot: @unchecked Sendable {
     struct Refused: Error { let message: String }
 
     let fd: Int32
-    /// Prava pot korena (F_GETPATH): sklic za pot nadrejene mape, ki jo operacija pripne.
-    let path: String
+    private let openedPath: String
+    /// Trenutna prava pot korena (F_GETPATH ob vsakem klicu, kot Go): sklic za pot nadrejene mape, ki jo operacija pripne;
+    /// preimenovana mapa deljenja tako še dela.
+    var path: String { Self.path(of: fd) ?? openedPath }
+    /// Datotečni sistem razlikuje velike in male črke (primerjava absolutnih ciljev povezav kot Go na Darwinu).
+    private let caseSensitive: Bool
     /// Imena korena (kot odprto, prava pot): tako je lahko napisana absolutna povezava, ki kaže v mapo.
     private let bases: [[String]]
 
@@ -23,8 +27,9 @@ final class ShareRoot: @unchecked Sendable {
         let fd = Darwin.open(real.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { return nil }
         self.fd = fd
-        path = Self.path(of: fd) ?? real.path
-        bases = Set([url.standardizedFileURL.path, real.path, path]).map(Self.lexical)
+        openedPath = Self.path(of: fd) ?? real.path
+        caseSensitive = (try? real.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?.volumeSupportsCaseSensitiveNames ?? false
+        bases = Set([url.standardizedFileURL.path, real.path, openedPath]).map(Self.lexical)
     }
     deinit { close(fd) }
 
@@ -37,6 +42,11 @@ final class ShareRoot: @unchecked Sendable {
 
     /// Komponente brez praznih in ».«.
     static func comps(_ rel: String) -> [String] { rel.split(separator: "/").map(String.init).filter { $0 != "." } }
+    /// Kot Go filepath.IsLocal: relativna pot brez »..« (in absolutne); nil = zavrnjena.
+    static func local(_ rel: String) -> [String]? {
+        let c = rel.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        return rel.hasPrefix("/") || c.contains("..") ? nil : c.filter { !$0.isEmpty && $0 != "." }
+    }
     static func join(_ c: [String]) -> String { c.isEmpty ? "." : c.joined(separator: "/") }
     /// Leksikalno čiščenje (»..« odstrani prejšnjo komponento).
     static func lexical(_ p: String) -> [String] {
@@ -52,7 +62,7 @@ final class ShareRoot: @unchecked Sendable {
     /// Razreševanje le izbere pot; operacija še vedno gre prek deskriptorja, zato povezava, ki se spremeni po njem, ne vodi ven.
     /// Zaščiteno pot je treba preveriti na vrnjeni poti, ne na vhodu.
     func resolve(_ rel: String, followLast: Bool) throws -> String {
-        var comps = Self.comps(rel)
+        guard var comps = Self.local(rel) else { throw Refused(message: "invalid path: \(rel)") }
         var rewrites = 0
         while !comps.isEmpty {
             if rewrites > Self.maxLinkRewrites { throw Refused(message: "too many links: \(Self.join(comps))") }
@@ -88,8 +98,9 @@ final class ShareRoot: @unchecked Sendable {
 
     /// Absolutni cilj (leksikalno) relativno na ime korena, v katerem leži; nil, če je zunaj. APFS ne loči velikosti črk.
     private func inside(_ target: String) -> [String]? {
-        let t = Self.lexical(target), tl = t.map { $0.lowercased() }
-        for b in bases where t.count >= b.count && tl[..<b.count].elementsEqual(b.map { $0.lowercased() }) {
+        let fold: (String) -> String = { self.caseSensitive ? $0 : $0.lowercased() }
+        let t = Self.lexical(target), tl = t.map(fold)
+        for b in bases where t.count >= b.count && tl[..<b.count].elementsEqual(b.map(fold)) {
             return Array(t[b.count...])
         }
         return nil
@@ -112,6 +123,7 @@ final class ShareRoot: @unchecked Sendable {
     // MARK: branje
 
     func lstat(_ rel: String, _ err: inout Int32) -> stat? {
+        guard Self.local(rel) != nil else { err = EINVAL; return nil }
         var st = stat()
         if fstatat(fd, rel, &st, AT_SYMLINK_NOFOLLOW_ANY) == 0 { return st }
         err = errno
@@ -122,6 +134,7 @@ final class ShareRoot: @unchecked Sendable {
     func isDir(_ rel: String) -> Bool { (lstat(rel)?.st_mode ?? 0) & S_IFMT == S_IFDIR }
 
     func readlink(_ rel: String) -> String? {
+        guard Self.local(rel) != nil else { return nil }
         var buf = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
         let n = readlinkat(fd, rel, &buf, Int(PATH_MAX))
         return n >= 0 ? String(decoding: buf[..<n].map { UInt8(bitPattern: $0) }, as: UTF8.self) : nil
@@ -129,6 +142,7 @@ final class ShareRoot: @unchecked Sendable {
 
     /// Navadna datoteka za branje (brez čakanja na FIFO); povezava kjerkoli v poti = nil.
     func openRead(_ rel: String) -> Int32? {
+        guard Self.local(rel) != nil else { return nil }
         let f = openat(fd, rel, O_RDONLY | O_NONBLOCK | O_NOFOLLOW_ANY | O_CLOEXEC)
         guard f >= 0 else { return nil }
         var st = stat()
@@ -137,21 +151,23 @@ final class ShareRoot: @unchecked Sendable {
     }
 
     func list(_ rel: String) -> [String]? {
+        guard Self.local(rel) != nil else { return nil }
         let d = openat(fd, rel, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
         guard d >= 0 else { return nil }
         return Self.names(d)
     }
 
-    /// Imena v mapi (zapre `d`).
+    /// Imena v mapi (zapre `d`); nil = napaka pri odpiranju ali branju.
     private static func names(_ d: Int32) -> [String]? {
         guard let dir = fdopendir(d) else { close(d); return nil }
         defer { closedir(dir) }
         var out: [String] = []
-        while let e = readdir(dir) {
+        while true {
+            errno = 0
+            guard let e = readdir(dir) else { return errno == 0 ? out : nil }  // napaka ni konec mape
             let n = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix(Int(e.pointee.d_namlen)), as: UTF8.self) }
             if n != "." && n != ".." { out.append(n) }
         }
-        return out
     }
 
     /// `count` bajtov od odmika `start`; nil = ni navadna datoteka ali napaka.
@@ -173,12 +189,12 @@ final class ShareRoot: @unchecked Sendable {
     /// Nadrejena mapa `rel`, odprta brez povezav, in ime. Preveri še pot odprte mape glede na koren: zaščitena pot
     /// (.git, .claude/settings*.json, …) ali mapa zunaj korena = nil (kot Go mutationParent). Klicatelj zapre deskriptor.
     func parent(_ rel: String) -> (fd: Int32, name: String)? {
-        let c = Self.comps(rel)
-        guard let name = c.last, !c.contains(".."), !Sync.isProtected(c.joined(separator: "/")) else { return nil }
+        guard let c = Self.local(rel), let name = c.last, !Sync.isProtected(c.joined(separator: "/")) else { return nil }
         let p = openat(fd, Self.join(Array(c.dropLast())), O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
         guard p >= 0 else { return nil }
-        guard let pp = Self.path(of: p), pp == path || pp.hasPrefix(path + "/"),
-              !Sync.isProtected(pp == path ? name : String(pp.dropFirst(path.count + 1)) + "/" + name)
+        let root = path  // ob vsaki spremembi znova iz deskriptorja
+        guard let pp = Self.path(of: p), pp == root || pp.hasPrefix(root + "/"),
+              !Sync.isProtected(pp == root ? name : String(pp.dropFirst(root.count + 1)) + "/" + name)
         else { close(p); return nil }
         return (p, name)
     }
@@ -192,7 +208,8 @@ final class ShareRoot: @unchecked Sendable {
 
     func mkdirAll(_ rel: String) -> Bool {
         var cur: [String] = []
-        for c in Self.comps(rel) {
+        guard let all = Self.local(rel) else { return false }
+        for c in all {
             cur.append(c)
             let e = mkdir(cur.joined(separator: "/"))
             if e != 0 && !(e == EEXIST && isDir(cur.joined(separator: "/"))) { return false }
@@ -215,8 +232,9 @@ final class ShareRoot: @unchecked Sendable {
 
     /// Drevo (povezav ne sledi, odstrani jih same); zaščiteno drevo = false.
     func removeAll(_ rel: String) -> Bool {
-        guard let (p, name) = parent(rel), !Self.treeProtected(p, name, [name]) else { return false }
+        guard let (p, name) = parent(rel) else { return false }
         defer { close(p) }
+        guard !Self.treeProtected(p, name, [name]) else { return false }
         return Self.removeTree(p, name)
     }
 
@@ -224,12 +242,11 @@ final class ShareRoot: @unchecked Sendable {
         var st = stat()
         guard fstatat(p, name, &st, AT_SYMLINK_NOFOLLOW) == 0 else { return errno == ENOENT }
         if st.st_mode & S_IFMT == S_IFDIR {
-            let d = openat(p, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            guard d >= 0, let kids = names(d) else { return false }  // names zapre d
-            let sub = openat(p, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            guard sub >= 0 else { return false }
-            defer { close(sub) }
-            for k in kids where !removeTree(sub, k) { return false }
+            let d = openat(p, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)  // ena odprtina: seznam in brisanje
+            guard d >= 0 else { return false }
+            defer { close(d) }
+            guard let kids = names(dup(d)) else { return false }
+            for k in kids where !removeTree(d, k) { return false }
             return unlinkat(p, name, AT_REMOVEDIR) == 0
         }
         return unlinkat(p, name, 0) == 0
@@ -239,7 +256,7 @@ final class ShareRoot: @unchecked Sendable {
     /// nečitljivo = zaščiteno (kot Go rootTreeProtected).
     private static func treeProtected(_ p: Int32, _ name: String, _ base: [String]) -> Bool {
         var st = stat()
-        guard fstatat(p, name, &st, AT_SYMLINK_NOFOLLOW) == 0 else { return false }
+        guard fstatat(p, name, &st, AT_SYMLINK_NOFOLLOW) == 0 else { return errno != ENOENT }  // ni je = nič zaščitenega; druga napaka = zaščiteno
         let b = base.joined(separator: "/")
         if st.st_mode & S_IFMT != S_IFDIR { return Sync.isProtected(b) }
         if Sync.isProtected(b) { return true }
@@ -253,7 +270,7 @@ final class ShareRoot: @unchecked Sendable {
 
     /// Kot Go rootTreeProtected(rooted, rel, base): `rel` v mapi, `base` = ime(na), pod katerim bi drevo ležalo.
     func treeProtected(_ rel: String, base: [String]) -> Bool {
-        let c = Self.comps(rel)
+        guard let c = Self.local(rel) else { return true }
         let p = openat(fd, Self.join(Array(c.dropLast())), O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
         guard p >= 0 else { return true }
         defer { close(p) }
@@ -299,7 +316,9 @@ final class ShareRoot: @unchecked Sendable {
         }
         if err == 0, let mode, fchmod(f, mode) != 0 { err = errno }
         if err == 0, let mtime {
-            let ts = timespec(tv_sec: Int(mtime / 1000), tv_nsec: Int(mtime % 1000) * 1_000_000)
+            var sec = mtime / 1000, rem = mtime % 1000
+            if rem < 0 { rem += 1000; sec -= 1 }  // tv_nsec mora biti v 0..<1e9
+            let ts = timespec(tv_sec: Int(sec), tv_nsec: Int(rem) * 1_000_000)
             if futimens(f, [ts, ts]) != 0 { err = errno }
         }
         if close(f) != 0, err == 0 { err = errno }
@@ -321,31 +340,48 @@ final class ShareRoot: @unchecked Sendable {
 
     /// COPY: navadne datoteke in mape; povezave (tudi ugnezdene) in drugo izpusti (kot Go rootCopyTree).
     func copyTree(_ src: String, _ dst: String) -> Bool {
-        guard let st = lstat(src) else { return false }
+        guard Self.local(src) != nil, Self.local(dst) != nil, let st = lstat(src) else { return false }
         switch st.st_mode & S_IFMT {
         case S_IFREG:
             guard let i = openRead(src) else { return false }
             defer { close(i) }
             guard let o = create(dst, mode: st.st_mode & 0o777) else { return false }
-            defer { close(o) }
-            var buf = [UInt8](repeating: 0, count: 1 << 16)
-            while true {
+            var buf = [UInt8](repeating: 0, count: 1 << 16), ok = true
+            copy: while true {
                 let r = Darwin.read(i, &buf, buf.count)
-                if r < 0 { return false }
-                if r == 0 { return true }
+                if r < 0 { ok = false; break }
+                if r == 0 { break }
                 var off = 0
                 while off < r {
                     let w = buf.withUnsafeBytes { Darwin.write(o, $0.baseAddress! + off, r - off) }
-                    if w < 0 { return false }
+                    if w < 0 { ok = false; break copy }
                     off += w
                 }
             }
+            if close(o) != 0 { ok = false }
+            if !ok { remove(dst) }  // nepopolne kopije ne pustimo
+            return ok
         case S_IFDIR:
             guard mkdir(dst, st.st_mode & 0o777) == 0, let kids = list(src) else { return false }
             for k in kids where !copyTree(src + "/" + k, dst + "/" + k) { return false }
             return true
         default:
             return true
+        }
+    }
+
+    /// Vsebina navadne datoteke prek enega deskriptorja (odpre, fstat, bere do konca) do `max` bajtov; večja, bralna napaka
+    /// ali ni navadna datoteka = nil.
+    func readAll(_ rel: String, max: Int) -> Data? {
+        guard let f = openRead(rel) else { return nil }
+        defer { close(f) }
+        var out = Data(), buf = [UInt8](repeating: 0, count: 1 << 16)
+        while true {
+            let r = Darwin.read(f, &buf, buf.count)
+            if r < 0 { return nil }
+            if r == 0 { return out }
+            out.append(contentsOf: buf[..<r])
+            if out.count > max { return nil }
         }
     }
 }

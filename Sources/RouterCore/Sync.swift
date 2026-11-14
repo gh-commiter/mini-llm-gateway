@@ -233,18 +233,22 @@ public enum Sync {
         let exec = st.st_mode & 0o100 != 0
         if var p = previous, p.size == size, p.mtime == mtime { p.path = path; p.exec = exec; return p }
         guard let fd = rt.openRead(rel) else { return nil }
-        let f = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { close(fd) }
         var now = stat()
         guard fstat(fd, &now) == 0, now.st_dev == st.st_dev, now.st_ino == st.st_ino else { return nil }
-        var h = SHA256()
-        while let d = try? f.read(upToCount: 1 << 20), !d.isEmpty { h.update(data: d) }
+        var h = SHA256(), buf = [UInt8](repeating: 0, count: 1 << 20)
+        while true {
+            let r = Darwin.read(fd, &buf, buf.count)
+            if r < 0 { return nil }  // bralna napaka: ne zgoščujemo dela vsebine
+            if r == 0 { break }
+            buf.withUnsafeBytes { h.update(bufferPointer: UnsafeRawBufferPointer(rebasing: $0.prefix(r))) }
+        }
         return Entry(path: path, size: size, mtime: mtime, sha256: hex(h.finalize()), exec: exec)
     }
 
     /// Odjemalec: vsebina navadne datoteke `rel` v mapi `root` do maxFile prek odprtega korena (nikoli prek povezave); nil = ni.
     public static func readShared(_ root: URL, _ rel: String) -> Data? {
-        guard let rt = ShareRoot(root), let st = rt.lstat(rel), st.st_mode & S_IFMT == S_IFREG, st.st_size <= maxFile else { return nil }
-        return rt.readRange(rel, start: 0, count: Int(st.st_size))
+        ShareRoot(root)?.readAll(rel, max: Int(maxFile))
     }
 
     /// Navadna datoteka, odprta brez čakanja na FIFO; `flags`: O_NOFOLLOW (zadnji del), O_NOFOLLOW_ANY (nikjer v poti,
