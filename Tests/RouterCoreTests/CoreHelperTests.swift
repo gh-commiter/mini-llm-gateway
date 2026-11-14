@@ -8,7 +8,9 @@ import Testing
 private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 private let clientDir = repo.appendingPathComponent("client")
 
-private func run(_ args: [String], in dir: URL, env: [String: String] = [:]) throws -> String {
+/// Runs a tool WITHOUT blocking a thread of the cooperative pool (a blocking `go build` of 10+ s in a test body starves every
+/// other async test of the run, which then times out under load): the process ends through its termination handler.
+private func run(_ args: [String], in dir: URL, env: [String: String] = [:]) async throws -> String {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     p.arguments = args
@@ -17,13 +19,18 @@ private func run(_ args: [String], in dir: URL, env: [String: String] = [:]) thr
     e["PATH"] = (e["PATH"] ?? "/usr/bin:/bin") + ":/opt/homebrew/bin:/usr/local/go/bin"
     e.merge(env) { $1 }
     p.environment = e
-    let out = Pipe()
+    let log = FileManager.default.temporaryDirectory.appendingPathComponent("mgcore-run-\(UUID().uuidString).log")
+    FileManager.default.createFile(atPath: log.path, contents: nil)
+    let out = try FileHandle(forWritingTo: log)
     p.standardOutput = out; p.standardError = out
-    try p.run()
-    let data = out.fileHandleForReading.readDataToEndOfFile()
-    p.waitUntilExit()
-    let text = String(decoding: data, as: UTF8.self)
-    guard p.terminationStatus == 0 else { throw NSError(domain: "run", code: Int(p.terminationStatus), userInfo: [NSLocalizedDescriptionKey: args.joined(separator: " ") + ": " + text]) }
+    let status: Int32 = try await withCheckedThrowingContinuation { cont in
+        p.terminationHandler = { cont.resume(returning: $0.terminationStatus) }
+        do { try p.run() } catch { cont.resume(throwing: error) }
+    }
+    try? out.close()
+    let text = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+    try? FileManager.default.removeItem(at: log)
+    guard status == 0 else { throw NSError(domain: "run", code: Int(status), userInfo: [NSLocalizedDescriptionKey: args.joined(separator: " ") + ": " + text]) }
     return text
 }
 
@@ -33,12 +40,21 @@ private func tempDir(_ name: String) -> URL {
     return u
 }
 
-/// The helper built once per test run into a temp folder (never into the worktree).
-private let helperBinary: URL = {
-    let out = tempDir("bin").appendingPathComponent("minigw-core")
-    do { _ = try run(["go", "build", "-o", out.path, "./cmd/minigw-core"], in: clientDir, env: ["CGO_ENABLED": "0"]) } catch { fatalError("\(error)") }
-    return out
-}()
+/// The helper, built once per test run into a temp folder (never into the worktree); concurrent tests await the same build.
+private actor HelperBuild {
+    static let shared = HelperBuild()
+    private var task: Task<URL, Error>?
+    func binary() async throws -> URL {
+        if let task { return try await task.value }
+        let t = Task { () -> URL in
+            let out = tempDir("bin").appendingPathComponent("minigw-core")
+            _ = try await run(["go", "build", "-o", out.path, "./cmd/minigw-core"], in: clientDir, env: ["CGO_ENABLED": "0"])
+            return out
+        }
+        task = t
+        return try await t.value
+    }
+}
 
 private actor MemoryMarks: CoreRevocationMarks {
     var items: [String] = []
@@ -47,10 +63,13 @@ private actor MemoryMarks: CoreRevocationMarks {
     func clear(_ devices: [String]) { items.removeAll { devices.contains($0) } }
 }
 
-private func helper(_ binary: URL? = helperBinary, store: URL = tempDir("store").appendingPathComponent("core"), marks: MemoryMarks = MemoryMarks(),
-                    versions: ClosedRange<Int> = 1...1, backoff: [Double] = [0.05, 0.1, 0.2]) throws -> CoreHelper {
+/// binary nil = the built helper.
+private func helper(_ binary: URL? = nil, store: URL = tempDir("store").appendingPathComponent("core"), marks: MemoryMarks = MemoryMarks(),
+                    versions: ClosedRange<Int> = 1...1, backoff: [Double] = [0.05, 0.1, 0.2]) async throws -> CoreHelper {
     try CoreHelper.prepareStoreFolder(store)
-    return CoreHelper(binary: binary, store: store, ownerName: "tester", marks: marks, versions: versions, backoff: backoff, requestTimeout: 10)
+    let bin: URL
+    if let binary { bin = binary } else { bin = try await HelperBuild.shared.binary() }
+    return CoreHelper(binary: bin, store: store, ownerName: "tester", marks: marks, versions: versions, backoff: backoff, requestTimeout: 10)
 }
 
 private func fixture(_ name: String) throws -> Data { try Data(contentsOf: clientDir.appendingPathComponent("coreapi/testdata/" + name)) }
@@ -78,7 +97,7 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
     }
 
     @Test func memberRequestRoundTripThroughTheRealHelper() async throws {
-        let h = try helper(); h.start(); defer { h.stop() }
+        let h = try await helper(); h.start(); defer { h.stop() }
         #expect(await h.waitReady())
         // ensure-owner ran before project routes: the owner is the OS account name we gave
         let users = json(await adm(h, "GET", "/users"))["users"] as? [[String: Any]]
@@ -103,7 +122,7 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
 
     @Test func routerForwardsMemberRoutesWithTheTunnelDeviceAndTheOrderOfGo() async throws {
         let saved = Router.agentPeer; Router.agentPeer = { _, _ in false }; defer { Router.agentPeer = saved }
-        let h = try helper(); h.start(); defer { h.stop() }
+        let h = try await helper(); h.start(); defer { h.stop() }
         #expect(await h.waitReady())
         _ = await adm(h, "PUT", "/bindings/dev-A", #"{"user":1}"#)
         _ = await adm(h, "POST", "/projects", #"{"slug":"fakture","name":"Fakture"}"#)
@@ -149,7 +168,7 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
     }
 
     @Test func adminRoutesOfTheCoreAreForwardedAfterAdminAuthentication() async throws {
-        let h = try helper(); h.start(); defer { h.stop() }
+        let h = try await helper(); h.start(); defer { h.stop() }
         #expect(await h.waitReady())
         let app = FakeApp()
         func router() -> Router {
@@ -168,7 +187,7 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
     }
 
     @Test func helperMissingIsA503AndNothingCrashes() async throws {
-        let h = try helper(URL(fileURLWithPath: "/nonexistent/minigw-core")); h.start(); defer { h.stop() }
+        let h = try await helper(URL(fileURLWithPath: "/nonexistent/minigw-core")); h.start(); defer { h.stop() }
         try await Task.sleep(nanoseconds: 400_000_000)
         #expect(h.isReady == false && h.pid == nil && h.restarts >= 2)  // keeps trying with a backoff
         let r = await h.call(context: .admin, request: CoreRequest(method: "GET", path: "/users"))
@@ -183,7 +202,7 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
     }
 
     @Test func helperKilledMidRequestGives503ThenRecovers() async throws {
-        let h = try helper(); h.start(); defer { h.stop() }
+        let h = try await helper(); h.start(); defer { h.stop() }
         #expect(await h.waitReady())
         let first = try #require(h.pid)
         kill(first, SIGSTOP)  // frozen: the request below waits for an answer that does not come
@@ -199,7 +218,7 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
     }
 
     @Test func versionMismatchRefusesForGoodWithoutARestartLoop() async throws {
-        let h = try helper(versions: 2...3); h.start(); defer { h.stop() }
+        let h = try await helper(versions: 2...3); h.start(); defer { h.stop() }
         try await Task.sleep(nanoseconds: 1_200_000_000)
         guard case .versionMismatch(let why)? = h.fatalError else { Issue.record("fatal: \(String(describing: h.fatalError))"); return }
         #expect(why.contains("supports protocol 1..1") && h.restarts == 0 && h.isReady == false)  // one start, no loop
@@ -209,17 +228,17 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
 
     @Test func deviceRemovedWhileTheHelperIsDownIsReconciledAtTheNextStart() async throws {
         let store = tempDir("store").appendingPathComponent("core"), marks = MemoryMarks()
-        let a = try helper(store: store, marks: marks); a.start()
+        let a = try await helper(store: store, marks: marks); a.start()
         #expect(await a.waitReady())
         let before = try #require(await a.epoch())
         a.stop()
         // the helper is down: the removal is durable (the mark) and says so
-        let down = try helper(URL(fileURLWithPath: "/nonexistent/minigw-core"), store: store, marks: marks); down.start()
+        let down = try await helper(URL(fileURLWithPath: "/nonexistent/minigw-core"), store: store, marks: marks); down.start()
         let deferred = await down.revoke("dev-gone"), pending = await marks.list()
         #expect(deferred == .deferred && pending == ["dev-gone"])
         down.stop()
         // the next start sends reconcile before project routes are served
-        let c = try helper(store: store, marks: marks); c.start(); defer { c.stop() }
+        let c = try await helper(store: store, marks: marks); c.start(); defer { c.stop() }
         #expect(await c.waitReady())
         let left = await marks.list(), epoch1 = await c.epoch()
         #expect(left.isEmpty && epoch1 == before + 1)
@@ -231,7 +250,7 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
     @Test func adminDeleteDeviceRevokesBeforeItAnswersAndKeepsTheMarkWhenTheHelperIsDown() async throws {
         let saved = Router.agentPeer; Router.agentPeer = { _, _ in false }; defer { Router.agentPeer = saved }
         let marks = MemoryMarks()
-        let h = try helper(marks: marks); h.start(); defer { h.stop() }
+        let h = try await helper(marks: marks); h.start(); defer { h.stop() }
         #expect(await h.waitReady())
         let id = String(repeating: "A", count: 43)
         var c = RouterConfig(); c.devices = [DeviceConfig(id: id, name: "Air")]
@@ -251,7 +270,7 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
         // helper down: still 200, the mark stays
         let id2 = String(repeating: "B", count: 43)
         app.config.devices = [DeviceConfig(id: id2, name: "PC")]
-        let down = try helper(URL(fileURLWithPath: "/nonexistent/minigw-core"), marks: marks); down.start(); defer { down.stop() }
+        let down = try await helper(URL(fileURLWithPath: "/nonexistent/minigw-core"), marks: marks); down.start(); defer { down.stop() }
         let r2 = await admin(router(down), "DELETE", "/devices/" + id2)
         let m2 = await marks.list()
         #expect(r2.status == 200 && m2 == [id2])
@@ -270,9 +289,9 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
 
     @Test func tableOfRequestsGivesByteIdenticalBodiesThroughSwiftAndTheHelper() async throws {
         let out = tempDir("parity")
-        _ = try run(["go", "test", "-count=1", "./coreapi", "-run", "TestParityTableIsServedInProcess"], in: clientDir, env: ["MG_PARITY_OUT": out.path])
+        _ = try await run(["go", "test", "-count=1", "./coreapi", "-run", "TestParityTableIsServedInProcess"], in: clientDir, env: ["MG_PARITY_OUT": out.path])
         let rows = try JSONSerialization.jsonObject(with: Data(contentsOf: out.appendingPathComponent("cases.json"))) as! [[String: Any]]
-        let h = try helper(store: out.appendingPathComponent("store")); h.start(); defer { h.stop() }
+        let h = try await helper(store: out.appendingPathComponent("store")); h.start(); defer { h.stop() }
         #expect(await h.waitReady())
         var checked = 0, skippedRun = 0
         var seen = Set<Int>()
