@@ -62,7 +62,8 @@ public final class AllowedFolders: @unchecked Sendable {
     private let volumeID: (String) -> String?
     private var entries: [String: Entry] = [:]
 
-    public init(volumeID: @escaping (String) -> String? = AllowedFolders.volumeUUID) { self.volumeID = volumeID }
+    public init() { volumeID = AllowedFolders.volumeUUID }
+    init(volumeID: @escaping (String) -> String?) { self.volumeID = volumeID }  // tests
 
     public static func volumeUUID(_ p: String) -> String? {
         let v = try? URL(fileURLWithPath: p).resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString
