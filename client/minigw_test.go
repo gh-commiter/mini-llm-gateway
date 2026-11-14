@@ -836,7 +836,8 @@ func TestDavMoveSameFileKeepsContent(t *testing.T) {
 	}
 }
 
-// #2: direktni WebDAV ne piše v zaščitene poti (kot sync), tudi prek povezave; branje ostane.
+// #2: direktni WebDAV ne piše v zaščitene poti (kot sync), tudi prek povezave; branje ostane. #112: git podatki (HEAD, index, refs …)
+// so v direct pisljivi, config, hooks in drugo, kar zažene kodo, ne (gitguard_test.go).
 func TestDavRefusesProtectedWrites(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755)
@@ -853,7 +854,7 @@ func TestDavRefusesProtectedWrites(t *testing.T) {
 	for _, c := range [][3]string{
 		{"PUT", ".git/config", ""}, {"PUT", ".GIT/config", ""}, {"PUT", "git~1/config", ""}, {"PUT", ".envrc", ""},
 		{"PUT", ".claude/settings.local.json", ""}, {"PUT", ".vscode/tasks.json", ""}, {"MKCOL", ".git/x", ""},
-		{"DELETE", ".git/HEAD", ""}, {"DELETE", ".git", ""}, {"LOCK", ".git/new", ""}, {"PROPPATCH", ".git/HEAD", ""},
+		{"DELETE", ".git/hooks", ""}, {"DELETE", ".git", ""}, {"LOCK", ".git/new", ""}, {"PROPPATCH", ".git/config", ""},
 		{"MOVE", "a.txt", ".git/hooks/pre-commit"}, {"COPY", "a.txt", ".envrc"}, {"MOVE", ".git", "g"},
 		{"PUT", ".claude/hooks/x.sh", ""}, {"MKCOL", ".claude/skills", ""}, {"PUT", ".claude/commands/c.md", ""},
 		{"PUT", ".husky/pre-commit", ""}, {"MOVE", "a.txt", ".githooks/pre-push"}, {"PUT", "sub/.claude/agents/a.md", ""},
