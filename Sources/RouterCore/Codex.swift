@@ -85,12 +85,12 @@ public enum Codex {
     /// (zunaj klona). Pisljive mape imajo .git in .codex le za branje (kot workspace-write).
     static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL, model: String? = nil,
                      write: Bool = true, network: Bool = false, resume: String? = nil, gits: [String] = [], path: String = "",
-                     deny: [String] = RouterConfig.agentDenied(kind: "codex", scratch: nil), tmp: String? = nil) -> [String] {
+                     deny: [String] = RouterConfig.agentDenied(kind: "codex", scratch: nil), tmp: String? = nil, directGit: Bool = false) -> [String] {
         var a = ["exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", cwd.path, "-o", output.path]
         if let model { a += ["-m", model] }
         let writes = agent && write
         a += treeProfile(writable: writes ? [cwd.path] + extraDirs + (tmp.map { [$0] } ?? []) : [], gits: writes ? gits : [], deny: deny,
-                         network: writes && network, path: path)
+                         network: writes && network, path: path, directGit: writes && directGit ? cwd.path : nil)
         if !agent { a.append("--ephemeral") }  // naslovi, povzetki: brez zapisa seje
         a += untrustedProjects(cwd)
         if let resume { a += ["resume", resume] }
@@ -129,11 +129,21 @@ public enum Codex {
     /// (git harnessa jih bere zunaj peskovnika). Ukazi agenta: PATH z ovojem, brez GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR
     /// vrhnjega klona (harness Codex jih obdrži, Worktree.claudeEnv).
     /// L1: iskanje repozitorija ne nad klonom; `deny`: mape brez dostopa (L3: podatki aplikacije, kot Go mapa nastavitev).
-    static func treeProfile(writable: [String], gits: [String], deny: [String] = [], network: Bool, path: String) -> [String] {
+    static func treeProfile(writable: [String], gits: [String], deny: [String] = [], network: Bool, path: String, directGit: String? = nil) -> [String] {
         var fs = ["/": "read"]  // #67: nič v /tmp (vse pod Scratch; TMPDIR ukazov je .build/tmp klona)
         for d in deny { fs[d] = "none" }
         for d in writable { fs[d] = "write" }
         if gits.isEmpty { for d in writable { for n in [".git", ".codex"] { fs[d + "/" + n] = "read" } } }  // brez klona: kot workspace-write
+        // 0.6.0 (#112) direct mode: the client's folder (the mount, never an allowed folder of this Mac) has git's own data writable so that `git add`, `git commit`,
+        // `git branch` … work; what the owner's git runs or follows stays read-only (ClaudeCLIConfig.directGitDenies); the client's guard is the final word.
+        if let d = directGit {
+            var st = stat()
+            if lstat(d + "/.git", &st) == 0, st.st_mode & S_IFMT == S_IFDIR {  // a gitdir: file or a link stays read-only
+                fs[d + "/.git"] = "write"
+                for g in ClaudeCLIConfig.directGitDenies { fs[d + "/.git/" + g] = "read" }
+                for p in ClaudeCLIConfig.submoduleGitPaths(d + "/.git", deny: ClaudeCLIConfig.directModuleDenies) { fs[p] = "read" }
+            }
+        }
         for g in gits {
             fs[g] = "write"
             for d in ClaudeCLIConfig.gitDenies { fs[g + "/" + d] = "read" }
@@ -279,6 +289,7 @@ extension Router {
         var tree: (root: URL, branch: String, maven: URL, read: [URL], gits: [String])?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         var sharedDir: URL?
+        var directGit = false  // #112: the client's folder mounted in direct mode: its git data is writable (Codex.treeProfile)
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
@@ -310,6 +321,7 @@ extension Router {
             }
             let cap = await capped(req, kind: "codex")  // #45: način seje nad omejitvijo → le branje
             readOnly = await Self.isReadOnly(req) || cap != nil
+            if tree == nil, shared != nil, !synced, !readOnly, config.codex.write { directGit = await Self.shares.isDirect(session: req.header("x-claude-mini-session") ?? "") }
             Self.runBranch?.readOnly = readOnly || (tree != nil && !config.codex.write)  // #46a
             if readOnly, tree != nil, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
@@ -363,7 +375,8 @@ extension Router {
                               write: config.codex.write && !readOnly, network: config.codex.network && (tree == nil || config.worktreeCodexNetwork),
                               resume: existing, gits: tree?.gits ?? [],
                               path: tree == nil ? "" : Worktree.agentPath(gitexec: config.scratch("gitexec"), path: ProcessInfo.processInfo.environment["PATH"] ?? ""),
-                              deny: RouterConfig.agentDenied(kind: "codex", scratch: config.scratchURL), tmp: tree == nil ? privateTmp.path : nil)  // L3, #106: v vsakem načinu
+                              deny: RouterConfig.agentDenied(kind: "codex", scratch: config.scratchURL), tmp: tree == nil ? privateTmp.path : nil,  // L3, #106: v vsakem načinu
+                              directGit: directGit)
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer, req: req) {
             self.dispatched("codex")  // the agent process starts (usage event)

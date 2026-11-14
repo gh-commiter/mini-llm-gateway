@@ -227,6 +227,9 @@ public actor ShareHub {
     /// Mapa seje je deljena samo za branje.
     func isReadOnly(session: String) -> Bool { bySession[session]?.readOnly ?? false }
 
+    /// Seja dela v priklopu odjemalčeve mape (WebDAV): ne v kopiji, klonu ali native.
+    func isDirect(session: String) -> Bool { bySession[session].map { $0.copy == nil && $0.tree == nil && $0.native == nil } ?? false }
+
     /// Seja dela v sinhronizirani kopiji (ne v priklopu).
     func bySessionTree(_ session: String) -> Tree? { bySession[session]?.tree }
 

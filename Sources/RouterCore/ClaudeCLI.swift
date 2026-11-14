@@ -147,7 +147,14 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// and nested (the same as the sandbox branch's N3 rules; only Edit(...) rules are matched, and they stop Write too: real run).
     static func gitEditDenies(dirs: [String]) -> [String] {
         dirs.flatMap { d in gitDenies.flatMap { g in ["/\(d)/.git/\(g)", "/\(d)/.git/\(g)/**", "/\(d)/**/.git/\(g)", "/\(d)/**/.git/\(g)/**"].map { "Edit(\($0))" } }
-            + ["Edit(/\(d)/.git)", "Edit(/\(d)/**/.git)"] } + submoduleEditDenies(dirs: dirs).map { "Edit(\($0))" }
+            + ["Edit(/\(d)/.git)", "Edit(/\(d)/**/.git)"] } + submoduleEditDenies(dirs: dirs).map { "Edit(\($0))" } + gitDataEditDenies(dirs: dirs)
+    }
+
+    /// 0.6.0 (#112): the client's guard lets a direct-mode agent write git's own data so that Bash (sandboxed mode only) can commit; the file tools
+    /// (Edit, Write, MultiEdit) never touch `.git` (a hand-written ref or index is not a commit; checked with a real `claude -p`: this rule does not
+    /// stop the sandbox's Bash from committing). Both branches, so the restricted mode (no Bash) stays as closed as it was.
+    static func gitDataEditDenies(dirs: [String]) -> [String] {
+        dirs.flatMap { d in ["Edit(/\(d)/.git/**)", "Edit(/\(d)/**/.git/**)"] }
     }
 
     /// The tools that read or write files: allowed only with a path rule (`T(./**)` and `T(//folder/**)`, the double slash is an absolute path).
@@ -207,7 +214,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) && (!readOnly || roTools.contains($0)) }
         // N3: nastavitve, hooki in preusmeritve ugnezdenih .git tudi ne z orodji Edit/Write (kot regex v Native.sandboxProfile)
         let nestedGit: [String] = readOnly ? [] : Self.nestedGitEditWriteDenies(dirs: dirs)  // tudi datoteka gitdir: (podmodul) ali .git sam
-        let denied = disabledTools + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : []) + nestedGit + (readOnly ? [] : claudeSettingsEditDenies(dirs: dirs))
+        let denied = disabledTools + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : []) + nestedGit + (readOnly ? [] : claudeSettingsEditDenies(dirs: dirs) + Self.gitDataEditDenies(dirs: dirs))
         return ["--tools", readOnly ? roTools.joined(separator: ",") : "default", "--permission-mode", "acceptEdits", "--settings", settings]
             + dirs.dropFirst().flatMap { ["--add-dir", $0] }
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
@@ -221,8 +228,19 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// `git submodule update`) only what the owner's git runs is denied: config (core.fsmonitor), hooks, info (attributes) and the redirect.
     static let submoduleDenies = ["config", "config.worktree", "hooks", "info"]
 
+    /// 0.6.0 (#112) direct mode: the agent commits in the client's repository, so git's own data under `.git` is writable (index, objects, refs, HEAD,
+    /// logs, packed-refs) and only what the owner's git runs or follows is denied: config, hooks, info (attributes), the redirects (commondir, shallow,
+    /// grafts, objects/info/alternates), linked worktrees (`git worktree add` by the agent does not work), the state a rebase or cherry-pick sequence
+    /// leaves (rebase-merge, rebase-apply, sequencer: an `exec` line in git-rebase-todo would run when the owner continues it) and the legacy remotes
+    /// and branches. The client's guard (Sync.gitDirWritable, Go gitDirWritable) holds the same list as an allow list and is the final word; `.git` itself
+    /// (replaced by a file or a link) is the guard's too, a Seatbelt path rule cannot name the entry without its contents.
+    static let directGitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply",
+                                  "sequencer", "remotes", "branches", "objects/info/alternates", "objects/info/http-alternates"]
+    /// The same for the git directory of a submodule (`.git/modules/<name>/`; `info` covers objects/info there).
+    static let directModuleDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply", "sequencer"]
+
     /// The submodule config, hooks and info paths that exist under a `.git` folder (for profiles that take literal paths only).
-    static func submoduleGitPaths(_ git: String) -> [String] {
+    static func submoduleGitPaths(_ git: String, deny: [String] = submoduleDenies) -> [String] {
         var out: [String] = []
         func walk(_ dir: String, _ depth: Int) {
             guard depth < 8, let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
@@ -230,7 +248,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
                 let p = dir + "/" + n
                 var st = stat()
                 guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR || st.st_mode & S_IFMT == S_IFREG else { continue }  // no links
-                if submoduleDenies.contains(n) { out.append(p) } else if st.st_mode & S_IFMT == S_IFDIR && n != "objects" && n != "refs" { walk(p, depth + 1) }
+                if deny.contains(n) { out.append(p) } else if st.st_mode & S_IFMT == S_IFDIR && n != "objects" && n != "refs" { walk(p, depth + 1) }
             }
         }
         walk(git + "/modules", 0)
@@ -243,9 +261,9 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         var out: [String] = Self.scratchPaths(RouterConfig.copilotCache)
         if readOnly { return out + dirs }
         for d in dirs {
-            for g in Self.gitDenies { out += [d + "/.git/" + g, d + "/**/.git/" + g] }
-            out.append(d + "/**/.git")
-            for g in Self.submoduleDenies { out += [d + "/.git/modules/**/" + g, d + "/**/.git/modules/**/" + g] }
+            for g in Self.directGitDenies { out += [d + "/.git/" + g, d + "/**/.git/" + g] }
+            out.append(d + "/**/.git")  // the entry itself (a glob names the entry only: nested contents are the client guard's, see directGitDenies)
+            for g in Self.directModuleDenies { out += [d + "/.git/modules/**/" + g, d + "/**/.git/modules/**/" + g] }
             if readsFolderSettings { out += [d + "/.claude", d + "/**/.claude"] }
         }
         return out
@@ -255,10 +273,10 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     static func nestedGitEditWriteDenies(dirs: [String]) -> [String] {
         var rules: [String] = []
         for d in dirs {
-            for g in gitDenies { rules += ["/\(d)/**/.git/\(g)", "/\(d)/**/.git/\(g)/**"] }
+            for g in directGitDenies { rules += ["/\(d)/**/.git/\(g)", "/\(d)/**/.git/\(g)/**"] }
             rules.append("/\(d)/**/.git")
         }
-        rules += submoduleEditDenies(dirs: dirs)
+        rules += dirs.flatMap { d in directModuleDenies.flatMap { g in ["/\(d)/**/.git/modules/**/\(g)", "/\(d)/**/.git/modules/**/\(g)/**"] } }
         return rules.flatMap { r in ["Edit(\(r))", "Write(\(r))"] }
     }
 
