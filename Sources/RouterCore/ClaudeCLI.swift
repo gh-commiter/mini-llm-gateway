@@ -294,7 +294,7 @@ public enum ClaudeCLI {
         guard allowed.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
         let hidden = RouterConfig.hiddenScratch(scratch)
         guard !hidden.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
-        guard !RouterConfig.overlapsCopilotCache(path) else { return nil }  // #26 (N2): ne paket Copilot ali mapa z njim
+        guard !RouterConfig.overlapsCopilotCache(path), !RouterConfig.overlapsCoreFolder(path) else { return nil }  // #26 (N2): ne paket Copilot ali mapa z njim; #106: ne podatki jedra
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 }

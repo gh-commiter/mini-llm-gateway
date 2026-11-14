@@ -169,7 +169,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     /// (lahko je uporabnikova mapa z drugo vsebino).
     public static func hiddenScratch(_ scratch: URL?) -> [String] {
         let fm = FileManager.default
-        var dirs = [defaultScratch]
+        var dirs = [defaultScratch] + coreDenied().map { URL(fileURLWithPath: $0, isDirectory: true) }  // 0.6.0 (#106): the core data folder is denied wherever Scratch is
         if let scratch { dirs = [scratch, defaultBase.appendingPathComponent(scratch.lastPathComponent, isDirectory: true)] + dirs }
         for base in Set([scratch?.deletingLastPathComponent(), defaultBase].compactMap { $0?.standardizedFileURL }) {
             for n in ((try? fm.contentsOfDirectory(atPath: base.path)) ?? []).sorted() {
@@ -181,6 +181,19 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         }
         var seen = Set<String>()
         return dirs.flatMap { [$0.standardizedFileURL.path, Sync.real($0)?.path].compactMap { $0 } }.filter { seen.insert($0).inserted }
+    }
+
+    /// 0.6.0 (#106): the app's data folder (state.json and the core database with its sidecars, backups and usage spool in
+    /// `core`): no agent may read or write it. Literal and real path (a link to it from an allowed folder does not reach
+    /// it); the folder itself, so every file in it.
+    public static func coreDenied(app: URL = GatewayHistory.defaultFile.deletingLastPathComponent(), store: URL = CoreHelper.defaultStore) -> [String] {
+        var seen = Set<String>()
+        return [app, store].flatMap { [$0.standardizedFileURL.path, Sync.realResolving($0)?.path].compactMap { $0 } }.filter { seen.insert($0).inserted }
+    }
+
+    /// An allowed folder that contains the app's data folder or is inside it (agents would reach the core database).
+    public static func overlapsCoreFolder(_ root: String) -> Bool {
+        [GatewayHistory.defaultFile.deletingLastPathComponent(), CoreHelper.defaultStore].contains { overlapsScratch(root, scratch: $0) }
     }
 
     /// Paket Copilot CLI (koda, ki jo copilot --version naloži in razširi).

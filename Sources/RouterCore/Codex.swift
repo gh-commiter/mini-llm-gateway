@@ -80,20 +80,17 @@ public enum Codex {
     /// Argumenti: agent piše le v mapi seje in dovoljenih mapah (sandbox Codex), omrežje za gradnjo dovoljeno.
     /// Brez orodij (naslovi, povzetki) le branje v začasni mapi.
     /// `resume`: ID niti Codex za nadaljevanje (možnosti exec, tudi sandbox, veljajo tudi zanj).
+    /// 0.6.0 (#106): vsak način teče v profilu dovoljenj (ne v workspace-write/read-only): mapa podatkov aplikacije
+    /// (jedro projektov) je `deny` (privzeto RouterConfig.coreDenied) s pravo potjo, branje in pisanje. `tmp`: zasebni TMPDIR
+    /// (zunaj klona). Pisljive mape imajo .git in .codex le za branje (kot workspace-write).
     static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL, model: String? = nil,
-                     write: Bool = true, network: Bool = false, resume: String? = nil, gits: [String] = [], path: String = "", deny: [String] = []) -> [String] {
+                     write: Bool = true, network: Bool = false, resume: String? = nil, gits: [String] = [], path: String = "",
+                     deny: [String] = RouterConfig.coreDenied(), tmp: String? = nil) -> [String] {
         var a = ["exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", cwd.path, "-o", output.path]
         if let model { a += ["-m", model] }
-        if agent && write && !gits.isEmpty {  // #40: klon, profil dovoljenj namesto workspace-write
-            a += treeProfile(writable: [cwd.path] + extraDirs, gits: gits, deny: deny, network: network, path: path)
-        } else if agent && write {
-            // $TMPDIR (/var/folders/…/T) ni pisljiv: tam je predpomnilnik xcrun (shim /usr/bin/git ga izvede); TMPDIR je zasebna mapa.
-            a += ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=\(network)",
-                  "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true"]
-            for d in extraDirs { a += ["--add-dir", d] }
-        } else {
-            a += ["--sandbox", "read-only", "-c", #"sandbox_mode="read-only""#]  // tudi kot -c: velja tudi za »exec resume« (kot v Go, I5)
-        }
+        let writes = agent && write
+        a += treeProfile(writable: writes ? [cwd.path] + extraDirs + (tmp.map { [$0] } ?? []) : [], gits: writes ? gits : [], deny: deny,
+                         network: writes && network, path: path)
         if !agent { a.append("--ephemeral") }  // naslovi, povzetki: brez zapisa seje
         a += untrustedProjects(cwd)
         if let resume { a += ["resume", resume] }
@@ -136,14 +133,17 @@ public enum Codex {
         var fs = ["/": "read"]  // #67: nič v /tmp (vse pod Scratch; TMPDIR ukazov je .build/tmp klona)
         for d in deny { fs[d] = "none" }
         for d in writable { fs[d] = "write" }
+        if gits.isEmpty { for d in writable { for n in [".git", ".codex"] { fs[d + "/" + n] = "read" } } }  // brez klona: kot workspace-write
         for g in gits {
             fs[g] = "write"
             for d in ClaudeCLIConfig.gitDenies { fs[g + "/" + d] = "read" }
         }
         func q(_ s: String) -> String { String(decoding: try! JSONSerialization.data(withJSONObject: s, options: [.fragmentsAllowed, .withoutEscapingSlashes]), as: UTF8.self) }
         let table = fs.keys.sorted().map { q($0) + "=\"" + fs[$0]! + "\"" }.joined(separator: ",")
-        return ["-c", #"default_permissions="minigw""#, "-c", "permissions.minigw.filesystem={" + table + "}",
-                "-c", "permissions.minigw.network.enabled=\(network)",
+        let base = ["-c", #"default_permissions="minigw""#, "-c", "permissions.minigw.filesystem={" + table + "}",
+                    "-c", "permissions.minigw.network.enabled=\(network)"]
+        guard !gits.isEmpty else { return base }
+        return base + [
                 "-c", #"shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]"#, "-c", "shell_environment_policy.set.PATH=" + q(path),
                 "-c", "shell_environment_policy.set.GIT_CEILING_DIRECTORIES=" + q(URL(fileURLWithPath: gits[0]).deletingLastPathComponent().deletingLastPathComponent().path),
                 "-c", #"shell_environment_policy.set.MINIGW_SANDBOXED="1""#]  // #67: le ukazi (v peskovniku), ne harness
@@ -348,7 +348,7 @@ extension Router {
                               write: config.codex.write && !readOnly, network: config.codex.network && (tree == nil || config.worktreeCodexNetwork),
                               resume: existing, gits: tree?.gits ?? [],
                               path: tree == nil ? "" : Worktree.agentPath(gitexec: config.scratch("gitexec"), path: ProcessInfo.processInfo.environment["PATH"] ?? ""),
-                              deny: [GatewayHistory.defaultFile.deletingLastPathComponent().path])  // L3
+                              deny: RouterConfig.coreDenied(), tmp: tree == nil ? privateTmp.path : nil)  // L3, #106: v vsakem načinu
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer, req: req) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,

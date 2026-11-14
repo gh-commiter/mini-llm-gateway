@@ -158,7 +158,7 @@ public final class AllowedFolders: @unchecked Sendable {
                     return nil
                 }
                 guard !(scratch.map { RouterConfig.overlapsScratch(p, scratch: $0) } ?? false),
-                      !RouterConfig.overlapsCopilotCache(p) else { return nil }
+                      !RouterConfig.overlapsCopilotCache(p), !RouterConfig.overlapsCoreFolder(p) else { return nil }
                 let config = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Preferences")
                 guard !RouterConfig.overlapsScratch(p, scratch: config) else { return nil }
                 let r = Sync.real(URL(fileURLWithPath: p))?.path

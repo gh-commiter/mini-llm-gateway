@@ -67,6 +67,8 @@ public enum Grok {
         }
     }
 
+    static let coreRefusal = "Grok cannot run on this gateway while projects are enabled: Grok can read every file of the gateway's user, including the notes of all projects, and it cannot be confined"
+
     static func args(cwd: URL, extraDirs: [String], agent: Bool, model: String?, write: Bool) -> [String] {
         var a = ["--cwd", cwd.path, "--output-format", "streaming-json", "--prompt-file", "/dev/stdin"]
         if let model { a += ["-m", model] }
@@ -175,6 +177,10 @@ extension Router {
     }
 
     func runGrok(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
+        // 0.6.0 (#106): Grok reads every file of this user (its own sandbox only limits writing; --deny is a permission rule of
+        // its tools, not enforced for commands: verified with grok 1.0.77), and it cannot run inside sandbox-exec (its sandbox
+        // cannot nest). So it does not run while this gateway has the project core.
+        if core != nil { return await error(403, "permission_error", Grok.coreRefusal, rid: rid, writer: writer) }
         // Grok nima zaščite .git v peskovniku, njegov program pa poganja git zunaj njega (in ~/.grok je pisljiv): s pisanjem
         // zavrni; brez pisanja v worktree le bere v klonu (veje ne vrne).
         let sid = req.header("x-claude-mini-session") ?? ""
