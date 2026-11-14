@@ -135,3 +135,14 @@ private let cwd = URL(fileURLWithPath: "/tmp/session")
     c.tools = "Read,Grep"; #expect(c.editToolsOffNote(cwd: "/Users/a/proj (copy)") == nil)  // nothing to turn off
     c.tools = "Read,Edit"; c.allowLocalTools = true; #expect(c.editToolsOffNote(cwd: "/Users/a/proj (copy)") == nil)  // sandbox: the path is a JSON value there
 }
+
+@Test func readOnlyRequestsFilterStoredToolsInsteadOfFailing() {  // U1
+    var c = ClaudeCLIConfig(); c.tools = "Read(/etc/**), Bash,Grep(/Users/**),Edit,WebFetch(domain:example.com),Task,read"
+    #expect(c.restrictedProblem(mode: false, folders: false) != nil)  // a normal run is refused (400) ...
+    let a = c.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders(), checkedPaths: ["/w"])  // ... a read-only one is filtered
+    #expect(value(a, "--tools") == "Read,Grep,WebFetch(domain:example.com)")
+    #expect(value(a, "--allowedTools") == "Read(./**),Read(//w/**),Grep(./**),Grep(//w/**),WebFetch(domain:example.com)")
+    #expect(!value(a, "--allowedTools").contains("/etc") && !value(a, "--allowedTools").contains("Bash") && !value(a, "--allowedTools").contains("Edit"))
+    let normal = c.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: [])  // the last defence of a normal run: bare names too
+    #expect(value(normal, "--allowedTools") == "Read(./**),Grep(./**),Edit(./**),WebFetch(domain:example.com)")
+}
