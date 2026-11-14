@@ -43,7 +43,7 @@ Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and q
 
 ### Fixed
 
-- Fixed (Mac app, 0.6.0 deny rules; the 0.5.28 regression is fixed in 0.5.29): the deny rules of the gateway's own folders (the app folder with the core, the credential homes) are not applied where the folder of a run (a remote client's mount under `~/Library/Application Support/Mini Gateway/mounts`, a sync copy) lives inside them, in the restricted mode, the sandboxed mode and Worktree mode; a deny wins over an allow. The rest of the app folder and the other clients' mounts stay refused (only the run's own folders are allowed), and an allowed folder around such a folder that cannot be fenced off is not used (logged).
+- Fixed (Mac app, 0.6.0 deny rules; the 0.5.28 regression is fixed in 0.5.29): the deny rules of the gateway's own folders (the app folder with the core, the credential homes) are not applied where the folder of a run (a remote client's mount under `~/Library/Application Support/Mini Gateway/mounts`, a sync copy) lives inside them, in the restricted mode, the sandboxed mode and Worktree mode; a deny wins over an allow. The rest of the app folder and the other clients' mounts stay refused (only the run's own folders are allowed), and an allowed folder that contains, equals or is inside the app folder, Scratch or Copilot's package cache is refused when saved and skipped at run (see 0.5.29).
 
 ### Known limits
 
