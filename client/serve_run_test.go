@@ -232,9 +232,9 @@ func (x *runFx) agent(user, dir, sid string, project int64, history ...string) (
 	}
 	body := `{"model":"` + model + `","tools":[{"name":"x"}],"messages":[` + strings.Join(msgs, ",") + `]}`
 	h := map[string]string{"x-claude-mini-session": sid, "x-claude-mini-cwd": dir, "content-type": "application/json"}
-	x.nps[user].project = "" // minigw's proxy sets the project header (L1); a header from the client would be dropped
+	x.nps[user].project.Store("") // minigw's proxy sets the project header (L1); a header from the client would be dropped
 	if project != 0 {
-		x.nps[user].project = fmt.Sprint(project)
+		x.nps[user].project.Store(fmt.Sprint(project))
 	}
 	st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second)
 	return st, string(data)
@@ -372,7 +372,7 @@ func TestRunWithoutProjectHasNoPortAndHeaderRules(t *testing.T) {
 	// a device that left the approved list
 	f.s.adminDo("DELETE", "/devices/"+devID(f.dev["bor"]), nil)
 	x.conn("bor")
-	x.nps["bor"].project = fmt.Sprint(f.pid["fakture"])
+	x.nps["bor"].project.Store(fmt.Sprint(f.pid["fakture"]))
 	r, _ := call(x.conn("bor"), "POST", "/v1/messages", map[string]string{"x-claude-mini-session": "s7", "x-claude-mini-cwd": dir}, []byte(`{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`), 30*time.Second)
 	if r != 403 && r != 0 {
 		t.Errorf("removed device: %d", r)
@@ -741,7 +741,7 @@ func TestProxySetsTheProjectAndIgnoresAForgedHeader(t *testing.T) {
 	x.conn("ana")
 	send := func(forged int64) {
 		body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
-		sc := &shareClient{c: x.conn("ana"), session: fmt.Sprint("p", forged, x.nps["ana"].project), root: dir, sync: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+		sc := &shareClient{c: x.conn("ana"), session: fmt.Sprint("p", forged, x.nps["ana"].project.Load()), root: dir, sync: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
 		if !sc.register() {
 			t.Fatal(sc.refusal)
 		}
@@ -752,9 +752,9 @@ func TestProxySetsTheProjectAndIgnoresAForgedHeader(t *testing.T) {
 			t.Fatalf("%d %s", st, b)
 		}
 	}
-	x.nps["ana"].project = fmt.Sprint(f.pid["fakture"])
+	x.nps["ana"].project.Store(fmt.Sprint(f.pid["fakture"]))
 	send(f.pid["import"]) // ana has no role in import: if the forged header got through, the request would be refused
-	x.nps["ana"].project = ""
+	x.nps["ana"].project.Store("")
 	send(f.pid["fakture"]) // ana does have a role in fakture: if it got through, the event would carry the project
 	ev := f.events()
 	if len(ev) != 2 || ev[0].Project != f.pid["fakture"] || ev[1].Project != 0 {

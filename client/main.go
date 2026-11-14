@@ -165,7 +165,7 @@ func routeErr(p profile) (connection, error) {
 	}
 	np, err := newNoiseProxy(c.URL, key, dev)
 	if err == nil {
-		np.project = proxyProject
+		np.project.Store(proxyProject)
 		err = np.start()
 	}
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,7 +29,7 @@ type noiseProxy struct {
 	routerKey []byte
 	dev       *device
 	ln        net.Listener
-	project   string // the project id minigw resolved for this run ("" = none); see rewriteHead
+	project   atomic.Value // string: the project id minigw resolved for this run ("" = none); see rewriteHead
 }
 
 func newNoiseProxy(routerURL string, routerKey []byte, dev *device) (*noiseProxy, error) {
@@ -108,6 +109,7 @@ func (p *noiseProxy) stop() {
 
 func (p *noiseProxy) serve(local net.Conn) {
 	defer local.Close()
+	project, _ := p.project.Load().(string) // read once per connection
 	remote, err := net.DialTimeout("tcp", p.router, 15*time.Second)
 	if err != nil {
 		return
@@ -154,7 +156,7 @@ func (p *noiseProxy) serve(local net.Conn) {
 					if i := bytes.Index(head, []byte("\r\n\r\n")); i >= 0 || len(head) > 64<<10 {
 						headDone = true
 						if i >= 0 {
-							head = append(rewriteHead(head[:i], p.project), head[i:]...)
+							head = append(rewriteHead(head[:i], project), head[i:]...)
 						}
 						chunk = head
 						head = nil
