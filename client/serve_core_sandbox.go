@@ -8,6 +8,8 @@ package main
 // applied (runAgent, the Claude launch).
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -71,9 +73,21 @@ func (s *server) coreRefusal(c serveConfig, kind string) string {
 	return agentNames[kind] + " cannot run on this gateway while projects are enabled: it runs without a sandbox and could read the notes of all projects. To run it, " + acceptHint
 }
 
+// warnStaleCore: the core is refused, but its folder holds data of an earlier accepted or sandboxed period: the agents
+// that made the refusal necessary can read it. Nothing is deleted; the owner is told (log and status).
+func (s *server) warnStaleCore() {
+	dir := filepath.Join(s.cfgDir, coreDirName)
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+		s.coreStale = dir
+		s.log.Printf("WARNING: old project data is still on disk in %s and agents without a sandbox can read it (the core is not opened); move or delete it, or accept it with acceptAgentsCanReadNotes", dir)
+	}
+}
+
 // coreStatus: the line of `minigw gw status` about the projects and the agents' access ("" = nothing to say: offline).
 func (s *server) coreStatus(c serveConfig) string {
 	switch {
+	case s.coreErr != nil && s.coreStale != "":
+		return "projects: off (" + s.coreErr.Error() + "); old project data is still on disk and readable by agents: " + s.coreStale
 	case s.coreErr != nil:
 		return "projects: off (" + s.coreErr.Error() + ")"
 	case s.core == nil:

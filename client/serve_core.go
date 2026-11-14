@@ -31,6 +31,7 @@ func (s *server) openCore() {
 	var err error
 	if why := s.coreOpenRefusal(s.conf()); why != "" { // #106: agents that could read the database: not opened unless accepted
 		err = errors.New(why)
+		s.warnStaleCore()
 	} else {
 		s.logCoreAccepted(s.conf())
 		st, err = core.Open(filepath.Join(s.cfgDir, coreDirName), core.Options{ProtectDir: protectDir})

@@ -206,3 +206,41 @@ func TestConfigFolderDeniedAndNotAllowed(t *testing.T) {
 		t.Fatalf("deny: %v", deny)
 	}
 }
+
+// Data of an earlier period stays readable for unsandboxed agents while the core is refused: log and status say so.
+func TestStaleCoreDataIsReported(t *testing.T) {
+	s := exposedServer(t, nil)
+	var logs strings.Builder
+	s.log.SetOutput(&logs)
+	dir := filepath.Join(s.cfgDir, coreDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// an empty folder is no data
+	s.openCore()
+	if s.coreStale != "" || strings.Contains(s.coreStatus(s.conf()), "old project data") {
+		t.Fatalf("empty folder reported: %q", s.coreStatus(s.conf()))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "core.db"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logs.Reset()
+	s.coreErr = nil
+	s.openCore()
+	if s.core != nil || s.coreStale != dir || strings.Count(logs.String(), "old project data is still on disk in "+dir) != 1 {
+		t.Fatalf("stale %q log %q", s.coreStale, logs.String())
+	}
+	if line := s.coreStatus(s.conf()); !strings.Contains(line, "projects: off") || !strings.HasSuffix(line, "old project data is still on disk and readable by agents: "+dir) {
+		t.Fatalf("status: %q", line)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "core.db")); err != nil { // nothing is deleted
+		t.Fatal(err)
+	}
+	// opened (accepted): no stale note
+	s2 := exposedServer(t, func(c *serveConfig) { c.AcceptAgentsReadNotes = true })
+	s2.openCore()
+	t.Cleanup(s2.closeCore)
+	if s2.coreStale != "" || strings.Contains(s2.coreStatus(s2.conf()), "old project data") {
+		t.Fatalf("accepted: %q", s2.coreStatus(s2.conf()))
+	}
+}
