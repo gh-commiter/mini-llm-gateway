@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // startFrom: a gateway start from the config file (as minigw serve does); returns the server and what it logged.
@@ -230,5 +231,43 @@ func TestAllowedFolderIdentityEnforcedAtRunTime(t *testing.T) {
 	back(folder + ".old")
 	if got := s.agentFolders(s.conf(), base); len(got) != 1 {
 		t.Fatalf("original folder not accepted again: %v", got)
+	}
+}
+
+// A5: the record migration waits for another writer of serve.json and then builds on its result (no lost update).
+func TestFolderRecordSaveDoesNotLoseConcurrentChange(t *testing.T) {
+	base := realOf(t, t.TempDir())
+	folder := filepath.Join(base, "folder")
+	if err := os.Mkdir(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := testServer(t, func(c *serveConfig) { c.AllowedFolders = []string{folder} })
+	releaseScratch()
+	path := s.cfgPath
+	file, _ := loadServeConfig(path)
+	delete(file.AllowedRecords, folder) // an old config: the migration still has to save the record
+	if err := writeServeConfig(path, file); err != nil {
+		t.Fatal(err)
+	}
+	unlock := lockServeConfig(path) // another process is in the middle of its own read-modify-write
+	done := make(chan error)
+	go func() {
+		done <- saveFolderRecords(path, map[string]folderRecord{folder: {Real: folder}}, []string{folder})
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("migration did not wait for the other writer: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	file.Port = 4321 // the other writer's change, saved after the migration already looked at the file
+	if err := writeServeConfig(path, file); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := loadServeConfig(path); got.Port != 4321 || got.AllowedRecords[folder].Real != folder {
+		t.Fatalf("lost update: port %d, records %+v", got.Port, got.AllowedRecords)
 	}
 }

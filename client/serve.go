@@ -167,6 +167,27 @@ func saveServeConfig(path string, c serveConfig) {
 	}
 }
 
+// lockServeConfig (A5): exclusive interprocess lock (<serve.json>.lock) around a load-modify-write of serve.json, so a
+// second process (minigw serve ... without a running gateway, a starting gateway) cannot overwrite it with an older
+// snapshot. Waits up to 5 s; if the lock cannot be had (no flock, a foreign file), it goes on unlocked as before.
+// Not reentrant: take it once per read-modify-write.
+func lockServeConfig(path string) func() {
+	f, err := openLockFile(path + ".lock")
+	if err != nil {
+		return func() {}
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		busy, lerr := tryLockFile(f, true)
+		if lerr == nil {
+			return func() { unlockFile(f); f.Close() }
+		}
+		if !busy || time.Now().After(deadline) {
+			f.Close()
+			return func() {}
+		}
+	}
+}
+
 func writeServeConfig(path string, c serveConfig) error {
 	data, _ := json.MarshalIndent(c, "", "  ")
 	if err := writeFileAtomic(path, append(data, '\n')); err != nil {
@@ -680,6 +701,7 @@ func (s *server) checkFolderRecords(had map[string]folderRecord, missing []strin
 
 // saveFolderRecords: adds the records of folders that have none in the config file (nothing else changes).
 func saveFolderRecords(path string, records map[string]folderRecord, folders []string) error {
+	defer lockServeConfig(path)() // A5
 	file, err := loadServeConfig(path)
 	if err != nil {
 		return err
@@ -961,6 +983,7 @@ func (s *server) claudeExe() []string {
 func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer lockServeConfig(s.cfgPath)() // A5: load-modify-write of serve.json, also against other minigw processes
 	clone := func(c serveConfig) serveConfig {
 		c.Devices = slices.Clone(c.Devices)
 		c.Gateways = slices.Clone(c.Gateways)
