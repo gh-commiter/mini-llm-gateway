@@ -81,3 +81,57 @@ private let cwd = URL(fileURLWithPath: "/tmp/session")
     let unsafeCwd = c.agentArgs(cwd: URL(fileURLWithPath: "/tmp/p (1)"), allTools: [], folders: AllowedFolders(), checkedPaths: [])  // the deny rules for its .git cannot be written
     #expect(value(unsafeCwd, "--tools") == "Read" && value(unsafeCwd, "--allowedTools") == "Read(./**)")
 }
+
+@Test func anUpgradedStoredConfigDoesNotHoldBackTheOtherPanes() {  // T1: guardClaude is the Settings window's apply rule
+    var stored = RouterConfig()
+    stored.claudeCLI.enabled = true; stored.claudeCLI.tools = "Read,Bash"; stored.claudeCLI.allowLocalTools = false  // what an older version saved
+    var draft = stored
+    draft.port = 9999  // an edit in another pane
+    var (apply, attention) = RouterConfig.guardClaude(draft: draft, stored: stored)
+    #expect(attention && apply.port == 9999 && apply.claudeCLI == stored.claudeCLI)  // the rest saves, the stored Claude fields stay
+    draft.claudeCLI.tools = "Read, Grep"  // the fix: Bash removed
+    (apply, attention) = RouterConfig.guardClaude(draft: draft, stored: stored)
+    #expect(!attention && apply.claudeCLI.tools == "Read, Grep" && apply.port == 9999)
+    draft.claudeCLI.tools = "Read,Bash"; draft.claudeCLI.allowLocalTools = true  // or local tools on
+    (apply, attention) = RouterConfig.guardClaude(draft: draft, stored: stored)
+    #expect(!attention && apply.claudeCLI.allowLocalTools && apply.claudeCLI.tools == "Read,Bash")
+    draft.claudeCLI.allowLocalTools = false; draft.claudeCLI.enabled = false  // Claude CLI off: nothing is checked
+    (apply, attention) = RouterConfig.guardClaude(draft: draft, stored: stored)
+    #expect(!attention && apply.claudeCLI.tools == "Read,Bash" && !apply.claudeCLI.enabled && apply.port == 9999)
+    draft.claudeCLI.enabled = true; draft.claudeCLI.tools = "Read"; draft.claudeCLI.permissionMode = "auto"  // a stored mode that does not enforce
+    (apply, attention) = RouterConfig.guardClaude(draft: draft, stored: stored)
+    #expect(!attention && apply.claudeCLI.permissionMode == "dontAsk")
+    draft.claudeCLI.allowedRoots = "~/a/Bad (copy)"
+    (apply, attention) = RouterConfig.guardClaude(draft: draft, stored: stored)
+    #expect(attention && apply.claudeCLI == stored.claudeCLI)
+}
+
+@Test func gitModulesAndClaudeSettingsAreDeniedToTheEditTools() {  // T2, T3
+    #expect(ClaudeCLIConfig.gitDenies.contains("modules"))
+    var c = ClaudeCLIConfig(); c.tools = "Read,Edit"
+    let plain = c.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: ["/w"])
+    let deny = value(plain, "--disallowedTools").split(separator: ",").map(String.init)
+    #expect(deny.contains("Edit(//tmp/session/.git/modules/**)") && deny.contains("Edit(//w/**/.git/modules/**)"))
+    #expect(!deny.contains { $0.contains("/.claude") })  // no setting sources: Claude Code reads no .claude settings
+    c.settingSources = "project"
+    let withSources = value(c.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: ["/w"]), "--disallowedTools").split(separator: ",").map(String.init)
+    for d in ["tmp/session", "w"] { #expect(withSources.contains("Edit(//\(d)/.claude/**)") && withSources.contains("Edit(//\(d)/**/.claude/**)"), "\(d)") }
+    c.tools = "Read,Grep"
+    #expect(!value(c.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: ["/w"]), "--disallowedTools").contains(".claude"))  // nothing edits
+    c.tools = "Read,Edit"; c.allowLocalTools = true  // the sandboxed branch: the same Edit denies and the sandbox's denyWrite
+    let sb = c.agentArgs(cwd: cwd, allTools: ["Read", "Edit", "Bash"], folders: AllowedFolders(), checkedPaths: ["/w"])
+    let fs = ((try? JSONSerialization.jsonObject(with: Data(value(sb, "--settings").utf8))) as? [String: Any]).flatMap { ($0["sandbox"] as? [String: Any])?["filesystem"] as? [String: Any] }
+    let denyWrite = fs?["denyWrite"] as? [String] ?? []
+    #expect(value(sb, "--disallowedTools").contains("Edit(//w/.claude/**)") && denyWrite.contains("/w/.claude") && denyWrite.contains("/w/**/.claude") && denyWrite.contains("/w/.git/modules"))
+    c.settingSources = ""
+    #expect(!value(c.agentArgs(cwd: cwd, allTools: ["Read", "Edit", "Bash"], folders: AllowedFolders(), checkedPaths: ["/w"]), "--disallowedTools").contains(".claude"))
+}
+
+@Test func theRunToldAboutEditToolsThatAreOffForAnOddFolderName() {  // T5
+    var c = ClaudeCLIConfig(); c.tools = "Read,Edit"
+    #expect(c.editToolsOffNote(cwd: "/Users/a/proj") == nil)
+    let note = c.editToolsOffNote(cwd: "/Users/a/proj (copy)")
+    #expect(note?.contains("Edit tools are off for this folder") == true && note?.contains("proj (copy)") == true)
+    c.tools = "Read,Grep"; #expect(c.editToolsOffNote(cwd: "/Users/a/proj (copy)") == nil)  // nothing to turn off
+    c.tools = "Read,Edit"; c.allowLocalTools = true; #expect(c.editToolsOffNote(cwd: "/Users/a/proj (copy)") == nil)  // sandbox: the path is a JSON value there
+}

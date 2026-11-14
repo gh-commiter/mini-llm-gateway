@@ -100,3 +100,23 @@ func TestRestrictedGoGitDenyAndModeRefusal(t *testing.T) {
 		t.Errorf("with local tools the mode is not used: %d %s", st, b)
 	}
 }
+
+// T2, T3: .git/modules and (with setting sources) .claude are denied to the edit tools in Go too.
+func TestRestrictedGoModulesAndClaudeSettingsDenied(t *testing.T) {
+	s, _ := testServer(t, func(c *serveConfig) { c.SettingSources = "project" })
+	deny := func(a []string) []string { return strings.Split(a[slices.Index(a, "--disallowedTools")+1], ",") }
+	got := deny(s.agentArgs("/copy", false, []string{"/other"}))
+	for _, d := range []string{"//copy", "//other"} {
+		for _, want := range []string{"Edit(" + d + "/.git/modules/**)", "Edit(" + d + "/**/.git/modules/**)", "Edit(" + d + "/.claude/**)", "Edit(" + d + "/**/.claude/**)"} {
+			if !slices.Contains(got, want) {
+				t.Errorf("missing %s", want)
+			}
+		}
+	}
+	s2, _ := testServer(t, nil)
+	for _, r := range deny(s2.agentArgs("/copy", false, []string{"/other"})) {
+		if strings.Contains(r, "/.claude") {
+			t.Errorf("no setting sources, yet %s", r)
+		}
+	}
+}

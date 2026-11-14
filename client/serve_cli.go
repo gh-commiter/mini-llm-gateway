@@ -155,6 +155,9 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 				deny = append(deny, "Edit("+ruleAbs(d)+"/**/.git/"+g+")", "Edit("+ruleAbs(d)+"/**/.git/"+g+"/**)")
 			}
 			deny = append(deny, "Edit("+ruleAbs(d)+"/.git)", "Edit("+ruleAbs(d)+"/**/.git)") // a gitdir: file (submodule) or .git itself
+			if strings.TrimSpace(c.SettingSources) != "" {                                   // T3: .claude/settings*.json of the folder are read with the setting sources project or local (hooks run unsandboxed)
+				deny = append(deny, "Edit("+ruleAbs(d)+"/.claude/**)", "Edit("+ruleAbs(d)+"/**/.claude/**)")
+			}
 		}
 	}
 	var args []string
@@ -229,7 +232,7 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 	return args
 }
 
-var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees"}
+var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees", "modules"} // modules: .git/modules/<sub>/{config,hooks} run in the owner's `git status` of the parent
 
 const readOnlyWorktree = "Worktree mode cannot be read-only (--minigw-ro): use direct or sync"
 
