@@ -544,7 +544,7 @@ final class ShareClient: @unchecked Sendable {
             note("the agent's change to \(p) is not copied back yet; kept on the gateway")
         }
         for p in need {
-            guard files[p] != nil, let url = Sync.resolve(p, root: root), let data = try? Data(contentsOf: url) else { next[p] = synced[p]; continue }
+            guard files[p] != nil, Sync.resolve(p, root: root) != nil, let data = Sync.readShared(root, p) else { next[p] = synced[p]; continue }
             let (st, _) = call(c, "PUT", "/minigw/sync/file", ["x-share-key": k, "x-sync-path": Sync.encode(p)], data, timeout: 300)
             if st != 204 {
                 next[p] = synced[p]
@@ -832,7 +832,7 @@ func refuseUnsafeClaudeFlags(info: Bool = false) {
 
 // MARK: ukazi
 
-let minigwVersion = "0.5.26"  // bump-version.sh
+let minigwVersion = "0.5.27"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 // --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
 var readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
