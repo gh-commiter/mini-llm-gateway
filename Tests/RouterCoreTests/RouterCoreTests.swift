@@ -540,6 +540,27 @@ func freeTCPPort() -> UInt16 {
     return UInt16(bigEndian: a.sin_port)
 }
 
+/// #109: freeTCPPort() zapre vrata pred zagonom (drug test, drug zagon testov ali odjemalec jih lahko prevzame), NWListener pa
+/// napako (EADDRINUSE) javi le asinhrono prek onState; portInUse bi nato uspel proti tujemu strežniku ali ne bi uspel nikoli.
+/// Čaka se na stanje strežnika; pri napaki nova vrata. `router` sestavi Router za dana vrata.
+func startOnFreePort(key: Curve25519.KeyAgreement.PrivateKey? = nil, router: (UInt16) -> Router) async throws -> (RouterServer, UInt16) {
+    for _ in 0..<20 {
+        let port = freeTCPPort()
+        let server = RouterServer(router: router(port), key: key)
+        let states = Received()
+        server.onState = { states.add(Data("\($0)\n".utf8)) }
+        try server.start()
+        for _ in 0..<600 {  // 30 s: velja le, če se stanje ne javi
+            let text = String(decoding: states.data, as: UTF8.self)
+            if text.contains("listening") { return (server, port) }
+            if text.contains("failed") { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        server.stop()
+    }
+    throw CocoaError(.fileWriteUnknown)
+}
+
 /// Ali na portu 127.0.0.1 nekdo posluša.
 func portInUse(_ port: UInt16) -> Bool {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -551,15 +572,12 @@ func portInUse(_ port: UInt16) -> Bool {
 
 @Test func encryptedProxyToRouter() async throws {
     var c = RouterConfig()
-    let routerPort = freeTCPPort(), routerURL = "http://127.0.0.1:\(routerPort)"
-    c.host = "127.0.0.1"; c.port = routerPort
+    c.host = "127.0.0.1"
     let key = Noise.newKey()
     let seen = SeenDevices()
-    let server = RouterServer(router: Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]),
-                                             onDevice: { d in seen.add(d) }), key: key)
-    try server.start()
+    let (server, routerPort) = try await startOnFreePort(key: key) { c.port = $0; return Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), onDevice: { d in seen.add(d) }) }
     defer { server.stop() }
-    for _ in 0..<100 where !portInUse(routerPort) { try await Task.sleep(for: .milliseconds(50)) }  // namesto fiksnega čakanja
+    let routerURL = "http://127.0.0.1:\(routerPort)"
 
     func get(_ base: String, _ path: String) async -> (Int, String) {
         // 30 s, ne 5: pod obremenitvijo (vzporedni testi, druge gradnje) router odgovori pozneje; preverja se pot, ne hitrost.
@@ -597,12 +615,9 @@ func portInUse(_ port: UInt16) -> Bool {
 /// SO_REUSEPORT, na 127.0.0.1 ali 0.0.0.0: allowLocalEndpointReuse (hiter ponovni zagon) ne odpre deljenja vrat.
 @Test func routerPortCannotBeSharedByAnotherListener() async throws {
     var c = RouterConfig()
-    let port = freeTCPPort()
-    c.host = "127.0.0.1"; c.port = port
-    let server = RouterServer(router: Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])))
-    try server.start()
+    c.host = "127.0.0.1"
+    let (server, port) = try await startOnFreePort { c.port = $0; return Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])) }
     defer { server.stop() }
-    for _ in 0..<100 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
     #expect(portInUse(port))
     for host in ["127.0.0.1", "0.0.0.0"] {
         for opts in [[SO_REUSEADDR], [SO_REUSEPORT], [SO_REUSEADDR, SO_REUSEPORT]] {

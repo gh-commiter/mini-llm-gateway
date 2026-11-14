@@ -180,7 +180,7 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         let app = FakeApp()
         app.config.host = "127.0.0.1"
         let realKey = Noise.newKey()
-        let (server, port) = try await startOnFreePort(app, key: realKey)
+        let (server, port) = try await startOnFreePort(key: realKey) { app.config.port = $0; return app.router() }
         defer { server.stop() }
         let fakeKey = Noise.newKey()
         let (l, fakePort) = listener()
@@ -222,28 +222,6 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         // Brez ključa routerja (program na vratih ne konča rokovanja): 0, nič poslano.
         #expect(AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation).request("GET", "/health/live", nil, timeout: 30).0 == 0)
     }
-}
-
-/// #109: freeTCPPort() zapre vrata pred zagonom (drug test ali odjemalec jih lahko prevzame), NWListener pa napako (EADDRINUSE)
-/// javi le asinhrono prek onState; portInUse bi nato uspel proti tujemu strežniku ali ne bi uspel nikoli. Čaka se na stanje
-/// strežnika; pri napaki nova vrata.
-func startOnFreePort(_ app: FakeApp, key: Curve25519.KeyAgreement.PrivateKey) async throws -> (RouterServer, UInt16) {
-    for _ in 0..<20 {
-        let port = freeTCPPort()
-        app.config.port = port
-        let server = RouterServer(router: app.router(), key: key)
-        let states = Received()
-        server.onState = { states.add(Data("\($0)\n".utf8)) }
-        try server.start()
-        for _ in 0..<600 {  // zgornja meja šteje le pri napaki; pri uspehu ali napaki takoj naprej
-            let text = String(decoding: states.data, as: UTF8.self)
-            if text.contains("listening") { return (server, port) }
-            if text.contains("failed") { break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        server.stop()
-    }
-    throw CocoaError(.fileWriteUnknown)
 }
 
 final class Received: @unchecked Sendable {
