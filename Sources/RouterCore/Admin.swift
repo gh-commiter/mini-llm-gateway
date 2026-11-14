@@ -200,7 +200,8 @@ extension Router {
                           "autostart": hooks.installed() ? "sign-in" : "", "agents": AgentCount.running.load(ordering: .relaxed),
                           "devices": c.devices.count, "pending": Router.deviceLog.pending.count, "claude": await claudeInfo(c.claudeCLI), "gateways": list, "providers": list]
                           .merging(c.copilot.enabled ? Copilot.login(copilotConfig).problem.map { ["copilot": $0] } ?? [:] : [:]) { $1 }  // #81
-                          .merging(coreLine.isEmpty ? [:] : ["core": coreLine]) { $1 })
+                          .merging(coreLine.isEmpty ? [:] : ["core": coreLine]) { $1 }
+                          .merging(await claudeSandboxStatus()) { $1 })  // 0.6.0: the kernel layer under Claude CLI without local tools
 
         // Naprave kot v minigw serve: dovoljene (z zadnjim stikom), čakajoče na odobritev, allowAnyDevice.
         case "GET devices":

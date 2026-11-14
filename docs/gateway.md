@@ -278,16 +278,41 @@ minigw serve                 # or run it in this terminal (--port, --config)
     refused until the other link is removed.
   - **Claude CLI in every mode:** the tool rules `Read` and `Edit` (Read covers Grep and Glob, Edit covers Write; checked
     with a real `claude -p`) for the core folder and the other providers' credential homes are in the settings of the
-    default mode (no "Allow local tools", no sandbox) as well as the sandboxed modes. The Go gateway's default mode already
+    default mode (no "Allow local tools"; on the Mac with a kernel profile under the rules) as well as the sandboxed modes. The Go gateway's default mode already
     scopes the file tools to the session and allowed folders and denies the config folder.
   - **Other providers' credentials:** `~/.grok` (or `$GROK_HOME`), `~/.codex` (or `$CODEX_HOME`), `~/.copilot` (or
     `$COPILOT_HOME`) and the gateway's `Scratch/grok-home` and `Scratch/copilot` are denied to every agent of another
     kind (Codex's profile, Grok's `sandbox.toml`, the Seatbelt hidden list, Claude's rules); an agent keeps its own home.
-  - **Claude CLI without "Allow local tools"** (the restricted mode, no sandbox on the Mac): only file tools run there (Read,
+  - **Claude CLI without "Allow local tools"** (the restricted mode): only file tools run there (Read,
     Grep, Glob, LS, Edit, Write, MultiEdit, NotebookEdit, WebSearch, WebFetch). A configuration that lists `Bash`, `Task`, an
     MCP tool or another tool is refused when it is saved, and a run with such an older stored configuration is refused (400),
     because such a tool could read the notes of all projects. `minigw serve` refuses the same tools except `Bash`, which its
     sandbox confines.
+  - **Two layers under the restricted Claude CLI on the Mac** (0.6.0). The Claude Code rules (`--allowedTools` scoped to the
+    session and allowed folders, `--disallowedTools`, `dontAsk`/`acceptEdits`) are the first layer, enforced by the Claude Code
+    program, so they depend on the installed version (older versions ignored scoped rules in some modes). The second layer is
+    the kernel: the whole `claude` process runs in a Seatbelt profile (`sandbox-exec`, `Native.claudeRestrictedProfile`) that
+    denies every file read and write except an explicit list, so a file outside the session folder and the allowed folders
+    is refused with EPERM even when the rules fail open. Readable: the system libraries, the `claude` program, the session
+    folder, the allowed folders (writable only when edit tools are configured and the run is not read-only), claude's temp
+    folder (`CLAUDE_CODE_TMPDIR`, a private folder `Scratch/tmp/run-<id>`, removed after the run or at the next start),
+    `~/.claude` (not `projects`, `history.jsonl`, `file-history`, `paste-cache`, `backups`, `settings*.json`; writable only
+    `projects/<this session>`, `session-env`, `sessions`, `cache`), `~/.claude.json`, and for the login the login keychain
+    files (`login.keychain-db*` read and write so that a token refresh is saved, `metadata.keychain-db`, the folder). Network
+    out: only TCP 443 and DNS, never localhost (not the gateway's own port). A session folder inside the app folder or Scratch
+    (a remote client's mount, `sync/…`) sees only itself, not sibling sessions, the app folder or the rest of Scratch.
+    A self-check decides whether the layer is used: at start (and at the first run after a new `claude`, macOS or profile) one
+    tiny real `claude -p` runs under the profile in a temporary folder and reads a canary, and plain `cat`/`touch` under the
+    same profile must not read or write outside it. The pass is cached in `Scratch/cache/claude-seatbelt.json`. If claude does
+    not run under the profile after an update, the restricted mode falls back to the rules alone and says so, never silently:
+    one WARNING in the log, `minigw gw status` ("Claude CLI without local tools runs without the system sandbox: <reason>";
+    `claudeSandbox` in the admin `status`) and the Claude CLI pane of Settings. A failed check because the network or the login
+    is down is not the profile's fault and does not switch the layer off. The sandboxed ("Allow local tools") and worktree
+    modes are not wrapped: Claude Code's own sandbox does not nest inside `sandbox-exec`.
+    What the kernel layer does not cover: WebFetch/WebSearch send what the agent could read to the network (any host on
+    port 443); the login keychain files are readable and writable by the confined process (their content is encrypted, and
+    the Claude Code rules keep the Read and Edit tools away from them, but the kernel does not); `~/.claude.json` (account
+    name, project list) and `~/.claude/CLAUDE.md` are readable; the gateway's own network behaviour is not restricted.
   - **Codex write mode on the Mac** is a permission profile now: writable are the session folder, allowed folders and
     the request's private temporary folder (`/private/tmp/minigw-codex-<id>`, exported as `TMPDIR`); other places in
     `/tmp` are not writable any more (before: all of `/tmp`).

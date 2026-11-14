@@ -795,6 +795,7 @@ extension Router {
         var registryKey: String?
         var sharedDir: URL?
         var editOffNote: String?  // T5: restricted run in a folder whose path cannot go into a rule
+        var restricted = false  // 0.6.0: no "Allow local tools", no worktree: the kernel layer (ClaudeSeatbelt) goes under the tool rules
         var readOnly = false
 
         if agent {
@@ -845,6 +846,7 @@ extension Router {
                 return await error(400, "invalid_request_error", "claude \(why)", rid: rid, writer: writer)
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
+            restricted = tree == nil && !cfg.allowLocalTools
             if tree == nil { checked = allowedFolders.checked(cfg.allowedRoots, scratch: config.scratchURL) }  // A2: also a cwd that is an allowed root is opened and verified at launch
             args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
                                                  scratch: config.scratchURL, read: $0.read, gits: $0.gits) }
@@ -880,15 +882,43 @@ extension Router {
             return await error(503, "api_error", cfg.executable.isEmpty ? "claude not found; set its path in Mini Gateway settings"
                                                                          : "claude not found at \(cfg.executable)", rid: rid, writer: writer)
         }
+        // 0.6.0: the restricted run goes under a Seatbelt profile (second layer, kernel-enforced; the tool rules above stay). The run's private temp folder lives in
+        // Scratch/tmp (run-<rid>: the cleanup of `minigw run` removes it at the next start too). A failed self-check (ClaudeSeatbelt) or a profile that cannot be built:
+        // the rules alone, said in the log, status and Settings.
+        var launch = (exe, args)
+        var confinedTmp: URL?
+        var confinedPath: String?
+        var keepTmp = false  // the tree could not be stopped: the folder stays for the start-up cleanup
+        defer { if let t = confinedTmp, !keepTmp { try? FileManager.default.removeItem(at: t) } }
+        if restricted {
+            let tmpBase = config.scratch("tmp")
+            if await Self.claudeSeatbelt.ensure(exe: exe, tmpBase: tmpBase, cacheFile: config.scratch("cache").appendingPathComponent("claude-seatbelt.json")) {
+                let tmp = tmpBase.appendingPathComponent("run-" + rid, isDirectory: true)
+                let grants = ClaudeSeatbelt.grants(args: args)
+                let canon = { (p: String) in Sync.real(URL(fileURLWithPath: p))?.path ?? p }
+                if (try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil {
+                    confinedTmp = tmp
+                }
+                if let tmpReal = confinedTmp.flatMap({ Sync.real($0)?.path }), let real = Sync.real(URL(fileURLWithPath: exe))?.path,
+                   let profile = Native.claudeRestrictedProfile(session: canon(cwd.path), folders: grants.folders.map(canon), writable: grants.writable && !readOnly,
+                                                               tmp: tmpReal, exe: real, hidden: RouterConfig.hiddenScratch(config.scratchURL) + RouterConfig.agentDenied(kind: "claude", scratch: config.scratchURL)) {
+                    launch = ("/usr/bin/sandbox-exec", ["-p", profile, exe] + args)
+                    confinedPath = tmpReal
+                } else {
+                    Self.log.warning("\(ClaudeSeatbelt.offLine("the profile for this run could not be built (a link instead of a folder?)"), privacy: .public)")
+                }
+            }
+        }
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: exe)
-        p.arguments = args
+        p.executableURL = URL(fileURLWithPath: launch.0)
+        p.arguments = launch.1
         p.currentDirectoryURL = cwd
         var env = ProcessInfo.processInfo.environment
         for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || Worktree.sandboxMarkers.contains(k) {
             env[k] = nil  // sicer bi notranji claude klical nazaj ta router; #67: harness ni v peskovniku
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        if let tmp = confinedPath { ClaudeSeatbelt.confine(&env, tmp: tmp) }
         if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
             guard let tenv = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: gitexec, gits: t.gits, agent: "claude", path: env["PATH"] ?? "") else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
@@ -962,6 +992,7 @@ extension Router {
             let pid = p.processIdentifier
             if !(await offPool { Native.killTree(pid, pipes: pipes, dirs: dirs) }) {
                 Self.log.error("\(rid, privacy: .public) claude: its processes could not be stopped")
+                keepTmp = true
                 await Self.shares.abandon()  // #73: klon sync ne gre v kopijo
             }
             return headSent ? 200 : 499
@@ -970,7 +1001,7 @@ extension Router {
         run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
         let pid = p.processIdentifier
         let stopped = await offPool { Native.killTree(pid, pipes: pipes, dirs: dirs) }  // #73: finalize (syncBack) le, ko drevesa ni več
-        if !stopped { await Self.shares.abandon() }  // klon sync ne gre v kopijo
+        if !stopped { await Self.shares.abandon(); keepTmp = true }  // klon sync ne gre v kopijo
         // sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
         let pullErr = agent && stopped ? await Self.shares.syncBack(session: req.header("x-claude-mini-session") ?? "") : nil  // #82
         pinger?.cancel()

@@ -164,7 +164,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "providers": [Provider], "os", "installDir"?, "tray", "autostart", "agents": n, "agentsUnsandboxed", "agentSandbox"?}` |
+| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "providers": [Provider], "os", "installDir"?, "tray", "autostart", "agents": n, "agentsUnsandboxed", "agentSandbox"?, "claudeSandbox"?, "claudeSandboxReason"?}` |
 | `GET /devices` | – | `{"devices": [Device], "pending": [Device], "allowAnyDevice": bool}` |
 | `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending; without a name, the pending device's name |
 | `PATCH /devices/{id}` | `{"name"}` | `{"device": Device}`; renames an allowed device |
@@ -288,7 +288,7 @@ Notes:
   with the key before it saves anything, and stores the key in the system's secret store (Credential Manager,
   Keychain or Secret Service), never in the config. `keyStore` says where. A new provider with more than 20 models
   starts with none enabled. The key is never returned.
-- `status`: `core` (both gateways, only when the gateway has a core) is one line about the project database: `projects: on`, or
+- `status`: `claudeSandbox` (Mac app, 0.6.0): `"on"` or `"off"` (with `claudeSandboxReason`) for the kernel layer under the Claude CLI without "Allow local tools"; absent while not checked yet and when the Claude CLI has local tools. `core` (both gateways, only when the gateway has a core) is one line about the project database: `projects: on`, or
   `projects: off (reason)`; on `minigw serve` it also says when agents without a sandbox can read all notes (see
   `acceptAgentsCanReadNotes` below) or that old project data on disk keeps such agents out; on the Mac the reason can be
   that the helper is not running or a hard link to a core file. `os` is `windows`, `linux` or `darwin` (the settings page uses it for commands without a sandbox),

@@ -392,6 +392,12 @@ git validates (`git fsck`). It does not change where git pushes: remotes live in
 sync and worktree mode are unchanged, and so is the Claude CLI mode without "Allow local tools": its file tools stay
 out of `.git` altogether (commits need Bash, which exists only in the sandboxed mode).
 
+Layers per Claude CLI mode on the Mac (0.6.0): **kernel profile** (the `claude` process in `sandbox-exec`, default-deny files), **Claude Code rules** (scoped `--allowedTools`, `--disallowedTools`, `dontAsk`), **client guard** (the minigw client refuses what it can see before the request).
+- *Without "Allow local tools"* (file tools only): kernel profile + Claude Code rules + client guard. The profile is the layer that still holds when the rules fail open (0.5.27); a failed self-check falls back to the rules and is shown in `minigw gw status`, the log and Settings.
+- *With "Allow local tools"*: Claude Code's own sandbox confines Bash, and its rules confine the file tools; no outer profile (Claude Code's sandbox does not run inside `sandbox-exec`).
+- *Worktree mode*: Claude Code's sandbox in a git clone, as before.
+The kernel layer does not stop network egress of what the agent can read (WebFetch to any host on port 443) and leaves the login keychain files accessible to the confined process (encrypted; the rules keep the file tools away). Details: [gateway.md](gateway.md).
+
 This list is defence in depth, not a sandbox for your folder. An agent that may write can still add code that runs
 on your computer later, for example in `package.json` scripts, a `Makefile` or `.mcp.json`. Review an agent's
 changes before you run builds or hooks, or share the folder read-only.
