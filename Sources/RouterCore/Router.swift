@@ -50,6 +50,7 @@ public final class Router: Sendable {
     let onActivity: @Sendable (Activity) -> Void
     let admin: AdminHooks?  // skrbniški API (aplikacija); nil = ni ga
     let core: CoreHelper?  // 0.6.0: the helper that hosts the project core (CoreForward.swift); nil = every project route answers 503
+    let usageSender: UsageSender  // 0.6.0: usage events to the helper, off the request path (UsageEvents.swift)
     let catalog: Catalog
     let probes = Probes()
     /// Zgodovina naprav in sej: Router.history (aplikacija); testi dajo svojo, da jih vzporedni testi ne motijo.
@@ -65,6 +66,7 @@ public final class Router: Sendable {
                 onActivity: @escaping @Sendable (Activity) -> Void = { _ in },
                 admin: AdminHooks? = nil, core: CoreHelper? = nil, history: GatewayHistory = Router.history, copilotConfig: URL = Copilot.userConfig, allowedFolders: AllowedFolders = AllowedFolders()) {
         self.core = core
+        usageSender = UsageSender(core: core)
         self.allowedFolders = allowedFolders
         allowedFolders.record(config.claudeCLI.allowedRoots, records: config.claudeCLI.allowedRecords)
         self.config = config
@@ -106,13 +108,21 @@ public final class Router: Sendable {
         let rid = "req_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         if let d = req.device { onDevice(d) }
         let tracked = req.method == "POST" && req.path.hasPrefix("/v1/messages") && !req.path.hasSuffix("/count_tokens")
-        if tracked, let model = (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any])?["model"] as? String {
+        let trackedModel = tracked ? (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any])?["model"] as? String : nil
+        if let model = trackedModel {
             onActivity(.started(id: rid, time: start, model: Self.activityModel(model, status: 0)))
         }
         defer { if tracked { onActivity(.finished(id: rid)) } }
         let usage = tracked ? UsageWriter(writer) : nil
         let branch = RunBranch()  // veja izvajanja te zahteve (syncRun), za zgodovino seje
-        let (status, model, provider) = await Self.$runBranch.withValue(branch) { await route(req, rid: rid, writer: usage ?? writer) }
+        let state = RequestState()  // 0.6.0: the project of this request and its usage event (ProjectRun.swift, UsageEvents.swift)
+        let (status, model, provider) = await Self.$runBranch.withValue(branch) {
+            await Self.$reqState.withValue(state) {
+                if let trackedModel { await admitEvent(req, model: trackedModel, state: state) }
+                return await route(req, rid: rid, writer: usage ?? writer)
+            }
+        }
+        endEvent(state, status: status, usage: usage)
         writer.close()
         if let usage, let model {  // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
             await recordSession(req, model: model, status: status, took: Date().timeIntervalSince(start), usage: usage.usage, facts: branch)
@@ -311,13 +321,13 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "grok")
                     }
-                    return (await syncRun(agent: "grok", rid: rid, writer: writer) { await runGrok(req, body: body, model: grokModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "grok")
+                    return (await syncRun(agent: "grok", req: req, rid: rid, writer: writer) { await runGrok(req, body: body, model: grokModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "grok")
                 }
                 if config.codex.enabled, let codexModel = Codex.match(model), codexModel.map(config.codex.isModelEnabled) ?? true {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
                     }
-                    return (await syncRun(agent: "codex", rid: rid, writer: writer) { await runCodex(req, body: body, model: codexModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "codex")
+                    return (await syncRun(agent: "codex", req: req, rid: rid, writer: writer) { await runCodex(req, body: body, model: codexModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "codex")
                 }
                 if config.foundry.enabled, model.hasPrefix(Foundry.prefix), Foundry.validModel(String(model.dropFirst(Foundry.prefix.count))) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -329,7 +339,7 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "copilot")
                     }
-                    return (await syncRun(agent: "copilot", rid: rid, writer: writer) { await runCopilot(req, body: body, model: copilotModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "copilot")
+                    return (await syncRun(agent: "copilot", req: req, rid: rid, writer: writer) { await runCopilot(req, body: body, model: copilotModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "copilot")
                 }
                 if config.appleFM.enabled, AppleFM.ids.contains(model) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -341,7 +351,7 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "claude-cli")
                     }
-                    return (await syncRun(agent: "claude", rid: rid, writer: writer) { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: await early(req, body, rid, writer)) },
+                    return (await syncRun(agent: "claude", req: req, rid: rid, writer: writer) { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: await early(req, body, rid, writer)) },
                             model, "claude-cli")
                 }
                 return (await error(404, "not_found_error", "Unknown model: \(model)", rid: rid, writer: writer), model, nil)
@@ -537,15 +547,22 @@ public final class Router: Sendable {
     }
 
     /// Vgnezdena zahteva (AgentRun): pravila verige, nato v izvajanju klicatelja (ista mapa, isti klon; konča ga klicatelj).
-    func syncRun(agent: String, rid: String, writer: ResponseWriter, _ run: () async -> Int) async -> Int {
-        if core != nil, let why = RouterConfig.coreLinkProblem() {  // 0.6.0 (#106): every agent run, any kind
+    func syncRun(agent: String, req: HTTPRequest, rid: String, writer: ResponseWriter, _ run: () async -> Int) async -> Int {
+        if let core, let why = RouterConfig.coreLinkProblem(store: core.store) {  // 0.6.0 (#106): every agent run, any kind
             return await error(403, "permission_error", "\(Self.agentNames[agent] ?? agent) cannot run: \(why)", rid: rid, writer: writer)
         }
         if let p = AgentRun.current {
             if let why = AgentRun.refusal(agent) { return await error(403, "permission_error", why, rid: rid, writer: writer) }
+            Self.reqState?.project = p.project  // 0.6.0: a nested run inherits the root's project; the header is never read from it
             let status = await ShareHub.$run.withValue(p.runID) { await ShareHub.$agent.withValue(agent) { await run() } }
             if let id = p.runID { Self.runBranch?.branch = await Self.shares.runBranch(id) }  // veja klicatelja
             return status
+        }
+        switch await admitProject(req) {  // 0.6.0 (D7): the project header of an agent request; a refused request never runs, and never without its project
+        case .none: break
+        case .admitted(let p): Self.reqState?.project = p
+        case .refused(let status, let type, let message, let retryAfter):
+            return await refuseProject(status, type, message, retryAfter: retryAfter, rid: rid, writer: writer)
         }
         let id = UUID().uuidString
         let status = await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue(agent) { await run() } }
@@ -725,6 +742,7 @@ public final class Router: Sendable {
 
         var headSent = false
         var status = 502
+        dispatched(r.provider.id)  // the upstream request goes out (usage event)
         do {
             let (bytes, resp) = try await session.bytes(for: up)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }

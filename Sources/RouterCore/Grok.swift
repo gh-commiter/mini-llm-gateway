@@ -212,8 +212,15 @@ public enum Grok {
 extension Router {
     /// Ključ za nadaljevanje seje agenta: naprava + mapa odjemalca. ID seje routerja in pot priklopa
     /// se pri `minigw -c`/`--resume` zamenjata, zato nista v ključu.
-    static func agentScope(_ provider: String, _ req: HTTPRequest, cwd: URL) -> String {
-        [provider, req.device?.id ?? "local", req.header("x-claude-mini-cwd") ?? cwd.path].joined(separator: "|")
+    /// 0.6.0: the parts of the key; `conversationScope` joins them (no project: the 0.5.26 key byte for byte) or gives the project's namespace.
+    static func agentScopeFields(_ provider: String, _ req: HTTPRequest, cwd: URL) -> [String] {
+        [provider, req.device?.id ?? "local", req.header("x-claude-mini-cwd") ?? cwd.path]
+    }
+
+    /// The refusal of an agent request whose project the core cannot serve any more (the helper went down after admission): it does not run.
+    func projectDown(rid: String, writer: ResponseWriter) async -> Int {
+        guard case .refused(let s, let t, let m, _) = Self.projectUnavailable else { return 503 }
+        return await refuseProject(s, t, m, retryAfter: 0, rid: rid, writer: writer)
     }
 
     func runGrok(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
@@ -221,7 +228,14 @@ extension Router {
         // (Grok.prepareCoreHome); if that cannot be set up (also while the helper is merely not ready) it does not run.
         var coreEnv: [String: String] = [:]
         if core != nil {
-            guard let e = Grok.prepareCoreHome(config.scratch("grok-home"), deny: RouterConfig.agentDenied(kind: "grok", scratch: config.scratchURL)) else {
+            // A project run has its own home per user, project and epoch (projectHome) instead of the shared one: the same profile file in it,
+            // the login stays where it is (GROK_AUTH_PATH). Its path is under <Scratch>/state, which every agent's deny list holds.
+            var home = config.scratch("grok-home")
+            if let p = Self.reqState?.project {
+                guard let h = await projectHome(kind: "grok", owner: req.device?.id ?? "local", project: p) else { return await projectDown(rid: rid, writer: writer) }
+                home = h
+            }
+            guard let e = Grok.prepareCoreHome(home, deny: RouterConfig.agentDenied(kind: "grok", scratch: config.scratchURL)) else {
                 return await error(503, "api_error", Grok.coreUnavailable, rid: rid, writer: writer)
             }
             coreEnv = e
@@ -288,7 +302,9 @@ extension Router {
         }
         var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write && !readOnly, core: core != nil)
         // Nadaljevanje Grokove seje (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
-        let scope = Self.agentScope("grok", req, cwd: cwd)
+        guard let scope = await conversationScope("agent", Self.agentScopeFields("grok", req, cwd: cwd), project: Self.reqState?.project) else {
+            return await projectDown(rid: rid, writer: writer)
+        }
         if agent, let existing = await Self.grokSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) {
             args += ["-r", existing]
             prompt = last.text
@@ -305,6 +321,7 @@ extension Router {
             env.merge(e.filter { $0.key != "MINIGW_DEPS" }) { $1 }  // #67: Grok v klonu le bere
         }
         return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer, req: req) {
+            self.dispatched("grok")  // the agent process starts (usage event)
             let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, dirs: await Self.shares.runDirs(), checked: checked, stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             // sync: spremembe agenta k odjemalcu pred odgovorom; #82: neprevzete niso uspeh

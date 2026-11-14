@@ -11,15 +11,29 @@ import os
 // no path to bind or steal. It serves only its parent (LOCAL_PEERPID) and only after a mutual HMAC handshake that proves
 // the secret both ways (the secret is never sent). Frames are 4-byte big-endian length + JSON (coreapi/wire.go).
 
-/// What the adapter vouches for (coreapi.Context). `run` contexts belong to the run port, a later task.
+/// core.RunCap: the notes capability of one agent run (docs/core-adapter.md). The gateway keeps it; the core checks it.
+public struct CoreRunCap: Sendable, Equatable {
+    public var runId: String
+    public var userId: Int
+    public var deviceId: String
+    public var projectId: Int
+    public var epoch: Int
+    public init(runId: String, userId: Int, deviceId: String, projectId: Int, epoch: Int) {
+        self.runId = runId; self.userId = userId; self.deviceId = deviceId; self.projectId = projectId; self.epoch = epoch
+    }
+    var json: [String: Any] { ["runId": runId, "userId": userId, "deviceId": deviceId, "projectId": projectId, "epoch": epoch] }
+}
+
+/// What the adapter vouches for (coreapi.Context).
 public struct CoreContext: Sendable, Equatable {
     public enum Kind: String, Sendable { case member, admin, run, `internal` }
     public var kind: Kind
     public var device = ""        // member: the device proven in THIS Noise tunnel ("" = none)
     public var approved = false   // member: on the approved list now
     public var agentPeer = false  // member: the caller is a process of one of the gateway's agents
-    public init(kind: Kind, device: String = "", approved: Bool = false, agentPeer: Bool = false) {
-        self.kind = kind; self.device = device; self.approved = approved; self.agentPeer = agentPeer
+    public var run: CoreRunCap?   // run: the capability of the run port's run (`approved`: its device is on the approved list now)
+    public init(kind: Kind, device: String = "", approved: Bool = false, agentPeer: Bool = false, run: CoreRunCap? = nil) {
+        self.kind = kind; self.device = device; self.approved = approved; self.agentPeer = agentPeer; self.run = run
     }
     public static let admin = CoreContext(kind: .admin)
     public static let `internal` = CoreContext(kind: .internal)
@@ -29,6 +43,7 @@ public struct CoreContext: Sendable, Equatable {
         if !device.isEmpty { o["device"] = device }
         if approved { o["approved"] = true }
         if agentPeer { o["agentPeer"] = true }
+        if let run { o["run"] = run.json }
         return o
     }
 }
@@ -130,7 +145,8 @@ public final class CoreHelper: @unchecked Sendable {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mini Gateway/core", isDirectory: true)
     }
 
-    private let binary: URL?, store: URL, versions: ClosedRange<Int>, backoff: [Double], requestTimeout: Double
+    let store: URL  // the folder in use (RouterConfig.coreLinkProblem checks this one before every agent run)
+    private let binary: URL?, versions: ClosedRange<Int>, backoff: [Double], requestTimeout: Double
     private let ownerName: String, marks: CoreRevocationMarks
     private let cond = NSCondition()
     private var conn: CoreProcess?            // set after the handshake

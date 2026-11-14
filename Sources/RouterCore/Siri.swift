@@ -233,6 +233,7 @@ extension Router {
                     Self.log.notice("\(rid, privacy: .public) siri mentions=\(names.count) attached=\(files.count) media=\(media.count)")
                 }
             }
+            self.dispatched("siri-ai")  // Siri is asked (usage event)
             let reply = try await SiriEngine.shared.ask(turns, scope: scope, cfg: config.siri, context: context, files: media)
             Self.log.notice("\(rid, privacy: .public) siri thread=\(reply.newThread ? "new" : "continued", privacy: .public) marker=\(reply.markerMissing ? "missing" : "ok", privacy: .public)")
             var headers = [("x-siri-thread", reply.newThread ? "new" : "continued")]

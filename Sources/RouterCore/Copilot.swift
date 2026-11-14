@@ -436,8 +436,15 @@ extension Router {
         defer { run?.stop() }
         let env = Copilot.environment(base, home: home, extra: extraEnv.merging(run?.env ?? [:]) { $1 })
         // Nadaljevanje seje Copilot (--session-id): ključ je dosedanji pogovor v tej mapi; stanje seje iz Scratch.
-        let store = config.scratch("copilot").appendingPathComponent("sessions")
-        let scope = Self.agentScope("copilot", req, cwd: cwd)
+        // 0.6.0 (M2): a run with a project keeps its sessions in its own home (per user, project and epoch), not in the shared folder.
+        var store = config.scratch("copilot").appendingPathComponent("sessions")
+        if let p = Self.reqState?.project {
+            guard let home = await projectHome(kind: "copilot", owner: req.device?.id ?? "local", project: p) else { return await projectDown(rid: rid, writer: writer) }
+            store = home.appendingPathComponent("sessions")
+        }
+        guard let scope = await conversationScope("agent", Self.agentScopeFields("copilot", req, cwd: cwd), project: Self.reqState?.project) else {
+            return await projectDown(rid: rid, writer: writer)
+        }
         let existing = agent ? await Self.copilotSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil
         let session = existing ?? UUID().uuidString.lowercased()
         if let existing, Copilot.copySession(store.appendingPathComponent(existing), to: home.appendingPathComponent("session-state/" + existing)) {
@@ -456,6 +463,7 @@ extension Router {
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-copilot", rid: rid, writer: writer, req: req) {
+            self.dispatched("copilot")  // the agent process starts (usage event)
             let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox, dirs: await Self.shares.runDirs(), started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }

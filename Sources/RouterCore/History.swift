@@ -451,11 +451,14 @@ final class UsageWriter: ResponseWriter, @unchecked Sendable {
     private let lock = NSLock()
     private var tail = Data()
     private var counts = (input: 0, output: 0)
+    private var errors = false
     private static let re = try! NSRegularExpression(pattern: #""(input|output)_tokens"\s*:\s*(\d+)"#)
 
     init(_ inner: ResponseWriter) { self.inner = inner }
 
     var usage: (input: Int, output: Int) { lock.withLock { counts } }
+    /// An SSE error event went through (a stream that began with 200 and failed): the usage event of the request is an error.
+    var errorSeen: Bool { lock.withLock { errors } }
 
     func write(_ data: Data) async throws {
         scan(data)
@@ -468,6 +471,7 @@ final class UsageWriter: ResponseWriter, @unchecked Sendable {
         lock.withLock {
             let buf = tail + data
             let s = String(decoding: buf, as: UTF8.self) as NSString
+            if s.contains("event: error\n") { errors = true }
             for m in Self.re.matches(in: s as String, range: NSRange(location: 0, length: s.length)) {
                 let n = Int(s.substring(with: m.range(at: 2))) ?? 0
                 if s.substring(with: m.range(at: 1)) == "input" { counts.input = max(counts.input, n) } else { counts.output = max(counts.output, n) }
