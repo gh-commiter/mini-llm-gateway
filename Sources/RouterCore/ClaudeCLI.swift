@@ -168,6 +168,13 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         return ["\(r)(./**)"] + dirs.dropFirst().map { "\(r)(/\($0)/**)" }
     }
 
+    /// The roots the restricted mode denies to the file tools: what the other agents' homes, the core and the state need (`agentDenied`) and everything the sandboxes hide
+    /// (Scratch, its `.old-*` siblings, the app folder: `hiddenScratch`); main denied the second set, the 0.6.0 merge had lost it (#116 A1).
+    static func hiddenRoots(scratch: URL?) -> [String] {
+        var seen = Set<String>()
+        return (RouterConfig.agentDenied(kind: "claude", scratch: scratch) + (scratch.map(RouterConfig.hiddenScratch) ?? [])).filter { seen.insert($0).inserted }
+    }
+
     /// #114: which of the hidden folders (the gateway's app folder, Scratch, the Copilot cache, the core …) may be denied to the tools without denying the run's own files.
     /// A deny beats an allow, and a remote client's folder lives INSIDE hidden roots (`…/Mini Gateway/mounts/<dir>`, `Scratch/sync/<…>`): denying the root would deny
     /// the session. So, per hidden root H and the scope folders (the session folder and the checked allowed folders):
@@ -217,7 +224,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             var extra = dirs.dropFirst().filter { Self.ruleSafe($0) }
             if extra.count != dirs.count - 1 { Self.logOnce("claude: allowed folders with a character that cannot go into a permission rule are skipped: \(dirs.dropFirst().filter { !Self.ruleSafe($0) }.joined(separator: ", "))") }
             let scopeDirs0 = [cwd.path] + extra
-            let hiddenDenied = Self.scopedDenies(hidden: RouterConfig.agentDenied(kind: "claude", scratch: scratch).filter { Self.ruleSafe($0) }, scopes: scopeDirs0)
+            let hiddenDenied = Self.scopedDenies(hidden: Self.hiddenRoots(scratch: scratch).filter { Self.ruleSafe($0) }, scopes: scopeDirs0)
             let copilotDenied = Self.scopedDenies(hidden: Self.scratchPaths(RouterConfig.copilotCache).filter { Self.ruleSafe($0) }, scopes: scopeDirs0)
             extra = extra.filter { !hiddenDenied.dropped.contains($0) && !copilotDenied.dropped.contains($0) }  // #114: an allowed folder around a hidden root that cannot be fenced off
             let scopeDirs = [cwd.path] + extra
@@ -237,6 +244,12 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
                 + extra.flatMap { ["--add-dir", $0] }
         }
 
+        // #116 B4: a folder whose path cannot go into a rule keeps no `.git` Edit/Write denies, so it is not used (an allowed folder is skipped, as in the restricted
+        // branch); for the session's own folder the file tools are switched off instead (Bash stays, in its sandbox with the denyWrite paths, which are not rules)
+        let skipped = dirs.dropFirst().filter { !Self.ruleSafe($0) }
+        if !skipped.isEmpty { Self.logOnce("claude: allowed folders with a character that cannot go into a permission rule are skipped: \(skipped.joined(separator: ", "))"); dirs = [dirs[0]] + dirs.dropFirst().filter { Self.ruleSafe($0) } }
+        let editToolsOff = !Self.ruleSafe(cwd.path)
+        if editToolsOff { Self.logOnce("claude: the session folder \(cwd.path) has a character that cannot go into a permission rule: no edit tools") }
         var denySettings = Self.toolDenySettings(scratch: scratch, scopes: dirs)
         if !denySettings.dropped.isEmpty {  // #114: an allowed folder around a gateway folder that cannot be fenced off is not used
             dirs = dirs.filter { !denySettings.dropped.contains($0) }
@@ -256,7 +269,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) && (!readOnly || roTools.contains($0)) }
         // N3: nastavitve, hooki in preusmeritve ugnezdenih .git tudi ne z orodji Edit/Write (kot regex v Native.sandboxProfile)
         let nestedGit: [String] = readOnly ? [] : Self.nestedGitEditWriteDenies(dirs: dirs)  // tudi datoteka gitdir: (podmodul) ali .git sam
-        let denied = disabledTools + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : []) + nestedGit + (readOnly ? [] : claudeSettingsEditDenies(dirs: dirs) + Self.gitDataEditDenies(dirs: dirs))
+        let denied = disabledTools + (editToolsOff ? Array(Self.editClass.sorted()) : []) + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : []) + nestedGit + (readOnly ? [] : claudeSettingsEditDenies(dirs: dirs) + Self.gitDataEditDenies(dirs: dirs))
         return ["--tools", readOnly ? roTools.joined(separator: ",") : "default", "--permission-mode", "acceptEdits", "--settings", settings]
             + dirs.dropFirst().flatMap { ["--add-dir", $0] }
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])

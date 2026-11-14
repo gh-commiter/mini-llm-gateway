@@ -491,7 +491,7 @@ sandboxes (Claude CLI sandbox rules, the Codex permission profile) let it write 
   the closed names; the file tools (Edit, Write) never touch `.git`. Without "Allow local tools" there is no Bash, so no
   commit, and the file tools stay out of `.git` as before.
 - **Codex**: the permission profile makes the folder's `.git` writable and the closed names read-only.
-- **Grok**: its sandbox has no `.git` rule. On a client's shared folder in direct mode the client's guard applies; in direct mode on a folder of the gateway Mac itself (an allowed folder) Grok has no `.git` protection of its own.
+- **Grok**: its sandbox has no `.git` rule. On a client's shared folder in direct mode the client's guard applies; in direct mode on a folder of the gateway Mac itself (an allowed folder) Grok has no `.git` protection of its own (issue #115).
 - **Copilot**: no commands and no repository of its own (`GIT_DIR=/dev/null`); it cannot commit, and its profile keeps
   `.git` closed.
 - Worktree, sync and read-only (`--minigw-ro`) runs, and `minigw serve` (no direct mode), are unchanged.

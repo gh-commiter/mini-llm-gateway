@@ -84,6 +84,39 @@ public enum Grok {
         return coreProfiles.map { "[profiles.\($0.0)]\nextends = \"\($0.1)\"\ndeny = [\(list.joined(separator: ", "))]\n" }.joined(separator: "\n")
     }
 
+    /// #114 for Grok: its profile has no allow side (it reads everywhere), so a hidden root that holds the session folder (`…/Mini Gateway/mounts/<dir>`,
+    /// `Scratch/sync/<device>/<proj>`) cannot simply give way: the root's other content (state.json, the other clients' mounts, the core) must stay denied.
+    /// The root is replaced by globs for every entry on every level down to the session folder except the one that leads to it (the profile's `deny` takes
+    /// gitignore-style globs, kernel-enforced on macOS also for entries created later). Names are matched by character classes: for the name `s1`: `[!s]*`,
+    /// `s[!1]*`, `s1?*` and the exact prefix `s`. nil = a name or path that cannot be written that way (a glob character, a space): the run is refused.
+    static func scopedDenies(hidden: [String], scope: String) -> [String]? {
+        func real(_ p: String) -> String { Sync.realResolving(URL(fileURLWithPath: p))?.path ?? p }
+        let scopeReal = real(scope)
+        var out: [String] = [], seen = Set<String>()
+        func add(_ p: String) { if seen.insert(p).inserted { out.append(p) } }
+        func addGlob(_ p: String) { add(p); add(p + "/**") }  // a glob names the entry only (real run: `cat s2/x` still worked): its contents too
+        func simple(_ n: String) -> Bool { !n.isEmpty && n.unicodeScalars.allSatisfy { ($0.value < 128) && (CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0)) } }
+        for h in hidden {
+            let hr = real(h)
+            guard scopeReal == hr || scopeReal.hasPrefix(hr + "/") else { add(h); continue }
+            guard !hr.contains(where: { "*?[".contains($0) }), hr.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }
+            let comps = scopeReal.dropFirst(hr.count).split(separator: "/").map(String.init)
+            var level = hr
+            for c in comps {
+                guard simple(c) else { return nil }
+                let chars = Array(c)
+                for i in 0..<chars.count {
+                    let cls = "[!" + String(chars[i]) + "]*"
+                    addGlob(level + "/" + String(chars[0..<i]) + cls)
+                    if i > 0 { add(level + "/" + String(chars[0..<i])) }  // a name that is a proper prefix of c
+                }
+                addGlob(level + "/" + c + "?*")
+                level += "/" + c
+            }
+        }
+        return out
+    }
+
     /// Gateway-owned Grok home with the profiles, checked here before each run: env for the process, or nil (refuse).
     /// `login`: the folder of the real login (the user's ~/.grok or $GROK_HOME).
     static func prepareCoreHome(_ home: URL, deny: [String], login: URL = Grok.loginHome()) -> [String: String]? {
@@ -228,6 +261,7 @@ extension Router {
         // (Grok.prepareCoreHome); if that cannot be set up (also while the helper is merely not ready) it does not run.
         var coreEnv: [String: String] = [:]
         var held: URL?
+        var coreHome: URL?  // the home with the profiles, prepared below once the session folder is known (its deny list depends on it)
         defer { if let held { Self.releaseProjectHome(held) } }  // F8: the project home is held for the whole run
         if core != nil {
             // A project run has its own home per user, project and epoch (projectHome) instead of the shared one: the same profile file in it,
@@ -238,10 +272,7 @@ extension Router {
                 held = h
                 home = h
             }
-            guard let e = Grok.prepareCoreHome(home, deny: RouterConfig.agentDenied(kind: "grok", scratch: config.scratchURL)) else {
-                return await error(503, "api_error", Grok.coreUnavailable, rid: rid, writer: writer)
-            }
-            coreEnv = e
+            coreHome = home
         }
         // Grok nima zaščite .git v peskovniku, njegov program pa poganja git zunaj njega (in ~/.grok je pisljiv): s pisanjem
         // zavrni; brez pisanja v worktree le bere v klonu (veje ne vrne).
@@ -298,10 +329,18 @@ extension Router {
             Self.runBranch?.readOnly = readOnly || inTree  // #46a
             if readOnly, inTree, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }  // kot Codex
             if let shared, let clientCwd {
-                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || inTree, synced: synced) + "\n\n" + prompt
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || inTree || !config.grok.write, synced: synced) + "\n\n" + prompt
             }
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
+        }
+        if let home = coreHome {
+            // #116 A2: the gateway's folders are denied to Grok's kernel profile, except the way down to the session folder (a remote client's mount lives inside the app folder)
+            guard let deny = Grok.scopedDenies(hidden: RouterConfig.agentDenied(kind: "grok", scratch: config.scratchURL), scope: cwd.path),
+                  let e = Grok.prepareCoreHome(home, deny: deny) else {
+                return await error(503, "api_error", Grok.coreUnavailable, rid: rid, writer: writer)
+            }
+            coreEnv = e
         }
         var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write && !readOnly, core: core != nil)
         // Nadaljevanje Grokove seje (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.

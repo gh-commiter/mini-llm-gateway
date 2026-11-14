@@ -56,7 +56,7 @@ private struct Repo {
     // what an agent does: add, commit, branch, tag, checkout, stash, merge of a local branch, and a commit inside the submodule (its git dir is .git/modules/sub)
     for cmd in ["echo more >> a.txt && git add a.txt && git commit -qm agent", "git branch feature", "git tag v1", "git checkout -q -b topic", "echo again >> a.txt && git stash -q && git stash list | grep -q stash",
                 "git checkout -q master 2>/dev/null || git checkout -q main", "git merge -q --no-edit x", "echo s > sub/s.txt && git -C sub add s.txt && git -C sub commit -qm subc",
-                "echo m > nest/m && git -C nest add m && git -C nest commit -qm nm", "git gc -q"] {
+                "echo m > nest/m && git -C nest add m && git -C nest commit -qm nm", "git gc -q", "git repack -a -d -q && git prune --expire=now"] {
         let o = under(w, cmd)
         #expect(o.status == 0, "\(cmd): \(o)")
     }
@@ -142,4 +142,14 @@ private struct Repo {
     let wdeny = try #require(((wst["sandbox"] as? [String: Any])?["filesystem"] as? [String: Any])?["denyWrite"] as? [String])
     for g in ClaudeCLIConfig.gitDenies { #expect(wdeny.contains(git.path + "/" + g), "\(g)") }
     #expect(wdeny.contains(git.path + "/modules/sub/config") && wdeny.contains(git.path + "/modules/**/hooks"))
+}
+
+// #116 B4: a folder whose path cannot go into a rule keeps no `.git` Edit denies, so the sandboxed branch does not use it (an allowed folder) or switches the file tools off (the session folder).
+@Test func theSandboxedBranchDropsFoldersThatCannotGoIntoARule() {
+    var local = ClaudeCLIConfig(); local.allowLocalTools = true
+    let a = local.agentArgs(cwd: URL(fileURLWithPath: "/tmp/ok"), allTools: [], folders: AllowedFolders(), checkedPaths: ["/tmp/bad (1)", "/tmp/fine"])
+    #expect(!a.contains("/tmp/bad (1)") && a.contains("/tmp/fine"))
+    let b = local.agentArgs(cwd: URL(fileURLWithPath: "/tmp/p (1)"), allTools: [], folders: AllowedFolders(), checkedPaths: [])
+    let denied = b.firstIndex(of: "--disallowedTools").map { b[$0 + 1] } ?? ""
+    #expect(["Edit", "Write", "MultiEdit", "NotebookEdit"].allSatisfy { denied.contains($0) }, "\(denied)")
 }

@@ -279,6 +279,7 @@ final class ShareClient: @unchecked Sendable {
     var capped: [String] = []  // #60: agenti, ki zaradi omejitve prehoda le berejo (starejši prehod tega ne pošlje)
     var worktree: Bool { kind == "worktree" }
     var refusal = ""  // zakaj router mape ni sprejel
+    private var gitWatch: GitWatch?  // #116 B1: direct: the repository at the start (GitWatch.swift)
     static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
     private let lock = NSLock()
     private var current = ""
@@ -324,7 +325,10 @@ final class ShareClient: @unchecked Sendable {
         return true
     }
 
-    func unregister() { guard !key.isEmpty else { return }; _ = call(c, "DELETE", "/minigw/share", ["x-share-key": key], timeout: 3) }
+    func unregister() {
+        if let g = gitWatch { gitWatch = nil; g.finish() }  // #116 B1: what the agent did in the owner's repository
+        guard !key.isEmpty else { return }; _ = call(c, "DELETE", "/minigw/share", ["x-share-key": key], timeout: 3)
+    }
 
     private var rootID: [UInt64]?  // L6 (#84): istovetnost korena ob start; nil = ni znana ali ni preverjena → vsi posli zavrnjeni
 
@@ -336,6 +340,7 @@ final class ShareClient: @unchecked Sendable {
             try? FileHandle.standardError.write(contentsOf: Data("minigw: not sharing \(root.path) (the folder changed after it was checked)\n".utf8))
         }
         folderLock = rootID.map { FolderLock(id: $0) }
+        if kind == "direct", !readOnly, rootID != nil { gitWatch = GitWatch.begin(root.path) }  // direct mode: the agent can commit (#116 B1)
         for _ in 0..<workers { Thread { self.work() }.start() }
     }
 

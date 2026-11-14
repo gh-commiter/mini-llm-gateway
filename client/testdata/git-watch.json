@@ -1,0 +1,227 @@
+{
+ "_": "Direct-mode git watch (docs/how-it-works.md): asserted by Go (gitwatch_test.go) and Swift (GitWatchTests.swift)",
+ "cases": [
+  {
+   "name": "nothing",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "a.txt": "100644 aaaa 0"
+    },
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "a.txt": "100644 aaaa 0"
+    },
+    "pending": []
+   },
+   "commits": [],
+   "lines": [],
+   "reset": []
+  },
+  {
+   "name": "commits, branch, tag",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "b",
+     "refs/heads/feature": "c",
+     "refs/tags/v1": "c",
+     "refs/stash": "d"
+    },
+    "index": {},
+    "pending": []
+   },
+   "commits": [
+    {
+     "id": "b",
+     "files": [
+      "src/a.go"
+     ]
+    },
+    {
+     "id": "c",
+     "files": [
+      "README.md"
+     ]
+    }
+   ],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: 2 new commit(s); new branches: feature; moved branches: main; new tags: v1"
+   ],
+   "reset": []
+  },
+  {
+   "name": "protected paths committed",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "b"
+    },
+    "index": {},
+    "pending": [],
+    "cached": []
+   },
+   "commits": [
+    {
+     "id": "b",
+     "files": [
+      ".envrc",
+      "src/a.go",
+      ".claude/settings.json",
+      ".husky/pre-commit"
+     ]
+    }
+   ],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: 1 new commit(s); moved branches: main",
+    "minigw: WARNING: the agent committed a protected path: .claude/settings.json, .envrc, .husky/pre-commit - review before git checkout, reset --hard, restore, stash pop or your next commit"
+   ],
+   "reset": []
+  },
+  {
+   "name": "protected paths staged",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "a.txt": "100644 aaaa 0",
+     ".vscode/tasks.json": "100644 aaaa 0"
+    },
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "a.txt": "100644 bbbb 0",
+     ".vscode/tasks.json": "100644 bbbb 0",
+     ".envrc": "100644 bbbb 0"
+    },
+    "pending": [],
+    "cached": [
+     ".envrc",
+     ".vscode/tasks.json",
+     "a.txt"
+    ]
+   },
+   "commits": [],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: 3 staged path(s)",
+    "minigw: WARNING: the agent staged a protected path: .envrc, .vscode/tasks.json - removed from the index for you (your files were not touched)"
+   ],
+   "reset": [
+    ".envrc",
+    ".vscode/tasks.json"
+   ]
+  },
+  {
+   "name": "merge in progress",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": [
+     "MERGE_HEAD"
+    ]
+   },
+   "commits": [],
+   "lines": [
+    "minigw: WARNING: a merge, cherry-pick or revert is in progress, started by the agent (MERGE_HEAD): finish it or cancel it (git merge --abort) after you have reviewed it"
+   ],
+   "reset": []
+  },
+  {
+   "name": "already in progress at the start",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": [
+     "MERGE_HEAD"
+    ]
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": [
+     "MERGE_HEAD",
+     "REVERT_HEAD"
+    ]
+   },
+   "commits": [],
+   "lines": [
+    "minigw: WARNING: a merge, cherry-pick or revert is in progress, started by the agent (REVERT_HEAD): finish it or cancel it (git merge --abort) after you have reviewed it"
+   ],
+   "reset": []
+  },
+  {
+   "name": "checkout, deleted branch, detached",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a",
+     "refs/heads/old": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "end": {
+    "head": "",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "commits": [],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: HEAD is detached; deleted refs: old"
+   ],
+   "reset": []
+  }
+ ]
+}

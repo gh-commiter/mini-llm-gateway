@@ -122,17 +122,25 @@ public enum Sync {
     public static func gitDirWritable(_ c: [String]) -> Bool {
         guard let first = c.first, !c.contains(where: { $0 == ".git" || $0 == "." || $0 == ".." || $0.isEmpty }) else { return false }
         switch first {
-        case "refs", "logs": return c.count > 1
+        case "refs", "logs": return c.count > 1 && !c.dropFirst().contains { $0.hasPrefix("-") }  // a ref named `-x` could be read as an option by the owner's script
         case "objects": return objectsWritable(Array(c.dropFirst()))
         case "modules": return moduleWritable(Array(c.dropFirst()))
         default: return c.count == 1 && gitFile(first)
         }
     }
 
+    /// `.git/objects/<xx>` and `.git/objects/pack` (also in a submodule's git folder): the folders git fills; their files are writable and deletable, the folders
+    /// themselves are not removed or replaced (DELETE or MOVE of one would destroy repository data in one request).
+    public static func isGitFolderRoot(_ rel: String) -> Bool {
+        let c = rel.split(separator: "/").map { normName(String($0)) }
+        let n = c.count
+        return n >= 3 && c[n - 2] == "objects" && (c[n - 1] == "pack" || c[n - 1].count == 2 && c[n - 1].allSatisfy { $0.isHexDigit && !$0.isUppercase }) && c[..<(n - 2)].contains(".git")
+    }
+
     /// The files git writes in its directory for add, commit, branch, checkout, stash, tag and merge of local branches
     /// (and their .lock files); index.* is the temporary index of stash, next-index-* of commit with paths.
     static func gitFile(_ n: String) -> Bool {
-        n.range(of: #"^(index(\.[a-z0-9._-]+)?|sharedindex\.[0-9a-f]+|next-index-[0-9]+|head|orig_head|fetch_head|merge_head|merge_msg|merge_mode|merge_rr|auto_merge|commit_editmsg|cherry_pick_head|revert_head|squash_msg|tag_editmsg|packed-refs|gc\.pid|gc\.log)(\.lock)?$"#, options: .regularExpression) != nil
+        n.range(of: #"^(index(\.[a-z0-9._-]+)?|sharedindex\.[0-9a-f]+|next-index-[0-9]+|head|orig_head|fetch_head|merge_head|merge_msg|merge_mode|merge_rr|auto_merge|commit_editmsg|cherry_pick_head|revert_head|squash_msg|tag_editmsg|packed-refs|gc\.pid)(\.lock)?$"#, options: .regularExpression) != nil
     }
 
     static func objectsWritable(_ c: [String]) -> Bool {

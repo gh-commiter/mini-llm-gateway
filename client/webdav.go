@@ -282,7 +282,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if len(rel) == 0 {
 			return dav(403, nil, nil)
 		}
-		if rootTreeProtected(rooted, p, rel, true) {
+		if rootTreeProtected(rooted, p, rel, true) || isDir && gitFolderRoot(strings.Join(rel, "/")) {
 			return davRefuse(rel)
 		}
 		davMutationReady()
@@ -321,8 +321,11 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if protected(dest, destRel) || rootTreeProtected(rooted, p, destRel, true) || (lerr == nil && rootTreeProtected(rooted, dest, destRel, true)) {
 			return davRefuse(destRel)
 		}
-		if method == "MOVE" && rootTreeProtected(rooted, p, rel, true) {
+		if method == "MOVE" && (rootTreeProtected(rooted, p, rel, true) || isDir && gitFolderRoot(strings.Join(rel, "/"))) {
 			return davRefuse(rel)
+		}
+		if di, err := rooted.Lstat(dest); err == nil && di.IsDir() && gitFolderRoot(strings.Join(destRel, "/")) { // a folder git fills is not replaced
+			return davRefuse(destRel)
 		}
 		if isJunk(dest) {
 			return dav(201, nil, nil)

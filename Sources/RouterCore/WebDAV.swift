@@ -146,7 +146,7 @@ public enum WebDAV {
             if junk { return DAVResponse(204) }
             guard exists else { return DAVResponse(404) }
             guard !rel.isEmpty else { return forbidden() }
-            guard !rt.treeProtected(p, base: rel) else { return refuse(rel) }
+            guard !rt.treeProtected(p, base: rel), !(isDir && Sync.isGitFolderRoot(rel.joined(separator: "/"))) else { return refuse(rel) }
             beforeMutation?(rt.path ?? "")
             guard rt.removeAll(p) else { return forbidden() }
             return DAVResponse(204)
@@ -165,7 +165,8 @@ public enum WebDAV {
             if protected(dest, destRel) || rt.treeProtected(p, base: destRel) || (rt.lstat(dest) != nil && rt.treeProtected(dest, base: destRel)) {
                 return refuse(destRel)
             }
-            if method == "MOVE", rt.treeProtected(p, base: rel) { return refuse(rel) }
+            if method == "MOVE", rt.treeProtected(p, base: rel) || (isDir && Sync.isGitFolderRoot(rel.joined(separator: "/"))) { return refuse(rel) }
+            if let di = rt.lstat(dest), di.st_mode & S_IFMT == S_IFDIR, Sync.isGitFolderRoot(destRel.joined(separator: "/")) { return refuse(destRel) }  // a folder git fills is not replaced
             if isJunk(dest) { return DAVResponse(201) }
             guard parentExists(dest) else { return DAVResponse(409) }
             // Mapa v svojo podmapo in vir v cilju (MOVE /a/b → /a bi z brisanjem cilja izbrisal vir): nikoli

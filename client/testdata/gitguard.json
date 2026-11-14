@@ -562,11 +562,6 @@ true,
 false
 ],
 [
-".git/gc.log",
-true,
-false
-],
-[
 ".git/gc.pid.lock",
 true,
 false
@@ -574,6 +569,31 @@ false
 [
 ".git/gc.logx",
 false,
+false
+],
+[
+".git/gc.log",
+false,
+false
+],
+[
+".git/refs/heads/-x",
+false,
+false
+],
+[
+".git/refs/-heads/x",
+false,
+false
+],
+[
+".git/logs/refs/heads/-x",
+false,
+false
+],
+[
+".git/refs/heads/x-y",
+true,
 false
 ]
 ],
@@ -614,7 +634,10 @@ false
 "f:nest/.git/index",
 "l:link-hooks=.git/hooks",
 "l:.git/refs/heads/evil=../../hooks",
-"l:.git/refs/heads/escape=../../../../.."
+"l:.git/refs/heads/escape=../../../../..",
+"d:.git/objects/pack",
+"f:.git/objects/pack/pack-1.pack",
+"f:.git/objects/ab/cdef"
 ],
 "ops": [
 {
@@ -780,7 +803,7 @@ false
 {
 "m": "DELETE",
 "p": ".git/objects/ab",
-"ok": true
+"ok": false
 },
 {
 "m": "DELETE",
@@ -1039,6 +1062,50 @@ false
 {
 "m": "DELETE",
 "p": ".git/modules",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git/objects/pack",
+"ok": false
+},
+{
+"m": "MOVE",
+"p": ".git/objects/pack",
+"d": "packs-away",
+"ok": false
+},
+{
+"m": "MOVE",
+"p": ".git/objects/ab",
+"d": ".git/objects/cd",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git/objects/pack/pack-1.pack",
+"ok": true
+},
+{
+"m": "DELETE",
+"p": ".git/objects/ab/cdef",
+"ok": true
+},
+{
+"m": "PUT",
+"p": ".git/refs/heads/-x",
+"ok": false
+},
+{
+"m": "MOVE",
+"p": ".git/refs/heads/main",
+"d": ".git/refs/heads/-main",
+"ok": false
+},
+{
+"m": "MOVE",
+"p": "a.txt",
+"d": ".git/objects/ab",
 "ok": false
 }
 ]

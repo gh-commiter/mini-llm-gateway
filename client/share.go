@@ -66,6 +66,7 @@ type shareClient struct {
 	rootID   fileID                     // L6 (#84): istovetnost korena ob start; ničelna brez start (preizkusi)
 	rootErr  error                      // L6: ob start ni znana ali ni preverjena → vsi posli zavrnjeni
 	fsMu     sync.RWMutex               // #82: lockFolder v tem procesu (branje deljeno, pisanje izključno)
+	git      *gitWatch                  // #116 B1: direct mode: the repository at the start (gitwatch.go)
 	fsWant   atomic.Int32               // #82 N1: čakajoča pisanja; branje se jim umakne (do svojega roka)
 }
 
@@ -131,6 +132,10 @@ func (s *shareClient) register() bool {
 }
 
 func (s *shareClient) unregister() {
+	if g := s.git; g != nil { // #116 B1: what the agent did in the owner's repository
+		s.git = nil
+		g.report()
+	}
 	if k := s.currentKey(); k != "" {
 		call(s.c, "DELETE", "/minigw/share", map[string]string{"x-share-key": k}, nil, 3*time.Second)
 	}
@@ -141,6 +146,9 @@ func (s *shareClient) start(workers int) {
 	if s.rootErr == nil && s.checked != nil && *s.checked != s.rootID {
 		s.rootErr = errors.New("the folder changed after it was checked")
 		fmt.Fprintln(os.Stderr, "minigw: not sharing "+s.root+" (the folder changed after it was checked)")
+	}
+	if !s.sync && !s.native && !s.worktree && !s.readOnly && s.rootErr == nil { // direct mode: the agent can commit (#116 B1)
+		s.git = gitWatchStart(s.root)
 	}
 	for i := 0; i < workers; i++ {
 		go s.work()

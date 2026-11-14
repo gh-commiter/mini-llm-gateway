@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -161,7 +162,8 @@ func gitDirWritable(c []string) bool {
 	}
 	switch c[0] {
 	case "refs", "logs":
-		return len(c) > 1
+		// a ref whose name starts with "-" (any component) could be read as an option by a script of the owner
+		return len(c) > 1 && !strings.HasPrefix(c[len(c)-1], "-") && !slices.ContainsFunc(c, func(n string) bool { return strings.HasPrefix(n, "-") })
 	case "objects":
 		return gitObjectsWritable(c[1:])
 	case "modules":
@@ -172,7 +174,7 @@ func gitDirWritable(c []string) bool {
 
 // The files git writes in its directory for add, commit, branch, checkout, stash, tag and merge of local branches (and
 // their .lock files); index.* is the temporary index of stash, next-index-* of commit with paths.
-var gitFileRe = regexp.MustCompile(`^(index(\.[a-z0-9._-]+)?|sharedindex\.[0-9a-f]+|next-index-[0-9]+|head|orig_head|fetch_head|merge_head|merge_msg|merge_mode|merge_rr|auto_merge|commit_editmsg|cherry_pick_head|revert_head|squash_msg|tag_editmsg|packed-refs|gc\.pid|gc\.log)(\.lock)?$`)
+var gitFileRe = regexp.MustCompile(`^(index(\.[a-z0-9._-]+)?|sharedindex\.[0-9a-f]+|next-index-[0-9]+|head|orig_head|fetch_head|merge_head|merge_msg|merge_mode|merge_rr|auto_merge|commit_editmsg|cherry_pick_head|revert_head|squash_msg|tag_editmsg|packed-refs|gc\.pid)(\.lock)?$`)
 
 func gitObjectsWritable(c []string) bool {
 	if len(c) == 0 {
@@ -827,4 +829,15 @@ func rootChmod(rooted *os.Root, p string, mode os.FileMode) error {
 		return fmt.Errorf("protected path: %s", p)
 	}
 	return f.Chmod(mode)
+}
+
+// gitFolderRoot: `.git/objects/<xx>` and `.git/objects/pack` (also in a submodule's git folder): the folders git fills; their files are writable and
+// deletable, the folders themselves are not removed or replaced (DELETE or MOVE of one would destroy repository data in one request).
+func gitFolderRoot(rel string) bool {
+	c := strings.Split(rel, "/")
+	for i, n := range c {
+		c[i] = normName(n)
+	}
+	n := len(c)
+	return n >= 3 && c[n-2] == "objects" && (c[n-1] == "pack" || len(c[n-1]) == 2 && isHex(c[n-1])) && slices.Contains(c[:n-2], ".git")
 }

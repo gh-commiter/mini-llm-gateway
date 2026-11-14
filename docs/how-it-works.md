@@ -366,6 +366,18 @@ alternative to rebase; in sync mode that there is no `.git` in the copy; read-on
 without "Allow local tools", Copilot) that there are no commits. When a refused write has an alternative, the client's
 refusal line names it, for example `(protected path: rebase is not available in direct mode; use merge, or worktree mode)`.
 
+Git as a way around the protected paths (known property): with `index`, `objects` and `refs` writable an agent can stage or commit `.claude/settings.json`,
+`.envrc`, `.vscode/tasks.json` or `.husky/*` without touching the work tree, where the guard looks; your next `git checkout`, `reset --hard`, `restore` or
+`stash pop` would write them to disk, and your next commit would carry them. A forged `MERGE_HEAD` would make your next commit a merge with the agent's
+history. So in direct mode the client reports at the end of the share what the agent did in the repository (one line: HEAD, new commits, branches, tags,
+staged paths), warns loudly about protected paths in new commits (review them before you check out or commit), takes staged protected paths out of the index
+(your files and the agent's commits are not touched or rewritten), and warns when a merge, cherry-pick or revert was started by the agent (it is not deleted).
+The client runs git for this without hooks, fsmonitor or external diff. The agent is told that its git changes are reported. Worktree mode has no such warning today: it returns a branch that you review before you apply it (see
+[Worktree mode](usage.md#worktree-mode-results-as-branches)).
+
+Grok's sandbox does not fence `.git` (issue #115): in direct mode on a client's shared folder the client guard alone holds, and on a folder of the gateway Mac
+itself Grok has no `.git` protection at all.
+
 Known properties, not protected on purpose: `.gitattributes` and `.gitmodules` in the work tree are ordinary tracked files that an agent
 is there to edit, and the change shows in the diff; filter and diff drivers and `update = !cmd` only take effect from `.git/config`, which
 stays closed. Review `.gitmodules` URL changes before you run `git submodule update`. An agent in direct mode can also damage the

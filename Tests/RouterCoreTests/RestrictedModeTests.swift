@@ -262,6 +262,27 @@ private func covers(_ deny: String, _ scope: String) -> Bool { scope == deny || 
     #expect(sawLiteral, "the literal closed paths of the submodule and the nested repository are in denyWrite")
 }
 
+// #116 A1: the restricted mode denies every root main denied (Scratch, its `.old-*` siblings, the app folder) and what 0.6.0 adds (the credential homes, the core, the state).
+@Test func theRestrictedModeDeniesEveryHiddenRootOfMain() throws {
+    let fm = FileManager.default
+    let scratchRoot = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("scratch-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: scratchRoot) }
+    let scratch = scratchRoot.appendingPathComponent("Mini Gateway Scratch")
+    try fm.createDirectory(at: scratch, withIntermediateDirectories: true)
+    try fm.createDirectory(at: scratchRoot.appendingPathComponent("Mini Gateway Scratch.old-2026-01-01"), withIntermediateDirectories: true)
+    var c = ClaudeCLIConfig(); c.tools = "Read,Grep,Glob,Edit,Write"
+    for ro in [false, true] {
+        let a = c.agentArgs(cwd: URL(fileURLWithPath: "/Users/x/src"), allTools: [], scratch: scratch, readOnly: ro, folders: AllowedFolders(), checkedPaths: [])
+        let denied = Set(deniedPaths(a))
+        let app = GatewayHistory.defaultFile.deletingLastPathComponent().standardizedFileURL.path
+        for h in RouterConfig.hiddenScratch(scratch) + RouterConfig.agentDenied(kind: "claude", scratch: scratch) + [app] {
+            #expect(denied.contains(h), Comment(rawValue: "ro=\(ro): \(h) is not denied"))
+        }
+        let rules = (value(a, "--disallowedTools")).split(separator: ",").map(String.init)
+        #expect(rules.contains("Read(/\(app)/**)") && rules.contains("Edit(/\(app)/**)"))
+    }
+}
+
 @Test func hiddenRootsAreDeniedUnlessTheSessionLivesInThem() throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("hid-" + UUID().uuidString).path
