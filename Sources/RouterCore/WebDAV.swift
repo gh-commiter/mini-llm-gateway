@@ -38,7 +38,7 @@ public enum WebDAV {
             return "minigw: further refused agent writes not shown\n"
         }
     }
-    private static let refused = Mutex(RefusalLog())
+    static let refused = Mutex(RefusalLog())  // internal: a test starts from an empty log (DirectGitMountTests)
 
     /// Ena vrstica na stderr na zavrnjeno pot (brez ponovitev): agent vidi le »Operation not permitted«, tako da je
     /// razvidno, da je zavrnila ta zaščita in ne peskovnik agenta. Le relativna pot v deljeni mapi.

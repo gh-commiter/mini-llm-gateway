@@ -85,16 +85,33 @@ private func sh(_ cmd: String, cwd: String, timeout: Double = 90) -> (status: In
     return (p.terminationStatus, String(decoding: data, as: UTF8.self))
 }
 
+/// webdavfs keeps the data of a write the client refused and retries it, so a plain umount can wait for ever: force it, and never wait longer than 20 s.
+private func forceUnmount(_ mp: URL) {
+    for (exe, args) in [("/sbin/umount", ["-f", mp.path]), ("/usr/sbin/diskutil", ["unmount", "force", mp.path])] {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: exe); p.arguments = args
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { continue }
+        let deadline = Date().addingTimeInterval(20)
+        while p.isRunning && Date() < deadline { usleep(50_000) }
+        if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+        p.waitUntilExit()
+        if !ShareHub.isMounted(mp) { break }
+    }
+    rmdir(mp.path)
+}
+
 @Test func anAgentInADirectModeMountCommitsAndCannotPlantWhatRunsCode() throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("direct-mount-" + UUID().uuidString, isDirectory: true)
     let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
     for d in [client, mp] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
-    defer { ShareHub.unmount(mp); try? fm.removeItem(at: base) }
+    defer { try? fm.removeItem(at: base) }
     #expect(sh("git init -q && echo hi > a.txt && git add a.txt && git commit -qm init && git branch x", cwd: client.path).status == 0)
     let server = try #require(DAVLoopback(root: client, prefix: "/dav/e2e"))
-    defer { server.stop() }
+    defer { server.stop() }  // runs after the unmount below: webdavfs still wants its server while it writes back
     let mounted = ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) == 0
+    defer { forceUnmount(mp) }
     try #require(mounted, "mount_webdav to the loopback server")
 
     // the agent: edit, add, commit, branch, tag, switch, stash, merge a local branch
@@ -109,15 +126,22 @@ private func sh(_ cmd: String, cwd: String, timeout: Double = 90) -> (status: In
     #expect(sh("git branch --list feature topic && git tag --list v1 && git fsck --strict 2>&1 | grep -c -i -E 'error|fatal|missing'", cwd: client.path).out.hasSuffix("0\n"))
 
     // what runs code is refused with the client's refusal line (stderr of this process), and nothing appears in the client's folder
+    // (the log of refusals is one line per path and process: start from an empty one; webdavfs writes back after close, so wait for the lines)
+    WebDAV.refused.withLock { $0 = WebDAV.RefusalLog() }
     let errFile = base.appendingPathComponent("stderr.txt")
     let saved = dup(2), fd = open(errFile.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
     dup2(fd, 2)
     let denied = ["echo '# t' >> .git/config", "echo noop > .git/hooks/pre-commit", "echo noop > .git/info/attributes", "echo /x > .git/objects/info/alternates",
                   "mkdir .git/rebase-merge && echo noop > .git/rebase-merge/git-rebase-todo", "echo x > .git/shallow", "git config user.name evil"]
     for cmd in denied { _ = sh(cmd, cwd: mp.path) }
+    var refusals = ""
+    for _ in 0..<150 {
+        refusals = (try? String(contentsOf: errFile, encoding: .utf8)) ?? ""
+        if [".git/hooks/pre-commit\"", ".git/config", ".git/info/attributes\"", ".git/objects/info/alternates\""].allSatisfy(refusals.contains) { break }
+        usleep(200_000)
+    }
     dup2(saved, 2); close(saved); close(fd)
-    // (webdavfs writes back after close: the shell may report success for a write the client then refuses, so the checks are the refusal line and the client's folder)
-    let refusals = (try? String(contentsOf: errFile, encoding: .utf8)) ?? ""
+    // (the shell may report success for a write that webdavfs writes back after close and the client then refuses: the checks are the refusal line and the client's folder)
     #expect(refusals.contains("minigw: refused agent write to \".git/hooks/pre-commit\" (protected path)"), "\(refusals)")
     #expect(refusals.contains("minigw: refused agent write to \".git/config"), "\(refusals)")
     for p in ["hooks/pre-commit", "info/attributes", "objects/info/alternates", "rebase-merge", "shallow", "config.lock"] {

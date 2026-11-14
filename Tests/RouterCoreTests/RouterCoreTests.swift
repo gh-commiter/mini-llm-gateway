@@ -1724,7 +1724,7 @@ final class FakeMinigw: @unchecked Sendable {
     }
     for (m, p, d) in [("PUT", ".git/config", nil), ("PUT", ".GIT/config", nil), ("PUT", "git~1/config", nil), ("PUT", ".envrc", nil),
                       ("PUT", ".claude/settings.local.json", nil), ("PUT", ".vscode/tasks.json", nil), ("MKCOL", ".git/x", nil),
-                      ("DELETE", ".git/HEAD", nil), ("DELETE", ".git", nil), ("LOCK", ".git/new", nil), ("PROPPATCH", ".git/HEAD", nil),
+                      ("DELETE", ".git/hooks", nil), ("DELETE", ".git", nil), ("LOCK", ".git/new", nil), ("PROPPATCH", ".git/config", nil),  // #112: git data (HEAD, refs …) is writable in direct mode, see GitGuardTests
                       ("PUT", "hooks/pre-commit", nil), ("MOVE", "a.txt", ".git/hooks/pre-commit"), ("COPY", "a.txt", ".envrc"),
                       ("MOVE", ".git", "g")] as [(String, String, String?)] {
         #expect(dav(m, p, d) == 403, "\(m) \(p)")
