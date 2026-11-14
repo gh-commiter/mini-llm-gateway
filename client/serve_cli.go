@@ -286,6 +286,12 @@ func (s *server) agentFolders(c serveConfig, dir string) []string {
 
 func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 	var out checkedFolders
+	refuse := func(f, why string) { // every run-time drop is logged once and listed in `refused`
+		s.runRefused.Store(f, why)
+		if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
+			s.log.Printf("WARNING: allowed folder %s is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
+		}
+	}
 	for _, f := range c.AllowedFolders {
 		if f == dir || scratchHiddenOverlaps(f, c.Scratch) || len(copilotCacheOverlaps([]string{f})) > 0 {
 			continue
@@ -297,10 +303,15 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 			s.runRefused.Delete(f) // B5
 			if errors.Is(err, fs.ErrNotExist) {
 				s.wasMissing.Store(f, true)
+			} else if err != nil {
+				refuse(f, "it cannot be read: "+err.Error())
+			} else {
+				refuse(f, "it is not a folder")
 			}
 			continue
 		}
 		if _, err := checkFolder(f, s.cfgDir, false); err != nil {
+			refuse(f, "it failed the folder check: "+err.Error())
 			continue
 		}
 		why := ""
@@ -323,14 +334,11 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 			why = "its identity changed (another folder is there now)"
 		}
 		if why != "" {
-			s.runRefused.Store(f, why)
-			if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
-				s.log.Printf("WARNING: allowed folder %s is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
-			}
+			refuse(f, why)
 			continue
 		}
 		if idErr != nil {
-			s.runRefused.Delete(f) // B5
+			refuse(f, "its identity cannot be read: "+idErr.Error())
 			continue
 		}
 		s.runRefused.Delete(f)

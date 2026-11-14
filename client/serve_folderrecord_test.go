@@ -329,3 +329,38 @@ func TestRefusedAgreesWithLogAtStart(t *testing.T) {
 		t.Fatalf("remote folder: log %q refused %v", logs, s.claudeInfo().Refused)
 	}
 }
+
+// W3: a folder dropped at run time for any reason is logged once and listed in `refused`, and leaves the list when it is fine again.
+func TestRunTimeDropIsLoggedAndListed(t *testing.T) {
+	base := realOf(t, t.TempDir())
+	folder := filepath.Join(base, "folder")
+	if err := os.Mkdir(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := testServer(t, func(c *serveConfig) { c.AllowedFolders = []string{folder} })
+	var buf bytes.Buffer
+	s.log.SetOutput(&buf)
+	if err := os.Rename(folder, folder+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(folder, nil, 0o600); err != nil { // a file where the folder was
+		t.Fatal(err)
+	}
+	for range 2 {
+		if got := s.agentFolders(s.conf(), base); len(got) != 0 {
+			t.Fatalf("accepted: %v", got)
+		}
+	}
+	if strings.Count(buf.String(), "is not used: it is not a folder") != 1 || !slices.Equal(s.claudeInfo().Refused, []string{folder}) {
+		t.Fatalf("log %q refused %v", buf.String(), s.claudeInfo().Refused)
+	}
+	if err := os.Remove(folder); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(folder+".old", folder); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.agentFolders(s.conf(), base); len(got) != 1 || len(s.claudeInfo().Refused) != 0 {
+		t.Fatalf("not accepted again: %v %v", got, s.claudeInfo().Refused)
+	}
+}
