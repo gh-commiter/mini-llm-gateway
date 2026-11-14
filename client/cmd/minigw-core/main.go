@@ -84,7 +84,11 @@ func main() {
 		Dir: *store,
 		Log: log.Printf, // reasons only; never a body
 	})
+	if openErr == nil { // as in minigw serve: no recorder and no spool file while the core is not open (nothing is written next to protected data)
+		api.StartRecorder() // usage events (the app sends them): stored in the core; spooled (bounded) in the store folder if a write fails
+	}
 	err = serve(context.Background(), conn, secret, api, requestTimeout)
+	api.StopRecorder() // drain the queue while the core is still open
 	if st != nil {
 		st.Close()
 	}
