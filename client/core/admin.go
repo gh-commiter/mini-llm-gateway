@@ -12,9 +12,9 @@ import (
 // transaction. The rules (section 1, "Epoch"):
 //   - binding set to another user, binding removed, user deactivated, member removed, role lowered, grant removed,
 //     DeviceRevoked: bump. Adding or raising anything, renaming, archiving: no bump.
-//   - a note whose class changes, unless it moves out of `private` (which only widens): structure->data takes it
-//     from readers and structure-only grantees, data->structure from data-only grantees, any move into private
-//     from everyone but the author and the admins. (UpdateNote does this.)
+//   - every note class change (UpdateNote): structure->data takes the note from readers and structure-only grantees,
+//     data->structure from data-only grantees, a move into private from everyone but author and admins, and a
+//     move out of private from an author who is only a reader by now.
 const adminActor = "owner"
 
 type User struct {

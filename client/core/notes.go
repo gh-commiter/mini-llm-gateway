@@ -384,7 +384,7 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 }
 
 // UpdateNote replaces class, title and body of a note when revision is the current one. A class change is
-// checked against the transition table and bumps the epoch unless the note leaves `private`.
+// checked against the transition table and always bumps the epoch (also private -> shared: the author may be only a reader by now).
 func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revision int64, in NoteInput) (n Note, err error) {
 	if err = s.rate(p.UserID, true); err != nil {
 		return
@@ -417,7 +417,7 @@ func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revisi
 		if err := Audit(tx, actor(p), "note.update", strconv.FormatInt(id, 10), map[string]any{"project": project, "class": in.Class, "from": old.Class}); err != nil {
 			return err
 		}
-		if in.Class != old.Class && old.Class != Private {
+		if in.Class != old.Class {
 			if _, err := s.BumpEpochTx(tx, "note class narrowed"); err != nil {
 				return err
 			}

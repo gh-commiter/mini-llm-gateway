@@ -567,7 +567,7 @@ func TestEpochRules(t *testing.T) {
 		{"structure -> data", true, up(n.ID, 1, Data)},
 		{"data -> structure", true, up(n.ID, 2, Structure)},
 		{"structure -> private", true, up(n.ID, 3, Private)},
-		{"private -> structure", false, up(n.ID, 4, Structure)},
+		{"private -> structure", true, up(n.ID, 4, Structure)},
 		{"same class", false, up(pn.ID, 1, Private)},
 	}
 	for _, s := range steps {
@@ -963,4 +963,22 @@ func TestPolicySurvivesRestore(t *testing.T) { // case 21, policy part: revoked 
 	if np.ID <= last {
 		t.Fatalf("project id %d not above %d", np.ID, last)
 	}
+}
+
+func TestEpochBumpsWhenAuthorLosesPrivateNote(t *testing.T) {
+	f := newFx(t)
+	fk := f.pid["fakture"]
+	n := f.mk("ana", "fakture", Private)
+	f.ok(f.SetMember(ctx, fk, f.uid["ana"], Reader))
+	if _, err := f.GetNote(ctx, f.p("ana"), fk, n.ID); err != nil { // a reader still reads her own private note
+		t.Fatal(err)
+	}
+	before, _ := f.Epoch(ctx)
+	_, err := f.UpdateNote(ctx, f.p("fani"), fk, n.ID, 1, NoteInput{Class: Data, Title: "x"})
+	f.ok(err)
+	if after, _ := f.Epoch(ctx); after <= before {
+		t.Fatal("epoch did not grow")
+	}
+	_, err = f.GetNote(ctx, f.p("ana"), fk, n.ID)
+	is(t, err, ErrNotFound)
 }
