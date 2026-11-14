@@ -132,6 +132,16 @@ struct SettingsView: View {
         pane = target
     }
 
+    /// The red text for a configuration that cannot run without "Allow local tools" (#111).
+    private func restrictedText(_ issue: ClaudeCLIConfig.RestrictedIssue) -> String {
+        switch issue {
+        case .toolName(let n): String(localized: "“\(n)” is not a tool name: use letters, digits and _, separated by commas.")
+        case .tool(let n): String(localized: "Without “Allow local tools” only file tools are allowed; remove \(n) or turn on “Allow local tools”.")
+        case .mode(let m): m
+        case .folder(let f): String(localized: "The allowed folder \(f) has a character that a permission rule cannot hold (parentheses, * ? [ ] { }, backslash, !): choose another folder or turn on “Allow local tools”.")
+        }
+    }
+
     private struct PendingApply: Equatable { let draft: RouterConfig; let claudeOK: Bool }
 
     /// Uveljavi osnutek (skupaj z morebitnimi spremembami od drugod); neveljaven vklopljen claude ga zadrži.
@@ -852,8 +862,8 @@ struct SettingsView: View {
                     .help(String(localized: "Agents get every Claude Code tool on this Mac, but files only in the allowed folders: commands run in a sandbox that cannot read your home folder or write outside these folders."))
                 if !draft.claudeCLI.allowLocalTools {
                     TextField("Tools (comma-separated; empty = none)", text: $draft.claudeCLI.tools)
-                    if let problem = draft.claudeCLI.restrictedProblem(mode: false) {
-                        Text(verbatim: problem).font(.caption).foregroundStyle(.red)
+                    if let issue = draft.claudeCLI.restrictedIssue(mode: false) {
+                        Text(verbatim: restrictedText(issue)).font(.caption).foregroundStyle(.red)
                     }
                     Picker("Permission mode", selection: $draft.claudeCLI.permissionMode) {
                         ForEach(ClaudeCLIConfig.restrictedModes, id: \.self) { Text(verbatim: $0) }  // the modes that enforce the path rules

@@ -73,22 +73,33 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         !path.isEmpty && path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy({ $0 == $0.trimmingCharacters(in: .whitespacesAndNewlines) }) && !path.contains { "()*?[]{},\\!".contains($0) || $0.isNewline || $0.asciiValue.map { $0 < 32 } == true }
     }
 
-    /// Why this configuration may not run without "Allow local tools" (nil = fine); `fields` limits the check to what a request changed.
-    public func restrictedProblem(tools checkTools: Bool = true, mode checkMode: Bool = true, folders checkFolders: Bool = true) -> String? {
+    /// What is wrong with this configuration without "Allow local tools" (nil = fine); the flags limit the check to what a request changed.
+    public enum RestrictedIssue: Equatable {
+        case toolName(String), tool(String), mode(String), folder(String)
+    }
+
+    public func restrictedIssue(tools checkTools: Bool = true, mode checkMode: Bool = true, folders checkFolders: Bool = true) -> RestrictedIssue? {
         guard !allowLocalTools else { return nil }
         if checkTools {
-            if let p = Self.toolsTextProblem(tools) { return p }
-            if let bad = Self.unsafeRestricted(tools).first {
-                return "tools: \(bad) needs \"Allow local tools\" (without it the tool runs without a sandbox, outside the path rules); allowed here: \(Self.restrictedAllowed.joined(separator: ", ")). Turn on \"Allow local tools\" (commands then run in a sandbox) or remove it."
-            }
+            if let bad = Self.toolNames(tools).first(where: { $0.range(of: "^[A-Za-z0-9_]+$", options: .regularExpression) == nil }) { return .toolName(bad) }
+            if let bad = Self.unsafeRestricted(tools).first { return .tool(bad) }
         }
-        if checkMode, !Self.restrictedModes.contains(permissionMode) {
-            return "permission mode \(permissionMode) does not enforce the path rules; use \(Self.restrictedModes.joined(separator: " or ")) (or turn on \"Allow local tools\")"
-        }
-        if checkFolders, let bad = allowedRoots.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty && !Self.ruleSafe($0) }) {
-            return "allowed folder \(bad) has a character that cannot be used in a permission rule (parentheses, * ? [ ] { }, backslash, !, a control character): choose another folder or turn on \"Allow local tools\""
-        }
+        if checkMode, !Self.restrictedModes.contains(permissionMode) { return .mode(permissionMode) }
+        if checkFolders, let bad = allowedRoots.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty && !Self.ruleSafe($0) }) { return .folder(bad) }
         return nil
+    }
+
+    /// The English text of the issue (admin API, logs); the Settings pane has its own localised texts.
+    public func restrictedProblem(tools checkTools: Bool = true, mode checkMode: Bool = true, folders checkFolders: Bool = true) -> String? {
+        switch restrictedIssue(tools: checkTools, mode: checkMode, folders: checkFolders) {
+        case nil: return nil
+        case .toolName(let n)?: return "tools: \"\(n)\" is not a tool name (comma-separated names of letters, digits and _, e.g. Read,Grep,Glob)"
+        case .tool(let n)?:
+            return "tools: \(n) needs \"Allow local tools\" (without it the tool runs without a sandbox, outside the path rules); allowed here: \(Self.restrictedAllowed.joined(separator: ", ")). Turn on \"Allow local tools\" (commands then run in a sandbox) or remove it."
+        case .mode(let m)?: return "permission mode \(m) does not enforce the path rules; use \(Self.restrictedModes.joined(separator: " or ")) (or turn on \"Allow local tools\")"
+        case .folder(let f)?:
+            return "allowed folder \(f) has a character that cannot be used in a permission rule (parentheses, * ? [ ] { }, backslash, !, a control character): choose another folder or turn on \"Allow local tools\""
+        }
     }
 
     /// The mode a restricted run uses: one that enforces the rules (a stored `auto` or `plan` becomes dontAsk, logged once).
