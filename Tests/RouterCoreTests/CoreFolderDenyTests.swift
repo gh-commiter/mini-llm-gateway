@@ -207,7 +207,9 @@ private func profileConfig(_ a: [String]) -> [String] {
     ]
     modes.append(("restricted + other tools", restricted.agentArgs(cwd: f.work, allTools: ["Read", "Bash"], scratch: scratch, folders: AllowedFolders())))
     for (name, a) in modes {
-        let deny = try #require(((try settings(a, name))["permissions"] as? [String: Any])?["deny"] as? [String], "\(name)")
+        // the deny rules are in the settings (sandboxed modes) or, since 0.5.29, in --disallowedTools (the restricted mode has no settings)
+        var deny = a.firstIndex(of: "--settings") == nil ? [] : (((try settings(a, name))["permissions"] as? [String: Any])?["deny"] as? [String] ?? [])
+        deny += a.firstIndex(of: "--disallowedTools").map { a[$0 + 1].components(separatedBy: ",") } ?? []
         for d in live { for t in ["Read", "Edit"] { #expect(deny.contains("\(t)(/\(d)/**)"), "\(name) \(t) \(d)") } }
     }
     for (name, a) in modes where name.hasPrefix("local") || name == "worktree" {
