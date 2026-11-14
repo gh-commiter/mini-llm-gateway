@@ -78,9 +78,13 @@ public enum Worktree {
         close(o[1]); close(i[0])
         guard rc == 0 else { close(o[0]); close(i[1]); return (-1, "") }
         // L2: časovnik pred pisanjem vhoda in branjem izhoda (oba čakata na git)
-        let done = OSAllocatedUnfairLock(initialState: false)
+        // #109: lastna nit, ne DispatchQueue.global(): pod obremenitvijo (vzporedni zagoni, zasedeni delavci) blok tam začne
+        // z zamudo desetih sekund in git z visečim podprocesom teče čez omejitev.
+        let done = OSAllocatedUnfairLock(initialState: false), finished = DispatchSemaphore(value: 0)
         if let timeout {
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [pid] in done.withLock { if !$0 { _ = kill(-pid, SIGKILL) } } }
+            Thread { [pid] in
+                if finished.wait(timeout: .now() + timeout) == .timedOut { done.withLock { if !$0 { _ = kill(-pid, SIGKILL) } } }
+            }.start()
         }
         let w = FileHandle(fileDescriptor: i[1], closeOnDealloc: true)
         if let input { try? w.write(contentsOf: input) }
@@ -88,7 +92,7 @@ public enum Worktree {
         let data = FileHandle(fileDescriptor: o[0], closeOnDealloc: true).readDataToEndOfFile()
         var st: Int32 = 0
         while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
-        done.withLock { $0 = true }
+        done.withLock { $0 = true }; finished.signal()
         let status = st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f)
         let out = String(decoding: data, as: UTF8.self)
         return (status, trim ? out.trimmingCharacters(in: .whitespacesAndNewlines) : out)

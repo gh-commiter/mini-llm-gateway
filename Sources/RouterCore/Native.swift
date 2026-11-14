@@ -566,7 +566,7 @@ public enum Native {
     static func terminateGroup(_ pgid: pid_t) {
         guard pgid > 1, pgid != getpgrp() else { return }
         _ = Darwin.kill(-pgid, SIGTERM)
-        DispatchQueue.global().asyncAfter(deadline: .now() + 5) { _ = Darwin.kill(-pgid, SIGKILL) }
+        Thread { Thread.sleep(forTimeInterval: 5); _ = Darwin.kill(-pgid, SIGKILL) }.start()
     }
 
     /// Izvršljiva datoteka ukaza: z »/« relativno na mapo (npr. ./mvnw), sicer v PATH.
@@ -785,15 +785,16 @@ extension Router {
             var st: Int32 = 0
             while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
             exit.done(st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f))
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                Native.killTree(pid, pipes: [out, err], dirs: [realTmp])
-                DispatchQueue.global().asyncAfter(deadline: .now() + 1) { closeFrames() }
-                // #72: po uboju skupine in ko so tudi zadnje mape umirjene (`settled`)
-                DispatchQueue.global().asyncAfter(deadline: .now() + 2.5) {
-                    Native.removeSaveCopies(after: Native.saveCopies(dirs: tempDirs), before: copies, since: runStart)
-                    gone.done(0)
-                }
-            }
+            // #109: spanje v tej niti, ne DispatchQueue.global().asyncAfter: pod obremenitvijo se tam bloki zakasnijo za
+            // desetine sekund, uboj skupine in zaprtje toka pa zamudita.
+            Thread.sleep(forTimeInterval: 2)
+            Native.killTree(pid, pipes: [out, err], dirs: [realTmp])
+            Thread.sleep(forTimeInterval: 1)
+            closeFrames()
+            // #72: po uboju skupine in ko so tudi zadnje mape umirjene (`settled`)
+            Thread.sleep(forTimeInterval: 1.5)
+            Native.removeSaveCopies(after: Native.saveCopies(dirs: tempDirs), before: copies, since: runStart)
+            gone.done(0)
         }.start()
         @Sendable func stop() { Native.terminateGroup(pid) }
         Self.log.info("\(rid, privacy: .public) run start device=\(d.name, privacy: .public) folder=\(dir.path, privacy: .private) argv=\(argv.joined(separator: " "), privacy: .private)")

@@ -16,8 +16,9 @@ final class ShareRoot: @unchecked Sendable {
     /// Trenutna prava pot korena (F_GETPATH ob vsakem klicu, kot Go): sklic za pot nadrejene mape, ki jo operacija pripne;
     /// preimenovana mapa deljenja tako še dela. nil, če je ni mogoče prebrati: operacije zavrnejo.
     var path: String? { Self.path(of: fd) }
-    /// Največja globina drevesa pri pregledu in brisanju (test jo zniža); globlje = zaščiteno oziroma ne izbriše.
-    nonisolated(unsafe) static var maxDepth = 1024
+    /// Največja globina drevesa pri pregledu in brisanju (test jo zniža na svojem korenu: #109, brez globalnega stanja);
+    /// globlje = zaščiteno oziroma ne izbriše.
+    var maxDepth = 1024
     /// Test: po branju seznama mape, pred brisanjem vsebine; argument = pot mape.
     nonisolated(unsafe) static var afterList: ((String) -> Void)?
     /// Datotečni sistem razlikuje velike in male črke (primerjava absolutnih ciljev povezav kot Go na Darwinu).
@@ -238,11 +239,11 @@ final class ShareRoot: @unchecked Sendable {
     func removeAll(_ rel: String) -> Bool {
         guard let (p, name) = parent(rel) else { return false }
         defer { close(p) }
-        guard !Self.treeProtected(p, name, [name], 0) else { return false }
-        return Self.removeTree(p, name, 0)
+        guard !Self.treeProtected(p, name, [name], 0, maxDepth) else { return false }
+        return Self.removeTree(p, name, 0, maxDepth)
     }
 
-    private static func removeTree(_ p: Int32, _ name: String, _ depth: Int) -> Bool {
+    private static func removeTree(_ p: Int32, _ name: String, _ depth: Int, _ maxDepth: Int) -> Bool {
         if depth > maxDepth { return false }
         var st = stat()
         guard fstatat(p, name, &st, AT_SYMLINK_NOFOLLOW) == 0 else { return errno == ENOENT }
@@ -252,7 +253,7 @@ final class ShareRoot: @unchecked Sendable {
             defer { close(d) }
             guard let kids = names(dup(d)) else { return false }
             if let hook = afterList, let dp = path(of: d) { hook(dp) }
-            for k in kids where !removeTree(d, k, depth + 1) { return false }
+            for k in kids where !removeTree(d, k, depth + 1, maxDepth) { return false }
             return unlinkat(p, name, AT_REMOVEDIR) == 0
         }
         return unlinkat(p, name, 0) == 0
@@ -260,7 +261,7 @@ final class ShareRoot: @unchecked Sendable {
 
     /// Ali je katera koli pot v drevesu `name` (pod `p`; z imenom `base`) zaščitena; povezavi (ni mapa) se ne sledi,
     /// nečitljivo = zaščiteno (kot Go rootTreeProtected).
-    private static func treeProtected(_ p: Int32, _ name: String, _ base: [String], _ depth: Int) -> Bool {
+    private static func treeProtected(_ p: Int32, _ name: String, _ base: [String], _ depth: Int, _ maxDepth: Int) -> Bool {
         if depth > maxDepth { return true }
         var st = stat()
         guard fstatat(p, name, &st, AT_SYMLINK_NOFOLLOW) == 0 else { return errno != ENOENT }  // ni je = nič zaščitenega; druga napaka = zaščiteno
@@ -271,7 +272,7 @@ final class ShareRoot: @unchecked Sendable {
         guard d >= 0 else { return true }
         defer { close(d) }
         guard let kids = names(dup(d)) else { return true }
-        for k in kids where treeProtected(d, k, base + [k], depth + 1) { return true }
+        for k in kids where treeProtected(d, k, base + [k], depth + 1, maxDepth) { return true }
         return false
     }
 
@@ -281,7 +282,7 @@ final class ShareRoot: @unchecked Sendable {
         let p = openat(fd, Self.join(Array(c.dropLast())), O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
         guard p >= 0 else { return true }
         defer { close(p) }
-        return Self.treeProtected(p, c.last ?? ".", base, 0)
+        return Self.treeProtected(p, c.last ?? ".", base, 0, maxDepth)
     }
 
     /// Preimenuje (zaščiteno drevo ni dovoljeno ne kot vir ne kot cilj).
@@ -290,7 +291,7 @@ final class ShareRoot: @unchecked Sendable {
         defer { close(sp) }
         guard let (dp, dn) = parent(dst) else { return false }
         defer { close(dp) }
-        guard !Self.treeProtected(sp, sn, [sn], 0), !Self.treeProtected(sp, sn, [dn], 0) else { return false }
+        guard !Self.treeProtected(sp, sn, [sn], 0, maxDepth), !Self.treeProtected(sp, sn, [dn], 0, maxDepth) else { return false }
         return renameat(sp, sn, dp, dn) == 0
     }
 
