@@ -444,7 +444,9 @@ func TestCase9Identity(t *testing.T) {
 	}
 }
 
-func TestCase10StateChangesBetweenCalls(t *testing.T) {
+// Case 10, the sequential core part: state changes between two calls. The barrier version (an operation paused
+// before authorization while the revocation commits) comes with the gateway.
+func TestCase10SequentialCorePart(t *testing.T) {
 	changes := map[string]func(f *fx) (user string, check func() error){
 		"device removed": func(f *fx) (string, func() error) {
 			f.ok(f.DeviceRevoked(ctx, "dev-cene"))
