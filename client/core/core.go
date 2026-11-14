@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -41,12 +42,16 @@ type Options struct {
 
 // Store is an open core database. Reads use DB(); every write goes through write().
 type Store struct {
-	dir  string
-	db   *sql.DB
-	lock *os.File
-	mu   sync.Mutex // one writer; guards st
-	st   state
-	gw   string
+	dir   string
+	db    *sql.DB
+	lock  *os.File
+	rdb   *sql.DB      // read-only handle: deferred transactions, so readers never wait for the writer
+	mu    sync.Mutex   // one writer; guards st
+	epoch atomic.Int64 // mirror of st.Epoch for lock-free reads
+	now   func() time.Time
+	rl    rateLimits
+	st    state
+	gw    string
 }
 
 // state is what must outlive a restore: it is kept in core.state as well as in the database (max of both wins).
@@ -57,7 +62,7 @@ type state struct {
 }
 
 // migrations is ordered and forward only; migration i brings the schema to version i+1. Tests replace it.
-var migrations = []func(*sql.Tx) error{migrate1}
+var migrations = []func(*sql.Tx) error{migrate1, migrate2}
 
 func migrate1(tx *sql.Tx) error {
 	_, err := tx.Exec(`
@@ -83,10 +88,13 @@ func Open(dir string, opts Options) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, lock: lock}
+	s := &Store{dir: dir, lock: lock, now: time.Now, rl: rateLimits{w: map[int64]*window{}}}
 	if err := s.open(); err != nil {
 		if s.db != nil {
 			s.db.Close()
+		}
+		if s.rdb != nil {
+			s.rdb.Close()
 		}
 		lock.Close()
 		return nil, err
@@ -150,6 +158,10 @@ func (s *Store) open() error {
 	}
 	m.Epoch, m.ProjectHigh = max(m.Epoch, side.Epoch), max(m.ProjectHigh, side.ProjectHigh)
 	s.st, s.gw = m, m.GatewayID
+	s.epoch.Store(m.Epoch)
+	if s.rdb, err = sql.Open("sqlite", dsn(path, "_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)&_pragma=query_only(1)")); err != nil {
+		return err
+	}
 	return s.write(ctx, func(tx *sql.Tx) error { return s.persist(tx) })
 }
 
@@ -168,6 +180,7 @@ func openDB(path string) (*sql.DB, error) {
 
 // Close releases the database and the folder lock.
 func (s *Store) Close() error {
+	s.rdb.Close()
 	err := s.db.Close()
 	s.lock.Close()
 	return err
@@ -278,9 +291,7 @@ func schemaVersion(ctx context.Context, db *sql.DB) (int, error) {
 
 // Epoch is the gateway-wide counter; it never goes down.
 func (s *Store) Epoch(ctx context.Context) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.st.Epoch, nil
+	return s.epoch.Load(), nil
 }
 
 // BumpEpoch raises the epoch by one and audits the reason.
@@ -295,6 +306,7 @@ func (s *Store) BumpEpochTx(tx *sql.Tx, reason string) (int64, error) {
 	if err := s.persist(tx); err != nil {
 		return 0, err
 	}
+	s.epoch.Store(s.st.Epoch)
 	return s.st.Epoch, Audit(tx, "core", "epoch.bump", i64(s.st.Epoch), map[string]any{"reason": reason})
 }
 

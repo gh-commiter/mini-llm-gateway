@@ -104,20 +104,20 @@ func TestMigrationSnapshotAndPrune(t *testing.T) {
 	openT(t, dir).Close()
 	base := migrations
 	t.Cleanup(func() { migrations = base })
-	for i := 2; i <= 6; i++ {
+	for i := 1; i <= 5; i++ {
 		n := i
 		var more []func(*sql.Tx) error // test-only migrations 2..n: adding one is one more list entry
-		for k := 2; k <= n; k++ {
+		for k := 1; k <= n; k++ {
 			k := k
 			more = append(more, func(tx *sql.Tx) error {
-				_, err := tx.Exec(fmt.Sprintf(`CREATE TABLE t%d(a)`, k))
+				_, err := tx.Exec(fmt.Sprintf(`CREATE TABLE tt%d(a)`, k))
 				return err
 			})
 		}
 		migrations = append(append([]func(*sql.Tx) error{}, base...), more...)
 		s := openT(t, dir)
-		if v, _ := schemaVersion(ctx, s.DB()); v != n {
-			t.Fatalf("schema %d, want %d", v, n)
+		if v, _ := schemaVersion(ctx, s.DB()); v != len(base)+n {
+			t.Fatalf("schema %d, want %d", v, len(base)+n)
 		}
 		s.Close()
 	}
@@ -137,11 +137,12 @@ func TestMigrationSnapshotAndPrune(t *testing.T) {
 func TestFailedMigrationKeepsOldFile(t *testing.T) {
 	dir := t.TempDir()
 	openT(t, dir).Close()
+	base := migrations
 	before := hash(t, filepath.Join(dir, dbFile))
 	withMigrations(t,
 		func(tx *sql.Tx) error { _, err := tx.Exec(`CREATE TABLE ok2(a)`); return err },
 		func(tx *sql.Tx) error { _, err := tx.Exec(`CREATE TABLE nope(`); return err })
-	if _, err := Open(dir, Options{}); err == nil || !strings.Contains(err.Error(), "migration 3") {
+	if _, err := Open(dir, Options{}); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("migration %d", len(base)+2)) {
 		t.Fatalf("want migration error, got %v", err)
 	}
 	if hash(t, filepath.Join(dir, dbFile)) != before {
@@ -150,19 +151,20 @@ func TestFailedMigrationKeepsOldFile(t *testing.T) {
 	if len(snapshots(dir)) != 1 || !strings.Contains(auditLog(t, dir), "migrate.failed") {
 		t.Fatalf("snapshots %v, audit %q", snapshots(dir), auditLog(t, dir))
 	}
-	migrations = migrations[:1]
+	migrations = base
 	s := openT(t, dir) // the lock was released and the old file works
 	defer s.Close()
-	if v, _ := schemaVersion(ctx, s.DB()); v != 1 {
+	if v, _ := schemaVersion(ctx, s.DB()); v != len(base) {
 		t.Fatalf("schema %d", v)
 	}
 }
 
 func TestNewerSchemaRefused(t *testing.T) {
 	dir := t.TempDir()
+	base := migrations
 	withMigrations(t, func(tx *sql.Tx) error { _, err := tx.Exec(`CREATE TABLE t2(a)`); return err })
 	openT(t, dir).Close()
-	migrations = migrations[:1]
+	migrations = base
 	before := hash(t, filepath.Join(dir, dbFile))
 	if _, err := Open(dir, Options{}); !errors.Is(err, ErrNewerSchema) {
 		t.Fatalf("got %v", err)
