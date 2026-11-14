@@ -254,7 +254,7 @@ the MSI, or `rm ~/.local/bin/minigw`.
   created them), then moves
   `~/Library/Application Support/Mini Gateway`, `~/Library/Caches/dev.trojar.minigateway` (scratch), its preferences,
   HTTP storage and saved window state to the Trash. That includes the project database (`core`: projects, members, notes,
-  usage): `--zap` deletes it and it cannot be undone; take a `minigw gw core backup <file>` first.
+  usage): `--zap` deletes it and it cannot be undone; take a `minigw gw core backup` first and copy the file out of `core/backups`.
 - Linux: `install.sh` puts `minigw` and `minigw-tui` in `~/.local/bin`; with `--gateway`, `minigw serve install` adds
   the systemd user unit. `install.sh --uninstall` runs `minigw uninstall`, which removes the unit, the plugin entries
   and scratch folders, then removes the two files.
@@ -267,8 +267,8 @@ the MSI, or `rm ~/.local/bin/minigw`.
   Windows: `%AppData%\minigw\core\`; Linux: `~/.config/minigw/core/`. It holds the projects, members, notes, usage
   events and audit trail of the gateway; `usage.spool` next to `serve.json` holds usage events waiting for it. A client
   that only connects to a gateway has none of this.
-- **Backups:** only the files you ask for with `minigw gw core backup <file>`; snapshots made by a migration or a restore sit
-  inside `core`. Nothing is backed up elsewhere.
+- **Backups:** only the files you ask for with `minigw gw core backup [name]`, written into `core/backups`; snapshots made by
+  a migration or a restore also sit inside `core`. Nothing is backed up elsewhere.
 - **Licences:** `THIRD-PARTY-NOTICES.md` (the Go modules inside the binaries and their licences) is in the app
   (`Contents/Resources`), in `minigw.zip`, in the MSI install folder, and a release file next to the Linux binaries.
 - **Uninstall leaves the core folder** on every system; only `--purge`/`PURGE=1`/`brew uninstall --zap` remove it, and

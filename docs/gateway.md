@@ -335,8 +335,9 @@ holds a lock on it, so only one process uses it at a time.
   rename. It brings back the users, bindings, memberships and grants of the backup, also ones revoked since, so it asks
   you to confirm (`--yes` skips that). The epoch is set above both values (all runs and conversations end) and the
   project-id counter never goes back. An interrupted restore is finished or rolled back at the next start.
-- **Where backups go:** only where you point `minigw gw core backup <file>`; the gateway makes none by itself. Put them
-  outside the core folder (a backup inside it is removed together with it, see below). The only automatic copies are the
+- **Where backups go:** `minigw gw core backup [name]` writes only into `core/backups` (agents cannot read that folder); the
+  gateway makes none by itself. A backup there is removed together with the core folder (see below): to keep one, copy the
+  file yourself to a place that agents cannot read, not into a project or an allowed folder. The only automatic copies are the
   migration snapshots and the restore snapshot, both inside the core folder.
 - **Uninstall:** the core folder is never removed by an uninstall or an upgrade, only by purge. Windows MSI: Uninstall and
   upgrade leave `%AppData%\minigw\core`; `PURGE=1` (or `minigw uninstall --purge`) deletes the whole settings folder,
