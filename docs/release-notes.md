@@ -2,8 +2,6 @@
 
 ## Unreleased
 
-## Unreleased
-
 - Fixed (Mac gateway, regression in 0.5.28): with "Allow local tools" off (the default) the Claude CLI models could not read or edit any file of a folder that another computer shares with the gateway, neither in direct mode (the folder is mounted under `~/Library/Application Support/Mini Gateway/mounts`) nor in sync mode (the copy lives under the Scratch folder): 0.5.28 denied the tools those two folders as the gateway's own, and a deny wins over the allow for the session folder. Folders of the same computer were not affected. Now a gateway folder is denied to the tools only where no folder of the run (the session folder, an allowed folder) is inside it; where one is, the run's folders are the only allowed paths, so the other clients' mounts and copies and the app's own files stay refused, and if an allowed folder around such a gateway folder (for example `~/Library`) cannot be fenced off, that allowed folder is not used for the run (logged).
 
 ## 0.5.28
