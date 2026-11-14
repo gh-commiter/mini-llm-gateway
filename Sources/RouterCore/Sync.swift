@@ -95,16 +95,66 @@ public enum Sync {
 
     /// Pot, ki je prevzem nikoli ne zapiše ali izbriše: git, hooki gita (.husky, .githooks), .claude/{hooks,commands,
     /// agents,skills} in nastavitve, ki zaganjajo ukaze (.claude/settings*.json, .vscode/tasks.json, .envrc).
-    /// Isti seznam velja za WebDAV (M1, kot Go protectedPath).
-    public static func isProtected(_ rel: String) -> Bool {
-        let c = rel.split(separator: "/").map { normName(String($0)) }
+    /// Isti seznam velja za WebDAV (M1, kot Go protectedPath). `git`: direct mode (WebDAV), where git's own data is
+    /// writable (gitDirWritable); everything outside .git is judged as before (kot Go protectedPathFor).
+    public static func isProtected(_ rel: String, git: Bool = false) -> Bool {
+        let raw = rel.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        let c = raw.map { normName($0) }
+        let gi = git ? c.firstIndex(of: ".git") : nil
+        let end = gi ?? c.count  // before it the general rules; the rest is inside a git directory
         let last = c.last ?? "", parent = c.count > 1 ? c[c.count - 2] : ""
         let run: Set<String> = ["hooks", "commands", "agents", "skills"]
-        if c.contains(where: { $0 == ".husky" || $0 == ".githooks" }) || zip(c, c.dropFirst()).contains(where: { $0 == ".claude" && run.contains($1) }) {
+        if c.prefix(end).contains(where: { $0 == ".husky" || $0 == ".githooks" || $0 == ".git" })
+            || zip(c.prefix(end), c.prefix(end).dropFirst()).contains(where: { $0 == ".claude" && run.contains($1) }) {
             return true
         }
-        return isGitPath(rel) || last == ".envrc" || (parent == ".vscode" && last == "tasks.json")
+        if let gi { return !gitDirWritable(Array(c[(gi + 1)...])) }
+        return last == ".envrc" || (parent == ".vscode" && last == "tasks.json")
             || (parent == ".claude" && last.hasPrefix("settings") && last.hasSuffix(".json"))
+    }
+
+    /// The path `c` inside a git directory (the components after ".git", normName'd = lower case) that direct mode lets
+    /// the agent write (kot Go gitDirWritable; client/testdata/gitguard.json is asserted by both). A list of what is
+    /// allowed: a name git adds later stays refused. Refused on purpose: config, config.worktree, hooks/, info/, commondir,
+    /// gitdir, shallow, grafts, worktrees/, objects/info/alternates and http-alternates, rebase-merge/, rebase-apply/,
+    /// sequencer/ (an `exec` line in git-rebase-todo runs when the owner continues the rebase), remotes/, branches/ and
+    /// their .lock files. The folders refs, logs, objects and modules themselves cannot be removed or renamed.
+    public static func gitDirWritable(_ c: [String]) -> Bool {
+        guard let first = c.first, !c.contains(where: { $0 == ".git" || $0 == "." || $0 == ".." || $0.isEmpty }) else { return false }
+        switch first {
+        case "refs", "logs": return c.count > 1
+        case "objects": return objectsWritable(Array(c.dropFirst()))
+        case "modules": return moduleWritable(Array(c.dropFirst()))
+        default: return c.count == 1 && gitFile(first)
+        }
+    }
+
+    /// The files git writes in its directory for add, commit, branch, checkout, stash, tag and merge of local branches
+    /// (and their .lock files); index.* is the temporary index of stash, next-index-* of commit with paths.
+    static func gitFile(_ n: String) -> Bool {
+        n.range(of: #"^(index(\.[a-z0-9._-]+)?|sharedindex\.[0-9a-f]+|next-index-[0-9]+|head|orig_head|fetch_head|merge_head|merge_msg|merge_mode|merge_rr|auto_merge|commit_editmsg|cherry_pick_head|revert_head|squash_msg|tag_editmsg|packed-refs)(\.lock)?$"#, options: .regularExpression) != nil
+    }
+
+    static func objectsWritable(_ c: [String]) -> Bool {
+        guard let first = c.first else { return false }
+        if first.count == 2 && first.allSatisfy({ $0.isHexDigit && !$0.isUppercase }) || first == "pack" { return c.count <= 2 }  // objects/ab/<object>, objects/pack/<pack file>
+        if first == "info" {  // only the commit graph and the pack list: never alternates or http-alternates
+            return c.count > 1 && c[1].hasPrefix("commit-graph") && (c[1] == "commit-graphs" || c.count == 2) || c.count == 2 && c[1] == "packs"
+        }
+        return c.count == 1 && first.hasPrefix("tmp_obj_")
+    }
+
+    /// modules/<name>/<member of the module's git directory>; the name may contain slashes, so the git directory starts at
+    /// the first member git has. A refused name anywhere in the path is refused (a module's objects/info too).
+    static func moduleWritable(_ c: [String]) -> Bool {
+        let refused: Set<String> = ["config", "config.worktree", "hooks", "info", "commondir", "gitdir", "worktrees", "shallow", "grafts", "rebase-merge",
+                                    "rebase-apply", "sequencer", "alternates", "http-alternates", "remotes", "branches"]
+        for (i, n) in c.enumerated() {
+            if refused.contains(n) { return false }
+            if ["refs", "logs", "objects"].contains(n) { return i > 0 && gitDirWritable(Array(c[i...])) }
+            if i > 0 && gitFile(n) { return gitDirWritable(Array(c[i...])) }
+        }
+        return false
     }
 
     /// Posel routerja za minigw (router ni zaupanja vreden): SYNC-* le v načinu sync, SYNC-PULL nikoli pri --minigw-ro,
@@ -312,7 +362,7 @@ public enum Sync {
 
     /// #11: zaščita tudi za kanonično pot (povezava hooks → .git/hooks): kanonična pot najglobljega obstoječega prednika
     /// z manjkajočim koncem, relativno na kanonični koren; nečitljiva pot ali pot zunaj korena = zaščitena.
-    static func protectedCanonical(_ url: URL, root: URL) -> Bool {
+    static func protectedCanonical(_ url: URL, root: URL, git: Bool = false) -> Bool {
         guard let r = real(root)?.path else { return true }
         var p = url.path, rest: [String] = []
         while true {
@@ -320,7 +370,7 @@ public enum Sync {
                 let full = ([c] + rest).joined(separator: "/")
                 guard full == r || full.hasPrefix(r + "/") else { return true }
                 let rel = String(full.dropFirst(r.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                return !rel.isEmpty && isProtected(rel)
+                return !rel.isEmpty && isProtected(rel, git: git)
             }
             let parent = (p as NSString).deletingLastPathComponent
             guard parent != p, !parent.isEmpty else { return true }

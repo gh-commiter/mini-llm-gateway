@@ -109,7 +109,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		return dav(403, nil, nil)
 	}
 	defer rooted.Close()
-	mut := mutationRoot{rooted}
+	mut := mutationRoot{Root: rooted, git: true} // WebDAV = direct mode: git's own data is writable (protectedPathFor)
 	p, rel, ok := davResolve(path, prefix, root)
 	if !ok {
 		return dav(403, nil, nil)
@@ -136,7 +136,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 	// Zaščitene poti (kot sync): pisanje v .git, .claude/settings*.json, .vscode/tasks.json, .envrc nikoli, tudi
 	// prek povezave; branje ostane.
 	protected := func(full string, rel []string) bool {
-		return protectedPath(strings.Join(rel, "/")) || protectedCanonical(filepath.Join(root, full), root)
+		return protectedPathFor(strings.Join(rel, "/"), true) || protectedCanonicalFor(filepath.Join(root, full), root, true)
 	}
 	switch method {
 	case "PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH":
@@ -248,7 +248,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 			return dav(409, nil, nil)
 		}
 		davMutationReady()
-		if err := rootWriteAtomic(rooted, p, body); err != nil {
+		if err := rootWriteAtomicFor(rooted, p, body, true); err != nil {
 			return dav(403, nil, nil)
 		}
 		if exists {
@@ -279,7 +279,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if len(rel) == 0 {
 			return dav(403, nil, nil)
 		}
-		if rootTreeProtected(rooted, p, rel) {
+		if rootTreeProtected(rooted, p, rel, true) {
 			return davRefuse(rel)
 		}
 		davMutationReady()
@@ -315,10 +315,10 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		}
 		destRel = relParts(dest)
 		_, lerr := rooted.Lstat(dest)
-		if protected(dest, destRel) || rootTreeProtected(rooted, p, destRel) || (lerr == nil && rootTreeProtected(rooted, dest, destRel)) {
+		if protected(dest, destRel) || rootTreeProtected(rooted, p, destRel, true) || (lerr == nil && rootTreeProtected(rooted, dest, destRel, true)) {
 			return davRefuse(destRel)
 		}
-		if method == "MOVE" && rootTreeProtected(rooted, p, rel) {
+		if method == "MOVE" && rootTreeProtected(rooted, p, rel, true) {
 			return davRefuse(rel)
 		}
 		if isJunk(dest) {
@@ -491,14 +491,14 @@ func hasPathPrefix(p, root string) bool {
 }
 
 // treeProtected: ali je katera koli pot v drevesu dir (z imenom base) zaščitena; povezavam ne sledi, nečitljivo = zaščiteno.
-func rootTreeProtected(rooted *os.Root, dir string, base []string) bool {
+func rootTreeProtected(rooted *os.Root, dir string, base []string, git bool) bool {
 	if st, err := rooted.Lstat(dir); err == nil && !st.IsDir() { // a link is acted on itself, not walked
-		return protectedPath(strings.Join(base, "/"))
+		return protectedPathFor(strings.Join(base, "/"), git)
 	}
 	found := false
 	fs.WalkDir(rooted.FS(), filepath.ToSlash(dir), func(p string, _ fs.DirEntry, err error) error {
 		sub, _ := filepath.Rel(dir, filepath.FromSlash(p))
-		if err != nil || protectedPath(path.Join(strings.Join(base, "/"), filepath.ToSlash(sub))) {
+		if err != nil || protectedPathFor(path.Join(strings.Join(base, "/"), filepath.ToSlash(sub)), git) {
 			found = true
 			return filepath.SkipAll
 		}
@@ -518,7 +518,11 @@ func rootParentExists(rooted *os.Root, p string) bool {
 }
 
 func rootWriteAtomic(rooted *os.Root, p string, data []byte) error {
-	parent, name, err := mutationParent(rooted, p)
+	return rootWriteAtomicFor(rooted, p, data, false)
+}
+
+func rootWriteAtomicFor(rooted *os.Root, p string, data []byte, git bool) error {
+	parent, name, err := mutationParentFor(rooted, p, git)
 	if err != nil {
 		return err
 	}
@@ -564,7 +568,7 @@ func rootCopyTree(rooted *os.Root, src, dst string) error {
 		if st, err := in.Stat(); err != nil || !st.Mode().IsRegular() {
 			return fmt.Errorf("not a regular file: %s", src)
 		}
-		out, err := (mutationRoot{rooted}).OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+		out, err := (mutationRoot{Root: rooted, git: true}).OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
 		if err != nil {
 			return err
 		}
@@ -574,7 +578,7 @@ func rootCopyTree(rooted *os.Root, src, dst string) error {
 		}
 		return out.Close()
 	}
-	if err := (mutationRoot{rooted}).Mkdir(dst, info.Mode().Perm()); err != nil {
+	if err := (mutationRoot{Root: rooted, git: true}).Mkdir(dst, info.Mode().Perm()); err != nil {
 		return err
 	}
 	entries, err := rootReadDir(rooted, src)

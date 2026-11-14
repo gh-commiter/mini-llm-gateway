@@ -110,13 +110,30 @@ var claudeRun = map[string]bool{"hooks": true, "commands": true, "agents": true,
 // protectedPath: pot, ki je prevzem nikoli ne zapiše ali izbriše: git (tudi ».GIT«, ».git.«), hooki gita (.husky,
 // .githooks), .claude/{hooks,commands,agents,skills} in nastavitve, ki zaganjajo ukaze (.claude/settings*.json,
 // .vscode/tasks.json, .envrc). Isti seznam velja za WebDAV (M1).
-func protectedPath(rel string) bool {
-	comps := strings.Split(rel, "/")
+func protectedPath(rel string) bool { return protectedPathFor(rel, false) }
+
+// protectedPathFor: git true = direct mode (WebDAV): git's own data (index, objects, refs, HEAD, logs, packed-refs, the
+// commit and merge files; also in a submodule's git directory) is writable so the agent can commit; whatever can run
+// code or redirect git stays refused (gitDirWritable). Everything outside .git is judged as before. The same list as
+// Swift Sync.gitDirWritable; client/testdata/gitguard.json is asserted by both.
+func protectedPathFor(rel string, git bool) bool {
+	raw := strings.Split(rel, "/")
+	comps := make([]string, len(raw))
+	end := len(raw) // components before this index are judged by the general rules, the rest is inside a git directory
+	for i, c := range raw {
+		comps[i] = normName(c)
+		if git && comps[i] == ".git" && end == len(raw) {
+			end = i
+		}
+	}
 	for i, c := range comps {
-		if comps[i] = normName(c); comps[i] == ".git" || (windowsNames && shortName.MatchString(c)) || comps[i] == ".husky" || comps[i] == ".githooks" ||
-			(i > 0 && comps[i-1] == ".claude" && claudeRun[comps[i]]) {
+		if windowsNames && shortName.MatchString(raw[i]) || (i < end && (c == ".git" || c == ".husky" || c == ".githooks" ||
+			(i > 0 && comps[i-1] == ".claude" && claudeRun[c]))) {
 			return true
 		}
+	}
+	if end < len(comps) {
+		return !gitDirWritable(comps[end+1:])
 	}
 	last, parent := comps[len(comps)-1], ""
 	if len(comps) > 1 {
@@ -124,6 +141,78 @@ func protectedPath(rel string) bool {
 	}
 	return last == ".envrc" || (parent == ".vscode" && last == "tasks.json") ||
 		(parent == ".claude" && strings.HasPrefix(last, "settings") && strings.HasSuffix(last, ".json"))
+}
+
+// gitDirWritable: the path c inside a git directory (the components after ".git", normName'd = lower case) that direct
+// mode lets the agent write. A list of what is allowed, not of what is refused: a name git adds later stays refused.
+// Refused on purpose (each can run code or redirect git of the owner): config, config.worktree, hooks/, info/ (attributes),
+// commondir, gitdir, shallow, grafts, worktrees/ (git worktree add by the agent does not work), objects/info/alternates
+// and http-alternates, rebase-merge/, rebase-apply/, sequencer/ (an `exec` line in git-rebase-todo would run when the
+// owner continues the rebase), remotes/, branches/, and the .lock file of any of them. The folders refs, logs, objects
+// and modules themselves cannot be removed or renamed, only what is in them.
+func gitDirWritable(c []string) bool {
+	if len(c) == 0 {
+		return false
+	}
+	for _, n := range c {
+		if n == ".git" || n == "" || n == "." || n == ".." {
+			return false
+		}
+	}
+	switch c[0] {
+	case "refs", "logs":
+		return len(c) > 1
+	case "objects":
+		return gitObjectsWritable(c[1:])
+	case "modules":
+		return gitModuleWritable(c[1:])
+	}
+	return len(c) == 1 && gitFileRe.MatchString(c[0])
+}
+
+// The files git writes in its directory for add, commit, branch, checkout, stash, tag and merge of local branches (and
+// their .lock files); index.* is the temporary index of stash, next-index-* of commit with paths.
+var gitFileRe = regexp.MustCompile(`^(index(\.[a-z0-9._-]+)?|sharedindex\.[0-9a-f]+|next-index-[0-9]+|head|orig_head|fetch_head|merge_head|merge_msg|merge_mode|merge_rr|auto_merge|commit_editmsg|cherry_pick_head|revert_head|squash_msg|tag_editmsg|packed-refs)(\.lock)?$`)
+
+func gitObjectsWritable(c []string) bool {
+	if len(c) == 0 {
+		return false
+	}
+	switch {
+	case len(c[0]) == 2 && isHex(c[0]) || c[0] == "pack": // objects/ab/<object>, objects/pack/<pack file>
+		return len(c) <= 2
+	case c[0] == "info": // only the commit graph and the pack list: never alternates or http-alternates
+		return len(c) > 1 && strings.HasPrefix(c[1], "commit-graph") && (c[1] == "commit-graphs" || len(c) == 2) || len(c) == 2 && c[1] == "packs"
+	}
+	return len(c) == 1 && strings.HasPrefix(c[0], "tmp_obj_")
+}
+
+func isHex(s string) bool {
+	for _, r := range s {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// gitModuleWritable: modules/<name>/<member of the module's git directory>. The name may contain slashes, so the git
+// directory starts at the first member git has (HEAD, index, objects, refs …). A refused name anywhere in the path is
+// refused (also in a module's name), so a module's objects/info (commit graph) is refused too.
+func gitModuleWritable(c []string) bool {
+	for i, n := range c {
+		switch n {
+		case "config", "config.worktree", "hooks", "info", "commondir", "gitdir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply",
+			"sequencer", "alternates", "http-alternates", "remotes", "branches":
+			return false
+		case "refs", "logs", "objects":
+			return i > 0 && gitDirWritable(c[i:])
+		}
+		if i > 0 && gitFileRe.MatchString(n) {
+			return gitDirWritable(c[i:])
+		}
+	}
+	return false
 }
 
 func ignored(rules []ignoreRule, rel string, isDir bool) bool {
@@ -272,7 +361,10 @@ func sha256Hex(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToStri
 // protectedCanonical (#11): zaščita velja tudi za kanonično pot: uporabnikova povezava v mapi (hooks → .git/hooks)
 // bi sicer pisanje v »hooks/pre-commit« pustila. Kanonična pot najglobljega obstoječega prednika (Windows: dolga imena)
 // skupaj z manjkajočim koncem; nečitljiva pot = zaščitena.
-func protectedCanonical(full, root string) bool {
+func protectedCanonical(full, root string) bool { return protectedCanonicalFor(full, root, false) }
+
+// protectedCanonicalFor: git true = direct mode (protectedPathFor).
+func protectedCanonicalFor(full, root string, git bool) bool {
 	r, err := finalPath(root) // Windows: tudi stičišče (hooks → .git\hooks)
 	if err != nil {
 		return true
@@ -284,7 +376,7 @@ func protectedCanonical(full, root string) bool {
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return true
 			}
-			return rel != "." && protectedPath(filepath.ToSlash(rel))
+			return rel != "." && protectedPathFor(filepath.ToSlash(rel), git)
 		}
 		parent := filepath.Dir(p)
 		if parent == p {
@@ -338,7 +430,7 @@ func syncWritePolicy(rooted *os.Root, full string, data []byte, mtime int64, exe
 	}
 	var err error
 	if protect {
-		err = (mutationRoot{rooted}).MkdirAll(filepath.Dir(full), 0o755)
+		err = (mutationRoot{Root: rooted}).MkdirAll(filepath.Dir(full), 0o755)
 	} else {
 		err = rooted.MkdirAll(filepath.Dir(full), 0o755)
 	}
@@ -468,7 +560,7 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		if runtime.GOOS == "windows" { // #6: datoteke samo za branje Windows ne izbriše
 			rootChmod(rooted, full, 0o666)
 		}
-		(mutationRoot{rooted}).Remove(full)
+		(mutationRoot{Root: rooted}).Remove(full)
 		delete(state, p)
 	}
 	for _, e := range ch.Changed {

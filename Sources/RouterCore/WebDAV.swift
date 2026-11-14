@@ -60,6 +60,7 @@ public enum WebDAV {
                               root: URL, prefix: String) -> DAVResponse {
         let root = root.resolvingSymlinksInPath().standardizedFileURL
         guard let rt = ShareRoot(root), let (_, href0) = resolve(path, prefix: prefix, root: root) else { return forbidden() }
+        rt.git = true  // WebDAV = direct mode: git's own data is writable (Sync.isProtected(_, git:))
         var p = ShareRoot.join(href0)
         let junk = isJunk(p)  // ._* (xattri) in .DS_Store ne pišemo v mapo odjemalca
         // Povezave v mapi (tudi absolutne) se razrešijo tu; zaščita poti velja za rezultat. DELETE in MOVE delata na povezavi sami.
@@ -74,7 +75,7 @@ public enum WebDAV {
         // Zaščitene poti (kot sync): pisanje v .git, .claude/settings*.json, .vscode/tasks.json, .envrc nikoli, tudi
         // prek povezave; branje ostane.
         func protected(_ r: String, _ c: [String]) -> Bool {
-            Sync.isProtected(c.joined(separator: "/")) || Sync.protectedCanonical(URL(fileURLWithPath: root.path).appendingPathComponent(r), root: root)
+            Sync.isProtected(c.joined(separator: "/"), git: true) || Sync.protectedCanonical(URL(fileURLWithPath: root.path).appendingPathComponent(r), root: root, git: true)
         }
         if ["PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH"].contains(method) || (method == "LOCK" && !exists), protected(p, rel) {
             return refuse(rel)

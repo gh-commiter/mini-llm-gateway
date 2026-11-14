@@ -11,7 +11,12 @@ const linkRefusal = "links that lead outside the shared folder are not followed"
 
 // Pin the parent, then check the location of that handle. Mutations use only its basename.
 func mutationParent(root *os.Root, p string) (*os.Root, string, error) {
-	if !filepath.IsLocal(p) || p == "." || protectedPath(filepath.ToSlash(p)) {
+	return mutationParentFor(root, p, false)
+}
+
+// mutationParentFor: git true = direct mode, where git's own data is writable (protectedPathFor).
+func mutationParentFor(root *os.Root, p string, git bool) (*os.Root, string, error) {
+	if !filepath.IsLocal(p) || p == "." || protectedPathFor(filepath.ToSlash(p), git) {
 		return nil, "", fmt.Errorf("protected path: %s", p)
 	}
 	parent, err := root.OpenRoot(filepath.Dir(p))
@@ -39,16 +44,19 @@ func mutationParent(root *os.Root, p string) (*os.Root, string, error) {
 	}
 	rel, err := filepath.Rel(rp, pp)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
-		protectedPath(filepath.ToSlash(filepath.Join(rel, filepath.Base(p)))) {
+		protectedPathFor(filepath.ToSlash(filepath.Join(rel, filepath.Base(p))), git) {
 		return fail(fmt.Errorf("protected path: %s", p))
 	}
 	return parent, filepath.Base(p), nil
 }
 
-type mutationRoot struct{ *os.Root }
+type mutationRoot struct {
+	*os.Root
+	git bool // direct mode (WebDAV): git's own data is writable
+}
 
 func (r mutationRoot) Mkdir(p string, mode os.FileMode) error {
-	parent, name, err := mutationParent(r.Root, p)
+	parent, name, err := mutationParentFor(r.Root, p, r.git)
 	if err != nil {
 		return err
 	}
@@ -78,7 +86,7 @@ func (r mutationRoot) MkdirAll(p string, mode os.FileMode) error {
 	return err
 }
 func (r mutationRoot) Remove(p string) error {
-	parent, name, err := mutationParent(r.Root, p)
+	parent, name, err := mutationParentFor(r.Root, p, r.git)
 	if err != nil {
 		return err
 	}
@@ -86,28 +94,28 @@ func (r mutationRoot) Remove(p string) error {
 	return parent.Remove(name)
 }
 func (r mutationRoot) RemoveAll(p string) error {
-	parent, name, err := mutationParent(r.Root, p)
+	parent, name, err := mutationParentFor(r.Root, p, r.git)
 	if err != nil {
 		return err
 	}
 	defer parent.Close()
-	if rootTreeProtected(parent, name, []string{name}) {
+	if rootTreeProtected(parent, name, []string{name}, r.git) {
 		return fmt.Errorf("protected tree: %s", p)
 	}
 	return parent.RemoveAll(name)
 }
 func (r mutationRoot) Rename(src, dst string) error {
-	sp, sn, err := mutationParent(r.Root, src)
+	sp, sn, err := mutationParentFor(r.Root, src, r.git)
 	if err != nil {
 		return err
 	}
 	defer sp.Close()
-	dp, dn, err := mutationParent(r.Root, dst)
+	dp, dn, err := mutationParentFor(r.Root, dst, r.git)
 	if err != nil {
 		return err
 	}
 	defer dp.Close()
-	if rootTreeProtected(sp, sn, []string{sn}) || rootTreeProtected(sp, sn, []string{dn}) {
+	if rootTreeProtected(sp, sn, []string{sn}, r.git) || rootTreeProtected(sp, sn, []string{dn}, r.git) {
 		return fmt.Errorf("protected tree: %s", src)
 	}
 	sf, err := sp.Open(".")
@@ -126,7 +134,7 @@ func (r mutationRoot) OpenFile(p string, flags int, mode os.FileMode) (*os.File,
 	if flags&(os.O_WRONLY|os.O_RDWR|os.O_CREATE|os.O_TRUNC) == 0 {
 		return r.Root.OpenFile(p, flags, mode)
 	}
-	parent, name, err := mutationParent(r.Root, p)
+	parent, name, err := mutationParentFor(r.Root, p, r.git)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,984 @@
+{
+"_": "Direct-mode guard of git data (docs/gateway.md, security): asserted by Go (client/gitguard_test.go) and Swift (Tests/RouterCoreTests/GitGuardTests.swift). paths = [path, writable in direct mode, writable in sync]; setup = d:dir, f:file, l:link=target; ops = a WebDAV request on a fresh copy of setup, ok = not refused",
+"paths": [
+[
+".git/index",
+true,
+false
+],
+[
+".git/index.lock",
+true,
+false
+],
+[
+".git/HEAD",
+true,
+false
+],
+[
+".git/HEAD.lock",
+true,
+false
+],
+[
+".git/ORIG_HEAD",
+true,
+false
+],
+[
+".git/FETCH_HEAD",
+true,
+false
+],
+[
+".git/MERGE_HEAD",
+true,
+false
+],
+[
+".git/MERGE_MSG",
+true,
+false
+],
+[
+".git/MERGE_MODE",
+true,
+false
+],
+[
+".git/AUTO_MERGE",
+true,
+false
+],
+[
+".git/COMMIT_EDITMSG",
+true,
+false
+],
+[
+".git/CHERRY_PICK_HEAD",
+true,
+false
+],
+[
+".git/packed-refs",
+true,
+false
+],
+[
+".git/packed-refs.lock",
+true,
+false
+],
+[
+".git/index.stash.123",
+true,
+false
+],
+[
+".git/next-index-42.lock",
+true,
+false
+],
+[
+".git/sharedindex.abc123",
+true,
+false
+],
+[
+".git/objects/ab",
+true,
+false
+],
+[
+".git/objects/ab/cdef",
+true,
+false
+],
+[
+".git/objects/ab/tmp_obj_X1",
+true,
+false
+],
+[
+".git/objects/pack",
+true,
+false
+],
+[
+".git/objects/pack/pack-1.pack",
+true,
+false
+],
+[
+".git/objects/pack/tmp_pack_Q",
+true,
+false
+],
+[
+".git/objects/info/commit-graph",
+true,
+false
+],
+[
+".git/objects/info/commit-graph.lock",
+true,
+false
+],
+[
+".git/objects/info/commit-graphs",
+true,
+false
+],
+[
+".git/objects/info/commit-graphs/commit-graph-chain",
+true,
+false
+],
+[
+".git/objects/info/packs",
+true,
+false
+],
+[
+".git/objects/tmp_obj_Q",
+true,
+false
+],
+[
+".git/refs/heads",
+true,
+false
+],
+[
+".git/refs/heads/main",
+true,
+false
+],
+[
+".git/refs/tags/v1",
+true,
+false
+],
+[
+".git/refs/stash",
+true,
+false
+],
+[
+".git/logs/HEAD",
+true,
+false
+],
+[
+".git/logs/refs/heads/main",
+true,
+false
+],
+[
+".git/modules/sub/HEAD",
+true,
+false
+],
+[
+".git/modules/sub/index",
+true,
+false
+],
+[
+".git/modules/sub/index.lock",
+true,
+false
+],
+[
+".git/modules/sub/objects/ab/cdef",
+true,
+false
+],
+[
+".git/modules/sub/refs/heads/main",
+true,
+false
+],
+[
+".git/modules/a/b/HEAD",
+true,
+false
+],
+[
+".git/modules/sub/logs/HEAD",
+true,
+false
+],
+[
+".GIT/index",
+true,
+false
+],
+[
+".Git/refs/heads/x",
+true,
+false
+],
+[
+".GIT/INDEX.LOCK",
+true,
+false
+],
+[
+".GIT/Objects/AB/CDEF",
+true,
+false
+],
+[
+"sub/.git/index",
+true,
+false
+],
+[
+"sub/.git/refs/heads/main",
+true,
+false
+],
+[
+"nest/deeper/.git/objects/ab/cdef",
+true,
+false
+],
+[
+".g\u200cit/index",
+true,
+false
+],
+[
+".git/worktrees",
+false,
+false
+],
+[
+".git/worktrees/x",
+false,
+false
+],
+[
+".git/worktrees/x/gitdir",
+false,
+false
+],
+[
+".git/worktrees/x/HEAD",
+false,
+false
+],
+[
+".git/worktrees/x/commondir",
+false,
+false
+],
+[
+".git/objects",
+false,
+false
+],
+[
+".git/objects/info",
+false,
+false
+],
+[
+".git/objects/info/alternates",
+false,
+false
+],
+[
+".git/objects/info/http-alternates",
+false,
+false
+],
+[
+".git/objects/info/commit-graphs/../alternates",
+false,
+false
+],
+[
+".git/objects/pack/x/y",
+false,
+false
+],
+[
+".git/objects/zz/abc",
+false,
+false
+],
+[
+".git/objects/ab/cd/ef",
+false,
+false
+],
+[
+".git/objects/other",
+false,
+false
+],
+[
+".git/rebase-merge",
+false,
+false
+],
+[
+".git/rebase-merge/git-rebase-todo",
+false,
+false
+],
+[
+".git/rebase-apply/patch",
+false,
+false
+],
+[
+".git/sequencer/todo",
+false,
+false
+],
+[
+".git/remotes/origin",
+false,
+false
+],
+[
+".git/branches/x",
+false,
+false
+],
+[
+".git/refs",
+false,
+false
+],
+[
+".git/logs",
+false,
+false
+],
+[
+".git/modules",
+false,
+false
+],
+[
+".git/modules/sub",
+false,
+false
+],
+[
+".git/foo",
+false,
+false
+],
+[
+".git/HEAD/x",
+false,
+false
+],
+[
+".git/index/x",
+false,
+false
+],
+[
+".git/.git/index",
+false,
+false
+],
+[
+".git/modules/sub/.git/index",
+false,
+false
+],
+[
+"nest/.git",
+false,
+false
+],
+[
+"nest/.git/config",
+false,
+false
+],
+[
+"nest/.git/hooks/pre-commit",
+false,
+false
+],
+[
+"sub/.git",
+false,
+false
+],
+[
+"sub/.git/info/attributes",
+false,
+false
+],
+[
+".g\u200cit/config",
+false,
+false
+],
+[
+".g\u200cit",
+false,
+false
+],
+[
+".husky/pre-commit",
+false,
+false
+],
+[
+".husky/.git/index",
+false,
+false
+],
+[
+".githooks/x",
+false,
+false
+],
+[
+".claude/settings.json",
+false,
+false
+],
+[
+".claude/settings.local.json",
+false,
+false
+],
+[
+".claude/hooks/x",
+false,
+false
+],
+[
+".claude/hooks/.git/index",
+false,
+false
+],
+[
+".claude/commands/x",
+false,
+false
+],
+[
+".claude/agents/a",
+false,
+false
+],
+[
+".claude/skills/s",
+false,
+false
+],
+[
+".envrc",
+false,
+false
+],
+[
+"sub/.envrc",
+false,
+false
+],
+[
+".vscode/tasks.json",
+false,
+false
+],
+[
+".git /config",
+false,
+false
+],
+[
+"a.txt",
+true,
+true
+],
+[
+"src/main.go",
+true,
+true
+],
+[
+".gitignore",
+true,
+true
+],
+[
+".gitmodules",
+true,
+true
+],
+[
+".gitattributes",
+true,
+true
+],
+[
+"src/.gitkeep",
+true,
+true
+],
+[
+"docs/.claude/notes.md",
+true,
+true
+],
+[
+".vscode/settings.json",
+true,
+true
+],
+[
+".claude/other.md",
+true,
+true
+],
+[
+"gitconfig",
+true,
+true
+],
+[
+"git/config",
+true,
+true
+]
+],
+"setup": [
+"d:.git",
+"d:.git/objects",
+"d:.git/objects/ab",
+"d:.git/objects/info",
+"d:.git/refs",
+"d:.git/refs/heads",
+"d:.git/refs/tags",
+"d:.git/hooks",
+"d:.git/info",
+"d:.git/logs",
+"d:.git/modules",
+"d:.git/modules/sub",
+"d:.git/modules/sub/hooks",
+"d:.git/rebase-merge",
+"f:.git/index",
+"f:.git/index.lock",
+"f:.git/config",
+"f:.git/config.tmp",
+"f:.git/HEAD",
+"f:.git/refs/heads/main",
+"f:.git/objects/ab/cd",
+"f:.git/hooks/pre-commit",
+"f:.git/info/attributes",
+"f:.git/objects/info/alternates",
+"f:.git/rebase-merge/git-rebase-todo",
+"f:.git/modules/sub/hooks/pre-commit",
+"f:a.txt",
+"d:sub",
+"f:sub/.git",
+"d:nest",
+"d:nest/.git",
+"d:nest/.git/hooks",
+"f:nest/.git/hooks/pre-commit",
+"f:nest/.git/index",
+"l:link-hooks=.git/hooks",
+"l:.git/refs/heads/evil=../../hooks",
+"l:.git/refs/heads/escape=../../../../.."
+],
+"ops": [
+{
+"m": "PUT",
+"p": ".git/index.lock",
+"ok": true
+},
+{
+"m": "PUT",
+"p": ".git/index",
+"ok": true
+},
+{
+"m": "PUT",
+"p": ".git/refs/heads/new",
+"ok": true
+},
+{
+"m": "PUT",
+"p": ".git/objects/ab/new",
+"ok": true
+},
+{
+"m": "PUT",
+"p": ".git/modules/sub/HEAD",
+"ok": true
+},
+{
+"m": "PUT",
+"p": "nest/.git/index",
+"ok": true
+},
+{
+"m": "PUT",
+"p": ".git/config",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".git/config.tmp",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".git/hooks/pre-commit",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".git/info/attributes",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".git/rebase-merge/git-rebase-todo",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".git/objects/info/alternates",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".git/modules/sub/hooks/pre-commit",
+"ok": false
+},
+{
+"m": "PUT",
+"p": "nest/.git/hooks/pre-commit",
+"ok": false
+},
+{
+"m": "PUT",
+"p": "sub/.git",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".GIT/config",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".Git/hooks/x",
+"ok": false
+},
+{
+"m": "PUT",
+"p": "link-hooks/pre-commit",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".git/refs/heads/evil/pre-commit",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".git/refs/heads/escape/x",
+"ok": false
+},
+{
+"m": "PUT",
+"p": ".git",
+"ok": false
+},
+{
+"m": "PUT",
+"p": "a.txt",
+"ok": true
+},
+{
+"m": "MKCOL",
+"p": ".git/objects/cd",
+"ok": true
+},
+{
+"m": "MKCOL",
+"p": ".git/refs/tags/sub",
+"ok": true
+},
+{
+"m": "MKCOL",
+"p": ".git/refs/heads/feature",
+"ok": true
+},
+{
+"m": "MKCOL",
+"p": ".git/hooks/x",
+"ok": false
+},
+{
+"m": "MKCOL",
+"p": ".git/rebase-merge/x",
+"ok": false
+},
+{
+"m": "MKCOL",
+"p": ".git/worktrees",
+"ok": false
+},
+{
+"m": "MKCOL",
+"p": ".git/objects/info/x",
+"ok": false
+},
+{
+"m": "MKCOL",
+"p": ".git/modules/sub/info",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git/index.lock",
+"ok": true
+},
+{
+"m": "DELETE",
+"p": ".git/refs/heads/main",
+"ok": true
+},
+{
+"m": "DELETE",
+"p": ".git/objects/ab",
+"ok": true
+},
+{
+"m": "DELETE",
+"p": ".git/config",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git/hooks",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git/hooks/pre-commit",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git/refs",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git/objects",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git/rebase-merge",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": "nest",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": ".git/modules/sub",
+"ok": false
+},
+{
+"m": "DELETE",
+"p": "link-hooks",
+"ok": false
+},
+{
+"m": "MOVE",
+"p": ".git/index.lock",
+"ok": true,
+"d": ".git/index"
+},
+{
+"m": "MOVE",
+"p": ".git/refs/heads/main",
+"ok": true,
+"d": ".git/refs/heads/main2"
+},
+{
+"m": "MOVE",
+"p": ".git/refs/heads/main",
+"ok": true,
+"d": "moved.txt"
+},
+{
+"m": "MOVE",
+"p": ".git/config.tmp",
+"ok": false,
+"d": ".git/config"
+},
+{
+"m": "MOVE",
+"p": ".git/objects/ab/cd",
+"ok": false,
+"d": ".git/hooks/pre-commit"
+},
+{
+"m": "MOVE",
+"p": ".git/hooks/pre-commit",
+"ok": false,
+"d": ".git/refs/heads/x"
+},
+{
+"m": "MOVE",
+"p": ".git/index.lock",
+"ok": false,
+"d": ".git/config"
+},
+{
+"m": "MOVE",
+"p": ".git/config",
+"ok": false,
+"d": ".git/index"
+},
+{
+"m": "MOVE",
+"p": "a.txt",
+"ok": false,
+"d": ".git/hooks/x"
+},
+{
+"m": "MOVE",
+"p": "a.txt",
+"ok": true,
+"d": ".git/refs/heads/x"
+},
+{
+"m": "MOVE",
+"p": ".git",
+"ok": false,
+"d": ".git2"
+},
+{
+"m": "MOVE",
+"p": ".git/refs",
+"ok": false,
+"d": ".git/refs2"
+},
+{
+"m": "MOVE",
+"p": "nest",
+"ok": false,
+"d": "nest2"
+},
+{
+"m": "MOVE",
+"p": ".git/objects/ab/cd",
+"ok": true,
+"d": ".git/objects/ab/ef"
+},
+{
+"m": "MOVE",
+"p": ".git/index.lock",
+"ok": false,
+"d": ".git/info/attributes"
+},
+{
+"m": "MOVE",
+"p": "a.txt",
+"ok": false,
+"d": ".git/rebase-merge/git-rebase-todo"
+},
+{
+"m": "COPY",
+"p": ".git/objects/ab/cd",
+"ok": true,
+"d": ".git/objects/ab/ef"
+},
+{
+"m": "COPY",
+"p": ".git/hooks/pre-commit",
+"ok": true,
+"d": "copy.txt"
+},
+{
+"m": "COPY",
+"p": "a.txt",
+"ok": false,
+"d": ".git/hooks/x"
+},
+{
+"m": "COPY",
+"p": "a.txt",
+"ok": true,
+"d": ".git/refs/heads/x2"
+},
+{
+"m": "COPY",
+"p": "a.txt",
+"ok": false,
+"d": ".git/config"
+},
+{
+"m": "COPY",
+"p": ".git/refs/heads/main",
+"ok": false,
+"d": ".git/hooks/main"
+},
+{
+"m": "COPY",
+"p": "a.txt",
+"ok": false,
+"d": ".git/modules/sub/config"
+},
+{
+"m": "LOCK",
+"p": ".git/refs/heads/lk",
+"ok": true
+},
+{
+"m": "LOCK",
+"p": ".git/indexx",
+"ok": false
+},
+{
+"m": "LOCK",
+"p": ".git/hooks/new",
+"ok": false
+},
+{
+"m": "LOCK",
+"p": ".git/config.lock",
+"ok": false
+},
+{
+"m": "LOCK",
+"p": ".git/rebase-merge/new",
+"ok": false
+},
+{
+"m": "LOCK",
+"p": ".GIT/hooks/new",
+"ok": false
+}
+]
+}
