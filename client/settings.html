@@ -153,6 +153,7 @@ const S = {
   installedYes: ["minigw serve install", "minigw serve install"], enabled: ["Enabled", "Vklopljeno"],
   claudeOff: ["Claude CLI and Codex are off: %s", "Claude CLI in Codex sta izklopljena: %s"],
   leftOut: ["left out (scratch folder or Copilot's cache): select and remove it", "izpuščena (mapa Scratch ali predpomnilnik Copilot): izberite jo in odstranite"],
+  folderRefused: ["refused (folder identity could not be verified): remove and add it again", "zavrnjena (identitete mape ni mogoče potrditi): odstranite jo in dodajte znova"],
   leftOutUnchecked: ["left out (cannot be checked): select and remove it", "izpuščena (ni je mogoče preveriti): izberite jo in odstranite"],
   offLeftOut: ["the allowed folder(s) %s contain or are inside the scratch folder or Copilot's package cache%s: they are left out; save the allowed folders without them (Claude CLI → Allowed folders), then turn Claude CLI and Codex on",
     "dovoljene mape %s vsebujejo mapo Scratch ali predpomnilnik paketov Copilot ali so v njej%s: izpuščene so; shranite dovoljene mape brez njih (Claude CLI → Dovoljene mape), nato vklopite Claude CLI in Codex"],
@@ -446,7 +447,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 // folderList: seznam map s + / − (kot »Allowed folders« na Macu). Pot se vpiše ali, s pladnjem na Windows, izbere (Izberi…).
 // leftOut: mape iz serve.json, ki jih prehod ob zagonu izpusti; označene, odstrani jih vsako shranjevanje seznama.
 // unchecked: od teh tiste, ki jih ni mogoče preveriti (drug razlog).
-function folderList(csv, send, hint, win, leftOut, unchecked) {
+function folderList(csv, send, hint, win, leftOut, unchecked, refused) {
   const list = (csv || "").split(",").map(x => x.trim()).filter(Boolean), left = [...(leftOut || [])];
   let sel = null;
   const n = note(hint);
@@ -456,7 +457,8 @@ function folderList(csv, send, hint, win, leftOut, unchecked) {
   const render = () => box.replaceChildren(
     ...left.map(f => { const r = row(el("span", {class: "label mono warn", textContent: "⚠️ " + f + " · " + t((unchecked || []).includes(f) ? "leftOutUnchecked" : "leftOut")}));
       r.classList.toggle("selected", f === sel); r.addEventListener("click", () => { sel = sel === f ? null : f; render(); }); return r; }),
-    ...list.map(f => { const r = row(el("span", {class: "label mono", textContent: "📁 " + f}));
+    ...list.map(f => { const bad = (refused || []).includes(f);
+      const r = row(el("span", {class: "label mono" + (bad ? " warn" : ""), textContent: (bad ? "⚠️ " : "📁 ") + f + (bad ? " · " + t("folderRefused") : "")}));
       r.classList.toggle("selected", f === sel); r.addEventListener("click", () => { sel = sel === f ? null : f; render(); }); return r; }),
     row(input, PICKER ? button(t("choose"), async () => {
       try { const p = await pick("folder"); if (p && !list.includes(p)) commit([...list, p]); }
@@ -506,7 +508,7 @@ async function agentPane(kind) {
     el("h3", {}, el("span", {textContent: t("models")}), buttons(button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false)))),
     list, n1,
     section(t("login")), loginGroup(kind, a.login, patch, n1),
-    ...(codex ? [section(t("allowedFolders")), folderList(c.folders, v => api("PATCH", "/agents/claude", {folders: v}), t("allowedFoldersShared"), win, c.leftOut, c.leftOutUnchecked)] : []),
+    ...(codex ? [section(t("allowedFolders")), folderList(c.folders, v => api("PATCH", "/agents/claude", {folders: v}), t("allowedFoldersShared"), win, c.leftOut, c.leftOutUnchecked, c.refused)] : []),
     section(t("sandbox")),
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show(kind); }), locked)),
       codex ? row(t("allowNetwork"), toggle(a.network, v => save(n2, () => patch({network: v})), !a.write || locked)) : null,
@@ -905,7 +907,7 @@ const pages = {
         browse(path, n1, async v => showStatus(await patch({path: v}))))),
       el("div", {class: "note"}, status), n1,
       section(t("login")), loginGroup("claude", c.login, patch, n1),
-      section(t("allowedFolders")), folderList(c.folders, v => patch({folders: v}), t("allowedFoldersHint"), win, c.leftOut, c.leftOutUnchecked),
+      section(t("allowedFolders")), folderList(c.folders, v => patch({folders: v}), t("allowedFoldersHint"), win, c.leftOut, c.leftOutUnchecked, c.refused),
       box ? el("div", {class: "note warn", textContent: t("pathHomeWarn")}) : null,
       el("div", {style: "height:12px"}),
       group(row(labelSub(t("localTools"), win ? t(box ? "localToolsBox" : "localToolsWin") : t("localToolsHelp")), toggle(c.allowLocalTools, v => save(n2, async () => { await patch({allowLocalTools: v}); show("claude"); }))),

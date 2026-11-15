@@ -2140,3 +2140,21 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
     #expect(await pull("r3") == nil)
     #expect(minigw.notes.count == before && read(client, "a.txt") == "agent1")
 }
+
+@Test func syncCopyLimitMessage() async throws {
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("synclimit-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+    var c = RouterConfig()
+    c.scratchFolder = scratch.path
+    for i in 0..<Sync.maxCopies {
+        try FileManager.default.createDirectory(at: scratch.appendingPathComponent("sync/local/" + String(format: "%016x", i)), withIntermediateDirectories: true)
+    }
+    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    var q = request("POST", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": "limit",
+                                                       "x-claude-mini-cwd": "/new", "x-claude-mini-work": "sync"])
+    q.peer = "127.0.0.1"
+    let w = FakeWriter()
+    await r.handle(q, writer: w)
+    #expect(w.status == 429)
+    #expect(w.text.contains("This device already has \(Sync.maxCopies) synced folders on the gateway; unused ones expire after 14 days; the owner can remove one with `minigw gw sync remove`"))
+}

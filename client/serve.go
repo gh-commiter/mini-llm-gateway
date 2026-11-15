@@ -1599,7 +1599,7 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		}
 		copyDir := filepath.Join(s.conf().scratch("sync"), owner, sha256Hex([]byte(cwd))[:16]+suffix)
 		if tooManyCopies(copyDir) {
-			return writeError(w, r.rid, 429, fmt.Sprintf("This device already has %d synced folders on the gateway; unused ones expire after 14 days", maxCopies)), ""
+			return writeError(w, r.rid, 429, fmt.Sprintf("This device already has %d synced folders on the gateway; unused ones expire after 14 days; the owner can remove one with `minigw gw sync remove`", maxCopies)), ""
 		}
 		k, ok := s.hub.register(session, cwd, key, ro, copyDir, dev)
 		if !ok {
