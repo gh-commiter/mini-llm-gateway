@@ -370,9 +370,11 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     defer { try? FileManager.default.removeItem(at: dir) }
     let out = dir.appendingPathComponent("out"), pid = dir.appendingPathComponent("pid")
     let start = Date()
-    let (text, _) = try await Codex.run("/bin/sh", args: ["-c", "sleep 60 & echo $! > '\(pid.path)'; echo done > '\(out.path)'"],
+    let (text, _) = try await Codex.run("/bin/sh", args: ["-c", "sleep 300 & echo $! > '\(pid.path)'; echo done > '\(out.path)'"],
                                         cwd: dir, prompt: "", output: out)
-    #expect(text == "done" && Date().timeIntervalSince(start) < 10)
+    // the property: the run does not wait for the grandchild that holds the pipe (300 s); the bound is half of that, not a guess about
+    // the speed of a loaded Mac (the 2 s the reading may take is far inside it)
+    #expect(text == "done" && Date().timeIntervalSince(start) < 150)
     let p = try #require(pid_t(String(contentsOf: pid, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
     #expect(Darwin.kill(p, 0) != 0)
 }
