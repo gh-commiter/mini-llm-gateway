@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import RouterCore
 
@@ -11,6 +12,8 @@ private final class DAVLoopback: @unchecked Sendable {
     let root: URL, prefix: String
     private var listener: Int32 = -1
     private(set) var port: UInt16 = 0
+    private let seen = Mutex<[String]>([])  // requests that reached the client side, newest last (for the failure message)
+    var summary: String { seen.withLock { "\($0.count) requests reached the client side, last: " + $0.suffix(6).joined(separator: "; ") } }
 
     init?(root: URL, prefix: String) {
         self.root = root; self.prefix = prefix
@@ -49,6 +52,7 @@ private final class DAVLoopback: @unchecked Sendable {
             case .error(let s, _):
                 send(c, HTTPResponse.head(status: s, headers: [], contentLength: 0)); return
             case .request(let req):
+                seen.withLock { $0.append(req.method + " " + req.path) }
                 let r = WebDAV.handle(method: req.method, path: req.path, headers: req.headers, body: req.body, root: root, prefix: prefix)
                 var headers = r.headers.map { ($0.key, $0.value) }
                 let length = r.headers["Content-Length"] == nil ? r.body.count : nil
@@ -118,7 +122,7 @@ private func forceUnmount(_ mp: URL) {
     for cmd in ["echo more >> a.txt && git add a.txt && git commit -qm agent", "git branch feature", "git tag v1", "git checkout -q -b topic", "echo again >> a.txt && git stash -q",
                 "git checkout -q - && git merge -q --no-edit x", "git log --oneline | wc -l | grep -q 2", "git gc -q", "git repack -a -d -q && git prune --expire=now && git count-objects -v | grep -q '^count: 0'", "git gc --aggressive -q"] {
         let r = sh(cmd, cwd: mp.path)
-        #expect(r.status == 0, "\(cmd): \(r)")
+        #expect(r.status == 0, "\(cmd): \(r) | mounted \(ShareHub.isMounted(mp)); \(server.summary)")
     }
     // the commit is in the client's own repository, which git itself finds sound
     let log = sh("git log --oneline", cwd: client.path)
@@ -127,10 +131,12 @@ private func forceUnmount(_ mp: URL) {
 
     // what runs code is refused with the client's refusal line (stderr of this process), and nothing appears in the client's folder
     // (the log of refusals is one line per path and process: start from an empty one; webdavfs writes back after close, so wait for the lines)
-    WebDAV.refused.withLock { $0 = WebDAV.RefusalLog() }
     let errFile = base.appendingPathComponent("stderr.txt")
     let saved = dup(2), fd = open(errFile.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
     dup2(fd, 2)
+    // the log is process-wide and a line is written once per path: reset it only now that stderr is ours, else another test's refusal of the
+    // same path between the reset and the redirect would use the line up and send it to the real stderr
+    WebDAV.refused.withLock { $0 = WebDAV.RefusalLog() }
     let denied = ["echo '# t' >> .git/config", "echo noop > .git/hooks/pre-commit", "echo noop > .git/info/attributes", "echo /x > .git/objects/info/alternates",
                   "mkdir .git/rebase-merge && echo noop > .git/rebase-merge/git-rebase-todo", "echo x > .git/shallow", "git config user.name evil"]
     for cmd in denied { _ = sh(cmd, cwd: mp.path) }
@@ -142,8 +148,9 @@ private func forceUnmount(_ mp: URL) {
     }
     dup2(saved, 2); close(saved); close(fd)
     // (the shell may report success for a write that webdavfs writes back after close and the client then refuses: the checks are the refusal line and the client's folder)
-    #expect(refusals.contains("minigw: refused agent write to \".git/hooks/pre-commit\" (protected path)"), "\(refusals)")
-    #expect(refusals.contains("minigw: refused agent write to \".git/config"), "\(refusals)")
+    let state = "mounted \(ShareHub.isMounted(mp)); \(server.summary)"  // no line = the writes never reached the client (a stalled mount) or the log was used up
+    #expect(refusals.contains("minigw: refused agent write to \".git/hooks/pre-commit\" (protected path)"), "\(refusals) | \(state)")
+    #expect(refusals.contains("minigw: refused agent write to \".git/config"), "\(refusals) | \(state)")
     for p in ["hooks/pre-commit", "info/attributes", "objects/info/alternates", "rebase-merge", "shallow", "config.lock"] {
         #expect(!fm.fileExists(atPath: client.appendingPathComponent(".git/" + p).path), "\(p)")
     }

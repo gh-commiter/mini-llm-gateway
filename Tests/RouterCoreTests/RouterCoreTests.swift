@@ -432,21 +432,24 @@ func discoveryReady(_ r: Router) async {
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
     let fake = dir.appendingPathComponent("agent"), gate = dir.appendingPathComponent("go")
-    try Data("#!/bin/sh\nwhile [ ! -e '\(gate.path)' ]; do sleep 0.1; done\n".utf8).write(to: fake)  // teče, dokler test ne reče
+    try Data("#!/bin/sh\ntouch '\(dir.path)/started-'$$\nwhile [ ! -e '\(gate.path)' ]; do sleep 0.1; done\n".utf8).write(to: fake)  // teče, dokler test ne reče
     chmod(fake.path, 0o755)
     let n = 2 * ProcessInfo.processInfo.activeProcessorCount + 2
     let runs = (0..<n).map { i in
         Task { _ = try? await (i.isMultiple(of: 2) ? Grok.run(fake.path, args: [], cwd: dir, prompt: "x", onStep: { _ in })
                                                    : Codex.run(fake.path, args: [], cwd: dir, prompt: "x", output: dir.appendingPathComponent("o\(i)"))) }
     }
-    // Agente ustavi nit po 20 s, ne naloga: zasedenega bazena (pred popravkom) ne bi nikoli dočakala.
-    Thread { Thread.sleep(forTimeInterval: 20); FileManager.default.createFile(atPath: gate.path, contents: nil) }.start()
-    let t0 = ContinuousClock.now  // pred čakanjem: tudi to nadaljevanje potrebuje nit bazena
-    try await Task.sleep(for: .milliseconds(500))  // agenti zagnani in v branju
+    // The property, not a time: /health is answered while every agent run is still in flight, i.e. before anything released the agents.
+    // The thread releases them only after 60 s as a guard (a starved pool, before the fix, answers only after that; a thread, not a task,
+    // so the pool cannot hold it up). Load makes the answer slower, never wrong: no time limit on the answer itself.
+    Thread { Thread.sleep(forTimeInterval: 60); FileManager.default.createFile(atPath: gate.path, contents: nil) }.start()
+    let started = { ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasPrefix("started-") }.count }
+    while started() < n && !FileManager.default.fileExists(atPath: gate.path) { try await Task.sleep(for: .milliseconds(50)) }  // all agents running and reading
     let r = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
     let w = FakeWriter()
     await r.handle(request("GET", "/health/live"), writer: w)
-    #expect(w.status == 200 && ContinuousClock.now - t0 < .seconds(10))  // pred popravkom: šele po koncu agentov (20 s)
+    #expect(w.status == 200)
+    #expect(started() == n && !FileManager.default.fileExists(atPath: gate.path), "health answered only after the agents were released (started \(started()) of \(n))")
     FileManager.default.createFile(atPath: gate.path, contents: nil)
     for t in runs { await t.value }
 }
