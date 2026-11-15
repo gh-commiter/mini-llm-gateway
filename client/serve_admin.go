@@ -403,24 +403,18 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		if s.scratchOther.Load() {
 			return fail(503, "sync: Scratch belongs to another gateway")
 		}
+		// Both take the read gate: a Scratch move (write gate) cannot run meanwhile. Removal refuses only a copy that a session or an
+		// agent of this gateway uses (hub.ifCopyFree), not every busy gateway.
+		if !s.scratchGate.TryRLock() {
+			return fail(503, scratchMovingMsg)
+		}
+		defer s.scratchGate.RUnlock()
 		if method == "DELETE" {
-			if !s.scratchGate.TryLock() {
-				return fail(409, "sync: minigw sessions or agents are active; retry when they stop")
-			}
-			defer s.scratchGate.Unlock()
-			if s.hub.count() > 0 || s.agentsRunning.Load() > 0 {
-				return fail(409, "sync: minigw sessions or agents are active; retry when they stop")
-			}
 			if why := s.offlineScratchHeld(); why != "" {
 				return fail(409, why)
 			}
-		} else {
-			if !s.scratchGate.TryRLock() {
-				return fail(503, scratchMovingMsg)
-			}
-			defer s.scratchGate.RUnlock()
 		}
-		copies, status, why := syncCopies(s.conf().scratch("sync"), device, arg)
+		copies, status, why := syncCopies(s.conf().scratch("sync"), device, arg, s.hub.ifCopyFree)
 		if why != "" {
 			return fail(status, why)
 		}

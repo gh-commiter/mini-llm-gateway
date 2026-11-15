@@ -24,11 +24,11 @@ func TestSyncCopiesManagement(t *testing.T) {
 	if !tooManyCopies(next) {
 		t.Fatal("expected quota")
 	}
-	copies, status, why := syncCopies(root, device, "")
+	copies, status, why := syncCopies(root, device, "", nil)
 	if status != 200 || why != "" || len(copies) != maxCopies {
 		t.Fatalf("list: %v %d %s", copies, status, why)
 	}
-	_, status, why = syncCopies(root, device, copies[0])
+	_, status, why = syncCopies(root, device, copies[0], nil)
 	if status != 200 || why != "" {
 		t.Fatalf("remove: %d %s", status, why)
 	}
@@ -39,7 +39,7 @@ func TestSyncCopiesManagement(t *testing.T) {
 		t.Fatal("marker remains")
 	}
 	for _, id := range []string{"../outside", "0000000000000000/..", "bad"} {
-		if _, status, _ := syncCopies(root, device, id); status != 400 {
+		if _, status, _ := syncCopies(root, device, id, nil); status != 400 {
 			t.Fatalf("accepted %q", id)
 		}
 	}
@@ -47,7 +47,7 @@ func TestSyncCopiesManagement(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
 		t.Skip("symlinks unavailable")
 	}
-	if _, status, _ := syncCopies(root, "linked", ""); status != 400 {
+	if _, status, _ := syncCopies(root, "linked", "", nil); status != 400 {
 		t.Fatal("accepted linked owner")
 	}
 }
@@ -55,14 +55,54 @@ func TestSyncCopiesManagement(t *testing.T) {
 func TestSyncCopiesAdminBusy(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	s, _ := testServer(t, nil)
-	s.hub.register("session", "/folder", "key", false, "", "local")
-	status, _ := s.adminDo("DELETE", "/sync/0000000000000000?device=local", nil)
-	if status != 409 {
-		t.Fatalf("active session: %d", status)
+	mk := func(id string) string {
+		p := filepath.Join(s.conf().scratch("sync"), "local", id)
+		if err := os.MkdirAll(p, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return p
 	}
-	status, _ = s.adminDo("GET", "/sync?device=..", nil)
-	if status != 400 {
+	used, other := mk("0000000000000001"), mk("0000000000000002")
+	s.hub.register("session", "/folder", "key", false, used, "local")
+	s.agentsRunning.Add(1) // an agent running anywhere does not block a copy it does not use
+	defer s.agentsRunning.Add(-1)
+	if status, body := s.adminDo("DELETE", "/sync/0000000000000002?device=local", nil); status != 200 {
+		t.Fatalf("unrelated session blocked the removal: %d %v", status, body)
+	}
+	if _, err := os.Stat(other); !os.IsNotExist(err) {
+		t.Fatal("copy not removed")
+	}
+	status, body := s.adminDo("DELETE", "/sync/0000000000000001?device=local", nil)
+	if status != 409 {
+		t.Fatalf("copy of an active session: %d", status)
+	}
+	want, _ := os.ReadFile("testdata/sync_copy_in_use.txt")
+	if msg := fmt.Sprint(body); !strings.Contains(msg, string(want)) {
+		t.Fatalf("message %q lacks the shared text %q", msg, want)
+	}
+	if _, err := os.Stat(used); err != nil {
+		t.Fatal("copy of an active session was removed")
+	}
+	s.hub.unregister(s.hub.bySession["session"].key, "local")
+	if status, _ := s.adminDo("DELETE", "/sync/0000000000000001?device=local", nil); status != 200 {
+		t.Fatalf("after the session ended: %d", status)
+	}
+	if status, _ := s.adminDo("GET", "/sync?device=..", nil); status != 400 {
 		t.Fatalf("invalid device: %d", status)
+	}
+}
+
+func TestSyncCopiesRegistrationAndRemovalDoNotInterleave(t *testing.T) {
+	h := newShareHub()
+	dir := filepath.Join(t.TempDir(), "c")
+	ran := false
+	if inUse, err := h.ifCopyFree(dir, func() error { ran = true; return nil }); inUse || err != nil || !ran {
+		t.Fatalf("free copy: %v %v %v", inUse, err, ran)
+	}
+	h.register("s", "/f", "k", false, dir, "local")
+	ran = false
+	if inUse, _ := h.ifCopyFree(dir+"/", func() error { ran = true; return nil }); !inUse || ran {
+		t.Fatal("registered copy must be in use and the step must not run")
 	}
 }
 
@@ -102,7 +142,7 @@ func TestSyncCopiesListDuringClientRequest(t *testing.T) {
 		t.Fatalf("list during client request: %d %v", status, body)
 	}
 	status, _ = s.adminDo("DELETE", "/sync/0000000000000000?device=local", nil)
-	if status != 409 {
+	if status != 404 { // the request of another client does not block the removal (this copy does not exist)
 		t.Fatalf("remove during client request: %d", status)
 	}
 }
@@ -115,6 +155,9 @@ func TestSyncCopiesListDuringScratchMove(t *testing.T) {
 	status, _ := s.adminDo("GET", "/sync?device=local", nil)
 	if status != 503 {
 		t.Fatalf("list during Scratch move: %d", status)
+	}
+	if status, _ = s.adminDo("DELETE", "/sync/0000000000000000?device=local", nil); status != 503 {
+		t.Fatalf("remove during Scratch move: %d", status)
 	}
 }
 
