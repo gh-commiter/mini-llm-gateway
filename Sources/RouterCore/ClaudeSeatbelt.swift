@@ -252,12 +252,24 @@ public actor ClaudeSeatbelt {
         p.standardOutput = try? FileHandle(forWritingTo: outURL)
         p.standardError = try? FileHandle(forWritingTo: errURL)
         guard (try? p.run()) != nil else { return (-1, "", "cannot start \(exe)", false) }
-        let timedOut = Flag(false)
-        // the child is not a process group leader (Process offers no setpgid), so `Native.killTree(pid)` would find no group and kill nothing: the tree is killed by pid, children first
-        let killer = DispatchWorkItem { timedOut.set(); if p.isRunning { killTreeByPid(p.processIdentifier) } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
+        let timedOut = Flag(false), finished = Flag(false)
+        // The timer is a thread of its own, not a dispatch-pool timer: under a loaded full test run the pool has no free thread for seconds, the timer fired late and a run that took three
+        // times its limit was judged a pass (reproduced by captureTimeoutHoldsWhileTheDispatchPoolIsBusy). The child is not a process group leader (Process offers no setpgid), so
+        // `Native.killTree(pid)` would find no group: the tree is killed by pid, parent first.
+        let pid = p.processIdentifier
+        let killer = Thread {
+            let end = Date().addingTimeInterval(timeout)
+            while !finished.value {
+                if Date() >= end {
+                    if !finished.value { timedOut.set(); killTreeByPid(pid) }
+                    return
+                }
+                usleep(20_000)
+            }
+        }
+        killer.start()
         p.waitUntilExit()
-        killer.cancel()  // the process is reaped: its pid may be reused, so nothing is killed by pid from here on
+        finished.set()  // the process is reaped: its pid may be reused, so nothing is killed by pid from here on
         let read = { (u: URL) in String(decoding: (try? Data(contentsOf: u)) ?? Data(), as: UTF8.self) }
         return (p.terminationStatus, read(outURL), read(errURL), timedOut.value)
     }

@@ -473,6 +473,23 @@ private final class Clock: @unchecked Sendable {
     #expect(gone, "the descendant lives")
 }
 
+/// The timeout must not depend on a free thread of the dispatch pool: under a loaded full test run (xcodebuild runs hundreds of blocking tests at once) a timer on the pool fired late,
+/// the stub finished its 6 s sleep and a run that took 3 times its limit was judged a pass. Reproduced here by keeping the pool busy.
+@Test func captureTimeoutHoldsWhileTheDispatchPoolIsBusy() async throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("capture-busy-" + UUID().uuidString.lowercased(), isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let group = DispatchGroup()
+    for _ in 0..<150 { DispatchQueue.global().async(group: group) { Thread.sleep(forTimeInterval: 3) } }  // more than the pool has threads, for 3 s
+    Thread.sleep(forTimeInterval: 0.3)
+    let t0 = Date()
+    // the stub ends after 2 s: a timer that waits for a free pool thread (about 3 s) fires after it, and the run would count as in time
+    let r = ClaudeSeatbelt.capture("/bin/sh", ["-c", "sleep 2; echo late"], env: ProcessInfo.processInfo.environment, cwd: dir.path, input: "", timeout: 0.5, log: dir)
+    let took = Date().timeIntervalSince(t0)
+    #expect(r.timedOut && !r.out.contains("late") && took < 1.9, "timedOut \(r.timedOut), took \(took) s")
+    group.wait()
+}
+
 /// L1: a run too slow under the profile while the control run answers is a slow machine, not a broken profile; an `off` verdict expires (30 minutes) and is checked again.
 @Test func timeoutIsInconclusiveAndOffExpires() async throws {
     let rig = try Rig()
