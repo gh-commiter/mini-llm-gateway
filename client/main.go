@@ -281,16 +281,20 @@ func getJSON(c connection, path string) (int, map[string]any) {
 	return st, m
 }
 
-// createsState: the command creates folders or files that must belong to the user (the profile, lock files, the
-// request folder). An elevated process that cannot set the token owner would leave them owned by Administrators.
+// createsState: refuse by default when the token owner cannot be set. Even read-only
+// gateway requests can persist a device key or migrate an encrypted profile in routeErr.
+// Only exact forms whose dispatch paths cannot write local state are exempted.
 func createsState(arg0 string, args []string) bool {
-	if isTrayExe(arg0) { // minigw-tray.exe
+	if isTrayExe(arg0) {
 		return true
 	}
 	// Match main's removal of the global profile flag, wherever it appears.
 	var command []string
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--minigw-profile" {
+			if i+1 >= len(args) {
+				return true
+			}
 			i++
 			continue
 		}
@@ -299,24 +303,24 @@ func createsState(arg0 string, args []string) bool {
 		}
 		command = append(command, args[i])
 	}
-	if len(command) == 0 {
-		return true // The default Claude flow saves session and sharing state.
+	if len(command) == 1 {
+		switch command[0] {
+		case "--minigw-help", "-h", "--help", "-v", "--version":
+			return false // main only prints help or the version.
+		case "gw", "router":
+			return false // routerCommand returns before openAdmin.
+		case "share":
+			return false // shareCommand defaults to list; it never calls save.
+		}
 	}
-	switch command[0] {
-	case "status", "models", "verify-sums", "--minigw-help", "-h", "--help", "-v", "--version":
-		return false
-	case "profiles":
-		return len(command) > 1 && command[1] != "list"
-	case "project":
-		return len(command) > 1 && command[1] != "list" && command[1] != "show"
-	case "plugin":
-		return len(command) > 1 && command[1] != "status"
-	case "note":
-		return len(command) > 1 && command[1] != "list" && command[1] != "read"
-	case "usage":
-		return false
+	if len(command) == 2 {
+		switch command[0] {
+		case "gw", "router":
+			return command[1] != "help"
+		case "share":
+			return command[1] != "list"
+		}
 	}
-	// Unknown commands and Claude options fall through to the session flow.
 	return true
 }
 
