@@ -23,6 +23,7 @@ type gitWatchStored struct {
 	Version   int               `json:"version"`
 	Root      string            `json:"root"`
 	PID       int               `json:"pid"`
+	Started   string            `json:"started,omitempty"` // when the process started (gitWatchProcStart): a reused process id is another process
 	Head      string            `json:"head"`
 	HeadID    string            `json:"headId"` // the object id HEAD pointed to (a detached HEAD is on no ref); "" = unborn or an older file
 	Refs      map[string]string `json:"refs"`
@@ -71,7 +72,7 @@ func gitWatchFile(root string, pid int) string {
 }
 
 func (st gitState) stored(root string, pid int, isProtected func(string) bool) gitWatchStored {
-	s := gitWatchStored{Version: 1, Root: root, PID: pid, Head: st.Head, HeadID: st.HeadID, Refs: st.Refs, Pending: st.Pending, IndexHash: st.IndexHash, Protected: map[string]string{}}
+	s := gitWatchStored{Version: 1, Root: root, PID: pid, Head: st.Head, HeadID: st.HeadID, Refs: st.Refs, Pending: st.Pending, IndexHash: st.IndexHash, Protected: map[string]string{}, Started: gitWatchProcStart(pid)}
 	for p, v := range st.Index {
 		if isProtected(p) && len(s.Protected) < gitWatchMaxProt {
 			s.Protected[p] = v
@@ -80,19 +81,22 @@ func (st gitState) stored(root string, pid int, isProtected func(string) bool) g
 	return s
 }
 
-func (w *gitWatch) save() {
+// save: whether the start state is stored (false: the caller says so, a killed client would lose the report).
+func (w *gitWatch) save() bool {
 	f := gitWatchFile(w.root, os.Getpid())
 	if f == "" || len(w.start.Refs) > gitWatchMaxRefs {
-		return
+		return false
 	}
 	data, err := json.Marshal(w.start.stored(w.root, os.Getpid(), protectedPath))
 	if err != nil || len(data) > gitWatchMaxFile || os.MkdirAll(filepath.Dir(f), 0o700) != nil {
-		return
+		return false
 	}
 	tmp := f + ".tmp"
 	if os.WriteFile(tmp, data, 0o600) == nil && os.Rename(tmp, f) == nil {
 		w.file = f
+		return true
 	}
+	return false
 }
 
 func (w *gitWatch) forget() {
@@ -151,7 +155,7 @@ func parseGitWatchStored(data []byte, root string) (gitState, error) {
 }
 
 // gitWatchRecover: files of runs that did not finish (their process is gone) in this folder: compare and report, prefixed, then remove them.
-func gitWatchRecover(root string, self int, alive func(int) bool) []string {
+func gitWatchRecover(root string, self int, alive func(pid int, started string) bool) []string {
 	d := gitWatchDir()
 	if d == "" {
 		return nil
@@ -160,7 +164,7 @@ func gitWatchRecover(root string, self int, alive func(int) bool) []string {
 	var out []string
 	for _, f := range files {
 		var pid int
-		if _, err := fmt.Sscanf(strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), gitWatchKey(root)+"-"), ".json"), "%d", &pid); err != nil || pid == self || alive(pid) {
+		if _, err := fmt.Sscanf(strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), gitWatchKey(root)+"-"), ".json"), "%d", &pid); err != nil || pid == self {
 			continue
 		}
 		fh, err := os.Open(f)
@@ -169,6 +173,13 @@ func gitWatchRecover(root string, self int, alive func(int) bool) []string {
 		}
 		data, _ := io.ReadAll(io.LimitReader(fh, gitWatchMaxFile+1))
 		fh.Close()
+		var when struct {
+			Started string `json:"started"`
+		}
+		json.Unmarshal(data, &when) // lenient: a damaged file has no start time, the process id alone decides
+		if alive(pid, when.Started) {
+			continue
+		}
 		st, err := parseGitWatchStored(data, root)
 		if err != nil {
 			os.Remove(f)

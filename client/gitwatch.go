@@ -145,6 +145,15 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 	if len(reset) > 0 {
 		lines = append(lines, "minigw: WARNING: the agent staged a protected path: "+gitNames(slices.Clone(reset))+" - removed from the index for you (your files were not touched)")
 	}
+	var dashed []string
+	for r, id := range end.Refs {
+		if old, had := start.Refs[r]; (!had || old != id) && slices.ContainsFunc(strings.Split(r, "/"), func(c string) bool { return strings.HasPrefix(c, "-") }) {
+			dashed = append(dashed, r)
+		}
+	}
+	if len(dashed) > 0 { // the guard refuses them as loose refs, packed-refs is writable: a script of yours could read such a name as an option
+		lines = append(lines, "minigw: WARNING: the agent created a ref with a name that starts with \"-\" ("+gitNames(dashed)+"): a script of yours could take it for an option - review it, then git update-ref -d <name>")
+	}
 	if len(replaced) > 0 {
 		lines = append(lines, "minigw: WARNING: the agent created or changed a replacement ref ("+gitNames(replaced)+"): git shows other content than the real commits while it exists - review it, then git replace -d <name>")
 	}
@@ -170,9 +179,13 @@ type gitWatch struct {
 	file  string // the stored copy of the start state (gitwatch_store.go)
 }
 
-// --no-replace-objects: the watch reads the real objects, never what a refs/replace entry says they are.
-var gitWatchPins = []string{"--no-replace-objects", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull,
+// --no-replace-objects: the watch reads the real objects, never what a refs/replace entry says they are. core.commitGraph=false and core.multiPackIndex=false: the agent can
+// write objects/info/commit-graph* and the multi-pack-index (git gc needs the first), and a forged one would show a commit's files as another's. The Swift watch has the same
+// (Worktree.guardrails, GitWatch.pins); client/testdata/git-watch-pins.json is asserted by both.
+var gitWatchPins = []string{"--no-replace-objects", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull,
 	"-c", "core.quotePath=false", "-c", "diff.external=", "-c", "submodule.recurse=false"}
+
+var gitWatchEnv = []string{"GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_EXTERNAL_DIFF=", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull}
 
 // gitWatchRun runs git with the guardrails (no hooks, no fsmonitor, no external diff, no optional locks, no replacements) and at most 1 MB of output in 20 s.
 // ok is false when git failed or the output was longer than the limit (the part read is returned): a caller never takes it for the whole.
@@ -181,7 +194,7 @@ func gitWatchRun(root string, input string, args ...string) (string, bool) {
 	defer cancel()
 	cmd := commandContext(ctx, "git", append(slices.Clone(gitWatchPins), args...)...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_EXTERNAL_DIFF=", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = append(os.Environ(), gitWatchEnv...)
 	if input != "" {
 		cmd.Stdin = strings.NewReader(input)
 	}
@@ -249,15 +262,22 @@ func gitWatchState(root string) (gitState, bool) {
 }
 
 func gitWatchStart(root string) *gitWatch {
-	for _, l := range gitWatchRecover(root, os.Getpid(), gitWatchPidAlive) { // a run in this folder that did not finish (X2)
-		fmt.Fprintln(os.Stderr, l)
-	}
+	gitWatchRecoverAtStart(root) // a run in this folder that did not finish (X2)
 	if st, ok := gitWatchState(root); ok {
 		w := &gitWatch{root: root, start: st}
-		w.save()
+		if !w.save() {
+			fmt.Fprintln(os.Stderr, "minigw: git watch: the start state of this repository could not be stored (too many refs or no writable settings folder): if this client is killed, the report of what the agent did is lost")
+		}
 		return w
 	}
 	return nil
+}
+
+// gitWatchRecoverAtStart: the runs of this folder that did not finish, reported at the start of every share (not only a direct-mode one that watches the repository itself).
+func gitWatchRecoverAtStart(root string) {
+	for _, l := range gitWatchRecover(root, os.Getpid(), gitWatchPidAlive) {
+		fmt.Fprintln(os.Stderr, l)
+	}
 }
 
 // lines: the comparison of the stored start state with the repository now; the staged protected paths are taken out of the index (plumbing: the work tree is not touched).
@@ -279,7 +299,7 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 	tips, old := gitWatchTips(end), gitWatchTips(w.start)
 	var commits []gitCommit
 	if len(tips) > 0 {
-		args := append([]string{"log", "-m", "--no-renames", "--name-only", "--format=@@%H", "-n", strconv.Itoa(gitWatchMaxCommits + 1)}, tips...)
+		args := append([]string{"log", "-m", "-z", "--no-renames", "--name-only", "--format=@@%H", "-n", strconv.Itoa(gitWatchMaxCommits + 1)}, tips...)
 		if len(old) > 0 {
 			args = append(args, "--not")
 			args = append(args, old...)
@@ -288,16 +308,7 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 		if !ok {
 			end.Incomplete = append(end.Incomplete, "history not read in full")
 		}
-		for _, l := range strings.Split(out, "\n") {
-			switch {
-			case strings.HasPrefix(l, "@@"):
-				if n := len(commits); n == 0 || commits[n-1].ID != l[2:] { // -m: a merge comes once per parent
-					commits = append(commits, gitCommit{ID: l[2:]})
-				}
-			case l != "" && len(commits) > 0:
-				commits[len(commits)-1].Files = append(commits[len(commits)-1].Files, l)
-			}
-		}
+		commits = parseGitLog(out)
 		if len(commits) > gitWatchMaxCommits {
 			commits = commits[:gitWatchMaxCommits]
 			end.Incomplete = append(end.Incomplete, fmt.Sprintf("more than %d new commits: only the first %d were checked", gitWatchMaxCommits, gitWatchMaxCommits))
@@ -310,6 +321,31 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 		lines = append(lines, "minigw: could not remove the staged protected paths from the index: run git reset -- "+strings.Join(reset, " "))
 	}
 	return lines, len(end.Incomplete) == 0
+}
+
+// parseGitLog: the output of `git log -m -z --name-only --format=@@%H`: NUL-separated, "@@<id>" starts a commit, the names follow raw (a quote, a newline or a control
+// character in a name is not C-quoted); the first name after the header has git's newline in front. -m: a merge comes once per parent, so the same id in a row is one commit.
+func parseGitLog(out string) []gitCommit {
+	var commits []gitCommit
+	afterHeader := false
+	for _, t := range strings.Split(out, "\x00") {
+		switch {
+		case strings.HasPrefix(t, "@@"):
+			if n := len(commits); n == 0 || commits[n-1].ID != t[2:] {
+				commits = append(commits, gitCommit{ID: t[2:]})
+			}
+			afterHeader = true
+		case len(commits) > 0:
+			if afterHeader {
+				t = strings.TrimPrefix(t, "\n")
+			}
+			afterHeader = false
+			if t != "" {
+				commits[len(commits)-1].Files = append(commits[len(commits)-1].Files, t)
+			}
+		}
+	}
+	return commits
 }
 
 // gitWatchTips: the object ids to start the history from: every ref and HEAD.

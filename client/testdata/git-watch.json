@@ -1,5 +1,5 @@
 {
- "_": "Direct-mode git watch (docs/how-it-works.md): asserted by Go (gitwatch_test.go) and Swift (GitWatchTests.swift)",
+ "_": "Direct-mode git watch (docs/how-it-works.md): asserted by Go (gitwatch_test.go) and Swift (GitWatchTests.swift); logs = `git log -m -z --name-only --format=@@%H` outputs parsed (NUL as \\u0000); pins = what every git call of the watch has (args as given or as -c key=value; {null} = the null device), asserted by both",
  "cases": [
   {
    "name": "nothing",
@@ -478,6 +478,111 @@
     "minigw: git in this folder, changed by the agent: moved tags: v1"
    ],
    "reset": []
+  },
+  {
+   "name": "a ref name with a component that starts with a dash (arrives through packed-refs)",
+   "start": {
+    "head": "main",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "a",
+     "refs/heads/-x": "a",
+     "refs/heads/ok/-y/z": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "commits": [],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: new branches: -x, ok/-y/z",
+    "minigw: WARNING: the agent created a ref with a name that starts with \"-\" (refs/heads/-x, refs/heads/ok/-y/z): a script of yours could take it for an option - review it, then git update-ref -d <name>"
+   ],
+   "reset": []
   }
- ]
+ ],
+ "logs": [
+  {
+   "name": "plain",
+   "out": "@@aaa\u0000\nsrc/a.go\u0000README.md\u0000@@bbb\u0000\n.envrc\u0000",
+   "commits": [
+    {
+     "id": "aaa",
+     "files": [
+      "src/a.go",
+      "README.md"
+     ]
+    },
+    {
+     "id": "bbb",
+     "files": [
+      ".envrc"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a quote and a newline in a name are raw, not C-quoted",
+   "out": "@@aaa\u0000\na\"b/.claude/settings.json\u0000x\ny\u0000",
+   "commits": [
+    {
+     "id": "aaa",
+     "files": [
+      "a\"b/.claude/settings.json",
+      "x\ny"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a merge comes once per parent",
+   "out": "@@mmm\u0000\nfrom-first-parent.txt\u0000@@mmm\u0000\nfrom-second.txt\u0000@@ccc\u0000",
+   "commits": [
+    {
+     "id": "mmm",
+     "files": [
+      "from-first-parent.txt",
+      "from-second.txt"
+     ]
+    },
+    {
+     "id": "ccc",
+     "files": []
+    }
+   ]
+  },
+  {
+   "name": "nothing",
+   "out": "",
+   "commits": []
+  }
+ ],
+ "pins": {
+  "args": [
+   "--no-replace-objects",
+   "--no-optional-locks",
+   "core.fsmonitor=false",
+   "core.commitGraph=false",
+   "core.multiPackIndex=false",
+   "core.hooksPath={null}",
+   "core.attributesFile={null}",
+   "diff.external=",
+   "submodule.recurse=false"
+  ],
+  "env": [
+   "GIT_NO_REPLACE_OBJECTS=1",
+   "GIT_CONFIG_NOSYSTEM=1",
+   "GIT_CONFIG_GLOBAL={null}",
+   "GIT_OPTIONAL_LOCKS=0",
+   "GIT_EXTERNAL_DIFF="
+  ]
+ }
 }

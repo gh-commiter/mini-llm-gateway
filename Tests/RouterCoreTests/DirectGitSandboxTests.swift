@@ -53,10 +53,9 @@ private struct Repo {
     }
     func under(_ c: [String], _ cmd: String) -> (status: Int32, out: String) { run(exe, ["sandbox"] + c + ["--", "/bin/sh", "-c", gitEnv + "export TMPDIR='\(r.tmp.path)/'; cd '\(r.repo.path)' && " + cmd]) }
     let w = cfg()
-    // what an agent does: add, commit, branch, tag, checkout, stash, merge of a local branch, and a commit inside the submodule (its git dir is .git/modules/sub)
+    // what an agent does: add, commit, branch, tag, checkout, stash, merge of a local branch, and no commit inside the submodule (G-2)
     for cmd in ["echo more >> a.txt && git add a.txt && git commit -qm agent", "git branch feature", "git tag v1", "git checkout -q -b topic", "echo again >> a.txt && git stash -q && git stash list | grep -q stash",
-                "git checkout -q master 2>/dev/null || git checkout -q main", "git merge -q --no-edit x", "echo s > sub/s.txt && git -C sub add s.txt && git -C sub commit -qm subc",
-                "echo m > nest/m && git -C nest add m && git -C nest commit -qm nm", "git gc -q", "git repack -a -d -q && git prune --expire=now"] {
+                "git checkout -q master 2>/dev/null || git checkout -q main", "git merge -q --no-edit x", "git gc -q", "git repack -a -d -q && git prune --expire=now"] {
         let o = under(w, cmd)
         #expect(o.status == 0, "\(cmd): \(o)")
     }
@@ -65,6 +64,7 @@ private struct Repo {
     let git = r.repo.appendingPathComponent(".git")
     let denied = ["echo '[core]' >> .git/config", "echo x > .git/hooks/pre-commit", "mkdir -p .git/info && echo x > .git/info/attributes", "mkdir -p .git/objects/info && echo /x > .git/objects/info/alternates",
                   "mkdir .git/rebase-merge && echo 'exec x' > .git/rebase-merge/git-rebase-todo", "mkdir .git/rebase-apply", "mkdir .git/sequencer", "echo x > .git/shallow", "echo x > .git/commondir", "mkdir .git/worktrees",
+                  "echo s > sub/s.txt && git -C sub add s.txt", "echo m > nest/m && git -C nest add m",  // round 3 (G-2): a commit inside a submodule or a nested clone is closed, the watch audits one repository
                   "echo '[core]' >> nest/.git/config", "echo x > nest/.git/hooks/pre-commit", "mkdir -p nest/.git/info && echo x > nest/.git/info/attributes", "mv nest/.git nest/.g",
                   "echo '[core]' >> .git/modules/sub/config", "echo x > .git/modules/sub/hooks/pre-commit", "mkdir -p .git/modules/sub/info && echo x > .git/modules/sub/info/attributes"]
     for cmd in denied {
@@ -133,7 +133,9 @@ private struct Repo {
     // literal paths: Claude's sandbox then also refuses `mv .git/modules m` (a real run: the globs alone did not)
     for p in ["config", "hooks", "info"] { #expect(deny.contains(git.path + "/modules/sub/" + p), "\(p)") }
     // a nested repository found at launch: its closed paths literally (the globs name entries only)
-    for g in ClaudeCLIConfig.directGitDenies { #expect(deny.contains(base.path + "/a/b/.git/" + g), "\(g)") }
+    // (G-2: the whole git directory of a nested repository)
+    #expect(deny.contains(base.path + "/a/b/.git"))
+    #expect(ClaudeCLIConfig.directGitDenies.contains("modules"))
     #expect(ClaudeCLIConfig.nestedGitDirs(base.path) == [base.path + "/a/b/.git"])
     // worktree mode: the one shared list, config.worktree, worktrees and the submodule folders included
     let wt = local.worktreeArgs(root: base, maven: base, cwd: base, allTools: [], network: false)

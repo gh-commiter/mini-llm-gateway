@@ -177,6 +177,8 @@ func grokDenies(_ deny: [String], _ path: String) -> Bool {
     let deep = "/nowhere/root" + (0..<14).map { "/level\($0)xx" }.joined()
     #expect(Grok.scopedDenies(hidden: ["/nowhere/root"], scope: deep) == nil)
     #expect(Grok.scopedDenies(hidden: ["/nowhere/root"], scope: "/elsewhere/s1") == ["/nowhere/root"])
+    // R-2: an owner-configured root with a glob character is refused, and a root reached through a link is listed as what it resolves to too
+    #expect(Grok.scopedDenies(hidden: ["/nowhere/root*"], scope: "/elsewhere/s1") == nil)
     #expect(Grok.scopedDenies(hidden: (0..<Grok.maxGlobEntries + 20).map { "/nowhere/root-\($0)" }, scope: "/elsewhere/s1")?.count == Grok.maxGlobEntries + 20, "literals are cheap")
 }
 
@@ -221,4 +223,22 @@ func grokDenies(_ deny: [String], _ path: String) -> Bool {
         #expect(!out.contains("NEIGHBOUR-SECRET"), "\(layout): a neighbour's file was read")
         #expect(fm.fileExists(atPath: cwd + "/new.txt"), "\(layout): it could not write its own folder")
     }
+}
+
+@Test func grokDenyListNamesARootBehindALinkByWhatItResolvesTo() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("grok-link-" + UUID().uuidString, isDirectory: true).path
+    defer { try? fm.removeItem(atPath: base) }
+    try fm.createDirectory(atPath: base + "/real/secret", withIntermediateDirectories: true)
+    try fm.createSymbolicLink(atPath: base + "/link", withDestinationPath: base + "/real")
+    let deny = try #require(Grok.scopedDenies(hidden: [base + "/link/secret"], scope: base + "/elsewhere/s1"))
+    #expect(deny.contains(base + "/link/secret") && deny.contains(base + "/real/secret"), "\(deny)")
+}
+
+/// R-1: the class prefix is not shortened below 6 characters; a session that needs less is refused (never a weaker list), and the prefix chosen is told.
+@Test func grokDenyListDoesNotShortenTheClassPrefixBelowSix() {
+    #expect(Grok.minPrefix == 6)
+    let deep = "/nowhere/root" + (0..<9).map { "/level\($0)xxxx" }.joined()  // 9 levels: fits at 3 characters (about 30 globs), not at 6
+    #expect(Grok.scopedDeniesWithPrefix(hidden: ["/nowhere/root"], scope: deep) == nil)
+    #expect(Grok.scopedDeniesWithPrefix(hidden: ["/nowhere/root"], scope: "/nowhere/root/sync/device-id-0123456789/project-0123456789")?.prefix == 12)
 }

@@ -74,6 +74,10 @@ public struct GitWatch: Sendable {
         if !committed.isEmpty { lines.append("minigw: WARNING: the agent committed a protected path: " + list(committed) + " - review before git checkout, reset --hard, restore, stash pop or your next commit") }
         let reset = staged.filter(isProtected).sorted()
         if !reset.isEmpty { lines.append("minigw: WARNING: the agent staged a protected path: " + list(reset) + " - removed from the index for you (your files were not touched)") }
+        let dashed = end.refs.filter { r, id in start.refs[r] != id && r.split(separator: "/").contains { $0.hasPrefix("-") } }.keys.map { $0 }
+        if !dashed.isEmpty {  // the guard refuses them as loose refs, packed-refs is writable: a script of yours could read such a name as an option
+            lines.append("minigw: WARNING: the agent created a ref with a name that starts with \"-\" (" + list(dashed) + "): a script of yours could take it for an option - review it, then git update-ref -d <name>")
+        }
         if !replaced.isEmpty { lines.append("minigw: WARNING: the agent created or changed a replacement ref (" + list(replaced) + "): git shows other content than the real commits while it exists - review it, then git replace -d <name>") }
         if !end.incomplete.isEmpty { lines.append("minigw: WARNING: the check of git in this folder is INCOMPLETE (" + end.incomplete.joined(separator: "; ") + "): the absence of other warnings is not a clean result - review the repository before git checkout, reset --hard, restore, stash pop or your next commit") }
         let pending = end.pending.filter { !start.pending.contains($0) }
@@ -89,10 +93,14 @@ public struct GitWatch: Sendable {
     var dir = GitWatch.stateDir()  // where it is stored (a test uses its own folder)
 
     /// --no-replace-objects: the watch reads the real objects, never what a refs/replace entry says they are.
+    /// Every git call of the watch also has Worktree.guardrails (core.commitGraph=false, core.multiPackIndex=false, no hooks, no fsmonitor, no external diff) and, with `safe`,
+    /// GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL=/dev/null (Worktree.safeEnv). The agent can write objects/info/commit-graph* and the multi-pack-index (git gc needs the first),
+    /// and a forged one would show a commit's files as another's. The Go watch has the same (gitWatchPins); client/testdata/git-watch.json (pins) is asserted by both.
+    static let env = ["GIT_OPTIONAL_LOCKS": "0", "GIT_NO_REPLACE_OBJECTS": "1", "GIT_EXTERNAL_DIFF": ""]
     static let pins = ["--no-replace-objects", "--no-optional-locks", "-c", "core.attributesFile=/dev/null", "-c", "core.quotePath=false", "-c", "diff.external="]  // Worktree.guardrails: no hooks, no fsmonitor
 
     static func git(_ root: String, maxOutput: Int = GitWatch.maxOutputDefault, _ args: [String], input: Data? = nil) -> (ok: Bool, out: String) {
-        let r = Worktree.run(pins + args, cwd: root, env: ["GIT_OPTIONAL_LOCKS": "0", "GIT_NO_REPLACE_OBJECTS": "1"], safe: true, hooks: false, input: input, timeout: 20, trim: false)
+        let r = Worktree.run(pins + args, cwd: root, env: env, safe: true, hooks: false, input: input, timeout: 20, trim: false)
         // ok is false when git failed or the output was longer than the limit (the part is returned): a caller never takes it for the whole
         return (r.status == 0 && r.out.utf8.count <= maxOutput, String(decoding: Array(r.out.utf8.prefix(maxOutput)), as: UTF8.self))
     }
@@ -125,12 +133,18 @@ public struct GitWatch: Sendable {
     }
 
     public static func begin(_ root: String, stateDir: String = GitWatch.stateDir()) -> GitWatch? {
-        for l in recover(root, dir: stateDir, selfPID: getpid(), alive: Self.pidAlive) { try? FileHandle.standardError.write(contentsOf: Data((l + "\n").utf8)) }  // a run that did not finish (X2)
+        recoverAtStart(root, stateDir: stateDir)  // a run that did not finish (X2)
         guard let st = state(root) else { return nil }
         var w = GitWatch(root: root, start: st)
         w.dir = stateDir
         w.file = w.save()
+        if w.file == nil { try? FileHandle.standardError.write(contentsOf: Data("minigw: git watch: the start state of this repository could not be stored (too many refs or no writable settings folder): if this client is killed, the report of what the agent did is lost\n".utf8)) }
         return w
+    }
+
+    /// The runs of this folder that did not finish, reported at the start of every share (not only a direct-mode one that watches the repository itself).
+    public static func recoverAtStart(_ root: String, stateDir: String = GitWatch.stateDir()) {
+        for l in recover(root, dir: stateDir, selfPID: getpid(), alive: Self.pidAlive) { try? FileHandle.standardError.write(contentsOf: Data((l + "\n").utf8)) }
     }
 
     /// The comparison of the start state with the repository now; the staged protected paths are taken out of the index (plumbing: the work tree is not touched).
@@ -147,12 +161,9 @@ public struct GitWatch: Sendable {
         let tips = Self.tips(end), old = Self.tips(start)
         var commits: [Commit] = []
         if !tips.isEmpty {
-            let r = Self.git(root, maxOutput: maxOutput, ["log", "-m", "--no-renames", "--name-only", "--format=@@%H", "-n", String(maxCommits + 1)] + tips + (old.isEmpty ? [] : ["--not"] + old))
+            let r = Self.git(root, maxOutput: maxOutput, ["log", "-m", "-z", "--no-renames", "--name-only", "--format=@@%H", "-n", String(maxCommits + 1)] + tips + (old.isEmpty ? [] : ["--not"] + old))
             if !r.ok { end.incomplete.append("history not read in full") }
-            for l in r.out.split(separator: "\n", omittingEmptySubsequences: true) {
-                if l.hasPrefix("@@") { if commits.last?.id != String(l.dropFirst(2)) { commits.append(Commit(id: String(l.dropFirst(2)), files: [])) } }  // -m: a merge comes once per parent
-                else if !commits.isEmpty { commits[commits.count - 1].files.append(String(l)) }
-            }
+            commits = Self.parseLog(r.out)
             if commits.count > maxCommits {
                 commits = Array(commits.prefix(maxCommits))
                 end.incomplete.append("more than \(maxCommits) new commits: only the first \(maxCommits) were checked")
@@ -163,6 +174,24 @@ public struct GitWatch: Sendable {
             lines.append("minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): run git reset -- " + reset.joined(separator: " "))
         } else if !reset.isEmpty, !resetIndex(reset) { lines.append("minigw: could not remove the staged protected paths from the index: run git reset -- " + reset.joined(separator: " ")) }
         return (lines, end.incomplete.isEmpty)
+    }
+
+    /// The output of `git log -m -z --name-only --format=@@%H`: NUL-separated, "@@<id>" starts a commit, the names follow raw (a quote, a newline or a control character in a name is
+    /// not C-quoted); the first name after the header has git's newline in front. -m: a merge comes once per parent, so the same id in a row is one commit.
+    static func parseLog(_ out: String) -> [Commit] {
+        var commits: [Commit] = [], afterHeader = false
+        for part in out.split(separator: "\0", omittingEmptySubsequences: false) {
+            var t = String(part)
+            if t.hasPrefix("@@") {
+                if commits.last?.id != String(t.dropFirst(2)) { commits.append(Commit(id: String(t.dropFirst(2)), files: [])) }
+                afterHeader = true
+            } else if !commits.isEmpty {
+                if afterHeader, t.hasPrefix("\n") { t.removeFirst() }
+                afterHeader = false
+                if !t.isEmpty { commits[commits.count - 1].files.append(t) }
+            }
+        }
+        return commits
     }
 
     /// The object ids to start the history from: every ref and HEAD.
@@ -190,6 +219,7 @@ public struct GitWatch: Sendable {
 
     struct Stored: Codable, Equatable {
         var version = 1, root = "", pid = 0, head = "", indexHash = ""
+        var started: String?  // procStart of the process that wrote the file; absent in a file of an older client
         var headId: String?  // absent in a file of an older client
         var refs: [String: String] = [:], protected: [String: String] = [:]
         var pending: [String] = []
@@ -202,11 +232,24 @@ public struct GitWatch: Sendable {
         return SHA256.hash(data: Data(r.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
     }
     static func file(_ root: String, dir: String, pid: pid_t) -> String { dir + "/\(key(root))-\(pid).json" }
-    static func pidAlive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 || errno == EPERM }
+    /// When the process started ("sec.usec", sysctl; "" = not known): a reused process id is another process.
+    static func procStart(_ pid: pid_t) -> String {
+        var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return "" }
+        let t = info.kp_proc.p_un.__p_starttime
+        return "\(t.tv_sec).\(t.tv_usec)"
+    }
+    /// Whether the process that wrote the state file still runs: the id exists and, when the start time was stored and can be read, it is the same process.
+    static func pidAlive(_ pid: pid_t, _ started: String) -> Bool {
+        guard kill(pid, 0) == 0 || errno == EPERM else { return false }
+        let now = procStart(pid)
+        return started.isEmpty || now.isEmpty || now == started
+    }
 
     func save() -> String? {
         guard start.refs.count <= Self.maxRefs else { return nil }
-        var s = Stored(); s.root = root; s.pid = Int(getpid()); s.head = start.head; s.headId = start.headId.isEmpty ? nil : start.headId; s.refs = start.refs; s.pending = start.pending; s.indexHash = start.indexHash
+        var s = Stored(); s.root = root; s.pid = Int(getpid()); s.started = Self.procStart(getpid()); s.head = start.head; s.headId = start.headId.isEmpty ? nil : start.headId; s.refs = start.refs; s.pending = start.pending; s.indexHash = start.indexHash
         for (p, v) in start.index where Sync.isProtected(p) && s.protected.count < Self.maxProtected { s.protected[p] = v }
         guard let data = try? JSONEncoder().encode(s), data.count <= Self.maxFile else { return nil }
         let f = Self.file(root, dir: dir, pid: getpid()), fm = FileManager.default
@@ -219,7 +262,7 @@ public struct GitWatch: Sendable {
     static func parse(_ data: Data, root: String) -> (State?, String) {
         if data.count > maxFile { return (nil, "too large") }
         guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(o.keys).isSubset(of: ["version", "root", "pid", "head", "headId", "refs", "pending", "indexHash", "protected"]),
+              Set(o.keys).isSubset(of: ["version", "root", "pid", "head", "headId", "started", "refs", "pending", "indexHash", "protected"]),
               let s = try? JSONDecoder().decode(Stored.self, from: data) else { return (nil, "not valid") }
         guard s.version == 1, s.root == root, s.refs.count <= maxRefs, s.protected.count <= maxProtected, s.pending.count <= 3, s.indexHash.count == 64,
               s.indexHash.allSatisfy({ $0.isHexDigit }) else { return (nil, "unexpected content") }
@@ -238,14 +281,16 @@ public struct GitWatch: Sendable {
     }
 
     /// Files of runs that did not finish (their process is gone) in this folder: compare and report, prefixed, then remove them.
-    static func recover(_ root: String, dir: String, selfPID: pid_t, alive: (pid_t) -> Bool, maxCommits: Int = GitWatch.maxCommitsDefault, maxOutput: Int = GitWatch.maxOutputDefault) -> [String] {
+    static func recover(_ root: String, dir: String, selfPID: pid_t, alive: (pid_t, String) -> Bool, maxCommits: Int = GitWatch.maxCommitsDefault, maxOutput: Int = GitWatch.maxOutputDefault) -> [String] {
         let fm = FileManager.default, prefix = key(root) + "-"
         var out: [String] = []
         for name in ((try? fm.contentsOfDirectory(atPath: dir)) ?? []).sorted() where name.hasPrefix(prefix) && name.hasSuffix(".json") {
-            guard let pid = pid_t(name.dropFirst(prefix.count).dropLast(5)), pid != selfPID, !alive(pid) else { continue }
+            guard let pid = pid_t(name.dropFirst(prefix.count).dropLast(5)), pid != selfPID else { continue }
             let f = dir + "/" + name
             var data = Data()
             if let h = FileHandle(forReadingAtPath: f) { data = h.readData(ofLength: maxFile + 1); try? h.close() }
+            let started = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["started"] as? String ?? ""  // lenient: a damaged file has none, the id alone decides
+            if alive(pid, started) { continue }
             let (st, why) = parse(data, root: root)
             guard let st else { try? fm.removeItem(atPath: f); out.append("minigw: ignoring a damaged git watch state file (\(why))"); continue }
             var w = GitWatch(root: root, start: st); w.maxCommits = maxCommits; w.maxOutput = maxOutput

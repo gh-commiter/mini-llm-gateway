@@ -100,7 +100,7 @@ public enum Sync {
     public static func isProtected(_ rel: String, git: Bool = false) -> Bool {
         let raw = rel.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         let c = raw.map { normName($0) }
-        let gi = git ? c.firstIndex(of: ".git") : nil
+        let gi = git && c.first == ".git" ? 0 : nil  // only the share's own git directory: a nested repository's .git stays refused as before #112 (the watch audits one repository)
         let end = gi ?? c.count  // before it the general rules; the rest is inside a git directory
         let last = c.last ?? "", parent = c.count > 1 ? c[c.count - 2] : ""
         let run: Set<String> = ["hooks", "commands", "agents", "skills"]
@@ -117,7 +117,7 @@ public enum Sync {
     /// the agent write (kot Go gitDirWritable; client/testdata/gitguard.json is asserted by both). A list of what is
     /// allowed: a name git adds later stays refused. Refused on purpose: config, config.worktree, hooks/, info/, commondir,
     /// gitdir, shallow, grafts, worktrees/, objects/info/alternates and http-alternates, rebase-merge/, rebase-apply/,
-    /// sequencer/ (an `exec` line in git-rebase-todo runs when the owner continues the rebase), remotes/, branches/, refs/replace/ (and its log) and
+    /// sequencer/ (an `exec` line in git-rebase-todo runs when the owner continues the rebase), modules/ (a commit inside a submodule or a nested clone: the git watch audits the share root's repository only), remotes/, branches/, refs/replace/ (and its log) and
     /// their .lock files. The folders refs, logs, objects and modules themselves cannot be removed or renamed.
     public static func gitDirWritable(_ c: [String]) -> Bool {
         guard let first = c.first, !c.contains(where: { $0 == ".git" || $0 == "." || $0 == ".." || $0.isEmpty }) else { return false }
@@ -127,7 +127,7 @@ public enum Sync {
             // it: no commit, branch, tag or stash needs it, so the agent does not write it (a replacement ref in packed-refs is the watch's)
             return c.count > 1 && !c.dropFirst().contains { $0.hasPrefix("-") } && !(c[1] == "replace" || first == "logs" && c.count > 2 && c[1] == "refs" && c[2] == "replace")
         case "objects": return objectsWritable(Array(c.dropFirst()))
-        case "modules": return moduleWritable(Array(c.dropFirst()))
+        case "modules": return false  // a submodule's git directory (a commit inside a submodule): the watch audits the root repository only, so these stay refused
         default: return c.count == 1 && gitFile(first)
         }
     }
@@ -153,19 +153,6 @@ public enum Sync {
             return c.count > 1 && c[1].hasPrefix("commit-graph") && (c[1] == "commit-graphs" || c.count == 2) || c.count == 2 && c[1] == "packs"
         }
         return c.count == 1 && first.hasPrefix("tmp_obj_")
-    }
-
-    /// modules/<name>/<member of the module's git directory>; the name may contain slashes, so the git directory starts at
-    /// the first member git has. A refused name anywhere in the path is refused (a module's objects/info too).
-    static func moduleWritable(_ c: [String]) -> Bool {
-        let refused: Set<String> = ["config", "config.worktree", "hooks", "info", "commondir", "gitdir", "worktrees", "shallow", "grafts", "rebase-merge",
-                                    "rebase-apply", "sequencer", "alternates", "http-alternates", "remotes", "branches"]
-        for (i, n) in c.enumerated() {
-            if refused.contains(n) { return false }
-            if ["refs", "logs", "objects"].contains(n) { return i > 0 && gitDirWritable(Array(c[i...])) }
-            if i > 0 && gitFile(n) { return gitDirWritable(Array(c[i...])) }
-        }
-        return false
     }
 
     /// Posel routerja za minigw (router ni zaupanja vreden): SYNC-* le v načinu sync, SYNC-PULL nikoli pri --minigw-ro,

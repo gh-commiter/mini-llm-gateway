@@ -157,6 +157,8 @@ func (s *shareClient) start(workers int) {
 	}
 	if !s.sync && !s.native && !s.worktree && !s.readOnly && s.rootErr == nil { // direct mode: the agent can commit (#116 B1)
 		s.git = gitWatchStart(s.root)
+	} else if s.rootErr == nil {
+		gitWatchRecoverAtStart(s.root) // a run of this folder that did not finish, whatever mode it had
 	}
 	for i := 0; i < workers; i++ {
 		go s.work()
