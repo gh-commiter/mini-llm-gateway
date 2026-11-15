@@ -328,7 +328,7 @@ minigw serve                 # or run it in this terminal (--port, --config)
     What the kernel layer does not cover: WebFetch/WebSearch send what the agent could read to the network (any host on
     port 443; TCP 443 cannot be limited to one host in a Seatbelt profile, and DNS goes to any resolver); the login keychain files are readable and writable by the confined process (their content is encrypted, and
     the Claude Code rules keep the Read and Edit tools away from them, but the kernel does not); `~/.claude.json` (account
-    name, project list) is readable; a profile cannot hide the names of the conversation files in `~/.claude/projects` of other folders (only their content is closed). Residual risk, plainly: a file the agent can read can leave over TCP 443; the login keychain files can be overwritten by a process confined by this profile; `~/.claude.json` is not writable, so Claude Code cannot save its own state there (runs work without it).
+    name, project list) is readable; Residual risk, plainly: a file the agent can read can leave over TCP 443; the login keychain files can be overwritten by a process confined by this profile; `~/.claude.json` is not writable, so Claude Code cannot save its own state there (runs work without it).
   - **Codex write mode on the Mac** is a permission profile now: writable are the session folder, allowed folders and
     the request's private temporary folder (`/private/tmp/minigw-codex-<id>`, exported as `TMPDIR`); other places in
     `/tmp` are not writable any more (before: all of `/tmp`).
