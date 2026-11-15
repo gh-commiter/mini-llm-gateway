@@ -369,6 +369,9 @@ func TestRunTimeDropQuotesFolderAndReason(t *testing.T) {
 	var buf bytes.Buffer
 	s.log.SetOutput(&buf)
 	folder := "bad\nfolder"
+	if runtime.GOOS == "windows" { // a newline is not a valid name there: realPath errors, so the folder is dropped before the rule check, unlogged
+		folder = filepath.Join(t.TempDir(), "bad(folder)") // parentheses cannot go into a rule; %q doubles the backslashes
+	}
 	c := s.conf()
 	c.AllowLocalTools = false
 	c.AllowedFolders = []string{folder}

@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -16,11 +15,7 @@ func TestUsageMetricsFixtures(t *testing.T) {
 		Name, Body          string
 		Input, Output, Cost *int64
 	}
-	data, err := os.ReadFile("testdata/usage-metrics.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = json.Unmarshal(data, &cases); err != nil {
+	if err := json.Unmarshal(srcFile(t, "testdata/usage-metrics.json"), &cases); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range cases {
@@ -50,11 +45,7 @@ func TestUpstreamErrorFixtures(t *testing.T) {
 		Status                             int
 		NoRetry                            bool
 	}
-	data, err := os.ReadFile("testdata/upstream-errors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = json.Unmarshal(data, &cases); err != nil {
+	if err := json.Unmarshal(srcFile(t, "testdata/upstream-errors.json"), &cases); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range cases {
