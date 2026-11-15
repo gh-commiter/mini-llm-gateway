@@ -25,14 +25,22 @@ public actor ClaudeSeatbelt {
     private var inflight: [String: Task<Outcome, Never>] = [:]
     private var inconclusiveUntil: [String: Date] = [:]
     private let now: @Sendable () -> Date
+    private var requireTranscript: Bool
+    /// Bump when `Native.claudeRestrictedProfile` changes in any way (a rule, a parameter, a variant): a cached pass is for one schema. (The key also holds the binary, its version, the OS.)
+    static let profileSchema = 2
     /// An inconclusive check (network or login down: the control run failed too) is not repeated for this long per binary: during an outage every request would otherwise run
     /// two claude runs (up to 120 s each) before it fails anyway. The runs use the profile meanwhile.
     static let inconclusiveFor: TimeInterval = 600
 
-    public init(home: String = NSHomeDirectory(), now: @escaping @Sendable () -> Date = { Date() }) {
+    /// `requireTranscript`: the model run must leave its conversation under `~/.claude/projects` (a resume depends on it; claude answers without it); tests with a fake claude turn it off.
+    public init(home: String = NSHomeDirectory(), now: @escaping @Sendable () -> Date = { Date() }, requireTranscript: Bool = true) {
         self.home = home
         self.now = now
+        self.requireTranscript = requireTranscript
     }
+
+    /// Tests with a fake claude (it writes no transcript) turn the transcript check off for the shared instance.
+    func setRequireTranscript(_ on: Bool) { requireTranscript = on }
 
     /// The reason the layer is off ("" while it is on or not checked yet): `status.claudeSandbox`, Settings.
     public var offReason: String { if case .off(let r) = state { return r }; return "" }
@@ -44,21 +52,26 @@ public actor ClaudeSeatbelt {
     /// `tmpBase`: Scratch/tmp (the check's temp folder, a hidden root as a real session's can be); `cacheFile`: the passes, kept on disk (Scratch/cache, hidden from agents).
     public func ensure(exe: String, tmpBase: URL, cacheFile: URL) async -> Bool {
         guard let key = await keyFor(exe) else { return true }  // no claude: the launch reports it
-        if let v = verdicts[key] { state = v; return v == .on }
-        if let disk = Self.stored(cacheFile), disk == key { verdicts[key] = .on; state = .on; return true }
-        if let until = inconclusiveUntil[key], now() < until { return true }
         let task: Task<Outcome, Never>
-        if let t = inflight[key] { task = t } else {
-            let home = self.home
-            task = Task { await Self.check(exe: exe, tmpBase: tmpBase, home: home) }
+        let cached = Self.stored(cacheFile) == key
+        while true {
+            if let v = verdicts[key] { state = v; return v == .on }
+            if let until = inconclusiveUntil[key], now() < until { return true }
+            if let t = inflight[key] { task = t; break }
+            // one check at a time (they share a folder, and two claude runs at once only slow each other): wait for another binary's check, then look again
+            if let other = inflight.values.first { _ = await other.value; await Task.yield(); continue }
+            let home = self.home, transcript = requireTranscript
+            // a cached pass is for the model run; the kernel rows (cheap, no model) run again once per process and binary
+            task = Task { await Self.check(exe: exe, tmpBase: tmpBase, home: home, modelRun: !cached, requireTranscript: transcript) }
             inflight[key] = task
+            break
         }
         let outcome = await task.value
         inflight[key] = nil
         switch outcome {
         case .pass:
             verdicts[key] = .on; state = .on
-            try? Data("{\"key\":\"\(key)\"}".utf8).write(to: cacheFile, options: .atomic)
+            if !cached { try? Data("{\"key\":\"\(key)\"}".utf8).write(to: cacheFile, options: .atomic) }
             return true
         case .fail(let why):
             if state != .off(why) { Self.log.warning("\(Self.offLine(why), privacy: .public)") }
@@ -74,7 +87,7 @@ public actor ClaudeSeatbelt {
         guard let real = Sync.real(URL(fileURLWithPath: exe))?.path else { return nil }
         var st = stat()
         guard stat(real, &st) == 0 else { return nil }
-        let stamp = "\(real)|\(st.st_mtimespec.tv_sec)|\(st.st_size)"
+        let stamp = "\(real)|\(st.st_mtimespec.tv_sec).\(st.st_mtimespec.tv_nsec)|\(st.st_size)"
         if let m = memo, m.stamp == stamp { return m.key }
         let version = await offPool { () -> String in
             if case .success(let v) = ClaudeCLI.validate(real) { return v }
@@ -82,7 +95,7 @@ public actor ClaudeSeatbelt {
         }
         let os = ProcessInfo.processInfo.operatingSystemVersionString
         let template = Native.claudeRestrictedProfile(session: "/s", folders: ["/a"], writable: true, tmp: "/t", exe: "/e", home: "/h") ?? ""
-        let hash = SHA256.hash(data: Data("1|\(stamp)|\(version)|\(os)|\(template)".utf8)).map { String(format: "%02x", $0) }.joined()
+        let hash = SHA256.hash(data: Data("\(Self.profileSchema)|\(stamp)|\(version)|\(os)|\(template)".utf8)).map { String(format: "%02x", $0) }.joined()
         memo = (stamp, hash)
         return hash
     }
@@ -94,31 +107,39 @@ public actor ClaudeSeatbelt {
 
     // MARK: the grants of a run, from the arguments the restricted branch built
 
-    /// The allowed folders (`--add-dir`), whether the run may write (an edit tool is among `--tools`; a read-only run has none) and the setting sources the run passes (`--setting-sources`).
-    static func grants(args: [String]) -> (folders: [String], writable: Bool, sources: String) {
+    /// The allowed folders (`--add-dir`), whether the run may write (an edit tool is among `--tools`; a read-only run has none) the setting sources the run passes (`--setting-sources`) and its conversation id (`--session-id` or `--resume`).
+    static func grants(args: [String]) -> (folders: [String], writable: Bool, sources: String, sessionID: String?) {
         var folders: [String] = []
         for (i, a) in args.enumerated() where a == "--add-dir" && i + 1 < args.count { folders.append(args[i + 1]) }
         let tools = args.firstIndex(of: "--tools").map { args[$0 + 1] } ?? ""
         let sources = args.firstIndex(of: "--setting-sources").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? ""
-        return (folders, tools.split(separator: ",").contains { editTools.contains($0.trimmingCharacters(in: .whitespaces)) }, sources)
+        let id = ["--session-id", "--resume"].lazy.compactMap { f in args.firstIndex(of: f).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }.first
+        return (folders, tools.split(separator: ",").contains { editTools.contains($0.trimmingCharacters(in: .whitespaces)) }, sources, id)
     }
 
-    /// The environment of a confined run: claude's temp folder (`CLAUDE_CODE_TMPDIR`) and TMPDIR are the run's private folder.
-    static func confine(_ env: inout [String: String], tmp: String) {
-        env["CLAUDE_CODE_TMPDIR"] = tmp
-        env["TMPDIR"] = tmp + "/"; env["TMP"] = tmp; env["TEMP"] = tmp
+    /// The environment of a confined run, from an allow list (the gateway's own environment may hold tokens and keys, which no file rule hides): the user and shell basics, locale, proxies,
+    /// what the gateway sets for claude itself, and claude's temp folder (`CLAUDE_CODE_TMPDIR`) and TMPDIR as the run's private folder. USER is needed: without it the Keychain login is not found
+    /// (measured: "Not logged in").
+    static let envAllowed: Set<String> = ["HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "TERM", "TZ", "CLAUDE_CODE_DISABLE_FILE_MENTIONS",
+                                          "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy"]
+    static func confinedEnvironment(_ env: [String: String], tmp: String) -> [String: String] {
+        var out = env.filter { envAllowed.contains($0.key) || $0.key.hasPrefix("LC_") }
+        out["CLAUDE_CODE_TMPDIR"] = tmp
+        out["TMPDIR"] = tmp + "/"; out["TMP"] = tmp; out["TEMP"] = tmp
+        return out
     }
 
     // MARK: the self-check
 
     /// What claude needs under the profile, in a temp session folder under `tmpBase` (Scratch: a hidden root, as a real session can be).
-    static func check(exe: String, tmpBase: URL, home: String) async -> Outcome {
-        await offPool { checkNow(exe: exe, tmpBase: tmpBase, home: home) }
+    static func check(exe: String, tmpBase: URL, home: String, modelRun: Bool, requireTranscript: Bool) async -> Outcome {
+        await offPool { checkNow(exe: exe, tmpBase: tmpBase, home: home, modelRun: modelRun, requireTranscript: requireTranscript) }
     }
 
-    static func checkNow(exe: String, tmpBase: URL, home: String, modelRun: Bool = true) -> Outcome {
+    static func checkNow(exe: String, tmpBase: URL, home: String, modelRun: Bool = true, requireTranscript: Bool = true) -> Outcome {
         let fm = FileManager.default
-        // a fixed name: claude keeps this session's transcript under ~/.claude/projects/<slug of the path>, one folder for every check, not one per check
+        // a fixed name (checks run one at a time): claude keeps this session's transcript under ~/.claude/projects/<folder of the path>: one folder for every check, not one per check;
+        // the transcript file of a check is removed after it
         let root = tmpBase.appendingPathComponent("run-seatbelt", isDirectory: true)
         let dirs = ["session", "outside", "tmp"].map { root.appendingPathComponent($0, isDirectory: true) }
         for d in dirs {
@@ -127,9 +148,10 @@ public actor ClaudeSeatbelt {
             }
         }
         defer { try? fm.removeItem(at: root) }
+        let sessionID = UUID().uuidString.lowercased()
         guard let session = Sync.real(dirs[0])?.path, let outside = Sync.real(dirs[1])?.path, let tmp = Sync.real(dirs[2])?.path,
               let real = Sync.real(URL(fileURLWithPath: exe))?.path,
-              let profile = Native.claudeRestrictedProfile(session: session, folders: [], writable: true, tmp: tmp, exe: real, home: home) else {
+              let profile = Native.claudeRestrictedProfile(session: session, folders: [], writable: true, tmp: tmp, exe: real, home: home, sessionID: sessionID) else {
             return .fail("cannot build the sandbox profile")
         }
         let canary = "CANARY-" + UUID().uuidString.lowercased()
@@ -143,12 +165,18 @@ public actor ClaudeSeatbelt {
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"
         let args = ["-p", "--disable-slash-commands", "--output-format", "json", "--model", "haiku", "--strict-mcp-config", "--tools", "Read",
-                    "--allowedTools", "Read(./**)", "--permission-mode", "dontAsk", "--setting-sources", ""]
+                    "--allowedTools", "Read(./**)", "--permission-mode", "dontAsk", "--session-id", sessionID, "--setting-sources", ""]
         let prompt = "Read the file canary.txt in the current folder and reply with only its exact content."
-        var boxed = env
-        confine(&boxed, tmp: tmp)
+        let boxed = confinedEnvironment(env, tmp: tmp)
         let sandboxed = capture("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, env: boxed, cwd: session, input: prompt, timeout: 120, log: root)
-        if sandboxed.out.contains(canary) { return .pass }
+        if sandboxed.out.contains(canary) {
+            // claude answers even when it cannot save its conversation, and then a resume finds nothing: the transcript must be there (and is removed, one per check would pile up)
+            let transcript = (Sync.real(URL(fileURLWithPath: home))?.path ?? home) + "/.claude/projects/" + Native.claudeProjectFolder(session) + "/" + sessionID + ".jsonl"
+            guard requireTranscript else { return .pass }
+            guard fm.fileExists(atPath: transcript) else { return .fail("claude cannot save its conversation under the profile (no transcript in ~/.claude/projects)") }
+            try? fm.removeItem(atPath: transcript)
+            return .pass
+        }
         // not shown by the profile alone: the same run without it (network, login, a Claude Code outage are not the profile's fault)
         let control = capture(exe, args, env: env, cwd: session, input: prompt, timeout: 120, log: root)
         if !control.out.contains(canary) { return .inconclusive }
@@ -172,12 +200,11 @@ public actor ClaudeSeatbelt {
         guard let inside = run("/bin/cat", [session + "/canary.txt"]), inside.status == 0, inside.out == canary else {
             return "sandbox-exec does not run a program in the session folder under the profile"
         }
-        if let r = run("/bin/cat", [outside + "/secret.txt"]), r.status == 0 || r.out.contains("OUTSIDE") {
-            return "the system sandbox (sandbox-exec) does not stop a read outside the session folder"
-        }
-        if let r = run("/usr/bin/touch", [outside + "/new.txt"]), r.status == 0 || FileManager.default.fileExists(atPath: outside + "/new.txt") {
-            return "the system sandbox (sandbox-exec) does not stop a write outside the session folder"
-        }
+        // a program that cannot start is no proof of a refusal: it counts as a failure
+        guard let read = run("/bin/cat", [outside + "/secret.txt"]) else { return "sandbox-exec could not run the read check under the profile" }
+        if read.status == 0 || read.out.contains("OUTSIDE") { return "the system sandbox (sandbox-exec) does not stop a read outside the session folder" }
+        guard let write = run("/usr/bin/touch", [outside + "/new.txt"]) else { return "sandbox-exec could not run the write check under the profile" }
+        if write.status == 0 || FileManager.default.fileExists(atPath: outside + "/new.txt") { return "the system sandbox (sandbox-exec) does not stop a write outside the session folder" }
         return nil
     }
 
@@ -205,8 +232,7 @@ public actor ClaudeSeatbelt {
         let killer = DispatchWorkItem { timedOut.set(); _ = Native.killTree(p.processIdentifier, pipes: []) }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
         p.waitUntilExit()
-        killer.cancel()
-        _ = Native.killTree(p.processIdentifier, pipes: [])  // grandchildren
+        killer.cancel()  // the process is reaped: its pid may be reused, so nothing is killed by pid from here on
         let read = { (u: URL) in String(decoding: (try? Data(contentsOf: u)) ?? Data(), as: UTF8.self) }
         return (p.terminationStatus, read(outURL), read(errURL), timedOut.value)
     }

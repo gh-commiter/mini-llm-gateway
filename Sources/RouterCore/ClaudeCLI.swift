@@ -906,9 +906,10 @@ extension Router {
                 guard let tmpReal = confinedTmp.flatMap({ Sync.real($0)?.path }), let real = Sync.real(URL(fileURLWithPath: exe))?.path,
                       let profile = Native.claudeRestrictedProfile(session: canon(cwd.path), folders: grants.folders.map(canon), writable: grants.writable && !readOnly,
                                                                    tmp: tmpReal, exe: real, hidden: RouterConfig.hiddenScratch(config.scratchURL) + RouterConfig.agentDenied(kind: "claude", scratch: config.scratchURL),
-                                                                   folderSettings: ClaudeCLIConfig.readsFolderSettings(grants.sources), userSettings: ClaudeCLIConfig.sourceEntries(grants.sources).contains("user")) else {
+                                                                   folderSettings: ClaudeCLIConfig.readsFolderSettings(grants.sources), userSettings: ClaudeCLIConfig.sourceEntries(grants.sources).contains("user"),
+                                                                   sessionID: grants.sessionID, denyPorts: [Int(config.port)]) else {
                     Self.log.error("\(rid, privacy: .public) claude: the system sandbox profile for this run could not be built: the run is refused")
-                    return await error(503, "api_error", "claude: cannot prepare the system sandbox for this run (a folder changed into a link, or its temporary folder cannot be made): start a new conversation", rid: rid, writer: writer)
+                    return await error(503, "api_error", "claude: cannot prepare the system sandbox for this run (a folder changed into a link or has a control character in its name, or its temporary folder cannot be made): start a new conversation", rid: rid, writer: writer)
                 }
                 launch = ("/usr/bin/sandbox-exec", ["-p", profile, exe] + args)
                 confinedPath = tmpReal
@@ -923,7 +924,6 @@ extension Router {
             env[k] = nil  // sicer bi notranji claude klical nazaj ta router; #67: harness ni v peskovniku
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        if let tmp = confinedPath { ClaudeSeatbelt.confine(&env, tmp: tmp) }
         if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
             guard let tenv = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: gitexec, gits: t.gits, agent: "claude", path: env["PATH"] ?? "") else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
@@ -938,6 +938,7 @@ extension Router {
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"
+        if let tmp = confinedPath { env = ClaudeSeatbelt.confinedEnvironment(env, tmp: tmp) }  // an allow list: the gateway's environment may hold secrets
         p.environment = env
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         p.standardInput = stdin

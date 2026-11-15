@@ -297,19 +297,28 @@ minigw serve                 # or run it in this terminal (--port, --config)
     folder, the allowed folders (writable only when edit tools are configured and the run is not read-only; `.git` and, with
     the setting sources `project` or `local`, `.claude` stay closed for writing there, as the rules do), claude's temp
     folder (`CLAUDE_CODE_TMPDIR`, a private folder `Scratch/tmp/run-<id>`, removed after the run or at the next start),
-    `~/.claude.json`, and for the login the login keychain files (`login.keychain-db*` read and write so that a token
-    refresh is saved, `metadata.keychain-db`, the folder). `~/.claude` is an allow list found with real `claude -p` runs
-    (start, login, answer, Read, Grep, Glob, Write, Edit, resume): only `dev-mods` is read (without it Claude Code refuses
-    the write tools), `projects/<this session's folder>` and `cache/model-catalog` are read and written, `session-env` and
-    `sessions` only written. Everything else there is closed: shell snapshots, `.credentials.json`, history, other
-    projects' transcripts, debug, todos, plans, plugins, settings, the owner's `CLAUDE.md`. With the setting source
+    a few device nodes, and for the login the login keychain files (`login.keychain-db*` read and write: a token refresh
+    must be saved, else the rotated refresh token is lost; `metadata.keychain-db`, the folder). `~/.claude` is an allow list
+    found with real `claude -p` runs (start, login, answer, Read, Grep, Glob, Write, Edit, resume): only `dev-mods` is read
+    (without it Claude Code refuses the write tools), and the run's own conversation is read and written (`projects/<folder
+    of the session>/<conversation id>.*` and `<id>/`; the folder is created if missing; the folder's name is not unique per
+    session, so the id is the rule and other conversations of the same folder are neither readable nor listed). Nothing
+    else in `~/.claude` is written (no `session-env`, `sessions`, `cache`; runs work without them) and everything else is
+    closed to reading: shell snapshots, `.credentials.json`, history, other projects' transcripts, project memory, debug,
+    todos, plans, plugins, settings, the owner's `CLAUDE.md`. `~/.claude.json` is read-only. With the setting source
     `user`, `settings.json` is readable too (never writable); the owner's plugin hooks stay unloaded because the plugin
-    folders are closed, so `user` settings apply but plugin hooks do not. Network
-    out: only TCP 443 and DNS, never localhost (not the gateway's own port). A session folder inside the app folder or Scratch
-    (a remote client's mount, `sync/…`) sees only itself, not sibling sessions, the app folder or the rest of Scratch.
-    A self-check decides whether the layer is used: at start (and at the first run after a new `claude`, macOS or profile) one
-    tiny real `claude -p` runs under the profile in a temporary folder and reads a canary, and plain `cat`/`touch` under the
-    same profile must not read or write outside it. The pass is cached in `Scratch/cache/claude-seatbelt.json`. If claude does
+    folders are closed, so `user` settings apply but plugin hooks do not. A per-run `CLAUDE_CONFIG_DIR` is not possible:
+    the Keychain keeps the login under a name derived from that folder (measured: "Not logged in"). The environment of
+    the confined `claude` is an allow list (HOME, USER, LOGNAME, PATH, SHELL, LANG, LC_*, TERM, TZ, proxies, the temp
+    folders), not the gateway's whole environment, so the tokens and keys of the gateway process are not in it. Network
+    out: only TCP 443 and DNS; every other port is closed on every address (loopback and the Mac's own LAN address,
+    including the gateway's port), nothing can listen (bind and inbound are denied).
+    A self-check decides whether the layer is used: at start (and at the first run after a new `claude`, macOS or a change
+    of the profile) one tiny real `claude -p` runs under the profile in a temporary folder, reads a canary and must leave its
+    conversation file, and plain `cat`/`touch` under the same profile must not read or write outside it (these cheap rows run at
+    every start). The model run's pass is cached in `Scratch/cache/claude-seatbelt.json` (key: the program with its
+    nanosecond modification time, its version, macOS and a profile schema number that is bumped with every change of the
+    profile). If claude does
     not run under the profile after an update, the restricted mode falls back to the rules alone and says so, never silently:
     one WARNING in the log, `minigw gw status` ("Claude CLI without local tools runs without the system sandbox: <reason>";
     `claudeSandbox` in the admin `status`) and the Claude CLI pane of Settings. A failed check because the network or the login
@@ -317,9 +326,9 @@ minigw serve                 # or run it in this terminal (--port, --config)
     profile cannot be built (its temporary folder, a folder that became a link) is refused with 503, not run on the rules alone. The sandboxed ("Allow local tools") and worktree
     modes are not wrapped: Claude Code's own sandbox does not nest inside `sandbox-exec`.
     What the kernel layer does not cover: WebFetch/WebSearch send what the agent could read to the network (any host on
-    port 443); the login keychain files are readable and writable by the confined process (their content is encrypted, and
+    port 443; TCP 443 cannot be limited to one host in a Seatbelt profile, and DNS goes to any resolver); the login keychain files are readable and writable by the confined process (their content is encrypted, and
     the Claude Code rules keep the Read and Edit tools away from them, but the kernel does not); `~/.claude.json` (account
-    name, project list) is readable and writable; the gateway's own network behaviour is not restricted.
+    name, project list) is readable; a profile cannot hide the names of the conversation files in `~/.claude/projects` of other folders (only their content is closed). Residual risk, plainly: a file the agent can read can leave over TCP 443; the login keychain files can be overwritten by a process confined by this profile; `~/.claude.json` is not writable, so Claude Code cannot save its own state there (runs work without it).
   - **Codex write mode on the Mac** is a permission profile now: writable are the session folder, allowed folders and
     the request's private temporary folder (`/private/tmp/minigw-codex-<id>`, exported as `TMPDIR`); other places in
     `/tmp` are not writable any more (before: all of `/tmp`).
