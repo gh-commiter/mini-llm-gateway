@@ -337,7 +337,9 @@ private final class Clock: @unchecked Sendable {
     let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-test")  // a fixed path: claude keeps one transcript folder for it in ~/.claude/projects, not one per run
     try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: base) }
-    let session = base.appendingPathComponent("session"), outside = base.appendingPathComponent("outside"), tmp = base.appendingPathComponent("tmp")
+    // the layout of a remote client's mount: the session folder inside the app folder, a sibling mount next to it (the outside file)
+    let app = base.appendingPathComponent("Mini Gateway")
+    let session = app.appendingPathComponent("mounts/aaaa"), outside = app.appendingPathComponent("mounts/bbbb"), tmp = base.appendingPathComponent("tmp")
     for d in [session, outside, tmp] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
     let secret = "OUTSIDE-" + UUID().uuidString.lowercased()
     try Data(secret.utf8).write(to: outside.appendingPathComponent("secret.txt"))
@@ -348,12 +350,12 @@ private final class Clock: @unchecked Sendable {
     env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
     let weak = ["-p", "--output-format", "json", "--model", "haiku", "--strict-mcp-config", "--tools", "Read,Grep,Glob,Edit,Write",
                 "--allowedTools", "Read,Grep,Glob,Edit,Write", "--permission-mode", "acceptEdits", "--setting-sources", ""]
-    let ask = "Use the Read tool on \(outside.path)/secret.txt and on in.txt. Report exactly what each returned, including errors."
+    let ask = "Use the Read tool on \(outside.path)/secret.txt and on \(session.path)/in.txt. Report exactly what each returned, including errors."
     // not logged in (or no network): the only skip
     let control = ClaudeSeatbelt.capture(exe, weak, env: env, cwd: session.path, input: ask, timeout: 120, log: tmp)
     guard control.out.contains(secret) else { try Test.cancel("claude is not logged in or not reachable here (the unsandboxed control run did not answer): \(control.err.prefix(120)) \(control.out.prefix(120))") }
     let profile = try #require(Native.claudeRestrictedProfile(session: Sync.real(session)!.path, folders: [], writable: true, tmp: Sync.real(tmp)!.path, exe: real, home: home,
-                                                              hidden: RouterConfig.hiddenScratch(nil)))
+                                                              hidden: [Sync.real(app)!.path] + RouterConfig.hiddenScratch(nil)))
     var boxed = env
     ClaudeSeatbelt.confine(&boxed, tmp: Sync.real(tmp)!.path)
     let r = ClaudeSeatbelt.capture("/usr/bin/sandbox-exec", ["-p", profile, exe] + weak, env: boxed, cwd: session.path, input: ask, timeout: 120, log: tmp)
@@ -361,6 +363,7 @@ private final class Clock: @unchecked Sendable {
     #expect(r.out.contains("EPERM") || r.out.contains("operation not permitted"), "\(r.out.prefix(400)) \(r.err.prefix(200))")
     #expect(r.out.contains("INSIDE"))  // the session folder itself is readable
     // and the check itself passes with this claude
+    // (the sync layout, a session folder inside Scratch, is the self-check's own: its folder is Scratch/tmp/run-seatbelt)
     #expect(ClaudeSeatbelt.checkNow(exe: exe, tmpBase: base.appendingPathComponent("tmp"), home: home) == .pass)
 }
 
