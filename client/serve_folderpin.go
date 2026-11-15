@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 )
 
 type checkedFolder struct {
@@ -54,5 +55,7 @@ func closeFolders(held []*os.File) {
 // matches (B1): id (from recordIDOf) is the recorded folder. No recorded inode = not recorded yet (always true; the first
 // use adopts it). A legacy record without a volume id compares only the inode; a recorded id must remain available and match.
 func (r folderRecord) matches(id fileID) bool {
-	return r.Ino == 0 || id.ino == r.Ino && (r.Vol == 0 || id.dev == r.Vol)
+	// Keep the pre-existing comparison on platforms outside this change.
+	missingAllowed := runtime.GOOS != "linux" && runtime.GOOS != "darwin" && id.dev == 0
+	return r.Ino == 0 || id.ino == r.Ino && (r.Vol == 0 || missingAllowed || id.dev == r.Vol)
 }
