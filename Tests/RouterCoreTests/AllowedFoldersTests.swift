@@ -426,6 +426,28 @@ private func allowedTemp() throws -> URL {
     #expect(logs.count == 2)
 }
 
+/// #123: a folder whose real path cannot be resolved (no search permission on a parent) is logged once, listed as refused and left out; it is accepted again when the path resolves.
+@Test func allowedFolderUnresolvablePathIsRefusedAndLogged() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    let locked = base.appendingPathComponent("locked"), folder = locked.appendingPathComponent("inner")
+    try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer {
+        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+        try? fm.removeItem(at: base)
+    }
+    let check = AllowedFolders(), p = folder.path
+    check.record(p)
+    try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+    var logs: [String] = []
+    for _ in 0..<2 { #expect(check.folders(p, log: { logs.append($0) }).isEmpty) }
+    #expect(logs.count == 1)
+    #expect(logs.first?.contains("allowed folder \(p.debugDescription) is not used: \"cannot resolve the real path of ") == true)
+    #expect(check.refused(p) == [p])
+    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+    #expect(check.folders(p) == [p])
+    #expect(check.refused(p).isEmpty)
+}
+
 @Test func quotedRefusalTextCannotForgeALogLine() {
     let q = AllowedFolders.quoted("/x\nWARNING: forged\r\t\u{1}")
     #expect(!q.contains("\n") && !q.contains("\r") && !q.contains("\u{1}") && q.hasPrefix("\"") && q.hasSuffix("\""))

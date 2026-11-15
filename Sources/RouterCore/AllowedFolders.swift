@@ -181,9 +181,23 @@ public final class AllowedFolders: @unchecked Sendable {
             let folders: [Checked.Folder] = Self.paths(roots).compactMap { p in
                 guard p != cwd, var e = entries[p] else { return nil }
                 defer { entries[p] = e }
+                func refuse(_ why: String) {  // #123: every drop is listed in `refused` and logged once per reason
+                    e.refused = why
+                    if e.logged.count < Self.maxLoggedReasons, e.logged.insert(why).inserted {
+                        log("WARNING: allowed folder \(Self.quoted(p)) is not used: \(Self.quoted(why)); if you trust it, remove and add it again in the allowed folders")
+                    } else if e.logged.count >= Self.maxLoggedReasons, !e.logged.contains(why), !e.capped {
+                        e.capped = true
+                        log("WARNING: allowed folder \(Self.quoted(p)) was refused for many different reasons; further refusals of it are not logged")
+                    }
+                }
                 let st = inspect(p)
                 guard st.directory else {
                     if st.error == ENOENT { e.missing = true }
+                    else if st.error != 0 { refuse("cannot resolve the real path of \(p): " + String(cString: strerror(st.error))) }  // #123: access denied, a file in the path
+                    return nil
+                }
+                if Sync.realResolving(URL(fileURLWithPath: p)) == nil {  // #123: before the overlap checks, which count an unresolvable path as overlapping, silently
+                    refuse("cannot resolve the real path of \(p): " + String(cString: strerror(errno)))
                     return nil
                 }
                 if RouterConfig.overlapsGatewayFolder(p, scratch: scratch) {  // #114: the app folder, Scratch, the Copilot cache: contains, equals or inside
@@ -210,13 +224,7 @@ public final class AllowedFolders: @unchecked Sendable {
                 else if e.missing && r != p { why = "it is reached through a link to " + r! }
                 else if !Self.owned(r!) || (e.missing && !Self.owned(p)) { why = "it is a link or owned by another user" }
                 if !why.isEmpty {
-                    e.refused = why
-                    if e.logged.count < Self.maxLoggedReasons, e.logged.insert(why).inserted {
-                        log("WARNING: allowed folder \(Self.quoted(p)) is not used: \(Self.quoted(why)); if you trust it, remove and add it again in the allowed folders")
-                    } else if e.logged.count >= Self.maxLoggedReasons, !e.logged.contains(why), !e.capped {
-                        e.capped = true
-                        log("WARNING: allowed folder \(Self.quoted(p)) was refused for many different reasons; further refusals of it are not logged")
-                    }
+                    refuse(why)
                     return nil
                 }
                 guard have, identity.st_mode & S_IFMT == S_IFDIR,

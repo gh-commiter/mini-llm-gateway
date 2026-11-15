@@ -381,3 +381,46 @@ func TestRunTimeDropQuotesFolderAndReason(t *testing.T) {
 		t.Fatalf("log %q reason %v", buf.String(), why)
 	}
 }
+
+// #123: an allowed folder whose real path cannot be resolved is logged once, listed in runRefused and left out (it used to be
+// dropped silently by the overlap check), and comes back when the path resolves again.
+func TestUnresolvablePathIsRefusedAndLogged(t *testing.T) {
+	base := realOf(t, t.TempDir())
+	locked := filepath.Join(base, "locked")
+	folder := filepath.Join(locked, "inner")
+	if runtime.GOOS == "windows" { // a newline is not a valid name there
+		folder = filepath.Join(base, "bad\nfolder")
+	} else if os.Getuid() == 0 {
+		t.Skip("root searches every folder")
+	} else if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := testServer(t, func(c *serveConfig) { c.AllowedFolders = []string{folder} })
+	c := s.conf()
+	c.AllowedFolders = []string{folder} // newServer drops a folder that does not exist
+	var buf bytes.Buffer
+	s.log.SetOutput(&buf)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(locked, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	}
+	for range 2 {
+		if got := s.checkedAgentFolders(c, "").paths(); len(got) != 0 {
+			t.Fatalf("accepted: %v", got)
+		}
+	}
+	if _, ok := s.runRefused.Load(folder); !ok || strings.Count(buf.String(), fmt.Sprintf("allowed folder %q is not used: \"cannot resolve the real path of ", folder)) != 1 {
+		t.Fatalf("log %q refused %v", buf.String(), ok)
+	}
+	if runtime.GOOS != "windows" {
+		os.Chmod(locked, 0o700)
+		if got := s.checkedAgentFolders(c, "").paths(); len(got) != 1 {
+			t.Fatalf("not accepted again: %v", got)
+		}
+		if _, ok := s.runRefused.Load(folder); ok {
+			t.Fatal("still listed as refused")
+		}
+	}
+}

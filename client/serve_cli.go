@@ -467,6 +467,12 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 		s.logRefusal(f, why)
 	}
 	for _, f := range c.AllowedFolders {
+		if f != dir {
+			if _, err := realPath(f); err != nil { // #123: before the overlap checks below, which count an unresolvable path as overlapping, silently
+				refuse(f, err.Error()) // "cannot resolve the real path of <f>: <cause>"
+				continue
+			}
+		}
 		if f == dir || scratchHiddenOverlaps(f, c.Scratch) || len(copilotCacheOverlaps([]string{f})) > 0 {
 			continue
 		}

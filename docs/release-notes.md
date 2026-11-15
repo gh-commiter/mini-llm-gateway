@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Changed (both gateways): an allowed folder whose real path cannot be resolved (access denied, an invalid name) is now logged once with the reason and listed as refused, instead of being left out silently (#123).
+
 ## 0.6.1
 
 ### New
