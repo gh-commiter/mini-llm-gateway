@@ -132,13 +132,16 @@ func (s *Store) FinishEvent(ctx context.Context, e UsageEvent) error {
 	return s.write(ctx, func(tx *sql.Tx) error { return finishEvent(tx, e) })
 }
 
+// MaxEventCostNanos: a reported cost above 1,000,000 USD per event is stored as unknown, so SQLite sums cannot overflow.
+const MaxEventCostNanos = 1e15
+
 func finishEvent(tx *sql.Tx, e UsageEvent) error {
 	if _, err := tx.Exec(`INSERT OR IGNORE INTO usage_events(id,parent_id,start,user_id,device_id,project_id,provider,model,upstream_model,outcome,token_source)
 VALUES(?,?,?,?,?,?,?,?,?,'open','unknown')`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), capStr(e.DeviceID, 256), nullID(e.ProjectID), capStr(e.Provider, 64), capStr(e.Model, 256), nullStr(capStr(e.UpstreamModel, 256))); err != nil {
 		return err
 	}
 	source := e.CostSource
-	if e.CostUsdNanos == nil || *e.CostUsdNanos < 0 || (source != "reported" && source != "estimated") {
+	if e.CostUsdNanos == nil || *e.CostUsdNanos < 0 || *e.CostUsdNanos > MaxEventCostNanos || (source != "reported" && source != "estimated") {
 		e.CostUsdNanos = nil
 		source = "unknown"
 	}

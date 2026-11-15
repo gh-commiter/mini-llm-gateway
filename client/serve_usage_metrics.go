@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"math/big"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -226,7 +227,23 @@ func costNanos(s string) *int64 {
 		return nil
 	}
 	n := q.Int64()
+	if n > maxEventCostNanos {
+		return nil
+	}
 	return &n
+}
+
+// A reported cost above 1,000,000 USD per event is not believable; it is stored as unknown, so sums cannot overflow.
+const maxEventCostNanos = 1e15
+
+var secretRe = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=-]+|sk-[A-Za-z0-9_-]{8,}`)
+
+// redactSecrets removes the configured provider key and anything shaped like a bearer token or an sk- key from upstream text.
+func redactSecrets(s, key string) string {
+	if key != "" {
+		s = strings.ReplaceAll(s, key, "[redacted]")
+	}
+	return secretRe.ReplaceAllString(s, "[redacted]")
 }
 
 func spendingLimit(name string, body []byte) bool {

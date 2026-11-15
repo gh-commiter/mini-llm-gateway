@@ -758,7 +758,7 @@ public final class Router: Sendable {
                         if d.count >= 64 << 10 { break }
                     }
                 } catch {}
-                let (st, msg) = Self.upstreamError(status: status, name: r.provider.name, body: d)
+                let (st, msg) = Self.upstreamError(status: status, name: r.provider.name, body: d, key: key)
                 // 429 ponudnika (npr. brezplačni model na OpenRouterju) brez ponavljanja, kot omejitev agenta
                 return await self.error(st, Self.errorType(st), msg, rid: rid,
                                         extra: st == 429 || status == 403 && spendingLimit(name: r.provider.name, body: d) ? [("x-should-retry", "false")] : [], writer: writer)
@@ -787,13 +787,14 @@ public final class Router: Sendable {
 
     /// Napaka upstreama kot napaka Anthropic (kot upstreamError v Go): le error.message, očiščeno, največ 300 bajtov.
     /// 401/403 → 502: Claude Code bi ju prikazal kot napačno prijavo v router.
-    static func upstreamError(status: Int, name: String, body: Data) -> (Int, String) {
+    static func upstreamError(status: Int, name: String, body: Data, key: String = "") -> (Int, String) {
         var msg = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])
             .flatMap { $0["error"] as? [String: Any] }?["message"] as? String ?? ""
         if msg.isEmpty { msg = String(decoding: body, as: UTF8.self) }
         msg = String(String.UnicodeScalarView(msg.unicodeScalars.filter {
             $0 == "\n" || ($0.properties.generalCategory != .control && $0.properties.generalCategory != .format && $0.value != 0x2028 && $0.value != 0x2029)  // tudi bidi
         })).trimmingCharacters(in: .whitespacesAndNewlines)
+        msg = redactSecrets(msg, key: key)
         msg = String(String.UnicodeScalarView(msg.unicodeScalars.prefix(300)))
         while msg.utf8.count > 300 { msg.unicodeScalars.removeLast() }
         switch status {

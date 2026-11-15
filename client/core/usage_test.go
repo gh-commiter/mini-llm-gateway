@@ -380,6 +380,42 @@ func TestUsageCostMigration(t *testing.T) {
 	}
 }
 
+// finishHuge stores an event with a cost above the ceiling directly (FinishEvent refuses it), to test the SQL overflow defence.
+func finishHuge(s *Store, e UsageEvent) error {
+	huge := e.CostUsdNanos
+	e.CostUsdNanos = nil
+	if err := s.FinishEvent(ctx, e); err != nil {
+		return err
+	}
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE usage_events SET cost_usd_nanos=?, cost_source='reported' WHERE id=?`, *huge, e.ID)
+		return err
+	})
+}
+
+func TestUsageCostAboveTheCeilingIsUnknown(t *testing.T) {
+	f := newFx(t)
+	now := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	f.Store.now = func() time.Time { return now }
+	at := now.AddDate(0, 0, -usageRetentionDays)
+	big, ok := int64(math.MaxInt64), int64(MaxEventCostNanos)
+	for i, c := range []*int64{&big, &big, &ok} {
+		e := UsageEvent{ID: fmt.Sprint("e", i), Start: at.Add(-time.Millisecond), End: at, Provider: "p", Model: "m", Outcome: OutcomeOK, TokensIn: -1, TokensOut: -1, TokenSource: "unknown", CostUsdNanos: c, CostSource: "reported"}
+		f.ok(f.FinishEvent(ctx, e))
+	}
+	check := func() {
+		rep, err := f.AdminUsage(ctx, 401, UsageFilter{})
+		if err != nil || len(rep.Rows) != 1 || rep.Rows[0].Events != 3 || rep.Rows[0].UnknownCost != 2 || rep.Rows[0].ReportedCost == nil || *rep.Rows[0].ReportedCost != ok {
+			t.Fatalf("%+v %v", rep, err)
+		}
+	}
+	check()
+	if n, err := f.FoldOldUsage(ctx); err != nil || n != 3 {
+		t.Fatalf("fold %d %v", n, err)
+	}
+	check()
+}
+
 func TestUsageCostOverflowIsAnError(t *testing.T) {
 	for _, folded := range []bool{false, true} {
 		t.Run(fmt.Sprint(folded), func(t *testing.T) {
@@ -389,13 +425,13 @@ func TestUsageCostOverflowIsAnError(t *testing.T) {
 			at := now.AddDate(0, 0, -usageRetentionDays)
 			cost := int64(math.MaxInt64)
 			e := UsageEvent{ID: "one", Start: at.Add(-time.Millisecond), End: at, Provider: "p", Model: "m", Outcome: OutcomeOK, TokensIn: -1, TokensOut: -1, TokenSource: "unknown", CostUsdNanos: &cost, CostSource: "reported"}
-			f.ok(f.FinishEvent(ctx, e))
+			f.ok(finishHuge(f.Store, e))
 			if folded {
 				_, err := f.FoldOldUsage(ctx)
 				f.ok(err)
 			}
 			e.ID, e.Start = "two", at
-			f.ok(f.FinishEvent(ctx, e))
+			f.ok(finishHuge(f.Store, e))
 			if _, err := f.AdminUsage(ctx, 401, UsageFilter{}); err == nil {
 				t.Fatal("overflow returned a successful report")
 			}
@@ -411,7 +447,7 @@ func TestUsageCostOverflowRetainsDetailAndAllowsReopen(t *testing.T) {
 			at := time.Now().UTC().AddDate(0, 0, -usageRetentionDays-1)
 			cost := int64(math.MaxInt64)
 			e := UsageEvent{ID: "one", Start: at, End: at, Provider: "p", Model: "m", Outcome: OutcomeOK, TokensIn: -1, TokensOut: -1, TokenSource: "unknown", CostUsdNanos: &cost, CostSource: "reported"}
-			if err := s.FinishEvent(ctx, e); err != nil {
+			if err := finishHuge(s, e); err != nil {
 				t.Fatal(err)
 			}
 			if folded {
@@ -420,7 +456,7 @@ func TestUsageCostOverflowRetainsDetailAndAllowsReopen(t *testing.T) {
 				}
 			}
 			e.ID = "two"
-			if err := s.FinishEvent(ctx, e); err != nil {
+			if err := finishHuge(s, e); err != nil {
 				t.Fatal(err)
 			}
 			if n, err := s.FoldOldUsage(ctx); err != nil || n != 0 {

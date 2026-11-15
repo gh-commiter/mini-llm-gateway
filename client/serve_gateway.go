@@ -473,7 +473,7 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 		return writeJSON(w, r.rid, 200, map[string]int{"input_tokens": len(r.body) / 4})
 	}
 	if resp.StatusCode/100 != 2 {
-		return upstreamError(w, r.rid, g.Name, resp)
+		return upstreamError(w, r.rid, g.Name, key, resp)
 	}
 	ct := resp.Header.Get("Content-Type")
 	if ct == "" {
@@ -501,7 +501,7 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 }
 
 // upstreamError: napaka upstreama kot napaka Anthropic. 401/403 → 502: Claude Code bi ju prikazal kot napačno prijavo v router.
-func upstreamError(w http.ResponseWriter, rid, name string, resp *http.Response) int {
+func upstreamError(w http.ResponseWriter, rid, name, key string, resp *http.Response) int {
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	var e struct {
 		Error struct {
@@ -515,7 +515,7 @@ func upstreamError(w http.ResponseWriter, rid, name string, resp *http.Response)
 	if msg == "" {
 		msg = string(data)
 	}
-	if msg = strings.TrimSpace(clean(msg)); len(msg) > 300 {
+	if msg = redactSecrets(strings.TrimSpace(clean(msg)), key); len(msg) > 300 {
 		msg = capUsageError(msg)
 	}
 	status := resp.StatusCode
