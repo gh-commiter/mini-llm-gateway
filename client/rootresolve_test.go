@@ -174,6 +174,47 @@ func TestAutofsStopsBeforeChildren(t *testing.T) {
 	if len(probes) == 0 || probes[len(probes)-1] != mount {
 		t.Fatalf("did not stop at aliased mount: %v", probes)
 	}
+	for _, p := range probes {
+		if strings.HasPrefix(p, mount+string(filepath.Separator)) {
+			t.Fatalf("probed below the mount: %v", probes)
+		}
+	}
+}
+
+// A link planted in the share to a place below an autofs mount is refused, and nothing below the mount is probed.
+func TestRootResolveRefusesAutofsLinkTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mounts")
+	}
+	mount, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	dirLink(t, filepath.Join(mount, "host", "x"), filepath.Join(root, "evil"))
+	old := targetAutofs
+	defer func() { targetAutofs = old }()
+	var probes []string
+	targetAutofs = func(p string) (bool, error) {
+		probes = append(probes, p)
+		return p == mount, nil
+	}
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if _, err := rootResolve(rt, "evil/f", false); err == nil || !strings.Contains(err.Error(), linkRefusal) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(probes) == 0 || probes[len(probes)-1] != mount {
+		t.Fatalf("did not stop at the mount: %v", probes)
+	}
+	for _, p := range probes {
+		if strings.HasPrefix(p, mount+string(filepath.Separator)) {
+			t.Fatalf("probed below the mount: %v", probes)
+		}
+	}
 }
 
 func TestLinkDotDotResolvesBeforeMoveGuard(t *testing.T) {

@@ -68,48 +68,38 @@ final class ShareRoot: @unchecked Sendable {
     /// Razreševanje le izbere pot; operacija še vedno gre prek deskriptorja, zato povezava, ki se spremeni po njem, ne vodi ven.
     /// Zaščiteno pot je treba preveriti na vrnjeni poti, ne na vhodu.
     func resolve(_ rel: String, followLast: Bool) throws -> String {
-        guard var comps = Self.local(rel) else { throw Refused(message: "invalid path: \(rel)") }
-        var rewrites = 0
-        var lastLink = rel
-        while !comps.isEmpty {
-            if rewrites > Self.maxLinkRewrites { throw Refused(message: "too many links: \(Self.join(comps))") }
-            var cur: [String] = []
-            var again = false
-            for (i, name) in comps.enumerated() {
-                if name == ".." {
-                    guard cur.popLast() != nil else { throw Refused(message: "\(Self.linkRefusal): \(lastLink)") }
-                    continue
-                }
-                let next = cur + [name], rest = Array(comps[(i + 1)...])
-                if i == comps.count - 1 && !followLast { return Self.join(next) }
-                var e: Int32 = 0
-                guard let st = lstat(Self.join(next), &e) else {
-                    guard !rest.contains("..") else { throw Refused(message: "\(Self.linkRefusal): \(lastLink)") }
-                    return Self.join(next + rest)
-                }  // je ni: operacija sporoči
-                guard st.st_mode & S_IFMT == S_IFLNK, let target = readlink(Self.join(next)), !target.isEmpty else {
-                    cur = next; continue
-                }
-                let refusal = Refused(message: "\(Self.linkRefusal): \(Self.join(next))")
-                guard let rootPath = path else { throw refusal }
-                let probe = target.hasPrefix("/") ? target : rootPath + "/" + Self.join(cur) + "/" + target
-                let first = Self.comps(probe).first?.lowercased()
-                guard first != "net", first != "network", Self.safeTargetFilesystem(probe) else { throw refusal }
-                lastLink = Self.join(next)
-                let np: [String]
-                if target.hasPrefix("/") {
-                    guard let n = inside(target) ?? inside(realTarget(target)) else { throw refusal }  // druga imena mape
-                    np = n
-                } else {
-                    // Keep .. until every preceding link has been resolved.
-                    np = cur + Self.comps(target)
-                }
-                comps = np + rest; rewrites += 1; again = true
-                break
+        guard let all = Self.local(rel) else { throw Refused(message: "invalid path: \(rel)") }
+        // realpath: `cur` je vedno pot brez povezav, `queue` komponente, ki jih je treba še obiskati; »..« za povezavo
+        // se tako uporabi na cilju povezave (nikoli ne izgine kot besedilo).
+        var queue = all, cur: [String] = [], rewrites = 0, lastLink = rel
+        while !queue.isEmpty {
+            let name = queue.removeFirst()
+            if name == ".." {
+                guard cur.popLast() != nil else { throw Refused(message: "\(Self.linkRefusal): \(lastLink)") }
+                continue
             }
-            if !again { return Self.join(cur) }
+            let next = cur + [name]
+            if queue.isEmpty && !followLast { return Self.join(next) }
+            var e: Int32 = 0
+            guard let st = lstat(Self.join(next), &e) else {  // je ni: operacija sporoči
+                guard !queue.contains("..") else { throw Refused(message: "\(Self.linkRefusal): \(lastLink)") }
+                return Self.join(next + queue)
+            }
+            guard st.st_mode & S_IFMT == S_IFLNK, let target = readlink(Self.join(next)), !target.isEmpty else {
+                cur = next; continue
+            }
+            rewrites += 1
+            if rewrites > Self.maxLinkRewrites { throw Refused(message: "too many links: \(rel)") }
+            let refusal = Refused(message: "\(Self.linkRefusal): \(Self.join(next))")
+            lastLink = Self.join(next)
+            if target.hasPrefix("/") {
+                guard let n = inside(target) ?? inside(realTarget(target)) else { throw refusal }  // druga imena mape
+                cur = []; queue = n + queue
+            } else {
+                queue = Self.comps(target) + queue  // relativno na mapo povezave (= cur)
+            }
         }
-        return "."
+        return Self.join(cur)
     }
 
     /// Absolutni cilj (leksikalno) relativno na ime korena, v katerem leži; nil, če je zunaj. APFS ne loči velikosti črk.

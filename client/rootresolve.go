@@ -26,92 +26,71 @@ func rootResolve(rooted *os.Root, rel string, followLast bool) (string, error) {
 	if !filepath.IsLocal(rel) {
 		return "", fmt.Errorf("invalid path: %s", rel)
 	}
+	// realpath semantics: cur is always a link-free root-relative path, queue the components still to walk, so a ..
+	// after a link applies to the link's target (never cleaned away as text).
 	var bases []string
-	lastLink := rel
-	for rewrites := 0; ; rewrites++ {
-		if rewrites > maxLinkRewrites {
-			return "", fmt.Errorf("too many links: %s", rel)
+	queue, cur, lastLink := relParts(rel), ".", rel
+	for rewrites := 0; len(queue) > 0; {
+		name := queue[0]
+		queue = queue[1:]
+		switch name {
+		case "", ".":
+			continue
+		case "..":
+			if cur == "." {
+				return "", fmt.Errorf("%s: %s", linkRefusal, lastLink)
+			}
+			cur = filepath.Dir(cur)
+			continue
 		}
-		parts := strings.Split(filepath.ToSlash(rel), "/")
-		cur, again := ".", false
-		for i, name := range parts {
-			if name == ".." {
-				if cur == "." {
+		next := filepath.Join(cur, name)
+		if len(queue) == 0 && !followLast {
+			return next, nil
+		}
+		st, err := rooted.Lstat(next)
+		if err != nil { // absent: the operation reports it
+			for _, part := range queue {
+				if part == ".." {
 					return "", fmt.Errorf("%s: %s", linkRefusal, lastLink)
 				}
-				cur = filepath.Dir(cur)
-				continue
 			}
-			next := filepath.Join(cur, name)
-			rest := parts[i+1:]
-			if i == len(parts)-1 && !followLast {
-				return next, nil
-			}
-			st, err := rooted.Lstat(next)
-			if err != nil { // absent: the operation reports it
-				for _, part := range rest {
-					if part == ".." {
-						return "", fmt.Errorf("%s: %s", linkRefusal, lastLink)
-					}
-				}
-				return filepath.Join(append([]string{next}, rest...)...), nil
-			}
-			target := ""
-			if st.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 { // Windows: a junction is irregular
-				target, err = rooted.Readlink(next)
-			}
-			if target == "" || err != nil { // not a link
-				cur = next
-				continue
-			}
-			if runtime.GOOS == "windows" {
-				target = trimFinalPrefix(target)
-			}
+			return filepath.Join(append([]string{next}, queue...)...), nil
+		}
+		target := ""
+		if st.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 { // Windows: a junction is irregular
+			target, err = rooted.Readlink(next)
+		}
+		if target == "" || err != nil { // not a link
+			cur = next
+			continue
+		}
+		if rewrites++; rewrites > maxLinkRewrites {
+			return "", fmt.Errorf("too many links: %s", rel)
+		}
+		if runtime.GOOS == "windows" {
+			target = trimFinalPrefix(target)
+		}
+		lastLink = next
+		switch {
+		case filepath.IsAbs(target):
 			if bases == nil {
 				bases = rootBases(rooted)
 			}
-			probe := target
-			if !filepath.IsAbs(probe) {
-				probe = bases[len(bases)-1] + string(filepath.Separator) + cur + string(filepath.Separator) + target
+			np, ok := insideLinkBases(bases, target)
+			if !ok {
+				np, ok = insideLinkBases(bases, realTarget(target, bases)) // the link was made with another name of the share
 			}
-			if !trustedUNCPath(probe, bases) && !safeTarget(probe, bases) {
+			if !ok {
 				return "", fmt.Errorf("%s: %s", linkRefusal, next)
 			}
-			lastLink = next
-			var np string
-			switch {
-			case filepath.IsAbs(target):
-				var ok bool
-				if np, ok = insideLinkBases(bases, target); !ok {
-					np, ok = insideLinkBases(bases, realTarget(target, bases)) // the link was made with another name of the share
-				}
-				if !ok {
-					return "", fmt.Errorf("%s: %s", linkRefusal, next)
-				}
-			case filepath.VolumeName(target) != "" || strings.HasPrefix(target, `/`) || strings.HasPrefix(target, `\`):
-				return "", fmt.Errorf("%s: %s", linkRefusal, next)
-			default:
-				// Keep .. until every preceding link has been resolved.
-				np = cur + string(filepath.Separator) + target
-			}
-			rel, again = strings.Join(append([]string{np}, rest...), string(filepath.Separator)), true
-			// Match Swift's component list without cleaning away parent components.
-			var pending []string
-			for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
-				if part != "" && part != "." {
-					pending = append(pending, part)
-				}
-			}
-			rel = strings.Join(pending, string(filepath.Separator))
-			if rel == "" {
-				rel = "."
-			}
-			break
-		}
-		if !again {
-			return cur, nil
+			cur, queue = ".", append(relParts(np), queue...)
+		case filepath.VolumeName(target) != "" || strings.HasPrefix(target, `/`) || strings.HasPrefix(target, `\`):
+			return "", fmt.Errorf("%s: %s", linkRefusal, next)
+		default: // relative to the link's folder, which is cur
+			queue = append(relParts(target), queue...)
 		}
 	}
+	return cur, nil
 }
 
 // rootBases: the root's own names: as opened, its real path and, on Windows, its final path.
@@ -315,9 +294,6 @@ func safeTargetFilesystem(target string) bool {
 			continue
 		}
 		next := filepath.Join(cur, name)
-		if next == "/net" || strings.EqualFold(next, "/Network") {
-			return false
-		}
 		st, err := os.Lstat(next)
 		if os.IsNotExist(err) {
 			return true

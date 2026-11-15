@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Fixed (Go and Mac clients/gateways): shared-folder link resolution refuses autofs mounts before probing their children and resolves links before applying `..`, keeping the WebDAV MOVE self-nesting guard effective.
+- Fixed (Go and Mac clients/gateways): a link in a shared folder is refused when its target passes through an autofs mount (not only `/net` and `/Network`); the check stops at the mount and never looks inside it. A `..` after a link now applies to the link's target, which keeps the WebDAV MOVE guard against moving a folder into its own subfolder effective (a regression against 0.5.29).
 
 - Fixed (Mac client): a refused folder share prints the gateway’s reason, including the synced-folder limit.
 - New (both gateways): `minigw gw sync list --device ID` and `minigw gw sync remove <copy id> --device ID` reclaim synced-folder slots without waiting 14 days; stop sessions and agents before removal (`local` selects local Mac copies); listing works during active sessions. Profile e2e cleanup removes only copies for its own temporary folder, preserving pre-existing copies and copies created by concurrent sessions.

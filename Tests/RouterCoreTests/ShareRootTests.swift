@@ -452,6 +452,7 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     })
     #expect(throughLink == nil)
     #expect(probes.last == mount)
+    #expect(!probes.contains { $0.hasPrefix(mount + "/") })
 }
 
 @Test func shareLinkDotDotResolvesBeforeMoveGuard() throws {
