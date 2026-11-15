@@ -417,12 +417,20 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 }
 
 // gatewayRoute: prvi prehod v vrstnem redu nastavitev z vklopljenim modelom (ID pri upstreamu ali objavljeni ID).
-// Inference uses the cached catalog; refresh never holds up a request.
-func (s *server) gatewayRoute(model string) (serveGateway, gwModel, bool) {
-	for _, g := range s.conf().Gateways {
-		for _, m := range s.gatewayRoutes(g) {
-			if !shadowsCLI(m.route()) && (m.route() == model || publishedID(m.route()) == model) {
-				return g, m, true
+// Najprej zadnji znani seznami; z wait (neznan model) še počaka na prehode, ki se nalagajo prvič.
+func (s *server) gatewayRoute(model string, wait bool) (serveGateway, gwModel, bool) {
+	for _, w := range []bool{false, true} {
+		if w && !wait {
+			break
+		}
+		if w {
+			s.loadGateways()
+		}
+		for _, g := range s.conf().Gateways {
+			for _, m := range s.gatewayRoutes(g) {
+				if !shadowsCLI(m.route()) && (m.route() == model || publishedID(m.route()) == model) {
+					return g, m, true
+				}
 			}
 		}
 	}

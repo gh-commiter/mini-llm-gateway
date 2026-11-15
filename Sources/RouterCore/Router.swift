@@ -887,6 +887,8 @@ actor Catalog {
     func route(_ model: String) async -> Route? {
         for p in providers {
             loadIfStale(p)
+            // First load (no list yet, no manual aliases): wait up to 2 s as before; a stale list never waits, prices refresh in the background.
+            if entries[p.id] == nil, p.aliasPairs.isEmpty, let t = loading[p.id] { _ = await firstOf(t, within: .seconds(2)) }
             let routes = entries[p.id]?.routes ?? p.aliasPairs.map {
                 Route(provider: p, name: $0.alias, alias: ProviderConfig.publishedID($0.alias), upstream: $0.upstream, window: $0.window)
             }

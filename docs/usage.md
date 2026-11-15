@@ -510,8 +510,9 @@ consults its [public cost map](https://docs.litellm.ai/docs/proxy/model_cost_map
 mapping, with deployment overrides taking precedence. Complete deployment input/output rates do not depend on the public map. Aliases use the routed upstream model's price. A snapshot
 is frozen at dispatch and retained in the shared core database (migration 6); replay and later refreshes never
 reprice a completed event. Snapshots include source and fetch time; last-good prices can be stale.
-Inference never waits for catalog discovery: a cold manual alias can run without a price, while a discovered-only
-model is available after the background catalog load finishes. Such early events are not repriced later.
+A request never waits for a price: a stale catalog is used as it is and refreshed in the background. Only the first
+request for a model that is not an alias and not yet in any list waits for the model list, at most 2 s, as before. A model
+without a price at dispatch gets unknown cost (never zero), and such an event is not repriced later.
 
 Estimates currently cover ordinary input/output tokens only. Cache read/write counts are retained when reported. Cache token usage, images, audio, tools and complex
 tiers are not priced; unsupported price dimensions or incomplete token counts leave cost unknown rather than zero.

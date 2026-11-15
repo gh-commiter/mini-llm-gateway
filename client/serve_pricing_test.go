@@ -221,7 +221,7 @@ func TestInferenceDoesNotWaitForPrices(t *testing.T) {
 	})
 	done := make(chan bool, 1)
 	go func() {
-		_, m, ok := s.gatewayRoute("claude-alias")
+		_, m, ok := s.gatewayRoute("claude-alias", true)
 		done <- ok && m.price == nil && m.id == "base"
 	}()
 	select {
@@ -233,7 +233,7 @@ func TestInferenceDoesNotWaitForPrices(t *testing.T) {
 		t.Fatal("inference waited for price discovery")
 	}
 	// Repeated lookups share the background load.
-	s.gatewayRoute("claude-alias")
+	s.gatewayRoute("claude-alias", true)
 	select {
 	case <-blocked:
 	case <-time.After(time.Second):

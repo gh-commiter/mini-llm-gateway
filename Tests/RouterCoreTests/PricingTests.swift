@@ -73,8 +73,7 @@ import Testing
     @Test func discoveryKeepsPricesWithKnownWindows() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [PricingUpstream.self]
-        let session = URLSession(configuration: config)
-        defer { session.invalidateAndCancel() }
+        let session = URLSession(configuration: config)  // not invalidated: route() below starts a background refresh that outlives the test
         let p = ProviderConfig(id: "litellm", name: "LiteLLM", enabled: true, baseURL: "https://prices.example", aliases: "alias = base, 10k")
         let result = try await Discovery.load(p, key: "fixture", session: session).get()
         #expect(result.count == 1)
