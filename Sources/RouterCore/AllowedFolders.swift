@@ -54,9 +54,11 @@ public final class AllowedFolders: @unchecked Sendable {
         var real: String?
         var missing: Bool
         var logged: Set<String> = []
+        var capped = false  // the "further refusals suppressed" line is logged once
         var refused = ""
         var record: FolderRecord?  // M2, A1: the recorded identity; compared on every check (ino 0: adopted at the first use, B2)
     }
+    static let maxLoggedReasons = 8  // per folder: the reason holds a path, so a retargeted folder must not grow the set or the log
     private let lock = NSLock()
     /// B2: called with a record that has just adopted its identity; the owner saves it (must not call back in).
     public var onAdopt: (@Sendable (String, FolderRecord) -> Void)?
@@ -120,6 +122,8 @@ public final class AllowedFolders: @unchecked Sendable {
         }
     }
 
+    func loggedReasonCount(_ p: String) -> Int { lock.withLock { entries[p]?.logged.count ?? 0 } }
+
     /// Refused configured paths, cleared by a passing check or removal from the allowed list.
     public func refused(_ roots: String) -> [String] {
         lock.withLock {
@@ -181,8 +185,11 @@ public final class AllowedFolders: @unchecked Sendable {
                 }
                 if RouterConfig.overlapsGatewayFolder(p, scratch: scratch) {  // #114: the app folder, Scratch, the Copilot cache: contains, equals or inside
                     let why = "it contains, equals or is inside one of the gateway's own folders (app folder, Scratch, Copilot cache)"
-                    if e.logged.insert(why).inserted {
+                    if e.logged.count < Self.maxLoggedReasons, e.logged.insert(why).inserted {
                         log("WARNING: allowed folder \(p.debugDescription) is not used: \(why.debugDescription)")
+                    } else if e.logged.count >= Self.maxLoggedReasons, !e.logged.contains(why), !e.capped {
+                        e.capped = true
+                        log("WARNING: allowed folder \(p.debugDescription) was refused for many different reasons; further refusals of it are not logged")
                     }
                     return nil
                 }
@@ -201,8 +208,11 @@ public final class AllowedFolders: @unchecked Sendable {
                 else if !Self.owned(r!) || (e.missing && !Self.owned(p)) { why = "it is a link or owned by another user" }
                 if !why.isEmpty {
                     e.refused = why
-                    if e.logged.insert(why).inserted {
+                    if e.logged.count < Self.maxLoggedReasons, e.logged.insert(why).inserted {
                         log("WARNING: allowed folder \(p.debugDescription) is not used: \(why.debugDescription); if you trust it, remove and add it again in the allowed folders")
+                    } else if e.logged.count >= Self.maxLoggedReasons, !e.logged.contains(why), !e.capped {
+                        e.capped = true
+                        log("WARNING: allowed folder \(p.debugDescription) was refused for many different reasons; further refusals of it are not logged")
                     }
                     return nil
                 }

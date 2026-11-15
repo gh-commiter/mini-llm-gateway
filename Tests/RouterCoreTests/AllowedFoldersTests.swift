@@ -222,6 +222,33 @@ private func allowedTemp() throws -> URL {
     #expect(restarted.refused(p).isEmpty)
 }
 
+// A folder retargeted to many directories: the stored reasons and the log lines stay capped.
+@Test func refusalLogIsCappedPerFolder() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let folder = base.appendingPathComponent("folder"), first = base.appendingPathComponent("t0")
+    try fm.createDirectory(at: first, withIntermediateDirectories: false)
+    try fm.createSymbolicLink(at: folder, withDestinationURL: first)
+    let p = folder.path
+    let check = AllowedFolders()
+    check.record(p)
+    var logs: [String] = []
+    let cap = AllowedFolders.maxLoggedReasons
+    for i in 1...(cap + 4) {
+        let t = base.appendingPathComponent("t\(i)")
+        try fm.createDirectory(at: t, withIntermediateDirectories: false)
+        try fm.removeItem(at: folder)
+        try fm.createSymbolicLink(at: folder, withDestinationURL: t)
+        #expect(check.folders(p, log: { logs.append($0) }).isEmpty)
+        #expect(check.folders(p, log: { logs.append($0) }).isEmpty)
+    }
+    #expect(check.loggedReasonCount(p) == cap)
+    #expect(logs.count == cap + 1 && logs.last?.contains("further refusals of it are not logged") == true)
+    check.record("")  // removed from the list: the entry and its log state go
+    check.record(p)
+    #expect(check.loggedReasonCount(p) == 0)
+}
+
 @Test func allowedFolderIdentityChangedAtStart() throws {
     let fm = FileManager.default, base = try allowedTemp()
     defer { try? fm.removeItem(at: base) }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -928,5 +929,24 @@ func TestHoldBetweenPickAndDeleteWaits(t *testing.T) {
 	pruneProjectHomes(root, h, nil)
 	if _, err := os.Stat(dead); err == nil {
 		t.Fatal("an idle dead epoch stays")
+	}
+}
+
+// logRefusal keeps at most maxRefusalReasons reasons per folder, logs one line when the cap is hit and nothing after it.
+func TestLogRefusalIsCappedPerFolder(t *testing.T) {
+	var buf bytes.Buffer
+	s := &server{log: log.New(&buf, "", 0)}
+	for i := 0; i < maxRefusalReasons+4; i++ {
+		why := fmt.Sprintf("its real path changed to /t%d", i)
+		s.logRefusal("/f", why)
+		s.logRefusal("/f", why)
+	}
+	v, _ := s.refusedLogged.Load("/f")
+	if n := len(v.(*folderRefusals).reasons); n != maxRefusalReasons {
+		t.Errorf("stored reasons = %d, want %d", n, maxRefusalReasons)
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != maxRefusalReasons+1 || !strings.Contains(lines[len(lines)-1], "further refusals of it are not logged") {
+		t.Errorf("log lines = %d, want %d with a suppression line last:\n%s", len(lines), maxRefusalReasons+1, buf.String())
 	}
 }

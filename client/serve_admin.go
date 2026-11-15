@@ -938,12 +938,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				for _, f := range kept {
 					if !slices.Contains(s.cfg.AllowedFolders, f) {
 						s.wasMissing.Delete(f)
-						s.refusedLogged.Range(func(key, _ any) bool {
-							if key.(folderRefusal).folder == f {
-								s.refusedLogged.Delete(key)
-							}
-							return true
-						})
+						s.refusedLogged.Delete(f)
 						s.startRefused.Delete(f)
 						s.runRefused.Delete(f)
 					}

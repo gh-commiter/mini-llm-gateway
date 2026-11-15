@@ -435,15 +435,36 @@ func (s *server) agentFolders(c serveConfig, dir string) []string {
 	return s.checkedAgentFolders(c, dir).paths()
 }
 
-type folderRefusal struct{ folder, reason string }
+const maxRefusalReasons = 8 // per folder: the reason holds a path, so a retargeted folder must not grow the set or the log
+
+type folderRefusals struct {
+	mu      sync.Mutex
+	reasons map[string]bool
+	capped  bool
+}
+
+// logRefusal logs a refusal of folder f once per reason; after maxRefusalReasons reasons it logs one line and then nothing.
+func (s *server) logRefusal(f, why string) {
+	v, _ := s.refusedLogged.LoadOrStore(f, &folderRefusals{reasons: map[string]bool{}})
+	l := v.(*folderRefusals)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	switch {
+	case l.reasons[why]:
+	case len(l.reasons) < maxRefusalReasons:
+		l.reasons[why] = true
+		s.log.Printf("WARNING: allowed folder %q is not used: %q; if you trust it, remove and add it again in the allowed folders", f, why)
+	case !l.capped:
+		l.capped = true
+		s.log.Printf("WARNING: allowed folder %q was refused for many different reasons; further refusals of it are not logged", f)
+	}
+}
 
 func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 	var out checkedFolders
 	refuse := func(f, why string) { // every run-time drop is logged once and listed in `refused`
 		s.runRefused.Store(f, why)
-		if _, logged := s.refusedLogged.LoadOrStore(folderRefusal{f, why}, true); !logged {
-			s.log.Printf("WARNING: allowed folder %q is not used: %q; if you trust it, remove and add it again in the allowed folders", f, why)
-		}
+		s.logRefusal(f, why)
 	}
 	for _, f := range c.AllowedFolders {
 		if f == dir || scratchHiddenOverlaps(f, c.Scratch) || len(copilotCacheOverlaps([]string{f})) > 0 {
