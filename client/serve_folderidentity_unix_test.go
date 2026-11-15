@@ -105,10 +105,10 @@ func TestAllowedFolderRecordIgnoresDeviceNumber(t *testing.T) {
 	if got := s.agentFolders(s.conf(), base); len(got) != 0 {
 		t.Fatalf("other volume accepted: %v", got)
 	}
-	// No volume id available now or when recorded: the inode alone decides.
+	// Losing the current volume id must not weaken a recorded identity to an inode-only check.
 	volumeIDFn = func(string) uint64 { return 0 }
-	if got := s.agentFolders(s.conf(), base); len(got) != 1 {
-		t.Fatalf("inode only: %v", got)
+	if got := s.agentFolders(s.conf(), base); len(got) != 0 {
+		t.Fatalf("missing current volume id accepted: %v", got)
 	}
 	// Another inode (replaced folder) is refused whatever the volume id says.
 	volumeIDFn = func(string) uint64 { return 0xabc }

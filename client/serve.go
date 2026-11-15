@@ -335,7 +335,14 @@ func serveCommand(args []string) {
 
 	switch sub {
 	case "init":
-		defer lockServeConfig(*cfgPath)() // B3: load-modify-write
+		abs, _ := filepath.Abs(filepath.Dir(*cfgPath)) // zasebna mapa pred prvim zapisom žetona in ključa
+		os.MkdirAll(abs, 0o700)
+		if err := protectConfigDir(abs); errors.Is(err, errForeignOwner) {
+			fail(abs + " " + err.Error() + ": use a folder of your own")
+		} else if err != nil {
+			say("WARNING: cannot make " + abs + " private to this user: use the default config folder")
+		}
+		defer lockServeConfig(*cfgPath)() // B3: load-modify-write, after the directory ownership check
 		c, err := loadServeConfig(*cfgPath)
 		created := errors.Is(err, os.ErrNotExist)
 		if created {
@@ -347,13 +354,6 @@ func serveCommand(args []string) {
 			c.Port = *port
 		}
 		deprecatedFolder(&c, *folder)
-		abs, _ := filepath.Abs(filepath.Dir(*cfgPath)) // zasebna mapa pred prvim zapisom žetona in ključa
-		os.MkdirAll(abs, 0o700)
-		if err := protectConfigDir(abs); errors.Is(err, errForeignOwner) {
-			fail(abs + " " + err.Error() + ": use a folder of your own")
-		} else if err != nil {
-			say("WARNING: cannot make " + abs + " private to this user: use the default config folder")
-		}
 		saveServeConfig(*cfgPath, c)
 
 		if connectLine(c) == "" {

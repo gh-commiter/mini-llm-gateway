@@ -2,7 +2,20 @@
 
 package main
 
-import "syscall"
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"syscall"
+)
+
+// hashVolumeID combines the filesystem type and mount source without ambiguous concatenation.
+func hashVolumeID(fsType, source string) uint64 {
+	if fsType == "" || source == "" {
+		return 0
+	}
+	sum := sha256.Sum256([]byte(fsType + "\x00" + source))
+	return binary.BigEndian.Uint64(sum[:])
+}
 
 // fileIDOf (#84): istovetnost mape (st_dev, st_ino; sledi povezavam), napaka = ni je mogoče ugotoviti.
 func fileIDOf(p string) (fileID, error) {
