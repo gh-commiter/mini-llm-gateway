@@ -1495,6 +1495,9 @@ func testNestedSkipped(t *testing.T, kind, why string) {
 		if ok && st != 200 {
 			t.Fatalf("messages: %d %s\n%s", st, data, out)
 		}
+		if st != 200 {
+			return fmt.Sprintf("%s\nmessages: status %d: %s", out, st, data)
+		}
 		return string(out)
 	}
 	branch := "minigw/claude-" + sha256Hex([]byte("sidk"))[:8] + "-0"
@@ -1523,7 +1526,26 @@ func testNestedSkipped(t *testing.T, kind, why string) {
 	out := run(false) // moved: nadzor teka agenta ustavi (zamenjan .git), delo vrhnjega vseeno pride
 	if kind == "toolarge" {
 		if !strings.Contains(out, "the agent's clone is too large to return") || strings.Contains(out, "kept on the gateway") {
-			t.Fatalf("too large clone:\n%s", out)
+			files, bytes := 0, int64(0)
+			err := filepath.WalkDir(slot.wt, func(p string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.IsDir() && strings.EqualFold(d.Name(), ".git") {
+					return filepath.SkipDir
+				}
+				if d.Type().IsRegular() {
+					fi, err := d.Info()
+					if err != nil {
+						return err
+					}
+					files++
+					bytes += fi.Size()
+				}
+				return nil
+			})
+			t.Fatalf("too large clone:\n%s\nclone: %d files, %d bytes; limits: %d files, %d bytes; scan error: %v",
+				out, files, bytes, maxSyncFiles, maxSyncBytes, err)
 		}
 		sc.unregister()
 		if k, _ := filepath.Glob(filepath.Join(tree.worktrees, "*-kept-*")); len(k) != 0 {

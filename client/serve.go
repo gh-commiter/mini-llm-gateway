@@ -531,7 +531,7 @@ type server struct {
 	// offUnchecked, offErrors: med offFolders tiste, ki jih ni mogoče preveriti, in napake razrešitve (stran sestavi razlog)
 	offUnchecked, offErrors []string
 	wasMissing              sync.Map // #83: dovoljene mape, ki so kdaj manjkale (agentFolders); odide le z mapo s seznama
-	refusedLogged           sync.Map // #83: zavrnjene označene mape, že v dnevniku (enkrat na mapo)
+	refusedLogged           sync.Map // folderRefusal → already logged
 	startRefused            sync.Map // M2: mapa → razlog; mapa se je od zapisa spremenila, ko je prehod bil ustavljen
 	runRefused              sync.Map // A1, A7: mapa → razlog; zavrnjena ob zadnjem zagonu agenta (prava pot, istovetnost)
 	settings                settingsState
@@ -714,8 +714,8 @@ func (s *server) checkFolderRecords(had map[string]folderRecord, missing []strin
 		}
 		if why != "" {
 			s.startRefused.Store(f, why)
-			s.refusedLogged.Store(f, true)
-			s.log.Printf("WARNING: allowed folder %s is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
+			s.refusedLogged.Store(folderRefusal{f, why}, true)
+			s.log.Printf("WARNING: allowed folder %q is not used: %q; if you trust it, remove and add it again in the allowed folders", f, why)
 		}
 	}
 	if len(added) > 0 {

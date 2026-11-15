@@ -44,6 +44,12 @@ public enum SharedFolders {
         return entries.filter { !matches.contains($0) } + [e]
     }
 
+    /// Only a stored name can remove an entry; an unstored alias leaves the list unchanged.
+    public static func removing(_ path: String, from entries: [Entry]) -> [Entry]? {
+        let kept = entries.filter { $0.path.caseInsensitiveCompare(path) != .orderedSame }
+        return kept.count == entries.count ? nil : kept
+    }
+
     /// Projektna mapa kjer koli (tudi /Volumes/Disk/projekt), razen korena diska ali priklopa, domače mape same,
     /// sistemskih map, domačih map drugih ter skritih map in ~/Library (kot autoShare v minigw Go). Podmapa začasne mape
     /// (/tmp/projekt, mktemp -d) je projektna mapa (privzeti auto jo kopira: worktree ali sync), začasna mapa sama ne,

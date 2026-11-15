@@ -791,7 +791,8 @@ func shareCommand(_ a: [String]) -> Never {
         list = updated; save()
         print("shared with the gateway from now on: \(describe(e)) (and its subfolders)")
     case "remove":
-        list.removeAll { $0.path == dir }; save()
+        guard let kept = SharedFolders.removing(dir, from: list) else { fail("not shared: \(dir)") }
+        list = kept; save()
         print("no longer shared: \(dir)")
     case "list":
         if list.isEmpty { print("no extra shared folders (folders under your home folder are shared by default)") }

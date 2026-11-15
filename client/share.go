@@ -398,7 +398,7 @@ func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastRe
 func call(c connection, method, path string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte) {
 	req, err := http.NewRequest(method, c.URL+path, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil
+		return 0, []byte(err.Error())
 	}
 	req.Header.Set("authorization", "Bearer "+c.Token)
 	req.Header.Set("X-Minigw-Client", clientInfo()) // OS in različica za vrstico čakajoče naprave (starejši prehodi jo prezrejo)
@@ -407,9 +407,12 @@ func call(c connection, method, path string, headers map[string]string, body []b
 	}
 	resp, err := (&http.Client{Timeout: timeout, CheckRedirect: noRedirect}).Do(req)
 	if err != nil {
-		return 0, nil
+		return 0, []byte(err.Error())
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxReply))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxReply))
+	if err != nil {
+		return 0, []byte(err.Error())
+	}
 	return resp.StatusCode, data
 }

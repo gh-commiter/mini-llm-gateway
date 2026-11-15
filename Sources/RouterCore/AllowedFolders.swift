@@ -53,7 +53,7 @@ public final class AllowedFolders: @unchecked Sendable {
     private struct Entry {
         var real: String?
         var missing: Bool
-        var logged = false
+        var logged: Set<String> = []
         var refused = ""
         var record: FolderRecord?  // M2, A1: the recorded identity; compared on every check (ino 0: adopted at the first use, B2)
     }
@@ -180,9 +180,9 @@ public final class AllowedFolders: @unchecked Sendable {
                     return nil
                 }
                 if RouterConfig.overlapsGatewayFolder(p, scratch: scratch) {  // #114: the app folder, Scratch, the Copilot cache: contains, equals or inside
-                    if !e.logged {
-                        e.logged = true
-                        log("WARNING: allowed folder \(p) is not used: it contains, equals or is inside one of the gateway's own folders (app folder, Scratch, Copilot cache)")
+                    let why = "it contains, equals or is inside one of the gateway's own folders (app folder, Scratch, Copilot cache)"
+                    if e.logged.insert(why).inserted {
+                        log("WARNING: allowed folder \(p.debugDescription) is not used: \(why.debugDescription)")
                     }
                     return nil
                 }
@@ -201,9 +201,8 @@ public final class AllowedFolders: @unchecked Sendable {
                 else if !Self.owned(r!) || (e.missing && !Self.owned(p)) { why = "it is a link or owned by another user" }
                 if !why.isEmpty {
                     e.refused = why
-                    if !e.logged {
-                        e.logged = true
-                        log("WARNING: allowed folder \(p) is not used: \(why); if you trust it, remove and add it again in the allowed folders")
+                    if e.logged.insert(why).inserted {
+                        log("WARNING: allowed folder \(p.debugDescription) is not used: \(why.debugDescription); if you trust it, remove and add it again in the allowed folders")
                     }
                     return nil
                 }

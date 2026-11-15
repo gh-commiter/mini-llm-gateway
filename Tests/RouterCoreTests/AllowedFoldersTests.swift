@@ -377,3 +377,24 @@ private func allowedTemp() throws -> URL {
         #expect(claude["folders"] as? String == p)
     }
 }
+
+@Test func allowedFolderLogsEachQuotedReasonOnce() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let folder = base.appendingPathComponent("folder")
+    try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+    let check = AllowedFolders(), p = folder.path
+    check.record(p)
+    try fm.removeItem(at: folder)
+    var logs: [String] = []
+    for name in ["first\ntarget", "second\ntarget"] {
+        let target = base.appendingPathComponent(name)
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: folder, withDestinationURL: target)
+        for _ in 0..<2 { #expect(check.folders(p, log: { logs.append($0) }).isEmpty) }
+        let reason = "its real path changed to " + target.path
+        #expect(logs.last?.contains("allowed folder \(p.debugDescription) is not used: \(reason.debugDescription);") == true)
+        try fm.removeItem(at: folder)
+    }
+    #expect(logs.count == 2)
+}

@@ -5,6 +5,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -66,7 +67,7 @@ func TestAllowedFolderRecordAcrossRestart(t *testing.T) {
 	if got := s.agentFolders(s.conf(), base); len(got) != 0 {
 		t.Fatalf("retargeted folder accepted: %v", got)
 	}
-	if strings.Count(logs, "is not used: its real path changed to ") != 1 {
+	if strings.Count(logs, `is not used: "its real path changed to `) != 1 {
 		t.Fatalf("log: %q", logs)
 	}
 	if again, _ := loadServeConfig(path); !slices.Equal(again.AllowedFolders, []string{folder}) || again.AllowedRecords[folder] != rec {
@@ -313,7 +314,7 @@ func TestRefusedAgreesWithLogAtStart(t *testing.T) {
 	ownedByMeFn = func(string) bool { return false }
 	ownerEveryRun = true
 	s, logs := startFrom(t, path)
-	if !strings.Contains(logs, "is not used: it is a link or owned by another user") || !slices.Equal(s.claudeInfo().Refused, []string{folder}) {
+	if !strings.Contains(logs, `is not used: "it is a link or owned by another user"`) || !slices.Equal(s.claudeInfo().Refused, []string{folder}) {
 		t.Fatalf("log %q refused %v", logs, s.claudeInfo().Refused)
 	}
 }
@@ -339,16 +340,41 @@ func TestRunTimeDropIsLoggedAndListed(t *testing.T) {
 			t.Fatalf("accepted: %v", got)
 		}
 	}
-	if strings.Count(buf.String(), "is not used: it is not a folder") != 1 || !slices.Equal(s.claudeInfo().Refused, []string{folder}) {
+	if strings.Count(buf.String(), `is not used: "it is not a folder"`) != 1 || !slices.Equal(s.claudeInfo().Refused, []string{folder}) {
 		t.Fatalf("log %q refused %v", buf.String(), s.claudeInfo().Refused)
 	}
+	c := s.conf()
+	c.AllowedRecords = map[string]folderRecord{folder: {}}
+	// A different reason for the same folder is logged once too.
 	if err := os.Remove(folder); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(folder+".old", folder); err != nil {
 		t.Fatal(err)
 	}
+	for range 2 {
+		s.agentFolders(c, base)
+	}
+	if strings.Count(buf.String(), "is not used:") != 2 ||
+		!strings.Contains(buf.String(), fmt.Sprintf("allowed folder %q", folder)) {
+		t.Fatalf("log %q", buf.String())
+	}
 	if got := s.agentFolders(s.conf(), base); len(got) != 1 || len(s.claudeInfo().Refused) != 0 {
 		t.Fatalf("not accepted again: %v %v", got, s.claudeInfo().Refused)
+	}
+}
+
+func TestRunTimeDropQuotesFolderAndReason(t *testing.T) {
+	s, _ := testServer(t, nil)
+	var buf bytes.Buffer
+	s.log.SetOutput(&buf)
+	folder := "bad\nfolder"
+	c := s.conf()
+	c.AllowLocalTools = false
+	c.AllowedFolders = []string{folder}
+	s.checkedAgentFolders(c, "")
+	why, ok := s.runRefused.Load(folder)
+	if !ok || !strings.Contains(buf.String(), fmt.Sprintf("allowed folder %q is not used: %q;", folder, why)) {
+		t.Fatalf("log %q reason %v", buf.String(), why)
 	}
 }

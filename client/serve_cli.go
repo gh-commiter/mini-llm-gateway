@@ -435,12 +435,14 @@ func (s *server) agentFolders(c serveConfig, dir string) []string {
 	return s.checkedAgentFolders(c, dir).paths()
 }
 
+type folderRefusal struct{ folder, reason string }
+
 func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 	var out checkedFolders
 	refuse := func(f, why string) { // every run-time drop is logged once and listed in `refused`
 		s.runRefused.Store(f, why)
-		if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
-			s.log.Printf("WARNING: allowed folder %s is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
+		if _, logged := s.refusedLogged.LoadOrStore(folderRefusal{f, why}, true); !logged {
+			s.log.Printf("WARNING: allowed folder %q is not used: %q; if you trust it, remove and add it again in the allowed folders", f, why)
 		}
 	}
 	for _, f := range c.AllowedFolders {
