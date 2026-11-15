@@ -667,6 +667,30 @@ public enum Native {
     /// Drevo agenta po teku ni ustavljeno (killTree false): brez syncBack in brez združitve klona.
     struct TreeAlive: Error { let agent: String }
 
+    /// A timer that guards a kill or a deadline, on a thread of its own: not `DispatchQueue.global().asyncAfter` (#109): under a loaded full run the pool has no free thread for tens of
+    /// seconds and the block runs after the process it should have killed has finished. The action runs once after `seconds` unless `cancel()` came first; the thread is named
+    /// `minigw.kill-timer` (a test checks that it is not a pool thread).
+    final class KillTimer: @unchecked Sendable {
+        static let threadName = "minigw.kill-timer"
+        private let lock = NSLock()
+        private var done = false
+        init(after seconds: TimeInterval, _ action: @escaping @Sendable () -> Void) {
+            let end = Date().addingTimeInterval(seconds)
+            let t = Thread { [self] in
+                while !isDone {
+                    if Date() >= end { if claim() { action() }; return }
+                    usleep(20_000)
+                }
+            }
+            t.name = Self.threadName
+            t.start()
+        }
+        private var isDone: Bool { lock.withLock { done } }
+        private func claim() -> Bool { lock.withLock { if done { return false }; done = true; return true } }
+        /// True: the action will not run (it had not started). False: it already ran or is running.
+        @discardableResult func cancel() -> Bool { claim() }
+    }
+
     /// Prekinitev: SIGTERM skupini `pgid`, po 5 s SIGKILL.
     static func terminateGroup(_ pgid: pid_t) {
         guard pgid > 1, pgid != getpgrp() else { return }

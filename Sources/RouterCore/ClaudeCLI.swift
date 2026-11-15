@@ -515,8 +515,7 @@ public enum ClaudeCLI {
         p.standardError = out
         p.standardInput = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return .failure(.init("Cannot run file")) }
-        let killer = DispatchWorkItem { Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }  // #73: tudi vnuk s cevjo
-        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: killer)
+        let killer = Native.KillTimer(after: 5) { Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }  // #73: tudi vnuk s cevjo; own thread (#109), not the dispatch pool
         let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         killer.cancel()
@@ -540,8 +539,7 @@ public enum ClaudeCLI {
             p.standardInput = FileHandle.nullDevice
             guard (try? p.run()) != nil else { return [] }
             // #73: drevo (tudi vnuk s cevjo), ne le claude: sicer branje spodaj obvisi
-            let killer = DispatchWorkItem { Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: killer)
+            let killer = Native.KillTimer(after: 15) { Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }  // own thread (#109), not the dispatch pool
             defer { killer.cancel(); Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }
             var line = Data()
             while let b = try? out.fileHandleForReading.read(upToCount: 1), let c = b.first, c != 10 { line.append(c) }

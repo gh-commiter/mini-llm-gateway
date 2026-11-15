@@ -473,21 +473,25 @@ private final class Clock: @unchecked Sendable {
     #expect(gone, "the descendant lives")
 }
 
-/// The timeout must not depend on a free thread of the dispatch pool: under a loaded full test run (xcodebuild runs hundreds of blocking tests at once) a timer on the pool fired late,
-/// the stub finished its 6 s sleep and a run that took 3 times its limit was judged a pass. Reproduced here by keeping the pool busy.
-@Test func captureTimeoutHoldsWhileTheDispatchPoolIsBusy() async throws {
-    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("capture-busy-" + UUID().uuidString.lowercased(), isDirectory: true)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let group = DispatchGroup()
-    for _ in 0..<150 { DispatchQueue.global().async(group: group) { Thread.sleep(forTimeInterval: 3) } }  // more than the pool has threads, for 3 s
-    Thread.sleep(forTimeInterval: 0.3)
-    let t0 = Date()
-    // the stub ends after 2 s: a timer that waits for a free pool thread (about 3 s) fires after it, and the run would count as in time
-    let r = ClaudeSeatbelt.capture("/bin/sh", ["-c", "sleep 2; echo late"], env: ProcessInfo.processInfo.environment, cwd: dir.path, input: "", timeout: 0.5, log: dir)
-    let took = Date().timeIntervalSince(t0)
-    #expect(r.timedOut && !r.out.contains("late") && took < 1.9, "timedOut \(r.timedOut), took \(took) s")
-    group.wait()
+/// The kill timers do not depend on a free thread of the dispatch pool (under a loaded full run the pool had none for seconds and a timer fired after the process it guarded had finished:
+/// reproduced once by keeping the pool busy for 9 s, which also made other tests miss their limits, so the property is checked structurally): the action runs on its own named thread,
+/// once, and `cancel()` prevents it.
+@Test func killTimerRunsOnItsOwnThreadOnceAndCanBeCancelled() async throws {
+    final class Seen: @unchecked Sendable {
+        let lock = NSLock(); var names: [String] = []; var pool = false
+        func add(_ n: String, onMain: Bool) { lock.withLock { names.append(n); if onMain { pool = true } } }
+    }
+    let seen = Seen()
+    let timer = Native.KillTimer(after: 0.2) { seen.add(Thread.current.name ?? "", onMain: Thread.isMainThread) }
+    for _ in 0..<500 where seen.lock.withLock({ seen.names.isEmpty }) { try await Task.sleep(for: .milliseconds(20)) }  // generous: it must fire, however loaded
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(seen.names == [Native.KillTimer.threadName] && !seen.pool)  // once, on its own thread
+    #expect(!timer.cancel())  // too late: it ran
+    let cancelled = Seen()
+    let late = Native.KillTimer(after: 0.3) { cancelled.add("ran", onMain: false) }
+    #expect(late.cancel())
+    try await Task.sleep(for: .milliseconds(700))
+    #expect(cancelled.names.isEmpty)
 }
 
 /// L1: a run too slow under the profile while the control run answers is a slow machine, not a broken profile; an `off` verdict expires (30 minutes) and is checked again.
