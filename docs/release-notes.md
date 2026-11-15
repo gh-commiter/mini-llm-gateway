@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.1
+
 ### New
 - New (both gateways): usage statistics keep the provider and, when the provider reports it, the cost of each request (`/usage/events` rows: `provider`, `reportedCostUsd`, `eventsWithoutCost`); an OpenRouter spending or key limit is now reported as "OpenRouter: spending limit reached" instead of "check the API key".
 - New (`minigw serve`): the Settings page in the browser marks allowed folders that are refused, with the reason, as the Mac Settings do.
