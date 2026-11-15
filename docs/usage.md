@@ -387,7 +387,10 @@ still runs (measured with a real run), so for this run **your own settings and h
 can only remove tools. While a restriction applies, minigw refuses options that could widen it, also outside Claude Code and with
 `MINIGW_ALLOW_UNSAFE_FLAGS=1` (`--tools`, `--allowedTools`, `--mcp-config`, `--permission-mode`, `--dangerously-skip-permissions`, `--settings`,
 `--setting-sources`, `--add-dir`, `--agents`, `--plugin-dir` …); `-c`, `-r` and `--session-id` stay allowed. `--minigw-ro` (also a folder
-saved read-only) means `read` for every model that is not certainly a gateway agent, also when no `--model` is given. Agent models
+saved read-only) means `read` for every model that is not certainly a gateway agent, also when no `--model` is given: the default model then
+comes from the `model` key of your Claude settings (measured: `{"model":"haiku"}` in a project's `.claude/settings.json` ran claude-haiku-5-5 without `--model`),
+and that key can name a provider model, so minigw cannot know it. The restricted run loads no settings, so an interactive `minigw --minigw-ro`
+without `--model` uses Claude Code's built-in default model, with read tools only and without your own settings and hooks; name `--model` to choose. Agent models
 (`claude-cli-…`, `claude-codex…`, `claude-grok…`, `claude-copilot…`, exact names as the gateway uses them) are limited on the gateway:
 `--minigw-tools` with one is an error (use `--minigw-ro`). `ANTHROPIC_MODEL` does not name the model (minigw does not pass it to claude).
 Inside a gateway agent (`MINIGW_AGENT_URL`) a provider model is asked directly and gets no tools at all, so the flag is accepted and has nothing
