@@ -425,18 +425,42 @@ public enum Profiles {
         return (rest, value, nil)
     }
 
-    /// Orodja modela (model brez pripone profila); nil = brez omejitve (kot Go toolsFor).
+    /// Model, ki ga prehod zagotovo vodi kot agenta (kot Go isAgentID): claude-cli-…, claude-codex|grok|copilot[-…]; model ponudnika s takim
+    /// imenom se na prehodu skrije. Velike črke in »claude-codexa« niso agent.
+    static func isAgentID(_ m: String) -> Bool {
+        m.hasPrefix("claude-cli-") || ["claude-codex", "claude-grok", "claude-copilot"].contains { m == $0 || m.hasPrefix($0 + "-") }
+    }
+
+    /// Orodja modela (model brez pripone profila, "" = ni --model); nil = brez omejitve (kot Go toolsFor). readOnly vključuje shranjeno
+    /// nastavitev mape; --minigw-ro pomeni read za vse, kar ni zagotovo agent, tudi brez znanega modela.
     public static func toolsFor(model: String, flag: String?, readOnly: Bool) -> (tools: String?, error: String?) {
-        if flag != nil, isAgentModel(model) {
+        if flag != nil, isAgentID(model) {
             return (nil, "--minigw-tools is not available for \(model): agents are limited on the gateway, use --minigw-ro")
         }
-        if flag == nil, readOnly, !model.isEmpty, !isAgentModel(model) { return ("read", nil) }
+        if flag == nil, readOnly, !isAgentID(model) { return ("read", nil) }
         return (flag, nil)
+    }
+
+    /// Prva možnost claude, ki bi omejitev orodij razširila ali zamenjala; tudi zunaj Claude Code in kljub MINIGW_ALLOW_UNSAFE_FLAGS=1
+    /// (kot Go toolsWiden). Pogovorne možnosti (-c, -r, --session-id …) ostanejo.
+    public static func toolsWiden(_ args: [String]) -> String? {
+        var rest: [String] = [], i = 0
+        while i < args.count {
+            let a = args[i], name = a.split(separator: "=", maxSplits: 1).first.map(String.init) ?? a
+            if a == "--" { rest += args[i...]; break }
+            if a == "-c" || a == "--continue" || a == "--fork-session" {
+            } else if name == "-r" || name == "--resume" || name == "--session-id" {
+                if !a.contains("="), i + 1 < args.count, !args[i + 1].hasPrefix("-") { i += 1 }
+            } else { rest.append(a) }
+            i += 1
+        }
+        return unsafeClaudeFlag(rest, env: ["CLAUDECODE": "1"])
     }
 
     /// Argumenti claude za orodja; --disable-slash-commands le, če ga args še nimajo (kot Go toolsArgs).
     public static func toolsArgs(_ tools: String, args: [String]) -> [String] {
-        let out = ["--tools=" + (tools == "read" ? toolsRead : ""), "--strict-mcp-config"]
+        // --setting-sources=: hooki in dovoljenja iz nastavitev bi tekli mimo seznama orodij (izmerjeno); --settings minigw ostane
+        let out = ["--tools=" + (tools == "read" ? toolsRead : ""), "--strict-mcp-config", "--setting-sources="]
         return args.contains("--disable-slash-commands") ? out : out + ["--disable-slash-commands"]
     }
 

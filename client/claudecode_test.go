@@ -301,7 +301,16 @@ type toolsCases struct {
 		Args  []string
 		Out   []string
 	}
-	Line []struct{ Tools, Line string }
+	Line     []struct{ Tools, Line string }
+	FolderRo []struct {
+		Model, Flag     string
+		FlagRo, SavedRo bool
+		Tools           string
+	}
+	Widen []struct {
+		Args []string
+		Flag string
+	}
 }
 
 func loadToolsCases(t *testing.T) toolsCases {
@@ -334,6 +343,17 @@ func TestMinigwTools(t *testing.T) {
 	for _, p := range c.Line {
 		if l := toolsLine(p.Tools); l != p.Line {
 			t.Errorf("line %q", l)
+		}
+	}
+	for _, p := range c.FolderRo { // R3: shranjena nastavitev mape samo za branje šteje kot --minigw-ro (workMode)
+		_, ro := workMode("", &sharedFolder{ReadOnly: p.SavedRo}, p.FlagRo)
+		if tools, msg := toolsFor(p.Model, p.Flag, ro); tools != p.Tools || msg != "" {
+			t.Errorf("folderRo %+v: got %q %q", p, tools, msg)
+		}
+	}
+	for _, p := range c.Widen { // R1: z omejitvijo ostane le to, kar ne širi orodij; tudi zunaj Claude Code
+		if f := toolsWiden(p.Args); f != p.Flag {
+			t.Errorf("widen %v: got %q, want %q", p.Args, f, p.Flag)
 		}
 	}
 }
@@ -381,6 +401,14 @@ func TestMinigwToolsRefusals(t *testing.T) {
 	}
 	if out := run("-p", "--model", "litellm-gpt", "--minigw-tools=read", "x"); strings.Contains(out, "not accepted") || strings.Contains(out, "unknown value") {
 		t.Errorf("--minigw-tools refused inside Claude Code: %s", out)
+	}
+	// R1: tudi zunaj Claude Code (MINIGW_ALLOW_UNSAFE_FLAGS=1) omejitev ne sme dobiti širših možnosti za sabo
+	for _, args := range []string{"-p --model litellm-gpt --minigw-tools=read --allowedTools Bash x", "-p --model litellm-gpt --minigw-ro --tools default x",
+		"-p --minigw-tools none --mcp-config m.json x"} {
+		cmd := minigwCmd(dir, log, []string{"HOME=" + home, "XDG_CONFIG_HOME=" + home, "APPDATA=" + home, "USERPROFILE=" + home}, strings.Fields(args)...)
+		if out, _ := cmd.CombinedOutput(); !strings.Contains(string(out), "is not accepted together with --minigw-tools") {
+			t.Errorf("%s: %s", args, out)
+		}
 	}
 	if _, err := os.Stat(log); err == nil {
 		t.Error("claude was started")

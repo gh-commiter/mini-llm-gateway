@@ -67,7 +67,7 @@ Claude Code's settings.
 | `--minigw-work=MODE` | `MINIGW_WORK=MODE` | Work mode: `auto`, `worktree`, `sync`, `direct`, `native`, `native-direct` ([usage.md → Work modes](usage.md#work-modes-what-happens-to-your-files)). Inside Claude Code the flag with `direct`, `sync` or `native-direct` needs read-only or that mode saved for the folder; otherwise put `MINIGW_WORK=` in front |
 | `--minigw-ro` | `MINIGW_SHARE=ro` | Share the folder read-only |
 | – | `MINIGW_SHARE=0` / `1` | Do not share the folder / share it even if it is not shared automatically |
-| `--minigw-tools none\|read` | | Tools of a provider model (LiteLLM, OpenRouter) that runs in the local Claude Code: `read` = Read, Grep, Glob only, `none` = no tools; no Bash, edits, MCP tools or sub-agents either way. Allowed inside Claude Code (it only takes tools away); `--minigw-ro` alone means `read` for these models; an error for agent models (use `--minigw-ro`). minigw prints `minigw: tools of this model: …` |
+| `--minigw-tools none\|read` | | Tools of a provider model (LiteLLM, OpenRouter) that runs in the local Claude Code: `read` = Read, Grep, Glob only, `none` = no tools; no Bash, edits, MCP tools or sub-agents either way; your own Claude settings and hooks are not loaded for that run, and options that could widen the set are refused. Allowed inside Claude Code (it only takes tools away); `--minigw-ro` alone means `read` for these models; an error for agent models (use `--minigw-ro`). minigw prints `minigw: tools of this model: …` |
 | `--minigw-role NAME` | `MINIGW_ROLE=NAME` | The caller's role, recorded in the gateway's session history |
 | `--minigw-profile P` | – | Use only profile `P` for this command |
 | `--model <model>@P` | – | Run on profile `P`'s gateway |

@@ -859,6 +859,7 @@ let toolsArg = Profiles.takeTools(args)
 if let e = toolsArg.error { fail(e) }
 args = toolsArg.rest
 let toolsFlag = toolsArg.value
+var toolsPlan: (tools: String?, error: String?) = (nil, nil)
 // --minigw-role <ime> (ali MINIGW_ROLE): vloga klicatelja za zgodovino sej (kasneje omejitve); varovalo, ne meja.
 let roleArg = GatewayHistory.takeRole(args, env: ProcessInfo.processInfo.environment["MINIGW_ROLE"])
 let role = roleArg.role
@@ -883,7 +884,7 @@ while let i = args.firstIndex(where: { $0 == "--minigw-profile" || $0.hasPrefix(
 if agentConn() != nil, let first = args.first, ["connect", "reconnect", "disconnect", "profiles", "plugin", "uninstall"].contains(first) {
     fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): \(first) is not available here")
 }
-if let c = agentConn(), args.first?.hasPrefix("-") == true, args.contains("-p") || args.contains("--print") { agentAsk(c, args) }
+if let c = agentConn(), args.first?.hasPrefix("-") == true, args.contains("-p") || args.contains("--print") { agentAsk(c, args, tools: toolsFlag) }
 
 switch args.first {
 case "share":
@@ -1064,8 +1065,15 @@ if agentConn() == nil {  // --model …@profil: ves zagon s tem prehodom, kot --
         profileFlag = p; args = mp.args
     }
 }
-let toolsPlan = Profiles.toolsFor(model: Profiles.modelArg(args), flag: toolsFlag, readOnly: readOnly)  // #119: model brez pripone profila
-if let e = toolsPlan.error { fail(e) }
+do {  // #119: model brez pripone profila (modelProfile zgoraj); shranjena nastavitev mape samo za branje šteje kot --minigw-ro (SharedFolders.mode)
+    let entry = savedShare(FileManager.default.currentDirectoryPath)
+    toolsPlan = Profiles.toolsFor(model: Profiles.modelArg(args), flag: toolsFlag,
+                                  readOnly: SharedFolders.mode(flag: workFlag, saved: entry, readOnly: readOnly).readOnly)
+    if let e = toolsPlan.error { fail(e) }
+    if toolsPlan.tools != nil, let f = Profiles.toolsWiden(args) {
+        fail("\(f) is not accepted together with --minigw-tools (or --minigw-ro for a provider model): it could widen the tools of the model")
+    }
+}
 let profiles = loadProfiles()
 if profiles.isEmpty { _ = requireProfile() }
 let saved = profiles[0].conn  // privzeti profil: mapa, glave in modeli brez pripone kot prej

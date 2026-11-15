@@ -323,7 +323,11 @@ func main() {
 		}
 		http.DefaultTransport.(*http.Transport).Proxy = agentProxy
 		if strings.HasPrefix(first, "-") && (slices.Contains(args, "-p") || slices.Contains(args, "--print")) {
-			agentAsk(c, args)
+			args, toolsFlag, e := takeTools(args) // #119: tam model ponudnika nima orodij; model agenta je omejen na prehodu
+			if e != "" {
+				fail(e)
+			}
+			agentAsk(c, args, toolsFlag)
 			return
 		}
 	}
@@ -616,6 +620,16 @@ func main() {
 		asked = savedWork
 	}
 	work, readOnly = workMode(work, shared, readOnly)
+	if agentConn() == nil { // #119: po workMode (shranjena nastavitev mape samo za branje šteje) in po modelProfile (brez pripone profila)
+		args = modelProfile(args, profileNames())
+	}
+	tools, toolsErr := toolsFor(modelArg(args), toolsFlag, readOnly)
+	if toolsErr != "" {
+		fail(toolsErr)
+	}
+	if f := toolsWiden(args); tools != "" && f != "" {
+		fail(f + " is not accepted together with --minigw-tools (or --minigw-ro for a provider model): it could widen the tools of the model")
+	}
 	if unsafeWork(flagWork, savedWork, readOnly, os.Getenv) {
 		fail("--minigw-work=" + flagWork + " is not accepted when minigw runs inside Claude Code: the agent would change your files " +
 			"without a branch to review; put MINIGW_WORK=" + flagWork + " in front of the command instead, so Claude Code asks you first " +
@@ -625,13 +639,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "minigw: "+asked+" mode cannot be read-only; sharing the folder read-only instead")
 	}
 	implicit := workImplicit(asked, work)
-	if agentConn() == nil {
-		args = modelProfile(args, profileNames())
-	}
-	tools, toolsErr := toolsFor(modelArg(args), toolsFlag, readOnly) // #119: model brez pripone profila (modelProfile)
-	if toolsErr != "" {
-		fail(toolsErr)
-	}
 	ps := loadProfiles()
 	if len(ps) == 0 {
 		requireProfile()

@@ -120,7 +120,9 @@ struct ToolsCases: Decodable {
     struct Plan: Decodable { let model: String; let flag: String; let ro: Bool; let tools: String; let error: String }
     struct Out: Decodable { let tools: String; let args: [String]; let out: [String] }
     struct Line: Decodable { let tools: String; let line: String }
-    let parse: [Parse], plan: [Plan], claudeArgs: [Out], line: [Line]
+    struct FolderRo: Decodable { let model: String; let flag: String; let flagRo: Bool; let savedRo: Bool; let tools: String }
+    struct Widen: Decodable { let args: [String]; let flag: String }
+    let parse: [Parse], plan: [Plan], claudeArgs: [Out], line: [Line], folderRo: [FolderRo], widen: [Widen]
 }
 
 @Test func minigwToolsFlagTable() throws {
@@ -135,6 +137,12 @@ struct ToolsCases: Decodable {
     }
     for p in c.claudeArgs { #expect(Profiles.toolsArgs(p.tools, args: p.args) == p.out, "args \(p)") }
     for p in c.line { #expect(Profiles.toolsLine(p.tools) == p.line) }
+    for p in c.folderRo {  // R3: shranjena nastavitev mape samo za branje šteje kot --minigw-ro
+        let ro = SharedFolders.mode(flag: nil, saved: SharedFolders.Entry(path: "/x", readOnly: p.savedRo), readOnly: p.flagRo).readOnly
+        let r = Profiles.toolsFor(model: p.model, flag: p.flag.isEmpty ? nil : p.flag, readOnly: ro)
+        #expect((r.tools ?? "") == p.tools && r.error == nil, "folderRo \(p)")
+    }
+    for p in c.widen { #expect((Profiles.toolsWiden(p.args) ?? "") == p.flag, "widen \(p.args)") }  // R1
 }
 
 /// #119: --minigw-tools sme pod Claude Code (le jemlje orodja); --tools in dovoljenja ostanejo zavrnjeni; zavrnitev »@« pove za stdin.

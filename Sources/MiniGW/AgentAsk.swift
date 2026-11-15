@@ -66,7 +66,7 @@ func agentBody(_ model: String, _ question: String) -> Data {
 }
 
 /// minigw -p --model <id> "vprašanje" (ali vprašanje na stdin); besedilo odgovora sproti na stdout.
-func agentAsk(_ c: Connection, _ args: [String]) -> Never {
+func agentAsk(_ c: Connection, _ args: [String], tools: String?) -> Never {
     var model = "", words: [String] = []
     var i = 0
     while i < args.count {
@@ -82,6 +82,7 @@ func agentAsk(_ c: Connection, _ args: [String]) -> Never {
         i += 1
     }
     guard !model.isEmpty else { fail("usage: minigw -p --model <id> \"question\"   (minigw models lists the models)") }
+    if let e = Profiles.toolsFor(model: model, flag: tools, readOnly: false).error { fail(e) }  // #119: model ponudnika tu nima orodij
     var q = words.joined(separator: " ")
     if q.isEmpty { q = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self) }
     var status = 0, errBody = Data(), line = Data(), failure: String?
