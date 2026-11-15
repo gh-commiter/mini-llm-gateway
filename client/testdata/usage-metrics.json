@@ -1,0 +1,205 @@
+[
+  {
+    "name": "reported",
+    "body": "{\"usage\":{\"input_tokens\":12,\"output_tokens\":3,\"cost\":0.006}}",
+    "input": 12,
+    "output": 3,
+    "cost": 6000000
+  },
+  {
+    "name": "zero",
+    "body": "{\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cost\":0}}",
+    "input": 0,
+    "output": 0,
+    "cost": 0
+  },
+  {
+    "name": "absent",
+    "body": "{\"content\":[{\"type\":\"text\",\"text\":\"input_tokens: 9999\"}]}",
+    "input": null,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "tool usage is not accounting",
+    "body": "{\"content\":[{\"type\":\"tool_use\",\"input\":{\"usage\":{\"input_tokens\":999,\"cost\":100}}}]}",
+    "input": null,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "escaped false tokens",
+    "body": "{\"content\": [{\"text\": \"\\\"usage\\\":{\\\"input_tokens\\\":999,\\\"cost\\\":100}\"}]}",
+    "input": null,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "cumulative SSE",
+    "body": "event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\nevent: message_delta\ndata: {\"usage\":{\"output_tokens\":4,\"cost\":0.0000000015}}\n\ndata: {\"usage\":{\"output_tokens\":4,\"cost\":0.0000000015}}\n\n",
+    "input": 12,
+    "output": 4,
+    "cost": 2
+  },
+  {
+    "name": "multi data SSE",
+    "body": "data: {\"usage\":\ndata: {\"input_tokens\":2,\ndata: \"output_tokens\":3}}\n\n",
+    "input": 2,
+    "output": 3,
+    "cost": null
+  },
+  {
+    "name": "partial stream",
+    "body": "data: {\"usage\":{\"input_tokens\":5}}\n\ndata: {\"usage\":{\"output_tokens\":",
+    "input": 5,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "invalid values",
+    "body": "{\"usage\":{\"input_tokens\":-1,\"output_tokens\":true,\"cost\":-1}}",
+    "input": null,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "overflow",
+    "body": "{\"usage\":{\"input_tokens\":9223372036854775808,\"cost\":1e1000000000}}",
+    "input": null,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "string cost is unsupported",
+    "body": "{\"usage\":{\"cost\":\"0.003\"}}",
+    "input": null,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "HTTP wrapped",
+    "body": "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"usage\":{\"input_tokens\":0,\"cost\":0.01}}",
+    "input": 0,
+    "output": null,
+    "cost": 10000000
+  },
+  {
+    "name": "exact decimal below half",
+    "body": "{\"usage\":{\"cost\":0.123456789499999999}}",
+    "input": null,
+    "output": null,
+    "cost": 123456789
+  },
+  {
+    "name": "exact decimal above half",
+    "body": "{\"usage\":{\"cost\":0.123456789500000001}}",
+    "input": null,
+    "output": null,
+    "cost": 123456790
+  },
+  {
+    "name": "invalid cost valid counter",
+    "body": "{\"usage\":{\"input_tokens\":7,\"cost\":1e1000000000}}",
+    "input": 7,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "invalid input valid output",
+    "body": "{\"usage\":{\"input_tokens\":true,\"output_tokens\":2}}",
+    "input": null,
+    "output": 2,
+    "cost": null
+  },
+  {
+    "name": "null is absent",
+    "body": "{\"usage\":{\"input_tokens\":null,\"output_tokens\":null,\"cost\":null}}",
+    "input": null,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "SSE metadata is not accounting",
+    "body": ": {\"usage\":{\"input_tokens\":999,\"cost\":100}}\nevent: \"quoted\"\nid: {\"usage\":{\"output_tokens\":999}}\ndata: {\"usage\":{\"input_tokens\":2,\"output_tokens\":3}}\n\n",
+    "input": 2,
+    "output": 3,
+    "cost": null
+  },
+  {
+    "name": "whole numeric counters",
+    "body": "{\"usage\":{\"input_tokens\":1.0,\"output_tokens\":1e2}}",
+    "input": 1,
+    "output": 100,
+    "cost": null
+  },
+  {
+    "name": "fractional counters",
+    "body": "{\"usage\":{\"input_tokens\":1.5,\"output_tokens\":\"2\"}}",
+    "input": null,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "recover after malformed SSE frame",
+    "body": "data: {\"content\":\"unterminated\n\ndata: {\"usage\":{\"input_tokens\":2,\"output_tokens\":3,\"cost\":0}}\n\n",
+    "input": 2,
+    "output": 3,
+    "cost": 0
+  },
+  {
+    "name": "CRLF SSE",
+    "body": "event: message_start\r\ndata: {\"message\":{\"usage\":{\"input_tokens\":2}}}\r\n\r\ndata: {\"usage\":{\"output_tokens\":3}}\r\n\r\n",
+    "input": 2,
+    "output": 3,
+    "cost": null
+  },
+  {
+    "name": "recover after malformed CRLF SSE frame",
+    "body": "data: {\"content\":\"unterminated\r\n\r\ndata: {\"usage\":{\"output_tokens\":3}}\r\n\r\n",
+    "input": null,
+    "output": 3,
+    "cost": null
+  },
+  {
+    "name": "CR-only SSE",
+    "body": "event: message_start\rdata: {\"message\":{\"usage\":{\"input_tokens\":2}}}\r\rdata: {\"usage\":{\"output_tokens\":3}}\r\r",
+    "input": 2,
+    "output": 3,
+    "cost": null
+  },
+  {
+    "name": "long decimal below half",
+    "body": "{\"usage\":{\"cost\":0.0000000004999999999999999999999999999999999999999999999999999999999999}}",
+    "input": null,
+    "output": null,
+    "cost": 0
+  },
+  {
+    "name": "long decimal above half",
+    "body": "{\"usage\":{\"cost\":0.00000000050000000000000000000000000000000000000000000000000000000000001}}",
+    "input": null,
+    "output": null,
+    "cost": 1
+  },
+  {
+    "name": "nanodollar maximum",
+    "body": "{\"usage\":{\"cost\":9223372036.854775807}}",
+    "input": null,
+    "output": null,
+    "cost": 9223372036854775807
+  },
+  {
+    "name": "nanodollar rounded overflow",
+    "body": "{\"usage\":{\"cost\":9223372036.8547758075}}",
+    "input": null,
+    "output": null,
+    "cost": null
+  },
+  {
+    "name": "nested cost is not billing",
+    "body": "{\"usage\":{\"nested\":{\"cost\":3},\"cost\":0.01}}",
+    "input": null,
+    "output": null,
+    "cost": 10000000
+  }
+]

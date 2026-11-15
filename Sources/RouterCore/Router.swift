@@ -742,7 +742,7 @@ public final class Router: Sendable {
 
         var headSent = false
         var status = 502
-        dispatched(r.provider.id)  // the upstream request goes out (usage event)
+        dispatched(r.provider.id, upstreamModel: r.upstream)  // the upstream request goes out (usage event)
         do {
             let (bytes, resp) = try await session.bytes(for: up)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
@@ -761,7 +761,7 @@ public final class Router: Sendable {
                 let (st, msg) = Self.upstreamError(status: status, name: r.provider.name, body: d)
                 // 429 ponudnika (npr. brezplačni model na OpenRouterju) brez ponavljanja, kot omejitev agenta
                 return await self.error(st, Self.errorType(st), msg, rid: rid,
-                                        extra: st == 429 ? [("x-should-retry", "false")] : [], writer: writer)
+                                        extra: st == 429 || status == 403 && spendingLimit(name: r.provider.name, body: d) ? [("x-should-retry", "false")] : [], writer: writer)
             }
             try await writer.write(HTTPResponse.head(status: status, headers: [
                 ("Content-Type", http.value(forHTTPHeaderField: "content-type") ?? "application/json"),
@@ -792,12 +792,14 @@ public final class Router: Sendable {
             .flatMap { $0["error"] as? [String: Any] }?["message"] as? String ?? ""
         if msg.isEmpty { msg = String(decoding: body, as: UTF8.self) }
         msg = String(String.UnicodeScalarView(msg.unicodeScalars.filter {
-            $0 == "\n" || ($0.properties.generalCategory != .control && $0.properties.generalCategory != .format)  // tudi bidi
+            $0 == "\n" || ($0.properties.generalCategory != .control && $0.properties.generalCategory != .format && $0.value != 0x2028 && $0.value != 0x2029)  // tudi bidi
         })).trimmingCharacters(in: .whitespacesAndNewlines)
-        msg = String(msg.prefix(300))
-        while msg.utf8.count > 300 { msg.removeLast() }
+        msg = String(String.UnicodeScalarView(msg.unicodeScalars.prefix(300)))
+        while msg.utf8.count > 300 { msg.unicodeScalars.removeLast() }
         switch status {
-        case 401, 403: return (502, "\(name): HTTP \(status), check the API key (minigw gw provider add \(name))")
+        case 403 where spendingLimit(name: name, body: body): return (502, "OpenRouter: spending limit reached")
+        case 403: return (502, "\(name): access denied: \(msg)")
+        case 401: return (502, "\(name): HTTP \(status), check the API key (minigw gw provider add \(name))")
         case 400...599: return (status, "\(name): \(msg)")
         default: return (502, "\(name): HTTP \(status): \(msg)")
         }

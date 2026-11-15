@@ -501,12 +501,14 @@ type usageWriter struct {
 	http.ResponseWriter
 	in, out int64
 	tail    []byte
+	metrics usageMetrics
 	errSeen bool // an SSE error event went through (a stream that began with 200 and failed)
 }
 
 var usageRe = regexp.MustCompile(`"(input|output)_tokens"\s*:\s*(\d+)`)
 
 func (u *usageWriter) Write(p []byte) (int, error) {
+	u.metrics.feed(p)
 	buf := append(u.tail, p...)
 	u.errSeen = u.errSeen || usageErrSeen(buf)
 	for _, m := range usageRe.FindAllSubmatch(buf, -1) {

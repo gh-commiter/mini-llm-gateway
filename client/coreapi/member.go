@@ -3,6 +3,7 @@ package coreapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -61,17 +62,21 @@ func toNote(n core.Note, withBody bool) NoteJSON {
 }
 
 type UsageRowJSON struct {
-	Day           string `json:"day"`
-	Model         string `json:"model"`
-	User          int64  `json:"user,omitempty"`
-	UserName      string `json:"userName,omitempty"`
-	Project       int64  `json:"project,omitempty"`
-	Events        int64  `json:"events"`
-	TokensIn      int64  `json:"tokensIn"`
-	TokensOut     int64  `json:"tokensOut"`
-	UnknownTokens int64  `json:"eventsWithoutTokens"`
-	Nested        int64  `json:"nestedEvents"`
-	Failed        int64  `json:"failedEvents"`
+	Provider      string  `json:"provider"`
+	ReportedCost  *string `json:"reportedCostUsd"`
+	EstimatedCost *string `json:"estimatedCostUsd"`
+	UnknownCost   int64   `json:"eventsWithoutCost"`
+	Day           string  `json:"day"`
+	Model         string  `json:"model"`
+	User          int64   `json:"user,omitempty"`
+	UserName      string  `json:"userName,omitempty"`
+	Project       int64   `json:"project,omitempty"`
+	Events        int64   `json:"events"`
+	TokensIn      int64   `json:"tokensIn"`
+	TokensOut     int64   `json:"tokensOut"`
+	UnknownTokens int64   `json:"eventsWithoutTokens"`
+	Nested        int64   `json:"nestedEvents"`
+	Failed        int64   `json:"failedEvents"`
 }
 
 type UsageGapJSON struct {
@@ -84,12 +89,12 @@ type UsageGapJSON struct {
 func UsageJSON(rep core.UsageReport) map[string]any {
 	rows, gaps := []UsageRowJSON{}, []UsageGapJSON{}
 	for _, r := range rep.Rows {
-		rows = append(rows, UsageRowJSON{r.Day, r.Model, r.UserID, r.UserName, r.ProjectID, r.Events, r.TokensIn, r.TokensOut, r.UnknownTokens, r.Nested, r.Failed})
+		rows = append(rows, UsageRowJSON{r.Provider, costString(r.ReportedCost), costString(r.EstimatedCost), r.UnknownCost, r.Day, r.Model, r.UserID, r.UserName, r.ProjectID, r.Events, r.TokensIn, r.TokensOut, r.UnknownTokens, r.Nested, r.Failed})
 	}
 	for _, g := range rep.Gaps {
 		gaps = append(gaps, UsageGapJSON{g.Count, g.From, g.To})
 	}
-	return map[string]any{"days": rows, "gaps": gaps}
+	return map[string]any{"days": rows, "gaps": gaps, "timezone": "UTC"}
 }
 
 // member serves the member routes. Failures of the device or the principal all answer the same 403
@@ -349,4 +354,12 @@ func (a *API) run(ctx context.Context, c Context, r Request) Response {
 		return a.errResponse(err)
 	}
 	return resp(200, toNote(n, true))
+}
+
+func costString(n *int64) *string {
+	if n == nil {
+		return nil
+	}
+	s := fmt.Sprintf("%d.%09d", *n/1000000000, *n%1000000000)
+	return &s
 }

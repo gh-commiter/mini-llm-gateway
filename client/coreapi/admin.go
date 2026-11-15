@@ -308,7 +308,7 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 			}
 			days = n
 		}
-		f := core.UsageFilter{Model: q.Get("model")}
+		f := core.UsageFilter{Model: q.Get("model"), Provider: q.Get("provider")}
 		f.User, _ = strconv.ParseInt(q.Get("user"), 10, 64)
 		f.Project, _ = strconv.ParseInt(q.Get("project"), 10, 64)
 		rep, err := st.AdminUsage(ctx, days, f)

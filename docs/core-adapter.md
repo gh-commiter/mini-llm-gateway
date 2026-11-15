@@ -81,6 +81,18 @@ carries the id of its request. Go: `coreapi.WriteRequest/ReadRequest/WriteRespon
    `agent-home` (the registries and the folders themselves are the adapter's).
 8. **Usage events**: decide when a model request is *dispatched* (never for a local refusal), freeze user (`bound-user`),
    device, project and parent at admission, and send `event-begin` and `event-finish`. Token counting and streams are the adapter's.
+   Freeze `upstreamModel` at provider dispatch, leaving the requested `model` intact. Finish may include nullable
+   `costUsdNanos` (nonnegative integer nanodollars) and `costSource` (`reported`, `estimated`, `unknown`); absent cost
+   stays unknown. This slice emits only reported provider cost, never subscription CLI nominal cost or estimates.
+   Both adapters scan bounded JSON/SSE usage objects, preserve zero counters, and keep cumulative maxima without
+   counting repeated terminal counters twice. SSE accepts LF, CRLF and CR line endings. Cost rounds once to the
+   nearest nanodollar, with halves rounded up; numeric spellings over 128 bytes or exponents outside ±400 are unsupported.
+   Input tokens retain the upstream `input_tokens` meaning; separate cache-read/write counters are not added in this slice.
+   Text and tool payloads are skipped. Usage objects over 64 KiB or
+   nesting beyond 128 levels are unsupported and leave missing metrics unknown. Partial objects supply no metrics;
+   earlier complete usage objects in a partial stream remain available. A malformed SSE event does not prevent
+   collecting usage from later events. Legacy `/usage` counting is unchanged.
+   The Go helper uses the same event shape for begin, finish and durable spool replay; first finish wins.
 9. **Quota** probes and their settings (they run CLIs and provider HTTP).
 10. **Opening the store** (`core.Open` with the private-folder and backup-file protection of the platform) and closing it; the
     OS account name for `ensure-owner`.

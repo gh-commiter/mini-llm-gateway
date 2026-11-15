@@ -2,6 +2,9 @@ package core
 
 import (
 	"errors"
+	"fmt"
+	"math"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -256,5 +259,160 @@ func TestBoundUserIsAMemorySnapshot(t *testing.T) { // review A3
 	}
 	if id, _ := f.BoundUser(ctx, "unknown"); id != 0 {
 		t.Fatal("unbound device attributed")
+	}
+}
+
+func TestUsageCostsProviderAndRetentionBoundary(t *testing.T) {
+	f := newFx(t)
+	now := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	f.Store.now = func() time.Time { return now }
+	cut := now.AddDate(0, 0, -usageRetentionDays)
+	zero, paid := int64(0), int64(6000000)
+	event := func(id, provider string, at time.Time, cost *int64) UsageEvent {
+		return UsageEvent{ID: id, Start: at, End: at, Provider: provider, Model: "alias", UpstreamModel: "routed", Outcome: OutcomeOK, TokensIn: 0, TokensOut: 0, TokenSource: "reported", CostUsdNanos: cost, CostSource: "reported"}
+	}
+	old := event("old", "openrouter", cut.Add(-time.Millisecond), &paid)
+	live := event("live", "openrouter", cut, &zero)
+	unknown := event("unknown", "openrouter", cut.Add(time.Second), nil)
+	other := event("other", "litellm", cut, &paid)
+	f.ok(f.BeginEvent(ctx, old))
+	changed := old
+	changed.UpstreamModel = "changed"
+	f.ok(f.FinishEvent(ctx, changed))
+	// Neither first-finish replay nor begin replay can replace cost/model attribution.
+	changed.CostUsdNanos = &zero
+	f.ok(f.ReplayUsage(ctx, []UsageEvent{changed, live, unknown, other}, nil))
+	f.ok(f.ReplayUsage(ctx, []UsageEvent{changed, live, unknown, other}, nil))
+	var upstream string
+	f.ok(f.DB().QueryRow(`SELECT upstream_model FROM usage_events WHERE id='old'`).Scan(&upstream))
+	if upstream != "routed" {
+		t.Fatal(upstream)
+	}
+	n, err := f.FoldOldUsage(ctx)
+	f.ok(err)
+	if n != 1 {
+		t.Fatalf("folded %d", n)
+	}
+	rep, err := f.AdminUsage(ctx, 401, UsageFilter{Provider: "openrouter", Model: "alias"})
+	f.ok(err)
+	if len(rep.Rows) != 1 {
+		t.Fatalf("%+v", rep)
+	}
+	r := rep.Rows[0]
+	if r.Provider != "openrouter" || r.Events != 3 || r.UnknownTokens != 0 || r.UnknownCost != 1 || r.ReportedCost == nil || *r.ReportedCost != paid || r.EstimatedCost != nil {
+		t.Fatalf("%+v", r)
+	}
+	rep, err = f.AdminUsage(ctx, 401, UsageFilter{})
+	f.ok(err)
+	if len(rep.Rows) != 2 {
+		t.Fatalf("providers merged: %+v", rep)
+	}
+	n, err = f.FoldOldUsage(ctx)
+	f.ok(err)
+	if n != 0 {
+		t.Fatal("fold replay", n)
+	}
+}
+
+func TestUsageCostMigration(t *testing.T) {
+	dir := t.TempDir()
+	db, err := openDB(filepath.Join(dir, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range migrations[:4] {
+		if err = m(tx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = setMeta(tx, "schema", "4"); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	e := UsageEvent{ID: "old", Start: at, End: at, Provider: "p", Model: "m", Outcome: OutcomeOK, TokensIn: -1, TokensOut: -1, TokenSource: "unknown"}
+	// Insert the old schema directly, as the previous executable did.
+	if _, err = db.Exec(`INSERT INTO usage_events(id,start,end,device_id,provider,model,outcome,token_source) VALUES(?,?,?,'d','p','m','ok','unknown')`, e.ID, ms(at), ms(at)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO usage_daily(day,user_id,project_id,provider,model,events,tokens_in,tokens_out) VALUES(?,0,0,'p','m',2,0,0)`, at.UTC().Format("2006-01-02")); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	s := openT(t, dir)
+	defer s.Close()
+	rep, err := s.AdminUsage(ctx, 7, UsageFilter{})
+	if err != nil || len(rep.Rows) != 1 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	r := rep.Rows[0]
+	if r.Events != 3 || r.UnknownCost != 3 || r.ReportedCost != nil || r.EstimatedCost != nil {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestUsageCostOverflowIsAnError(t *testing.T) {
+	for _, folded := range []bool{false, true} {
+		t.Run(fmt.Sprint(folded), func(t *testing.T) {
+			f := newFx(t)
+			now := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+			f.Store.now = func() time.Time { return now }
+			at := now.AddDate(0, 0, -usageRetentionDays)
+			cost := int64(math.MaxInt64)
+			e := UsageEvent{ID: "one", Start: at.Add(-time.Millisecond), End: at, Provider: "p", Model: "m", Outcome: OutcomeOK, TokensIn: -1, TokensOut: -1, TokenSource: "unknown", CostUsdNanos: &cost, CostSource: "reported"}
+			f.ok(f.FinishEvent(ctx, e))
+			if folded {
+				_, err := f.FoldOldUsage(ctx)
+				f.ok(err)
+			}
+			e.ID, e.Start = "two", at
+			f.ok(f.FinishEvent(ctx, e))
+			if _, err := f.AdminUsage(ctx, 401, UsageFilter{}); err == nil {
+				t.Fatal("overflow returned a successful report")
+			}
+		})
+	}
+}
+
+func TestUsageCostOverflowRetainsDetailAndAllowsReopen(t *testing.T) {
+	for _, folded := range []bool{false, true} {
+		t.Run(fmt.Sprint(folded), func(t *testing.T) {
+			dir := t.TempDir()
+			s := openT(t, dir)
+			at := time.Now().UTC().AddDate(0, 0, -usageRetentionDays-1)
+			cost := int64(math.MaxInt64)
+			e := UsageEvent{ID: "one", Start: at, End: at, Provider: "p", Model: "m", Outcome: OutcomeOK, TokensIn: -1, TokensOut: -1, TokenSource: "unknown", CostUsdNanos: &cost, CostSource: "reported"}
+			if err := s.FinishEvent(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+			if folded {
+				if n, err := s.FoldOldUsage(ctx); err != nil || n != 1 {
+					t.Fatalf("%d %v", n, err)
+				}
+			}
+			e.ID = "two"
+			if err := s.FinishEvent(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := s.FoldOldUsage(ctx); err != nil || n != 0 {
+				t.Fatalf("%d %v", n, err)
+			}
+			s.Close()
+			s = openT(t, dir)
+			defer s.Close()
+			var count int
+			if err := s.DB().QueryRow(`SELECT (SELECT count(*) FROM usage_events)+(SELECT COALESCE(sum(events),0) FROM usage_daily)`).Scan(&count); err != nil || count != 2 {
+				t.Fatalf("%d %v", count, err)
+			}
+			if _, err := s.AdminUsage(ctx, 402, UsageFilter{}); err == nil {
+				t.Fatal("overflow returned a successful report")
+			}
+		})
 	}
 }

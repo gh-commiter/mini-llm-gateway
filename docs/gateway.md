@@ -552,3 +552,11 @@ sandboxes (Claude CLI sandbox rules, the Codex permission profile) let it write 
 | Admin secret | Keychain | `admin.secret` in the config folder | `admin.secret` in the config folder |
 | Log | – | `minigw-serve.log` in the config folder (tray) | the systemd journal |
 | Agents' copies and clones | Scratch folder (Settings → General) | Scratch folder | Scratch folder |
+
+### Provider spending-limit errors
+
+An OpenRouter 403 with a recognized spending-limit code (`spending_limit_reached` or
+`spending_limit_exceeded`) or a message containing "spending limit reached" or "spending limit exceeded"
+returns `OpenRouter: spending limit reached` with `x-should-retry: false`. The client-facing status stays 502
+for compatibility. A 401 retains the API-key hint. Other 403s return 502 with `access denied` and the sanitized
+upstream message, including guardrail refusals. Raw upstream error bodies are not stored as accounting data.

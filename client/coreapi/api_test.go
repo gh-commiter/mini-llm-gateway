@@ -338,6 +338,8 @@ func TestEventCallsReachTheCore(t *testing.T) {
 	f.api.StartRecorder()
 	defer f.api.StopRecorder()
 	ev := core.UsageEvent{ID: "e1", Provider: "p", Model: "m", UserID: f.uid["ana"], DeviceID: "dev-ana", Outcome: "ok", TokensIn: 1, TokensOut: 2, TokenSource: "reported"}
+	cost := int64(6000000)
+	ev.CostUsdNanos, ev.CostSource, ev.UpstreamModel = &cost, "reported", "resolved"
 	ev.Start, ev.End = nowUTC(), nowUTC()
 	if err := f.api.Call(bg, "event-begin", EventRequest{Event: ev}, nil); err != nil {
 		t.Fatal(err)
@@ -347,8 +349,12 @@ func TestEventCallsReachTheCore(t *testing.T) {
 	}
 	f.api.FlushRecorder()
 	rep, err := f.st.AdminUsage(bg, 7, core.UsageFilter{})
-	if err != nil || len(rep.Rows) != 1 || rep.Rows[0].Events != 1 || rep.Rows[0].TokensOut != 2 {
+	if err != nil || len(rep.Rows) != 1 || rep.Rows[0].Events != 1 || rep.Rows[0].TokensOut != 2 || rep.Rows[0].ReportedCost == nil || *rep.Rows[0].ReportedCost != cost || rep.Rows[0].UnknownCost != 0 {
 		t.Fatalf("%+v %v", rep, err)
+	}
+	var upstream string
+	if err := f.st.DB().QueryRow(`SELECT upstream_model FROM usage_events WHERE id='e1'`).Scan(&upstream); err != nil || upstream != "resolved" {
+		t.Fatalf("upstream %s: %v", upstream, err)
 	}
 	var b BoundReply
 	f.api.Call(bg, "bound-user", DeviceRequest{Device: "dev-ana"}, &b)
@@ -465,5 +471,27 @@ func TestEventLostIsSpooledWhenTheCoreIsDownAndCountedOnce(t *testing.T) {
 	}
 	if n != 4 {
 		t.Fatalf("counted %d, want 4 once: %+v", n, rep.Gaps)
+	}
+}
+
+func TestUsageProviderFilterAndCostJSON(t *testing.T) {
+	f := newFixture(t)
+	zero := int64(0)
+	for _, p := range []string{"OpenRouter", "LiteLLM"} {
+		e := core.UsageEvent{ID: p, Start: nowUTC(), End: nowUTC(), Provider: p, Model: "same", Outcome: "ok", TokensIn: 0, TokensOut: 0, TokenSource: "reported", CostUsdNanos: &zero, CostSource: "reported"}
+		if err := f.st.FinishEvent(bg, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response := f.api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/usage/events", RawQuery: "days=7&provider=OpenRouter&model=same"})
+	var body struct {
+		Days     []UsageRowJSON
+		Timezone string
+	}
+	if err := json.Unmarshal(response.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != 200 || len(body.Days) != 1 || body.Days[0].Provider != "OpenRouter" || body.Timezone != "UTC" || body.Days[0].ReportedCost == nil || *body.Days[0].ReportedCost != "0.000000000" || body.Days[0].EstimatedCost != nil || body.Days[0].UnknownCost != 0 {
+		t.Fatalf("%d %s", response.Status, response.Body)
 	}
 }

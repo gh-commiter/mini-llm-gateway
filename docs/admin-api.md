@@ -227,9 +227,29 @@ Errors of these routes use the envelope above (`400` invalid, `404` not found, `
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /usage/events?days=&user=&project=&model=` | – | `{"days": [{"day", "model", "user"?, "userName"?, "project"?, "events", "tokensIn", "tokensOut", "eventsWithoutTokens", "nestedEvents", "failedEvents"}], "gaps": [{"count", "from", "to"}]}`: every model invocation, per day (UTC), model, user and project, newest first; days 1-3650 (default 7), detail rows older than 400 days are daily totals; also events without a user or project. **Not** `GET /usage` (0.5.x folder counters, unchanged) |
+| `GET /usage/events?days=&user=&project=&provider=&model=` | – | `{"days": [{"day", "provider", "model", "user"?, "userName"?, "project"?, "events", "tokensIn", "tokensOut", "eventsWithoutTokens", "nestedEvents", "failedEvents", "reportedCostUsd", "estimatedCostUsd", "eventsWithoutCost"}], "gaps": [{"count", "from", "to"}], "timezone":"UTC"}`: every model invocation, per day (UTC), provider, model, user and project, newest first; days 1-3650 (default 7), detail rows older than 400 days are daily totals; also events without a user or project. **Not** `GET /usage` (0.5.x folder counters, unchanged) |
 | `GET /quota` | – | `{"quota": [{"name", "unit", "value"?, "source", "observedAt"?, "resetsAt"?, "resetsText"?, "stale", "note"?, "reason"?}], "claudeProbe": bool}`: Codex windows (`codex-session-log`), the Claude subscription (`claude-usage`, only when the probe is on), OpenRouter credit (`openrouter-api`), LiteLLM spend (`litellm-api`); `source: "unavailable"` with a `reason` (for example `probe off`) when a value cannot be had; works without the core |
 | `PATCH /quota` | `{"claudeProbe": bool}` | as `GET`; turns the Claude quota probe on or off (default off, see gateway.md) |
+
+Usage event rows also include `provider`, `reportedCostUsd`, `estimatedCostUsd` and `eventsWithoutCost`;
+the response includes `timezone: "UTC"`. Money is a decimal USD string with nine fractional digits, or `null`
+when no amount is known. Sums cover known amounts only: missing costs are counted separately, never treated as free.
+An aggregate cost outside the integer nanodollar range fails the report rather than returning a partial or wrapped total.
+If retention folding would overflow, its transaction is rolled back and detail is retained so the core can still start.
+This step collects only reported provider `usage.cost` when present; it does not estimate prices. Subscription CLI
+rows have null money. No recorded OpenRouter Anthropic Messages cost fixture exists in the repository, so that field's
+presence is not assumed or requested from the upstream. The shared parser fixtures describe supported shapes,
+not captured OpenRouter responses.
+
+Provider and model filters are exact matches in both detail and folded totals; provider remains part of the grouping
+when no filter is set. Swift provider keys are configuration IDs (for example `openrouter`); Go provider keys are
+configuration names (for example `OpenRouter`). Identical model names across providers remain separate. Requested
+model names remain unchanged; the routed upstream model is frozen separately at dispatch.
+
+Detail older than 400 days is folded into daily totals. Folded totals currently survive indefinitely and reports
+can request up to 3650 days. Clear History still clears legacy sessions/counters only; it does not delete core usage
+accounting. There is no separate accounting deletion endpoint yet. No prompts, answers or raw upstream errors are
+stored in usage accounting.
 
 `GET /usage/events` is a core route (it answers `503` like the others); `GET` and `PATCH /quota` are the gateway's own and
 work without the core. On the Mac app the quota routes are in the app (Codex session log, provider credit, the opt-in
