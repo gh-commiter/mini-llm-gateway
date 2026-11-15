@@ -97,16 +97,31 @@ public enum Grok {
     /// The root is replaced by globs for every entry on every level down to the session folder except the one that leads to it (the profile's `deny` takes
     /// gitignore-style globs, kernel-enforced on macOS also for entries created later). Names are matched by character classes: for the name `s1`: `[!s]*`,
     /// `s[!1]*`, `s1?*` and the exact prefix `s`. nil = a name or path that cannot be written that way (a glob character, a space): the run is refused.
-    /// The most entries Grok's profile starts with (a real run: 30 long entries pass, 37 do not). More hidden roots (the Scratch folder with the copies of other clients, the app
-    /// folder, the credential homes) need shorter class prefixes on the deeper levels: the longest one that fits is used, and if none does the run is refused (nil), never given a
-    /// list grok cannot start with.
-    static let maxDenyEntries = 34
+    /// What a real grok (1.0.77, measured) starts with: a literal path in `deny` is cheap (400 started), a glob is not: macOS compiles the globs into regexes and fails ("too many
+    /// levels of backtracking") at about 41 of them, whatever their length or depth (40 start, 43 do not). So the globs are counted, with a margin, the literals only capped.
+    static let maxGlobEntries = 34, maxLiteralEntries = 300
+    static func isGlob(_ e: String) -> Bool { e.contains(where: { "*?[".contains($0) }) }
+
+    /// The longest class prefix whose list fits (for a deeper level the prefix is all that tells names apart); none fits = nil (the run is refused, never given a list grok
+    /// cannot start with).
     static func scopedDenies(hidden: [String], scope: String) -> [String]? {
-        for prefix in [8, 6, 5, 4] {
+        for prefix in [12, 10, 8, 6, 5, 4, 3] {
             guard let l = scopedDenies(hidden: hidden, scope: scope, prefix: prefix) else { return nil }
-            if l.count <= maxDenyEntries { return l }
+            if l.filter(isGlob).count <= maxGlobEntries && l.count - l.filter(isGlob).count <= maxLiteralEntries { return l }
         }
         return nil
+    }
+
+    /// Whether the profile denies `path` and everything below it: a literal entry names it or a parent, a glob `G/**` denies what is below a path that `G` matches.
+    /// The matching Seatbelt does for the globs (`*` and `[...]` do not cross a `/`); a glob without `/**` denies only its own entry, so it does not count.
+    static func denies(_ entries: [String], _ path: String) -> Bool {
+        let parts = path.split(separator: "/").map(String.init)
+        return entries.contains { e in
+            if !isGlob(e) { return path == e || path.hasPrefix(e + "/") }
+            guard e.hasSuffix("/**") else { return false }
+            let base = String(e.dropLast(3))
+            return parts.indices.contains { fnmatch(base, "/" + parts[0...$0].joined(separator: "/"), FNM_PATHNAME) == 0 }
+        }
     }
 
     static func scopedDenies(hidden: [String], scope: String, prefix: Int) -> [String]? {
@@ -116,33 +131,28 @@ public enum Grok {
         func add(_ p: String) { if seen.insert(p).inserted { out.append(p) } }
         func addGlob(_ p: String) { add(p); add(p + "/**") }  // a glob names the entry only (real run: `cat s2/x` still worked): its contents too
         func simple(_ n: String) -> Bool { !n.isEmpty && n.unicodeScalars.allSatisfy { ($0.value < 128) && (CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0)) } }
-        // A root inside another one is covered by the outer one (a plain entry denies everything below it; an expanded root denies every child that does not lead to
-        // the session, also the ones made later), except where the session itself lies in or below it: the entry count is what a real grok can start with.
-        let roots = hidden.map(real)
+        var plain: [String] = []  // hidden roots that do not hold the session: entries as they are
         for h in hidden {
             let hr = real(h)
-            if roots.contains(where: { $0 != hr && hr.hasPrefix($0 + "/") }), !(scopeReal == hr || scopeReal.hasPrefix(hr + "/") || hr.hasPrefix(scopeReal + "/")) { continue }
-            guard scopeReal == hr || scopeReal.hasPrefix(hr + "/") else { add(h); continue }
+            guard scopeReal == hr || scopeReal.hasPrefix(hr + "/") else { plain.append(h); continue }
             guard !hr.contains(where: { "*?[".contains($0) }), hr.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }
             let comps = scopeReal.dropFirst(hr.count).split(separator: "/").map(String.init)
             var level = hr
             for (depth, c) in comps.enumerated() {
                 guard simple(c) else { return nil }
-                let chars = Array(c)
-                // Grok's profile fails to start when the entries are many or long ("too many levels of backtracking": real run, 30 entries with a UUID-long prefix pass,
-                // 37 do not), so: the children of the hidden root (state.json, `mounts`, … files and folders) get the whole name, as the entry and its contents. Deeper
-                // levels hold only folders the gateway makes (a mount named by a random id, a copy named by a device and a project): there only the first `prefix` characters
-                // are told apart, by classes, and only the contents are denied; the siblings that exist now and share that prefix (too close for the classes) are listed
-                // as they are. What is not covered: a sibling made AFTER launch whose name starts with the same `prefix` characters as ours, which the gateway's random
-                // names do not do (16^8 for a mount id).
-                let top = depth == 0
-                let k = top ? chars.count : min(chars.count, prefix)
+                // On every level down to the session every child but the one that leads to it is denied, also one made later: the first `prefix` characters of our name are
+                // told apart by classes (`s1`: `[!s]*`, `s[!1]*`; the children of the root also as the entry itself, they can be files), names that are a proper prefix of
+                // them or that share them and exist now are listed as literals (cheap). Not covered: a sibling made AFTER launch whose name starts with the same `prefix`
+                // characters as ours, which the gateway's random names (ids of mounts, devices, projects, clones) do not do.
+                let chars = Array(c), top = depth == 0, k = min(chars.count, prefix)
                 for i in 0..<k {
                     let g = level + "/" + String(chars[0..<i]) + "[!" + String(chars[i]) + "]*"
                     if top { addGlob(g) } else { add(g + "/**") }
-                    if top, i > 0 { add(level + "/" + String(chars[0..<i])) }  // a name that is a proper prefix of c
+                    if i > 0 { add(level + "/" + String(chars[0..<i])) }  // a name that is a proper prefix of c
                 }
-                if top { addGlob(level + "/" + c + "?*") } else if let sib = try? FileManager.default.contentsOfDirectory(atPath: level) {
+                if k == chars.count { if top { addGlob(level + "/" + c + "?*") } else { add(level + "/" + c + "?*/**") } }
+                else { add(level + "/" + String(chars[0..<k])) }
+                if let sib = try? FileManager.default.contentsOfDirectory(atPath: level) {
                     for n in sib.sorted() where n != c && n.hasPrefix(String(chars[0..<k])) {
                         guard !n.contains(where: { "*?[".contains($0) }), n.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }
                         add(level + "/" + n)
@@ -151,6 +161,8 @@ public enum Grok {
                 level += "/" + c
             }
         }
+        // A root that does not hold the session stays as an entry unless the entries above already deny it (proved by the same matching, not assumed).
+        for h in plain where !denies(out, real(h)) { add(h) }
         return out
     }
 

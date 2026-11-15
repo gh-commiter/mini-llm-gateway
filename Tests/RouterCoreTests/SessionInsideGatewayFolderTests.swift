@@ -109,40 +109,56 @@ func grokDenies(_ deny: [String], _ path: String) -> Bool {
                                               ["scratch/sync/" + dev + "/0123456789abcdee/x", "scratch/sync/" + dev.dropLast() + "e/" + proj + "/x", "scratch/state/s"],
                                               ["scratch/sync/" + dev + "/fedcba9876543210/x", "scratch/sync/" + String(repeating: "z", count: 43) + "/y/x"])] as [([String], String, [String], [String])] {
         let deny = try #require(Grok.scopedDenies(hidden: hidden, scope: scope))
-        #expect(deny.count <= 40, "\(deny.count) entries")
+        #expect(deny.filter(Grok.isGlob).count <= Grok.maxGlobEntries, "\(deny.count) entries")
         #expect(deny == Grok.scopedDenies(hidden: hidden, scope: scope), "deterministic")
         for n in siblings + later { #expect(grokDenies(deny, base + "/" + n), "\(n)") }
         #expect(!grokDenies(deny, scope) && !grokDenies(deny, scope + "/f.txt") && !grokDenies(deny, scope + "/deep/er/file"))
     }
 }
 
-/// Finding 1 of the 0.6.0 review: Grok's list holds the hidden Scratch roots too (the sync copies, worktrees and mirrors of other clients), with the way down to the
-/// session carved out, and still fits what the real `grok` starts with. The list below is the shape of the gateway's own (`Grok.deniedRoots`: agentDenied + hiddenScratch,
-/// each root literal and real) with a Scratch folder on another volume, its `.old-` neighbour, the default Scratch, the app folder, the core, the credential homes.
-@Test func grokDenyListWithTheHiddenScratchRootsStaysUnderTheLimit() throws {
+/// Finding 1 of the 0.6.0 review, round 2: Grok's list holds the hidden Scratch roots too (the sync copies, worktrees and mirrors of other clients), with the way down to
+/// the session carved out, for every layout a session lives in, and it stays under what a real grok starts with (measured: about 41 globs; literals are cheap). The list
+/// below is the shape of the gateway's own (`Grok.deniedRoots`: agentDenied + hiddenScratch, each root literal and real) with a Scratch folder on another volume, its
+/// `.old-` neighbour, the default Scratch, the app folder, the core, the credential homes.
+@Test func grokDenyListFitsEveryLayoutAWorktreeSyncMountOrLocalFolderSessionLivesIn() throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("grok-hidden-" + UUID().uuidString, isDirectory: true).path
     defer { try? fm.removeItem(atPath: base) }
-    let dev = String(repeating: "d", count: 43), proj = "0123456789abcdef", u = "0f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f"
+    let dev = String(repeating: "d", count: 43), dev2 = String(repeating: "e", count: 43), proj = "0123456789abcdef", clone = "minigw-0123456789abcdef-1", u = "0f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f"
     let scratch = base + "/vol/Mini Gateway Scratch"
-    for d in ["vol/Mini Gateway Scratch/sync/" + dev + "/" + proj, "vol/Mini Gateway Scratch/sync/" + dev + "/0123456789abcdee", "vol/Mini Gateway Scratch/sync/" + String(repeating: "e", count: 43) + "/" + proj,
-              "vol/Mini Gateway Scratch/worktrees/" + dev + "/" + proj, "vol/Mini Gateway Scratch/state", "vol/Mini Gateway Scratch/copilot", "vol/Mini Gateway Scratch/grok-home",
-              "vol/Mini Gateway Scratch.old-2026-11-01", "caches/Scratch", "caches/Mini Gateway Scratch", "app/mounts/" + u, "app/mounts/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "app/core",
-              "home/.codex", "home/.copilot"] {
+    for d in ["sync/" + dev + "/" + proj, "sync/" + dev + "/0123456789abcdee", "sync/" + dev2 + "/" + proj, "worktrees/" + dev + "/" + proj + "/" + clone, "worktrees/" + dev + "/" + proj + "/minigw-0123456789abcdef-2",
+              "worktrees/" + dev2 + "/" + proj + "/" + clone, "state", "copilot", "grok-home"].map({ "vol/Mini Gateway Scratch/" + $0 }) +
+        ["vol/Mini Gateway Scratch.old-2026-11-01", "caches/Scratch", "caches/Mini Gateway Scratch", "app/mounts/" + u, "app/mounts/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "app/core", "home/.codex", "home/.copilot", "mine/proj"] {
         try fm.createDirectory(atPath: base + "/" + d, withIntermediateDirectories: true)
     }
     let hidden = [scratch, scratch + "/state", scratch + "/copilot", base + "/app", base + "/app/core", base + "/home/.codex", base + "/home/.copilot",
                   base + "/caches/Mini Gateway Scratch", base + "/caches/Scratch", scratch + ".old-2026-11-01"]
-    let other = scratch + "/sync/" + dev + "/0123456789abcdee/x", otherDev = scratch + "/sync/" + String(repeating: "e", count: 43) + "/" + proj + "/x"
-    for (scope, mustDeny) in [(scratch + "/sync/" + dev + "/" + proj, [other, otherDev, scratch + "/worktrees/" + dev + "/" + proj + "/x", scratch + "/sync/later/x", scratch + "/state/s",
-                                                                      scratch + "/owner.json", base + "/app/mounts/" + u + "/x", base + "/app/state.json"]),
-                              (base + "/app/mounts/" + u, [scratch + "/sync/" + dev + "/" + proj + "/x", scratch + "/worktrees/x", base + "/app/mounts/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d/x", base + "/app/state.json",
-                                                          base + "/app/core/core.db"])] {
-        let deny = try #require(Grok.scopedDenies(hidden: hidden, scope: scope))
-        #expect(deny.count <= Grok.maxDenyEntries, "\(deny.count) entries: a real grok does not start above about 35")
-        for n in mustDeny { #expect(grokDenies(deny, n), "\(n)") }
-        #expect(!grokDenies(deny, scope) && !grokDenies(deny, scope + "/f.txt") && !grokDenies(deny, scope + "/deep/er/file"))
+    let neighbours = [scratch + "/sync/" + dev + "/0123456789abcdee/x", scratch + "/sync/" + dev2 + "/" + proj + "/x", scratch + "/worktrees/" + dev2 + "/" + proj + "/" + clone + "/x",
+                      scratch + "/worktrees/" + dev + "/" + proj + "/minigw-0123456789abcdef-2/x", scratch + "/sync/later/x", scratch + "/worktrees/later/x", scratch + "/state/s", scratch + "/owner.json",
+                      base + "/app/mounts/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d/x", base + "/app/mounts/later/x", base + "/app/state.json", base + "/app/core/core.db",
+                      base + "/home/.codex/auth.json", scratch + ".old-2026-11-01/x"]
+    for scope in [scratch + "/sync/" + dev + "/" + proj, scratch + "/worktrees/" + dev + "/" + proj + "/" + clone, base + "/app/mounts/" + u, base + "/mine/proj"] {
+        let deny = try #require(Grok.scopedDenies(hidden: hidden, scope: scope), "\(scope)")
+        let globs = deny.filter(Grok.isGlob).count
+        #expect(globs <= Grok.maxGlobEntries, "\(globs) globs in \(scope): a real grok does not start above about 41")
+        for n in neighbours where !n.hasPrefix(scope + "/") { #expect(Grok.denies(deny, n), "\(n) for \(scope)") }
+        #expect(!Grok.denies(deny, scope) && !Grok.denies(deny, scope + "/f.txt") && !Grok.denies(deny, scope + "/deep/er/file"), "\(scope)")
     }
+}
+
+/// Round 2, H1: a nested root is dropped only when the entries above deny it. Roots `/scratch` and `/scratch/sync/abc` with the session in `/scratch/sync/abcdefgh/project`:
+/// the folder `abc` is a proper prefix of our name and must stay denied, and so must a sibling that shares our first characters and is made after the list.
+@Test func grokDenyListKeepsANestedRootTheAncestorDoesNotReallyCover() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("grok-nested-" + UUID().uuidString, isDirectory: true).path
+    defer { try? fm.removeItem(atPath: base) }
+    for d in ["scratch/sync/abc", "scratch/sync/abcdefgh/project", "scratch/sync/abcdefgi", "scratch/other"] { try fm.createDirectory(atPath: base + "/" + d, withIntermediateDirectories: true) }
+    let deny = try #require(Grok.scopedDenies(hidden: [base + "/scratch", base + "/scratch/sync/abc"], scope: base + "/scratch/sync/abcdefgh/project"))
+    for n in ["scratch/sync/abc/x", "scratch/sync/abcdefgi/x", "scratch/other/x", "scratch/sync/zzz/x"] { #expect(Grok.denies(deny, base + "/" + n), "\(n)") }
+    #expect(!Grok.denies(deny, base + "/scratch/sync/abcdefgh/project/f"))
+    // a root that is inside the session folder is not covered by anything and stays
+    let inner = try #require(Grok.scopedDenies(hidden: [base + "/scratch/sync/abcdefgh/project/.cache"], scope: base + "/scratch/sync/abcdefgh/project"))
+    #expect(inner == [base + "/scratch/sync/abcdefgh/project/.cache"])
 }
 
 /// The roots Grok is given: the hidden Scratch roots are in, Grok's own login home is not.
@@ -156,8 +172,53 @@ func grokDenies(_ deny: [String], _ path: String) -> Bool {
     #expect(Set(RouterConfig.hiddenScratch(scratch)).subtracting(RouterConfig.credentialHomes()).isSubset(of: Set(roots)))
 }
 
-/// A list grok cannot start with is never given to it: more roots than fit means the run is refused.
+/// A list grok cannot start with is never given to it: a session so deep that even the shortest class prefixes need more globs than fit is refused.
 @Test func grokDenyListThatCannotFitIsRefused() {
-    #expect(Grok.scopedDenies(hidden: (0..<Grok.maxDenyEntries + 1).map { "/nowhere/root-\($0)" }, scope: "/elsewhere/s1") == nil)
+    let deep = "/nowhere/root" + (0..<14).map { "/level\($0)xx" }.joined()
+    #expect(Grok.scopedDenies(hidden: ["/nowhere/root"], scope: deep) == nil)
     #expect(Grok.scopedDenies(hidden: ["/nowhere/root"], scope: "/elsewhere/s1") == ["/nowhere/root"])
+    #expect(Grok.scopedDenies(hidden: (0..<Grok.maxGlobEntries + 20).map { "/nowhere/root-\($0)" }, scope: "/elsewhere/s1")?.count == Grok.maxGlobEntries + 20, "literals are cheap")
+}
+
+/// A real grok, for the four layouts a session lives in (sync copy, worktree clone, app-folder mount, a folder outside the gateway's own): the list is built as the gateway builds
+/// it, written as the profile, and grok runs a few commands under it. Own file readable and writable, every neighbour's (also one made after the list) unreadable. It uses the
+/// owner's grok login (a few short prompts), so it runs only with MG_REAL_GROK=1.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_GROK"] == "1")) func realGrokKeepsEveryLayoutApartFromItsNeighbours() throws {
+    let exe = try #require(["/opt/homebrew/bin/grok", "/usr/local/bin/grok"].first { FileManager.default.isExecutableFile(atPath: $0) })
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("real-grok-" + UUID().uuidString, isDirectory: true).path
+    let dev = String(repeating: "d", count: 43), dev2 = String(repeating: "e", count: 43), proj = "0123456789abcdef", clone = "minigw-0123456789abcdef-1", u = "0f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f"
+    let scratch = base + "/vol/Mini Gateway Scratch"
+    let own = ["sync": scratch + "/sync/" + dev + "/" + proj, "worktree": scratch + "/worktrees/" + dev + "/" + proj + "/" + clone, "mount": base + "/app/mounts/" + u, "local": base + "/mine/proj"]
+    let other = [scratch + "/sync/" + dev2 + "/" + proj, scratch + "/worktrees/" + dev2 + "/" + proj + "/" + clone, scratch + "/worktrees/" + dev + "/" + proj + "/minigw-0123456789abcdef-2",
+                 base + "/app/mounts/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", base + "/home/.codex", scratch + "/state", base + "/app/core"]
+    for d in Array(own.values) + other { try fm.createDirectory(atPath: d, withIntermediateDirectories: true) }
+    for d in own.values { try Data("OWN-OK-\(d.hashValue)".utf8).write(to: URL(fileURLWithPath: d + "/own.txt")) }
+    for d in other { try Data("NEIGHBOUR-SECRET".utf8).write(to: URL(fileURLWithPath: d + "/secret.txt")) }
+    let hidden = [scratch, scratch + "/state", scratch + "/copilot", base + "/app", base + "/app/core", base + "/home/.codex", base + "/home/.copilot",
+                  base + "/caches/Mini Gateway Scratch", base + "/caches/Scratch"]
+    for (layout, cwd) in own.sorted(by: { $0.key < $1.key }) {
+        let deny = try #require(Grok.scopedDenies(hidden: hidden, scope: cwd), "\(layout)")
+        // a neighbour made after the list was built
+        let later = (cwd.hasPrefix(scratch + "/sync/") ? scratch + "/sync/later-client" : cwd.hasPrefix(scratch + "/worktrees/") ? scratch + "/worktrees/later-client" : base + "/app/mounts/later-client")
+        try fm.createDirectory(atPath: later, withIntermediateDirectories: true)
+        try Data("NEIGHBOUR-SECRET".utf8).write(to: URL(fileURLWithPath: later + "/secret.txt"))
+        let home = URL(fileURLWithPath: base + "/grok-home-" + layout)
+        let env = try #require(Grok.prepareCoreHome(home, deny: deny), "\(layout)")
+        let targets = Array(other.map { $0 + "/secret.txt" }) + [later + "/secret.txt"]
+        let prompt = "Run each of these with the shell, separately, and paste the raw output or error of each, nothing else:\n" + ([cwd + "/own.txt"] + targets).map { "cat '\($0)'" }.joined(separator: "\n") +
+                     "\nThen: echo wrote > '\(cwd)/new.txt' && cat '\(cwd)/new.txt'"
+        try Data(prompt.utf8).write(to: URL(fileURLWithPath: base + "/prompt-" + layout))
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: exe)
+        p.arguments = Grok.args(cwd: URL(fileURLWithPath: cwd), extraDirs: [], agent: true, model: nil, write: true, core: true).map { $0 == "/dev/stdin" ? base + "/prompt-" + layout : $0 }
+        p.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe; p.standardInput = FileHandle.nullDevice
+        try p.run()
+        let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self); p.waitUntilExit()
+        #expect(p.terminationStatus == 0, "\(layout): grok did not start: \(out.prefix(300))")
+        #expect(out.contains("OWN-OK-"), "\(layout): its own file was not read: \(out.suffix(600))")
+        #expect(!out.contains("NEIGHBOUR-SECRET"), "\(layout): a neighbour's file was read")
+        #expect(fm.fileExists(atPath: cwd + "/new.txt"), "\(layout): it could not write its own folder")
+    }
 }
