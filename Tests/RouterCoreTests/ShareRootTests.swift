@@ -433,3 +433,41 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     #expect(notes.isEmpty && done == ["sync.txt"], "\(notes)")
     #expect(read(canonical.appendingPathComponent("sync.txt")) == "sync")
 }
+
+@Test func shareAutofsStopsBeforeChildren() throws {
+    let mount = try tmp("autofs").path
+    var probes: [String] = []
+    let result = ShareRoot.safeTargetPath(mount + "/unprobed/child", autofs: { path in
+        probes.append(path)
+        return path == mount
+    })
+    #expect(result == nil)
+    #expect(probes.last == mount)
+    let alias = try tmp("autofs-alias").appendingPathComponent("alias")
+    try link(mount, alias)
+    probes = []
+    let throughLink = ShareRoot.safeTargetPath(alias.path + "/unprobed/child", autofs: { path in
+        probes.append(path)
+        return path == mount
+    })
+    #expect(throughLink == nil)
+    #expect(probes.last == mount)
+    #expect(!probes.contains { $0.hasPrefix(mount + "/") })
+}
+
+@Test func shareLinkDotDotResolvesBeforeMoveGuard() throws {
+    let root = try tmp("dotdot")
+    for name in ["a/deep", "a/x", "x"] {
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+    }
+    try link("a/deep", root.appendingPathComponent("L2"))
+    try link("L2/../x", root.appendingPathComponent("L1"))
+    try link(root.path + "/L2/../x", root.appendingPathComponent("absolute"))
+    let rt = try #require(ShareRoot(root))
+    #expect(try rt.resolve("L1/new", followLast: false) == "a/x/new")
+    #expect(try rt.resolve("absolute/new", followLast: false) == "a/x/new")
+    #expect(ShareRoot.safeTargetPath(root.path + "/L1") == root.path + "/a/x")
+    #expect(ShareRoot.safeTargetPath(root.path + "/L2/../x/new") == root.path + "/a/x/new")
+    #expect(dav(root, "MOVE", "/a/x", ["destination": "/s/L1/new"]).status == 403)
+    #expect(!gone(root.appendingPathComponent("a/x")))
+}

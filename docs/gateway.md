@@ -336,12 +336,14 @@ minigw serve                 # or run it in this terminal (--port, --config)
   the gateway saves its real path and identity with it (Go: `allowedRecords` in `serve.json`; Mac: in the settings,
   next to the allowed folders; identity = volume UUID and inode in the Mac app, `statfs` `f_fsid` and inode on Linux,
   volume serial and file ID on Windows; never the device number, which changes with the mount order; where a
-  filesystem has no stable volume id the inode alone is compared). The identity is compared at start, on every agent
-  run and right before launch. An older config
+  filesystem has no stable volume id the filesystem type, mount source and inode are compared). The identity is
+  compared at start, on every agent run and right before launch. An older config
   without records is migrated once at the first start of this version by recording the current state (one log line
   per folder: `recorded <folder> -> <real>`); that single step trusts what is there. At every later start a saved
   folder whose real path or identity differs from its record is refused like a changed folder at run time (the same
   reason, logged once; the Go gateway also lists it in `agents/claude.refused`) until you remove it and add it again.
+  Known limit: without a volume UUID, another server export mounted with the same filesystem type and mount
+  source string at the same path passes this check if the folder also has the same inode number.
   A start never rewrites the saved name or the record. A folder that does not exist at start keeps the "was
   missing" handling; a folder that did not exist when it was added takes its identity at its first accepted use, and
   that is saved.

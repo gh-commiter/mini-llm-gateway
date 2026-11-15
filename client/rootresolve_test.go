@@ -143,3 +143,112 @@ func TestMixedCaseAutomountTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestAutofsStopsBeforeChildren(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mounts")
+	}
+	mount, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := targetAutofs
+	defer func() { targetAutofs = old }()
+	var probes []string
+	targetAutofs = func(p string) (bool, error) {
+		probes = append(probes, p)
+		return p == mount, nil
+	}
+	if safeTarget(filepath.Join(mount, "unprobed", "child"), nil) {
+		t.Fatal("accepted autofs target")
+	}
+	if len(probes) == 0 || probes[len(probes)-1] != mount {
+		t.Fatalf("did not stop at mount: %v", probes)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	dirLink(t, mount, alias)
+	probes = nil
+	if safeTarget(filepath.Join(alias, "unprobed", "child"), nil) {
+		t.Fatal("accepted autofs target through a symlink ancestor")
+	}
+	if len(probes) == 0 || probes[len(probes)-1] != mount {
+		t.Fatalf("did not stop at aliased mount: %v", probes)
+	}
+	for _, p := range probes {
+		if strings.HasPrefix(p, mount+string(filepath.Separator)) {
+			t.Fatalf("probed below the mount: %v", probes)
+		}
+	}
+}
+
+// A link planted in the share to a place below an autofs mount is refused, and nothing below the mount is probed.
+func TestRootResolveRefusesAutofsLinkTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mounts")
+	}
+	mount, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	dirLink(t, filepath.Join(mount, "host", "x"), filepath.Join(root, "evil"))
+	old := targetAutofs
+	defer func() { targetAutofs = old }()
+	var probes []string
+	targetAutofs = func(p string) (bool, error) {
+		probes = append(probes, p)
+		return p == mount, nil
+	}
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if _, err := rootResolve(rt, "evil/f", false); err == nil || !strings.Contains(err.Error(), linkRefusal) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(probes) == 0 || probes[len(probes)-1] != mount {
+		t.Fatalf("did not stop at the mount: %v", probes)
+	}
+	for _, p := range probes {
+		if strings.HasPrefix(p, mount+string(filepath.Separator)) {
+			t.Fatalf("probed below the mount: %v", probes)
+		}
+	}
+}
+
+func TestLinkDotDotResolvesBeforeMoveGuard(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a/deep", "a/x", "x"} {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dirLink(t, "a/deep", filepath.Join(root, "L2"))
+	dirLink(t, "L2/../x", filepath.Join(root, "L1"))
+	dirLink(t, root+string(filepath.Separator)+"L2/../x", filepath.Join(root, "absolute"))
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if got, err := rootResolve(rt, "L1/new", false); err != nil || got != filepath.FromSlash("a/x/new") {
+		t.Fatalf("resolve = %q, %v", got, err)
+	}
+	if got, err := safeFinalPath(filepath.Join(root, "L1"), []string{root}); err != nil || got != realTarget(filepath.Join(root, "a/x"), []string{root}) {
+		t.Fatalf("absolute resolve = %q, %v", got, err)
+	}
+	if got, err := rootResolve(rt, "absolute/new", false); err != nil || got != filepath.FromSlash("a/x/new") {
+		t.Fatalf("absolute root resolve = %q, %v", got, err)
+	}
+	if got := realTarget(root+"/L2/../x/new", []string{root}); got != realTarget(filepath.Join(root, "a/x"), []string{root})+string(filepath.Separator)+"new" {
+		t.Fatalf("missing suffix resolved to %q", got)
+	}
+	r := davHandle("MOVE", "/s/a/x", map[string]string{"destination": "/s/L1/new"}, nil, root, "/s")
+	if r.Status != 403 {
+		t.Fatalf("self-nesting MOVE = %d", r.Status)
+	}
+	if _, err := os.Stat(filepath.Join(root, "a/x")); err != nil {
+		t.Fatal(err)
+	}
+}

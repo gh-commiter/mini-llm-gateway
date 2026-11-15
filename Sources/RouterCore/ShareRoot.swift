@@ -68,44 +68,44 @@ final class ShareRoot: @unchecked Sendable {
     /// Razreševanje le izbere pot; operacija še vedno gre prek deskriptorja, zato povezava, ki se spremeni po njem, ne vodi ven.
     /// Zaščiteno pot je treba preveriti na vrnjeni poti, ne na vhodu.
     func resolve(_ rel: String, followLast: Bool) throws -> String {
-        guard var comps = Self.local(rel) else { throw Refused(message: "invalid path: \(rel)") }
-        var rewrites = 0
-        while !comps.isEmpty {
-            if rewrites > Self.maxLinkRewrites { throw Refused(message: "too many links: \(Self.join(comps))") }
-            var cur: [String] = []
-            var again = false
-            for (i, name) in comps.enumerated() {
-                let next = cur + [name], rest = Array(comps[(i + 1)...])
-                if i == comps.count - 1 && !followLast { return Self.join(next) }
-                var e: Int32 = 0
-                guard let st = lstat(Self.join(next), &e) else { return Self.join(next + rest) }  // je ni: operacija sporoči
-                guard st.st_mode & S_IFMT == S_IFLNK, let target = readlink(Self.join(next)), !target.isEmpty else {
-                    cur = next; continue
-                }
-                let refusal = Refused(message: "\(Self.linkRefusal): \(Self.join(next))")
-                let np: [String]
-                if target.hasPrefix("/") {
-                    guard let n = inside(target) ?? inside(realTarget(target)) else { throw refusal }  // druga imena mape
-                    np = n
-                } else {
-                    var c = cur
-                    for t in target.split(separator: "/") where t != "." {  // cur nima povezav, zato je stikanje točno
-                        if t == ".." { guard c.popLast() != nil else { throw refusal } } else { c.append(String(t)) }
-                    }
-                    np = c
-                }
-                comps = np + rest; rewrites += 1; again = true
-                break
+        guard let all = Self.local(rel) else { throw Refused(message: "invalid path: \(rel)") }
+        // realpath: `cur` je vedno pot brez povezav, `queue` komponente, ki jih je treba še obiskati; »..« za povezavo
+        // se tako uporabi na cilju povezave (nikoli ne izgine kot besedilo).
+        var queue = all, cur: [String] = [], rewrites = 0, lastLink = rel
+        while !queue.isEmpty {
+            let name = queue.removeFirst()
+            if name == ".." {
+                guard cur.popLast() != nil else { throw Refused(message: "\(Self.linkRefusal): \(lastLink)") }
+                continue
             }
-            if !again { return Self.join(comps) }
+            let next = cur + [name]
+            if queue.isEmpty && !followLast { return Self.join(next) }
+            var e: Int32 = 0
+            guard let st = lstat(Self.join(next), &e) else {  // je ni: operacija sporoči
+                guard !queue.contains("..") else { throw Refused(message: "\(Self.linkRefusal): \(lastLink)") }
+                return Self.join(next + queue)
+            }
+            guard st.st_mode & S_IFMT == S_IFLNK, let target = readlink(Self.join(next)), !target.isEmpty else {
+                cur = next; continue
+            }
+            rewrites += 1
+            if rewrites > Self.maxLinkRewrites { throw Refused(message: "too many links: \(rel)") }
+            let refusal = Refused(message: "\(Self.linkRefusal): \(Self.join(next))")
+            lastLink = Self.join(next)
+            if target.hasPrefix("/") {
+                guard let n = inside(target) ?? inside(realTarget(target)) else { throw refusal }  // druga imena mape
+                cur = []; queue = n + queue
+            } else {
+                queue = Self.comps(target) + queue  // relativno na mapo povezave (= cur)
+            }
         }
-        return "."
+        return Self.join(cur)
     }
 
     /// Absolutni cilj (leksikalno) relativno na ime korena, v katerem leži; nil, če je zunaj. APFS ne loči velikosti črk.
     func inside(_ target: String) -> [String]? {
         let fold: (String) -> String = { self.caseSensitive ? $0 : $0.lowercased() }
-        let t = Self.lexical(target), tl = t.map(fold)
+        let t = Self.comps(target), tl = t.map(fold)
         for b in bases where t.count >= b.count && tl[..<b.count].elementsEqual(b.map(fold)) {
             return Array(t[b.count...])
         }
@@ -118,18 +118,21 @@ final class ShareRoot: @unchecked Sendable {
     }
 
     /// Inspect links before probing their targets; never touch Unix automount roots, including through a chain.
-    static func safeTargetPath(_ target: String) -> String? {
-        var parts = lexical(target)
+    static func safeTargetPath(_ target: String, autofs: (String) -> Bool? = isAutofs) -> String? {
+        var parts = comps(target)
         for _ in 0...maxLinkRewrites {
             var cur: [String] = []
             var again = false
             for (i, name) in parts.enumerated() {
+                if name == ".." { _ = cur.popLast(); continue }
                 cur.append(name)
                 guard cur.first?.lowercased() != "net", cur.first?.lowercased() != "network" else { return nil }
                 let p = "/" + cur.joined(separator: "/")
+                guard safeTargetFilesystem(p, autofs: autofs) else { return nil }
                 var st = stat()
                 guard Darwin.lstat(p, &st) == 0 else {
-                    return errno == ENOENT ? "/" + parts.joined(separator: "/") : nil
+                    let rest = Array(parts[(i + 1)...])
+                    return errno == ENOENT && !rest.contains("..") ? "/" + (cur + rest).joined(separator: "/") : nil
                 }
                 if st.st_mode & S_IFMT != S_IFLNK { continue }
                 var buf = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
@@ -137,15 +140,52 @@ final class ShareRoot: @unchecked Sendable {
                 guard n > 0 else { return nil }
                 let next = String(decoding: buf[..<n].map { UInt8(bitPattern: $0) }, as: UTF8.self)
                 let base = next.hasPrefix("/") ? "" : "/" + cur.dropLast().joined(separator: "/") + "/"
-                let rewritten = Self.lexical(base + next)
+                let rewritten = Self.comps(base + next)
                 guard rewritten.first?.lowercased() != "net", rewritten.first?.lowercased() != "network" else { return nil }
                 parts = rewritten + Array(parts[(i + 1)...])
                 again = true
                 break
             }
-            if !again { return "/" + parts.joined(separator: "/") }
+            if !again { return "/" + cur.joined(separator: "/") }
         }
         return nil
+    }
+
+    /// Walk parents from the root, stopping before any child of an autofs mount.
+    static func safeTargetFilesystem(_ target: String, autofs: (String) -> Bool? = isAutofs) -> Bool {
+        var parts = comps(target), cur: [String] = [], rewrites = 0
+        while !parts.isEmpty {
+            guard let mounted = autofs("/" + cur.joined(separator: "/")), !mounted else { return false }
+            let name = parts.removeFirst()
+            if name == ".." { _ = cur.popLast(); continue }
+            let next = cur + [name]
+            guard next.first?.lowercased() != "net", next.first?.lowercased() != "network" else { return false }
+            let p = "/" + next.joined(separator: "/")
+            var st = stat()
+            guard Darwin.lstat(p, &st) == 0 else { return errno == ENOENT }
+            if st.st_mode & S_IFMT == S_IFLNK {
+                rewrites += 1
+                guard rewrites <= maxLinkRewrites else { return false }
+                var buf = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
+                let n = Darwin.readlink(p, &buf, buf.count - 1)
+                guard n > 0 else { return false }
+                let link = String(decoding: buf[..<n].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                if link.hasPrefix("/") { cur = [] }
+                parts = comps(link) + parts
+            } else {
+                cur = next
+            }
+        }
+        guard let mounted = autofs("/" + cur.joined(separator: "/")) else { return false }
+        return !mounted
+    }
+
+    static func isAutofs(_ path: String) -> Bool? {
+        var fs = statfs()
+        guard statfs(path, &fs) == 0 else { return nil }
+        return withUnsafeBytes(of: fs.f_fstypename) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self) == "autofs"
+        }
     }
 
     // MARK: branje
