@@ -17,7 +17,7 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw connect <host[:port]> [--name P] [--token T \| --token -]` | Save a gateway as profile `P` (`-` reads the token from stdin) |
 | `minigw reconnect [--name P] [--token T \| --token -]` | New token for an existing profile (default: the default profile); address, gateway key and device key stay. Without `--token` it asks for the token (no echo) or reads stdin. A token without `#<key>` keeps the saved gateway key. Then prints the `minigw status` lines of that profile; exits 1 when it is not connected |
 | `minigw disconnect [--name P]` | Remove a profile (default: the default profile). The device key stays, so connecting again is the same device to the gateway; `minigw uninstall --purge` removes it |
-| `minigw status` | Each profile: gateway and encryption, providers, number of models, device ID and approval, status. Exits 1 when the default profile is not connected |
+| `minigw status` | Each profile: gateway and encryption, minigw and gateway version, providers, number of models, device ID and approval, status. Exits 1 when the default profile is not connected |
 | `minigw models` | Models of all profiles; other profiles' models end in `@P` |
 | `minigw profiles [list]` | List profiles; `*` marks the default |
 | `minigw profiles default P` | Make `P` the default (its models also appear without `@P`) |
