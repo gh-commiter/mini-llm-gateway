@@ -287,21 +287,37 @@ func createsState(arg0 string, args []string) bool {
 	if isTrayExe(arg0) { // minigw-tray.exe
 		return true
 	}
+	// Match main's removal of the global profile flag, wherever it appears.
+	var command []string
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--minigw-profile" { // global flag before the command
+		if args[i] == "--minigw-profile" {
 			i++
 			continue
 		}
 		if strings.HasPrefix(args[i], "--minigw-profile=") {
 			continue
 		}
-		switch args[i] {
-		case "serve", "tray", "connect", "share", "run":
-			return true
-		}
+		command = append(command, args[i])
+	}
+	if len(command) == 0 {
+		return true // The default Claude flow saves session and sharing state.
+	}
+	switch command[0] {
+	case "status", "models", "verify-sums", "--minigw-help", "-h", "--help", "-v", "--version":
+		return false
+	case "profiles":
+		return len(command) > 1 && command[1] != "list"
+	case "project":
+		return len(command) > 1 && command[1] != "list" && command[1] != "show"
+	case "plugin":
+		return len(command) > 1 && command[1] != "status"
+	case "note":
+		return len(command) > 1 && command[1] != "list" && command[1] != "read"
+	case "usage":
 		return false
 	}
-	return false
+	// Unknown commands and Claude options fall through to the session flow.
+	return true
 }
 
 func main() {

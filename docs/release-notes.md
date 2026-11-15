@@ -44,7 +44,7 @@ Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and q
 ### Fixed
 
 - Fixed (Mac app, 0.6.0 deny rules; the 0.5.28 regression is fixed in 0.5.29): the deny rules of the gateway's own folders (the app folder with the core, the credential homes) are not applied where the folder of a run (a remote client's mount under `~/Library/Application Support/Mini Gateway/mounts`, a sync copy) lives inside them, in the restricted mode, the sandboxed mode and Worktree mode; a deny wins over an allow. The rest of the app folder and the other clients' mounts stay refused (only the run's own folders are allowed). The refusal of overlapping allowed folders is the one of 0.5.29.
-- Fixed (Windows client, #99): an elevated `minigw` that cannot set the token owner now refuses `connect`, `share` and `run` (like `serve` and `tray`) instead of warning and creating folders and lock files owned by Administrators; the message says to run it from a normal command prompt, not elevated.
+- Fixed (Windows client, #99): an elevated `minigw` that cannot set the token owner now refuses Claude sessions and commands that write local state (including profile defaults, project links, `connect`, `reconnect`, `share`, `run`, `serve`, `tray` and plugin installation) instead of warning and creating folders and lock files owned by Administrators; the message says to run it from a normal command prompt, not elevated.
 
 ### Known limits
 
