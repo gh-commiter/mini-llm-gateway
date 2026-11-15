@@ -67,11 +67,11 @@ private func git(_ dir: String, _ args: String) -> String {
     #expect(!file.hasPrefix(root.path + "/"))
     // the agent works, the client is killed: no finish
     _ = git(root.path, "echo 'echo hi' > .envrc && git add .envrc && git commit -qm envrc && git branch feature")
-    #expect(GitWatch.recover(root.path, dir: dir, selfPID: getpid() + 1, alive: { _ in true }).isEmpty, "a live run is not reported")
-    let lines = GitWatch.recover(root.path, dir: dir, selfPID: getpid() + 1, alive: { _ in false }).joined(separator: "\n")
+    #expect(GitWatch.recover(root.path, dir: dir, selfPID: getpid() + 1, alive: { _, _ in true }).isEmpty, "a live run is not reported")
+    let lines = GitWatch.recover(root.path, dir: dir, selfPID: getpid() + 1, alive: { _, _ in false }).joined(separator: "\n")
     for want in ["from the previous run that did not finish: git in this folder", "1 new commit(s)", "new branches: feature", "committed a protected path: .envrc"] { #expect(lines.contains(want), "missing \(want) in \(lines)") }
     #expect(!fm.fileExists(atPath: file))
-    #expect(GitWatch.recover(root.path, dir: dir, selfPID: getpid() + 1, alive: { _ in false }).isEmpty, "reported once")
+    #expect(GitWatch.recover(root.path, dir: dir, selfPID: getpid() + 1, alive: { _, _ in false }).isEmpty, "reported once")
 }
 
 @Test func gitWatchIgnoresADamagedStateFile() throws {
@@ -92,7 +92,7 @@ private func git(_ dir: String, _ args: String) -> String {
     for (name, d) in bad { #expect(GitWatch.parse(d, root: root).0 == nil, "\(name) accepted") }
     try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
     try Data("not json".utf8).write(to: URL(fileURLWithPath: GitWatch.file(root, dir: dir, pid: 99999)))
-    let l = GitWatch.recover(root, dir: dir, selfPID: 1, alive: { _ in false })
+    let l = GitWatch.recover(root, dir: dir, selfPID: 1, alive: { _, _ in false })
     #expect(l.count == 1 && l[0].contains("ignoring a damaged git watch state file"), "\(l)")
     #expect(!fm.fileExists(atPath: GitWatch.file(root, dir: dir, pid: 99999)))
 }
@@ -226,10 +226,10 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
     let file = try #require(w.file)
     _ = git(root.path, "for i in 1 2 3 4 5; do git commit -q --allow-empty -m more; done")
-    var out = GitWatch.recover(root.path, dir: state, selfPID: getpid() + 1, alive: { _ in false }, maxCommits: 3).joined(separator: "\n")
+    var out = GitWatch.recover(root.path, dir: state, selfPID: getpid() + 1, alive: { _, _ in false }, maxCommits: 3).joined(separator: "\n")
     #expect(out.contains("from the previous run that did not finish") && out.contains("INCOMPLETE"), "\(out)")
     #expect(FileManager.default.fileExists(atPath: file), "the baseline was removed after an incomplete comparison")
-    out = GitWatch.recover(root.path, dir: state, selfPID: getpid() + 1, alive: { _ in false }).joined(separator: "\n")
+    out = GitWatch.recover(root.path, dir: state, selfPID: getpid() + 1, alive: { _, _ in false }).joined(separator: "\n")
     #expect(!out.contains("INCOMPLETE") && out.contains("5 new commit(s)"), "\(out)")
     #expect(!FileManager.default.fileExists(atPath: file), "the baseline stays after a complete comparison")
 }
@@ -251,4 +251,60 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     lock.closeWrites()
     #expect(ask(true) == 503 && ask(false) == 200)
     #expect(lock.respond(exclusive: false, rootOK: { false }) { DAVResponse(200) }.status == 403)
+}
+
+// MARK: round 3 (G-1, G-3, G-4, G-5), the same scenarios as client/gitwatch_test.go
+
+private func fixtureRoot() -> URL { URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent() }
+
+@Test func gitWatchHasTheSharedPins() throws {
+    struct File: Decodable { struct Pins: Decodable { let args: [String]; let env: [String] }; let pins: Pins }
+    let f = try JSONDecoder().decode(File.self, from: Data(contentsOf: fixtureRoot().appendingPathComponent("client/testdata/git-watch.json")))
+    let args = GitWatch.pins + Worktree.guardrails  // every call of the watch runs through Worktree.run with safe: true
+    let env = GitWatch.env.merging(Worktree.safeEnv) { $1 }
+    for a in f.pins.args.map({ $0.replacingOccurrences(of: "{null}", with: "/dev/null") }) {
+        let ok = args.contains(a) || zip(args, args.dropFirst()).contains { $0 == "-c" && $1 == a }
+        #expect(ok, "the watch does not run git with \(a)")
+    }
+    for e in f.pins.env.map({ $0.replacingOccurrences(of: "{null}", with: "/dev/null") }) {
+        let kv = e.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        #expect(env[kv[0]] == kv[1], "the watch does not run git with \(e) in its environment")
+    }
+}
+
+@Test func gitWatchLogParsesRawNames() throws {
+    struct Log: Decodable { let name: String; let out: String; let commits: [GitWatch.Commit] }
+    struct File: Decodable { let logs: [Log] }
+    let f = try JSONDecoder().decode(File.self, from: Data(contentsOf: fixtureRoot().appendingPathComponent("client/testdata/git-watch.json")))
+    #expect(!f.logs.isEmpty)
+    for l in f.logs { #expect(GitWatch.parseLog(l.out) == l.commits, "\(l.name)") }
+}
+
+@Test func gitWatchSeesAProtectedPathWithAQuoteInItsName() throws {
+    let (root, state) = try watched("quote"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    _ = git(root.path, "mkdir -p 'a\"b/.claude' && echo '{}' > 'a\"b/.claude/settings.json' && git add . && git commit -qm quoted")
+    let out = w.finish().joined(separator: "\n")
+    #expect(out.contains("a\"b/.claude/settings.json"), "\\(out)")
+}
+
+@Test func gitWatchRecoveryDoesNotTrustAReusedProcessID() throws {
+    let (root, state) = try watched("reuse"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    let file = try #require(w.file)
+    _ = git(root.path, "git branch feature")
+    #expect(!GitWatch.procStart(getpid()).isEmpty)
+    #expect(GitWatch.recover(root.path, dir: state, selfPID: getpid() + 1, alive: GitWatch.pidAlive).isEmpty, "this very process is still running")
+    // the same process id, but it started at another time: another process
+    let other = try String(contentsOfFile: file, encoding: .utf8).replacingOccurrences(of: "\"started\":\"", with: "\"started\":\"other-")
+    try other.write(toFile: file, atomically: true, encoding: .utf8)
+    let out = GitWatch.recover(root.path, dir: state, selfPID: getpid() + 1, alive: GitWatch.pidAlive).joined(separator: "\n")
+    #expect(out.contains("new branches: feature"), "\\(out)")
+}
+
+@Test func gitWatchSaysWhenTheStartStateIsNotStored() throws {
+    let (root, state) = try watched("nostore"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    try Data().write(to: URL(fileURLWithPath: state))  // the state folder is a file: nothing can be stored
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    #expect(w.file == nil)
 }

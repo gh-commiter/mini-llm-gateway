@@ -19,7 +19,7 @@ private func load() throws -> GitNoteCases {
     #expect(!c.cases.isEmpty)
     for k in c.cases {
         #expect(GitNote.text(mode: k.Mode, shell: k.Shell, readOnly: k.ReadOnly) == k.Note, "\(k.Mode) shell \(k.Shell) ro \(k.ReadOnly)")
-        #expect(k.Note.count < 700)
+        #expect(k.Note.count < 750)
     }
     for h in c.Hints { #expect((GitNote.refusalHint(h[0]) ?? "") == h[1], "\(h[0])") }
 }

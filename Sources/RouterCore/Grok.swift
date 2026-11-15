@@ -104,10 +104,14 @@ public enum Grok {
 
     /// The longest class prefix whose list fits (for a deeper level the prefix is all that tells names apart); none fits = nil (the run is refused, never given a list grok
     /// cannot start with).
-    static func scopedDenies(hidden: [String], scope: String) -> [String]? {
-        for prefix in [12, 10, 8, 6, 5, 4, 3] {
+    /// Not shorter than 6 characters: a sibling made after launch that shares our first `prefix` characters is not denied (16^6 for hex names), and `prefix` is told to the caller.
+    static let minPrefix = 6
+    static func scopedDenies(hidden: [String], scope: String) -> [String]? { scopedDeniesWithPrefix(hidden: hidden, scope: scope)?.list }
+
+    static func scopedDeniesWithPrefix(hidden: [String], scope: String) -> (list: [String], prefix: Int)? {
+        for prefix in [12, 10, 8, minPrefix] {
             guard let l = scopedDenies(hidden: hidden, scope: scope, prefix: prefix) else { return nil }
-            if l.filter(isGlob).count <= maxGlobEntries && l.count - l.filter(isGlob).count <= maxLiteralEntries { return l }
+            if l.filter(isGlob).count <= maxGlobEntries && l.count - l.filter(isGlob).count <= maxLiteralEntries { return (l, prefix) }
         }
         return nil
     }
@@ -134,7 +138,10 @@ public enum Grok {
         var plain: [String] = []  // hidden roots that do not hold the session: entries as they are
         for h in hidden {
             let hr = real(h)
-            guard scopeReal == hr || scopeReal.hasPrefix(hr + "/") else { plain.append(h); continue }
+            guard scopeReal == hr || scopeReal.hasPrefix(hr + "/") else {
+                guard !h.contains(where: { "*?[".contains($0) }), h.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }  // an owner-configured root with a glob character is refused
+                plain.append(h); continue
+            }
             guard !hr.contains(where: { "*?[".contains($0) }), hr.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }
             let comps = scopeReal.dropFirst(hr.count).split(separator: "/").map(String.init)
             var level = hr
@@ -162,7 +169,8 @@ public enum Grok {
             }
         }
         // A root that does not hold the session stays as an entry unless the entries above already deny it (proved by the same matching, not assumed).
-        for h in plain where !denies(out, real(h)) { add(h) }
+        // Seatbelt matches the resolved path, so a root reached through a link is also listed as what it resolves to.
+        for h in plain where !denies(out, real(h)) { add(h); add(real(h)) }
         return out
     }
 
@@ -385,11 +393,12 @@ extension Router {
         }
         if let home = coreHome {
             // #116 A2: the gateway's folders are denied to Grok's kernel profile, except the way down to the session folder (a remote client's mount lives inside the app folder)
-            guard let deny = Grok.scopedDenies(hidden: Grok.deniedRoots(scratch: config.scratchURL), scope: cwd.path),
+            guard let (deny, prefix) = Grok.scopedDeniesWithPrefix(hidden: Grok.deniedRoots(scratch: config.scratchURL), scope: cwd.path),
                   let e = Grok.prepareCoreHome(home, deny: deny) else {
                 return await error(503, "api_error", Grok.coreUnavailable, rid: rid, writer: writer)
             }
             coreEnv = e
+            if prefix < 12 { try? FileHandle.standardError.write(contentsOf: Data("minigw: grok: deny list with a class prefix of \(prefix) characters (\(deny.filter(Grok.isGlob).count) globs, \(deny.count - deny.filter(Grok.isGlob).count) paths)\n".utf8)) }
         }
         var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write && !readOnly, core: core != nil)
         // Nadaljevanje Grokove seje (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.

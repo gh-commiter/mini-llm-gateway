@@ -348,6 +348,7 @@ final class ShareClient: @unchecked Sendable {
         }
         folderLock = rootID.map { FolderLock(id: $0) }
         if kind == "direct", !readOnly, rootID != nil { gitWatch = GitWatch.begin(root.path) }  // direct mode: the agent can commit (#116 B1)
+        else if rootID != nil { GitWatch.recoverAtStart(root.path) }  // a run of this folder that did not finish, whatever mode it had
         for _ in 0..<workers { Thread { self.work() }.start() }
     }
 

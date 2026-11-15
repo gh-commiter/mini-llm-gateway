@@ -178,37 +178,37 @@ false
 ],
 [
 ".git/modules/sub/HEAD",
-true,
+false,
 false
 ],
 [
 ".git/modules/sub/index",
-true,
+false,
 false
 ],
 [
 ".git/modules/sub/index.lock",
-true,
+false,
 false
 ],
 [
 ".git/modules/sub/objects/ab/cdef",
-true,
+false,
 false
 ],
 [
 ".git/modules/sub/refs/heads/main",
-true,
+false,
 false
 ],
 [
 ".git/modules/a/b/HEAD",
-true,
+false,
 false
 ],
 [
 ".git/modules/sub/logs/HEAD",
-true,
+false,
 false
 ],
 [
@@ -233,17 +233,17 @@ false
 ],
 [
 "sub/.git/index",
-true,
+false,
 false
 ],
 [
 "sub/.git/refs/heads/main",
-true,
+false,
 false
 ],
 [
 "nest/deeper/.git/objects/ab/cdef",
-true,
+false,
 false
 ],
 [
@@ -708,12 +708,12 @@ false
 {
 "m": "PUT",
 "p": ".git/modules/sub/HEAD",
-"ok": true
+"ok": false
 },
 {
 "m": "PUT",
 "p": "nest/.git/index",
-"ok": true
+"ok": false
 },
 {
 "m": "PUT",

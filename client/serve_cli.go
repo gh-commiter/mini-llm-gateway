@@ -27,6 +27,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 )
 
 var cliFamilies = []string{"opus", "sonnet", "haiku", "fable"}
@@ -166,6 +167,7 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 			}
 		}
 	}
+	deny = withCaseVariants(deny)
 	var args []string
 	box := windowsBox() // #68: ves Claude v škatli MXC; ukazi z orodjem PowerShell (Git Bash je MSYS2, v škatli umre, W4)
 	if box && !readOnly {
@@ -239,6 +241,42 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 		args = append(args, "--settings", string(settings))
 	}
 	return args
+}
+
+// withCaseVariants (M1): NTFS and the default APFS compare names without case, so `sub/.GIT/config` is the repository's config; a rule glob names `.git`, `.claude` and git's own
+// closed names in one case. Every rule that names one of them is also given in a form that matches any case (`[gG][iI][tT]`, gitignore-style classes), added to the
+// rule, never instead of it: where the matcher already ignores case, or does not take classes, the original keeps working as before.
+func withCaseVariants(rules []string) []string {
+	names := append([]string{".git", ".claude"}, gitDenies...)
+	out := slices.Clone(rules)
+	for _, r := range rules {
+		if !strings.Contains(r, "/.git") && !strings.Contains(r, "/.claude") {
+			continue
+		}
+		v := r
+		for _, n := range names {
+			for _, after := range []string{"/", ")"} {
+				v = strings.ReplaceAll(v, "/"+n+after, "/"+caseClass(n)+after)
+			}
+		}
+		if v != r && !slices.Contains(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// caseClass: every letter of a name as a class of both cases (".git" -> ".[gG][iI][tT]").
+func caseClass(n string) string {
+	var b strings.Builder
+	for _, r := range n {
+		if l, u := unicode.ToLower(r), unicode.ToUpper(r); l != u {
+			fmt.Fprintf(&b, "[%c%c]", l, u)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees"}

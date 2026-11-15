@@ -123,7 +123,7 @@ func protectedPathFor(rel string, git bool) bool {
 	end := len(raw) // components before this index are judged by the general rules, the rest is inside a git directory
 	for i, c := range raw {
 		comps[i] = normName(c)
-		if git && comps[i] == ".git" && end == len(raw) {
+		if git && i == 0 && comps[i] == ".git" { // only the share's own git directory: a nested repository's .git stays refused as before #112 (the watch audits one repository)
 			end = i
 		}
 	}
@@ -149,7 +149,7 @@ func protectedPathFor(rel string, git bool) bool {
 // Refused on purpose (each can run code or redirect git of the owner): config, config.worktree, hooks/, info/ (attributes),
 // commondir, gitdir, shallow, grafts, worktrees/ (git worktree add by the agent does not work), objects/info/alternates
 // and http-alternates, rebase-merge/, rebase-apply/, sequencer/ (an `exec` line in git-rebase-todo would run when the
-// owner continues the rebase), remotes/, branches/, refs/replace/ (and its log), and the .lock file of any of them. The folders refs, logs, objects
+// owner continues the rebase), modules/ (a commit inside a submodule or a nested clone: the git watch audits the share root's repository only), remotes/, branches/, refs/replace/ (and its log), and the .lock file of any of them. The folders refs, logs, objects
 // and modules themselves cannot be removed or renamed, only what is in them.
 func gitDirWritable(c []string) bool {
 	if len(c) == 0 {
@@ -167,8 +167,8 @@ func gitDirWritable(c []string) bool {
 		return len(c) > 1 && !(c[1] == "replace" || c[0] == "logs" && len(c) > 2 && c[1] == "refs" && c[2] == "replace") && !strings.HasPrefix(c[len(c)-1], "-") && !slices.ContainsFunc(c, func(n string) bool { return strings.HasPrefix(n, "-") })
 	case "objects":
 		return gitObjectsWritable(c[1:])
-	case "modules":
-		return gitModuleWritable(c[1:])
+	case "modules": // a submodule's git directory (a commit inside a submodule): the watch audits the root repository only, so these stay refused
+		return false
 	}
 	return len(c) == 1 && gitFileRe.MatchString(c[0])
 }
@@ -197,25 +197,6 @@ func isHex(s string) bool {
 		}
 	}
 	return s != ""
-}
-
-// gitModuleWritable: modules/<name>/<member of the module's git directory>. The name may contain slashes, so the git
-// directory starts at the first member git has (HEAD, index, objects, refs …). A refused name anywhere in the path is
-// refused (also in a module's name), so a module's objects/info (commit graph) is refused too.
-func gitModuleWritable(c []string) bool {
-	for i, n := range c {
-		switch n {
-		case "config", "config.worktree", "hooks", "info", "commondir", "gitdir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply",
-			"sequencer", "alternates", "http-alternates", "remotes", "branches":
-			return false
-		case "refs", "logs", "objects":
-			return i > 0 && gitDirWritable(c[i:])
-		}
-		if i > 0 && gitFileRe.MatchString(n) {
-			return gitDirWritable(c[i:])
-		}
-	}
-	return false
 }
 
 func ignored(rules []ignoreRule, rel string, isDir bool) bool {
