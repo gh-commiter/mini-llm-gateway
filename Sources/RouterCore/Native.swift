@@ -422,7 +422,7 @@ public enum Native {
     ///   mapa sama, /usr/bin/security; brez podmape iCloud/podatkovne zaščite. Posebej: `~/.claude.json` je SAMO ZA BRANJE (Claude Code piše vanj stanje, ki ga zagon ne potrebuje; brez pisanja
     ///   zagoni delujejo; pisanje bi odprlo globalno nastavitev lastnika: strežnike MCP, zaupanje projektom);
     /// - ~/.claude: SEZNAM DOVOLJENEGA: bere se le `dev-mods` (brez branja te mape Claude Code zavrne orodja za pisanje z »Permission … denied«); pogovor te seje: `projects/<mapa seje>`
-    ///   (ustvarjanje mape) in z `sessionID` le datoteke `<id>.*` in `<id>/` (branje in pisanje; nadaljevanje pogovora deluje; tuji pogovori v isti mapi, ker
+    ///   (le ustvarjanje mape: file-write-create, ne spreminjanje) in z `sessionID` le datoteke `<id>.*` in `<id>/` (branje in pisanje; nadaljevanje pogovora deluje; tuji pogovori v isti mapi, ker
     ///   ime mape ni enolično, niso dostopni, tudi seznam mape ne); brez `sessionID` cela mapa; z `userSettings` (vir nastavitev `user`) še branje `settings.json`, sicer ga Claude
     ///   Code brez opozorila ne bi videl. NE pišejo se `session-env`, `sessions`, `cache`, `~/.claude.json` (zagoni delujejo brez; zavrnitve so opozorila v dnevniku jedra).
     ///   Zavrnjeno: shell-snapshots, .credentials.json, debug, todos, plans, tasks, ide, teams, statsig, plugins, telemetry, CLAUDE.md, history, `projects/<slug>/memory`, drugi projekti.
@@ -431,11 +431,16 @@ public enum Native {
     ///   na VSAKEM naslovu (tudi na lastnem naslovu LAN: pravilo je po vratih, ne po naslovu), `denyPorts` (vrata routerja) še izrecno, localhost nikoli; brez `network-bind` in `network-inbound`.
     /// Mapa seje je lahko v skriti mapi (mounts/<uuid>, Scratch/sync/…): ker je privzeto vse zavrnjeno, je dovoljena le ta pot, ostalo (sosednje seje,
     /// nastavitve, Scratch) ne. Skrita mapa ali skrivnost domače mape, ki je V dovoljeni mapi (ne obratno), je izrecno zavrnjena.
-    /// nil: pot ni kanonična (povezava; pisanje bi šlo drugam) ali vsebuje nadzorni znak (profil bi se razlomil): zagon se zavrne (ClaudeCLI), ne teče brez plasti.
+    /// nil: pot ni kanonična (povezava; pisanje bi šlo drugam), je korenski imenik ali vsebuje nadzorni znak (profil bi se razlomil): zagon se zavrne (ClaudeCLI), ne teče brez plasti.
+    /// Velike in male črke: Seatbelt primerja poti na APFS brez razlikovanja (preverjeno: pravilo za `.git` zavrne tudi `.GIT`, `.Git`), enako pravila Claude Code (preverjeno s 2.1.322:
+    /// navadne globe in razredi `[gG]` ujamejo vsako obliko črk, Read in Edit, dovoli in zavrni), zato vzorci ostanejo kot so.
     static func claudeRestrictedProfile(session: String, folders: [String], writable: Bool, tmp: String, exe: String,
                                         home: String = NSHomeDirectory(), hidden: [String] = [], folderSettings: Bool = false, userSettings: Bool = false,
                                         sessionID: String? = nil, denyPorts: [Int] = []) -> String? {
-        let granted = [session] + folders
+        // a trailing slash would make the prefix `//` (no deny below would match); the root itself is never a grant (the gateway refuses it, AllowedFolders.paths, and any folder around the app
+        // folder or Scratch, overlapsGatewayFolder, which includes every ancestor of the home folder)
+        let granted = ([session] + folders).map { $0.count > 1 && $0.hasSuffix("/") ? String($0.dropLast()) : $0 }
+        guard !granted.contains("/") else { return nil }
         let all = granted + [tmp, exe, home] + hidden
         guard !all.contains(where: { $0.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } }) else { return nil }
         for p in granted + [tmp] where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
@@ -452,7 +457,7 @@ public enum Native {
         // the conversation of this run: its files only (a UUID: nothing else goes into a regex); without an id the whole folder
         let project: String
         if let id = sessionID, id.range(of: #"^[0-9a-fA-F-]{8,64}$"#, options: .regularExpression) != nil {
-            project = "(allow file-write*" + rules("literal", [folder]) + ")\n(allow file-read* file-write* (regex #\"^" + re(folder + "/" + id) + "(\\.|/|$)\"))\n"
+            project = "(allow file-write-create" + rules("literal", [folder]) + ")\n(allow file-read* file-write* (regex #\"^" + re(folder + "/" + id) + "(\\.|/|$)\"))\n"
         } else {
             project = "(allow file-read* file-write*" + rules("subpath", [folder]) + ")\n"
         }

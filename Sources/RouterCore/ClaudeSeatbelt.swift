@@ -24,6 +24,10 @@ public actor ClaudeSeatbelt {
     private var verdicts: [String: State] = [:]
     private var inflight: [String: Task<Outcome, Never>] = [:]
     private var inconclusiveUntil: [String: Date] = [:]
+    private var offAt: [String: Date] = [:]
+    /// An `off` verdict is not final: after this long the check is repeated (a transient cause, a timeout, must not disable the layer until the app restarts); a new binary,
+    /// macOS or profile has another key and is checked at once.
+    static let offFor: TimeInterval = 1800
     private let now: @Sendable () -> Date
     private var requireTranscript: Bool
     /// Bump when `Native.claudeRestrictedProfile` changes in any way (a rule, a parameter, a variant): a cached pass is for one schema. (The key also holds the binary, its version, the OS.)
@@ -55,7 +59,10 @@ public actor ClaudeSeatbelt {
         let task: Task<Outcome, Never>
         let cached = Self.stored(cacheFile) == key
         while true {
-            if let v = verdicts[key] { state = v; return v == .on }
+            if let v = verdicts[key] {
+                if v != .on, let at = offAt[key], now() >= at.addingTimeInterval(Self.offFor) { verdicts[key] = nil; offAt[key] = nil; continue }  // expired: check again (state stays off meanwhile)
+                state = v; return v == .on
+            }
             if let until = inconclusiveUntil[key], now() < until { return true }
             if let t = inflight[key] { task = t; break }
             // one check at a time (they share a folder, and two claude runs at once only slow each other): wait for another binary's check, then look again
@@ -75,7 +82,7 @@ public actor ClaudeSeatbelt {
             return true
         case .fail(let why):
             if state != .off(why) { Self.log.warning("\(Self.offLine(why), privacy: .public)") }
-            verdicts[key] = .off(why); state = .off(why)
+            verdicts[key] = .off(why); state = .off(why); offAt[key] = now()
             return false
         case .inconclusive:
             inconclusiveUntil[key] = now().addingTimeInterval(Self.inconclusiveFor)
@@ -136,7 +143,7 @@ public actor ClaudeSeatbelt {
         await offPool { checkNow(exe: exe, tmpBase: tmpBase, home: home, modelRun: modelRun, requireTranscript: requireTranscript) }
     }
 
-    static func checkNow(exe: String, tmpBase: URL, home: String, modelRun: Bool = true, requireTranscript: Bool = true) -> Outcome {
+    static func checkNow(exe: String, tmpBase: URL, home: String, modelRun: Bool = true, requireTranscript: Bool = true, modelTimeout: TimeInterval = 120) -> Outcome {
         let fm = FileManager.default
         // a fixed name (checks run one at a time): claude keeps this session's transcript under ~/.claude/projects/<folder of the path>: one folder for every check, not one per check;
         // the transcript file of a check is removed after it
@@ -168,7 +175,7 @@ public actor ClaudeSeatbelt {
                     "--allowedTools", "Read(./**)", "--permission-mode", "dontAsk", "--session-id", sessionID, "--setting-sources", ""]
         let prompt = "Read the file canary.txt in the current folder and reply with only its exact content."
         let boxed = confinedEnvironment(env, tmp: tmp)
-        let sandboxed = capture("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, env: boxed, cwd: session, input: prompt, timeout: 120, log: root)
+        let sandboxed = capture("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, env: boxed, cwd: session, input: prompt, timeout: modelTimeout, log: root)
         if sandboxed.out.contains(canary) {
             // claude answers even when it cannot save its conversation, and then a resume finds nothing: the transcript must be there (and is removed, one per check would pile up)
             let transcript = (Sync.real(URL(fileURLWithPath: home))?.path ?? home) + "/.claude/projects/" + Native.claudeProjectFolder(session) + "/" + sessionID + ".jsonl"
@@ -178,10 +185,11 @@ public actor ClaudeSeatbelt {
             return .pass
         }
         // not shown by the profile alone: the same run without it (network, login, a Claude Code outage are not the profile's fault)
-        let control = capture(exe, args, env: env, cwd: session, input: prompt, timeout: 120, log: root)
+        let control = capture(exe, args, env: env, cwd: session, input: prompt, timeout: modelTimeout, log: root)
         if !control.out.contains(canary) { return .inconclusive }
-        let why = sandboxed.timedOut ? "claude did not answer in time under the profile"
-            : firstLine(sandboxed.err) ?? firstLine(sandboxed.out) ?? "claude exited with \(sandboxed.status) under the profile"
+        // too slow under the profile while the control run answers: a slow machine is not a broken profile (checked again after `inconclusiveFor`)
+        if sandboxed.timedOut { return .inconclusive }
+        let why = firstLine(sandboxed.err) ?? firstLine(sandboxed.out) ?? "claude exited with \(sandboxed.status) under the profile"
         return .fail("claude does not run under the profile (\(why))")
     }
 

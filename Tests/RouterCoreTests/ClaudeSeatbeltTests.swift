@@ -165,6 +165,16 @@ private struct Rig {
     #expect(try !rig.canWrite(p, rig.project + "/.claude/settings.json") && !rig.canWrite(p, rig.project + "/sub/.claude/settings.local.json"))  // folder settings are read
     let plain = try rig.profile(session: rig.project, writable: true)
     #expect(try rig.canWrite(plain, rig.project + "/.claude/x") && !rig.canWrite(plain, rig.project + "/.git/config"))  // `.claude` only with those sources
+    // M1: Seatbelt compares paths case-insensitively on APFS: `.GIT`, `.Git`, `.CLAUDE` are closed as `.git` and `.claude` are (the rows only mean something on a case-insensitive volume)
+    try Data("p".utf8).write(to: URL(fileURLWithPath: rig.root.path + "/CaseProbe"))
+    if FileManager.default.fileExists(atPath: rig.root.path + "/caseprobe") {
+        #expect(try !rig.canWrite(p, rig.project + "/.GIT/config") && !rig.canWrite(p, rig.project + "/.Git/hooks/x") && !rig.canWrite(p, rig.project + "/sub/.GIT/hooks/y"))
+        #expect(try !rig.ok(p, "/bin/mkdir", [rig.project + "/sub/.GIT"]) && !rig.ok(p, "/bin/mkdir", [rig.project + "/sub3/.Git"]) && !rig.ok(p, "/bin/mkdir", [rig.project + "/sub/.CLAUDE/x"]))
+        #expect(try !rig.canWrite(p, rig.project + "/.CLAUDE/settings.json") && !rig.canWrite(p, rig.project + "/sub/.Claude/settings.local.json"))
+        // the older macOS sandbox profile (minigw run, Copilot) has the same names: the same
+        let old = try #require(Native.sandboxProfile(dir: rig.project, home: rig.home, network: false, writable: [rig.project]))
+        #expect(try !rig.ok(old, "/usr/bin/touch", [rig.project + "/.GIT/config"]) && !rig.ok(old, "/bin/mkdir", [rig.project + "/sub/.GIT"]))
+    }
     // a read-only run has no write at all (the rows above, plus `.git`)
     let ro = try rig.profile(session: rig.project, writable: false)
     #expect(try !rig.canWrite(ro, rig.project + "/a2.txt"))
@@ -191,6 +201,7 @@ private struct Rig {
     let freshFolder = rig.home + "/.claude/projects/" + Native.claudeProjectFolder(rig.allowed)
     try FileManager.default.createDirectory(atPath: rig.home + "/.claude/projects", withIntermediateDirectories: true)
     #expect(try rig.ok(fresh, "/bin/mkdir", [freshFolder]) && FileManager.default.fileExists(atPath: freshFolder))
+    #expect(try !rig.ok(fresh, "/bin/chmod", ["700", freshFolder]) && !rig.ok(fresh, "/usr/bin/chflags", ["hidden", freshFolder]))  // L3: creating the folder, not changing the owner's folder
     #expect(try rig.canWrite(fresh, freshFolder + "/" + id + ".jsonl") && !rig.canWrite(fresh, freshFolder + "/" + other + ".jsonl"))
     // an id that is not a UUID-like token never goes into a regex
     let odd = try rig.profile(session: rig.project, sessionID: ".*")
@@ -244,6 +255,23 @@ private struct Rig {
     let refused = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)  // returns when nc exits: at once when refused
     attempt.waitUntilExit()
     #expect(refused.contains("Operation not permitted") && attempt.terminationStatus != 0, "\(refused)")
+}
+
+/// L4: the root is never a grant, a trailing slash does not weaken the denies (the prefix `//` matched nothing); L5: the Copilot cache is in the hidden list of a run.
+@Test func rootAndTrailingSlashGrants() throws {
+    let rig = try Rig()
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    #expect(Native.claudeRestrictedProfile(session: "/", folders: [], writable: true, tmp: rig.tmp, exe: "/c", home: rig.home) == nil)
+    #expect(Native.claudeRestrictedProfile(session: rig.project, folders: ["/"], writable: false, tmp: rig.tmp, exe: "/c", home: rig.home) == nil)
+    let slash = try rig.profile(session: rig.project, folders: [rig.root.path + "/"])  // a grant around the whole rig, with a trailing slash
+    #expect(try rig.canRead(slash, rig.outside + "/x.txt"))
+    #expect(try !rig.canRead(slash, rig.home + "/.ssh/config") && !rig.canRead(slash, rig.scratch + "/state/s") && !rig.canRead(slash, rig.app + "/state.json") && !rig.canWrite(slash, rig.project + "/.git/config"))
+    #expect(Router.copilotCacheDenied.contains(RouterConfig.copilotCache.path))
+    let cache = rig.root.path + "/home/Library/Caches/copilot"
+    try FileManager.default.createDirectory(atPath: cache, withIntermediateDirectories: true)
+    try Data("code".utf8).write(to: URL(fileURLWithPath: cache + "/pkg.js"))
+    let p = try #require(Native.claudeRestrictedProfile(session: rig.project, folders: [rig.root.path], writable: true, tmp: rig.tmp, exe: "/c", home: rig.home, hidden: [cache]))
+    #expect(try !rig.canRead(p, cache + "/pkg.js") && !rig.canWrite(p, cache + "/new.js"))
 }
 
 @Test func devicesAreTheFewOnesClaudeUses() throws {
@@ -429,6 +457,33 @@ private final class Clock: @unchecked Sendable {
     _ = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache)
     #expect(runs() == 2)  // after the ten minutes: checked once more
     #expect(await seatbelt.state == .unchecked)  // never turned off by an outage
+}
+
+/// L1: a run too slow under the profile while the control run answers is a slow machine, not a broken profile; an `off` verdict expires (30 minutes) and is checked again.
+@Test func timeoutIsInconclusiveAndOffExpires() async throws {
+    let rig = try Rig()
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    let base = URL(fileURLWithPath: rig.scratch + "/tmp")
+    let slow = try fakeClaude(rig.root, body: "[ -n \"$CLAUDE_CODE_TMPDIR\" ] && sleep 6; cat canary.txt; cat >/dev/null")  // slow only under the profile
+    #expect(ClaudeSeatbelt.checkNow(exe: slow, tmpBase: base, home: rig.home, requireTranscript: false, modelTimeout: 2) == .inconclusive)
+    // off, then expiry with an injected clock: the marker makes claude fail under the profile only
+    let marker = rig.root.path + "/off-marker"
+    try Data().write(to: URL(fileURLWithPath: marker))
+    let exe = try fakeClaude(rig.root, body: "[ -n \"$CLAUDE_CODE_TMPDIR\" ] && [ -e \"\(marker)\" ] && { echo 'EPERM transient' >&2; exit 1; }; cat canary.txt; cat >/dev/null")
+    let clock = Clock()
+    let seatbelt = ClaudeSeatbelt(home: rig.home, now: { clock.now }, requireTranscript: false)
+    let cache = rig.root.appendingPathComponent("cache.json")
+    let first = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache)
+    let firstState = await seatbelt.state
+    #expect(!first && firstState != .on && firstState != .unchecked)
+    try FileManager.default.removeItem(atPath: marker)  // the cause is gone
+    clock.advance(ClaudeSeatbelt.offFor - 1)
+    let early = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache)
+    #expect(!early)  // not before the expiry
+    clock.advance(2)
+    let later = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache)
+    let laterState = await seatbelt.state
+    #expect(later && laterState == .on)  // checked again, on
 }
 
 @Test func ensureCachesOnDiskAndReportsAFailureOnce() async throws {
@@ -649,5 +704,41 @@ private final class Clock: @unchecked Sendable {
         #expect(on == .on, "\(on)")
         let (s2, a2) = await turn([["role": "user", "content": q1], ["role": "assistant", "content": a1], ["role": "user", "content": "Without using any tool: which file did you just create?"]])
         #expect(s2 == 200 && a2.contains("w.txt"), "\(s2) \(a2.prefix(300))")  // the conversation was resumed
+    }
+
+    /// What the rule layer relies on, measured with the real Claude Code (2.1.322): its path globs match any letter case (plain and bracket classes alike), for Edit and Read, allow and deny,
+    /// existing and new folders: `.GIT`, `.Git` and `.CLAUDE` are closed by the lowercase rules. A neutral folder name is used (Claude Code also guards `.git` itself, which would hide the rule).
+    @Test func realClaudeRuleGlobsMatchAnyCase() async throws {
+        guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
+        let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-glob-" + UUID().uuidString.lowercased())
+        let session = base.appendingPathComponent("s"), logDir = base.appendingPathComponent("log")
+        for d in [session.appendingPathComponent("sub/Zname"), logDir] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+        defer { try? FileManager.default.removeItem(at: base) }
+        defer { removeTranscriptFolders([session.path, logDir.path]) }
+        try Data("ZDATA".utf8).write(to: session.appendingPathComponent("sub/Zname/f.txt"))
+        var env = ProcessInfo.processInfo.environment
+        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" { env[k] = nil }
+        env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        let sp = try #require(Sync.real(session)).path
+        func run(_ tool: String, allowed: String?, denied: String?, _ prompt: String) -> String {
+            var a = ["-p", "--model", "haiku", "--output-format", "json", "--tools", tool, "--permission-mode", "dontAsk", "--setting-sources", "", "--no-session-persistence"]
+            if let allowed { a += ["--allowedTools", allowed] }
+            if let denied { a += ["--disallowedTools", denied] }
+            return ClaudeSeatbelt.capture(exe, a, env: env, cwd: sp, input: prompt, timeout: 120, log: logDir).out
+        }
+        let probe = run("Read", allowed: "Read(./**)", denied: nil, "Use the Read tool on \(sp)/sub/Zname/f.txt and print its content.")
+        guard probe.contains("ZDATA") else { try Test.cancel("claude is not logged in or not reachable here: \(probe.prefix(160))") }
+        let u = String(Int.random(in: 1000...9999))
+        let read = "Use the Read tool on \(sp)/sub/ZNAME/f.txt and print its content. If denied say DENIED."
+        #expect(!run("Read", allowed: "Read(./**)", denied: "Read(/\(sp)/**/zname/**)", read).contains("ZDATA"), "deny, plain lowercase glob, other case: not closed")
+        #expect(!run("Read", allowed: "Read(./**)", denied: "Read(/\(sp)/**/[zZ][nN][aA][mM][eE]/**)", read).contains("ZDATA"), "deny, bracket classes")
+        #expect(run("Read", allowed: "Read(/\(sp)/**/zname/**)", denied: nil, read).contains("ZDATA"), "allow, plain lowercase glob, other case")
+        let write = "Use the Write tool to create \(sp)/sub/NewDir\(u)/f with text X. If denied say DENIED."
+        _ = run("Write", allowed: "Edit(./**)", denied: "Edit(/\(sp)/**/newdir\(u)/**)", write)
+        #expect(!FileManager.default.fileExists(atPath: sp + "/sub/NewDir\(u)/f"), "Edit deny, plain lowercase glob, a new folder in other case: not closed")
+        _ = run("Write", allowed: "Edit(./**)", denied: "Edit(/\(sp)/**/[nN][eE][wW][dD][iI][rR]\(u)/**)", write)
+        #expect(!FileManager.default.fileExists(atPath: sp + "/sub/NewDir\(u)/f"), "Edit deny, bracket classes")
+        _ = run("Write", allowed: "Edit(/\(sp)/**/newdir\(u)/**)", denied: nil, write)
+        #expect(FileManager.default.fileExists(atPath: sp + "/sub/NewDir\(u)/f"), "Edit allow, plain lowercase glob, other case")
     }
 }

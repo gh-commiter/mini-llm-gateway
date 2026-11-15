@@ -767,6 +767,8 @@ extension Router {
             + " Maven, Go, npm, pip, Cargo and Gradle caches are already set."
     }
     static let toolList = ToolList()
+    /// The Copilot package cache (the rules deny Edit there too): literal and real path, in the kernel profile's hidden list.
+    static var copilotCacheDenied: [String] { [RouterConfig.copilotCache.path, Sync.real(RouterConfig.copilotCache)?.path].compactMap { $0 } }
 
     /// Naslov tega routerja za lokalni mount_webdav.
     var localBase: String {
@@ -906,7 +908,7 @@ extension Router {
                 // a failed self-check (claude does not run under the profile at all) is the case that falls back, and says so in status and Settings.
                 guard let tmpReal = confinedTmp.flatMap({ Sync.real($0)?.path }), let real = Sync.real(URL(fileURLWithPath: exe))?.path,
                       let profile = Native.claudeRestrictedProfile(session: canon(cwd.path), folders: grants.folders.map(canon), writable: grants.writable && !readOnly,
-                                                                   tmp: tmpReal, exe: real, hidden: RouterConfig.hiddenScratch(config.scratchURL) + RouterConfig.agentDenied(kind: "claude", scratch: config.scratchURL),
+                                                                   tmp: tmpReal, exe: real, hidden: RouterConfig.hiddenScratch(config.scratchURL) + RouterConfig.agentDenied(kind: "claude", scratch: config.scratchURL) + Self.copilotCacheDenied,
                                                                    folderSettings: ClaudeCLIConfig.readsFolderSettings(grants.sources), userSettings: ClaudeCLIConfig.sourceEntries(grants.sources).contains("user"),
                                                                    sessionID: grants.sessionID, denyPorts: [Int(config.port)]) else {
                     Self.log.error("\(rid, privacy: .public) claude: the system sandbox profile for this run could not be built: the run is refused")
