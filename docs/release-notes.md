@@ -8,6 +8,11 @@
 ### Changed
 - Changed (both clients): `minigw status` now shows the gateway's version next to the minigw version (a `Version:` line), as `minigw plugin status` already did (#118).
 
+### Known problems
+- Grok agent runs that last longer than a few minutes can fail with 502.
+- Cost is shown only when the provider reports it (OpenRouter does); LiteLLM models and the subscription agents (Claude, Codex, Grok, Copilot) show "-". Estimates from price lists are not in this version.
+- Token counts of the subscription agents are what the agent's program reports and can be far below the real use.
+
 ## 0.6.2
 
 ### Changed
