@@ -439,7 +439,7 @@ func TestProjectCounters(t *testing.T) {
 	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/usage?days=32", ""); st != 400 || !strings.Contains(b, "days: 1-31") {
 		t.Fatalf("days=32: %d %s", st, b)
 	}
-	out := stdout(t, func() { routerCommand([]string{"usage", "--days", "2", "--config", cfg}, strings.NewReader("")) })
+	out := stdout(t, func() { routerCommand([]string{"usage", "--legacy", "--days", "2", "--config", cfg}, strings.NewReader("")) })
 	if !strings.Contains(out, `"/proj"  this computer  codex: 1 requests`) {
 		t.Fatalf("cli usage: %q", out)
 	}
