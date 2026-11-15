@@ -1,0 +1,36 @@
+{
+  "parse": [
+    {"args": ["-p", "--model", "m", "x"], "rest": ["-p", "--model", "m", "x"], "value": "", "error": ""},
+    {"args": ["--minigw-tools=read", "-p", "x"], "rest": ["-p", "x"], "value": "read", "error": ""},
+    {"args": ["-p", "--minigw-tools", "none", "x"], "rest": ["-p", "x"], "value": "none", "error": ""},
+    {"args": ["--minigw-tools=none", "--minigw-tools", "read"], "rest": [], "value": "read", "error": ""},
+    {"args": ["--minigw-tools=all", "-p"], "rest": null, "value": "", "error": "--minigw-tools: unknown value \"all\" (use none or read)"},
+    {"args": ["--minigw-tools="], "rest": null, "value": "", "error": "--minigw-tools: unknown value \"\" (use none or read)"},
+    {"args": ["--minigw-tools", "Bash"], "rest": null, "value": "", "error": "--minigw-tools: unknown value \"Bash\" (use none or read)"},
+    {"args": ["-p", "--minigw-tools"], "rest": null, "value": "", "error": "--minigw-tools needs a value (none or read)"},
+    {"args": ["-p", "--", "--minigw-tools=bad"], "rest": ["-p", "--", "--minigw-tools=bad"], "value": "", "error": ""}
+  ],
+  "plan": [
+    {"model": "litellm-gpt", "flag": "", "ro": false, "tools": "", "error": ""},
+    {"model": "litellm-gpt", "flag": "read", "ro": false, "tools": "read", "error": ""},
+    {"model": "litellm-gpt", "flag": "none", "ro": false, "tools": "none", "error": ""},
+    {"model": "openrouter/x-ai/grok", "flag": "", "ro": true, "tools": "read", "error": ""},
+    {"model": "litellm-gpt", "flag": "none", "ro": true, "tools": "none", "error": ""},
+    {"model": "", "flag": "", "ro": true, "tools": "", "error": ""},
+    {"model": "", "flag": "read", "ro": false, "tools": "read", "error": ""},
+    {"model": "claude-cli-opus", "flag": "", "ro": true, "tools": "", "error": ""},
+    {"model": "claude-codex-gpt-6.1-sol", "flag": "read", "ro": false, "tools": "", "error": "--minigw-tools is not available for claude-codex-gpt-6.1-sol: agents are limited on the gateway, use --minigw-ro"},
+    {"model": "claude-grok-4", "flag": "none", "ro": true, "tools": "", "error": "--minigw-tools is not available for claude-grok-4: agents are limited on the gateway, use --minigw-ro"},
+    {"model": "claude-copilot-x", "flag": "read", "ro": false, "tools": "", "error": "--minigw-tools is not available for claude-copilot-x: agents are limited on the gateway, use --minigw-ro"},
+    {"model": "claude-cli-opus", "flag": "none", "ro": false, "tools": "", "error": "--minigw-tools is not available for claude-cli-opus: agents are limited on the gateway, use --minigw-ro"}
+  ],
+  "claudeArgs": [
+    {"tools": "read", "args": ["-p", "x"], "out": ["--tools=Read,Grep,Glob", "--strict-mcp-config", "--disable-slash-commands"]},
+    {"tools": "none", "args": ["-p", "x"], "out": ["--tools=", "--strict-mcp-config", "--disable-slash-commands"]},
+    {"tools": "read", "args": ["--disable-slash-commands", "-p", "x"], "out": ["--tools=Read,Grep,Glob", "--strict-mcp-config"]}
+  ],
+  "line": [
+    {"tools": "read", "line": "minigw: tools of this model: read only (Read, Grep, Glob)"},
+    {"tools": "none", "line": "minigw: tools of this model: none"}
+  ]
+}

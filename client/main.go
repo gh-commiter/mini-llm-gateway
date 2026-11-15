@@ -554,6 +554,7 @@ func main() {
 			"minigw share add --work=native|native-direct|worktree|sync|direct|auto [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
 			projectHelp + "\n" + noteHelp + "\n" + usageHelp + "\n" +
 			"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
+			"minigw --minigw-tools none|read [claude args]  tools of a provider model (LiteLLM, OpenRouter): none, or read = Read, Grep, Glob (--minigw-ro = read); allowed inside Claude Code\n" +
 			"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +
 			"inside Claude Code minigw passes only -p, --model and other options that do not widen permissions (MINIGW_ALLOW_UNSAFE_FLAGS=1 = all)\n" +
 			"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +
@@ -584,6 +585,10 @@ func main() {
 	role, args, ok := takeRole(args, os.Getenv("MINIGW_ROLE"))
 	if !ok {
 		fail("--minigw-role: 1-32 letters, digits, . _ or -")
+	}
+	args, toolsFlag, toolsErr := takeTools(args) // #119
+	if toolsErr != "" {
+		fail(toolsErr)
 	}
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--minigw-ro" || strings.HasPrefix(args[i], "--minigw-work=") {
@@ -622,6 +627,10 @@ func main() {
 	implicit := workImplicit(asked, work)
 	if agentConn() == nil {
 		args = modelProfile(args, profileNames())
+	}
+	tools, toolsErr := toolsFor(modelArg(args), toolsFlag, readOnly) // #119: model brez pripone profila (modelProfile)
+	if toolsErr != "" {
+		fail(toolsErr)
 	}
 	ps := loadProfiles()
 	if len(ps) == 0 {
@@ -727,6 +736,11 @@ sessionArgs:
 		if checkClaudeArgs(os.Getenv) { // I17: env v --settings premaga env v uporabnikovem settings.json (izmerjeno, 2.1.318)
 			args = append([]string{"--settings", mentionSettings}, args...)
 		}
+	}
+
+	if tools != "" { // #119: za izrecnim zavrnjenim --tools (refuseUnsafeClaudeFlags) in promptGuard
+		args = append(toolsArgs(tools, args), args...)
+		fmt.Fprintln(os.Stderr, toolsLine(tools))
 	}
 
 	// Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
@@ -1051,7 +1065,11 @@ func promptRefusal(r string) string {
 	if r == stdinMention {
 		return r + " is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to " + minMentionGuard + " or newer"
 	}
-	return r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt"
+	msg := r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt"
+	if strings.HasPrefix(r, "@") { // #119: stdin sme »@« (diff z @Test), če claude ne bere omemb
+		msg += ", or pass it on stdin (for example: minigw -p --model <model> < file.txt; needs Claude Code " + minMentionGuard + " or newer)"
+	}
+	return msg
 }
 
 // stdinMentionsOff (#44): »@« na stdin gre naprej le, ko ga gnezdeni claude zanesljivo ne bere: varovalo, različica vsaj

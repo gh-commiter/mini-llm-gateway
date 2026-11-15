@@ -379,6 +379,13 @@ minigw --minigw-role security -p --model claude-codex "…"
 read-only, Codex and Grok run in their read-only sandbox, Copilot runs without its write tool, and Claude CLI gets only
 its reading tools (Read, Grep, Glob, web search and fetch; commands only in a sandbox that cannot write to the
 folder). This also holds when the gateway runs on the same computer. `/minigw:ask --ro` and `/minigw:review` use it.
+**Tools of provider models** (`--minigw-tools=read` or `none`): a LiteLLM or OpenRouter model runs in the local Claude Code with the
+session's permissions (Bash, Edit, MCP tools, sub-agents), and `--tools` is refused inside Claude Code. `--minigw-tools=read` gives it only Read,
+Grep and Glob (`--strict-mcp-config`, `--disable-slash-commands` and `--tools=Read,Grep,Glob` are passed to claude, which is what makes the set
+hard); `none` gives it no tools. It is accepted inside Claude Code because it can only remove tools; `--minigw-ro` with a provider model means
+`read`. Agent models are limited on the gateway: `--minigw-tools` with one is an error (use `--minigw-ro`). A prompt with `@` before a word
+(`@Test` in a diff) is refused inside Claude Code; pipe it on stdin instead (`git diff | minigw -p --model <model>`, Claude Code 2.1.299 or newer).
+
 Leaving `--minigw-ro` out is not prompted: a model call without it inside Claude Code is pre-approved like one with it,
 so the agent may write (in worktree mode only on its branch).
 

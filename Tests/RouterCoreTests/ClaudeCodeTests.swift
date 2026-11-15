@@ -113,3 +113,39 @@ struct ClaudeCodeCases: Decodable {
         #expect(spawned, "without a claude parent: \(text)")
     }
 }
+
+/// #119: isti primeri kot Go (client/testdata/minigw-tools-cases.json, client/claudecode_test.go TestMinigwTools).
+struct ToolsCases: Decodable {
+    struct Parse: Decodable { let args: [String]; let rest: [String]?; let value: String; let error: String }
+    struct Plan: Decodable { let model: String; let flag: String; let ro: Bool; let tools: String; let error: String }
+    struct Out: Decodable { let tools: String; let args: [String]; let out: [String] }
+    struct Line: Decodable { let tools: String; let line: String }
+    let parse: [Parse], plan: [Plan], claudeArgs: [Out], line: [Line]
+}
+
+@Test func minigwToolsFlagTable() throws {
+    let c = try JSONDecoder().decode(ToolsCases.self, from: Data(contentsOf: ClaudeCodeCases.root.appendingPathComponent("client/testdata/minigw-tools-cases.json")))
+    for p in c.parse {
+        let r = Profiles.takeTools(p.args)
+        #expect(r.rest == (p.rest ?? []) && (r.value ?? "") == p.value && (r.error ?? "") == p.error, "parse \(p.args)")
+    }
+    for p in c.plan {
+        let r = Profiles.toolsFor(model: p.model, flag: p.flag.isEmpty ? nil : p.flag, readOnly: p.ro)
+        #expect((r.tools ?? "") == p.tools && (r.error ?? "") == p.error, "plan \(p)")
+    }
+    for p in c.claudeArgs { #expect(Profiles.toolsArgs(p.tools, args: p.args) == p.out, "args \(p)") }
+    for p in c.line { #expect(Profiles.toolsLine(p.tools) == p.line) }
+}
+
+/// #119: --minigw-tools sme pod Claude Code (le jemlje orodja); --tools in dovoljenja ostanejo zavrnjeni; zavrnitev »@« pove za stdin.
+@Test func minigwToolsInsideClaudeCode() {
+    let env = ["CLAUDECODE": "1"]
+    let r = Profiles.takeTools(["-p", "--model", "litellm-gpt", "--minigw-tools=read", "x"])
+    #expect(r.error == nil && r.value == "read" && Profiles.unsafeClaudeFlag(r.rest, env: env) == nil)
+    for a in ["--tools", "--allowedTools", "--permission-mode", "--dangerously-skip-permissions"] {
+        #expect(Profiles.unsafeClaudeFlag(["-p", a, "x"], env: env) == a, "\(a)")
+    }
+    #expect(Profiles.modelArg(["-p", "--model=a", "--model", "b"]) == "b" && Profiles.modelArg(["--", "--model", "x"]) == "")
+    let msg = Profiles.unsafePrompt(["-p", "--", "@Test"], stdin: "", env: env, stdinMentionsOff: true).map(Profiles.promptRefusal) ?? ""
+    #expect(msg.hasSuffix("or pass it on stdin (for example: minigw -p --model <model> < file.txt; needs Claude Code 2.1.299 or newer)"))
+}

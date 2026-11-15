@@ -282,3 +282,107 @@ func TestClaudeAncestorRefusesBeforeClaude(t *testing.T) {
 		}
 	}
 }
+
+type toolsCases struct {
+	Parse []struct {
+		Args  []string
+		Rest  []string
+		Value string
+		Error string
+	}
+	Plan []struct {
+		Model, Flag string
+		Ro          bool
+		Tools       string
+		Error       string
+	}
+	ClaudeArgs []struct {
+		Tools string
+		Args  []string
+		Out   []string
+	}
+	Line []struct{ Tools, Line string }
+}
+
+func loadToolsCases(t *testing.T) toolsCases {
+	var c toolsCases
+	if err := json.Unmarshal(srcFile(t, "testdata/minigw-tools-cases.json"), &c); err != nil || len(c.Plan) == 0 {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// #119: zastavica --minigw-tools (oba zapisa, napačna vrednost), privzeto pri --minigw-ro, argumenti claude, vrstica ob zagonu.
+func TestMinigwTools(t *testing.T) {
+	c := loadToolsCases(t)
+	for _, p := range c.Parse {
+		rest, value, msg := takeTools(append([]string(nil), p.Args...))
+		if !slices.Equal(rest, p.Rest) || value != p.Value || msg != p.Error {
+			t.Errorf("parse %v: got %v %q %q", p.Args, rest, value, msg)
+		}
+	}
+	for _, p := range c.Plan {
+		if tools, msg := toolsFor(p.Model, p.Flag, p.Ro); tools != p.Tools || msg != p.Error {
+			t.Errorf("plan %+v: got %q %q", p, tools, msg)
+		}
+	}
+	for _, p := range c.ClaudeArgs {
+		if out := toolsArgs(p.Tools, p.Args); !slices.Equal(out, p.Out) {
+			t.Errorf("claude args %+v: got %v", p, out)
+		}
+	}
+	for _, p := range c.Line {
+		if l := toolsLine(p.Tools); l != p.Line {
+			t.Errorf("line %q", l)
+		}
+	}
+}
+
+// #119: --minigw-tools sme pod Claude Code (le jemlje orodja); --tools in dovoljenja ostanejo zavrnjeni.
+func TestMinigwToolsInsideClaudeCode(t *testing.T) {
+	inside := func(k string) string { return map[string]string{"CLAUDECODE": "1"}[k] }
+	rest, value, msg := takeTools([]string{"-p", "--model", "litellm-gpt", "--minigw-tools=read", "x"})
+	if msg != "" || value != "read" || unsafeClaudeFlag(rest, inside) != "" {
+		t.Errorf("not accepted inside Claude Code: %v %q %q", rest, value, msg)
+	}
+	for _, a := range []string{"--tools", "--allowedTools", "--permission-mode", "--dangerously-skip-permissions"} {
+		if unsafeClaudeFlag([]string{"-p", a, "x"}, inside) != a {
+			t.Errorf("%s no longer refused", a)
+		}
+	}
+	if unsafeClaudeFlag([]string{"-p", "--minigw-tools=read"}, inside) == "" {
+		t.Error("the flag must be taken out before the check, not passed to claude")
+	}
+	if modelArg([]string{"-p", "--model=a", "--model", "b"}) != "b" || modelArg([]string{"--", "--model", "x"}) != "" {
+		t.Error("modelArg")
+	}
+}
+
+// #119: pod Claude Code (CLAUDECODE) minigw sprejme --minigw-tools, zavrne napačno vrednost in model agenta ter še naprej
+// --tools; vse pred zagonom claude; temp HOME, brez prave nastavitve.
+func TestMinigwToolsRefusals(t *testing.T) {
+	dir, log := fakeClaudeDir(t)
+	home := t.TempDir()
+	run := func(args ...string) string {
+		cmd := minigwCmd(dir, log, []string{"CLAUDECODE=1", "HOME=" + home, "XDG_CONFIG_HOME=" + home, "APPDATA=" + home, "USERPROFILE=" + home}, args...)
+		cmd.Env = append(slices.DeleteFunc(cmd.Env, func(kv string) bool { return strings.HasPrefix(kv, "MINIGW_ALLOW_UNSAFE_FLAGS=") }), "MINIGW_ALLOW_UNSAFE_FLAGS=0")
+		out, _ := cmd.CombinedOutput()
+		return string(out)
+	}
+	for args, want := range map[string]string{
+		"-p --model litellm-gpt --minigw-tools=all x":       `--minigw-tools: unknown value "all" (use none or read)`,
+		"-p --model claude-cli-opus --minigw-tools none x":  "agents are limited on the gateway, use --minigw-ro",
+		"-p --model litellm-gpt --tools Bash --minigw-ro x": "--tools is not accepted when minigw runs inside Claude Code",
+		"-p --model litellm-gpt --minigw-tools=read @x":     "paste the text itself into the prompt, or pass it on stdin",
+	} {
+		if out := run(strings.Fields(args)...); !strings.Contains(out, want) {
+			t.Errorf("%s: %s", args, out)
+		}
+	}
+	if out := run("-p", "--model", "litellm-gpt", "--minigw-tools=read", "x"); strings.Contains(out, "not accepted") || strings.Contains(out, "unknown value") {
+		t.Errorf("--minigw-tools refused inside Claude Code: %s", out)
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Error("claude was started")
+	}
+}

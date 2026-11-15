@@ -854,6 +854,11 @@ var args = Array(CommandLine.arguments.dropFirst())
 // --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
 var readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
 args.removeAll { $0 == "--minigw-ro" }
+// --minigw-tools=none|read (#119): orodja modela ponudnika; pod Claude Code dovoljeno, ker orodja le jemlje.
+let toolsArg = Profiles.takeTools(args)
+if let e = toolsArg.error { fail(e) }
+args = toolsArg.rest
+let toolsFlag = toolsArg.value
 // --minigw-role <ime> (ali MINIGW_ROLE): vloga klicatelja za zgodovino sej (kasneje omejitve); varovalo, ne meja.
 let roleArg = GatewayHistory.takeRole(args, env: ProcessInfo.processInfo.environment["MINIGW_ROLE"])
 let role = roleArg.role
@@ -1016,6 +1021,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw plugin install|uninstall|status       the Claude Code plugin minigw@mini-gateway, using this minigw
         minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings, profiles, device key)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
+        minigw --minigw-tools none|read [claude args]  tools of a provider model (LiteLLM, OpenRouter): none, or read = Read, Grep, Glob (--minigw-ro = read); allowed inside Claude Code
         minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)
         inside Claude Code minigw passes only -p, --model and other options that do not widen permissions (MINIGW_ALLOW_UNSAFE_FLAGS=1 = all)
         minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)
@@ -1058,6 +1064,8 @@ if agentConn() == nil {  // --model …@profil: ves zagon s tem prehodom, kot --
         profileFlag = p; args = mp.args
     }
 }
+let toolsPlan = Profiles.toolsFor(model: Profiles.modelArg(args), flag: toolsFlag, readOnly: readOnly)  // #119: model brez pripone profila
+if let e = toolsPlan.error { fail(e) }
 let profiles = loadProfiles()
 if profiles.isEmpty { _ = requireProfile() }
 let saved = profiles[0].conn  // privzeti profil: mapa, glave in modeli brez pripone kot prej
@@ -1120,6 +1128,10 @@ let recordSession = (callerEnv["CLAUDECODE"] ?? "").isEmpty && !picker && (!fork
 if promptGuard { args = ["--disable-slash-commands"] + args }  // N7
 // I17: env v --settings premaga env v uporabnikovem settings.json (izmerjeno, 2.1.318)
 if mentionSettings { args = ["--settings", Profiles.mentionSettings] + args }
+if let tools = toolsPlan.tools {  // #119: za zavrnjenim --tools (refuseUnsafeClaudeFlags) in promptGuard
+    args = Profiles.toolsArgs(tools, args: args) + args
+    try? err.write(contentsOf: Data((Profiles.toolsLine(tools) + "\n").utf8))
+}
 for (k, v) in Profiles.helperModelEnv(args, env: callerEnv) { setenv(k, v, 1) }  // #78, po #7
 let streamArgs = Profiles.streamArgs(args), streamed = streamArgs != nil  // #78: minigw izpiše vsa besedila modela
 if let streamArgs { args = streamArgs }

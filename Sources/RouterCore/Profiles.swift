@@ -396,6 +396,63 @@ public enum Profiles {
         r == stdinMention
             ? r + " is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to \(minMentionGuard) or newer"
             : r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt"
+                + (r.hasPrefix("@") ? ", or pass it on stdin (for example: minigw -p --model <model> < file.txt; needs Claude Code \(minMentionGuard) or newer)" : "")
+    }
+
+    // MARK: #119 --minigw-tools
+
+    /// Orodja modela ponudnika pri read (kot Go toolsRead). Izmerjeno (claude 2.1.322): --tools=<seznam> sam ne zadošča (MCP orodja
+    /// iz povezav claude.ai ostanejo), zato še --strict-mcp-config in --disable-slash-commands; »--tools <seznam>« pogoltne navodilo.
+    static let toolsRead = "Read,Grep,Glob"
+
+    /// --minigw-tools <v> ali =<v> (zadnji velja, do »--«); value nil = ni podan; error ≠ nil = neveljavno (kot Go takeTools).
+    public static func takeTools(_ args: [String]) -> (rest: [String], value: String?, error: String?) {
+        var rest: [String] = [], value: String?, i = 0
+        while i < args.count {
+            let a = args[i]
+            if a == "--" { return (rest + args[i...], value, nil) }
+            var v: String?
+            if a == "--minigw-tools" {
+                guard i + 1 < args.count else { return ([], nil, "--minigw-tools needs a value (none or read)") }
+                v = args[i + 1]; i += 1
+            } else if a.hasPrefix("--minigw-tools=") { v = String(a.dropFirst("--minigw-tools=".count)) }
+            if let v {
+                guard v == "none" || v == "read" else { return ([], nil, "--minigw-tools: unknown value \"\(v)\" (use none or read)") }
+                value = v
+            } else { rest.append(a) }
+            i += 1
+        }
+        return (rest, value, nil)
+    }
+
+    /// Orodja modela (model brez pripone profila); nil = brez omejitve (kot Go toolsFor).
+    public static func toolsFor(model: String, flag: String?, readOnly: Bool) -> (tools: String?, error: String?) {
+        if flag != nil, isAgentModel(model) {
+            return (nil, "--minigw-tools is not available for \(model): agents are limited on the gateway, use --minigw-ro")
+        }
+        if flag == nil, readOnly, !model.isEmpty, !isAgentModel(model) { return ("read", nil) }
+        return (flag, nil)
+    }
+
+    /// Argumenti claude za orodja; --disable-slash-commands le, če ga args še nimajo (kot Go toolsArgs).
+    public static func toolsArgs(_ tools: String, args: [String]) -> [String] {
+        let out = ["--tools=" + (tools == "read" ? toolsRead : ""), "--strict-mcp-config"]
+        return args.contains("--disable-slash-commands") ? out : out + ["--disable-slash-commands"]
+    }
+
+    /// Vrstica ob zagonu na stderr.
+    public static func toolsLine(_ tools: String) -> String {
+        tools == "none" ? "minigw: tools of this model: none" : "minigw: tools of this model: read only (Read, Grep, Glob)"
+    }
+
+    /// Vrednost zadnjega --model (do »--«); "" = ni.
+    public static func modelArg(_ args: [String]) -> String {
+        var model = ""
+        for (i, a) in args.enumerated() {
+            if a == "--" { break }
+            if a == "--model", i + 1 < args.count { model = args[i + 1] } else if a.hasPrefix("--model=") { model = String(a.dropFirst(8)) }
+        }
+        return model
     }
 
     /// Besede navodila v argumentih claude: niso možnost ali njena vrednost, in vse po »--« (kot Go promptWords).
