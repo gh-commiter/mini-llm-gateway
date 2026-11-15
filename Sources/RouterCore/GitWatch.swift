@@ -161,12 +161,19 @@ public struct GitWatch: Sendable {
         let tips = Self.tips(end), old = Self.tips(start)
         var commits: [Commit] = []
         if !tips.isEmpty {
-            let r = Self.git(root, maxOutput: maxOutput, ["log", "-m", "-z", "--no-renames", "--name-only", "--format=@@%H", "-n", String(maxCommits + 1)] + tips + (old.isEmpty ? [] : ["--not"] + old))
+            // Framing that a file name cannot forge: the commit ids come alone (rev-list), then each commit's names alone (diff-tree, NUL-separated, raw, no header at all).
+            let r = Self.git(root, maxOutput: maxOutput, ["rev-list", "-n", String(maxCommits + 1)] + tips + (old.isEmpty ? [] : ["--not"] + old))
             if !r.ok { end.incomplete.append("history not read in full") }
-            commits = Self.parseLog(r.out)
-            if commits.count > maxCommits {
-                commits = Array(commits.prefix(maxCommits))
+            var ids = r.out.split(whereSeparator: \.isWhitespace).map(String.init)
+            if ids.count > maxCommits {
+                ids = Array(ids.prefix(maxCommits))
                 end.incomplete.append("more than \(maxCommits) new commits: only the first \(maxCommits) were checked")
+            }
+            for id in ids {
+                // -m: a merge is diffed against each parent; --root: the first commit has files too
+                let n = Self.git(root, maxOutput: maxOutput, ["diff-tree", "-m", "-r", "-z", "--name-only", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id])
+                if !n.ok { end.incomplete.append("files of a commit not read in full") }
+                commits.append(Commit(id: id, files: Self.parseNames(n.out)))
             }
         }
         var (lines, reset) = Self.report(start: start, end: end, commits: commits, isProtected: { Sync.isProtected($0) })
@@ -176,22 +183,12 @@ public struct GitWatch: Sendable {
         return (lines, end.incomplete.isEmpty)
     }
 
-    /// The output of `git log -m -z --name-only --format=@@%H`: NUL-separated, "@@<id>" starts a commit, the names follow raw (a quote, a newline or a control character in a name is
-    /// not C-quoted); the first name after the header has git's newline in front. -m: a merge comes once per parent, so the same id in a row is one commit.
-    static func parseLog(_ out: String) -> [Commit] {
-        var commits: [Commit] = [], afterHeader = false
-        for part in out.split(separator: "\0", omittingEmptySubsequences: false) {
-            var t = String(part)
-            if t.hasPrefix("@@") {
-                if commits.last?.id != String(t.dropFirst(2)) { commits.append(Commit(id: String(t.dropFirst(2)), files: [])) }
-                afterHeader = true
-            } else if !commits.isEmpty {
-                if afterHeader, t.hasPrefix("\n") { t.removeFirst() }
-                afterHeader = false
-                if !t.isEmpty { commits[commits.count - 1].files.append(t) }
-            }
-        }
-        return commits
+    /// The output of `git diff-tree -z --name-only --no-commit-id`: the names, NUL-separated and raw (a quote, a newline or a control character in a name is not C-quoted), each
+    /// once (-m lists a merge's names once per parent).
+    static func parseNames(_ out: String) -> [String] {
+        var names: [String] = []
+        for part in out.split(separator: "\0", omittingEmptySubsequences: true) where !names.contains(String(part)) { names.append(String(part)) }
+        return names
     }
 
     /// The object ids to start the history from: every ref and HEAD.

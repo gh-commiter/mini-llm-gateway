@@ -299,7 +299,8 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 	tips, old := gitWatchTips(end), gitWatchTips(w.start)
 	var commits []gitCommit
 	if len(tips) > 0 {
-		args := append([]string{"log", "-m", "-z", "--no-renames", "--name-only", "--format=@@%H", "-n", strconv.Itoa(gitWatchMaxCommits + 1)}, tips...)
+		// Framing that a file name cannot forge: the commit ids come alone (rev-list), then each commit's names alone (diff-tree, NUL-separated, raw, no header at all).
+		args := append([]string{"rev-list", "-n", strconv.Itoa(gitWatchMaxCommits + 1)}, tips...)
 		if len(old) > 0 {
 			args = append(args, "--not")
 			args = append(args, old...)
@@ -308,10 +309,18 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 		if !ok {
 			end.Incomplete = append(end.Incomplete, "history not read in full")
 		}
-		commits = parseGitLog(out)
-		if len(commits) > gitWatchMaxCommits {
-			commits = commits[:gitWatchMaxCommits]
+		ids := strings.Fields(out)
+		if len(ids) > gitWatchMaxCommits {
+			ids = ids[:gitWatchMaxCommits]
 			end.Incomplete = append(end.Incomplete, fmt.Sprintf("more than %d new commits: only the first %d were checked", gitWatchMaxCommits, gitWatchMaxCommits))
+		}
+		for _, id := range ids {
+			// -m: a merge is diffed against each parent; --root: the first commit has files too
+			names, ok := gitWatchRun(w.root, "", "diff-tree", "-m", "-r", "-z", "--name-only", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id)
+			if !ok {
+				end.Incomplete = append(end.Incomplete, "files of a commit not read in full")
+			}
+			commits = append(commits, gitCommit{ID: id, Files: parseGitNames(names)})
 		}
 	}
 	lines, reset := gitWatchReport(w.start, end, commits, protectedPath)
@@ -323,29 +332,16 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 	return lines, len(end.Incomplete) == 0
 }
 
-// parseGitLog: the output of `git log -m -z --name-only --format=@@%H`: NUL-separated, "@@<id>" starts a commit, the names follow raw (a quote, a newline or a control
-// character in a name is not C-quoted); the first name after the header has git's newline in front. -m: a merge comes once per parent, so the same id in a row is one commit.
-func parseGitLog(out string) []gitCommit {
-	var commits []gitCommit
-	afterHeader := false
+// parseGitNames: the output of `git diff-tree -z --name-only --no-commit-id`: the names, NUL-separated and raw (a quote, a newline or a control character in a name is not
+// C-quoted), each once (-m lists a merge's names once per parent).
+func parseGitNames(out string) []string {
+	var names []string
 	for _, t := range strings.Split(out, "\x00") {
-		switch {
-		case strings.HasPrefix(t, "@@"):
-			if n := len(commits); n == 0 || commits[n-1].ID != t[2:] {
-				commits = append(commits, gitCommit{ID: t[2:]})
-			}
-			afterHeader = true
-		case len(commits) > 0:
-			if afterHeader {
-				t = strings.TrimPrefix(t, "\n")
-			}
-			afterHeader = false
-			if t != "" {
-				commits[len(commits)-1].Files = append(commits[len(commits)-1].Files, t)
-			}
+		if t != "" && !slices.Contains(names, t) {
+			names = append(names, t)
 		}
 	}
-	return commits
+	return names
 }
 
 // gitWatchTips: the object ids to start the history from: every ref and HEAD.

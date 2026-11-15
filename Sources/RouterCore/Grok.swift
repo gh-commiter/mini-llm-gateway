@@ -139,7 +139,8 @@ public enum Grok {
         for h in hidden {
             let hr = real(h)
             guard scopeReal == hr || scopeReal.hasPrefix(hr + "/") else {
-                guard !h.contains(where: { "*?[".contains($0) }), h.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }  // an owner-configured root with a glob character is refused
+                // an owner-configured root with a glob or control character is refused, as configured and as it resolves (a glob would not match the literal path)
+                for name in [h, hr] { guard !name.contains(where: { "*?[".contains($0) }), name.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil } }
                 plain.append(h); continue
             }
             guard !hr.contains(where: { "*?[".contains($0) }), hr.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }

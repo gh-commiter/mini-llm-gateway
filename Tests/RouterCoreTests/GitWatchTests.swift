@@ -272,12 +272,21 @@ private func fixtureRoot() -> URL { URL(fileURLWithPath: #filePath).deletingLast
     }
 }
 
-@Test func gitWatchLogParsesRawNames() throws {
-    struct Log: Decodable { let name: String; let out: String; let commits: [GitWatch.Commit] }
+@Test func gitWatchNamesParseRaw() throws {
+    struct Log: Decodable { let name: String; let out: String; let files: [String] }
     struct File: Decodable { let logs: [Log] }
     let f = try JSONDecoder().decode(File.self, from: Data(contentsOf: fixtureRoot().appendingPathComponent("client/testdata/git-watch.json")))
     #expect(!f.logs.isEmpty)
-    for l in f.logs { #expect(GitWatch.parseLog(l.out) == l.commits, "\(l.name)") }
+    for l in f.logs { #expect(GitWatch.parseNames(l.out) == l.files, "\(l.name)") }
+}
+
+// Astra 5b90d47 finding 1: a name that begins with the commit-header marker is a name, not a commit.
+@Test func gitWatchSeesAProtectedNameThatStartsWithTheMarker() throws {
+    let (root, state) = try watched("marker"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    _ = git(root.path, "mkdir -p '@@payload/.claude' && echo x > 00.txt && echo '{}' > '@@payload/.claude/settings.json' && git add . && git commit -qm marker")
+    let out = w.finish().joined(separator: "\n")
+    #expect(out.contains("1 new commit(s)") && out.contains("committed a protected path: @@payload/.claude/settings.json"), "\(out)")
 }
 
 @Test func gitWatchSeesAProtectedPathWithAQuoteInItsName() throws {

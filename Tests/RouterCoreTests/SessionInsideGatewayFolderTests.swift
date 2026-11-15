@@ -242,3 +242,14 @@ func grokDenies(_ deny: [String], _ path: String) -> Bool {
     #expect(Grok.scopedDeniesWithPrefix(hidden: ["/nowhere/root"], scope: deep) == nil)
     #expect(Grok.scopedDeniesWithPrefix(hidden: ["/nowhere/root"], scope: "/nowhere/root/sync/device-id-0123456789/project-0123456789")?.prefix == 12)
 }
+
+/// Astra 5b90d47 finding 3: a hidden root that is a link to a path with glob characters: the resolved name is validated too (a glob would not match the literal path), so the run is refused.
+@Test func grokDenyListRefusesARootWhoseResolvedPathHasGlobCharacters() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("grok-meta-" + UUID().uuidString, isDirectory: true).path
+    defer { try? fm.removeItem(atPath: base) }
+    try fm.createDirectory(atPath: base + "/secret[1]", withIntermediateDirectories: true)
+    try fm.createSymbolicLink(atPath: base + "/link", withDestinationPath: base + "/secret[1]")
+    #expect(Grok.scopedDenies(hidden: [base + "/link"], scope: base + "/elsewhere/s1") == nil)
+    #expect(Grok.scopedDenies(hidden: [base + "/secret[1]"], scope: base + "/elsewhere/s1") == nil)
+}

@@ -1,5 +1,5 @@
 {
- "_": "Direct-mode git watch (docs/how-it-works.md): asserted by Go (gitwatch_test.go) and Swift (GitWatchTests.swift); logs = `git log -m -z --name-only --format=@@%H` outputs parsed (NUL as \\u0000); pins = what every git call of the watch has (args as given or as -c key=value; {null} = the null device), asserted by both",
+ "_": "Direct-mode git watch (docs/how-it-works.md): asserted by Go (gitwatch_test.go) and Swift (GitWatchTests.swift); logs = `git diff-tree -m -r -z --name-only --no-commit-id` outputs parsed into names (NUL as \\u0000); pins = what every git call of the watch has (args as given or as -c key=value; {null} = the null device), asserted by both",
  "cases": [
   {
    "name": "nothing",
@@ -512,57 +512,41 @@
  "logs": [
   {
    "name": "plain",
-   "out": "@@aaa\u0000\nsrc/a.go\u0000README.md\u0000@@bbb\u0000\n.envrc\u0000",
-   "commits": [
-    {
-     "id": "aaa",
-     "files": [
-      "src/a.go",
-      "README.md"
-     ]
-    },
-    {
-     "id": "bbb",
-     "files": [
-      ".envrc"
-     ]
-    }
+   "out": "src/a.go\u0000README.md\u0000",
+   "files": [
+    "src/a.go",
+    "README.md"
    ]
   },
   {
    "name": "a quote and a newline in a name are raw, not C-quoted",
-   "out": "@@aaa\u0000\na\"b/.claude/settings.json\u0000x\ny\u0000",
-   "commits": [
-    {
-     "id": "aaa",
-     "files": [
-      "a\"b/.claude/settings.json",
-      "x\ny"
-     ]
-    }
+   "out": "a\"b/.claude/settings.json\u0000x\ny\u0000",
+   "files": [
+    "a\"b/.claude/settings.json",
+    "x\ny"
    ]
   },
   {
-   "name": "a merge comes once per parent",
-   "out": "@@mmm\u0000\nfrom-first-parent.txt\u0000@@mmm\u0000\nfrom-second.txt\u0000@@ccc\u0000",
-   "commits": [
-    {
-     "id": "mmm",
-     "files": [
-      "from-first-parent.txt",
-      "from-second.txt"
-     ]
-    },
-    {
-     "id": "ccc",
-     "files": []
-    }
+   "name": "names that look like a header or a commit id are names",
+   "out": "00.txt\u0000@@payload/.claude/settings.json\u0000@@0123456789abcdef0123456789abcdef01234567\u0000",
+   "files": [
+    "00.txt",
+    "@@payload/.claude/settings.json",
+    "@@0123456789abcdef0123456789abcdef01234567"
+   ]
+  },
+  {
+   "name": "a merge lists a name once for each parent",
+   "out": "a.txt\u0000b.txt\u0000a.txt\u0000",
+   "files": [
+    "a.txt",
+    "b.txt"
    ]
   },
   {
    "name": "nothing",
    "out": "",
-   "commits": []
+   "files": []
   }
  ],
  "pins": {

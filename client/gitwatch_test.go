@@ -541,27 +541,20 @@ func TestGitNeedsTheCommitGraphOnlyForGc(t *testing.T) {
 }
 
 // G-3: paths with a quote or a newline arrive raw (log -z); G-5: a reused process id is not a running client.
-func TestGitWatchLogParsesRawNames(t *testing.T) {
+func TestGitWatchNamesParseRaw(t *testing.T) {
 	var f struct {
 		Logs []struct {
-			Name    string
-			Out     string
-			Commits []gitCommit
+			Name  string
+			Out   string
+			Files []string
 		}
 	}
 	if err := json.Unmarshal(srcFile(t, "testdata/git-watch.json"), &f); err != nil || len(f.Logs) == 0 {
 		t.Fatal(err)
 	}
 	for _, l := range f.Logs {
-		got := parseGitLog(l.Out)
-		if len(got) != len(l.Commits) {
-			t.Errorf("%s: %d commits, want %d", l.Name, len(got), len(l.Commits))
-			continue
-		}
-		for i := range got {
-			if got[i].ID != l.Commits[i].ID || !slices.Equal(got[i].Files, l.Commits[i].Files) && !(len(got[i].Files) == 0 && len(l.Commits[i].Files) == 0) {
-				t.Errorf("%s: %+v, want %+v", l.Name, got[i], l.Commits[i])
-			}
+		if got := parseGitNames(l.Out); !slices.Equal(got, l.Files) && !(len(got) == 0 && len(l.Files) == 0) {
+			t.Errorf("%s: %q, want %q", l.Name, got, l.Files)
 		}
 	}
 }
@@ -653,4 +646,20 @@ func TestCaseVariantsOfTheDenyRules(t *testing.T) {
 	if !slices.Contains(rules, "Edit(//d/.git/config)") || !slices.Contains(rules, "Read(//d/x/**)") || len(rules) != 5+4 {
 		t.Errorf("the originals are kept and only the rules that name .git or .claude get a variant: %q", rules)
 	}
+}
+
+// Astra 5b90d47 finding 1: a name that begins with the commit-header marker is a name, not a commit (also as a later name of a commit).
+func TestGitWatchSeesAProtectedNameThatStartsWithTheMarker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("@@ in a directory name is fine on Windows, but keep the test to the Unix shells")
+	}
+	root := watchRepo(t)
+	w := gitWatchStart(root)
+	os.MkdirAll(filepath.Join(root, "@@payload", ".claude"), 0o755)
+	os.WriteFile(filepath.Join(root, "00.txt"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(root, "@@payload", ".claude", "settings.json"), []byte("{}"), 0o644)
+	gitIn(t, root, "add", ".")
+	gitIn(t, root, "commit", "-qm", "marker")
+	out := captureStderr(t, func() { w.report(true) })
+	wantAll(t, out, "1 new commit(s)", "committed a protected path: @@payload/.claude/settings.json")
 }
