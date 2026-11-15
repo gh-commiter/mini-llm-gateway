@@ -151,6 +151,29 @@ public actor ShareHub {
         return hex.count == 16 && hex.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 
+    /// Name of a copy while it is deleted: "<id>.removing-<ns>" (as in serve_sync.go). A copy ID is 16 hex plus "-ro", computed by the
+    /// gateway from the folder, so a client cannot make a folder with a "." in its name here.
+    static func isLeftoverName(_ name: String) -> Bool {
+        guard let r = name.range(of: ".removing-") else { return false }
+        let tail = name[r.upperBound...]
+        return validSyncCopyID(String(name[..<r.lowerBound])) && !tail.isEmpty && tail.utf8.allSatisfy { (48...57).contains($0) }
+    }
+
+    /// Deletes the leftovers of removals that did not finish (a crash between the rename and the delete) in one device folder:
+    /// real directories only (removeItem on a link removes the link, never its target), exact name only; the marker of a gone copy goes too.
+    static func removeLeftovers(owner: URL) {
+        let fm = FileManager.default
+        for item in (try? fm.contentsOfDirectory(at: owner, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey])) ?? []
+        where isLeftoverName(item.lastPathComponent)
+            && (try? item.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
+            && (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            guard (try? fm.removeItem(at: item)) != nil else { continue }
+            let name = item.lastPathComponent
+            let base = owner.appendingPathComponent(String(name[..<name.range(of: ".removing-")!.lowerBound]))
+            if (try? fm.attributesOfItem(atPath: base.path)) == nil { try? fm.removeItem(at: base.appendingPathExtension("used")) }
+        }
+    }
+
     /// 409 text of removing a copy that a session or agent uses (the same text in serve_admin.go; client/testdata/sync_copy_in_use.txt).
     static let syncCopyInUse = "sync: a minigw session or agent is using this copy; retry when it stops"
 
@@ -175,6 +198,7 @@ public actor ShareHub {
         guard let realRoot = Sync.real(root), let realOwner = Sync.real(owner), realOwner.path == realRoot.appendingPathComponent(device).path else {
             throw AdminError(400, "sync: invalid copy directory")
         }
+        Task.detached { Self.removeLeftovers(owner: realOwner) }  // a big delete must not hold the actor
         guard let entries = try? fm.contentsOfDirectory(at: realOwner, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else {
             throw AdminError(500, "sync: cannot read copies")
         }
@@ -187,7 +211,11 @@ public actor ShareHub {
         guard copies.contains(remove) else { throw AdminError(404, "sync: copy not found") }
         let copy = realOwner.appendingPathComponent(remove)
         if copyInUse(copy) { throw AdminError(409, Self.syncCopyInUse) }
-        do { try fm.removeItem(at: copy) } catch { throw AdminError(500, "sync: cannot remove copy") }
+        // The copy leaves its name first (one rename, as in Go): a crash during the delete leaves "<id>.removing-<ns>", which is neither
+        // listed nor counted and is removed at the next start or list/remove, never a half-deleted copy under a valid ID.
+        let gone = realOwner.appendingPathComponent("\(remove).removing-\(UInt64(Date().timeIntervalSince1970 * 1e9))")
+        do { try fm.moveItem(at: copy, to: gone) } catch { throw AdminError(500, "sync: cannot remove copy") }
+        do { try fm.removeItem(at: gone) } catch { throw AdminError(500, "sync: cannot remove copy") }
         let marker = copy.appendingPathExtension("used")
         if fm.fileExists(atPath: marker.path) {
             do { try fm.removeItem(at: marker) } catch { throw AdminError(500, "sync: cannot remove copy marker") }
@@ -209,6 +237,9 @@ public actor ShareHub {
 
     static func removeOld(_ root: URL, active: Set<String>, now: Date) {
         let fm = FileManager.default
+        for owner in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where owner.lastPathComponent != "runs" {
+            removeLeftovers(owner: owner)  // #104: the first pass after a start also clears a crashed removal
+        }
         for owner in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where owner.lastPathComponent != "runs" {
             for copy in (try? fm.contentsOfDirectory(at: owner, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey])) ?? [] {
                 guard copy.pathExtension != "used", (try? copy.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,

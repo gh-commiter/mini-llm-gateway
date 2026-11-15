@@ -418,6 +418,7 @@ func serveCommand(args []string) {
 	}
 	s.announce(ln)
 	if !s.scratchOther.Load() { // N4: v mapi drugega prehoda nič (tudi ne čiščenje gitexec in mxc)
+		go removeLeftoverCopies(s.conf().scratch("sync"), "") // #104: a removal that crashed between rename and delete
 		sandboxInit(s.conf().Scratch, s.cfgDir, s.log.Printf) // #68: Windows, preizkus škatle MXC pred strežbo
 	}
 	fail(s.serve(ln).Error())

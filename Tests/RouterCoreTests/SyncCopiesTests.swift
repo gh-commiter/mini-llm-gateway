@@ -43,3 +43,29 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: owner.appendingPathComponent(copies[1]).path))
     #expect(!FileManager.default.fileExists(atPath: owner.appendingPathComponent(copies[2]).path))
 }
+
+@Test func syncCopyLeftoverOfACrashedRemovalIsNeitherListedNorCountedAndIsCleaned() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let owner = root.appendingPathComponent("local"), fm = FileManager.default
+    for i in 0..<(Sync.maxCopies - 1) { try fm.createDirectory(at: owner.appendingPathComponent(String(format: "%016x", i)), withIntermediateDirectories: true) }
+    let left = owner.appendingPathComponent("0123456789abcdef.removing-1700000000000000000")
+    let leftRO = owner.appendingPathComponent("fedcba9876543210-ro.removing-5")
+    let decoy = owner.appendingPathComponent("0123456789abcdef.removing-x")
+    for d in [left, leftRO, decoy] { try fm.createDirectory(at: d.appendingPathComponent("sub"), withIntermediateDirectories: true) }
+    ShareHub.touchUsed(owner.appendingPathComponent("0123456789abcdef"))
+    let outside = root.appendingPathComponent("outside")
+    try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+    try Data("k".utf8).write(to: outside.appendingPathComponent("keep"))
+    let link = owner.appendingPathComponent("aaaaaaaaaaaaaaaa.removing-9")
+    try fm.createSymbolicLink(at: link, withDestinationURL: outside)
+    #expect(!Sync.tooManyCopies(owner.appendingPathComponent("ffffffffffffffff")))
+    let hub = ShareHub()
+    #expect(try await hub.syncCopies(root, device: "local").count == Sync.maxCopies - 1)
+    ShareHub.removeLeftovers(owner: owner)
+    #expect(!fm.fileExists(atPath: left.path) && !fm.fileExists(atPath: leftRO.path))
+    #expect(!fm.fileExists(atPath: owner.appendingPathComponent("0123456789abcdef.used").path))
+    #expect(fm.fileExists(atPath: decoy.path))
+    #expect((try? fm.destinationOfSymbolicLink(atPath: link.path)) != nil && fm.fileExists(atPath: outside.appendingPathComponent("keep").path))
+    #expect(!ShareHub.isLeftoverName("0123456789abcdef") && !ShareHub.isLeftoverName("0123456789abcdef-ro") && ShareHub.isLeftoverName("0123456789abcdef-ro.removing-1"))
+}

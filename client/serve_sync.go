@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -75,7 +76,7 @@ func tooManyCopies(copyDir string) bool {
 	ents, _ := os.ReadDir(filepath.Dir(copyDir))
 	n := 0
 	for _, e := range ents {
-		if e.IsDir() {
+		if e.IsDir() && validSyncCopyID(e.Name()) { // a leftover "<id>.removing-<ns>" (a removal that crashed) is not a copy
 			n++
 		}
 	}
@@ -693,6 +694,59 @@ func (h *shareHub) ifCopyFree(copy string, act func() error) (bool, error) {
 	return false, act()
 }
 
+// removingName is the name a copy gets while it is deleted: <id>.removing-<ns>. A copy ID is 16 hex plus an optional "-ro" and the
+// gateway computes it itself (sha256 of the folder), so no client can create a folder with a "." in its name here; the pattern is exact.
+var removingName = regexp.MustCompile(`^[0-9a-f]{16}(-ro)?\.removing-[0-9]+$`)
+
+var leftoverRun sync.Mutex // one cleanup at a time; a second request skips
+
+// removeLeftoverCopies deletes the leftovers of removals that did not finish, in one device folder (device "" = all of them), inside
+// an opened os.Root: only directories (a link is not one, and RemoveAll does not follow links) whose name matches removingName.
+// The copy marker of a copy that is gone goes with it.
+func removeLeftoverCopies(root, device string) {
+	if leftoverRun.TryLock() {
+		defer leftoverRun.Unlock()
+		cleanLeftovers(root, device)
+	}
+}
+
+func cleanLeftovers(root, device string) {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return
+	}
+	defer r.Close()
+	owners := []string{device}
+	if device == "" {
+		ents, _ := rootReadDir(r, ".")
+		owners = owners[:0]
+		for _, e := range ents {
+			if e.IsDir() && e.Name() != "runs" {
+				owners = append(owners, e.Name())
+			}
+		}
+	}
+	for _, o := range owners {
+		ents, err := rootReadDir(r, o)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if !e.IsDir() || !removingName.MatchString(e.Name()) {
+				continue
+			}
+			rel := filepath.Join(o, e.Name())
+			if r.RemoveAll(rel) != nil {
+				continue
+			}
+			base := filepath.Join(o, e.Name()[:strings.Index(e.Name(), ".removing-")])
+			if _, err := r.Lstat(base); os.IsNotExist(err) {
+				r.Remove(base + ".used")
+			}
+		}
+	}
+}
+
 // syncCopies uses an opened root so a copy cannot redirect removal outside Scratch. `free` (nil = always free): see ifCopyFree.
 func syncCopies(root, device, remove string, free func(copy string, act func() error) (bool, error)) ([]string, int, string) {
 	copies := []string{}
@@ -717,6 +771,7 @@ func syncCopies(root, device, remove string, free func(copy string, act func() e
 	if !st.IsDir() {
 		return nil, 400, "sync: invalid copy directory"
 	}
+	go removeLeftoverCopies(root, device) // own root, runs after this call's folder listing, skipped if another cleanup runs
 	entries, err := rootReadDir(r, device)
 	if err != nil {
 		return nil, 500, "sync: cannot read copies"
