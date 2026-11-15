@@ -1192,7 +1192,8 @@ if !wantShare || sid.isEmpty {
         try? err.write(contentsOf: Data("minigw: \(share.sync ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : SharedFolders.cappedMode(capped)) with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
     }
 } else {
-    try? err.write(contentsOf: Data("minigw: gateway did not accept the folder; Claude CLI models with tools will not see it\n".utf8))
+    let why = "gateway did not accept the folder" + (share.refusal.isEmpty ? "" : ": " + oneLine(share.refusal))
+    try? err.write(contentsOf: Data("minigw: \(why); Claude CLI models with tools will not see it\n".utf8))
 }
 
 /// Načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.

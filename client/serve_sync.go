@@ -669,3 +669,72 @@ func (h *shareHub) syncGet(key, path, owner string) ([]byte, bool) {
 	}
 	return readRegular(s.copy, path, maxSyncFile, false) // agent ne podtakne povezave ven iz kopije
 }
+
+// syncCopies uses an opened root so a copy cannot redirect removal outside Scratch.
+func syncCopies(root, device, remove string) ([]string, int, string) {
+	copies := []string{}
+	if remove != "" && !validSyncCopyID(remove) {
+		return nil, 400, "sync: invalid copy ID"
+	}
+	r, err := os.OpenRoot(root)
+	if os.IsNotExist(err) && remove == "" {
+		return copies, 200, ""
+	}
+	if err != nil {
+		return nil, 404, "sync: copy not found"
+	}
+	defer r.Close()
+	st, err := r.Lstat(device)
+	if err != nil {
+		if remove == "" {
+			return copies, 200, ""
+		}
+		return nil, 404, "sync: copy not found"
+	}
+	if !st.IsDir() {
+		return nil, 400, "sync: invalid copy directory"
+	}
+	entries, err := rootReadDir(r, device)
+	if err != nil {
+		return nil, 500, "sync: cannot read copies"
+	}
+	for _, e := range entries {
+		if e.IsDir() && validSyncCopyID(e.Name()) {
+			copies = append(copies, e.Name())
+		}
+	}
+	sort.Strings(copies)
+	if remove == "" {
+		return copies, 200, ""
+	}
+	found := false
+	for _, id := range copies {
+		if id == remove {
+			found = true
+		}
+	}
+	if !found {
+		return nil, 404, "sync: copy not found"
+	}
+	rel := filepath.Join(device, remove)
+	if err := r.RemoveAll(rel); err != nil {
+		return nil, 500, "sync: cannot remove copy"
+	}
+	if err := r.Remove(rel + ".used"); err != nil && !os.IsNotExist(err) {
+		return nil, 500, "sync: cannot remove copy marker"
+	}
+	return copies, 200, ""
+}
+
+func validSyncCopyID(id string) bool {
+	id = strings.TrimSuffix(id, "-ro")
+	if len(id) != 16 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}

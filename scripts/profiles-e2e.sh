@@ -8,9 +8,10 @@
 #   profiles-e2e.sh
 emulate -L zsh; set -eu
 cd ${0:A:h}/..
+source scripts/sync-copies-cleanup.zsh
 T=${$(mktemp -d):A}; SPID=""
 S2PID=""
-trap '[[ -n $SPID ]] && kill $SPID 2>/dev/null; [[ -n $S2PID ]] && kill $S2PID 2>/dev/null; pbcopy </dev/null; rm -rf $T' EXIT
+trap 'sync_copies_cleanup || print -u2 "gateway copies remain"; [[ -n $SPID ]] && kill $SPID 2>/dev/null; [[ -n $S2PID ]] && kill $S2PID 2>/dev/null; pbcopy </dev/null; rm -rf $T' EXIT
 fail() { print -u2 "FAIL: $*"; exit 1 }
 (cd client && go build -o $T/minigw .)
 M=$T/minigw; PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')
@@ -62,6 +63,13 @@ grep -q '^claude-cli-haiku@serve ' $T/models.txt && grep -q '@default ' $T/model
 grep -q '^claude-cli-haiku@default ' $T/models.txt && ! grep -q '^claude-cli-haiku ' $T/models.txt && fail "default models missing without suffix"
 print "status models ok"
 
+# Only the app's default gateway persists beyond this test's temporary HOME.
+sync_admin() { "$PWD/build/Mini Gateway.app/Contents/Helpers/minigw" gw "$@" }
+if [[ -z $S2PID ]]; then
+  DEVICE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["device"])' "$CFG/connection.json")
+  sync_copies_begin "$DEVICE" "$H/proj" || fail "cannot record gateway copies"
+fi
+
 # Seja: lažen claude prek lokalnega usmerjevalnika
 cat > $H/bin/claude <<'EOF'
 #!/bin/zsh
@@ -74,6 +82,7 @@ curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer wrong" $ANTHROP
 EOF
 chmod +x $H/bin/claude
 (cd $H/proj && E2E=$T PATH=$H/bin:$PATH MINIGW_WORK=sync gw -p hi > $T/run.txt 2>&1) || fail "session: $(<$T/run.txt)"
+sync_copies_cleanup || fail "gateway copies remain"
 grep -q '2 gateways' $T/run.txt || fail "no router: $(<$T/run.txt)"
 [[ $(<$T/base) == http://127.0.0.1:3* ]] || fail "base URL $(<$T/base)"
 python3 - $T/models.json <<'EOF' || fail "session models: $(head -c 600 $T/models.json)"

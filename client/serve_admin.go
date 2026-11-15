@@ -392,6 +392,36 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		return 200, map[string]any{"id": arg, "name": s.conf().Devices[i].Name, "history": h}
 	case "GET activity":
 		return 200, s.activity.list()
+	case "GET sync", "DELETE sync/{}":
+		device := u.Query().Get("device")
+		if device != "local" && !validDeviceID(device) {
+			return fail(400, "sync: --device must be a device ID or local")
+		}
+		if s.scratchOther.Load() {
+			return fail(503, "sync: Scratch belongs to another gateway")
+		}
+		if method == "DELETE" {
+			if !s.scratchGate.TryLock() {
+				return fail(409, "sync: minigw sessions or agents are active; retry when they stop")
+			}
+			defer s.scratchGate.Unlock()
+			if s.hub.count() > 0 || s.agentsRunning.Load() > 0 {
+				return fail(409, "sync: minigw sessions or agents are active; retry when they stop")
+			}
+			if why := s.offlineScratchHeld(); why != "" {
+				return fail(409, why)
+			}
+		} else {
+			if !s.scratchGate.TryRLock() {
+				return fail(503, scratchMovingMsg)
+			}
+			defer s.scratchGate.RUnlock()
+		}
+		copies, status, why := syncCopies(s.conf().scratch("sync"), device, arg)
+		if why != "" {
+			return fail(status, why)
+		}
+		return 200, map[string]any{"copies": copies}
 	case "GET sessions":
 		return 200, map[string]any{"sessions": s.state.sessions(u.Query().Get("device"), u.Query().Get("folder"))}
 	case "GET sessions/{}":
