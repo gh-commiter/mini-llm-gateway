@@ -146,3 +146,23 @@ func TestSafeFinalPathUNCOutsideBase(t *testing.T) {
 		})
 	}
 }
+
+// Not run on the Mac where it was written: needs Windows (directory links).
+// A .. after a link, written with mixed separators, applies to the link's target.
+func TestSafeFinalPathMixedSeparators(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{`a\deep`, `a\x`, `x`} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dirLink(t, filepath.Join(root, `a\deep`), filepath.Join(root, "L2"))
+	got, err := safeFinalPath(root+`\L2/../x`, []string{root})
+	want, _ := filepath.EvalSymlinks(filepath.Join(root, `a\x`))
+	if err != nil || filepath.Clean(got) != filepath.Clean(want) {
+		t.Fatalf("got %q, %v; want %q", got, err, want)
+	}
+}
