@@ -368,25 +368,18 @@ func protectedCanonical(full, root string) bool { return protectedCanonicalFor(f
 
 // protectedCanonicalFor: git true = direct mode (protectedPathFor).
 func protectedCanonicalFor(full, root string, git bool) bool {
-	r, err := finalPath(root) // Windows: tudi stičišče (hooks → .git\hooks)
+	rooted, err := os.OpenRoot(root)
 	if err != nil {
 		return true
 	}
-	p, rest := full, ""
-	for {
-		if c, err := finalPath(p); err == nil {
-			rel, err := filepath.Rel(r, filepath.Join(c, rest))
-			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return true
-			}
-			return rel != "." && protectedPathFor(filepath.ToSlash(rel), git)
-		}
-		parent := filepath.Dir(p)
-		if parent == p {
-			return true
-		}
-		rest, p = filepath.Join(filepath.Base(p), rest), parent
+	defer rooted.Close()
+	// Sync may return the canonical name while root still uses a system link such as /var.
+	rel, ok := insideBases(rootBases(rooted), full)
+	if !ok {
+		return true
 	}
+	resolved, err := rootResolve(rooted, rel, true)
+	return err != nil || protectedPathFor(filepath.ToSlash(resolved), git)
 }
 
 // syncResolve: relativna pot druge strani → datoteka pod root; false za »..«, absolutno pot, »\«, prazne dele ali pobeg

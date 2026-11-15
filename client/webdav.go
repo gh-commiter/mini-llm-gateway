@@ -335,8 +335,8 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		}
 		// Mapa v svojo podmapo in vir v cilju (MOVE /a/b → /a bi z brisanjem cilja izbrisal vir): nikoli
 		// (kanonični poti, da povezava ne skrije zanke).
-		rp, err1 := finalPath(filepath.Join(root, p)) // Windows: tudi stičišča
-		rd, err2 := finalPath(filepath.Join(root, filepath.Dir(dest)))
+		rp, err1 := safeFinalPath(filepath.Join(root, p), []string{root}) // Windows: tudi stičišča
+		rd, err2 := safeFinalPath(filepath.Join(root, filepath.Dir(dest)), []string{root})
 		rdest := filepath.Join(rd, filepath.Base(dest))
 		if err1 != nil || err2 != nil || hasPathPrefix(rdest, rp) || hasPathPrefix(rp, rdest) {
 			return dav(403, nil, nil)
@@ -440,25 +440,14 @@ func davResolve(path, prefix, root string) (string, []string, bool) {
 		comps = append(comps, name)
 	}
 	full := filepath.Join(append([]string{root}, comps...)...)
-	// Simbolne povezave: obstoječi del poti mora tudi po razrešitvi ostati v root.
-	existing := full
-	for {
-		if _, err := os.Lstat(existing); err == nil || samePath(existing, root) {
-			break
-		}
-		parent := filepath.Dir(existing)
-		if parent == existing {
-			return "", nil, false
-		}
-		existing = parent
-	}
-	// finalPath: na Windows tudi stičišča (EvalSymlinks jih ne razreši); koren enako, da se poti ujemata.
-	real, err := finalPath(existing)
-	rr, err2 := finalPath(root)
-	if err != nil || err2 != nil {
+	// Resolve through the pinned root before any path-based canonicalization can follow a remote link.
+	rooted, err := os.OpenRoot(root)
+	if err != nil {
 		return "", nil, false
 	}
-	if !samePath(real, rr) && !hasPathPrefix(real, rr) {
+	defer rooted.Close()
+	rel := filepath.Join(append([]string{"."}, comps...)...)
+	if _, err := rootResolve(rooted, rel, true); err != nil {
 		return "", nil, false
 	}
 	return full, comps, true
