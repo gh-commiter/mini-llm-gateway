@@ -281,13 +281,36 @@ func getJSON(c connection, path string) (int, map[string]any) {
 	return st, m
 }
 
+// createsState: the command creates folders or files that must belong to the user (the profile, lock files, the
+// request folder). An elevated process that cannot set the token owner would leave them owned by Administrators.
+func createsState(arg0 string, args []string) bool {
+	if isTrayExe(arg0) { // minigw-tray.exe
+		return true
+	}
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--minigw-profile" { // global flag before the command
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "--minigw-profile=") {
+			continue
+		}
+		switch args[i] {
+		case "serve", "tray", "connect", "share", "run":
+			return true
+		}
+		return false
+	}
+	return false
+}
+
 func main() {
 	if isGitWrap() { // #68: kopija minigw.exe kot git.exe v škatli MXC (gitwrap.go)
 		gitWrapMain(os.Args[1:])
 	}
 	if err := ownerIsUser(); err != nil {
-		if isTrayExe(os.Args[0]) || len(os.Args) > 1 && (os.Args[1] == "serve" || os.Args[1] == "tray") {
-			fail("set token owner: " + err.Error()) // the gateway creates folders and files: they must be the user's
+		if createsState(os.Args[0], os.Args[1:]) {
+			fail("set token owner: " + err.Error() + "; run minigw from a normal command prompt, not elevated, so the folders it creates belong to you")
 		}
 		fmt.Fprintln(os.Stderr, "minigw: warning: cannot set the token owner ("+err.Error()+"); folders created by this command may be owned by the administrator")
 	}
