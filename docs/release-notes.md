@@ -49,6 +49,8 @@ Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and q
 
 - Fixed (Mac app, 0.6.0 deny rules; the 0.5.28 regression is fixed in 0.5.29): the deny rules of the gateway's own folders (the app folder with the core, the credential homes) are not applied where the folder of a run (a remote client's mount under `~/Library/Application Support/Mini Gateway/mounts`, a sync copy) lives inside them, in the restricted mode, the sandboxed mode and Worktree mode; a deny wins over an allow. The rest of the app folder and the other clients' mounts stay refused (only the run's own folders are allowed). The refusal of overlapping allowed folders is the one of 0.5.29.
 
+- Fixed (#78, both clients, plugin skills): `minigw -p` with a model of another provider now tells the model in its system prompt to put the whole answer in the final message (the ask, codex, review and copilot skills say it in their prompts too), so a weak model no longer refers to text it wrote in an earlier message that `-p` does not return.
+
 ### Known limits
 
 - Mac app: the helper `minigw-core` serves the app's requests one at a time, so a slow call delays the next one.

@@ -299,6 +299,20 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     #expect(run([text(#"a\u001b[2Jb\tc\u009bd"#)]) == ("a[2Jb\tcd\n", "", false))
 }
 
+/// #78 (kot client/stream_test.go TestFinalAnswerArgs): -p z modelom ponudnika dobi pravilo v sistemsko navodilo, pred »--«.
+@Test func finalAnswerRuleArgs() {
+    let rule = "Put the whole answer in your final message; earlier messages are not shown."
+    #expect(Profiles.finalAnswerArgs(["-p", "--model", "claude-deepseek/deepseek-v4-flash", "--", "question"])
+            == ["-p", "--model", "claude-deepseek/deepseek-v4-flash", "--append-system-prompt", rule, "--", "question"])
+    for a in [["-p", "--model", "claude-opus-5", "--", "question"], ["--model", "claude-deepseek/x", "question"], ["-p", "--", "question"]] {
+        #expect(Profiles.finalAnswerArgs(a) == a)
+    }
+    #expect(Profiles.finalAnswerArgs(["-p", "--model", "claude-codex-gpt-6.1-sol", "--append-system-prompt", "note", "--", "question"])
+            == ["-p", "--model", "claude-codex-gpt-6.1-sol", "--append-system-prompt", "note\n\n" + rule, "--", "question"])
+    #expect(Profiles.finalAnswerArgs(["-p", "--model", "claude-deepseek/x", "--append-system-prompt=note", "--", "q"])
+            == ["-p", "--model", "claude-deepseek/x", "--append-system-prompt=note\n\n" + rule, "--", "q"])
+}
+
 /// #80 (kot client/stream_test.go TestGateCloseBlockedWrite, TestRunClaudeStalledOutput): stdout, ki ga nihče ne bere,
 /// ne zadrži close dlje od roka; po close se konča le kos (64 KB) v teku, nič novega; stderr gre po stdout.
 @Test func outputGateUnreadStdout() throws {

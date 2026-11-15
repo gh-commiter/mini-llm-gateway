@@ -1115,6 +1115,7 @@ if promptGuard { args = ["--disable-slash-commands"] + args }  // N7
 // I17: env v --settings premaga env v uporabnikovem settings.json (izmerjeno, 2.1.318)
 if mentionSettings { args = ["--settings", Profiles.mentionSettings] + args }
 for (k, v) in Profiles.helperModelEnv(args, env: callerEnv) { setenv(k, v, 1) }  // #78, po #7
+args = Profiles.finalAnswerArgs(args)  // #78: the whole answer in the final message
 let streamArgs = Profiles.streamArgs(args), streamed = streamArgs != nil  // #78: minigw izpiše vsa besedila modela
 if let streamArgs { args = streamArgs }
 held.withLock { $0.on = streamed }

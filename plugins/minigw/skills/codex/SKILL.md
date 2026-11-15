@@ -17,6 +17,7 @@ Run the task with Bash (timeout 600000 ms, or in the background for long work):
 "${CLAUDE_PLUGIN_DATA}/bin/minigw" -p --model claude-codex-gpt-6.1-sol -- "$(cat <<'PROMPT'
 <the task, self-contained: goal, files, constraints, how to verify>
 When you finish, list the files you changed and how you verified the result.
+Put the whole answer in your final message; earlier messages are not shown.
 PROMPT
 )"
 ```
