@@ -448,6 +448,7 @@ func TestClaudeUsageParserAndGuards(t *testing.T) {
 	}
 	// the gateway: cached for 10 minutes, stale on a failed refresh, and switched off for good after inference
 	s, _ := testServer(t, func(c *serveConfig) { c.ClaudeQuotaProbe = true }) // opt-in (review A4)
+	s.claude = []string{"claude"}                                             // the probe is faked (claudeUsageFn); no claude CLI on this machine (Linux gate)
 	calls := 0
 	reply, rerr := []byte(claudeUsageFixture), error(nil)
 	claudeUsageFn = func(context.Context, []string, string) ([]byte, error) { calls++; return reply, rerr }
@@ -560,6 +561,7 @@ func TestQuotaAdminRouteNeedsNoCore(t *testing.T) {
 // Review A4: the probe is off unless the owner turns it on; its environment is an allowlist.
 func TestClaudeProbeIsOptInWithAnAllowlistedEnvironment(t *testing.T) {
 	s, _ := testServer(t, nil)
+	s.claude = []string{"claude"} // the probe is faked (claudeUsageFn); no claude CLI on this machine (Linux gate)
 	called := false
 	claudeUsageFn = func(context.Context, []string, string) ([]byte, error) {
 		called = true
@@ -603,6 +605,7 @@ func TestClaudeProbeIsOptInWithAnAllowlistedEnvironment(t *testing.T) {
 // Review A3: a stalled quota refresh never delays a model response or the recording of Codex numbers.
 func TestStalledQuotaRefreshDoesNotBlockTheModelPath(t *testing.T) {
 	s, _ := testServer(t, func(c *serveConfig) { c.ClaudeQuotaProbe = true })
+	s.claude = []string{"claude"} // the probe is faked (claudeUsageFn); no claude CLI on this machine (Linux gate)
 	release, started := make(chan struct{}), make(chan struct{})
 	claudeUsageFn = func(context.Context, []string, string) ([]byte, error) {
 		close(started)

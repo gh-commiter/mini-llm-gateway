@@ -30,6 +30,7 @@ func TestClaudeProbeArgv(t *testing.T) {
 // Q6: a failing probe is not run again at once; the settings change that turns it on runs nothing.
 func TestFailedProbeIsThrottledAndPatchRunsNothing(t *testing.T) {
 	s, _ := testServer(t, nil)
+	s.claude = []string{"claude"} // the probe is faked (claudeUsageFn); no claude CLI on this machine (Linux gate)
 	var calls atomic.Int32
 	claudeUsageFn = func(context.Context, []string, string) ([]byte, error) {
 		calls.Add(1)
@@ -73,6 +74,7 @@ func TestFailedProbeIsThrottledAndPatchRunsNothing(t *testing.T) {
 	// the report after PATCH: no probe, "not probed yet"
 	n := calls.Load()
 	s2, _ := testServer(t, func(c *serveConfig) { c.ClaudeQuotaProbe = true })
+	s2.claude = []string{"claude"}
 	if rep := s2.quotaReportF(context.Background(), false); calls.Load() != n || rep[1].Reason != "not probed yet" {
 		t.Fatalf("%+v", rep)
 	}

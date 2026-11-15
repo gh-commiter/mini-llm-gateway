@@ -15,6 +15,9 @@ func TestThirdPartyNoticesCoverLinkedModules(t *testing.T) {
 	}
 	notices, err := os.ReadFile("../THIRD-PARTY-NOTICES.md")
 	if err != nil {
+		if _, serr := os.Stat("../Package.swift"); serr != nil { // not a full checkout (the Docker gate mounts client/ and scripts/ only)
+			t.Skip("THIRD-PARTY-NOTICES.md is not in this tree (no ../Package.swift): checked by the macOS go-test step")
+		}
 		t.Fatal(err)
 	}
 	for _, target := range [][2]string{{"darwin", "arm64"}, {"windows", "amd64"}, {"windows", "arm64"}, {"linux", "amd64"}, {"linux", "arm64"}} {

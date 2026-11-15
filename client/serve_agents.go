@@ -1269,6 +1269,10 @@ func agentState(scratch string, k agentKind, owner string, p *projectCtx) (strin
 // maxAuthBytes: the largest auth.json that is carried back (a real one is a few KB).
 const maxAuthBytes = 256 << 10
 
+// mtimeSlack: dst was removed and linked under the lock, so any regular file there was written after the link; the slack only
+// covers the coarse file clock of Linux.
+const mtimeSlack = 50 * time.Millisecond
+
 // restoreAuth: če je CLI auth.json zamenjal (zapis z rename namesto skozi povezavo), je ta novejša: v pravo mapo in
 // spet povezava, da prava prijava ne zastari (osvežitveni žetoni se lahko zamenjajo).
 // sec-fix F6 (as Router.restoreProjectAuth on the Mac): the file is written by the agent's CLI, which an agent can drive, so it is
@@ -1340,8 +1344,8 @@ func carryBackLocked(dst, src string, since time.Time) {
 		drop()
 		return
 	}
-	if linked.at.After(since) {
-		since = linked.at
+	if at := linked.at.Add(-mtimeSlack); at.After(since) { // a file written at once after the link: Linux stamps mtime from a coarse clock (up to ~10 ms behind time.Now)
+		since = at
 	}
 	b, ok := readCarriable(dst, since)
 	var obj map[string]any
