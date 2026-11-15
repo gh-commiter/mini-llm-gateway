@@ -961,7 +961,7 @@ extension Router {
                     while !gone.claimed {
                         let r = poll(&p, 1, 500)
                         if r == 0 || (r < 0 && errno == EINTR) { continue }
-                        let n = r < 0 ? -1 : read(h.fileDescriptor, &buf, buf.count)
+                        let n = r < 0 ? -1 : Sock.retry { read(h.fileDescriptor, &buf, buf.count) }
                         if n <= 0 { return }  // EOF ali napaka
                         while room.wait(timeout: .now() + 0.5) == .timedOut { if gone.claimed { return } }
                         k.yield((Data("\(tag) \(Data(buf[0..<n]).base64EncodedString())\n".utf8), true))

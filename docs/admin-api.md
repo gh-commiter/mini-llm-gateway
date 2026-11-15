@@ -145,7 +145,7 @@ Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash"
          cleared with leftOut; the settings page builds the reason in its language from them). refused: allowed folders
          (still in the list) whose real path or identity differs from the record saved when they were added, refused
          at start or at a run; a folder leaves the list when it passes the checks again or is removed from the allowed
-         folders (Go gateway only; the Mac logs the reason once).
+         folders (both gateways; the reason is logged once).
 Login    {"state": string, "hint": string, "hasToken"?: bool, "apiKey"?: bool, "apiKeyNote"?: string}
          Go gateway only (#68), in GET /agents/{claude,codex,grok,copilot}: the agent's login, never a value. state:
          Claude "set" / "not set" (the stored token); Copilot "signed in (copilot login)" / "not available: <reason>"
@@ -438,3 +438,11 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
 - **Not on the Mac:** the settings page and its sessions (`/minigw/settings`, `POST /settings/login`): the app has
   its own Settings window, so only the admin secret (`minigw gw`) opens the API, and it never sets cookies.
 
+
+### Synced copies
+
+`GET /sync?device=ID` returns `{"copies":["<copy id>"]}` in sorted order.
+`DELETE /sync/<copy id>?device=ID` removes that copy and its usage marker, freeing a slot.
+Use a device ID from `minigw gw devices` (including a revoked device's ID), or `local` for local Mac copies.
+Removal refuses with 409 while sessions or agents are active. Stop them first; copy changes not pulled to the client are discarded.
+For temporary-folder tests, record the copy IDs before and after the run and remove newly created copies after stopping its client.

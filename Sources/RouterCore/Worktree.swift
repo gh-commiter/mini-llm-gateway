@@ -37,6 +37,9 @@ public enum Worktree {
                              "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false",
                              "-c", "core.pager=cat", "-c", "diff.external=", "-c", "core.sshCommand=", "-c", "credential.helper="]
 
+    /// `safe`: no system and no user configuration (the git watch asserts these with the Go watch: client/testdata/git-watch.json, pins).
+    static let safeEnv = ["GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"]
+
     /// git z izhodom; `safe`: brez sistemske in uporabniške nastavitve in brez hookov (router, prevzem pri odjemalcu).
     @discardableResult
     /// `hooks: false` (odjemalec): hooki uporabnika ne tečejo ob začasnem refu refs/minigw/push in posnetku.
@@ -50,7 +53,7 @@ public enum Worktree {
         let exe = sandbox == nil ? git : "/usr/bin/sandbox-exec"
         var env = ProcessInfo.processInfo.environment
         for k in env.keys where k.hasPrefix("GIT_") { env[k] = nil }
-        if safe { env["GIT_CONFIG_NOSYSTEM"] = "1"; env["GIT_CONFIG_GLOBAL"] = "/dev/null" }
+        if safe { env.merge(safeEnv) { $1 } }
         env["GIT_TERMINAL_PROMPT"] = "0"
         env.merge(extra) { $1 }
         env["xcrun_db"] = nil; env["xcrun_nocache"] = "1"  // tudi če bi git klical shim xcrun: brez predpomnilnika

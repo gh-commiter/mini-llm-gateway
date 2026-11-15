@@ -176,6 +176,40 @@ public enum Profiles {
         })
     }
 
+    /// #78 (kot Go finalAnswerRule): a weak model referred to text it wrote in an earlier message, which minigw -p
+    /// does not return: the answer must be complete in the final message.
+    public static let finalAnswerRule = "Put the whole answer in your final message; earlier messages are not shown."
+
+    /// #78 (kot Go finalAnswerArgs): claude -p with a non-Claude model gets finalAnswerRule in its system prompt (also
+    /// when the question comes on stdin); Claude models are left alone. The flag goes before "--", after it are the question words.
+    public static func finalAnswerArgs(_ args: [String]) -> [String] {
+        let opts = Array(args.prefix { $0 != "--" })  // flags, up to the question
+        var model = "", print = false
+        for (i, a) in opts.enumerated() {
+            if a == "-p" || a == "--print" {
+                print = true
+            } else if a == "--model", i + 1 < opts.count {
+                model = opts[i + 1]
+            } else if a.hasPrefix("--model=") {
+                model = String(a.dropFirst(8))
+            }
+        }
+        guard print, !model.isEmpty, ClaudeCLI.match(model.lowercased()) == nil else { return args }
+        for (i, a) in opts.enumerated() {  // the user's own note stays, the rule is added to it
+            if a.hasPrefix("--append-system-prompt=") {
+                var out = args
+                out[i] += "\n\n" + finalAnswerRule
+                return out
+            }
+            if a == "--append-system-prompt", i + 1 < opts.count {
+                var out = args
+                out[i + 1] += "\n\n" + finalAnswerRule
+                return out
+            }
+        }
+        return Array(args[..<opts.count]) + ["--append-system-prompt", finalAnswerRule] + Array(args[opts.count...])
+    }
+
     /// #78 (kot Go streamText): dogodki claude --output-format stream-json → besedilo modela za stdout sproti (delte
     /// --include-partial-messages; brez njih celi bloki), prazna vrstica med bloki; uporaba orodja (tudi oznaka ⏺ agenta
     /// prehoda) kot kratka vrstica za stderr; končni result ni izpisan dvakrat.

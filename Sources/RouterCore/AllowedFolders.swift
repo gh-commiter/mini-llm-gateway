@@ -5,8 +5,8 @@ import os
 /// M2: the real path and identity of an allowed folder, recorded when it is added (or at the first start of a version
 /// that has records) and saved with the settings. Start compares and refuses a folder that differs; it never rewrites it.
 /// B1: the identity is the volume UUID plus the inode, never st_dev (macOS assigns it at mount, so it changes for external
-/// and network disks). `volume` nil = the volume has no UUID (some network filesystems): the inode alone is compared.
-/// `ino` 0 = the folder did not exist when it was recorded: it adopts its identity at its first accepted use (B2).
+/// and network disks). Where no UUID exists, the filesystem type and mount source are the fallback identity. `volume` nil
+/// in an older record = only the inode is compared. `ino` 0 = the folder adopts its identity at its first accepted use (B2).
 public struct FolderRecord: Codable, Sendable, Equatable {
     public var real: String
     public var volume: String?
@@ -23,9 +23,9 @@ public struct FolderRecord: Codable, Sendable, Equatable {
         ino = try c.decodeIfPresent(UInt64.self, forKey: .ino) ?? 0
     }
 
-    /// The recorded identity matches `volume`/`ino` now; volumes are compared only when both are known.
+    /// A legacy record without a volume id compares only the inode; a recorded id must remain available and match.
     func matches(volume now: String?, ino now2: UInt64) -> Bool {
-        ino == 0 || ino == now2 && (volume == nil || now == nil || volume == now)
+        ino == 0 || ino == now2 && (volume == nil || volume == now)
     }
 }
 
@@ -54,6 +54,7 @@ public final class AllowedFolders: @unchecked Sendable {
         var real: String?
         var missing: Bool
         var logged = false
+        var refused = ""
         var record: FolderRecord?  // M2, A1: the recorded identity; compared on every check (ino 0: adopted at the first use, B2)
     }
     private let lock = NSLock()
@@ -66,8 +67,22 @@ public final class AllowedFolders: @unchecked Sendable {
     init(volumeID: @escaping (String) -> String?) { self.volumeID = volumeID }  // tests
 
     public static func volumeUUID(_ p: String) -> String? {
-        let v = try? URL(fileURLWithPath: p).resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString
-        return v?.isEmpty == false ? v : nil
+        // Query the UUID separately: an unsupported fallback key must not hide an available UUID.
+        let uuid = try? URL(fileURLWithPath: p).resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString
+        if let uuid, !uuid.isEmpty { return uuid }
+        var st = statfs()
+        guard statfs(p, &st) == 0 else { return nil }
+        let fs = withUnsafeBytes(of: st.f_fstypename) {
+            String(cString: $0.bindMemory(to: CChar.self).baseAddress!)
+        }
+        let source = withUnsafeBytes(of: st.f_mntfromname) {
+            String(cString: $0.bindMemory(to: CChar.self).baseAddress!)
+        }
+        // This identifies a named export, not a replacement filesystem behind the same export name.
+        // Device names and generic labels (e.g. "tmpfs") do not identify a filesystem across boots.
+        guard !fs.isEmpty, (!source.hasPrefix("/") || source.hasPrefix("//")),
+              source.contains(":") || source.hasPrefix("//") else { return nil }
+        return "mount:\(fs):\(source)"
     }
 
     /// A comma-separated list as typed in settings; checked paths travel as arrays (a real path may contain a comma).
@@ -102,6 +117,13 @@ public final class AllowedFolders: @unchecked Sendable {
                     entries[p] = e
                 }
             }
+        }
+    }
+
+    /// Refused configured paths, cleared by a passing check or removal from the allowed list.
+    public func refused(_ roots: String) -> [String] {
+        lock.withLock {
+            Set(Self.paths(roots).filter { entries[$0]?.refused.isEmpty == false }).sorted()
         }
     }
 
@@ -178,6 +200,7 @@ public final class AllowedFolders: @unchecked Sendable {
                 else if e.missing && r != p { why = "it is reached through a link to " + r! }
                 else if !Self.owned(r!) || (e.missing && !Self.owned(p)) { why = "it is a link or owned by another user" }
                 if !why.isEmpty {
+                    e.refused = why
                     if !e.logged {
                         e.logged = true
                         log("WARNING: allowed folder \(p) is not used: \(why); if you trust it, remove and add it again in the allowed folders")
@@ -186,6 +209,7 @@ public final class AllowedFolders: @unchecked Sendable {
                 }
                 guard have, identity.st_mode & S_IFMT == S_IFDIR,
                       identity.st_uid == getuid() else { return nil }
+                e.refused = ""
                 if var rec = e.record, rec.ino == 0 {  // B2: recorded while missing: trust on first use
                     rec.volume = volumeID(r!)
                     rec.ino = UInt64(identity.st_ino)

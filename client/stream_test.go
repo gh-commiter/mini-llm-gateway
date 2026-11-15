@@ -77,6 +77,32 @@ func TestHelperModelEnv(t *testing.T) {
 	}
 }
 
+func TestFinalAnswerArgs(t *testing.T) {
+	rule := "Put the whole answer in your final message; earlier messages are not shown."
+	if got, want := finalAnswerArgs([]string{"-p", "--model", "claude-deepseek/deepseek-v4-flash", "--", "question"}),
+		[]string{"-p", "--model", "claude-deepseek/deepseek-v4-flash", "--append-system-prompt", rule, "--", "question"}; !slices.Equal(got, want) {
+		t.Errorf("provider model: %v", got)
+	}
+	// a Claude model, no -p, and no --model stay as they are
+	for _, a := range [][]string{
+		{"-p", "--model", "claude-opus-5", "--", "question"},
+		{"--model", "claude-deepseek/x", "question"},
+		{"-p", "--", "question"},
+	} {
+		if got := finalAnswerArgs(a); !slices.Equal(got, a) {
+			t.Errorf("%v: %v", a, got)
+		}
+	}
+	if got, want := finalAnswerArgs([]string{"-p", "--model", "claude-codex-gpt-6.1-sol", "--append-system-prompt", "note", "--", "question"}),
+		[]string{"-p", "--model", "claude-codex-gpt-6.1-sol", "--append-system-prompt", "note\n\n" + rule, "--", "question"}; !slices.Equal(got, want) {
+		t.Errorf("existing note: %v", got)
+	}
+	if got, want := finalAnswerArgs([]string{"-p", "--model", "claude-deepseek/x", "--append-system-prompt=note", "--", "q"}),
+		[]string{"-p", "--model", "claude-deepseek/x", "--append-system-prompt=note\n\n" + rule, "--", "q"}; !slices.Equal(got, want) {
+		t.Errorf("existing note=: %v", got)
+	}
+}
+
 // runClaude s tokom: error result → 1, tudi ko claude konča z 0.
 func TestRunClaudeStream(t *testing.T) {
 	bin := t.TempDir()

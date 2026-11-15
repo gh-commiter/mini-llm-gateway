@@ -29,6 +29,7 @@ const routerHelp = `minigw gw: show or change the minigw serve gateway on this c
 runs; otherwise they go to serve.json.
 
   minigw gw status
+  minigw gw sync list|remove <copy id> --device ID       list synced copies or remove an unused copy
   minigw gw devices [allow <device id> [--name N] | rename <device id> --name N | deny <device id>]
   minigw gw devices history <device id>                 the device's last connections
   minigw gw sessions [--device ID] [--folder DIR] | <session id> | clear
@@ -450,6 +451,28 @@ func routerCommand(args []string, in io.Reader) {
 			fail(routerHelp)
 		}
 
+	case "sync":
+		if len(pos) < 2 || *device == "" {
+			fail("sync: list|remove <copy id> --device ID")
+		}
+		query := "?device=" + url.QueryEscape(*device)
+		if pos[1] == "list" && len(pos) == 2 {
+			var r struct {
+				Copies []string `json:"copies"`
+			}
+			a.do("GET", "/sync"+query, nil, &r)
+			for _, id := range r.Copies {
+				say(id)
+			}
+			if len(r.Copies) == 0 {
+				say("no synced copies")
+			}
+		} else if pos[1] == "remove" && len(pos) == 3 {
+			a.do("DELETE", "/sync/"+esc(pos[2])+query, nil, nil)
+			say("synced copy removed")
+		} else {
+			fail("sync: list|remove <copy id> --device ID")
+		}
 	case "sessions":
 		switch {
 		case len(pos) == 1:

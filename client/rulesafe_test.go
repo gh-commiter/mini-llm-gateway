@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -10,14 +11,30 @@ import (
 
 // #111 S5: a folder path that cannot go into a permission rule as it is is refused at save and skipped at run without "Allow local tools".
 func TestRuleSafe(t *testing.T) {
-	for _, ok := range []string{"/Users/a/src", "/Users/a/my project", "/Users/a/x-y_z.1", "/Users/a/ä", "C:/Users/a/src"} {
-		if !ruleSafe(ok) {
-			t.Errorf("%q refused", ok)
+	ok, bad := []string{"/Users/a/src", "/Users/a/my project", "/Users/a/x-y_z.1", "/Users/a/ä"},
+		[]string{"/a/b)", "/a/(b", "/a/*", "/a/b?", "/a/[x]", "/a/{x}", "/a/ x", "/a/x ", "/a/b,c", "/a/b\nc", "/a/b!", "", " /a", "/a/"}
+	if runtime.GOOS == "windows" {
+		// the rule text is `//c/Users/a/src`: only a drive path is expressible; UNC, \\?\, drive-relative, current-drive-relative and a stream colon are not
+		ok = []string{`C:\Users\a\src`, `C:/Users/a/my project`, `d:\x-y_z.1`, `C:\Users\a\ä`}
+		bad = []string{`C:\a\b)`, `C:\a\(b`, `C:\a\*`, `C:\a\b?`, `C:\a\x `, `C:\a\ x`, `C:\a\b,c`, `C:\a\b!`, ``, ` C:\a`, `C:\a\`,
+			`\\server\share\x`, `\\?\C:\x`, `C:proj`, `\Users\a`, `C:\a\b:stream`}
+	} else {
+		bad = append(bad, "/a/b\\c") // a backslash is not a separator here: it could escape in a rule
+	}
+	for _, p := range ok {
+		if !ruleSafe(p) {
+			t.Errorf("%q refused", p)
 		}
 	}
-	for _, bad := range []string{"/a/b)", "/a/(b", "/a/*", "/a/b?", "/a/[x]", "/a/{x}", "/a/ x", "/a/x ", "/a/b,c", "/a/b\nc", "/a/b\\c", "/a/b!", "", " /a"} {
-		if ruleSafe(bad) {
-			t.Errorf("%q accepted", bad)
+	for _, p := range bad {
+		if ruleSafe(p) {
+			t.Errorf("%q accepted", p)
+		}
+	}
+	// what goes into a rule never has a backslash and never changes meaning
+	for _, p := range ok {
+		if r := ruleAbs(p); strings.Contains(r, `\`) || !strings.HasPrefix(r, "//") {
+			t.Errorf("%q -> %q", p, r)
 		}
 	}
 }
@@ -147,7 +164,7 @@ func TestSubmoduleDeniesAreTheTopLevelListAndGitDirsAreFound(t *testing.T) { // 
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
-	prof := strings.Join(codexTreeProfile([]string{}, []string{git}, nil, false, "/usr/bin"), " ")
+	prof := strings.ReplaceAll(strings.Join(codexTreeProfile([]string{}, []string{git}, nil, false, "/usr/bin"), " "), `\\`, "/") // JSON keys carry the OS separator (escaped): compared portably
 	for _, w := range []string{`modules"`, "modules/sub", "modules/sub/commondir", "modules/sub/worktrees", "modules/sub/hooks"} {
 		if !strings.Contains(prof, w) {
 			t.Errorf("profile lacks %s: %s", w, prof)

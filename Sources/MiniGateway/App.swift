@@ -97,6 +97,7 @@ func menuBarImage(listening: Bool, active: Int, waiting: Int = 0) -> NSImage {
 @MainActor
 final class AppState: ObservableObject {
     private let allowedFolders = AllowedFolders()
+    func refusedFolders(_ roots: String) -> [String] { allowedFolders.refused(roots) }
     @Published var config = RouterConfig.load()
     @Published var status = String(localized: "Stopped")
     @Published var running = false

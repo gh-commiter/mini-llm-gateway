@@ -146,6 +146,55 @@ public actor ShareHub {
     static let copyLifetime: TimeInterval = 14 * 86400
     private var lastExpire = Date.distantPast
 
+    static func validSyncCopyID(_ id: String) -> Bool {
+        let hex = id.hasSuffix("-ro") ? String(id.dropLast(3)) : id
+        return hex.count == 16 && hex.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+
+    /// 409 text of removing a copy that a session or agent uses (the same text in serve_admin.go; client/testdata/sync_copy_in_use.txt).
+    static let syncCopyInUse = "sync: a minigw session or agent is using this copy; retry when it stops"
+
+    /// A session registered on `copy`, a run cloned from it, or a request holding it (agents run inside a registered session).
+    private func copyInUse(_ copy: URL) -> Bool {
+        let want = (Sync.real(copy) ?? copy).standardizedFileURL.path
+        func same(_ u: URL?) -> Bool { u.map { (Sync.real($0) ?? $0).standardizedFileURL.path == want } ?? false }
+        return bySession.values.contains { same($0.copy) } || runs.values.contains { same($0.copy) } || busy.keys.contains { same($0) }
+    }
+
+    /// Removes one copy only while that copy (device and folder) has no registered session, no run and no request on it; other
+    /// sessions and agents do not matter. Runs without suspension on the actor, and register runs on the same actor: a session
+    /// registers either before the check (refused) or after the delete (starts a fresh copy), never in between.
+    func syncCopies(_ root: URL, device: String, remove: String = "") throws -> [String] {
+        if !remove.isEmpty && !Self.validSyncCopyID(remove) { throw AdminError(400, "sync: invalid copy ID") }
+        let fm = FileManager.default
+        let owner = root.appendingPathComponent(device)
+        guard fm.fileExists(atPath: owner.path) else {
+            if remove.isEmpty { return [] }
+            throw AdminError(404, "sync: copy not found")
+        }
+        guard let realRoot = Sync.real(root), let realOwner = Sync.real(owner), realOwner.path == realRoot.appendingPathComponent(device).path else {
+            throw AdminError(400, "sync: invalid copy directory")
+        }
+        guard let entries = try? fm.contentsOfDirectory(at: realOwner, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else {
+            throw AdminError(500, "sync: cannot read copies")
+        }
+        let copies = entries.filter {
+            Self.validSyncCopyID($0.lastPathComponent) &&
+            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true &&
+            (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
+        }.map(\.lastPathComponent).sorted()
+        if remove.isEmpty { return copies }
+        guard copies.contains(remove) else { throw AdminError(404, "sync: copy not found") }
+        let copy = realOwner.appendingPathComponent(remove)
+        if copyInUse(copy) { throw AdminError(409, Self.syncCopyInUse) }
+        do { try fm.removeItem(at: copy) } catch { throw AdminError(500, "sync: cannot remove copy") }
+        let marker = copy.appendingPathExtension("used")
+        if fm.fileExists(atPath: marker.path) {
+            do { try fm.removeItem(at: marker) } catch { throw AdminError(500, "sync: cannot remove copy marker") }
+        }
+        return copies
+    }
+
     static func touchUsed(_ copy: URL) {
         let marker = copy.appendingPathExtension("used")
         if !FileManager.default.createFile(atPath: marker.path, contents: nil) { return }

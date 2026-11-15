@@ -135,7 +135,7 @@ private let cwd = URL(fileURLWithPath: "/tmp/session")
     let sb = c.agentArgs(cwd: cwd, allTools: ["Read", "Edit", "Bash"], folders: AllowedFolders(), checkedPaths: ["/w"])
     let fs = ((try? JSONSerialization.jsonObject(with: Data(value(sb, "--settings").utf8))) as? [String: Any]).flatMap { ($0["sandbox"] as? [String: Any])?["filesystem"] as? [String: Any] }
     let denyWrite = fs?["denyWrite"] as? [String] ?? []
-    #expect(value(sb, "--disallowedTools").contains("Edit(//w/.claude/**)") && denyWrite.contains("/w/.claude") && denyWrite.contains("/w/**/.claude") && denyWrite.contains("/w/.git/modules/**/hooks") && denyWrite.contains("/w/**/.git/modules/**/config") && !denyWrite.contains("/w/.git/modules"))
+    #expect(value(sb, "--disallowedTools").contains("Edit(//w/.claude/**)") && denyWrite.contains("/w/.claude") && denyWrite.contains("/w/**/.claude") && denyWrite.contains("/w/.git/modules/**/hooks") && denyWrite.contains("/w/**/.git/modules/**/config") && denyWrite.contains("/w/.git/modules"))  // G-2: modules is closed whole
     c.settingSources = ""
     #expect(!value(c.agentArgs(cwd: cwd, allTools: ["Read", "Edit", "Bash"], folders: AllowedFolders(), checkedPaths: ["/w"]), "--disallowedTools").contains(".claude"))
 }
@@ -255,7 +255,7 @@ private func covers(_ deny: String, _ scope: String) -> Bool { scope == deny || 
             let a = cfg.agentArgs(cwd: URL(fileURLWithPath: cwd), allTools: [], scratch: scratch, readOnly: ro, folders: AllowedFolders(), checkedPaths: [])
             for d in deniedPaths(a) + (ro ? [] : denyWrite(a)) {  // (read-only: the folders themselves are write-denied by design)
                  #expect(!covers(d, cwd), Comment(rawValue: "\(name) ro=\(ro): \(d) covers the scope folder")) }
-            if name == "sandboxed" && !ro { sawLiteral = denyWrite(a).contains(cwd + "/nested/.git/hooks") && denyWrite(a).contains(cwd + "/.git/modules/sub/config") }
+            if name == "sandboxed" && !ro { sawLiteral = denyWrite(a).contains(cwd + "/nested/.git") && denyWrite(a).contains(cwd + "/.git/modules/sub/config") }  // G-2: the nested repository whole
             #expect(value(a, "--allowedTools").contains("Read(./**)") || name == "sandboxed", Comment(rawValue: "\(name) ro=\(ro)"))
         }
     }

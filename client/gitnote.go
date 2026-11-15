@@ -59,7 +59,7 @@ func gitNote(mode string, shell, readOnly bool) string {
 	case mode == "direct":
 		works, refused := gitDirectLists()
 		return "Git: you can commit in this folder: " + strings.Join(works, ", ") + ". Not possible in this folder: " + strings.Join(refused, ", ") +
-			". Use merge instead of rebase. If the task needs one of these, say so and tell the user to run it themselves or to use worktree mode (minigw --minigw-work=worktree). Your git changes are reported to the user: do not commit or stage .claude/settings*.json, .envrc, .vscode/tasks.json or .husky (protected paths)."
+			". Use merge instead of rebase. Nested repositories and submodules are read-only for you. If the task needs one of these, say so and tell the user to run it themselves or to use worktree mode (minigw --minigw-work=worktree). Your git changes are reported to the user: do not commit or stage .claude/settings*.json, .envrc, .vscode/tasks.json or .husky (protected paths)."
 	}
 	return ""
 }

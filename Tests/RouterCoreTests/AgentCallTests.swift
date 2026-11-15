@@ -196,6 +196,19 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     #expect(AgentError.message("Internal error: {not json") == "Internal error: {not json")
 }
 
+/// FakeWriter, ki pove, da je bil kaj zapisan: delo agenta v testu počaka na glavo odgovora namesto na uro (#109: pinger
+/// je Task na skupni kooperativni skupini; pod obremenitvijo je lahko začel pozneje od fiksnih 1,5 s, glava potem ni šla ven).
+final class HeadWaitWriter: ResponseWriter, @unchecked Sendable {
+    private let inner = FakeWriter(), lock = NSLock()
+    private var wrote = false
+    func write(_ d: Data) async throws { try await inner.write(d); lock.withLock { wrote = true } }
+    func close() { inner.close() }
+    var text: String { inner.text }
+    var status: Int { inner.status }
+    /// Do prvega zapisa; 60 s je le varovalo pred zastojem (nato test pade na svojih pričakovanjih).
+    func waitForWrite() async { for _ in 0..<2400 where !lock.withLock({ wrote }) { try? await Task.sleep(for: .milliseconds(25)) } }
+}
+
 /// Napaka pred glavo (tudi pri pretoku) je pravi 429 z x-should-retry: false (Claude Code ne ponovi); po glavi dogodek SSE,
 /// ponovitev brez pretoka dobi isti 429 brez novega zagona CLI.
 @Test func replyWhenDoneRetryHeaders() async throws {
@@ -213,10 +226,10 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
         throw Copilot.Failure(message: "copilot failed (exit 1)")
     }
     #expect(fst == 502 && failed.status == 502 && failed.text.contains("x-should-retry: false"))
-    let w = FakeWriter()
+    let w = HeadWaitWriter()
     _ = await router.replyWhenDone(body: ["model": "claude-grok", "stream": true], model: "claude-grok", rid: "req_2", writer: w, req: req,
                                    headDelay: .milliseconds(10)) {
-        try await Task.sleep(for: .milliseconds(1500))  // glava gre ven tudi pod obremenitvijo celotnega testnega teka
+        await w.waitForWrite()  // napaka šele po glavi, ne po uri: glava gre ven tudi pod obremenitvijo celotnega testnega teka
         throw limit
     }
     #expect(w.status == 200 && w.text.contains("x-should-retry: false") && w.text.contains("event: error") && w.text.contains("rate_limit_error"))
@@ -233,10 +246,10 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     let before = FakeWriter()
     let bst = await router.replyWhenDone(body: ["model": "claude-grok"], model: "claude-grok", rid: "req_4", writer: before, req: req) { throw pull }
     #expect(bst == 502 && before.status == 502 && before.text.contains("x-should-retry: false") && before.text.contains("busy"))
-    let after = FakeWriter()
+    let after = HeadWaitWriter()
     _ = await router.replyWhenDone(body: ["model": "claude-grok", "stream": true], model: "claude-grok", rid: "req_5", writer: after, req: req,
                                    headDelay: .milliseconds(10)) {
-        try await Task.sleep(for: .milliseconds(1500))
+        await after.waitForWrite()
         throw pull
     }
     #expect(after.status == 200 && after.text.contains("event: error") && after.text.contains("busy"))

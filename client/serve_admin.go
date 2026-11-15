@@ -395,6 +395,30 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		return 200, map[string]any{"id": arg, "name": s.conf().Devices[i].Name, "history": h}
 	case "GET activity":
 		return 200, s.activity.list()
+	case "GET sync", "DELETE sync/{}":
+		device := u.Query().Get("device")
+		if device != "local" && !validDeviceID(device) {
+			return fail(400, "sync: --device must be a device ID or local")
+		}
+		if s.scratchOther.Load() {
+			return fail(503, "sync: Scratch belongs to another gateway")
+		}
+		// Both take the read gate: a Scratch move (write gate) cannot run meanwhile. Removal refuses only a copy that a session or an
+		// agent of this gateway uses (hub.ifCopyFree), not every busy gateway.
+		if !s.scratchGate.TryRLock() {
+			return fail(503, scratchMovingMsg)
+		}
+		defer s.scratchGate.RUnlock()
+		if method == "DELETE" {
+			if why := s.offlineScratchHeld(); why != "" {
+				return fail(409, why)
+			}
+		}
+		copies, status, why := syncCopies(s.conf().scratch("sync"), device, arg, s.hub.ifCopyFree)
+		if why != "" {
+			return fail(status, why)
+		}
+		return 200, map[string]any{"copies": copies}
 	case "GET sessions":
 		return 200, map[string]any{"sessions": s.state.sessions(u.Query().Get("device"), u.Query().Get("folder"))}
 	case "GET sessions/{}":

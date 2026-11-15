@@ -2,13 +2,18 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type gitWatchCase struct {
@@ -74,7 +79,7 @@ func TestGitWatchRealRepository(t *testing.T) {
 	r, wr, _ := os.Pipe()
 	saved := os.Stderr
 	os.Stderr = wr
-	w.report()
+	w.report(true)
 	wr.Close()
 	os.Stderr = saved
 	buf := make([]byte, 1<<16)
@@ -155,10 +160,10 @@ func TestGitWatchSurvivesAKilledClient(t *testing.T) {
 	gitIn(t, root, "commit", "-qm", "envrc")
 	gitIn(t, root, "branch", "feature")
 	// another process (alive: the file stays) and then one after the death of the first (the file is reported and removed)
-	if l := gitWatchRecover(root, os.Getpid()+1, func(int) bool { return true }); len(l) != 0 {
+	if l := gitWatchRecover(root, os.Getpid()+1, func(int, string) bool { return true }); len(l) != 0 {
 		t.Errorf("a live run was reported: %v", l)
 	}
-	lines := gitWatchRecover(root, os.Getpid()+1, func(int) bool { return false })
+	lines := gitWatchRecover(root, os.Getpid()+1, func(int, string) bool { return false })
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{"from the previous run that did not finish: git in this folder", "1 new commit(s)", "new branches: feature", "committed a protected path: .envrc"} {
 		if !strings.Contains(joined, want) {
@@ -168,7 +173,7 @@ func TestGitWatchSurvivesAKilledClient(t *testing.T) {
 	if _, err := os.Stat(w.file); err == nil {
 		t.Error("the state file was not removed")
 	}
-	if l := gitWatchRecover(root, os.Getpid()+1, func(int) bool { return false }); len(l) != 0 {
+	if l := gitWatchRecover(root, os.Getpid()+1, func(int, string) bool { return false }); len(l) != 0 {
 		t.Errorf("reported twice: %v", l)
 	}
 }
@@ -207,11 +212,445 @@ func TestGitWatchIgnoresADamagedStateFile(t *testing.T) {
 	f := gitWatchFile(root, 99999)
 	os.MkdirAll(filepath.Dir(f), 0o700)
 	os.WriteFile(f, []byte("not json"), 0o600)
-	l := gitWatchRecover(root, 1, func(int) bool { return false })
+	l := gitWatchRecover(root, 1, func(int, string) bool { return false })
 	if len(l) != 1 || !strings.Contains(l[0], "ignoring a damaged git watch state file") {
 		t.Errorf("lines: %v", l)
 	}
 	if _, err := os.Stat(f); err == nil {
 		t.Error("the damaged file stays")
+	}
+}
+
+// watchRepo: a repository with one commit, the watch started on it.
+func watchRepo(t *testing.T) string {
+	t.Helper()
+	isolateGitWatchState(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("needs git")
+	}
+	root := t.TempDir()
+	gitIn(t, root, "init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("a"), 0o644)
+	gitIn(t, root, "add", "a.txt")
+	gitIn(t, root, "commit", "-qm", "init")
+	return root
+}
+
+// captureStderr: what the watch prints while f runs.
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	r, wr, _ := os.Pipe()
+	saved := os.Stderr
+	os.Stderr = wr
+	f()
+	wr.Close()
+	os.Stderr = saved
+	b, _ := io.ReadAll(r)
+	return string(b)
+}
+
+func wantAll(t *testing.T, out string, wants ...string) {
+	t.Helper()
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q in:\n%s", w, out)
+		}
+	}
+}
+
+// Review finding 2: a replacement commit with a protected path, made reachable only through refs/replace/<HEAD> (loose, then packed). The watch reads without replacements:
+// the commit is reported although its ref is a replacement, and so is the ref.
+func TestGitWatchReportsReplacementRefs(t *testing.T) {
+	for _, packed := range []bool{false, true} {
+		root := watchRepo(t)
+		w := gitWatchStart(root)
+		head := strings.TrimSpace(gitIn(t, root, "rev-parse", "HEAD"))
+		os.WriteFile(filepath.Join(root, ".envrc"), []byte("echo hi"), 0o644)
+		gitIn(t, root, "add", ".envrc")
+		tree := strings.TrimSpace(gitIn(t, root, "write-tree"))
+		repl := strings.TrimSpace(gitIn(t, root, "commit-tree", tree, "-m", "replacement")) // on no branch
+		gitIn(t, root, "reset", "-q")
+		os.Remove(filepath.Join(root, ".envrc"))
+		gitIn(t, root, "update-ref", "refs/replace/"+head, repl)
+		if packed {
+			gitIn(t, root, "pack-refs", "--all")
+		}
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "replacement ref ("+head+")", "committed a protected path: .envrc", "other refs changed: refs/replace/"+head)
+	}
+}
+
+// Review finding 6: the agent commits a protected path on a detached HEAD (no ref moves) and leaves it there, the index matching the commit.
+func TestGitWatchSeesACommitOnADetachedHead(t *testing.T) {
+	for _, detachedAtStart := range []bool{false, true} {
+		root := watchRepo(t)
+		if detachedAtStart {
+			gitIn(t, root, "checkout", "-q", "--detach")
+		}
+		w := gitWatchStart(root)
+		gitIn(t, root, "checkout", "-q", "--detach")
+		os.MkdirAll(filepath.Join(root, ".claude"), 0o755)
+		os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte("{}"), 0o644)
+		gitIn(t, root, "add", ".claude/settings.json")
+		gitIn(t, root, "commit", "-qm", "settings")
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "1 new commit(s)", "committed a protected path: .claude/settings.json")
+		if detachedAtStart {
+			wantAll(t, out, "detached HEAD moved")
+		}
+	}
+}
+
+// Review finding 4: a merge commit brings a protected path in from a side branch that was there at the start (so its own commit is not new). The merge's tree is diffed
+// against its parents.
+func TestGitWatchSeesWhatAMergeBringsIn(t *testing.T) {
+	root := watchRepo(t)
+	gitIn(t, root, "checkout", "-q", "-b", "side")
+	os.WriteFile(filepath.Join(root, ".envrc"), []byte("echo hi"), 0o644)
+	gitIn(t, root, "add", ".envrc")
+	gitIn(t, root, "commit", "-qm", "envrc on side")
+	gitIn(t, root, "checkout", "-q", "main")
+	os.WriteFile(filepath.Join(root, "b.txt"), []byte("b"), 0o644)
+	gitIn(t, root, "add", "b.txt")
+	gitIn(t, root, "commit", "-qm", "b")
+	w := gitWatchStart(root)
+	gitIn(t, root, "merge", "-q", "--no-ff", "--no-edit", "side")
+	out := captureStderr(t, func() { w.report(true) })
+	wantAll(t, out, "1 new commit(s)", "committed a protected path: .envrc") // one commit, not one per parent
+}
+
+// Review finding 5: over the limits the report says the check is incomplete, and the stored start state stays for the next start.
+func TestGitWatchSaysWhenALimitWasReached(t *testing.T) {
+	defer func(c int, o int64) { gitWatchMaxCommits, gitWatchMaxOutput = c, o }(gitWatchMaxCommits, gitWatchMaxOutput)
+	t.Run("commits", func(t *testing.T) {
+		root := watchRepo(t)
+		gitWatchMaxCommits = 3
+		w := gitWatchStart(root)
+		os.WriteFile(filepath.Join(root, ".envrc"), []byte("echo hi"), 0o644)
+		gitIn(t, root, "add", ".envrc")
+		gitIn(t, root, "commit", "-qm", "envrc")
+		for i := 0; i < 4; i++ {
+			gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "more")
+		}
+		file := w.file
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "INCOMPLETE", "more than 3 new commits")
+		if _, err := os.Stat(file); err != nil {
+			t.Error("the stored start state is gone after an incomplete check")
+		}
+	})
+	t.Run("output", func(t *testing.T) {
+		root := watchRepo(t)
+		gitWatchMaxCommits = 200
+		w := gitWatchStart(root)
+		for i := 0; i < 30; i++ {
+			os.WriteFile(filepath.Join(root, fmt.Sprintf("file-with-a-long-name-%02d.txt", i)), []byte("x"), 0o644)
+		}
+		gitIn(t, root, "add", ".")
+		gitWatchMaxOutput = 300 // the index listing is longer
+		file := w.file
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "INCOMPLETE", "index not read in full")
+		if _, err := os.Stat(file); err != nil {
+			t.Error("the stored start state is gone after an incomplete check")
+		}
+	})
+	t.Run("complete", func(t *testing.T) {
+		root := watchRepo(t)
+		gitWatchMaxCommits, gitWatchMaxOutput = 200, 1<<20
+		w := gitWatchStart(root)
+		gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "one")
+		file := w.file
+		out := captureStderr(t, func() { w.report(true) })
+		if strings.Contains(out, "INCOMPLETE") {
+			t.Errorf("a complete check says incomplete:\n%s", out)
+		}
+		if _, err := os.Stat(file); err == nil {
+			t.Error("the stored start state stays after a complete check")
+		}
+	})
+}
+
+// Review finding 7: the end report waits for the requests that are running (they hold the folder lock), and a write that comes after it started is refused: what a running
+// request stages is in the report and restored, and nothing can stage after it.
+func TestGitWatchEndReportWaitsForRunningRequestsAndStopsWrites(t *testing.T) {
+	root := watchRepo(t)
+	s := &shareClient{root: root}
+	s.git = gitWatchStart(root)
+	running := s.lockFolder(false, time.Second) // a request in flight
+	if running == nil {
+		t.Fatal("no lock")
+	}
+	done := make(chan string)
+	go func() { done <- captureStderr(t, s.unregister) }()
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("the end report did not wait for the running request")
+	default:
+	}
+	// the running request finishes its write
+	os.WriteFile(filepath.Join(root, ".envrc"), []byte("echo hi"), 0o644)
+	gitIn(t, root, "add", ".envrc")
+	running()
+	out := <-done
+	wantAll(t, out, "staged a protected path: .envrc")
+	if gitIn(t, root, "ls-files", "-s", ".envrc") != "" {
+		t.Error("the staged path was not restored")
+	}
+	if r := s.handle(davJob{Method: "PUT", Path: "/x.txt", Body: []byte("x")}, ""); r.Status != 503 {
+		t.Errorf("a write after the end report: status %d", r.Status)
+	}
+	if r := s.handle(davJob{Method: "GET", Path: "/a.txt"}, ""); r.Status != 200 {
+		t.Errorf("a read after the end report: status %d", r.Status)
+	}
+}
+
+// The other direction: a new commit with a protected path is hidden by a replacement of it with an old, harmless commit (git shows the replacement everywhere).
+func TestGitWatchSeesACommitThatIsReplacedByAnotherOne(t *testing.T) {
+	root := watchRepo(t)
+	w := gitWatchStart(root)
+	old := strings.TrimSpace(gitIn(t, root, "rev-parse", "HEAD"))
+	os.WriteFile(filepath.Join(root, ".envrc"), []byte("echo hi"), 0o644)
+	gitIn(t, root, "add", ".envrc")
+	gitIn(t, root, "commit", "-qm", "envrc")
+	n := strings.TrimSpace(gitIn(t, root, "rev-parse", "HEAD"))
+	gitIn(t, root, "update-ref", "refs/replace/"+n, old)
+	out := captureStderr(t, func() { w.report(true) })
+	wantAll(t, out, "1 new commit(s)", "committed a protected path: .envrc", "replacement ref ("+n+")")
+}
+
+// Round 2, H3: the drain timed out (a request holds the folder lock): nothing is restored without the lock, the report says so, the baseline stays.
+func TestGitWatchDrainTimeoutRestoresNothing(t *testing.T) {
+	defer func(d time.Duration) { gitWatchDrainWait = d }(gitWatchDrainWait)
+	gitWatchDrainWait = 150 * time.Millisecond
+	root := watchRepo(t)
+	s := &shareClient{root: root}
+	s.git = gitWatchStart(root)
+	file := s.git.file
+	running := s.lockFolder(false, time.Second) // a request that outlasts the wait
+	if running == nil {
+		t.Fatal("no lock")
+	}
+	defer running()
+	os.WriteFile(filepath.Join(root, ".envrc"), []byte("echo hi"), 0o644)
+	gitIn(t, root, "add", ".envrc")
+	out := captureStderr(t, s.unregister)
+	wantAll(t, out, "INCOMPLETE", "requests of the agent were still running", "staged a protected path: .envrc", "NOT removed from the index")
+	if gitIn(t, root, "ls-files", "-s", ".envrc") == "" {
+		t.Error("the index was restored without the lock")
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Error("the baseline is gone")
+	}
+}
+
+// H4: the repository cannot be read at the end (a damaged packed-refs): a warning, and the baseline stays; a folder that was never watchable stays silent.
+func TestGitWatchUnreadableAtTheEndWarnsAndKeepsTheBaseline(t *testing.T) {
+	root := watchRepo(t)
+	w := gitWatchStart(root)
+	file := w.file
+	os.WriteFile(filepath.Join(root, ".git", "packed-refs"), []byte("garbage without a header\nnot a ref\n"), 0o644)
+	out := captureStderr(t, func() { w.report(true) })
+	wantAll(t, out, "INCOMPLETE", "could not be read at the end")
+	if _, err := os.Stat(file); err != nil {
+		t.Error("the baseline is gone after an unreadable end state")
+	}
+}
+
+// H5: the recovery at the next start removes the baseline only after a complete comparison.
+func TestGitWatchRecoveryKeepsAnIncompleteBaseline(t *testing.T) {
+	defer func(c int) { gitWatchMaxCommits = c }(gitWatchMaxCommits)
+	root := watchRepo(t)
+	w := gitWatchStart(root)
+	for i := 0; i < 5; i++ {
+		gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "more")
+	}
+	gone := func(int, string) bool { return false }
+	gitWatchMaxCommits = 3
+	out := strings.Join(gitWatchRecover(root, os.Getpid()+1, gone), "\n")
+	wantAll(t, out, "from the previous run that did not finish", "INCOMPLETE")
+	if _, err := os.Stat(w.file); err != nil {
+		t.Fatal("the baseline was removed after an incomplete comparison")
+	}
+	gitWatchMaxCommits = 200
+	out = strings.Join(gitWatchRecover(root, os.Getpid()+1, gone), "\n")
+	if strings.Contains(out, "INCOMPLETE") || !strings.Contains(out, "5 new commit(s)") {
+		t.Errorf("complete recovery:\n%s", out)
+	}
+	if _, err := os.Stat(w.file); err == nil {
+		t.Error("the baseline stays after a complete comparison")
+	}
+}
+
+// H6: an existing tag moved between two commits that were both in the history at the start.
+func TestGitWatchReportsAMovedTag(t *testing.T) {
+	root := watchRepo(t)
+	gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "second")
+	gitIn(t, root, "tag", "v1", "HEAD~1")
+	w := gitWatchStart(root)
+	gitIn(t, root, "tag", "-f", "v1", "HEAD")
+	out := captureStderr(t, func() { w.report(true) })
+	wantAll(t, out, "moved tags: v1")
+}
+
+// Round 3, G-1: the Go watch has the pins the Swift one has (shared list in git-watch.json: both assert it).
+func TestGitWatchHasTheSharedPins(t *testing.T) {
+	var f struct{ Pins struct{ Args, Env []string } }
+	if err := json.Unmarshal(srcFile(t, "testdata/git-watch.json"), &f); err != nil || len(f.Pins.Args) == 0 {
+		t.Fatal(err)
+	}
+	null := func(s string) string { return strings.ReplaceAll(s, "{null}", os.DevNull) }
+	for _, a := range f.Pins.Args {
+		a = null(a)
+		ok := slices.Contains(gitWatchPins, a)
+		for i := 1; i < len(gitWatchPins) && !ok; i++ {
+			ok = gitWatchPins[i-1] == "-c" && gitWatchPins[i] == a
+		}
+		if !ok {
+			t.Errorf("the watch does not run git with %q", a)
+		}
+	}
+	for _, e := range f.Pins.Env {
+		if !slices.Contains(gitWatchEnv, null(e)) {
+			t.Errorf("the watch does not run git with %q in its environment", e)
+		}
+	}
+}
+
+// G-1: git gc needs to write the commit graph, so objects/info/commit-graph* stays writable for the agent and the pins above are what keep a forged one from the watch.
+// Proved with real git: with the commit graph unwritable, commit, repack and fetch work and gc fails.
+func TestGitNeedsTheCommitGraphOnlyForGc(t *testing.T) {
+	root := watchRepo(t)
+	gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "two")
+	if err := os.MkdirAll(filepath.Join(root, ".git", "objects", "info", "commit-graph.lock"), 0o755); err != nil { // a lock git cannot take: the file is not writable
+		t.Fatal(err)
+	}
+	gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "three")
+	gitIn(t, root, "repack", "-adq")
+	gitIn(t, root, "fetch", "-q", ".")
+	cmd := exec.Command("git", "gc", "-q")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	if err := cmd.Run(); err == nil {
+		t.Error("gc worked without writing the commit graph: then the cache files could be refused")
+	}
+	if protectedPathFor(".git/objects/info/commit-graph", true) {
+		t.Error("the commit graph is refused although git gc needs it")
+	}
+}
+
+// G-3: paths with a quote or a newline arrive raw (log -z); G-5: a reused process id is not a running client.
+func TestGitWatchLogParsesRawNames(t *testing.T) {
+	var f struct {
+		Logs []struct {
+			Name    string
+			Out     string
+			Commits []gitCommit
+		}
+	}
+	if err := json.Unmarshal(srcFile(t, "testdata/git-watch.json"), &f); err != nil || len(f.Logs) == 0 {
+		t.Fatal(err)
+	}
+	for _, l := range f.Logs {
+		got := parseGitLog(l.Out)
+		if len(got) != len(l.Commits) {
+			t.Errorf("%s: %d commits, want %d", l.Name, len(got), len(l.Commits))
+			continue
+		}
+		for i := range got {
+			if got[i].ID != l.Commits[i].ID || !slices.Equal(got[i].Files, l.Commits[i].Files) && !(len(got[i].Files) == 0 && len(l.Commits[i].Files) == 0) {
+				t.Errorf("%s: %+v, want %+v", l.Name, got[i], l.Commits[i])
+			}
+		}
+	}
+}
+
+func TestGitWatchSeesAProtectedPathWithAQuoteInItsName(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a quote cannot be in a Windows file name")
+	}
+	root := watchRepo(t)
+	w := gitWatchStart(root)
+	dir := filepath.Join(root, `a"b`, ".claude")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "settings.json"), []byte("{}"), 0o644)
+	gitIn(t, root, "add", ".")
+	gitIn(t, root, "commit", "-qm", "quoted")
+	out := captureStderr(t, func() { w.report(true) })
+	wantAll(t, out, `a"b/.claude/settings.json`)
+}
+
+func TestGitWatchRecoveryDoesNotTrustAReusedProcessID(t *testing.T) {
+	root := watchRepo(t)
+	w := gitWatchStart(root)
+	gitIn(t, root, "branch", "feature")
+	b, _ := os.ReadFile(w.file)
+	if !strings.Contains(string(b), `"started"`) && gitWatchProcStart(os.Getpid()) != "" {
+		t.Fatal("the start time of the process is not stored")
+	}
+	// the file's process id is alive, but it is another process than the one that wrote it
+	other := strings.Replace(string(b), `"started":"`, `"started":"other-`, 1)
+	os.WriteFile(w.file, []byte(other), 0o600)
+	out := strings.Join(gitWatchRecover(root, os.Getpid()+1, gitWatchPidAlive), "\n")
+	if gitWatchProcStart(os.Getpid()) != "" {
+		wantAll(t, out, "new branches: feature")
+	}
+}
+
+// G-5: a start state that cannot be stored is said at the start; recovery runs at the start of every share.
+func TestGitWatchSaysWhenTheStartStateIsNotStored(t *testing.T) {
+	root := watchRepo(t)
+	t.Setenv("HOME", filepath.Join(root, "a-file-not-a-folder"))
+	os.WriteFile(filepath.Join(root, "a-file-not-a-folder"), nil, 0o644)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "a-file-not-a-folder", "config"))
+	t.Setenv("APPDATA", filepath.Join(root, "a-file-not-a-folder", "appdata"))
+	out := captureStderr(t, func() { gitWatchStart(root) })
+	wantAll(t, out, "could not be stored")
+}
+
+func TestShareStartRecoversForEveryMode(t *testing.T) {
+	root := watchRepo(t)
+	w := gitWatchStart(root)
+	gitIn(t, root, "branch", "feature")
+	_ = w
+	gitWatchGone := func(int, string) bool { return false }
+	_ = gitWatchGone
+	s := &shareClient{root: root, sync: true}
+	// a killed client's file has this process's id: pretend another one by moving it to a dead pid name
+	dead := strings.Replace(w.file, "-"+strconv.Itoa(os.Getpid())+".json", "-999999.json", 1)
+	os.Rename(w.file, dead)
+	out := captureStderr(t, func() { s.start(0) })
+	wantAll(t, out, "from the previous run that did not finish", "new branches: feature")
+}
+
+// M1 (Go): the guard compares names without case (normName); the rule globs of Claude Code also get a form that matches any case.
+func TestCaseVariantsOfTheDenyRules(t *testing.T) {
+	for _, p := range []string{".GIT/config", ".Git/hooks/x", "sub/.GIT/CONFIG", "sub/.Git/Hooks/pre-commit", ".CLAUDE/settings.json", ".Claude/Hooks/x"} {
+		if !protectedPathFor(p, true) {
+			t.Errorf("the guard lets %q through", p)
+		}
+	}
+	rules := withCaseVariants([]string{"Edit(//d/.git/config)", "Edit(//d/.git/config/**)", "Edit(//d/**/.git)", "Edit(//d/.claude/**)", "Read(//d/x/**)"})
+	toRe := func(g string) *regexp.Regexp {
+		g = strings.TrimSuffix(strings.TrimPrefix(g, "Edit("), ")")
+		g = regexp.QuoteMeta(g)
+		g = strings.ReplaceAll(strings.ReplaceAll(g, `\*\*`, `.*`), `\*`, `[^/]*`)
+		g = strings.NewReplacer(`\[`, `[`, `\]`, `]`).Replace(g)
+		return regexp.MustCompile("^" + g + "$")
+	}
+	for _, c := range []struct{ path string }{{"//d/.GIT/config"}, {"//d/.Git/CONFIG"}, {"//d/.git/Config/x"}, {"//d/sub/.GIT"}, {"//d/.CLAUDE/settings.json"}, {"//d/.Claude/a/b"}} {
+		hit := false
+		for _, r := range rules {
+			if strings.HasPrefix(r, "Edit(") && toRe(r).MatchString(c.path) {
+				hit = true
+			}
+		}
+		if !hit {
+			t.Errorf("no rule matches %s in %q", c.path, rules)
+		}
+	}
+	if !slices.Contains(rules, "Edit(//d/.git/config)") || !slices.Contains(rules, "Read(//d/x/**)") || len(rules) != 5+4 {
+		t.Errorf("the originals are kept and only the rules that name .git or .claude get a variant: %q", rules)
 	}
 }

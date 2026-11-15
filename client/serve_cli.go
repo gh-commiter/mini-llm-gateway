@@ -27,6 +27,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 )
 
 var cliFamilies = []string{"opus", "sonnet", "haiku", "fable"}
@@ -166,6 +167,7 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 			}
 		}
 	}
+	deny = withCaseVariants(deny)
 	var args []string
 	box := windowsBox() // #68: ves Claude v škatli MXC; ukazi z orodjem PowerShell (Git Bash je MSYS2, v škatli umre, W4)
 	if box && !readOnly {
@@ -241,6 +243,42 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 	return args
 }
 
+// withCaseVariants (M1): NTFS and the default APFS compare names without case, so `sub/.GIT/config` is the repository's config; a rule glob names `.git`, `.claude` and git's own
+// closed names in one case. Every rule that names one of them is also given in a form that matches any case (`[gG][iI][tT]`, gitignore-style classes), added to the
+// rule, never instead of it: where the matcher already ignores case, or does not take classes, the original keeps working as before.
+func withCaseVariants(rules []string) []string {
+	names := append([]string{".git", ".claude"}, gitDenies...)
+	out := slices.Clone(rules)
+	for _, r := range rules {
+		if !strings.Contains(r, "/.git") && !strings.Contains(r, "/.claude") {
+			continue
+		}
+		v := r
+		for _, n := range names {
+			for _, after := range []string{"/", ")"} {
+				v = strings.ReplaceAll(v, "/"+n+after, "/"+caseClass(n)+after)
+			}
+		}
+		if v != r && !slices.Contains(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// caseClass: every letter of a name as a class of both cases (".git" -> ".[gG][iI][tT]").
+func caseClass(n string) string {
+	var b strings.Builder
+	for _, r := range n {
+		if l, u := unicode.ToLower(r), unicode.ToUpper(r); l != u {
+			fmt.Fprintf(&b, "[%c%c]", l, u)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees"}
 
 // submoduleDenies (V1, V5): a submodule's git directory (.git/modules/<sub>/) is read by the owner's git like the top-level one, so the same list
@@ -297,20 +335,28 @@ func readsFolderSettings(sources string) bool {
 	return false
 }
 
-// ruleSafe (#111 S5): can the path go into a permission rule as it is? No parentheses, glob characters, comma, backslash, `!`, control
-// characters, no leading or trailing space in the path or in one of its components (they could split or widen a rule). Same as
-// ClaudeCLIConfig.ruleSafe on the Mac; on Windows the separators are converted first.
+// ruleSafe (#111 S5): can the path go into a permission rule as it is? It judges the text ruleAbs produces: no parentheses, glob characters, comma, backslash,
+// `!`, control characters, no leading or trailing space in the path or in one of its components (they could split or widen a rule). On Windows `C:\x` becomes
+// `//c/x`; a UNC path, `\\?\C:\x`, a drive-relative `C:x`, a path relative to the current drive and a colon after the drive are refused (they would become another path).
 func ruleSafe(p string) bool {
 	p = filepath.ToSlash(p)
-	if p == "" || strings.ContainsAny(p, "()*?[]{},\\!") {
+	if runtime.GOOS == "windows" {
+		// ruleAbs writes `C:\x` as `//c/x`; only a drive path with a separator has that form. A UNC path (`\\server\share`), `\\?\C:\x`, a drive-relative `C:x`,
+		// a path relative to the current drive (`\x`) would become another path in the rule (`///server/share`, `//cx`): not expressible, refused.
+		if len(p) < 3 || p[1] != ':' || p[2] != '/' || !(p[0] >= 'a' && p[0] <= 'z' || p[0] >= 'A' && p[0] <= 'Z') || strings.ContainsRune(p[2:], ':') {
+			return false // also a colon later in the path (an alternate data stream)
+		}
+	}
+	r := ruleAbs(p) // the text that goes into the rule
+	if r == "" || strings.HasSuffix(r, "/") || strings.ContainsAny(r, "()*?[]{},\\!") {
 		return false
 	}
-	for _, r := range p {
-		if r < 32 || r == 0x7f {
+	for _, c := range r {
+		if c < 32 || c == 0x7f {
 			return false
 		}
 	}
-	for _, c := range strings.Split(p, "/") {
+	for _, c := range strings.Split(r, "/") {
 		if c != strings.TrimSpace(c) {
 			return false
 		}

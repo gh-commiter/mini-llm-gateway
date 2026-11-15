@@ -25,7 +25,7 @@ func TestGitNoteMatchesTheSharedTable(t *testing.T) {
 		if got := gitNote(k.Mode, k.Shell, k.ReadOnly); got != k.Note {
 			t.Errorf("%s shell=%v ro=%v:\n got %q\nwant %q", k.Mode, k.Shell, k.ReadOnly, got, k.Note)
 		}
-		if len(k.Note) > 700 {
+		if len(k.Note) > 750 {
 			t.Errorf("%s: note is %d characters", k.Mode, len(k.Note))
 		}
 	}

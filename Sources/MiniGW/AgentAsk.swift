@@ -23,7 +23,7 @@ func agentHTTP(_ c: Connection, _ method: String, _ path: String, body: Data? = 
     var ai = res
     while let a = ai {
         fd = socket(a.pointee.ai_family, a.pointee.ai_socktype, a.pointee.ai_protocol)
-        if fd >= 0, connect(fd, a.pointee.ai_addr, a.pointee.ai_addrlen) == 0 { break }
+        if fd >= 0, Sock.connect(fd, a.pointee.ai_addr, a.pointee.ai_addrlen) == 0 { break }
         if fd >= 0 { close(fd); fd = -1 }
         ai = a.pointee.ai_next
     }
@@ -36,14 +36,14 @@ func agentHTTP(_ c: Connection, _ method: String, _ path: String, body: Data? = 
     }
     var out = Data((head + "\r\n").utf8) + (body ?? Data())
     while !out.isEmpty {
-        let n = out.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        let n = out.withUnsafeBytes { b in Sock.retry { write(fd, b.baseAddress, b.count) } }
         guard n > 0 else { return false }
         out = out.dropFirst(n)
     }
     var buf = [UInt8](repeating: 0, count: 64 << 10)
     var pending = Data(), headDone = false
     while true {
-        let n = read(fd, &buf, buf.count)
+        let n = Sock.retry { read(fd, &buf, buf.count) }
         guard n > 0 else { break }
         if headDone { onData(Data(buf[0..<n])); continue }
         pending.append(contentsOf: buf[0..<n])

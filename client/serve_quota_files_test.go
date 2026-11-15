@@ -17,22 +17,23 @@ func TestCodexLogIsNotReadThroughLinks(t *testing.T) {
 	os.MkdirAll(filepath.Join(real, "2026", "11", "14"), 0o755)
 	os.WriteFile(filepath.Join(real, "2026", "11", "14", "rollout-x-thread-a.jsonl"), []byte(planted), 0o644)
 	os.MkdirAll(filepath.Join(home, "sessions"), 0o755)
-	if err := os.Symlink(filepath.Join(real, "2026"), filepath.Join(home, "sessions", "2026")); err != nil {
-		t.Skip("no symlinks here:", err)
-	}
+	dirLink(t, filepath.Join(real, "2026"), filepath.Join(home, "sessions", "2026")) // a junction where symlinks need a privilege (Windows)
 	if got := codexSessionFile(home, "thread-a"); got != "" {
 		t.Fatalf("entered a linked year folder: %s", got)
 	}
 	// a linked day folder, and a linked log
 	day := filepath.Join(home, "sessions", "2027", "01", "02")
 	os.MkdirAll(filepath.Join(home, "sessions", "2027", "01"), 0o755)
-	os.Symlink(filepath.Join(real, "2026", "11", "14"), day)
+	dirLink(t, filepath.Join(real, "2026", "11", "14"), day)
 	if got := codexSessionFile(home, "thread-a"); got != "" {
 		t.Fatalf("entered a linked day folder: %s", got)
 	}
 	os.Remove(day)
 	os.MkdirAll(day, 0o755)
-	os.Symlink(filepath.Join(real, "2026", "11", "14", "rollout-x-thread-a.jsonl"), filepath.Join(day, "rollout-y-thread-a.jsonl"))
+	fileLinked := os.Symlink(filepath.Join(real, "2026", "11", "14", "rollout-x-thread-a.jsonl"), filepath.Join(day, "rollout-y-thread-a.jsonl")) == nil
+	if !fileLinked && runtime.GOOS != "windows" {
+		t.Fatal("cannot make a file symlink")
+	} // on Windows a file symlink needs a privilege and a junction cannot link a file: that sub-case is skipped there
 	if got := codexSessionFile(home, "thread-a"); got != "" {
 		t.Fatalf("took a linked log: %s", got)
 	}
@@ -43,7 +44,7 @@ func TestCodexLogIsNotReadThroughLinks(t *testing.T) {
 		t.Fatalf("the real log was not found: %q", got)
 	}
 	// a link given as the path itself is refused by the reader, also when it points at a real log
-	if v := lastRateLimits(filepath.Join(day, "rollout-y-thread-a.jsonl"), time.Now()); v != nil {
+	if v := lastRateLimits(filepath.Join(day, "rollout-y-thread-a.jsonl"), time.Now()); fileLinked && v != nil {
 		t.Fatalf("read through a link: %+v", v)
 	}
 	if v := lastRateLimits(good, time.Now()); len(v) != 1 {

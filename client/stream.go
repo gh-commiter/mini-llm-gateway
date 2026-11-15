@@ -60,6 +60,46 @@ func helperModelEnv(args []string, getenv func(string) string) []string {
 	return env
 }
 
+// finalAnswerRule (#78): a weak model referred to text it wrote in an earlier message ("points 1-2 are above"), which
+// minigw -p does not return: the answer must be complete in the final message.
+const finalAnswerRule = "Put the whole answer in your final message; earlier messages are not shown."
+
+// finalAnswerArgs (#78): claude -p with a non-Claude model gets finalAnswerRule in its system prompt (also when the
+// question comes on stdin); Claude models are left alone. The flag goes before "--", after it the words are the question.
+func finalAnswerArgs(args []string) []string {
+	end, model, print := len(args), "", false
+	for i, a := range args {
+		if a == "--" {
+			end = i
+			break
+		}
+		if a == "-p" || a == "--print" {
+			print = true
+		}
+		if a == "--model" && i+1 < end {
+			model = args[i+1]
+		} else if v, ok := strings.CutPrefix(a, "--model="); ok {
+			model = v
+		}
+	}
+	if _, _, claude := cliMatch(strings.ToLower(model)); !print || model == "" || claude {
+		return args
+	}
+	for i := 0; i < end; i++ { // the user's own note stays, the rule is added to it
+		if v, ok := strings.CutPrefix(args[i], "--append-system-prompt="); ok {
+			out := slices.Clone(args)
+			out[i] = "--append-system-prompt=" + v + "\n\n" + finalAnswerRule
+			return out
+		}
+		if args[i] == "--append-system-prompt" && i+1 < end {
+			out := slices.Clone(args)
+			out[i+1] += "\n\n" + finalAnswerRule
+			return out
+		}
+	}
+	return append(append(slices.Clone(args[:end]), "--append-system-prompt", finalAnswerRule), args[end:]...)
+}
+
 // streamLineMax: najdaljša vrstica stream-json (enako v Swift Profiles.StreamText.lineMax).
 const streamLineMax = 64 << 20
 

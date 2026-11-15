@@ -293,7 +293,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// and branches. The client's guard (Sync.gitDirWritable, Go gitDirWritable) holds the same list as an allow list and is the final word; `.git` itself
     /// (replaced by a file or a link) is the guard's too, a Seatbelt path rule cannot name the entry without its contents.
     static let directGitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply",
-                                  "sequencer", "remotes", "branches", "objects/info/alternates", "objects/info/http-alternates"]
+                                  "sequencer", "remotes", "branches", "objects/info/alternates", "objects/info/http-alternates", "refs/replace", "logs/refs/replace", "modules"]
     /// The same for the git directory of a submodule (`.git/modules/<name>/`; `info` covers objects/info there).
     static let directModuleDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply", "sequencer"]
 
@@ -351,7 +351,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // #113: the globs name the entries only, so `mv .git/modules m`, a write in m/sub/config and a move back got past them (a real run); a literal path also
             // makes the sandbox refuse a rename of the folders above it. The submodules' closed paths that exist now, literally.
             out += Self.submoduleGitPaths(d + "/.git", deny: Self.directModuleDenies)
-            for g in Self.nestedGitDirs(d) { out += Self.directGitDenies.map { g + "/" + $0 } + Self.submoduleGitPaths(g, deny: Self.directModuleDenies) }
+            out += Self.nestedGitDirs(d)  // a nested repository's git directory is closed whole (the watch audits the share's own repository only), literally: the globs name entries only
             if !settingSources.trimmingCharacters(in: .whitespaces).isEmpty { out += [d + "/.claude", d + "/**/.claude"] }
         }
         return out
@@ -364,6 +364,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         for d in dirs {
             for g in directGitDenies { rules += ["/\(d)/**/.git/\(g)", "/\(d)/**/.git/\(g)/**"] }
             rules.append("/\(d)/**/.git")
+            rules += ["/\(d)/*/**/.git/**"]  // a nested repository's git directory whole (not the share's own, which `**` would also match without a folder in between)
         }
         rules += dirs.flatMap { d in directModuleDenies.flatMap { g in ["/\(d)/**/.git/modules/**/\(g)", "/\(d)/**/.git/modules/**/\(g)/**"] } }
         return rules.flatMap { r in ["Edit(\(r))", "Write(\(r))"] }

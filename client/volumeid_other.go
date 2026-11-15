@@ -1,7 +1,6 @@
-//go:build !linux && !windows
+//go:build !linux && !windows && !darwin
 
 package main
 
-// volumeIDOf (B1): no stable volume id here (macOS f_fsid is the device number, which changes with the mount order):
-// only the inode is compared. The Mac app uses the volume UUID instead.
+// volumeIDOf (B1): no stable volume id or mount-source fallback on these platforms; only the inode is compared.
 func volumeIDOf(string) uint64 { return 0 }

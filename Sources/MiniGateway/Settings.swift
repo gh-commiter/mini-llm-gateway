@@ -668,7 +668,11 @@ struct SettingsView: View {
     private var foldersSection: some View {
         Section {
             ForEach(roots, id: \.self) { root in
-                Label { Text(verbatim: root) } icon: { Image(systemName: "folder") }
+                let refused = state.refusedFolders(root).isEmpty == false
+                Label { Text(verbatim: root) } icon: {
+                    Image(systemName: refused ? "exclamationmark.triangle.fill" : "folder")
+                        .foregroundStyle(refused ? Color.orange : Color.primary)
+                }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .listRowBackground(selectedRoot == root ? Color.accentColor.opacity(0.2) : nil)

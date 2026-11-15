@@ -82,6 +82,7 @@ type serveConfig struct {
 	// M2: real path and identity of each allowed folder, recorded when it is added (or at the first start of a version that
 	// has records). A start compares and refuses a folder that differs; it never rewrites a record.
 	AllowedRecords map[string]folderRecord `json:"allowedRecords,omitempty"`
+	flagFolder     string                  // #96: the folder given only by the deprecated --folder flag (written to the file once, with its record)
 
 	// N4: trajni ID te namestitve prehoda (datoteka lastnika v Scratch; ensureInstance)
 	Instance string `json:"instance,omitempty"`
@@ -335,7 +336,14 @@ func serveCommand(args []string) {
 
 	switch sub {
 	case "init":
-		defer lockServeConfig(*cfgPath)() // B3: load-modify-write
+		abs, _ := filepath.Abs(filepath.Dir(*cfgPath)) // zasebna mapa pred prvim zapisom žetona in ključa
+		os.MkdirAll(abs, 0o700)
+		if err := protectConfigDir(abs); errors.Is(err, errForeignOwner) {
+			fail(abs + " " + err.Error() + ": use a folder of your own")
+		} else if err != nil {
+			say("WARNING: cannot make " + abs + " private to this user: use the default config folder")
+		}
+		defer lockServeConfig(*cfgPath)() // B3: load-modify-write, after the directory ownership check
 		c, err := loadServeConfig(*cfgPath)
 		created := errors.Is(err, os.ErrNotExist)
 		if created {
@@ -347,13 +355,6 @@ func serveCommand(args []string) {
 			c.Port = *port
 		}
 		deprecatedFolder(&c, *folder)
-		abs, _ := filepath.Abs(filepath.Dir(*cfgPath)) // zasebna mapa pred prvim zapisom žetona in ključa
-		os.MkdirAll(abs, 0o700)
-		if err := protectConfigDir(abs); errors.Is(err, errForeignOwner) {
-			fail(abs + " " + err.Error() + ": use a folder of your own")
-		} else if err != nil {
-			say("WARNING: cannot make " + abs + " private to this user: use the default config folder")
-		}
 		saveServeConfig(*cfgPath, c)
 
 		if connectLine(c) == "" {
@@ -717,15 +718,16 @@ func (s *server) checkFolderRecords(had map[string]folderRecord, missing []strin
 		}
 	}
 	if len(added) > 0 {
-		if err := saveFolderRecords(s.cfgPath, s.cfg.AllowedRecords, added); err != nil {
+		if err := saveFolderRecords(s.cfgPath, s.cfg.AllowedRecords, added, s.cfg.flagFolder); err != nil {
 			s.log.Printf("WARNING: cannot save the folder records (%v): they are recorded again at the next start", err)
 		}
 	}
 	s.checkedAgentFolders(s.cfg, "") // W3: the run-time checks (owner, link) also at start: log and `refused` agree
 }
 
-// saveFolderRecords: adds the records of folders that have none in the config file (nothing else changes).
-func saveFolderRecords(path string, records map[string]folderRecord, folders []string) error {
+// saveFolderRecords: adds the records of folders that have none in the config file, including a folder given only by
+// --folder (nothing else changes).
+func saveFolderRecords(path string, records map[string]folderRecord, folders []string, flagFolder string) error {
 	defer lockServeConfig(path)() // A5
 	file, err := loadServeConfig(path)
 	if err != nil {
@@ -736,7 +738,13 @@ func saveFolderRecords(path string, records map[string]folderRecord, folders []s
 	}
 	changed := false
 	for _, f := range folders {
-		if _, ok := file.AllowedRecords[f]; !ok && slices.Contains(file.AllowedFolders, f) {
+		if _, ok := file.AllowedRecords[f]; !ok {
+			if !slices.Contains(file.AllowedFolders, f) {
+				if f != flagFolder { // a folder removed from the file meanwhile stays removed; only the --folder one is written (#96)
+					continue
+				}
+				file.AllowedFolders = append(file.AllowedFolders, f)
+			}
 			file.AllowedRecords[f], changed = records[f], true
 		}
 	}
@@ -782,8 +790,11 @@ func deprecatedFolder(c *serveConfig, f string) {
 		return
 	}
 	abs, _ := filepath.Abs(f)
-	if !slices.Contains(c.AllowedFolders, abs) {
+	if !slices.ContainsFunc(c.AllowedFolders, func(existing string) bool {
+		return samePath(existing, abs) || sameReal(existing, abs)
+	}) {
 		c.AllowedFolders = append(c.AllowedFolders, abs)
+		c.flagFolder = abs
 	}
 	say("--folder is deprecated: " + abs + " is now an allowed folder (use --folders)")
 }

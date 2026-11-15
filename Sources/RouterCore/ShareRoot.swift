@@ -103,7 +103,7 @@ final class ShareRoot: @unchecked Sendable {
     }
 
     /// Absolutni cilj (leksikalno) relativno na ime korena, v katerem leži; nil, če je zunaj. APFS ne loči velikosti črk.
-    private func inside(_ target: String) -> [String]? {
+    func inside(_ target: String) -> [String]? {
         let fold: (String) -> String = { self.caseSensitive ? $0 : $0.lowercased() }
         let t = Self.lexical(target), tl = t.map(fold)
         for b in bases where t.count >= b.count && tl[..<b.count].elementsEqual(b.map(fold)) {
@@ -114,16 +114,38 @@ final class ShareRoot: @unchecked Sendable {
 
     /// Cilj z razrešenim obstoječim delom (povezava /var/x, mapa odprta kot /private/var/x). Le izbere pot za poskus.
     private func realTarget(_ target: String) -> String {
-        var p = "/" + Self.lexical(target).joined(separator: "/"), rest: [String] = []
-        while true {
-            if let r = realpath(p, nil) {
-                defer { free(r) }
-                return ([String(cString: r)] + rest).joined(separator: "/")
+        Self.safeTargetPath(target) ?? target
+    }
+
+    /// Inspect links before probing their targets; never touch Unix automount roots, including through a chain.
+    static func safeTargetPath(_ target: String) -> String? {
+        var parts = lexical(target)
+        for _ in 0...maxLinkRewrites {
+            var cur: [String] = []
+            var again = false
+            for (i, name) in parts.enumerated() {
+                cur.append(name)
+                guard cur.first?.lowercased() != "net", cur.first?.lowercased() != "network" else { return nil }
+                let p = "/" + cur.joined(separator: "/")
+                var st = stat()
+                guard Darwin.lstat(p, &st) == 0 else {
+                    return errno == ENOENT ? "/" + parts.joined(separator: "/") : nil
+                }
+                if st.st_mode & S_IFMT != S_IFLNK { continue }
+                var buf = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
+                let n = Darwin.readlink(p, &buf, Int(PATH_MAX))
+                guard n > 0 else { return nil }
+                let next = String(decoding: buf[..<n].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                let base = next.hasPrefix("/") ? "" : "/" + cur.dropLast().joined(separator: "/") + "/"
+                let rewritten = Self.lexical(base + next)
+                guard rewritten.first?.lowercased() != "net", rewritten.first?.lowercased() != "network" else { return nil }
+                parts = rewritten + Array(parts[(i + 1)...])
+                again = true
+                break
             }
-            if p == "/" { return target }
-            rest.insert((p as NSString).lastPathComponent, at: 0)
-            p = (p as NSString).deletingLastPathComponent
+            if !again { return "/" + parts.joined(separator: "/") }
         }
+        return nil
     }
 
     // MARK: branje

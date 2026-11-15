@@ -12,6 +12,7 @@ Run the question through Mini Gateway with the `minigw` client, in the current f
 ```sh
 "${CLAUDE_PLUGIN_DATA}/bin/minigw" -p --model <model> -- "$(cat <<'PROMPT'
 <question or task, with the context the model needs>
+Put the whole answer in your final message; earlier messages are not shown.
 PROMPT
 )"
 ```

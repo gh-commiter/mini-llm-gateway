@@ -280,6 +280,7 @@ final class ShareClient: @unchecked Sendable {
     var worktree: Bool { kind == "worktree" }
     var refusal = ""  // zakaj router mape ni sprejel
     private var gitWatch: GitWatch?  // #116 B1: direct: the repository at the start (GitWatch.swift)
+    static let gitDrainWait: TimeInterval = 30  // how long the end report waits for the requests that are running
     static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
     private let lock = NSLock()
     private var current = ""
@@ -326,7 +327,13 @@ final class ShareClient: @unchecked Sendable {
     }
 
     func unregister() {
-        if let g = gitWatch { gitWatch = nil; g.finish() }  // #116 B1: what the agent did in the owner's repository
+        if let g = gitWatch {  // #116 B1: what the agent did in the owner's repository
+            gitWatch = nil
+            // No more writes, then wait for the ones running (the exclusive folder lock: a request holds it shared or exclusive for its whole run, and a write that gets it after
+            // `closeWrites` was called is refused), then audit and restore while nothing can write. Lock order as in work(): the folder lock, never syncLock.
+            folderLock?.closeWrites()
+            g.finish(under: folderLock, wait: Self.gitDrainWait)
+        }
         guard !key.isEmpty else { return }; _ = call(c, "DELETE", "/minigw/share", ["x-share-key": key], timeout: 3)
     }
 
@@ -341,6 +348,7 @@ final class ShareClient: @unchecked Sendable {
         }
         folderLock = rootID.map { FolderLock(id: $0) }
         if kind == "direct", !readOnly, rootID != nil { gitWatch = GitWatch.begin(root.path) }  // direct mode: the agent can commit (#116 B1)
+        else if rootID != nil { GitWatch.recoverAtStart(root.path) }  // a run of this folder that did not finish, whatever mode it had
         for _ in 0..<workers { Thread { self.work() }.start() }
     }
 
@@ -388,9 +396,7 @@ final class ShareClient: @unchecked Sendable {
     /// #82: posel pod zaklepom mape; drug proces ga drži predolgo → 503 z besedilom.
     private func locked(_ exclusive: Bool, _ wait: TimeInterval? = nil, _ job: () -> DAVResponse) -> DAVResponse {
         guard let folderLock else { return DAVResponse(403) }
-        return folderLock.with(exclusive: exclusive, wait: wait) {
-            SharedFolders.fileID(root.path) == rootID ? job() : DAVResponse(403)  // I2: koren znova pod zaklepom
-        } ?? DAVResponse(503, ["content-type": "text/plain", "retry-after": "5"], Data((FolderLock.busyText + "\n").utf8))
+        return folderLock.respond(exclusive: exclusive, wait: wait, rootOK: { SharedFolders.fileID(root.path) == rootID }, job)
     }
 
     private func note(_ s: String) { try? err.write(contentsOf: Data(("minigw: " + oneLine(s) + "\n").utf8)) }
@@ -1110,6 +1116,7 @@ if promptGuard { args = ["--disable-slash-commands"] + args }  // N7
 // I17: env v --settings premaga env v uporabnikovem settings.json (izmerjeno, 2.1.318)
 if mentionSettings { args = ["--settings", Profiles.mentionSettings] + args }
 for (k, v) in Profiles.helperModelEnv(args, env: callerEnv) { setenv(k, v, 1) }  // #78, po #7
+args = Profiles.finalAnswerArgs(args)  // #78: the whole answer in the final message
 let streamArgs = Profiles.streamArgs(args), streamed = streamArgs != nil  // #78: minigw izpiše vsa besedila modela
 if let streamArgs { args = streamArgs }
 held.withLock { $0.on = streamed }
@@ -1186,7 +1193,8 @@ if !wantShare || sid.isEmpty {
         try? err.write(contentsOf: Data("minigw: \(share.sync ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : SharedFolders.cappedMode(capped)) with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
     }
 } else {
-    try? err.write(contentsOf: Data("minigw: gateway did not accept the folder; Claude CLI models with tools will not see it\n".utf8))
+    let why = "gateway did not accept the folder" + (share.refusal.isEmpty ? "" : ": " + oneLine(share.refusal))
+    try? err.write(contentsOf: Data("minigw: \(why); Claude CLI models with tools will not see it\n".utf8))
 }
 
 /// Načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
