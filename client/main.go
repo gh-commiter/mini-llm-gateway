@@ -1796,6 +1796,10 @@ func shareCommand(args []string) {
 		save(append(keep, e))
 		fmt.Println("shared with the gateway from now on:", describe(e), "(and its subfolders)")
 	case "remove":
+		if len(keep) == len(list) {
+			fail("not shared: " + dir)
+			return
+		}
 		save(keep)
 		fmt.Println("no longer shared:", dir)
 	case "list":

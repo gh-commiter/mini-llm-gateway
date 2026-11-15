@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -127,5 +128,30 @@ func TestShareAddSameIdentity(t *testing.T) {
 	shareCommand([]string{"add", alias})
 	if got = sharedFolders(); len(got) != 1 || got[0].Path != proj || got[0].Work != "" {
 		t.Fatalf("shares: %+v", got)
+	}
+}
+
+func TestShareRemoveUnstoredAlias(t *testing.T) {
+	_, proj := fakeHome(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	dirLink(t, proj, alias)
+	shareCommand([]string{"add", proj})
+	before, err := os.ReadFile(sharedFoldersFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{alias, filepath.Join(t.TempDir(), "missing")} {
+		out, stderr, code := captured(func() { shareCommand([]string{"remove", name}) })
+		if code != 1 || out != "" || !strings.Contains(stderr, "not shared: "+name) {
+			t.Fatalf("remove %q: exit %d stdout %q stderr %q", name, code, out, stderr)
+		}
+		after, err := os.ReadFile(sharedFoldersFile())
+		if err != nil || string(after) != string(before) {
+			t.Fatalf("share list changed: %q %v", after, err)
+		}
+	}
+	_, _, code := captured(func() { shareCommand([]string{"remove", proj}) })
+	if code != 0 || len(sharedFolders()) != 0 {
+		t.Fatal("stored name was not removed")
 	}
 }

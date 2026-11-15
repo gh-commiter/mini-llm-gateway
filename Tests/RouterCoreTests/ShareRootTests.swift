@@ -70,13 +70,12 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     }
     #expect(read(out.appendingPathComponent("secret")) == "secret")
     #expect((try? FileManager.default.contentsOfDirectory(atPath: out.path)) == ["secret"])
-    // PROPFIND mape: povezava, ki zapusti mapo, ni datoteka z dolžino cilja povezave.
-    // Stran PROPFIND za povezavo ven: datoteka velikosti 0 (ne zbirka, ne dolžina cilja povezave).
+    // A link leaving the share is a forbidden entry, not a zero-byte file.
     let list = text(dav(root, "PROPFIND", "/", ["depth": "1"]))
     let resp = list.components(separatedBy: "<D:response>").dropFirst()
     func part(_ n: String) -> String { resp.first { $0.contains("<D:href>/s/\(n)</D:href>") || $0.contains("<D:href>/s/\(n)/</D:href>") } ?? "" }
     for n in ["file", "dir", "rel", "dangling-out"] {
-        #expect(part(n).contains("<D:getcontentlength>0<") && !part(n).contains("<D:collection/>"), "\(n): \(part(n))")
+        #expect(part(n).contains("HTTP/1.1 403 Forbidden") && part(n).contains(ShareRoot.linkRefusal), "\(n): \(part(n))")
     }
 }
 
@@ -470,4 +469,17 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     #expect(ShareRoot.safeTargetPath(root.path + "/L2/../x/new") == root.path + "/a/x/new")
     #expect(dav(root, "MOVE", "/a/x", ["destination": "/s/L1/new"]).status == 403)
     #expect(!gone(root.appendingPathComponent("a/x")))
+}
+
+@Test func shareListingRefusesOutsideLink() throws {
+    let root = try tmp("root"), out = try tmp("out")
+    defer {
+        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.removeItem(at: out)
+    }
+    try link(out.path, root.appendingPathComponent("outside"))
+    let r = dav(root, "PROPFIND", "", ["depth": "1"])
+    #expect(r.status == 207)
+    #expect(text(r).contains("<D:href>/s/outside</D:href><D:status>HTTP/1.1 403 Forbidden</D:status>"))
+    #expect(text(r).contains(ShareRoot.linkRefusal))
 }

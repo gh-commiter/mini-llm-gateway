@@ -244,10 +244,14 @@ public enum WebDAV {
         return prefix + "/" + comps.map { $0.addingPercentEncoding(withAllowedCharacters: allowed) ?? $0 }.joined(separator: "/")
     }
 
-    /// Povezava, ki je `resolve` ni prepisal (zapusti mapo, ostane povezava) ali česa ni: ne vrsta ne velikost povezave
-    /// (kot Go rootPropResponse: datoteka velikosti 0).
+    /// A refused link is a forbidden entry, including in a directory listing.
     static func propResponse(_ rt: ShareRoot, _ rel: String, href: String) -> String {
-        let st = rt.lstat(rel).flatMap { [S_IFREG, S_IFDIR].contains($0.st_mode & S_IFMT) ? $0 : nil }
+        let resolved: String
+        do { resolved = try rt.resolve(rel, followLast: true) } catch {
+            return "<D:response><D:href>\(href)</D:href><D:status>HTTP/1.1 403 Forbidden</D:status>"
+                + "<D:responsedescription>Access refused. \(ShareRoot.linkRefusal).</D:responsedescription></D:response>"
+        }
+        let st = rt.lstat(resolved).flatMap { [S_IFREG, S_IFDIR].contains($0.st_mode & S_IFMT) ? $0 : nil }
         let dir = st.map { $0.st_mode & S_IFMT == S_IFDIR } ?? false
         let size = st.map { Int($0.st_size) } ?? 0
         let mod = st.map { date($0.st_mtimespec) } ?? Date()

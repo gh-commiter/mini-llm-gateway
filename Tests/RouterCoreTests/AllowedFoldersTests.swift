@@ -222,6 +222,33 @@ private func allowedTemp() throws -> URL {
     #expect(restarted.refused(p).isEmpty)
 }
 
+// A folder retargeted to many directories: the stored reasons and the log lines stay capped.
+@Test func refusalLogIsCappedPerFolder() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let folder = base.appendingPathComponent("folder"), first = base.appendingPathComponent("t0")
+    try fm.createDirectory(at: first, withIntermediateDirectories: false)
+    try fm.createSymbolicLink(at: folder, withDestinationURL: first)
+    let p = folder.path
+    let check = AllowedFolders()
+    check.record(p)
+    var logs: [String] = []
+    let cap = AllowedFolders.maxLoggedReasons
+    for i in 1...(cap + 4) {
+        let t = base.appendingPathComponent("t\(i)")
+        try fm.createDirectory(at: t, withIntermediateDirectories: false)
+        try fm.removeItem(at: folder)
+        try fm.createSymbolicLink(at: folder, withDestinationURL: t)
+        #expect(check.folders(p, log: { logs.append($0) }).isEmpty)
+        #expect(check.folders(p, log: { logs.append($0) }).isEmpty)
+    }
+    #expect(check.loggedReasonCount(p) == cap)
+    #expect(logs.count == cap + 1 && logs.last?.contains("further refusals of it are not logged") == true)
+    check.record("")  // removed from the list: the entry and its log state go
+    check.record(p)
+    #expect(check.loggedReasonCount(p) == 0)
+}
+
 @Test func allowedFolderIdentityChangedAtStart() throws {
     let fm = FileManager.default, base = try allowedTemp()
     defer { try? fm.removeItem(at: base) }
@@ -376,4 +403,31 @@ private func allowedTemp() throws -> URL {
         #expect(claude["refused"] as? [String] == [p])
         #expect(claude["folders"] as? String == p)
     }
+}
+
+@Test func allowedFolderLogsEachQuotedReasonOnce() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let folder = base.appendingPathComponent("folder")
+    try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+    let check = AllowedFolders(), p = folder.path
+    check.record(p)
+    try fm.removeItem(at: folder)
+    var logs: [String] = []
+    for name in ["first\ntarget", "second\ntarget"] {
+        let target = base.appendingPathComponent(name)
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: folder, withDestinationURL: target)
+        for _ in 0..<2 { #expect(check.folders(p, log: { logs.append($0) }).isEmpty) }
+        let reason = "its real path changed to " + target.path
+        #expect(logs.last?.contains("allowed folder \(p.debugDescription) is not used: \(reason.debugDescription);") == true)
+        try fm.removeItem(at: folder)
+    }
+    #expect(logs.count == 2)
+}
+
+@Test func quotedRefusalTextCannotForgeALogLine() {
+    let q = AllowedFolders.quoted("/x\nWARNING: forged\r\t\u{1}")
+    #expect(!q.contains("\n") && !q.contains("\r") && !q.contains("\u{1}") && q.hasPrefix("\"") && q.hasSuffix("\""))
+    #expect(AllowedFolders.quoted("gateway's own") == "\"gateway's own\"")  // a fixed reason reads plainly
 }

@@ -606,6 +606,12 @@ func href(prefix string, comps []string) string {
 }
 
 func rootPropResponse(rooted *os.Root, p, href string) string {
+	resolved, err := rootResolve(rooted, p, true)
+	if err != nil {
+		return "<D:response><D:href>" + href + "</D:href><D:status>HTTP/1.1 403 Forbidden</D:status>" +
+			"<D:responsedescription>Access refused. " + linkRefusal + ".</D:responsedescription></D:response>"
+	}
+	p = resolved
 	info, err := rooted.Stat(p)
 	dir, size, mod := false, int64(0), time.Now()
 	if err == nil {

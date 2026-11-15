@@ -441,6 +441,8 @@ minigw share remove
 ```
 
 Adding an alias of an existing shared folder keeps one entry and updates its saved options.
+To remove it, use the saved name shown by `minigw share list`. An unstored alias or other name that is not
+shared reports `not shared`, exits non-zero, and leaves the list unchanged.
 
 `minigw share add` always refuses a drive root, the root of the volume that holds your home folder or the system
 (`/System/Volumes/Data` on macOS; on Linux a mount of the same file system as home or `/` that shows it from its top,
@@ -454,6 +456,8 @@ cannot be read). minigw checks again each time it shares: a current folder that 
 now refused prints `minigw: not sharing … (…); remove it with: minigw share remove "…"` and is not shared, and
 `minigw share list` marks it "not shared". The share list is per computer: with several profiles every gateway gets
 the folder on its first agent request.
+
+WebDAV refuses links that leave the shared folder with HTTP 403 and a short reason, including entries in directory listings.
 
 **Everything inside a shared folder is shared**, hidden files included (`.claude/`, `.env`, `.secret/`). Keep
 credentials out of project folders you use with a gateway, or list them in `.gitignore` for sync and worktree mode.

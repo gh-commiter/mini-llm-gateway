@@ -1318,3 +1318,50 @@ func TestSyncPullSummarySkipsSkipped(t *testing.T) {
 		t.Fatalf("summary: %v %q", ok, out)
 	}
 }
+
+// A refused link in a listing must not masquerade as a zero-byte regular file.
+func TestDavListingRefusesOutsideLink(t *testing.T) {
+	root, out := t.TempDir(), t.TempDir()
+	dirLink(t, out, filepath.Join(root, "outside"))
+	r := davHandle("PROPFIND", "/s", map[string]string{"depth": "1"}, nil, root, "/s")
+	body := string(r.Body)
+	if r.Status != 207 || !strings.Contains(body, "<D:href>/s/outside</D:href><D:status>HTTP/1.1 403 Forbidden</D:status>") ||
+		!strings.Contains(body, linkRefusal) {
+		t.Fatalf("listing: %d %s", r.Status, body)
+	}
+	for _, method := range []string{"GET", "HEAD", "PROPFIND", "PUT", "MKCOL"} {
+		r := davHandle(method, "/s/outside/x", nil, []byte("bad"), root, "/s")
+		if r.Status != 403 || !strings.Contains(string(r.Body), linkRefusal) {
+			t.Fatalf("%s: %d %s", method, r.Status, r.Body)
+		}
+	}
+}
+
+func TestCallReportsRequestAndTransportErrors(t *testing.T) {
+	for _, endpoint := range []string{":invalid", "http://127.0.0.1:0"} {
+		st, body := call(connection{URL: endpoint}, "GET", "/", nil, nil, time.Second)
+		if st != 0 || len(body) == 0 {
+			t.Fatalf("%q: status %d body %q", endpoint, st, body)
+		}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	st, body := call(connection{URL: srv.URL}, "GET", "/", nil, nil, 20*time.Millisecond)
+	if st != 0 || !strings.Contains(string(body), "Client.Timeout") {
+		t.Fatalf("timeout: status %d body %q", st, body)
+	}
+}
+
+func TestCallReportsBodyReadError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "10")
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	st, body := call(connection{URL: srv.URL}, "GET", "/", nil, nil, time.Second)
+	if st != 0 || !strings.Contains(string(body), "unexpected EOF") {
+		t.Fatalf("read error: status %d body %q", st, body)
+	}
+}
