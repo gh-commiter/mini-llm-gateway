@@ -341,8 +341,8 @@ still works. In sync mode such files are never copied back, and `.git` is never 
 
 **Git in direct mode (0.6.0).** An agent in direct mode can commit in your repository: `git add`, `git commit`,
 `git branch`, `git checkout`, `git stash`, `git tag` and `git merge` of a local branch work. For that the client lets
-the agent write git's own data in `.git` (and in the git folder of a submodule, `.git/modules/<name>`, and of a nested
-repository): `index`, `HEAD`, `ORIG_HEAD`, `FETCH_HEAD`, `MERGE_*`, `COMMIT_EDITMSG`, `packed-refs`, `refs/**`,
+the agent write git's own data in the share's own `.git` only (a submodule's git folder `.git/modules/<name>` and a
+nested repository stay read-only in direct mode; use worktree mode for them): `index`, `HEAD`, `ORIG_HEAD`, `FETCH_HEAD`, `MERGE_*`, `COMMIT_EDITMSG`, `packed-refs`, `refs/**`,
 `logs/**`, `objects/<xx>/*`, `objects/pack/*`, the commit graph, and the `*.lock` files git writes next to these. A
 client that wants the gateway to work on a separate copy uses worktree mode; direct is direct. What can run code or
 send git elsewhere stays refused, in the same list on the gateway's sandboxes and in the client (Go and Swift):

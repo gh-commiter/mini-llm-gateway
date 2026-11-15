@@ -83,6 +83,7 @@ Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and q
 ### Known problems
 
 - The Settings page of `minigw serve` (in the browser) does not mark refused allowed folders. The Mac Settings and the admin API do.
+- The self-check of the Mac sandbox layer for restricted Claude runs can report "pass" when the check run exceeds its time limit (it should report "inconclusive"). A fix is in work.
 - Grok agent runs that last longer than a few minutes can fail with 502.
 
 ## 0.5.29
