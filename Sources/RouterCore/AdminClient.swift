@@ -65,7 +65,7 @@ public struct AdminClient: Sendable {
         var got = Data()
         while got.count < Noise.handshakeLength, let d = recv() { got += d }
         guard got.count >= Noise.handshakeLength else { return (0, nil, why("handshake reply: \(got.count) of \(Noise.handshakeLength) bytes")) }
-        guard let session = try? hs.finish(Data(got.prefix(Noise.handshakeLength))) else { return (0, nil, "handshake reply rejected (not this router)") }
+        guard let session = try? hs.finish(Data(got.prefix(Noise.handshakeLength))) else { return (0, nil, "not this gateway") }
         var head = "\(method) \(path) HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nConnection: close\r\nContent-Type: application/json\r\n"
         if let authorization { head += "Authorization: \(authorization(session.hash))\r\n" }
         head += "Content-Length: \((body ?? Data()).count)\r\n\r\n"

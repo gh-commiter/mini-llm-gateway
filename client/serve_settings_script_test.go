@@ -35,3 +35,46 @@ func TestSettingsScriptSyntax(t *testing.T) {
 		}
 	}
 }
+
+func TestSettingsRefusedFolders(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	start := strings.Index(settingsPage, "function folderList(")
+	end := strings.Index(settingsPage[start:], "\n// agentPane") + start
+	// A small DOM double rejects HTML assignment; server paths must stay literal text.
+	script := `
+const assert = require('node:assert/strict');
+const PICKER = false;
+const t = key => key;
+function el(tag, props, ...children) {
+  const n = {tag, children, classList: {toggle() {}}, addEventListener() {},
+    replaceChildren(...c) { this.children = c; }};
+  Object.defineProperty(n, 'innerHTML', {set() { throw Error('HTML assignment'); }});
+  return Object.assign(n, props);
+}
+const row = (...c) => el('div', {}, ...c);
+const note = text => el('div', {textContent: text});
+const bad = '/projects/<img src=x onerror=alert(1)>';
+` + settingsPage[start:end] + `
+for (const refused of [undefined, [], [bad]]) {
+  const result = folderList(bad + ',/ok', () => {}, '', false, [], [], refused);
+  const labels = result.children[0].children.slice(0, 2).map(r => r.children[0]);
+  const warning = !!refused?.length;
+  assert.equal(labels[0].textContent, (warning ? '⚠️ ' : '📁 ') + bad + (warning ? ' · folderRefused' : ''));
+  assert.equal(labels[0].class.includes('warn'), warning);
+  assert.equal(labels[1].textContent, '📁 /ok');
+}
+`
+	if strings.Count(settingsPage, "win, c.leftOut, c.leftOutUnchecked, c.refused)") != 2 {
+		t.Fatal("both allowed-folder panes must pass refused paths")
+	}
+	f := filepath.Join(t.TempDir(), "folders.js")
+	if err := os.WriteFile(f, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, f).CombinedOutput(); err != nil {
+		t.Fatalf("folder list: %v\n%s", err, out)
+	}
+}

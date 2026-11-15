@@ -151,7 +151,7 @@ the agent's changes back after it. Agents and builds work on the gateway's local
   it as `<name>.minigw-conflict`.
 - **Read-only:** with `--minigw-ro` nothing comes back.
 - **Kept between requests:** the next sync and build are incremental. A copy that no session used for 14 days is
-  deleted.
+  deleted. At the synced-folder limit, the gateway also points the owner to `minigw gw sync remove`.
 - **Names:** files whose names differ only in case (`A.txt`, `a.txt`) are not synced, with a note. Accented names
   travel in NFC. A Linux folder that holds the NFD form of a name may get a second, NFC copy back.
 - Agents in the same folder run one after another.
@@ -662,6 +662,9 @@ to exclude single tools. File tools are refused outside the session folder and t
 in Claude Code's sandbox (no reads of the home folder, writes only in these folders, network allowed). On a Windows
 gateway the whole Claude Code runs in the Windows sandbox (see [Windows gateway](#windows-gateway-sandbox)) and runs
 commands with its PowerShell tool; without the Windows sandbox commands need **Allow commands without a sandbox**.
+
+The browser Settings page marks refused allowed folders with a warning and an explanation next to the path.
+Remove and add the folder again after checking that it is the folder you intended to allow.
 
 **Codex** runs one entry per enabled Codex model of your account. Its sandbox writes only to the session folder and
 the allowed folders. Within a conversation Codex continues its own thread (`codex exec resume`), also after

@@ -191,6 +191,28 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(app.config.providers.isEmpty && app.keys[p.id] == nil)
     }
 
+    @Test func rejectedHandshakeNamesGateway() {
+        let (fd, port) = listener()
+        defer { close(fd) }
+        Thread {
+            let c = Sock.retry { accept(fd, nil, nil) }
+            guard c >= 0 else { return }
+            defer { close(c) }
+            var received = 0, buf = [UInt8](repeating: 0, count: 4 + Noise.handshakeLength)
+            while received < buf.count {
+                let remaining = buf.count - received
+                let n = Sock.retry { Darwin.read(c, &buf, remaining) }
+                if n <= 0 { return }
+                received += n
+            }
+            let reply = Data(repeating: 0, count: Noise.handshakeLength)
+            _ = reply.withUnsafeBytes { b in Sock.retry { write(c, b.baseAddress, b.count) } }
+        }.start()
+        let result = AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation)
+            .attempt("GET", "/health/live", nil, timeout: 5)
+        #expect(result.0 == 0 && result.1 == nil && result.2 == "not this gateway")
+    }
+
     /// S1: lažen strežnik z lastnim ključem (podtaknjen ključ routerja) konča rokovanje, a dobi le dokaz, vezan na to
     /// rokovanje: ne skrivnosti in nič, kar bi pravi router sprejel.
     @Test func fakeResponderGetsNothingReusable() async throws {

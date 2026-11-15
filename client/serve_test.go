@@ -762,3 +762,28 @@ func TestHealthReadyProvidersOnlyLocalOrAuthorized(t *testing.T) {
 		}
 	}
 }
+
+func TestServeSyncCopyLimitMessage(t *testing.T) {
+	s, _ := testServer(t, nil)
+	root := filepath.Join(s.conf().scratch("sync"), "local")
+	for i := range maxCopies {
+		if err := os.MkdirAll(filepath.Join(root, fmt.Sprintf("%016x", i)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, body := call(startLoopback(t, s), "POST", "/minigw/share", map[string]string{
+		"x-claude-mini-session": "limit", "x-claude-mini-cwd": "/new", "x-claude-mini-work": "sync",
+	}, nil, 5*time.Second)
+	var response struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("This device already has %d synced folders on the gateway; unused ones expire after 14 days; the owner can remove one with `minigw gw sync remove`", maxCopies)
+	if st != 429 || response.Error.Message != want {
+		t.Fatalf("%d %s", st, body)
+	}
+}
