@@ -57,7 +57,8 @@ struct PriceSnapshot: Sendable, Equatable {
     }
 }
 
-func deploymentPrices(_ data: [[String: Any]], publicMap: [String: Any] = [:]) -> [String: PriceRates] {
+/// Only complete input and output rates of the owner's own proxy count; a deployment without them has no price.
+func deploymentPrices(_ data: [[String: Any]]) -> [String: PriceRates] {
     let counts = Dictionary(data.compactMap { ($0["model_name"] as? String).map { ($0, 1) } }, uniquingKeysWith: +)
     var out: [String: PriceRates] = [:]
     for m in data {
@@ -68,9 +69,6 @@ func deploymentPrices(_ data: [[String: Any]], publicMap: [String: Any] = [:]) -
             for (k, v) in overrides where !(v is NSNull) { local[k] = v }
         }
         var merged: [String: Any] = [:]
-        if local["input_cost_per_token"] == nil || local["output_cost_per_token"] == nil {
-            merged = (params["model"] as? String).flatMap { publicMap[$0] as? [String: Any] } ?? [:]
-        }
         for (k, v) in local { merged[k] = v }
         if let p = PriceRates.parse(merged, openRouter: false) { out[name] = p }
     }

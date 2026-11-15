@@ -14,9 +14,9 @@ import Testing
                 #expect(p.flatMap { Decimal(string: $0.output) } == Decimal(string: c["output"] as! String))
             } else { #expect(p == nil, "\(c["name"]!)") }
         }
-        let prices = deploymentPrices(f["deployments"] as! [[String: Any]], publicMap: f["publicMap"] as! [String: Any])
-        #expect(prices.count == 3)
-        #expect(prices["null-fallback"] == PriceRates(input: "0.000002", output: "0.000006"))
+        let prices = deploymentPrices(f["deployments"] as! [[String: Any]])
+        #expect(prices.count == 2)
+        #expect(prices["null-fallback"] == nil && prices["unmapped"] == nil && prices["ambiguous"] == nil)
         #expect(prices["custom"] == PriceRates(input: "0.000009", output: "0.000008"))
         #expect(prices["alias"] == PriceRates(input: "0.000003", output: "0.000006"))
         for c in f["usage"] as! [[String: Any]] {

@@ -997,20 +997,10 @@ public enum Discovery {
         func window(_ item: [String: Any]) -> Int? { (item["context_length"] ?? item["max_input_tokens"] ?? item["context_window"]) as? Int }
         var windows: [String: Int] = [:]
         var prices: [String: PriceSnapshot] = [:]
-        var priceRefreshFailed = false
         let needsInfo = p.id.lowercased() == "litellm" || items.contains(where: { window($0) == nil })
         let infoRows = needsInfo ? (try? await fetch(p, "/model/info", key: key, session: session))?["data"] as? [[String: Any]] : nil
         if let info = infoRows {
-            var rates = deploymentPrices(info)
-            if p.id.lowercased() == "litellm", info.contains(where: {
-                let params = $0["litellm_params"] as? [String: Any] ?? [:]
-                return rates[$0["model_name"] as? String ?? ""] == nil && !(params["model"] as? String ?? "").isEmpty
-            }) {
-                let publicProvider = ProviderConfig(id: "price-map", name: "Price map", enabled: true,
-                    baseURL: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json", aliases: "")
-                if let map = try? await fetch(publicProvider, "", key: "", session: session) { rates = deploymentPrices(info, publicMap: map) }
-                else { priceRefreshFailed = true }
-            }
+            let rates = deploymentPrices(info)
             for m in info {
                 if let name = m["model_name"] as? String, let rate = rates[name] { prices[name] = PriceSnapshot(provider: p.id, model: name, source: "/model/info", rates: rate) }
                 if let name = m["model_name"] as? String,
@@ -1020,7 +1010,7 @@ public enum Discovery {
         return .success(items.compactMap { item -> Model? in
             guard let id = item["id"] as? String, !id.contains("*") else { return nil }  // LiteLLM wildcard ni model
             let price = prices[id] ?? (item["pricing"] as? [String: Any]).flatMap { PriceRates.parse($0, openRouter: true) }.map { PriceSnapshot(provider: p.id, model: id, source: "/v1/models", rates: $0) }
-            return Model(id: id, window: window(item) ?? windows[id], price: price, priceRefreshFailed: priceRefreshFailed || p.id.lowercased() == "litellm" && infoRows == nil)
+            return Model(id: id, window: window(item) ?? windows[id], price: price, priceRefreshFailed: p.id.lowercased() == "litellm" && infoRows == nil)
         })
     }
 

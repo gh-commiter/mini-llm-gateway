@@ -3,13 +3,25 @@
     {
       "name": "invalid zero dimension spelling",
       "openRouter": true,
-      "price": {"prompt": "0", "completion": "0", "request": ".0"}
+      "price": {
+        "prompt": "0",
+        "completion": "0",
+        "request": ".0"
+      }
     },
     {
       "name": "zero exponent dimension",
       "openRouter": true,
-      "price": {"prompt": "0", "completion": "0", "request": "0e999"},
-      "input": "0", "output": "0", "tokensIn": 1, "tokensOut": 1, "nanos": 0
+      "price": {
+        "prompt": "0",
+        "completion": "0",
+        "request": "0e999"
+      },
+      "input": "0",
+      "output": "0",
+      "tokensIn": 1,
+      "tokensOut": 1,
+      "nanos": 0
     },
     {
       "name": "regional multiplier",
@@ -198,7 +210,8 @@
         "model": "vendor/plain"
       },
       "model_info": {
-        "input_cost_per_token": "0.000003"
+        "input_cost_per_token": "0.000003",
+        "output_cost_per_token": "0.000006"
       }
     },
     {
@@ -244,26 +257,10 @@
       }
     }
   ],
-  "publicMap": {
-    "vendor/base": {
-      "input_cost_per_token": "0.000002",
-      "output_cost_per_token": "0.000006",
-      "input_cost_per_token_above_128k_tokens": "0.00001"
-    },
-    "vendor/plain": {
-      "input_cost_per_token": "0.000002",
-      "output_cost_per_token": "0.000006"
-    }
-  },
   "mapped": {
     "alias": {
       "unit": "USD/token",
       "input": "0.000003",
-      "output": "0.000006"
-    },
-    "null-fallback": {
-      "unit": "USD/token",
-      "input": "0.000002",
       "output": "0.000006"
     },
     "custom": {

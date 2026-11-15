@@ -287,26 +287,7 @@ func discoverGateway(g serveGateway, key string) ([]gwModel, error) {
 					out[i].priceRefreshFailed = true
 				}
 			}
-			rates := deploymentPrices(data, nil)
-			needsPublic := false
-			for _, it := range data {
-				m, _ := it.(map[string]any)
-				name, _ := m["model_name"].(string)
-				params, _ := m["litellm_params"].(map[string]any)
-				base, _ := params["model"].(string)
-				if rates[name] == nil && base != "" {
-					needsPublic = true
-				}
-			}
-			if needsPublic && strings.EqualFold(g.Name, "LiteLLM") {
-				if public, err := gwFetch(ctx, serveGateway{BaseURL: publicCostMapURL}, "", ""); err == nil {
-					rates = deploymentPrices(data, public)
-				} else {
-					for i := range out {
-						out[i].priceRefreshFailed = true
-					}
-				}
-			}
+			rates := deploymentPrices(data)
 			for _, it := range data {
 				m, _ := it.(map[string]any)
 				name, _ := m["model_name"].(string)

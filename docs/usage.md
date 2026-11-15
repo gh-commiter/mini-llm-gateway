@@ -505,9 +505,9 @@ The provider/model usage report shows reported USD charges plain and estimated c
 `reported_cost_usd` and `estimated_cost_usd` columns. Claude, Codex, Grok and Copilot subscription calls have no money.
 
 Prices refresh in the background with a timeout and one refresh per provider at a time; failures keep the last good
-catalog. OpenRouter `/v1/models` prices and LiteLLM `/model/info` deployment rates are USD per token. LiteLLM
-consults its [public cost map](https://docs.litellm.ai/docs/proxy/model_cost_map) only for an exact, unique deployment-to-base-model
-mapping, with deployment overrides taking precedence. Complete deployment input/output rates do not depend on the public map. Aliases use the routed upstream model's price. A snapshot
+catalog. OpenRouter prices come from its `/v1/models` list, LiteLLM prices from the owner's own proxy (`/model/info`; complete input and
+output rates only), both USD per token. The gateway calls no other host for prices; a LiteLLM model without rates there has unknown cost.
+Aliases use the routed upstream model's price. A snapshot
 is frozen at dispatch and retained in the shared core database (migration 6); replay and later refreshes never
 reprice a completed event. Snapshots include source and fetch time; last-good prices can be stale.
 A request never waits for a price: a stale catalog is used as it is and refreshed in the background. Only the first

@@ -57,8 +57,8 @@ func snapshot(provider, model, source string, rates *core.PriceRates) *core.Pric
 	return &core.PriceSnapshot{ID: "ps_" + randomToken()[:24], Provider: provider, UpstreamModel: model, FetchedAt: at, EffectiveDay: at.Format("2006-01-02"), Source: source, Rates: *rates}
 }
 
-// Deployment overrides win. Public prices require an exact, unique base-model mapping.
-func deploymentPrices(data []any, public map[string]any) map[string]*core.PriceRates {
+// Only complete input and output rates of the owner's own proxy count; a deployment without them has no price.
+func deploymentPrices(data []any) map[string]*core.PriceRates {
 	counts := map[string]int{}
 	out := map[string]*core.PriceRates{}
 	for _, it := range data {
@@ -74,7 +74,6 @@ func deploymentPrices(data []any, public map[string]any) map[string]*core.PriceR
 		}
 		mi, _ := m["model_info"].(map[string]any)
 		params, _ := m["litellm_params"].(map[string]any)
-		base, _ := params["model"].(string)
 		local := map[string]any{}
 		for _, overrides := range []map[string]any{mi, params} {
 			for k, v := range overrides {
@@ -84,14 +83,6 @@ func deploymentPrices(data []any, public map[string]any) map[string]*core.PriceR
 			}
 		}
 		merged := map[string]any{}
-		// Complete deployment rates are authoritative; fallback is per deployment.
-		if local["input_cost_per_token"] == nil || local["output_cost_per_token"] == nil {
-			if p, ok := public[base].(map[string]any); ok {
-				for k, v := range p {
-					merged[k] = v
-				}
-			}
-		}
 		for k, v := range local {
 			merged[k] = v
 		}
@@ -99,5 +90,3 @@ func deploymentPrices(data []any, public map[string]any) map[string]*core.PriceR
 	}
 	return out
 }
-
-const publicCostMapURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"

@@ -25,7 +25,6 @@ func TestPriceFixtures(t *testing.T) {
 			Nanos               *int64
 		}
 		Deployments []any
-		PublicMap   map[string]any
 		Mapped      map[string]core.PriceRates
 		Usage       []struct {
 			Body     string
@@ -62,7 +61,7 @@ func TestPriceFixtures(t *testing.T) {
 			}
 		})
 	}
-	got := deploymentPrices(f.Deployments, f.PublicMap)
+	got := deploymentPrices(f.Deployments)
 	for name, want := range f.Mapped {
 		if got[name] == nil || *got[name] != want {
 			t.Fatalf("%s: %v", name, got[name])
