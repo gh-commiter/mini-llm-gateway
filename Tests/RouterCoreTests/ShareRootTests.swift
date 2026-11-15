@@ -396,7 +396,7 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
 
 @Test func shareRefusesAutomountLinkChains() throws {
     let root = try tmp("automount")
-    for (i, target) in ["/net", "/net/minigw-invalid/x", "/Network", "/Network/minigw-invalid/x"].enumerated() {
+    for (i, target) in ["/net", "/net/minigw-invalid/x", "/Network", "/Network/minigw-invalid/x", "/NET", "/NET/minigw-invalid/x", "/network", "/nEtWoRk/minigw-invalid/x"].enumerated() {
         #expect(ShareRoot.safeTargetPath(target) == nil)
         let name = "remote\(i)"
         try link(target, root.appendingPathComponent(name))

@@ -116,3 +116,30 @@ func TestRootThroughSystemLink(t *testing.T) {
 		t.Fatal("DAV refused root through system link")
 	}
 }
+
+// Darwin must refuse mixed-case automount names before any filesystem probe.
+func TestMixedCaseAutomountTargets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix automount roots")
+	}
+	for _, target := range []string{"/NET", "/NET/minigw-invalid/x", "/network", "/nEtWoRk/minigw-invalid/x"} {
+		if got := safeTarget(target, nil); got != (runtime.GOOS != "darwin") {
+			t.Errorf("safeTarget(%q) = %v", target, got)
+		}
+		if runtime.GOOS != "darwin" {
+			continue
+		}
+		root := t.TempDir()
+		if err := os.Symlink(target, filepath.Join(root, "remote")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("remote", filepath.Join(root, "chain")); err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{target, filepath.Join(root, "remote", "child"), filepath.Join(root, "chain", "child")} {
+			if _, err := safeFinalPath(path, []string{root}); err == nil || !strings.Contains(err.Error(), linkRefusal) {
+				t.Errorf("safeFinalPath(%q) = %v", path, err)
+			}
+		}
+	}
+}

@@ -125,7 +125,7 @@ final class ShareRoot: @unchecked Sendable {
             var again = false
             for (i, name) in parts.enumerated() {
                 cur.append(name)
-                guard cur.first != "net", cur.first != "Network" else { return nil }
+                guard cur.first?.lowercased() != "net", cur.first?.lowercased() != "network" else { return nil }
                 let p = "/" + cur.joined(separator: "/")
                 var st = stat()
                 guard Darwin.lstat(p, &st) == 0 else {
@@ -138,7 +138,7 @@ final class ShareRoot: @unchecked Sendable {
                 let next = String(decoding: buf[..<n].map { UInt8(bitPattern: $0) }, as: UTF8.self)
                 let base = next.hasPrefix("/") ? "" : "/" + cur.dropLast().joined(separator: "/") + "/"
                 let rewritten = Self.lexical(base + next)
-                guard rewritten.first != "net", rewritten.first != "Network" else { return nil }
+                guard rewritten.first?.lowercased() != "net", rewritten.first?.lowercased() != "network" else { return nil }
                 parts = rewritten + Array(parts[(i + 1)...])
                 again = true
                 break

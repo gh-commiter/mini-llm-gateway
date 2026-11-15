@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,5 +55,34 @@ func TestSameDriveJunctionToRemote(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("finalPath called %d times for remote junction chain", calls)
+	}
+}
+
+// The local administrative share exercises real UNC handles without a remote host.
+func TestDAVMoveCopyUNCRoot(t *testing.T) {
+	local := t.TempDir()
+	volume := filepath.VolumeName(local)
+	if len(volume) != 2 {
+		t.Skip("temporary directory is not on a drive")
+	}
+	root := `\\localhost\` + volume[:1] + `$` + strings.TrimPrefix(local, volume)
+	if _, err := os.Stat(root); err != nil {
+		t.Skipf("local administrative share unavailable: %v", err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	for _, method := range []string{"MOVE", "COPY"} {
+		t.Run(method, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(local, "source"), []byte("inside"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			dest := strings.ToLower(method)
+			r := davHandle(method, "/s/source", map[string]string{"destination": "/s/" + dest}, nil, root, "/s")
+			if r.Status != 201 {
+				t.Fatalf("%s on UNC root: status %d, body %s", method, r.Status, r.Body)
+			}
+			if b, err := os.ReadFile(filepath.Join(local, dest)); err != nil || string(b) != "inside" {
+				t.Fatalf("destination = %q, %v", b, err)
+			}
+		})
 	}
 }

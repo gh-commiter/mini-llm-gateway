@@ -34,7 +34,7 @@ Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and q
 
 ### Security
 
-- Security (#98, #102, both clients): DAV and sync inspect link chains before resolving targets, refusing remote or other-drive targets on Windows and `/net` or `/Network` automount paths on Unix.
+- Security (#98, #102, both clients): DAV and sync inspect link chains before resolving targets, refusing remote or other-drive targets on Windows and `/net` or `/Network` automount paths on Unix (case-insensitively on macOS); MOVE and COPY still work with a configured UNC share.
 
 - Security (#106, all gateways): no agent can read the core folder, which holds the notes of all projects. Mac: Codex always runs under its permission profile (also in read-only, chat and plain write mode), Claude CLI, `minigw run` and Copilot hide it like Scratch, and Grok runs in its own sandbox profile (Grok's own `--deny` is not enforced). Linux: `bwrap` hides the config folder. Windows: the Windows sandbox denies it for Claude CLI and Grok. An allowed folder that contains the core folder or is inside it is refused.
 - Security (#106, all gateways): the credential homes of the other agents (`~/.grok`, `~/.codex`, `~/.copilot` and the gateway's own `grok-home` and `copilot` folders under Scratch) are denied to every agent of another kind.

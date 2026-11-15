@@ -131,14 +131,16 @@ func sameVolume(bases []string, target string) bool {
 }
 
 // safeFinalPath inspects each link before opening its target, including intermediate links and chains.
-// The caller supplies trusted base names; remote volumes and Unix automount roots are never probed.
+// The caller supplies trusted base names; only an initial path inside a trusted UNC base may probe that share.
 func safeFinalPath(target string, bases []string) (string, error) {
 	p, err := filepath.Abs(target)
 	if err != nil {
 		return "", err
 	}
+	_, inside := insideBases(bases, p)
+	trustedUNC := runtime.GOOS == "windows" && strings.HasPrefix(filepath.VolumeName(p), `\\`) && inside
 	for rewrites := 0; rewrites <= maxLinkRewrites; rewrites++ {
-		if !safeTarget(p, bases) {
+		if !(rewrites == 0 && trustedUNC) && !safeTarget(p, bases) {
 			return "", fmt.Errorf("%s: %s", linkRefusal, target)
 		}
 		volume := filepath.VolumeName(p)
@@ -150,7 +152,7 @@ func safeFinalPath(target string, bases []string) (string, error) {
 				continue
 			}
 			cur = filepath.Join(cur, name)
-			if !safeTarget(cur, bases) {
+			if !(rewrites == 0 && trustedUNC) && !safeTarget(cur, bases) {
 				return "", fmt.Errorf("%s: %s", linkRefusal, target)
 			}
 			st, err := os.Lstat(cur)
@@ -193,6 +195,10 @@ func safeTarget(target string, bases []string) bool {
 		return len(v) == 2 && v[1] == ':' && sameVolume(bases, target)
 	}
 	p := filepath.Clean(target)
+	if runtime.GOOS == "darwin" {
+		p = strings.ToLower(p)
+		return p != "/net" && !strings.HasPrefix(p, "/net/") && p != "/network" && !strings.HasPrefix(p, "/network/")
+	}
 	return p != "/net" && !strings.HasPrefix(p, "/net/") && p != "/Network" && !strings.HasPrefix(p, "/Network/")
 }
 
