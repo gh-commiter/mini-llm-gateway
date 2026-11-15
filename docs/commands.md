@@ -84,6 +84,7 @@ only on the gateway computer.
 | Command | What it does |
 |---|---|
 | `minigw gw status` | Running, version, autostart, agent requests, devices, providers, and a line `projects: on` or `projects: off (reason)` for the project database |
+| `minigw gw sync list\|remove <copy id> --device ID` | List the synced copies of a device or remove an unused copy (stop its sessions and agents first) |
 | `minigw gw devices` | Allowed devices and devices waiting for approval |
 | `minigw gw devices allow <id> [--name N]` | Allow a device (compare the ID with `minigw status` on that client first) |
 | `minigw gw devices rename <id> --name N` | Rename a device (the name is only a label) |
