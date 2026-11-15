@@ -235,16 +235,15 @@ private struct Rig {
         #expect(try rig.status(named, "/usr/bin/nc", ["-z", "-w", "2", h, String(port)]) != 0)
     }
     #expect(named.contains("(deny network-outbound (remote ip \"*:\(port)\"))") && p.contains("(deny network-bind)") && p.contains("(deny network-inbound)"))
-    // nothing can listen: a listener started inside the profile does not accept
-    let listen = Process()
-    listen.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-    let freePort = port + 1
-    listen.arguments = ["-p", p, "/usr/bin/nc", "-l", "127.0.0.1", String(freePort)]
-    listen.standardOutput = FileHandle.nullDevice; listen.standardError = FileHandle.nullDevice; listen.standardInput = FileHandle.nullDevice
-    try listen.run()
-    defer { if listen.isRunning { listen.terminate() } }
-    Thread.sleep(forTimeInterval: 0.6)
-    #expect(try rig.status(nil, "/usr/bin/nc", ["-z", "-w", "2", "127.0.0.1", String(freePort)]) != 0)
+    // nothing can listen: binding inside the profile is refused by the kernel ("Operation not permitted"), whatever the port is doing: no row depends on a port staying unused
+    let attempt = Process(), err = Pipe()
+    attempt.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+    attempt.arguments = ["-p", p, "/usr/bin/nc", "-l", "127.0.0.1", String(Int.random(in: 40000...60000))]
+    attempt.standardOutput = FileHandle.nullDevice; attempt.standardError = err; attempt.standardInput = FileHandle.nullDevice
+    try attempt.run()
+    let refused = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)  // returns when nc exits: at once when refused
+    attempt.waitUntilExit()
+    #expect(refused.contains("Operation not permitted") && attempt.terminationStatus != 0, "\(refused)")
 }
 
 @Test func devicesAreTheFewOnesClaudeUses() throws {
@@ -348,6 +347,14 @@ private struct Rig {
     #expect(ClaudeSeatbelt.kernelRows(profile: leaky, session: rig.project, outside: rig.outside, canary: "CANARY")?.contains("does not stop a read") == true)
     let closed = "(version 1)\n(allow default)\n(deny file-read* file-write*)\n(allow file-read* (literal \"/\"))\n"  // claude's folder not readable either
     #expect(ClaudeSeatbelt.kernelRows(profile: closed, session: rig.project, outside: rig.outside, canary: "CANARY") != nil)
+}
+
+/// Claude keeps a conversation folder in ~/.claude/projects for every working folder it ran in: the test's own (unique) folders are removed again.
+private func removeTranscriptFolders(_ paths: [String]) {
+    for p in paths {
+        let real = Sync.real(URL(fileURLWithPath: p))?.path ?? p
+        try? FileManager.default.removeItem(atPath: NSHomeDirectory() + "/.claude/projects/" + Native.claudeProjectFolder(real))
+    }
 }
 
 /// A fake claude: starts under the profile, reads canary.txt of its cwd and answers it, or fails as a broken profile would.
@@ -464,9 +471,10 @@ private final class Clock: @unchecked Sendable {
 @Test func realClaudeWithWeakRulesIsStoppedByTheKernel() async throws {
     guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
     let home = NSHomeDirectory()
-    let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-test")  // a fixed path: claude keeps one transcript folder for it in ~/.claude/projects, not one per run
+    let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-test-" + UUID().uuidString.lowercased())  // unique (parallel runs of the suite); its transcript folders are removed below
     try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: base) }
+    defer { removeTranscriptFolders([base.path + "/Mini Gateway/mounts/aaaa", base.path + "/tmp/run-seatbelt/session"]) }
     // the layout of a remote client's mount: the session folder inside the app folder, a sibling mount next to it (the outside file)
     let app = base.appendingPathComponent("Mini Gateway")
     let session = app.appendingPathComponent("mounts/aaaa"), outside = app.appendingPathComponent("mounts/bbbb"), tmp = base.appendingPathComponent("tmp")
@@ -610,10 +618,11 @@ private final class Clock: @unchecked Sendable {
     @Test func realRestrictedRunReadsWritesAndResumes() async throws {
         await Router.claudeSeatbelt.setRequireTranscript(true)  // real claude: the transcript must be saved under the profile
         guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
-        let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-run")  // fixed: one transcript folder in ~/.claude/projects
+        let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-run-" + UUID().uuidString.lowercased())  // unique (parallel runs of the suite); its transcript folders are removed below
         let project = base.appendingPathComponent("proj"), logDir = base.appendingPathComponent("log")
         for d in [project, logDir] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
         defer { try? FileManager.default.removeItem(at: base) }
+        defer { removeTranscriptFolders([project.path, logDir.path, base.appendingPathComponent("scratch/Mini Gateway Scratch/tmp/run-seatbelt/session").path]) }
         var env = ProcessInfo.processInfo.environment
         for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" { env[k] = nil }
         let probe = ClaudeSeatbelt.capture(exe, ["-p", "--model", "haiku", "--tools", "", "--no-session-persistence"], env: env, cwd: logDir.path, input: "Reply with the word ok.", timeout: 120, log: logDir)
