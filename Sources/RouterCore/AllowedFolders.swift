@@ -5,8 +5,8 @@ import os
 /// M2: the real path and identity of an allowed folder, recorded when it is added (or at the first start of a version
 /// that has records) and saved with the settings. Start compares and refuses a folder that differs; it never rewrites it.
 /// B1: the identity is the volume UUID plus the inode, never st_dev (macOS assigns it at mount, so it changes for external
-/// and network disks). `volume` nil = the volume has no UUID (some network filesystems): the inode alone is compared.
-/// `ino` 0 = the folder did not exist when it was recorded: it adopts its identity at its first accepted use (B2).
+/// and network disks). Where no UUID exists, the filesystem type and mount source are the fallback identity. `volume` nil
+/// in an older record = only the inode is compared. `ino` 0 = the folder adopts its identity at its first accepted use (B2).
 public struct FolderRecord: Codable, Sendable, Equatable {
     public var real: String
     public var volume: String?
@@ -23,9 +23,9 @@ public struct FolderRecord: Codable, Sendable, Equatable {
         ino = try c.decodeIfPresent(UInt64.self, forKey: .ino) ?? 0
     }
 
-    /// The recorded identity matches `volume`/`ino` now; volumes are compared only when both are known.
+    /// A legacy record without a volume id compares only the inode; a recorded id must remain available and match.
     func matches(volume now: String?, ino now2: UInt64) -> Bool {
-        ino == 0 || ino == now2 && (volume == nil || now == nil || volume == now)
+        ino == 0 || ino == now2 && (volume == nil || volume == now)
     }
 }
 
@@ -67,8 +67,22 @@ public final class AllowedFolders: @unchecked Sendable {
     init(volumeID: @escaping (String) -> String?) { self.volumeID = volumeID }  // tests
 
     public static func volumeUUID(_ p: String) -> String? {
-        let v = try? URL(fileURLWithPath: p).resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString
-        return v?.isEmpty == false ? v : nil
+        // Query the UUID separately: an unsupported fallback key must not hide an available UUID.
+        let uuid = try? URL(fileURLWithPath: p).resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString
+        if let uuid, !uuid.isEmpty { return uuid }
+        var st = statfs()
+        guard statfs(p, &st) == 0 else { return nil }
+        let fs = withUnsafeBytes(of: st.f_fstypename) {
+            String(cString: $0.bindMemory(to: CChar.self).baseAddress!)
+        }
+        let source = withUnsafeBytes(of: st.f_mntfromname) {
+            String(cString: $0.bindMemory(to: CChar.self).baseAddress!)
+        }
+        // This identifies a named export, not a replacement filesystem behind the same export name.
+        // Device names and generic labels (e.g. "tmpfs") do not identify a filesystem across boots.
+        guard !fs.isEmpty, (!source.hasPrefix("/") || source.hasPrefix("//")),
+              source.contains(":") || source.hasPrefix("//") else { return nil }
+        return "mount:\(fs):\(source)"
     }
 
     /// A comma-separated list as typed in settings; checked paths travel as arrays (a real path may contain a comma).

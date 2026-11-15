@@ -275,7 +275,7 @@ private func allowedTemp() throws -> URL {
     #expect(restarted.folders(p) == [p])
 }
 
-// B1: the identity is the volume UUID plus the inode (never st_dev); no UUID: the inode alone.
+// B1: a recorded volume identity must match; only legacy records without it compare by inode.
 @Test func allowedFolderRecordUsesVolumeUUIDAndInode() throws {
     let fm = FileManager.default, base = try allowedTemp()
     defer { try? fm.removeItem(at: base) }
@@ -292,10 +292,17 @@ private func allowedTemp() throws -> URL {
     }
     #expect(check("UUID-A") == [p])  // the same volume, whatever st_dev says after a reconnect
     #expect(check("UUID-B").isEmpty)  // another disk
-    #expect(check(nil) == [p])  // no UUID now: inode only
+    #expect(check(nil).isEmpty)  // losing the volume identity must not bypass the saved UUID
     // An old record (dev and ino, no volume) still reads and is compared by inode.
     let old = try JSONDecoder().decode(FolderRecord.self, from: Data(#"{"real":"\#(p)","dev":7,"ino":\#(cfg.allowedRecords[p]!.ino)}"#.utf8))
     #expect(old.volume == nil && old.ino == cfg.allowedRecords[p]?.ino)
+    let legacy = AllowedFolders(volumeID: { _ in "UUID-B" })
+    legacy.record(p, records: [p: old])
+    #expect(legacy.folders(p) == [p])
+    cfg.allowedRecords[p] = old
+    cfg.recordFolders(volumeID: { _ in "UUID-B" })
+    #expect(cfg.allowedRecords[p] == old)
+    cfg.allowedRecords[p] = FolderRecord(real: p, volume: "UUID-A", ino: old.ino)
     // Another folder (another inode) at the same path is refused.
     try fm.moveItem(at: folder, to: base.appendingPathComponent("old"))
     try fm.createDirectory(at: folder, withIntermediateDirectories: false)

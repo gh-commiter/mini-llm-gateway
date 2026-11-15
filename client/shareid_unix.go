@@ -2,7 +2,25 @@
 
 package main
 
-import "syscall"
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"strings"
+	"syscall"
+)
+
+// hashVolumeID combines the filesystem type and mount source without ambiguous concatenation.
+// This identifies a named export, not a replacement filesystem served under the same export name.
+func hashVolumeID(fsType, source string) uint64 {
+	// Only qualified network sources are suitable across remounts. Generic labels and
+	// local device names can name unrelated filesystems and must not become saved identities.
+	if fsType == "" || (strings.HasPrefix(source, "/") && !strings.HasPrefix(source, "//")) ||
+		!(strings.Contains(source, ":") || strings.HasPrefix(source, "//")) {
+		return 0
+	}
+	sum := sha256.Sum256([]byte(fsType + "\x00" + source))
+	return binary.BigEndian.Uint64(sum[:])
+}
 
 // fileIDOf (#84): istovetnost mape (st_dev, st_ino; sledi povezavam), napaka = ni je mogoče ugotoviti.
 func fileIDOf(p string) (fileID, error) {
