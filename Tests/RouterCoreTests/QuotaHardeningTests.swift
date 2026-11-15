@@ -34,9 +34,10 @@ private func waitGone(_ pid: pid_t, seconds: Double = 3) async -> Bool {
         let dir = tempDir("q1a")
         let exe = try script(dir, "sleep 60 &\necho $! > \"\(dir.path)/child.pid\"\nprintf '%s' '\(envelope)'")  // claude ends, its child keeps stdout
         let t0 = Date()
-        let out = try await ClaudeUsageProbe.run(exe: exe, parent: tempDir("p"), limit: 10, drain: 0.5)
+        let out = try await ClaudeUsageProbe.run(exe: exe, parent: tempDir("p"), limit: 30, drain: 0.5)
         #expect(String(decoding: out, as: UTF8.self).contains("Current week"))
-        #expect(Date().timeIntervalSince(t0) < 6, "took \(Date().timeIntervalSince(t0)) s")
+        // the property: it returned by its drain, not by the limit (30 s) and not by the grandchild's own sleep (60 s); the margin is the load of the machine, not a guess at its speed
+        #expect(Date().timeIntervalSince(t0) < 25, "took \(Date().timeIntervalSince(t0)) s")
         let pid = pid_t(try String(contentsOf: dir.appendingPathComponent("child.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
         #expect(await waitGone(pid), "the grandchild lives")
     }
@@ -48,7 +49,7 @@ private func waitGone(_ pid: pid_t, seconds: Double = 3) async -> Bool {
         do { _ = try await ClaudeUsageProbe.run(exe: exe, parent: tempDir("p"), limit: 1, drain: 0.5); Issue.record("no error") } catch {
             #expect((error as? QuotaError)?.description == "claude /usage failed: timed out after 1 s")
         }
-        #expect(Date().timeIntervalSince(t0) < 8, "took \(Date().timeIntervalSince(t0)) s")
+        #expect(Date().timeIntervalSince(t0) < 25, "took \(Date().timeIntervalSince(t0)) s")  // ends by its 1 s limit, far below the 60 s sleeps
         for f in ["child.pid", "main.pid"] {
             let pid = pid_t(try String(contentsOf: dir.appendingPathComponent(f), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
             #expect(await waitGone(pid), "\(f) lives")

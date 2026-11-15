@@ -459,6 +459,20 @@ private final class Clock: @unchecked Sendable {
     #expect(await seatbelt.state == .unchecked)  // never turned off by an outage
 }
 
+/// The self-check's runner kills a hung tree on timeout (it once killed nothing: Process is not a group leader, so a hung claude would have blocked every check).
+@Test func captureKillsAHungTreeOnTimeout() async throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("capture-" + UUID().uuidString.lowercased(), isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let t0 = Date()
+    let r = ClaudeSeatbelt.capture("/bin/sh", ["-c", "sleep 60 & echo $! > \"\(dir.path)/child\"; wait"], env: ProcessInfo.processInfo.environment, cwd: dir.path, input: "", timeout: 1, log: dir)
+    #expect(r.timedOut && Date().timeIntervalSince(t0) < 30)  // far below the 60 s sleep
+    let child = pid_t(try String(contentsOf: dir.appendingPathComponent("child"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
+    var gone = false
+    for _ in 0..<150 { if kill(child, 0) != 0 { gone = true; break }; try await Task.sleep(for: .milliseconds(20)) }
+    #expect(gone, "the descendant lives")
+}
+
 /// L1: a run too slow under the profile while the control run answers is a slow machine, not a broken profile; an `off` verdict expires (30 minutes) and is checked again.
 @Test func timeoutIsInconclusiveAndOffExpires() async throws {
     let rig = try Rig()

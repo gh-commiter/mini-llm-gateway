@@ -220,6 +220,14 @@ public actor ClaudeSeatbelt {
         s.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }.map { String($0.prefix(160)) }
     }
 
+    /// SIGKILL to a process and, first, all its descendants (found through libproc).
+    static func killTreeByPid(_ pid: pid_t) {
+        var kids = [pid_t](repeating: 0, count: 256)
+        let n = Int(proc_listchildpids(pid, &kids, Int32(kids.count * MemoryLayout<pid_t>.size)))
+        for k in kids.prefix(max(0, min(n, kids.count))) where k > 1 { killTreeByPid(k) }
+        _ = Darwin.kill(pid, SIGKILL)
+    }
+
     /// Runs a program to its end (or kills its tree after `timeout`); output goes to files in `log` (no pipe to fill).
     static func capture(_ exe: String, _ args: [String], env: [String: String], cwd: String, input: String, timeout: TimeInterval,
                         log: URL) -> (status: Int32, out: String, err: String, timedOut: Bool) {
@@ -237,7 +245,8 @@ public actor ClaudeSeatbelt {
         p.standardError = try? FileHandle(forWritingTo: errURL)
         guard (try? p.run()) != nil else { return (-1, "", "cannot start \(exe)", false) }
         let timedOut = Flag(false)
-        let killer = DispatchWorkItem { timedOut.set(); _ = Native.killTree(p.processIdentifier, pipes: []) }
+        // the child is not a process group leader (Process offers no setpgid), so `Native.killTree(pid)` would find no group and kill nothing: the tree is killed by pid, children first
+        let killer = DispatchWorkItem { timedOut.set(); if p.isRunning { killTreeByPid(p.processIdentifier) } }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
         p.waitUntilExit()
         killer.cancel()  // the process is reaped: its pid may be reused, so nothing is killed by pid from here on
