@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -14,10 +13,7 @@ func TestSyncCopiesE2ECleanup(t *testing.T) {
 	if err != nil {
 		t.Skip("requires zsh for the profile e2e scripts")
 	}
-	data, err := os.ReadFile("../scripts/sync-copies-cleanup.zsh")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := srcFile(t, "../scripts/sync-copies-cleanup.zsh")
 	script := string(data)
 	cwd := "/private/tmp/profile cleanup/proj"
 	sum := sha256.Sum256([]byte(cwd))
@@ -78,10 +74,7 @@ func TestSyncCopiesE2ECleanupFailure(t *testing.T) {
 	if err != nil {
 		t.Skip("requires zsh for the profile e2e scripts")
 	}
-	data, err := os.ReadFile("../scripts/sync-copies-cleanup.zsh")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := srcFile(t, "../scripts/sync-copies-cleanup.zsh")
 	cmd := exec.Command(shell, "-c", string(data)+`
 set -eu
 SYNC_COPIES_DEVICE=test-device
@@ -107,10 +100,7 @@ func TestProfileScriptsWireSyncCopiesCleanup(t *testing.T) {
 		{"profiles-swift-e2e.sh", `source "$W/scripts/sync-copies-cleanup.zsh"`, `sync_copies_begin local "$T/proj"`, "(cd $T/proj &&"},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
-			b, err := os.ReadFile("../scripts/" + tc.file)
-			if err != nil {
-				t.Fatal(err)
-			}
+			b := srcFile(t, "../scripts/"+tc.file)
 			s := string(b)
 			source, begin, session := strings.Index(s, tc.source), strings.Index(s, tc.begin), strings.Index(s, tc.session)
 			if source < 0 || begin <= source || session <= begin {

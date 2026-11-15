@@ -225,8 +225,11 @@ func TestLinkDotDotResolvesBeforeMoveGuard(t *testing.T) {
 		}
 	}
 	dirLink(t, "a/deep", filepath.Join(root, "L2"))
-	dirLink(t, "L2/../x", filepath.Join(root, "L1"))
-	dirLink(t, root+string(filepath.Separator)+"L2/../x", filepath.Join(root, "absolute"))
+	// ".." after a link is only kept by a real symlink: a Windows junction stores a resolved absolute path (mklink also reads
+	// "/.." as a switch), so without the symlink privilege this scenario cannot be built there.
+	for link, target := range map[string]string{"L1": filepath.FromSlash("L2/../x"), "absolute": root + string(filepath.Separator) + filepath.FromSlash("L2/../x")} {
+		symlinkOrSkip(t, target, filepath.Join(root, link))
+	}
 	rt, err := os.OpenRoot(root)
 	if err != nil {
 		t.Fatal(err)

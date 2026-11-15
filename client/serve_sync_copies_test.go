@@ -76,7 +76,7 @@ func TestSyncCopiesAdminBusy(t *testing.T) {
 	if status != 409 {
 		t.Fatalf("copy of an active session: %d", status)
 	}
-	want, _ := os.ReadFile("testdata/sync_copy_in_use.txt")
+	want := srcFile(t, "testdata/sync_copy_in_use.txt")
 	if msg := fmt.Sprint(body); !strings.Contains(msg, string(want)) {
 		t.Fatalf("message %q lacks the shared text %q", msg, want)
 	}

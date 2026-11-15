@@ -35,7 +35,7 @@ func srcFile(t *testing.T, rel string) []byte {
 		return b
 	}
 	b, err := os.ReadFile(rel)
-	if errors.Is(err, fs.ErrNotExist) {
+	if _, serr := os.Stat("go.mod"); errors.Is(err, fs.ErrNotExist) && serr != nil { // in client/ (a checkout, the Docker gate) a missing file fails
 		t.Skip("needs the client/ source tree (" + rel + "); run with go test or from the client folder")
 	}
 	if err != nil {

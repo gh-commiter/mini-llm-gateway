@@ -84,7 +84,7 @@ func TestOwnerPolicyCoversDispatch(t *testing.T) {
 		"--minigw-help": false, "-h": false, "--help": false,
 		"-v": false, "--version": false,
 	}
-	file, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), "main.go", srcFile(t, "main.go"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

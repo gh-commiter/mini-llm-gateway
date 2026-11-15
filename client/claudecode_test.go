@@ -399,8 +399,11 @@ func TestMinigwToolsRefusals(t *testing.T) {
 			t.Errorf("%s: %s", args, out)
 		}
 	}
-	if out := run("-p", "--model", "litellm-gpt", "--minigw-tools=read", "x"); strings.Contains(out, "not accepted") || strings.Contains(out, "unknown value") {
-		t.Errorf("--minigw-tools refused inside Claude Code: %s", out)
+	// The accepted call must not go on to start claude: on Windows the profiles live in Credential Manager, which the temp HOME
+	// does not isolate, so a connected machine would run claude here. An unknown profile stops it right after the tools checks.
+	if out := run("-p", "--model", "litellm-gpt", "--minigw-tools=read", "--minigw-profile", "no-such-profile", "x"); strings.Contains(out, "not accepted") ||
+		strings.Contains(out, "unknown value") || !strings.Contains(out, "no profile no-such-profile") {
+		t.Errorf("--minigw-tools refused inside Claude Code (or did not reach the profile lookup): %s", out)
 	}
 	// R1: tudi zunaj Claude Code (MINIGW_ALLOW_UNSAFE_FLAGS=1) omejitev ne sme dobiti širših možnosti za sabo
 	for _, args := range []string{"-p --model litellm-gpt --minigw-tools=read --allowedTools Bash x", "-p --model litellm-gpt --minigw-ro --tools default x",
