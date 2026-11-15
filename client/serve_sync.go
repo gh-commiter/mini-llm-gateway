@@ -52,6 +52,7 @@ type shareHub struct {
 	mu        sync.Mutex
 	bySession map[string]*serveShare
 	busy      map[string]chan struct{} // ena zahteva agenta naenkrat na kopijo
+	ops       map[string]int           // Clean(copy) → operations working in that copy outside h.mu; kept after unregister (ifCopyFree)
 	refused   map[string]bool          // seje, ki so želele način direct
 	reaper    sync.Once
 	expired   time.Time            // zadnje čiščenje starih kopij (#1, #9)
@@ -158,7 +159,7 @@ func removeOldCopiesAt(rooted *os.Root, root string, active map[string]bool, now
 }
 
 func newShareHub() *shareHub {
-	return &shareHub{bySession: map[string]*serveShare{}, busy: map[string]chan struct{}{}, refused: map[string]bool{}, logf: func(string, ...any) {}}
+	return &shareHub{bySession: map[string]*serveShare{}, busy: map[string]chan struct{}{}, ops: map[string]int{}, refused: map[string]bool{}, logf: func(string, ...any) {}}
 }
 
 func newKey() string {
@@ -470,6 +471,20 @@ func syncDiff(old, cur map[string]syncEntry, root string) syncChanges {
 	return ch
 }
 
+// opStart counts an operation that touches the files of s's copy outside h.mu; call with h.mu held, in the same locked section
+// that found the session. The hold outlives an unregister of the session; the returned func (takes h.mu) ends it.
+func (h *shareHub) opStart(s *serveShare) func() {
+	c := filepath.Clean(s.copy)
+	h.ops[c]++
+	return func() {
+		h.mu.Lock()
+		if h.ops[c]--; h.ops[c] <= 0 {
+			delete(h.ops, c)
+		}
+		h.mu.Unlock()
+	}
+}
+
 // syncManifest: manifest odjemalca → poti, ki jih kopija potrebuje; datoteke, ki jih odjemalec nima več, izbriše.
 // Še nepotrjenih sprememb agenta (kept) ne prepiše in ne izbriše; gredo z naslednjim prevzemom.
 func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, owner string) (need, kept []string, ok bool) {
@@ -483,7 +498,9 @@ func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, o
 	s.execKnown = execKnown
 	touchUsed(s.copy)
 	prev := s.state
+	end := h.opStart(s)
 	h.mu.Unlock()
+	defer end()
 
 	if err := os.MkdirAll(s.copy, 0o700); err != nil {
 		return nil, nil, false
@@ -558,7 +575,9 @@ func (h *shareHub) syncPut(key, path string, data []byte, owner string) int {
 	s.lastSeen = time.Now()
 	e, listed := s.incoming[path]
 	copyDir, execKnown := s.copy, s.execKnown
+	end := h.opStart(s)
 	h.mu.Unlock()
+	defer end()
 	_, ok := syncResolve(path, copyDir)
 	if !listed || !ok {
 		return 403
@@ -608,7 +627,9 @@ func (h *shareHub) syncChanges(key, owner string) (syncChanges, bool) {
 	}
 	s.lastSeen = time.Now()
 	prev := s.state
+	end := h.opStart(s)
 	h.mu.Unlock()
+	defer end()
 
 	current, skipped := syncScan(s.copy, prev, false)
 	ch := syncDiff(prev, current, s.copy)
@@ -664,7 +685,9 @@ func (h *shareHub) syncGet(key, path, owner string) ([]byte, bool) {
 		return nil, false
 	}
 	s.lastSeen = time.Now()
+	end := h.opStart(s)
 	h.mu.Unlock()
+	defer end()
 	if _, ok := syncResolve(path, s.copy); !ok {
 		return nil, false
 	}
@@ -685,6 +708,9 @@ func (h *shareHub) ifCopyFree(copy string, act func() error) (bool, error) {
 		if filepath.Clean(s.copy) == c {
 			return true, nil
 		}
+	}
+	if h.ops[c] > 0 { // an operation of a session that was unregistered meanwhile still works in the copy
+		return true, nil
 	}
 	for k, sem := range h.busy {
 		if filepath.Clean(k) == c && len(sem) > 0 {

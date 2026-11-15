@@ -243,3 +243,49 @@ func TestSyncLeftoverNameCannotBeACopyID(t *testing.T) {
 		}
 	}
 }
+
+// Astra finding 2: an operation of a session that was unregistered meanwhile still works in the copy; the removal must wait for it.
+// Controlled interleaving (channels, no sleeps): syncPut is held inside its file write while the session is unregistered.
+func TestSyncCopyRemovalWaitsForAnOperationOfAnUnregisteredSession(t *testing.T) {
+	h := newShareHub()
+	copyDir := filepath.Join(t.TempDir(), "dev", "0123456789abcdef")
+	key, _ := h.register("s", "/c", "", false, copyDir, "dev")
+	data := []byte("hello")
+	if _, _, ok := h.syncManifest(key, []syncEntry{{Path: "a.txt", Size: int64(len(data)), SHA256: sha256Hex(data)}}, true, "dev"); !ok {
+		t.Fatal("manifest")
+	}
+	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan int)
+	orig := syncPutWrite
+	t.Cleanup(func() { syncPutWrite = orig })
+	syncPutWrite = func(rooted *os.Root, p string, b []byte, m int64, x, k bool) error {
+		close(entered)
+		<-release
+		return orig(rooted, p, b, m, x, k)
+	}
+	go func() { done <- h.syncPut(key, "a.txt", data, "dev") }()
+	<-entered
+	h.unregister(key, "dev")
+	ran := false
+	if inUse, _ := h.ifCopyFree(copyDir, func() error { ran = true; return nil }); !inUse || ran {
+		t.Fatalf("removal ran under a request still writing into the copy (inUse %v, ran %v)", inUse, ran)
+	}
+	close(release)
+	<-done
+	if inUse, err := h.ifCopyFree(copyDir, func() error { return nil }); inUse || err != nil {
+		t.Fatalf("copy still held after the operation ended: %v %v", inUse, err)
+	}
+}
+
+func TestSyncCopyOperationCountEndsOnEveryPath(t *testing.T) {
+	h := newShareHub()
+	copyDir := filepath.Join(t.TempDir(), "dev", "0123456789abcdef")
+	key, _ := h.register("s", "/c", "", false, copyDir, "dev")
+	h.syncManifest(key, nil, true, "dev")
+	h.syncPut(key, "missing.txt", nil, "dev") // 403: not listed
+	h.syncChanges(key, "dev")
+	h.syncGet(key, "x", "dev")
+	h.unregister(key, "dev")
+	if inUse, _ := h.ifCopyFree(copyDir, func() error { return nil }); inUse {
+		t.Fatal("an operation did not release its hold")
+	}
+}

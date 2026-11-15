@@ -181,7 +181,7 @@ public actor ShareHub {
     private func copyInUse(_ copy: URL) -> Bool {
         let want = (Sync.real(copy) ?? copy).standardizedFileURL.path
         func same(_ u: URL?) -> Bool { u.map { (Sync.real($0) ?? $0).standardizedFileURL.path == want } ?? false }
-        return bySession.values.contains { same($0.copy) } || runs.values.contains { same($0.copy) } || busy.keys.contains { same($0) }
+        return bySession.values.contains { same($0.copy) } || copyOps.keys.contains { same($0) } || runs.values.contains { same($0.copy) } || busy.keys.contains { same($0) }
     }
 
     /// Removes one copy only while that copy (device and folder) has no registered session, no run and no request on it; other
@@ -752,14 +752,26 @@ public actor ShareHub {
     /// Manifest odjemalca → poti, ki jih kopija potrebuje; datoteke, ki jih odjemalec nima več, izbriše.
     /// Še nepotrjenih sprememb agenta (`kept`) ne prepiše in ne izbriše; gredo z naslednjim prevzemom.
     /// ponytail: briše le neprezrte datoteke po pravilih kopije; prezrte (izhod gradnje) ostanejo, tudi če jih odjemalec ne prezre več.
+    /// Operations that suspend while they work in a copy (manifest and change scans run off the actor): a hold per copy that outlives an
+    /// unregister of the session, so a removal cannot take the folder from under them. Counted on the actor, before the first suspension.
+    private var copyOps: [URL: Int] = [:]
+    private func opStart(_ copy: URL) { copyOps[copy, default: 0] += 1 }
+    private func opEnd(_ copy: URL) { if let n = copyOps[copy], n > 1 { copyOps[copy] = n - 1 } else { copyOps[copy] = nil } }
+
+    private var scanHook: (@Sendable () async -> Void)?
+    /// Only for tests: a suspension point of syncManifest before its scan.
+    func setScanHook(_ h: (@Sendable () async -> Void)?) { scanHook = h }
+
     func syncManifest(key: String, _ files: [Sync.Entry], execKnown: Bool = true, device: String? = nil) async -> (need: [String], kept: [String])? {
         guard let s = share(key: key, device: device), let copy = s.copy else { return nil }
         let files = files.map { e -> Sync.Entry in var e = e; e.path = e.path.precomposedStringWithCanonicalMapping; return e }  // #3: NFC (starejši minigw na Macu: NFD)
         s.lastSeen = Date()
+        opStart(copy); defer { opEnd(copy) }
         Self.touchUsed(copy)
         s.execKnown = execKnown
         try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
         let prev = s.state ?? [:]
+        await scanHook?()  // tests: a suspension point where the actor is free, like the scan below
         let current = await offPool { Sync.scan(copy, previous: prev).files }  // zunaj akterja
         // Prvi prenos te registracije: stanje ni znano → kopija velja za usklajeno. Pri --minigw-ro je kopija zavrženo delo.
         let base = s.readOnly ? current : s.state ?? current
@@ -798,6 +810,7 @@ public actor ShareHub {
         guard let s = share(key: key, device: device), let copy = s.pulling?.clone ?? s.copy, !s.readOnly,
               let prev = s.pulling?.base ?? s.state else { return nil }
         s.lastSeen = Date()
+        opStart(copy); defer { opEnd(copy) }
         let (current, skipped) = await offPool { Sync.scan(copy, previous: prev) }
         var ch = Sync.diff(old: prev, new: current, root: copy)
         ch.base = Dictionary(uniqueKeysWithValues: (ch.changed.map(\.path) + ch.deleted).compactMap { p in

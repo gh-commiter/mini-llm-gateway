@@ -69,3 +69,32 @@ import Testing
     #expect((try? fm.destinationOfSymbolicLink(atPath: link.path)) != nil && fm.fileExists(atPath: outside.appendingPathComponent("keep").path))
     #expect(!ShareHub.isLeftoverName("0123456789abcdef") && !ShareHub.isLeftoverName("0123456789abcdef-ro") && ShareHub.isLeftoverName("0123456789abcdef-ro.removing-1"))
 }
+
+/// Astra finding 2 (Mac side): syncManifest suspends in its scan; the session is unregistered meanwhile and the copy removed.
+/// Controlled interleaving with a hook in the scan (no sleeps).
+@Test func syncCopyRemovalWaitsForAManifestScanOfAnUnregisteredSession() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let hub = ShareHub()
+    let id = "0123456789abcdef"
+    let copy = root.appendingPathComponent("dev").appendingPathComponent(id)
+    try FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
+    let key = try #require(await hub.register(session: "s", cwd: "/c", key: nil, copy: copy, device: "dev"))
+    let entered = AsyncStream<Void>.makeStream(), release = AsyncStream<Void>.makeStream()
+    await hub.setScanHook {
+        entered.continuation.yield()
+        for await _ in release.stream { break }
+    }
+    let manifest = Task { await hub.syncManifest(key: key, [], device: "dev") }
+    for await _ in entered.stream { break }  // the manifest is inside its scan, off the actor
+    await hub.unregister(key: key)
+    do {
+        _ = try await hub.syncCopies(root, device: "dev", remove: id)
+        Issue.record("removed a copy under a running manifest scan")
+    } catch let e as AdminError { #expect(e.status == 409) }
+    #expect(FileManager.default.fileExists(atPath: copy.path))
+    release.continuation.yield()
+    _ = await manifest.value
+    _ = try await hub.syncCopies(root, device: "dev", remove: id)  // after the scan ended the copy is free
+    #expect(!FileManager.default.fileExists(atPath: copy.path))
+}
