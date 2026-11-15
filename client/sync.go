@@ -149,7 +149,7 @@ func protectedPathFor(rel string, git bool) bool {
 // Refused on purpose (each can run code or redirect git of the owner): config, config.worktree, hooks/, info/ (attributes),
 // commondir, gitdir, shallow, grafts, worktrees/ (git worktree add by the agent does not work), objects/info/alternates
 // and http-alternates, rebase-merge/, rebase-apply/, sequencer/ (an `exec` line in git-rebase-todo would run when the
-// owner continues the rebase), remotes/, branches/, and the .lock file of any of them. The folders refs, logs, objects
+// owner continues the rebase), remotes/, branches/, refs/replace/ (and its log), and the .lock file of any of them. The folders refs, logs, objects
 // and modules themselves cannot be removed or renamed, only what is in them.
 func gitDirWritable(c []string) bool {
 	if len(c) == 0 {
@@ -162,8 +162,9 @@ func gitDirWritable(c []string) bool {
 	}
 	switch c[0] {
 	case "refs", "logs":
-		// a ref whose name starts with "-" (any component) could be read as an option by a script of the owner
-		return len(c) > 1 && !strings.HasPrefix(c[len(c)-1], "-") && !slices.ContainsFunc(c, func(n string) bool { return strings.HasPrefix(n, "-") })
+		// a ref whose name starts with "-" (any component) could be read as an option by a script of the owner; refs/replace (and its log) swaps the content of an object
+		// for another one wherever git reads it: no commit, branch, tag or stash needs it, so the agent does not write it (a replacement ref in packed-refs is the watch's)
+		return len(c) > 1 && !(c[1] == "replace" || c[0] == "logs" && len(c) > 2 && c[1] == "refs" && c[2] == "replace") && !strings.HasPrefix(c[len(c)-1], "-") && !slices.ContainsFunc(c, func(n string) bool { return strings.HasPrefix(n, "-") })
 	case "objects":
 		return gitObjectsWritable(c[1:])
 	case "modules":

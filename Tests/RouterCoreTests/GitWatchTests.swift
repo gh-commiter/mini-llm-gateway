@@ -84,6 +84,7 @@ private func git(_ dir: String, _ args: String) -> String {
         return try! JSONEncoder().encode(s)
     }
     #expect(GitWatch.parse(data { _ in }, root: root).0 != nil)
+    #expect(GitWatch.parse(data { $0.headId = id }, root: root).0?.headId == id && GitWatch.parse(data { $0.headId = "zz" }, root: root).0 == nil)
     let bad: [(String, Data)] = [("version", data { $0.version = 2 }), ("root", data { $0.root = "/elsewhere" }), ("ref name", data { $0.refs = ["../x": id] }),
         ("ref id", data { $0.refs = ["refs/heads/x": "zz"] }), ("entry", data { $0.protected = [".envrc": "bad"] }), ("pending", data { $0.pending = ["HEAD"] }),
         ("hash", data { $0.indexHash = "short" }), ("unknown field", Data(#"{"version":1,"root":"/some/folder","extra":1}"#.utf8)), ("not json", Data("nope".utf8)),
@@ -94,4 +95,100 @@ private func git(_ dir: String, _ args: String) -> String {
     let l = GitWatch.recover(root, dir: dir, selfPID: 1, alive: { _ in false })
     #expect(l.count == 1 && l[0].contains("ignoring a damaged git watch state file"), "\(l)")
     #expect(!fm.fileExists(atPath: GitWatch.file(root, dir: dir, pid: 99999)))
+}
+
+// MARK: review of 0.6.0 (findings 2, 4, 5, 6, 7), the same scenarios as client/gitwatch_test.go
+
+private func watched(_ name: String, _ setup: String = "git init -q -b main && echo a > a.txt && git add a.txt && git commit -qm init") throws -> (root: URL, state: String) {
+    let fm = FileManager.default
+    let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("gw-\(name)-" + UUID().uuidString)
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    _ = git(root.path, setup)
+    return (root, root.path + "-state")
+}
+
+@Test func gitWatchReportsReplacementRefsAndReadsWithoutThem() throws {
+    for packed in [false, true] {
+        let (root, state) = try watched("repl"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+        let w = try #require(GitWatch.begin(root.path, stateDir: state))
+        let head = git(root.path, "git rev-parse HEAD").trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = git(root.path, "echo 'echo hi' > .envrc && git add .envrc && tree=$(git write-tree) && repl=$(git commit-tree $tree -m replacement) && git reset -q && rm .envrc && git update-ref refs/replace/\(head) $repl" + (packed ? " && git pack-refs --all" : ""))
+        let out = w.finish().joined(separator: "\n")
+        for want in ["replacement ref (\(head))", "committed a protected path: .envrc", "other refs changed: refs/replace/\(head)"] { #expect(out.contains(want), "missing \(want) in \(out)") }
+    }
+    // a new commit with a protected path hidden by a replacement of it with the old commit
+    let (root, state) = try watched("hide"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    _ = git(root.path, "old=$(git rev-parse HEAD) && echo 'echo hi' > .envrc && git add .envrc && git commit -qm envrc && git update-ref refs/replace/$(git rev-parse HEAD) $old")
+    let out = w.finish().joined(separator: "\n")
+    for want in ["1 new commit(s)", "committed a protected path: .envrc", "replacement ref ("] { #expect(out.contains(want), "missing \(want) in \(out)") }
+}
+
+@Test func gitWatchSeesACommitOnADetachedHead() throws {
+    for atStart in [false, true] {
+        let (root, state) = try watched("det"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+        if atStart { _ = git(root.path, "git checkout -q --detach") }
+        let w = try #require(GitWatch.begin(root.path, stateDir: state))
+        _ = git(root.path, "git checkout -q --detach && mkdir .claude && echo '{}' > .claude/settings.json && git add .claude/settings.json && git commit -qm settings")
+        let out = w.finish().joined(separator: "\n")
+        for want in ["1 new commit(s)", "committed a protected path: .claude/settings.json"] + (atStart ? ["detached HEAD moved"] : []) { #expect(out.contains(want), "missing \(want) in \(out)") }
+    }
+}
+
+@Test func gitWatchSeesWhatAMergeBringsIn() throws {
+    let (root, state) = try watched("merge"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    _ = git(root.path, "git checkout -q -b side && echo 'echo hi' > .envrc && git add .envrc && git commit -qm side && git checkout -q main && echo b > b.txt && git add b.txt && git commit -qm b")
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    _ = git(root.path, "git merge -q --no-ff --no-edit side")
+    let out = w.finish().joined(separator: "\n")
+    for want in ["1 new commit(s)", "committed a protected path: .envrc"] { #expect(out.contains(want), "missing \(want) in \(out)") }
+}
+
+@Test func gitWatchSaysWhenALimitWasReached() throws {
+    var (root, state) = try watched("lim1"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    var w = try #require(GitWatch.begin(root.path, stateDir: state))
+    w.maxCommits = 3
+    var file = try #require(w.file)
+    _ = git(root.path, "echo 'echo hi' > .envrc && git add .envrc && git commit -qm envrc && for i in 1 2 3 4; do git commit -q --allow-empty -m more; done")
+    var out = w.finish().joined(separator: "\n")
+    #expect(out.contains("INCOMPLETE") && out.contains("more than 3 new commits"), "\(out)")
+    #expect(FileManager.default.fileExists(atPath: file), "the stored start state is gone after an incomplete check")
+    // the output limit: the index listing is cut
+    (root, state) = try watched("lim2"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    w = try #require(GitWatch.begin(root.path, stateDir: state))
+    file = try #require(w.file)
+    _ = git(root.path, "for i in $(seq 1 30); do echo x > file-with-a-long-name-$i.txt; done; git add .")
+    w.maxOutput = 300
+    out = w.finish().joined(separator: "\n")
+    #expect(out.contains("INCOMPLETE") && out.contains("index not read in full"), "\(out)")
+    #expect(FileManager.default.fileExists(atPath: file))
+    // complete: no word about it, the file is removed
+    (root, state) = try watched("lim3"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    w = try #require(GitWatch.begin(root.path, stateDir: state))
+    file = try #require(w.file)
+    _ = git(root.path, "git commit -q --allow-empty -m one")
+    out = w.finish().joined(separator: "\n")
+    #expect(!out.contains("INCOMPLETE") && !FileManager.default.fileExists(atPath: file))
+}
+
+// The end report waits for the requests that hold the folder lock: what a running request stages is in the report and restored.
+@Test func gitWatchEndReportWaitsForTheFolderLock() throws {
+    let (root, state) = try watched("drain"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    let lockDir = root.path + "-locks"; defer { try? FileManager.default.removeItem(atPath: lockDir) }
+    let lock = FolderLock(id: [UInt64.random(in: 1...UInt64.max), 1], dir: lockDir)
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    let started = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+    let running = Thread {  // a request in flight
+        _ = lock.with(exclusive: false) { started.signal(); release.wait(); return 1 }
+    }
+    running.start(); started.wait()
+    let done = DispatchSemaphore(value: 0)
+    nonisolated(unsafe) var lines: [String] = []
+    Thread { lines = w.finish(under: lock, wait: 10); done.signal() }.start()
+    #expect(done.wait(timeout: .now() + 0.3) == .timedOut, "the end report did not wait for the running request")
+    _ = git(root.path, "echo 'echo hi' > .envrc && git add .envrc")  // the running request finishes its write
+    release.signal()
+    #expect(done.wait(timeout: .now() + 10) == .success)
+    #expect(lines.joined(separator: "\n").contains("staged a protected path: .envrc"), "\(lines)")
+    #expect(git(root.path, "git ls-files -s .envrc").isEmpty, "the staged path was not restored")
 }

@@ -291,7 +291,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// and branches. The client's guard (Sync.gitDirWritable, Go gitDirWritable) holds the same list as an allow list and is the final word; `.git` itself
     /// (replaced by a file or a link) is the guard's too, a Seatbelt path rule cannot name the entry without its contents.
     static let directGitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply",
-                                  "sequencer", "remotes", "branches", "objects/info/alternates", "objects/info/http-alternates"]
+                                  "sequencer", "remotes", "branches", "objects/info/alternates", "objects/info/http-alternates", "refs/replace", "logs/refs/replace"]
     /// The same for the git directory of a submodule (`.git/modules/<name>/`; `info` covers objects/info there).
     static let directModuleDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply", "sequencer"]
 

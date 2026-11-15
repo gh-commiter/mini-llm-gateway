@@ -8,6 +8,7 @@ import Foundation
 public struct GitWatch: Sendable {
     public struct State: Codable, Equatable, Sendable {
         public var head = ""                  // branch HEAD is on ("" = detached or unborn)
+        public var headId = ""                // object id HEAD points to, also when it is detached ("" = unborn)
         public var refs: [String: String] = [:]   // refname → object id
         public var index: [String: String] = [:]  // path → "mode id stage"
         public var pending: [String] = []     // MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD that exist
@@ -16,22 +17,27 @@ public struct GitWatch: Sendable {
         /// for those, and a changed `indexHash` says that the index changed.
         public var indexHash = ""
         public var partial = false
+        /// end state only: what the check could not read in full (output over the limit, a git command that failed). Never a clean result: the report says so.
+        public var incomplete: [String] = []
         public init() {}
-        enum CodingKeys: String, CodingKey { case head, refs, index, pending, cached, indexHash, partial }
+        enum CodingKeys: String, CodingKey { case head, headId, refs, index, pending, cached, indexHash, partial, incomplete }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
             head = try c.decodeIfPresent(String.self, forKey: .head) ?? ""
+            headId = try c.decodeIfPresent(String.self, forKey: .headId) ?? ""
             refs = try c.decodeIfPresent([String: String].self, forKey: .refs) ?? [:]
             index = try c.decodeIfPresent([String: String].self, forKey: .index) ?? [:]
             pending = try c.decodeIfPresent([String].self, forKey: .pending) ?? []
             cached = try c.decodeIfPresent([String].self, forKey: .cached)
             indexHash = try c.decodeIfPresent(String.self, forKey: .indexHash) ?? ""
             partial = try c.decodeIfPresent(Bool.self, forKey: .partial) ?? false
+            incomplete = try c.decodeIfPresent([String].self, forKey: .incomplete) ?? []
         }
     }
     public struct Commit: Codable, Equatable, Sendable { public var id: String; public var files: [String] }
 
     static let names = 20  // names shown per list
+    static let maxCommitsDefault = 200, maxOutputDefault = 1 << 20
     static func list(_ l: [String]) -> String {
         let s = l.sorted()
         return s.count > names ? s.prefix(names).joined(separator: ", ") + " and \(s.count - names) more" : s.joined(separator: ", ")
@@ -40,11 +46,13 @@ public struct GitWatch: Sendable {
     /// The lines for the owner and the staged protected paths to reset. Pure: the fixture asserts it.
     public static func report(start: State, end: State, commits: [Commit], isProtected: (String) -> Bool) -> (lines: [String], reset: [String]) {
         func short(_ r: String) -> String { r.hasPrefix("refs/heads/") ? String(r.dropFirst(11)) : r.hasPrefix("refs/tags/") ? String(r.dropFirst(10)) : r }
-        var newBranches: [String] = [], moved: [String] = [], newTags: [String] = [], deleted: [String] = []
+        var newBranches: [String] = [], moved: [String] = [], newTags: [String] = [], other: [String] = [], replaced: [String] = [], deleted: [String] = []
         for (r, id) in end.refs {
             let old = start.refs[r]
+            if r.hasPrefix("refs/replace/"), old != id { replaced.append(String(r.dropFirst(13))) }
             if r.hasPrefix("refs/heads/") { if old == nil { newBranches.append(short(r)) } else if old != id { moved.append(short(r)) } }
-            else if r.hasPrefix("refs/tags/"), old == nil { newTags.append(short(r)) }
+            else if r.hasPrefix("refs/tags/") { if old == nil { newTags.append(short(r)) } }
+            else if old != id { other.append(r) }  // every other namespace: stash, notes, replace, remotes, ...
         }
         for r in start.refs.keys where end.refs[r] == nil { deleted.append(short(r)) }
         func notCommitted(_ p: String) -> Bool { end.cached == nil || end.cached!.contains(p) }  // a path the agent committed is in the index too
@@ -54,8 +62,9 @@ public struct GitWatch: Sendable {
         for p in start.index.keys where end.index[p] == nil && counted(p) && notCommitted(p) { staged.append(p) }
         var parts: [String] = []
         if end.head != start.head { parts.append(end.head.isEmpty ? "HEAD is detached" : "HEAD now on " + end.head) }
+        else if end.head.isEmpty, end.headId != start.headId { parts.append("detached HEAD moved") }  // no branch moves with it: only the object id says so
         if !commits.isEmpty { parts.append("\(commits.count) new commit(s)") }
-        for (what, l) in [("new branches", newBranches), ("moved branches", moved), ("new tags", newTags), ("deleted refs", deleted)] where !l.isEmpty { parts.append(what + ": " + list(l)) }
+        for (what, l) in [("new branches", newBranches), ("moved branches", moved), ("new tags", newTags), ("other refs changed", other), ("deleted refs", deleted)] where !l.isEmpty { parts.append(what + ": " + list(l)) }
         if !staged.isEmpty && !start.partial { parts.append("\(staged.count) staged path(s)") } else if start.partial && start.indexHash != end.indexHash { parts.append("the index changed") }
         var lines: [String] = []
         if !parts.isEmpty { lines.append("minigw: git in this folder, changed by the agent: " + parts.joined(separator: "; ")) }
@@ -64,6 +73,8 @@ public struct GitWatch: Sendable {
         if !committed.isEmpty { lines.append("minigw: WARNING: the agent committed a protected path: " + list(committed) + " - review before git checkout, reset --hard, restore, stash pop or your next commit") }
         let reset = staged.filter(isProtected).sorted()
         if !reset.isEmpty { lines.append("minigw: WARNING: the agent staged a protected path: " + list(reset) + " - removed from the index for you (your files were not touched)") }
+        if !replaced.isEmpty { lines.append("minigw: WARNING: the agent created or changed a replacement ref (" + list(replaced) + "): git shows other content than the real commits while it exists - review it, then git replace -d <name>") }
+        if !end.incomplete.isEmpty { lines.append("minigw: WARNING: the check of git in this folder is INCOMPLETE (" + end.incomplete.joined(separator: "; ") + "): the absence of other warnings is not a clean result - review the repository before git checkout, reset --hard, restore, stash pop or your next commit") }
         let pending = end.pending.filter { !start.pending.contains($0) }
         if !pending.isEmpty { lines.append("minigw: WARNING: a merge, cherry-pick or revert is in progress, started by the agent (" + pending.joined(separator: ", ") + "): finish it or cancel it (git merge --abort) after you have reviewed it") }
         return (lines, reset)
@@ -71,32 +82,43 @@ public struct GitWatch: Sendable {
 
     let root: String
     let start: State
+    var maxCommits = GitWatch.maxCommitsDefault  // new commits whose paths are checked (a test lowers it)
+    var maxOutput = GitWatch.maxOutputDefault    // bytes of one git command's output (a test lowers it)
     var file: String?  // the stored copy of the start state (store below)
     var dir = GitWatch.stateDir()  // where it is stored (a test uses its own folder)
 
-    static let pins = ["--no-optional-locks", "-c", "core.attributesFile=/dev/null", "-c", "core.quotePath=false", "-c", "diff.external="]  // Worktree.guardrails: no hooks, no fsmonitor
+    /// --no-replace-objects: the watch reads the real objects, never what a refs/replace entry says they are.
+    static let pins = ["--no-replace-objects", "--no-optional-locks", "-c", "core.attributesFile=/dev/null", "-c", "core.quotePath=false", "-c", "diff.external="]  // Worktree.guardrails: no hooks, no fsmonitor
 
-    static func git(_ root: String, _ args: [String], input: Data? = nil) -> (ok: Bool, out: String) {
-        let r = Worktree.run(pins + args, cwd: root, env: ["GIT_OPTIONAL_LOCKS": "0"], safe: true, hooks: false, input: input, timeout: 20, trim: false)
-        return (r.status == 0, String(r.out.prefix(1 << 20)))
+    static func git(_ root: String, maxOutput: Int = GitWatch.maxOutputDefault, _ args: [String], input: Data? = nil) -> (ok: Bool, out: String) {
+        let r = Worktree.run(pins + args, cwd: root, env: ["GIT_OPTIONAL_LOCKS": "0", "GIT_NO_REPLACE_OBJECTS": "1"], safe: true, hooks: false, input: input, timeout: 20, trim: false)
+        // ok is false when git failed or the output was longer than the limit (the part is returned): a caller never takes it for the whole
+        return (r.status == 0 && r.out.utf8.count <= maxOutput, String(decoding: Array(r.out.utf8.prefix(maxOutput)), as: UTF8.self))
     }
 
-    static func state(_ root: String) -> State? {
+    static func state(_ root: String, maxOutput: Int = GitWatch.maxOutputDefault) -> State? {
         var st = stat()
         guard lstat(root + "/.git", &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { return nil }  // a gitdir: file is not watched
-        let refs = git(root, ["for-each-ref", "--format=%(refname) %(objectname)"])
-        guard refs.ok else { return nil }
+        let refs = git(root, maxOutput: maxOutput, ["for-each-ref", "--format=%(refname) %(objectname)"])  // every namespace: heads, tags, stash, notes, replace, packed refs too
+        guard refs.ok || !refs.out.isEmpty else { return nil }
         var s = State()
+        if !refs.ok { s.incomplete.append("refs not read in full") }
         for l in refs.out.split(separator: "\n") { let p = l.split(separator: " ", maxSplits: 1).map(String.init); if p.count == 2 { s.refs[p[0]] = p[1] } }
-        let h = git(root, ["symbolic-ref", "-q", "--short", "HEAD"])
+        let h = git(root, maxOutput: maxOutput, ["symbolic-ref", "-q", "--short", "HEAD"])
         if h.ok { s.head = h.out.trimmingCharacters(in: .whitespacesAndNewlines) }
-        let idx = git(root, ["ls-files", "-s", "-z"]).out
+        let hid = git(root, maxOutput: maxOutput, ["rev-parse", "-q", "--verify", "HEAD"])  // also when HEAD is detached: no ref names that commit
+        if hid.ok { s.headId = hid.out.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let ls = git(root, maxOutput: maxOutput, ["ls-files", "-s", "-z"])
+        if !ls.ok { s.incomplete.append("index not read in full") }
+        let idx = ls.out
         s.indexHash = SHA256.hash(data: Data(idx.utf8)).map { String(format: "%02x", $0) }.joined()
         for e in idx.split(separator: "\0") {
             let parts = e.split(separator: "\t", maxSplits: 1).map(String.init)
             if parts.count == 2 { let f = parts[0].split(separator: " ").map(String.init); if f.count == 3 { s.index[parts[1]] = f.joined(separator: " ") } }
         }
-        s.cached = git(root, ["diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z"]).out.split(separator: "\0").map(String.init)
+        let cached = git(root, maxOutput: maxOutput, ["diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z"])
+        if !cached.ok { s.incomplete.append("staged paths not read in full") }
+        s.cached = cached.out.split(separator: "\0").map(String.init)
         for n in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] where lstat(root + "/.git/" + n, &st) == 0 { s.pending.append(n) }
         return s
     }
@@ -111,27 +133,48 @@ public struct GitWatch: Sendable {
     }
 
     /// The comparison of the start state with the repository now; the staged protected paths are taken out of the index (plumbing: the work tree is not touched).
-    func lines() -> [String] {
-        guard let end = Self.state(root) else { return [] }
-        let tips = Array(end.refs.values), old = Array(start.refs.values)
+    func lines() -> [String] { compare().lines }
+
+    /// The lines and whether the check was complete. The history is read from every ref and from HEAD itself (a detached HEAD is on no ref), minus what the start state
+    /// already had; merge commits are diffed against each parent (-m), so the paths a merge brings in show up.
+    func compare(incomplete: [String] = []) -> (lines: [String], complete: Bool) {
+        guard var end = Self.state(root, maxOutput: maxOutput) else { return ([], true) }
+        end.incomplete += incomplete
+        let tips = Self.tips(end), old = Self.tips(start)
         var commits: [Commit] = []
         if !tips.isEmpty {
-            let out = Self.git(root, ["log", "--no-renames", "--name-only", "--format=@@%H", "-n", "200"] + tips + (old.isEmpty ? [] : ["--not"] + old)).out
-            for l in out.split(separator: "\n", omittingEmptySubsequences: true) {
-                if l.hasPrefix("@@") { commits.append(Commit(id: String(l.dropFirst(2)), files: [])) } else if !commits.isEmpty { commits[commits.count - 1].files.append(String(l)) }
+            let r = Self.git(root, maxOutput: maxOutput, ["log", "-m", "--no-renames", "--name-only", "--format=@@%H", "-n", String(maxCommits + 1)] + tips + (old.isEmpty ? [] : ["--not"] + old))
+            if !r.ok { end.incomplete.append("history not read in full") }
+            for l in r.out.split(separator: "\n", omittingEmptySubsequences: true) {
+                if l.hasPrefix("@@") { if commits.last?.id != String(l.dropFirst(2)) { commits.append(Commit(id: String(l.dropFirst(2)), files: [])) } }  // -m: a merge comes once per parent
+                else if !commits.isEmpty { commits[commits.count - 1].files.append(String(l)) }
+            }
+            if commits.count > maxCommits {
+                commits = Array(commits.prefix(maxCommits))
+                end.incomplete.append("more than \(maxCommits) new commits: only the first \(maxCommits) were checked")
             }
         }
         var (lines, reset) = Self.report(start: start, end: end, commits: commits, isProtected: { Sync.isProtected($0) })
         if !reset.isEmpty, !resetIndex(reset) { lines.append("minigw: could not remove the staged protected paths from the index: run git reset -- " + reset.joined(separator: " ")) }
-        return lines
+        return (lines, end.incomplete.isEmpty)
     }
 
-    /// At the end of the share: prints to stderr, then forgets the stored start state.
-    @discardableResult public func finish() -> [String] {
-        let lines = self.lines()
-        for l in lines { try? FileHandle.standardError.write(contentsOf: Data((l + "\n").utf8)) }
-        if let file { try? FileManager.default.removeItem(atPath: file) }
-        return lines
+    /// The object ids to start the history from: every ref and HEAD.
+    static func tips(_ st: State) -> [String] { Array(Set(st.refs.values).union(st.headId.isEmpty ? [] : [st.headId])).sorted() }
+
+    /// At the end of the share: prints to stderr, then forgets the stored start state, unless the check was incomplete: then the file stays and the next start in the folder checks
+    /// again (`recover`). `drained` false: the requests of the share did not finish in time, the agent may still be writing.
+    @discardableResult public func finish(drained: Bool = true) -> [String] {
+        let r = compare(incomplete: drained ? [] : ["requests of the agent were still running"])
+        for l in r.lines { try? FileHandle.standardError.write(contentsOf: Data((l + "\n").utf8)) }
+        if r.complete, let file { try? FileManager.default.removeItem(atPath: file) }
+        return r.lines
+    }
+
+    /// The end report under the folder's exclusive lock: waits (up to `wait`) for the requests that hold it, so that nothing can write while the repository is read and the index
+    /// restored. nil lock or no lock in time: the check runs anyway and says that requests were still running.
+    @discardableResult public func finish(under lock: FolderLock?, wait: TimeInterval) -> [String] {
+        lock?.with(exclusive: true, wait: wait, { finish() }) ?? finish(drained: false)
     }
 
     // MARK: X2 the stored start state (#116)
@@ -141,6 +184,7 @@ public struct GitWatch: Sendable {
 
     struct Stored: Codable, Equatable {
         var version = 1, root = "", pid = 0, head = "", indexHash = ""
+        var headId: String?  // absent in a file of an older client
         var refs: [String: String] = [:], protected: [String: String] = [:]
         var pending: [String] = []
     }
@@ -156,7 +200,7 @@ public struct GitWatch: Sendable {
 
     func save() -> String? {
         guard start.refs.count <= Self.maxRefs else { return nil }
-        var s = Stored(); s.root = root; s.pid = Int(getpid()); s.head = start.head; s.refs = start.refs; s.pending = start.pending; s.indexHash = start.indexHash
+        var s = Stored(); s.root = root; s.pid = Int(getpid()); s.head = start.head; s.headId = start.headId.isEmpty ? nil : start.headId; s.refs = start.refs; s.pending = start.pending; s.indexHash = start.indexHash
         for (p, v) in start.index where Sync.isProtected(p) && s.protected.count < Self.maxProtected { s.protected[p] = v }
         guard let data = try? JSONEncoder().encode(s), data.count <= Self.maxFile else { return nil }
         let f = Self.file(root, dir: dir, pid: getpid()), fm = FileManager.default
@@ -169,12 +213,13 @@ public struct GitWatch: Sendable {
     static func parse(_ data: Data, root: String) -> (State?, String) {
         if data.count > maxFile { return (nil, "too large") }
         guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(o.keys).isSubset(of: ["version", "root", "pid", "head", "refs", "pending", "indexHash", "protected"]),
+              Set(o.keys).isSubset(of: ["version", "root", "pid", "head", "headId", "refs", "pending", "indexHash", "protected"]),
               let s = try? JSONDecoder().decode(Stored.self, from: data) else { return (nil, "not valid") }
         guard s.version == 1, s.root == root, s.refs.count <= maxRefs, s.protected.count <= maxProtected, s.pending.count <= 3, s.indexHash.count == 64,
               s.indexHash.allSatisfy({ $0.isHexDigit }) else { return (nil, "unexpected content") }
         func okName(_ n: String) -> Bool { !n.isEmpty && n.utf8.count <= 1024 && !n.contains(where: { $0 == "\0" || $0 == "\n" || $0 == "\r" }) && !n.hasPrefix("-") }
         func okID(_ i: String) -> Bool { (i.count == 40 || i.count == 64) && i.allSatisfy { $0.isHexDigit && !$0.isUppercase } }
+        guard (s.headId ?? "").isEmpty || okID(s.headId!) else { return (nil, "bad head id") }
         guard s.head.utf8.count <= 1024, !s.head.contains(where: { $0 == "\0" || $0 == "\n" || $0 == "\r" }) else { return (nil, "bad head") }
         for (r, id) in s.refs where !(r.hasPrefix("refs/") && okName(r) && okID(id)) { return (nil, "bad ref") }
         for (p, v) in s.protected {
@@ -182,7 +227,7 @@ public struct GitWatch: Sendable {
             guard okName(p), f.count == 3, f[0].count == 6, f[0].allSatisfy({ ("0"..."7").contains($0) }), okID(f[1]), f[2].count == 1, ("0"..."3").contains(f[2].first!) else { return (nil, "bad index entry") }
         }
         guard s.pending.allSatisfy({ ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"].contains($0) }) else { return (nil, "bad state name") }
-        var st = State(); st.head = s.head; st.refs = s.refs; st.index = s.protected; st.pending = s.pending; st.indexHash = s.indexHash; st.partial = true
+        var st = State(); st.head = s.head; st.headId = s.headId ?? ""; st.refs = s.refs; st.index = s.protected; st.pending = s.pending; st.indexHash = s.indexHash; st.partial = true
         return (st, "")
     }
 

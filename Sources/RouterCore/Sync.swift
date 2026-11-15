@@ -117,12 +117,15 @@ public enum Sync {
     /// the agent write (kot Go gitDirWritable; client/testdata/gitguard.json is asserted by both). A list of what is
     /// allowed: a name git adds later stays refused. Refused on purpose: config, config.worktree, hooks/, info/, commondir,
     /// gitdir, shallow, grafts, worktrees/, objects/info/alternates and http-alternates, rebase-merge/, rebase-apply/,
-    /// sequencer/ (an `exec` line in git-rebase-todo runs when the owner continues the rebase), remotes/, branches/ and
+    /// sequencer/ (an `exec` line in git-rebase-todo runs when the owner continues the rebase), remotes/, branches/, refs/replace/ (and its log) and
     /// their .lock files. The folders refs, logs, objects and modules themselves cannot be removed or renamed.
     public static func gitDirWritable(_ c: [String]) -> Bool {
         guard let first = c.first, !c.contains(where: { $0 == ".git" || $0 == "." || $0 == ".." || $0.isEmpty }) else { return false }
         switch first {
-        case "refs", "logs": return c.count > 1 && !c.dropFirst().contains { $0.hasPrefix("-") }  // a ref named `-x` could be read as an option by the owner's script
+        case "refs", "logs":
+            // a ref named `-x` could be read as an option by the owner's script; refs/replace (and its log) swaps the content of an object for another one wherever git reads
+            // it: no commit, branch, tag or stash needs it, so the agent does not write it (a replacement ref in packed-refs is the watch's)
+            return c.count > 1 && !c.dropFirst().contains { $0.hasPrefix("-") } && !(c[1] == "replace" || first == "logs" && c.count > 2 && c[1] == "refs" && c[2] == "replace")
         case "objects": return objectsWritable(Array(c.dropFirst()))
         case "modules": return moduleWritable(Array(c.dropFirst()))
         default: return c.count == 1 && gitFile(first)

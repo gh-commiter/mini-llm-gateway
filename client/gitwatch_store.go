@@ -23,6 +23,7 @@ type gitWatchStored struct {
 	Root      string            `json:"root"`
 	PID       int               `json:"pid"`
 	Head      string            `json:"head"`
+	HeadID    string            `json:"headId"` // the object id HEAD pointed to (a detached HEAD is on no ref); "" = unborn or an older file
 	Refs      map[string]string `json:"refs"`
 	Pending   []string          `json:"pending"`
 	IndexHash string            `json:"indexHash"`
@@ -66,7 +67,7 @@ func gitWatchFile(root string, pid int) string {
 }
 
 func (st gitState) stored(root string, pid int, isProtected func(string) bool) gitWatchStored {
-	s := gitWatchStored{Version: 1, Root: root, PID: pid, Head: st.Head, Refs: st.Refs, Pending: st.Pending, IndexHash: st.IndexHash, Protected: map[string]string{}}
+	s := gitWatchStored{Version: 1, Root: root, PID: pid, Head: st.Head, HeadID: st.HeadID, Refs: st.Refs, Pending: st.Pending, IndexHash: st.IndexHash, Protected: map[string]string{}}
 	for p, v := range st.Index {
 		if isProtected(p) && len(s.Protected) < gitWatchMaxProt {
 			s.Protected[p] = v
@@ -117,7 +118,10 @@ func parseGitWatchStored(data []byte, root string) (gitState, error) {
 	if len(s.Head) > 1024 || strings.ContainsAny(s.Head, "\x00\n\r") {
 		return gitState{}, fmt.Errorf("bad head")
 	}
-	st := gitState{Head: s.Head, Refs: s.Refs, Index: s.Protected, Pending: s.Pending, IndexHash: s.IndexHash, Partial: true}
+	if s.HeadID != "" && !gitIDRe.MatchString(s.HeadID) {
+		return gitState{}, fmt.Errorf("bad head id")
+	}
+	st := gitState{Head: s.Head, HeadID: s.HeadID, Refs: s.Refs, Index: s.Protected, Pending: s.Pending, IndexHash: s.IndexHash, Partial: true}
 	if st.Refs == nil {
 		st.Refs = map[string]string{}
 	}

@@ -63,7 +63,7 @@
     }
    ],
    "lines": [
-    "minigw: git in this folder, changed by the agent: 2 new commit(s); new branches: feature; moved branches: main; new tags: v1"
+    "minigw: git in this folder, changed by the agent: 2 new commit(s); new branches: feature; moved branches: main; new tags: v1; other refs changed: refs/stash"
    ],
    "reset": []
   },
@@ -320,6 +320,135 @@
    },
    "commits": [],
    "lines": [],
+   "reset": []
+  },
+  {
+   "name": "replacement ref added (the replacement commit carries a protected path)",
+   "start": {
+    "head": "main",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "a",
+     "refs/replace/aaaa": "b"
+    },
+    "index": {},
+    "pending": []
+   },
+   "commits": [
+    {
+     "id": "b",
+     "files": [
+      ".envrc"
+     ]
+    }
+   ],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: 1 new commit(s); other refs changed: refs/replace/aaaa",
+    "minigw: WARNING: the agent committed a protected path: .envrc - review before git checkout, reset --hard, restore, stash pop or your next commit",
+    "minigw: WARNING: the agent created or changed a replacement ref (aaaa): git shows other content than the real commits while it exists - review it, then git replace -d <name>"
+   ],
+   "reset": []
+  },
+  {
+   "name": "replacement ref moved, no new commit",
+   "start": {
+    "head": "main",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "a",
+     "refs/replace/aaaa": "b"
+    },
+    "index": {},
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "a",
+     "refs/replace/aaaa": "c"
+    },
+    "index": {},
+    "pending": []
+   },
+   "commits": [],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: other refs changed: refs/replace/aaaa",
+    "minigw: WARNING: the agent created or changed a replacement ref (aaaa): git shows other content than the real commits while it exists - review it, then git replace -d <name>"
+   ],
+   "reset": []
+  },
+  {
+   "name": "detached HEAD moved to a commit on no ref",
+   "start": {
+    "head": "",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "end": {
+    "head": "",
+    "headId": "b",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "commits": [
+    {
+     "id": "b",
+     "files": [
+      ".claude/settings.json"
+     ]
+    }
+   ],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: detached HEAD moved; 1 new commit(s)",
+    "minigw: WARNING: the agent committed a protected path: .claude/settings.json - review before git checkout, reset --hard, restore, stash pop or your next commit"
+   ],
+   "reset": []
+  },
+  {
+   "name": "the check was incomplete (limits)",
+   "start": {
+    "head": "main",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": [],
+    "incomplete": [
+     "more than 200 new commits: only the first 200 were checked",
+     "index not read in full"
+    ]
+   },
+   "commits": [],
+   "lines": [
+    "minigw: WARNING: the check of git in this folder is INCOMPLETE (more than 200 new commits: only the first 200 were checked; index not read in full): the absence of other warnings is not a clean result - review the repository before git checkout, reset --hard, restore, stash pop or your next commit"
+   ],
    "reset": []
   }
  ]

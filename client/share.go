@@ -67,6 +67,7 @@ type shareClient struct {
 	rootErr  error                      // L6: ob start ni znana ali ni preverjena → vsi posli zavrnjeni
 	fsMu     sync.RWMutex               // #82: lockFolder v tem procesu (branje deljeno, pisanje izključno)
 	git      *gitWatch                  // #116 B1: direct mode: the repository at the start (gitwatch.go)
+	closing  atomic.Bool                // the end report of git is running: writes are refused (unregister)
 	fsWant   atomic.Int32               // #82 N1: čakajoča pisanja; branje se jim umakne (do svojega roka)
 }
 
@@ -134,7 +135,14 @@ func (s *shareClient) register() bool {
 func (s *shareClient) unregister() {
 	if g := s.git; g != nil { // #116 B1: what the agent did in the owner's repository
 		s.git = nil
-		g.report()
+		// No more writes, then wait for the ones running (the exclusive folder lock: handle() holds it shared or exclusive for the whole request, and refuses a write that
+		// gets it after closing is set), then audit and restore while nothing can write. Lock order as in handle(): fsMu, the folder's file lock; syncMu is not needed.
+		s.closing.Store(true)
+		unlock := s.lockFolder(true, gitWatchDrainWait)
+		g.report(unlock != nil)
+		if unlock != nil {
+			unlock()
+		}
 	}
 	if k := s.currentKey(); k != "" {
 		call(s.c, "DELETE", "/minigw/share", map[string]string{"x-share-key": k}, nil, 3*time.Second)
@@ -195,6 +203,10 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 		// SYNC-PUSH mapo le bere; sync in worktree čakajo do roka posla prehoda (sicer bi se delo agenta izgubilo)
 		exclusive := writeMethods[job.Method] || job.Method == "SYNC-PULL" || strings.HasPrefix(job.Method, "WORKTREE-")
 		unlock := s.lockFolder(exclusive, folderLockWaitFor(job.Method))
+		if unlock != nil && exclusive && s.closing.Load() { // after the lock: a write that waited behind the end report
+			unlock()
+			return dav(503, map[string]string{"content-type": "text/plain", "retry-after": "5"}, []byte("minigw: the share is closing; the folder takes no more writes\n"))
+		}
 		if unlock == nil {
 			return dav(503, map[string]string{"content-type": "text/plain", "retry-after": "5"}, []byte(folderBusyText+"\n"))
 		}
@@ -244,6 +256,9 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 	}
 	return davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)
 }
+
+// gitWatchDrainWait: how long the end report waits for the requests that are running.
+var gitWatchDrainWait = 30 * time.Second
 
 // folderLockWait (#82, vmesno): toliko posel WebDAV čaka zaklep mape, nato 503 (nikoli ne obvisi).
 var folderLockWait = 5 * time.Second
