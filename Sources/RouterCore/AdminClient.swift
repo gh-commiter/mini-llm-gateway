@@ -42,13 +42,13 @@ public struct AdminClient: Sendable {
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET); addr.sin_port = port.bigEndian; addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-        let ok = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        let ok = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Sock.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
         guard ok == 0 else { return (0, nil, why("connect")) }
         func send(_ d: Data) -> Bool {
             d.withUnsafeBytes { b in
                 var off = 0
                 while off < b.count {
-                    let n = write(fd, b.baseAddress! + off, b.count - off)
+                    let n = Sock.retry { write(fd, b.baseAddress! + off, b.count - off) }
                     if n <= 0 { return false }
                     off += n
                 }
@@ -57,7 +57,7 @@ public struct AdminClient: Sendable {
         }
         func recv() -> Data? {
             var buf = [UInt8](repeating: 0, count: 64 << 10)
-            let n = read(fd, &buf, buf.count)
+            let n = Sock.retry { read(fd, &buf, buf.count) }
             return n > 0 ? Data(buf[0..<n]) : nil
         }
         var hs = Noise.Initiator(routerKey: routerKey, suite: .aesGCM)
