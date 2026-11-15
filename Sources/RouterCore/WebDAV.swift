@@ -228,11 +228,9 @@ public enum WebDAV {
             comps.append(name)
         }
         let url = comps.reduce(root) { $0.appendingPathComponent($1) }
-        // Simbolne povezave: obstoječi del poti mora tudi po razrešitvi ostati v root.
-        var existing = url
-        while !FileManager.default.fileExists(atPath: existing.path), existing.path != root.path { existing.deleteLastPathComponent() }
-        let real = existing.resolvingSymlinksInPath().standardizedFileURL.path
-        guard real == root.path || real.hasPrefix(root.path + "/") else { return nil }
+        // Resolve through the pinned root before any path-based canonicalization can follow a remote link.
+        guard let rooted = ShareRoot(root),
+              (try? rooted.resolve(ShareRoot.join(comps), followLast: true)) != nil else { return nil }
         return (url, comps)
     }
 

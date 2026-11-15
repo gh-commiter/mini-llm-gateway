@@ -374,20 +374,12 @@ public enum Sync {
     /// #11: zaščita tudi za kanonično pot (povezava hooks → .git/hooks): kanonična pot najglobljega obstoječega prednika
     /// z manjkajočim koncem, relativno na kanonični koren; nečitljiva pot ali pot zunaj korena = zaščitena.
     static func protectedCanonical(_ url: URL, root: URL, git: Bool = false) -> Bool {
-        guard let r = real(root)?.path else { return true }
-        var p = url.path, rest: [String] = []
-        while true {
-            if let c = real(URL(fileURLWithPath: p))?.path {
-                let full = ([c] + rest).joined(separator: "/")
-                guard full == r || full.hasPrefix(r + "/") else { return true }
-                let rel = String(full.dropFirst(r.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                return !rel.isEmpty && isProtected(rel, git: git)
-            }
-            let parent = (p as NSString).deletingLastPathComponent
-            guard parent != p, !parent.isEmpty else { return true }
-            rest.insert((p as NSString).lastPathComponent, at: 0)
-            p = parent
-        }
+        guard let rooted = ShareRoot(root) else { return true }
+        let base = root.standardizedFileURL.path, full = url.standardizedFileURL.path
+        guard full == base || full.hasPrefix(base + "/") else { return true }
+        let rel = full == base ? "." : String(full.dropFirst(base.count + 1))
+        guard let resolved = try? rooted.resolve(rel, followLast: true) else { return true }
+        return isProtected(resolved, git: git)
     }
 
     /// Atomarno zapiše datoteko (ustvari mape), nastavi čas spremembe druge strani. Način obstoječe (sicer 0644) ostane,

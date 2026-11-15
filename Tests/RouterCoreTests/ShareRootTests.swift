@@ -393,3 +393,19 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
         #expect((try? fm.contentsOfDirectory(atPath: root.appendingPathComponent(".claude").path)) == [])
     }
 }
+
+@Test func shareRefusesAutomountLinkChains() throws {
+    let root = try tmp("automount")
+    for (i, target) in ["/net", "/net/minigw-invalid/x", "/Network", "/Network/minigw-invalid/x"].enumerated() {
+        #expect(ShareRoot.safeTargetPath(target) == nil)
+        let name = "remote\(i)"
+        try link(target, root.appendingPathComponent(name))
+        try link(name, root.appendingPathComponent("chain\(i)"))
+        for rel in [name, name + "/child", "chain\(i)/child"] {
+            #expect(ShareRoot.safeTargetPath(root.appendingPathComponent(rel).path) == nil)
+            #expect(WebDAV.resolve("/" + rel, prefix: "", root: root) == nil)
+            #expect(Sync.resolve(rel, root: root) == nil)
+            #expect(Sync.protectedCanonical(root.appendingPathComponent(rel), root: root))
+        }
+    }
+}

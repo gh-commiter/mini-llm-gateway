@@ -130,17 +130,85 @@ func sameVolume(bases []string, target string) bool {
 	return false
 }
 
+// safeFinalPath inspects each link before opening its target, including intermediate links and chains.
+// The caller supplies trusted base names; remote volumes and Unix automount roots are never probed.
+func safeFinalPath(target string, bases []string) (string, error) {
+	p, err := filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	for rewrites := 0; rewrites <= maxLinkRewrites; rewrites++ {
+		if !safeTarget(p, bases) {
+			return "", fmt.Errorf("%s: %s", linkRefusal, target)
+		}
+		volume := filepath.VolumeName(p)
+		cur := volume + string(filepath.Separator)
+		parts := strings.Split(strings.TrimPrefix(p, cur), string(filepath.Separator))
+		again := false
+		for i, name := range parts {
+			if name == "" {
+				continue
+			}
+			cur = filepath.Join(cur, name)
+			if !safeTarget(cur, bases) {
+				return "", fmt.Errorf("%s: %s", linkRefusal, target)
+			}
+			st, err := os.Lstat(cur)
+			if err != nil {
+				return "", err
+			}
+			if st.Mode()&(os.ModeSymlink|os.ModeIrregular) == 0 {
+				continue
+			}
+			next, err := os.Readlink(cur)
+			if err != nil {
+				return "", err
+			}
+			if runtime.GOOS == "windows" {
+				next = trimFinalPrefix(next)
+			}
+			if !filepath.IsAbs(next) {
+				if filepath.VolumeName(next) != "" || strings.HasPrefix(next, `\`) || strings.HasPrefix(next, "/") {
+					return "", fmt.Errorf("%s: %s", linkRefusal, target)
+				}
+				next = filepath.Join(filepath.Dir(cur), next)
+			}
+			if !safeTarget(next, bases) {
+				return "", fmt.Errorf("%s: %s", linkRefusal, target)
+			}
+			p = filepath.Join(append([]string{next}, parts[i+1:]...)...)
+			again = true
+			break
+		}
+		if !again {
+			return finalPathFn(p)
+		}
+	}
+	return "", fmt.Errorf("too many links: %s", target)
+}
+
+func safeTarget(target string, bases []string) bool {
+	if runtime.GOOS == "windows" {
+		v := filepath.VolumeName(target)
+		return len(v) == 2 && v[1] == ':' && sameVolume(bases, target)
+	}
+	p := filepath.Clean(target)
+	return p != "/net" && !strings.HasPrefix(p, "/net/") && p != "/Network" && !strings.HasPrefix(p, "/Network/")
+}
+
 // realTarget: target with its existing part resolved (a link made as /var/x, the share opened as /private/var/x).
 // Only used to pick the path to try; the operation itself still goes through os.Root. A target on another volume is
 // returned as it is (then it is outside the root).
 func realTarget(target string, bases []string) string {
-	if !sameVolume(bases, target) {
+	if !safeTarget(target, bases) {
 		return target
 	}
 	rest := ""
 	for p := filepath.Clean(target); ; {
-		if r, err := finalPathFn(p); err == nil {
+		if r, err := safeFinalPath(p, bases); err == nil {
 			return filepath.Join(r, rest)
+		} else if !os.IsNotExist(err) {
+			return target
 		}
 		parent := filepath.Dir(p)
 		if parent == p {
