@@ -281,13 +281,56 @@ func getJSON(c connection, path string) (int, map[string]any) {
 	return st, m
 }
 
+// createsState: refuse by default when the token owner cannot be set. Even read-only
+// gateway requests can persist a device key or migrate an encrypted profile in routeErr.
+// Only exact forms whose dispatch paths cannot write local state are exempted.
+func createsState(arg0 string, args []string) bool {
+	if isTrayExe(arg0) {
+		return true
+	}
+	// Match main's removal of the global profile flag, wherever it appears.
+	var command []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--minigw-profile" {
+			if i+1 >= len(args) {
+				return true
+			}
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "--minigw-profile=") {
+			continue
+		}
+		command = append(command, args[i])
+	}
+	if len(command) == 1 {
+		switch command[0] {
+		case "--minigw-help", "-h", "--help", "-v", "--version":
+			return false // main only prints help or the version.
+		case "gw", "router":
+			return false // routerCommand returns before openAdmin.
+		case "share":
+			return false // shareCommand defaults to list; it never calls save.
+		}
+	}
+	if len(command) == 2 {
+		switch command[0] {
+		case "gw", "router":
+			return command[1] != "help"
+		case "share":
+			return command[1] != "list"
+		}
+	}
+	return true
+}
+
 func main() {
 	if isGitWrap() { // #68: kopija minigw.exe kot git.exe v škatli MXC (gitwrap.go)
 		gitWrapMain(os.Args[1:])
 	}
 	if err := ownerIsUser(); err != nil {
-		if isTrayExe(os.Args[0]) || len(os.Args) > 1 && (os.Args[1] == "serve" || os.Args[1] == "tray") {
-			fail("set token owner: " + err.Error()) // the gateway creates folders and files: they must be the user's
+		if createsState(os.Args[0], os.Args[1:]) {
+			fail("set token owner: " + err.Error() + "; run minigw from a normal command prompt, not elevated, so the folders it creates belong to you")
 		}
 		fmt.Fprintln(os.Stderr, "minigw: warning: cannot set the token owner ("+err.Error()+"); folders created by this command may be owned by the administrator")
 	}
