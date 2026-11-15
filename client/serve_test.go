@@ -476,46 +476,65 @@ func TestServeOldFolderMigrates(t *testing.T) {
 
 // #96: a folder given only by --folder keeps its first record, so a replacement is refused at the next start.
 func TestServeDeprecatedFolderKeepsRecordAtRestart(t *testing.T) {
-	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
-	cfgPath := filepath.Join(t.TempDir(), "serve.json")
-	saveServeConfig(cfgPath, serveConfig{Token: "tok", Key: base64url(k.Bytes()), Claude: anyClaude(t), Scratch: t.TempDir()})
-	folder := t.TempDir()
-	t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
-	start := func() *server {
-		c, err := loadServeConfig(cfgPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		c.Scratch = t.TempDir() // a second server must not claim the first server's Scratch
-		deprecatedFolder(&c, folder)
-		s, err := newServer(c, cfgPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		s.log.SetOutput(io.Discard)
-		return s
-	}
-	first := start()
-	record := first.cfg.AllowedRecords[folder]
-	if err := os.Rename(folder, folder+".old"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(folder, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	second := start()
-	if _, ok := second.startRefused.Load(folder); !ok {
-		t.Fatal("replacement of a --folder folder was not refused at restart")
-	}
-	saved, err := loadServeConfig(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(saved.AllowedFolders, folder) {
-		t.Fatalf("--folder was not saved: %v", saved.AllowedFolders)
-	}
-	if got := saved.AllowedRecords[folder]; got != record {
-		t.Fatalf("folder record changed at restart: got %+v, want %+v", got, record)
+	for _, alias := range []string{"exact", "symlink", "case"} {
+		t.Run(alias, func(t *testing.T) {
+			if alias == "case" && runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+				t.Skip("case-insensitive path comparison applies on Windows and macOS")
+			}
+			k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+			cfgPath := filepath.Join(t.TempDir(), "serve.json")
+			saveServeConfig(cfgPath, serveConfig{Token: "tok", Key: base64url(k.Bytes()), Claude: anyClaude(t), Scratch: t.TempDir()})
+			folder := t.TempDir()
+			t.Cleanup(releaseScratch) // Windows: the Scratch handle would prevent TempDir cleanup
+			start := func(flag string) *server {
+				c, err := loadServeConfig(cfgPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				c.Scratch = t.TempDir() // a second server must not claim the first server's Scratch
+				deprecatedFolder(&c, flag)
+				s, err := newServer(c, cfgPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				s.log.SetOutput(io.Discard)
+				return s
+			}
+			first := start(folder)
+			record := first.cfg.AllowedRecords[folder]
+			if err := os.Rename(folder, folder+".old"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(folder, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			flag := folder
+			if alias == "symlink" {
+				flag = filepath.Join(t.TempDir(), "alias")
+				if err := os.Symlink(folder, flag); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			} else if alias == "case" {
+				flag = strings.ToUpper(folder)
+			}
+			second := start(flag)
+			if !slices.Equal(second.cfg.AllowedFolders, []string{folder}) {
+				t.Fatalf("alias added a folder: %v", second.cfg.AllowedFolders)
+			}
+			if _, ok := second.startRefused.Load(folder); !ok {
+				t.Fatal("replacement of a --folder folder was not refused at restart")
+			}
+			saved, err := loadServeConfig(cfgPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(saved.AllowedFolders, []string{folder}) {
+				t.Fatalf("--folder was not saved: %v", saved.AllowedFolders)
+			}
+			if got := saved.AllowedRecords[folder]; got != record || len(saved.AllowedRecords) != 1 {
+				t.Fatalf("folder record changed at restart: got %+v, want %+v", got, record)
+			}
+		})
 	}
 }
 

@@ -790,7 +790,9 @@ func deprecatedFolder(c *serveConfig, f string) {
 		return
 	}
 	abs, _ := filepath.Abs(f)
-	if !slices.Contains(c.AllowedFolders, abs) {
+	if !slices.ContainsFunc(c.AllowedFolders, func(existing string) bool {
+		return samePath(existing, abs) || sameReal(existing, abs)
+	}) {
 		c.AllowedFolders = append(c.AllowedFolders, abs)
 		c.flagFolder = abs
 	}
