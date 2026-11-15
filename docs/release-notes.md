@@ -5,6 +5,14 @@
 ### Changed
 - Changed (both gateways): an allowed folder whose real path cannot be resolved (access denied, an invalid name) is now logged once with the reason and listed as refused, instead of being left out silently (#123).
 
+### Security
+- Fixed (Mac app): the time limits that stop a hung `claude` (the sandbox self-check, the version check and the tools list) ran on a shared timer that could fire late on a busy gateway, so a check that ran over its limit could count as passed and a hung process was not stopped in time. They now run on their own thread; a check that runs over its limit is "inconclusive", and the "off" setting of the self-check expires.
+- Changed (Mac app, restricted Claude runs): a run whose session or allowed folder is `/` is refused, the Copilot cache is closed to every confined run, and Claude Code's project folder may be created by the run but nothing outside the session's own files in it is writable.
+
+### Known problems
+- Grok agent runs that last longer than a few minutes can fail with 502.
+- The exact answer of OpenRouter for a reached key limit is assumed; if it differs, the message is "access denied" with the provider's text instead of "spending limit reached".
+
 ## 0.6.1
 
 ### New
