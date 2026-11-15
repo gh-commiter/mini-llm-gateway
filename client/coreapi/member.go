@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -62,21 +63,25 @@ func toNote(n core.Note, withBody bool) NoteJSON {
 }
 
 type UsageRowJSON struct {
-	Provider      string  `json:"provider"`
-	ReportedCost  *string `json:"reportedCostUsd"`
-	EstimatedCost *string `json:"estimatedCostUsd"`
-	UnknownCost   int64   `json:"eventsWithoutCost"`
-	Day           string  `json:"day"`
-	Model         string  `json:"model"`
-	User          int64   `json:"user,omitempty"`
-	UserName      string  `json:"userName,omitempty"`
-	Project       int64   `json:"project,omitempty"`
-	Events        int64   `json:"events"`
-	TokensIn      int64   `json:"tokensIn"`
-	TokensOut     int64   `json:"tokensOut"`
-	UnknownTokens int64   `json:"eventsWithoutTokens"`
-	Nested        int64   `json:"nestedEvents"`
-	Failed        int64   `json:"failedEvents"`
+	Cost                 *string `json:"costUsd"`
+	EstimatedEvents      int64   `json:"estimatedCostEvents"`
+	SubscriptionEvents   int64   `json:"subscriptionEvents"`
+	UnknownBillingEvents int64   `json:"unknownBillingEvents"`
+	Provider             string  `json:"provider"`
+	ReportedCost         *string `json:"reportedCostUsd"`
+	EstimatedCost        *string `json:"estimatedCostUsd"`
+	UnknownCost          int64   `json:"eventsWithoutCost"`
+	Day                  string  `json:"day"`
+	Model                string  `json:"model"`
+	User                 int64   `json:"user,omitempty"`
+	UserName             string  `json:"userName,omitempty"`
+	Project              int64   `json:"project,omitempty"`
+	Events               int64   `json:"events"`
+	TokensIn             int64   `json:"tokensIn"`
+	TokensOut            int64   `json:"tokensOut"`
+	UnknownTokens        int64   `json:"eventsWithoutTokens"`
+	Nested               int64   `json:"nestedEvents"`
+	Failed               int64   `json:"failedEvents"`
 }
 
 type UsageGapJSON struct {
@@ -89,7 +94,22 @@ type UsageGapJSON struct {
 func UsageJSON(rep core.UsageReport) map[string]any {
 	rows, gaps := []UsageRowJSON{}, []UsageGapJSON{}
 	for _, r := range rep.Rows {
-		rows = append(rows, UsageRowJSON{r.Provider, costString(r.ReportedCost), costString(r.EstimatedCost), r.UnknownCost, r.Day, r.Model, r.UserID, r.UserName, r.ProjectID, r.Events, r.TokensIn, r.TokensOut, r.UnknownTokens, r.Nested, r.Failed})
+		var total *int64
+		if r.ReportedCost != nil {
+			v := *r.ReportedCost
+			total = &v
+		}
+		if r.EstimatedCost != nil {
+			if total == nil {
+				v := *r.EstimatedCost
+				total = &v
+			} else if *total <= math.MaxInt64-*r.EstimatedCost {
+				*total += *r.EstimatedCost
+			} else {
+				total = nil
+			}
+		}
+		rows = append(rows, UsageRowJSON{costString(total), r.EstimatedEvents, r.SubscriptionEvents, r.UnknownBillingEvents, r.Provider, costString(r.ReportedCost), costString(r.EstimatedCost), r.UnknownCost, r.Day, r.Model, r.UserID, r.UserName, r.ProjectID, r.Events, r.TokensIn, r.TokensOut, r.UnknownTokens, r.Nested, r.Failed})
 	}
 	for _, g := range rep.Gaps {
 		gaps = append(gaps, UsageGapJSON{g.Count, g.From, g.To})

@@ -11,6 +11,8 @@ import (
 
 // Only usage objects are buffered. Text and tool payloads are skipped, including in SSE.
 type usageMetrics struct {
+	cacheUsed                 bool
+	cacheRead, cacheWrite     *int64
 	disabled                  bool
 	skipLine                  bool
 	started                   bool
@@ -153,6 +155,8 @@ func (m *usageMetrics) scan(data []byte) {
 			if m.captureDepth == len(m.stack) && m.captureDepth > 0 {
 				if len(m.capture) <= 65536 {
 					m.readUsage(m.capture)
+				} else {
+					m.cacheUsed = true
 				}
 				m.capture = nil
 				m.captureDepth = 0
@@ -172,7 +176,12 @@ func (m *usageMetrics) readUsage(data []byte) {
 	if json.Unmarshal(data, &u) != nil {
 		return
 	}
-	for key, dst := range map[string]**int64{"input_tokens": &m.input, "output_tokens": &m.output} {
+	for _, key := range []string{"cache_read_input_tokens", "cache_creation_input_tokens", "cache_creation", "server_tool_use", "prompt_tokens_details", "input_tokens_details"} {
+		if raw, ok := u[key]; ok && !zeroUsageDimension(raw) {
+			m.cacheUsed = true
+		}
+	}
+	for key, dst := range map[string]**int64{"input_tokens": &m.input, "output_tokens": &m.output, "cache_read_input_tokens": &m.cacheRead, "cache_creation_input_tokens": &m.cacheWrite} {
 		v, ok := u[key]
 		r := metricNumber(string(v))
 		if ok && r != nil && r.IsInt() && r.Num().IsInt64() {
@@ -188,6 +197,26 @@ func (m *usageMetrics) readUsage(data []byte) {
 			m.cost = n
 		}
 	}
+}
+
+// Empty or all-zero breakdowns do not add a billing dimension.
+func zeroUsageDimension(raw json.RawMessage) bool {
+	if string(raw) == "null" {
+		return true
+	}
+	if n := metricNumber(string(raw)); n != nil {
+		return n.Sign() == 0
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
+		return false
+	}
+	for _, v := range obj {
+		if !zeroUsageDimension(v) {
+			return false
+		}
+	}
+	return true
 }
 
 func metricNumber(s string) *big.Rat {

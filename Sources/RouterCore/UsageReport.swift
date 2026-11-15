@@ -10,10 +10,12 @@ public enum UsageReport {
           minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)
         """
 
-    /// Row sums. Cost is the known (reported) part only; `unknown` counts the events that had no cost.
+    /// Known reported and estimated sums; `unknown` counts events without cost.
     struct Sum {
         var events: Int64 = 0, failed: Int64 = 0, tin: Int64 = 0, tout: Int64 = 0, unknown: Int64 = 0, nanos: Int64 = 0
         var known = false
+        var estimated: Int64 = 0, reported: Int64 = 0
+        var estimateKnown = false, reportedKnown = false
 
         mutating func add(_ r: JDict) {
             let events = r["events"]?.int ?? 0, nocost = r["eventswithoutcost"]?.int ?? 0
@@ -22,13 +24,16 @@ public enum UsageReport {
             tin += r["tokensin"]?.int ?? 0
             tout += r["tokensout"]?.int ?? 0
             unknown += nocost
+            if let c = r["estimatedcostusd"]?.string, let n = UsageReport.parseNanos(c) { estimated += n; nanos += n; known = true; estimateKnown = true }
             guard let c = r["reportedcostusd"]?.string else { return }
-            if let n = UsageReport.parseNanos(c) { nanos += n; known = true } else { unknown += events - nocost }  // malformed: not a known cost
+            if let n = UsageReport.parseNanos(c) { nanos += n; reported += n; known = true; reportedKnown = true } else { unknown += events - nocost }  // malformed: not a known cost
         }
 
         var cost: String {
             guard known else { return "-" }
-            return unknown > 0 ? "\(UsageReport.usd(nanos)) (+\(unknown) unknown)" : UsageReport.usd(nanos)
+            var c = UsageReport.usd(reported)
+            if estimateKnown { c = "~" + UsageReport.usd(estimated); if reportedKnown { c = UsageReport.usd(reported) + " + " + c } }
+            return unknown > 0 ? "\(c) (+\(unknown) unknown)" : c
         }
     }
 
@@ -135,11 +140,12 @@ public enum UsageReport {
     static func csv(_ rows: [JDict]) -> String {
         var sums: [[String]: Sum] = [:]
         for r in rows { sums[[r["day"]?.string ?? "", r["provider"]?.string ?? "", r["model"]?.string ?? ""], default: Sum()].add(r) }
-        var out = "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,events_without_cost\n"
+        var out = "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n"
         for k in sums.keys.sorted(by: { before($0.joined(separator: "\u{0}"), $1.joined(separator: "\u{0}")) }) {
             let s = sums[k]!
-            let cost = s.known ? String(format: "%lld.%09lld", s.nanos / 1_000_000_000, s.nanos % 1_000_000_000) : ""
-            out += "\(cell(k[0])),\(cell(k[1])),\(cell(k[2])),\(s.events),\(s.failed),\(s.tin),\(s.tout),\(cost),\(s.unknown)\n"
+            let cost = s.reportedKnown ? String(format: "%lld.%09lld", s.reported / 1_000_000_000, s.reported % 1_000_000_000) : ""
+            let estimated = s.estimateKnown ? String(format: "%lld.%09lld", s.estimated / 1_000_000_000, s.estimated % 1_000_000_000) : ""
+            out += "\(cell(k[0])),\(cell(k[1])),\(cell(k[2])),\(s.events),\(s.failed),\(s.tin),\(s.tout),\(cost),\(estimated),\(s.unknown)\n"
         }
         return out
     }

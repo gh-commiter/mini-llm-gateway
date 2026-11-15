@@ -500,6 +500,23 @@ minigw gw usage-events --project fakture            # on the gateway computer
 minigw gw usage --days 30                           # on the gateway computer: requests, tokens and cost per provider and model (--csv for a spreadsheet)
 ```
 
+The provider/model usage report shows reported USD charges plain and estimated charges with `~` (for example
+`~0.42`). Mixed totals show `0.96 + ~0.42`; unknown costs retain their count. CSV exports have separate
+`reported_cost_usd` and `estimated_cost_usd` columns. Claude, Codex, Grok and Copilot subscription calls have no money.
+
+Prices refresh in the background with a timeout and one refresh per provider at a time; failures keep the last good
+catalog. OpenRouter `/v1/models` prices and LiteLLM `/model/info` deployment rates are USD per token. LiteLLM
+consults its [public cost map](https://docs.litellm.ai/docs/proxy/model_cost_map) only for an exact, unique deployment-to-base-model
+mapping, with deployment overrides taking precedence. Complete deployment input/output rates do not depend on the public map. Aliases use the routed upstream model's price. A snapshot
+is frozen at dispatch and retained in the shared core database (migration 6); replay and later refreshes never
+reprice a completed event. Snapshots include source and fetch time; last-good prices can be stale.
+Inference never waits for catalog discovery: a cold manual alias can run without a price, while a discovered-only
+model is available after the background catalog load finishes. Such early events are not repriced later.
+
+Estimates currently cover ordinary input/output tokens only. Cache read/write counts are retained when reported. Cache token usage, images, audio, tools and complex
+tiers are not priced; unsupported price dimensions or incomplete token counts leave cost unknown rather than zero.
+Reported costs still win, including reported zero. Legacy `/usage` counters and Clear History are unchanged.
+
 Back up the project database before you change things, and restore it with the gateway stopped:
 
 ```sh

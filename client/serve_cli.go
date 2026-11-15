@@ -935,8 +935,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 			return writeAgentError(w, r.rid, status, msg), model
 		}
 	}
-	_, _, isCLI := cliMatch(model)                     // model claude-cli ne čaka na odkrivanje prehodov
-	if g, m, ok := s.gatewayRoute(model, !isCLI); ok { // prehodi pred claude-cli (kot Router.swift); ID-ji z »/« (OpenRouter)
+	if g, m, ok := s.gatewayRoute(model); ok { // prehodi pred claude-cli (kot Router.swift); ID-ji z »/« (OpenRouter)
 		r.provider = g.Name
 		return s.passthrough(w, r, g, m), model
 	}

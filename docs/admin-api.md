@@ -227,7 +227,7 @@ Errors of these routes use the envelope above (`400` invalid, `404` not found, `
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /usage/events?days=&user=&project=&provider=&model=` | – | `{"days": [{"day", "provider", "model", "user"?, "userName"?, "project"?, "events", "tokensIn", "tokensOut", "eventsWithoutTokens", "nestedEvents", "failedEvents", "reportedCostUsd", "estimatedCostUsd", "eventsWithoutCost"}], "gaps": [{"count", "from", "to"}], "timezone":"UTC"}`: every model invocation, per day (UTC), provider, model, user and project, newest first; days 1-3650 (default 7), detail rows older than 400 days are daily totals; also events without a user or project. **Not** `GET /usage` (0.5.x folder counters, unchanged) |
+| `GET /usage/events?days=&user=&project=&provider=&model=` | – | `{"days": [{"day", "provider", "model", "user"?, "userName"?, "project"?, "events", "tokensIn", "tokensOut", "eventsWithoutTokens", "nestedEvents", "failedEvents", "reportedCostUsd", "estimatedCostUsd", "costUsd", "estimatedCostEvents", "subscriptionEvents", "unknownBillingEvents", "eventsWithoutCost"}], "gaps": [{"count", "from", "to"}], "timezone":"UTC"}`: every model invocation, per day (UTC), provider, model, user and project, newest first; days 1-3650 (default 7), detail rows older than 400 days are daily totals; also events without a user or project. **Not** `GET /usage` (0.5.x folder counters, unchanged) |
 | `GET /quota` | – | `{"quota": [{"name", "unit", "value"?, "source", "observedAt"?, "resetsAt"?, "resetsText"?, "stale", "note"?, "reason"?}], "claudeProbe": bool}`: Codex windows (`codex-session-log`), the Claude subscription (`claude-usage`, only when the probe is on), OpenRouter credit (`openrouter-api`), LiteLLM spend (`litellm-api`); `source: "unavailable"` with a `reason` (for example `probe off`) when a value cannot be had; works without the core |
 | `PATCH /quota` | `{"claudeProbe": bool}` | as `GET`; turns the Claude quota probe on or off (default off, see gateway.md) |
 
@@ -236,8 +236,11 @@ the response includes `timezone: "UTC"`. Money is a decimal USD string with nine
 when no amount is known. Sums cover known amounts only: missing costs are counted separately, never treated as free.
 An aggregate cost outside the integer nanodollar range fails the report rather than returning a partial or wrapped total.
 If retention folding would overflow, its transaction is rolled back and detail is retained so the core can still start.
-This step collects only reported provider `usage.cost` when present; it does not estimate prices. Subscription CLI
-rows have null money. No recorded OpenRouter Anthropic Messages cost fixture exists in the repository, so that field's
+Reported provider `usage.cost` wins when present. Otherwise metered calls with complete reported input/output
+counts use an immutable dispatch-time price snapshot. `costUsd` is the known reported plus estimated sum;
+`estimatedCostEvents`, `subscriptionEvents` and `unknownBillingEvents` describe coverage and billing mode.
+Subscription CLI rows have null money. Old events are never repriced. Estimates share the per-event ceiling of
+1e15 nanodollars and round the exact decimal sum once. Unsupported prices or incomplete usage stay null. No recorded OpenRouter Anthropic Messages cost fixture exists in the repository, so that field's
 presence is not assumed or requested from the upstream. The shared parser fixtures describe supported shapes,
 not captured OpenRouter responses.
 

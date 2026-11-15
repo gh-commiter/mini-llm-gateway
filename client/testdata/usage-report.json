@@ -42,7 +42,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,events_without_cost\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -122,7 +122,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,events_without_cost\n2026-11-14,codex,gpt-6.1-sol,5,0,1200,300,,5\n2026-11-14,openrouter,claude-deepseek/deepseek-chat,7,1,12000,2400,0.006000000,1\n2026-11-15,claude-cli,claude-opus,12,0,4200,900,,12\n2026-11-15,codex,gpt-6.1-sol,90,4,200000,30000,,90\n2026-11-15,litellm,gpt-x,50,0,999999,1,0.000040000,0\n2026-11-15,openrouter,claude-deepseek/deepseek-chat,320,2,46100000,914000,2.157400000,3\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n2026-11-14,codex,gpt-6.1-sol,5,0,1200,300,,,5\n2026-11-14,openrouter,claude-deepseek/deepseek-chat,7,1,12000,2400,0.006000000,,1\n2026-11-15,claude-cli,claude-opus,12,0,4200,900,,,12\n2026-11-15,codex,gpt-6.1-sol,90,4,200000,30000,,,90\n2026-11-15,litellm,gpt-x,50,0,999999,1,0.000040000,,0\n2026-11-15,openrouter,claude-deepseek/deepseek-chat,320,2,46100000,914000,2.157400000,,3\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -204,7 +204,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,events_without_cost\n2026-11-15,'-prov,m,1,0,1,1,,1\n2026-11-15,openrouter,\"'=HYPERLINK(\"\"x\"\")\",1,0,10,5,0.010000000,0\n2026-11-15,openrouter,\"'@sum +1\nline\",1,0,10,5,,1\n2026-11-15,openrouter,\"vendor/model,v2\",2,0,100,50,0.500000000,0\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n2026-11-15,'-prov,m,1,0,1,1,,,1\n2026-11-15,openrouter,\"'=HYPERLINK(\"\"x\"\")\",1,0,10,5,0.010000000,,0\n2026-11-15,openrouter,\"'@sum +1\nline\",1,0,10,5,,,1\n2026-11-15,openrouter,\"vendor/model,v2\",2,0,100,50,0.500000000,,0\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -327,6 +327,86 @@
     "out": "",
     "err": "minigw: the core is not running\n",
     "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "estimate text",
+   "args": [
+    "usage"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-15\",\"provider\":\"LiteLLM\",\"model\":\"alias\",\"events\":3,\"tokensIn\":1000,\"tokensOut\":500,\"failedEvents\":0,\"reportedCostUsd\":null,\"estimatedCostUsd\":\"0.420000000\",\"eventsWithoutCost\":1}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "provider  model  requests  failed  tokens in  tokens out  cost USD\nLiteLLM   alias         3       0         1K         500  ~0.42 (+1 unknown)\n\nday         requests  tokens in+out  cost USD\n2026-11-15         3           1.5K  ~0.42 (+1 unknown)\n\ntotal: 3 requests (0 failed), 1K tokens in, 500 tokens out, cost USD ~0.42 (+1 unknown)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "estimate csv",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "csv": true
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-15\",\"provider\":\"LiteLLM\",\"model\":\"alias\",\"events\":3,\"tokensIn\":1000,\"tokensOut\":500,\"failedEvents\":0,\"reportedCostUsd\":null,\"estimatedCostUsd\":\"0.420000000\",\"eventsWithoutCost\":1}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n2026-11-15,LiteLLM,alias,3,0,1000,500,,0.420000000,1\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "mixed costs",
+   "args": [
+    "usage"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-15\",\"provider\":\"LiteLLM\",\"model\":\"alias\",\"events\":3,\"tokensIn\":1000,\"tokensOut\":500,\"failedEvents\":0,\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":\"0.420000000\",\"eventsWithoutCost\":1}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "provider  model  requests  failed  tokens in  tokens out  cost USD\nLiteLLM   alias         3       0         1K         500  0.01 + ~0.42 (+1 unknown)\n\nday         requests  tokens in+out  cost USD\n2026-11-15         3           1.5K  0.01 + ~0.42 (+1 unknown)\n\ntotal: 3 requests (0 failed), 1K tokens in, 500 tokens out, cost USD 0.01 + ~0.42 (+1 unknown)\n",
+    "err": "",
+    "exit": 0,
     "requests": [
      [
       "GET",

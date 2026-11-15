@@ -34,6 +34,8 @@ struct Route: Sendable {
     let alias: String     // objavljeni ID (s predpono claude-)
     let upstream: String
     let window: Int?
+    var price: PriceSnapshot? = nil
+    var priceRefreshFailed = false
 }
 
 /// Overitev, usmerjanje po imenu modela in passthrough do zunanjih ponudnikov.
@@ -742,7 +744,7 @@ public final class Router: Sendable {
 
         var headSent = false
         var status = 502
-        dispatched(r.provider.id, upstreamModel: r.upstream)  // the upstream request goes out (usage event)
+        dispatched(r.provider.id, upstreamModel: r.upstream, price: r.price)  // the upstream request goes out (usage event)
         do {
             let (bytes, resp) = try await session.bytes(for: up)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
@@ -884,7 +886,11 @@ actor Catalog {
     /// Najprej ponudnik v vrstnem redu nastavitev; ime ali objavljeni ID.
     func route(_ model: String) async -> Route? {
         for p in providers {
-            if let r = await entry(p)?.routes.first(where: { $0.name == model || $0.alias == model }) { return r }
+            loadIfStale(p)
+            let routes = entries[p.id]?.routes ?? p.aliasPairs.map {
+                Route(provider: p, name: $0.alias, alias: ProviderConfig.publishedID($0.alias), upstream: $0.upstream, window: $0.window)
+            }
+            if let r = routes.first(where: { $0.name == model || $0.alias == model }) { return r }
         }
         return nil
     }
@@ -904,21 +910,42 @@ actor Catalog {
     /// Čaka največ 2 s (discovery v Claude Code ima 3 s); medtem velja zadnji znani seznam.
     private func entry(_ p: ProviderConfig) async -> Entry? {
         if let e = entries[p.id], e.ok, Date().timeIntervalSince(e.at) < Self.maxAge { return e }
-        let fresh = await firstOf(load(p), within: .seconds(2))
-        if let fresh {
-            loading[p.id] = nil
-            if fresh.ok || entries[p.id] == nil { entries[p.id] = fresh }  // ob napaki obdrži zadnji delujoči seznam
-            return entries[p.id]
-        }
+        let task = load(p)
+        if let e = entries[p.id] { return e }
+        _ = await firstOf(task, within: .seconds(2))
+
         return entries[p.id]
+    }
+
+    private func loadIfStale(_ p: ProviderConfig) {
+        if let e = entries[p.id], Date().timeIntervalSince(e.at) < Self.maxAge { return }
+        _ = load(p)
     }
 
     private func load(_ p: ProviderConfig) -> Task<Entry, Never> {
         if let t = loading[p.id] { return t }
         let (key, session) = (secrets.get(p.id) ?? "", self.session)
-        let t = Task { await Self.discover(p, key: key, session: session) }
+        let t = Task {
+            let fetch = Task { await Self.discover(p, key: key, session: session) }
+            let fresh = await firstOf(fetch, within: .seconds(30)) ?? Entry(routes: [], ok: false, at: Date())
+            fetch.cancel()
+            finishLoad(p, fresh)
+            return fresh
+        }
         loading[p.id] = t
         return t
+    }
+
+    private func finishLoad(_ p: ProviderConfig, _ fresh: Entry) {
+        loading[p.id] = nil
+        if fresh.ok || entries[p.id] == nil {
+            let routes = fresh.routes.map { route in
+                var r = route
+                if r.price == nil && r.priceRefreshFailed { r.price = entries[p.id]?.routes.first(where: { $0.upstream == r.upstream })?.price }
+                return r
+            }
+            entries[p.id] = Entry(routes: routes, ok: fresh.ok, at: fresh.at)
+        }
     }
 
     static func discover(_ p: ProviderConfig, key: String, session: URLSession) async -> Entry {
@@ -926,12 +953,14 @@ actor Catalog {
         if case .failure(let f) = result { Router.log.error("discovery \(p.id, privacy: .public): \(f.message, privacy: .public)") }
         let found = try? result.get()
         let windows = Dictionary((found ?? []).map { ($0.id, $0.window) }, uniquingKeysWith: { a, _ in a }).compactMapValues { $0 }
+        let prices = Dictionary((found ?? []).compactMap { m in m.price.map { (m.id, $0) } }, uniquingKeysWith: { a, _ in a })
+        let failedPrices = Set((found ?? []).filter(\.priceRefreshFailed).map(\.id))
         let manual = p.aliasPairs
         let routes: [Route] = manual.isEmpty
             ? (found ?? []).filter { p.isModelEnabled($0.id) }
-                .map { Route(provider: p, name: $0.id, alias: ProviderConfig.publishedID($0.id), upstream: $0.id, window: $0.window) }
+                .map { Route(provider: p, name: $0.id, alias: ProviderConfig.publishedID($0.id), upstream: $0.id, window: $0.window, price: $0.price, priceRefreshFailed: $0.priceRefreshFailed) }
             : manual.map { Route(provider: p, name: $0.alias, alias: ProviderConfig.publishedID($0.alias),
-                                 upstream: $0.upstream, window: $0.window ?? windows[$0.upstream]) }
+                                 upstream: $0.upstream, window: $0.window ?? windows[$0.upstream], price: prices[$0.upstream], priceRefreshFailed: failedPrices.contains($0.upstream)) }
         return Entry(routes: routes, ok: found != nil, at: Date())
     }
 }
@@ -941,6 +970,8 @@ public enum Discovery {
     public struct Model: Identifiable, Sendable, Equatable {
         public let id: String
         public let window: Int?
+        var price: PriceSnapshot? = nil
+        var priceRefreshFailed = false
     }
 
     public struct Failure: Error, Sendable {
@@ -963,16 +994,31 @@ public enum Discovery {
         }
         func window(_ item: [String: Any]) -> Int? { (item["context_length"] ?? item["max_input_tokens"] ?? item["context_window"]) as? Int }
         var windows: [String: Int] = [:]
-        if items.contains(where: { window($0) == nil }),  // okna manjkajo → LiteLLM jih ima v /model/info
-           let info = (try? await fetch(p, "/model/info", key: key, session: session))?["data"] as? [[String: Any]] {
+        var prices: [String: PriceSnapshot] = [:]
+        var priceRefreshFailed = false
+        let needsInfo = p.id.lowercased() == "litellm" || items.contains(where: { window($0) == nil })
+        let infoRows = needsInfo ? (try? await fetch(p, "/model/info", key: key, session: session))?["data"] as? [[String: Any]] : nil
+        if let info = infoRows {
+            var rates = deploymentPrices(info)
+            if p.id.lowercased() == "litellm", info.contains(where: {
+                let params = $0["litellm_params"] as? [String: Any] ?? [:]
+                return rates[$0["model_name"] as? String ?? ""] == nil && !(params["model"] as? String ?? "").isEmpty
+            }) {
+                let publicProvider = ProviderConfig(id: "price-map", name: "Price map", enabled: true,
+                    baseURL: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json", aliases: "")
+                if let map = try? await fetch(publicProvider, "", key: "", session: session) { rates = deploymentPrices(info, publicMap: map) }
+                else { priceRefreshFailed = true }
+            }
             for m in info {
+                if let name = m["model_name"] as? String, let rate = rates[name] { prices[name] = PriceSnapshot(provider: p.id, model: name, source: "/model/info", rates: rate) }
                 if let name = m["model_name"] as? String,
                    let w = (m["model_info"] as? [String: Any])?["max_input_tokens"] as? Int { windows[name] = w }
             }
         }
         return .success(items.compactMap { item -> Model? in
             guard let id = item["id"] as? String, !id.contains("*") else { return nil }  // LiteLLM wildcard ni model
-            return Model(id: id, window: window(item) ?? windows[id])
+            let price = prices[id] ?? (item["pricing"] as? [String: Any]).flatMap { PriceRates.parse($0, openRouter: true) }.map { PriceSnapshot(provider: p.id, model: id, source: "/v1/models", rates: $0) }
+            return Model(id: id, window: window(item) ?? windows[id], price: price, priceRefreshFailed: priceRefreshFailed || p.id.lowercased() == "litellm" && infoRows == nil)
         })
     }
 
@@ -980,7 +1026,7 @@ public enum Discovery {
         let base = p.baseURL.hasSuffix("/") ? String(p.baseURL.dropLast()) : p.baseURL
         guard let url = URL(string: base + path), url.host != nil else { throw Failure(message: String(localized: "Invalid base URL")) }
         var r = URLRequest(url: url, timeoutInterval: 5)
-        r.setValue("Bearer \(key)", forHTTPHeaderField: "authorization")
+        if !key.isEmpty { r.setValue("Bearer \(key)", forHTTPHeaderField: "authorization") }
         let data: Data, resp: URLResponse
         do {
             (data, resp) = try await session.data(for: r)
@@ -995,7 +1041,7 @@ public enum Discovery {
                 ? String(localized: "HTTP \(String(status)) – check the API key")
                 : String(localized: "HTTP \(String(status)) from \(path)"))
         }
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let obj = priceJSON(data) else {
             throw Failure(message: String(localized: "Unexpected response from \(path)"))
         }
         return obj

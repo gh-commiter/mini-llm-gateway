@@ -315,7 +315,7 @@ func TestServeGatewayKeyFileOnMac(t *testing.T) {
 	}
 }
 
-// Prehod, ki ne odgovori: model claude-cli ne čaka nanj, neznan model največ 2 s (prvo nalaganje).
+// Inference never waits for catalog or price discovery.
 func TestServeGatewayDeadDoesNotDelayCLI(t *testing.T) {
 	fakeKeys(t)["dead"] = gwKey
 	block := make(chan struct{})
@@ -334,8 +334,8 @@ func TestServeGatewayDeadDoesNotDelayCLI(t *testing.T) {
 	}
 	start = time.Now()
 	st, _ = call(conn, "POST", "/v1/messages", nil, []byte(`{"model":"claude-nope","messages":[]}`), 5*time.Second)
-	if d := time.Since(start); st != 404 || d < 1500*time.Millisecond || d > 3*time.Second {
-		t.Fatalf("unknown model: %d after %v (want 404 after about 2 s)", st, d)
+	if d := time.Since(start); st != 404 || d > time.Second {
+		t.Fatalf("unknown model: %d after %v (want immediate 404)", st, d)
 	}
 }
 
@@ -561,6 +561,7 @@ func TestServeGatewayForwardsOnlyBetaQuery(t *testing.T) {
 	s, _ := testServer(t, func(c *serveConfig) {
 		c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL + "/v1/", Insecure: true, Models: []string{"m1"}}}
 	})
+	s.loadGateways() // routing uses the catalog without waiting for discovery
 	conn := startLoopback(t, s)
 	for query, want := range map[string]string{"?beta=true&evil=1": "beta=true", "?evil=1": "", "": "", "?beta=false": ""} {
 		r, _ := http.NewRequest("POST", conn.URL+"/v1/messages"+query, strings.NewReader(`{"model":"m1","messages":[]}`))

@@ -46,6 +46,12 @@ func (s *server) dispatched(r *req) {
 		e.ProjectID = r.project.project
 	}
 	e.Provider = r.provider
+	if agentOfModel(e.Model) != "" && e.UpstreamModel == "" {
+		e.BillingMode = "subscription"
+	}
+	if r.provider == "foundry" {
+		e.BillingMode = "local"
+	}
 	s.api.EventBegin(*e)
 }
 
@@ -101,6 +107,12 @@ func (s *server) endEvent(r *req, status int, uw *usageWriter) {
 			e.CostUsdNanos = uw.metrics.cost
 			e.CostSource = "reported"
 		}
+	}
+	if uw != nil {
+		e.CacheReadTokens, e.CacheWriteTokens = uw.metrics.cacheRead, uw.metrics.cacheWrite
+	}
+	if uw != nil && uw.metrics.cacheUsed {
+		e.UnpricedDimensions = true
 	}
 	s.api.EventFinish(*e)
 }

@@ -24,11 +24,21 @@ struct UsageEvent: Sendable {
     var upstreamModel = ""
     var costUsdNanos: Int64?
     var costSource = "unknown"
+    var billingMode = "unknown"
+    var priceSnapshot: PriceSnapshot?
+    var unpricedDimensions = false
+    var cacheReadTokens: Int?
+    var cacheWriteTokens: Int?
     var tokenSource = "unknown"  // reported, estimated, unknown
 
     var json: [String: Any] {
         var o: [String: Any] = ["id": id, "start": Self.iso(start), "provider": provider, "model": model, "outcome": outcome,
                                 "tokensIn": tokensIn, "tokensOut": tokensOut, "tokenSource": tokenSource]
+        o["billingMode"] = billingMode
+        if let cacheReadTokens { o["cacheReadTokens"] = cacheReadTokens }
+        if let cacheWriteTokens { o["cacheWriteTokens"] = cacheWriteTokens }
+        if let priceSnapshot { o["priceSnapshot"] = priceSnapshot.json; o["priceSnapshotId"] = priceSnapshot.id }
+        if unpricedDimensions { o["unpricedDimensions"] = true }
         if !upstreamModel.isEmpty { o["upstreamModel"] = upstreamModel }
         if let costUsdNanos { o["costUsdNanos"] = costUsdNanos; o["costSource"] = costSource }
         if !parentId.isEmpty { o["parentId"] = parentId }
@@ -53,13 +63,16 @@ final class RequestState: @unchecked Sendable {
     var tokenSource: String { get { lock.withLock { _tokenSource } } set { lock.withLock { _tokenSource = newValue } } }
     func admit(_ e: UsageEvent) { lock.withLock { _event = e } }
     /// The first caller gets the event (with the project it has now); later ones nil: one begin per request.
-    func dispatch(provider: String, upstreamModel: String = "") -> UsageEvent? {
+    func dispatch(provider: String, upstreamModel: String = "", price: PriceSnapshot? = nil) -> UsageEvent? {
         lock.withLock {
             guard var e = _event, !_dispatched else { return nil }
             _dispatched = true
             e.projectId = _project?.project ?? e.projectId
             e.provider = provider
             e.upstreamModel = upstreamModel
+            e.priceSnapshot = price
+            e.billingMode = upstreamModel.isEmpty ? (["claude-cli", "claude", "codex", "grok", "copilot"].contains(provider) ? "subscription" : "unknown") : "metered"
+            if ["apple-fm", "siri-ai", "foundry"].contains(provider) { e.billingMode = "local" }
             _event = e
             return e
         }
@@ -294,8 +307,8 @@ extension Router {
 
     /// The moment execution or the upstream request really begins (a provider request, an agent process, a Foundry request): the event
     /// is sent as begun, with its project (an interrupted run keeps it).
-    func dispatched(_ provider: String, upstreamModel: String = "") {
-        if let e = Self.reqState?.dispatch(provider: provider, upstreamModel: upstreamModel) { usageSender.begin(e) }
+    func dispatched(_ provider: String, upstreamModel: String = "", price: PriceSnapshot? = nil) {
+        if let e = Self.reqState?.dispatch(provider: provider, upstreamModel: upstreamModel, price: price) { usageSender.begin(e) }
     }
 
     /// Completes the event of a request that was dispatched; any status then is an outcome (an upstream 4xx is an error event). A request that
@@ -315,6 +328,8 @@ extension Router {
             if e.tokensIn == 0 && e.tokenSource == "estimated" { e.tokensIn = -1 }
         }
         if let m = counts?.eventMetrics, state.tokenSource != "estimated" {
+            e.unpricedDimensions = m.cacheUsed
+            e.cacheReadTokens = m.cacheRead; e.cacheWriteTokens = m.cacheWrite
             e.tokensIn = m.input ?? -1; e.tokensOut = m.output ?? -1
             e.tokenSource = m.input != nil || m.output != nil ? "reported" : "unknown"
             if !e.upstreamModel.isEmpty, let cost = m.cost { e.costUsdNanos = cost; e.costSource = "reported" }

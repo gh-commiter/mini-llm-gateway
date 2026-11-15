@@ -495,3 +495,21 @@ func TestUsageProviderFilterAndCostJSON(t *testing.T) {
 		t.Fatalf("%d %s", response.Status, response.Body)
 	}
 }
+
+func TestUsageEstimatedCostJSON(t *testing.T) {
+	reported, estimated := int64(1000000), int64(2000000)
+	rep := core.UsageReport{Rows: []core.UsageRow{{Provider: "LiteLLM", Model: "m", Events: 4,
+		ReportedCost: &reported, EstimatedCost: &estimated, EstimatedEvents: 1, SubscriptionEvents: 1, UnknownBillingEvents: 1, UnknownCost: 2}}}
+	b, err := json.Marshal(UsageJSON(rep))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct{ Days []UsageRowJSON }
+	if err = json.Unmarshal(b, &body); err != nil {
+		t.Fatal(err)
+	}
+	r := body.Days[0]
+	if r.Cost == nil || *r.Cost != "0.003000000" || r.ReportedCost == nil || *r.ReportedCost != "0.001000000" || r.EstimatedCost == nil || *r.EstimatedCost != "0.002000000" || r.EstimatedEvents != 1 || r.SubscriptionEvents != 1 || r.UnknownBillingEvents != 1 || r.UnknownCost != 2 {
+		t.Fatal(string(b))
+	}
+}

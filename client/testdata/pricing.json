@@ -1,0 +1,297 @@
+{
+  "rates": [
+    {
+      "name": "invalid zero dimension spelling",
+      "openRouter": true,
+      "price": {"prompt": "0", "completion": "0", "request": ".0"}
+    },
+    {
+      "name": "zero exponent dimension",
+      "openRouter": true,
+      "price": {"prompt": "0", "completion": "0", "request": "0e999"},
+      "input": "0", "output": "0", "tokensIn": 1, "tokensOut": 1, "nanos": 0
+    },
+    {
+      "name": "regional multiplier",
+      "price": {
+        "input_cost_per_token": "0.000002",
+        "output_cost_per_token": "0.000006",
+        "regional_processing_uplift_multiplier_us": "1.1"
+      }
+    },
+    {
+      "name": "OpenRouter USD per token",
+      "openRouter": true,
+      "price": {
+        "prompt": "0.000002",
+        "completion": "0.000006"
+      },
+      "input": "0.000002",
+      "output": "0.000006",
+      "tokensIn": 1000,
+      "tokensOut": 500,
+      "nanos": 5000000
+    },
+    {
+      "name": "LiteLLM USD per token",
+      "price": {
+        "input_cost_per_token": 2e-06,
+        "output_cost_per_token": 6e-06
+      },
+      "input": "2e-06",
+      "output": "6e-06",
+      "tokensIn": 1000,
+      "tokensOut": 500,
+      "nanos": 5000000
+    },
+    {
+      "name": "free",
+      "openRouter": true,
+      "price": {
+        "prompt": "0",
+        "completion": "0"
+      },
+      "input": "0",
+      "output": "0",
+      "tokensIn": 100,
+      "tokensOut": 50,
+      "nanos": 0
+    },
+    {
+      "name": "round once",
+      "openRouter": true,
+      "price": {
+        "prompt": "0.00000000025",
+        "completion": "0.00000000025"
+      },
+      "input": "0.00000000025",
+      "output": "0.00000000025",
+      "tokensIn": 1,
+      "tokensOut": 1,
+      "nanos": 1
+    },
+    {
+      "name": "missing",
+      "price": {
+        "input_cost_per_token": "0.000002"
+      }
+    },
+    {
+      "name": "negative",
+      "openRouter": true,
+      "price": {
+        "prompt": "-1",
+        "completion": "0"
+      }
+    },
+    {
+      "name": "image charge",
+      "openRouter": true,
+      "price": {
+        "prompt": "0",
+        "completion": "0",
+        "image": "0.04"
+      }
+    },
+    {
+      "name": "tiered",
+      "price": {
+        "input_cost_per_token": "0.000002",
+        "output_cost_per_token": "0.000006",
+        "input_cost_per_token_above_128k_tokens": "0.000004"
+      }
+    },
+    {
+      "name": "ceiling",
+      "openRouter": true,
+      "price": {
+        "prompt": "1000000",
+        "completion": "0"
+      },
+      "input": "1000000",
+      "output": "0",
+      "tokensIn": 2,
+      "tokensOut": 0
+    },
+    {
+      "name": "overflow",
+      "openRouter": true,
+      "price": {
+        "prompt": "1000000",
+        "completion": "1000000"
+      },
+      "input": "1000000",
+      "output": "1000000",
+      "tokensIn": 9223372036854775807,
+      "tokensOut": 9223372036854775807
+    },
+    {
+      "name": "unknown tokens",
+      "openRouter": true,
+      "price": {
+        "prompt": "0",
+        "completion": "0"
+      },
+      "input": "0",
+      "output": "0",
+      "tokensIn": -1,
+      "tokensOut": 0
+    },
+    {
+      "name": "nested tool prices",
+      "price": {
+        "input_cost_per_token": "0.1",
+        "output_cost_per_token": "0.1",
+        "search_context_cost_per_query": {
+          "low": 0.01
+        }
+      }
+    },
+    {
+      "name": "zero dimension",
+      "openRouter": true,
+      "price": {
+        "prompt": "0",
+        "completion": "0",
+        "request": "0.000"
+      },
+      "input": "0",
+      "output": "0",
+      "tokensIn": 1,
+      "tokensOut": 1,
+      "nanos": 0
+    },
+    {
+      "name": "unsupported tiers array",
+      "price": {
+        "input_cost_per_token": "0.000002",
+        "output_cost_per_token": "0.000006",
+        "tiered_pricing": [
+          {
+            "threshold": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "tiny nonzero charge",
+      "openRouter": true,
+      "price": {
+        "prompt": "0",
+        "completion": "0",
+        "request": "1e-200"
+      }
+    },
+    {
+      "name": "exact rate ceiling",
+      "openRouter": true,
+      "price": {
+        "prompt": "1000000.0000000001",
+        "completion": "0"
+      }
+    }
+  ],
+  "deployments": [
+    {
+      "model_name": "alias",
+      "litellm_params": {
+        "model": "vendor/plain"
+      },
+      "model_info": {
+        "input_cost_per_token": "0.000003"
+      }
+    },
+    {
+      "model_name": "unmapped",
+      "litellm_params": {
+        "model": "base"
+      },
+      "model_info": {}
+    },
+    {
+      "model_name": "ambiguous",
+      "litellm_params": {
+        "model": "vendor/base"
+      },
+      "model_info": {}
+    },
+    {
+      "model_name": "ambiguous",
+      "litellm_params": {
+        "model": "vendor/other"
+      },
+      "model_info": {}
+    },
+    {
+      "model_name": "null-fallback",
+      "litellm_params": {
+        "model": "vendor/plain"
+      },
+      "model_info": {
+        "input_cost_per_token": null,
+        "output_cost_per_token": null
+      }
+    },
+    {
+      "model_name": "custom",
+      "litellm_params": {
+        "model": "vendor/base",
+        "input_cost_per_token": "0.000009",
+        "output_cost_per_token": "0.000008"
+      },
+      "model_info": {
+        "input_cost_per_token": "0.000001"
+      }
+    }
+  ],
+  "publicMap": {
+    "vendor/base": {
+      "input_cost_per_token": "0.000002",
+      "output_cost_per_token": "0.000006",
+      "input_cost_per_token_above_128k_tokens": "0.00001"
+    },
+    "vendor/plain": {
+      "input_cost_per_token": "0.000002",
+      "output_cost_per_token": "0.000006"
+    }
+  },
+  "mapped": {
+    "alias": {
+      "unit": "USD/token",
+      "input": "0.000003",
+      "output": "0.000006"
+    },
+    "null-fallback": {
+      "unit": "USD/token",
+      "input": "0.000002",
+      "output": "0.000006"
+    },
+    "custom": {
+      "unit": "USD/token",
+      "input": "0.000009",
+      "output": "0.000008"
+    }
+  },
+  "usage": [
+    {
+      "body": "{\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"cache_read_input_tokens\":10}}",
+      "unpriced": true
+    },
+    {
+      "body": "{\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"cache_creation\":{\"ephemeral_5m_input_tokens\":10}}}",
+      "unpriced": true
+    },
+    {
+      "body": "{\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"server_tool_use\":{\"web_search_requests\":1}}}",
+      "unpriced": true
+    },
+    {
+      "body": "{\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"cache_read_input_tokens\":0}}",
+      "unpriced": false
+    },
+    {
+      "body": "{\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0}}}",
+      "unpriced": false
+    }
+  ]
+}

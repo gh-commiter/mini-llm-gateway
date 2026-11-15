@@ -20,6 +20,7 @@ const usageReportHelp = `minigw gw usage [--days N] [--provider P] [--model M] [
 type usageEventRow struct {
 	Day, Provider, Model                                         string
 	Events, TokensIn, TokensOut, FailedEvents, EventsWithoutCost int64
+	EstimatedCostUsd                                             *string
 	ReportedCostUsd                                              *string
 }
 
@@ -28,19 +29,33 @@ type usageEventGap struct {
 	From, To time.Time
 }
 
-// usageSum adds rows. Cost is the known (reported) part only; unknown counts the events that had no cost.
+// usageSum adds known reported and estimated amounts; unknown counts events without cost.
 type usageSum struct {
 	events, failed, in, out, unknown, nanos int64
 	known                                   bool
+	estimated                               int64
+	estimateKnown                           bool
+	reported                                int64
+	reportedKnown                           bool
 }
 
 func (s *usageSum) add(r usageEventRow) {
 	s.events, s.failed, s.in, s.out, s.unknown = s.events+r.Events, s.failed+r.FailedEvents, s.in+r.TokensIn, s.out+r.TokensOut, s.unknown+r.EventsWithoutCost
+	if r.EstimatedCostUsd != nil {
+		if n, ok := parseNanos(*r.EstimatedCostUsd); ok {
+			s.estimated += n
+			s.nanos += n
+			s.estimateKnown = true
+			s.known = true
+		}
+	}
 	if r.ReportedCostUsd == nil {
 		return
 	}
 	if n, ok := parseNanos(*r.ReportedCostUsd); ok {
 		s.nanos, s.known = s.nanos+n, true
+		s.reported += n
+		s.reportedKnown = true
 	} else {
 		s.unknown += r.Events - r.EventsWithoutCost // malformed: not a known cost
 	}
@@ -76,10 +91,17 @@ func (s usageSum) cost() string {
 	if !s.known {
 		return "-"
 	}
-	if s.unknown > 0 {
-		return fmt.Sprintf("%s (+%d unknown)", usd(s.nanos), s.unknown)
+	cost := usd(s.reported)
+	if s.estimateKnown {
+		cost = "~" + usd(s.estimated)
+		if s.reportedKnown {
+			cost = usd(s.reported) + " + " + cost
+		}
 	}
-	return usd(s.nanos)
+	if s.unknown > 0 {
+		cost += fmt.Sprintf(" (+%d unknown)", s.unknown)
+	}
+	return cost
 }
 
 // human: 914, 1.2K, 914K, 46.1M, 3B.
@@ -221,14 +243,18 @@ func usageReportCSV(rows []usageEventRow) string {
 		sums[k].add(r)
 	}
 	sort.Slice(keys, func(i, j int) bool { return strings.Join(keys[i][:], "\x00") < strings.Join(keys[j][:], "\x00") })
-	out := "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,events_without_cost\n"
+	out := "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n"
 	for _, k := range keys {
 		s := sums[k]
 		cost := ""
-		if s.known {
-			cost = fmt.Sprintf("%d.%09d", s.nanos/1_000_000_000, s.nanos%1_000_000_000)
+		if s.reportedKnown {
+			cost = fmt.Sprintf("%d.%09d", s.reported/1_000_000_000, s.reported%1_000_000_000)
 		}
-		out += fmt.Sprintf("%s,%s,%s,%d,%d,%d,%d,%s,%d\n", csvCell(k[0], true), csvCell(k[1], true), csvCell(k[2], true), s.events, s.failed, s.in, s.out, cost, s.unknown)
+		estimated := ""
+		if s.estimateKnown {
+			estimated = fmt.Sprintf("%d.%09d", s.estimated/1_000_000_000, s.estimated%1_000_000_000)
+		}
+		out += fmt.Sprintf("%s,%s,%s,%d,%d,%d,%d,%s,%s,%d\n", csvCell(k[0], true), csvCell(k[1], true), csvCell(k[2], true), s.events, s.failed, s.in, s.out, cost, estimated, s.unknown)
 	}
 	return out
 }

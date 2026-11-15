@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"minigw/core"
 	"net"
 	"net/http"
 	"net/url"
@@ -141,9 +142,11 @@ func publishedID(upstream string) string {
 }
 
 type gwModel struct {
-	id     string // pri upstreamu
-	window int    // 0 = neznano
-	name   string // alias (ime za /model); prazno = id
+	priceRefreshFailed bool
+	price              *core.PriceSnapshot
+	id                 string // pri upstreamu
+	window             int    // 0 = neznano
+	name               string // alias (ime za /model); prazno = id
 }
 
 func (m gwModel) route() string {
@@ -162,8 +165,10 @@ func (s *server) gatewayRoutes(g serveGateway) []gwModel {
 	found := s.gatewayModels(g, false)
 	if pairs := aliasPairs(g.Aliases); len(pairs) > 0 {
 		win := map[string]int{}
+		prices := map[string]*core.PriceSnapshot{}
 		for _, m := range found {
 			win[m.id] = m.window
+			prices[m.id] = m.price
 		}
 		var out []gwModel
 		for _, p := range pairs {
@@ -171,7 +176,7 @@ func (s *server) gatewayRoutes(g serveGateway) []gwModel {
 			if w == 0 {
 				w = win[p.upstream]
 			}
-			out = append(out, gwModel{id: p.upstream, window: w, name: p.alias})
+			out = append(out, gwModel{id: p.upstream, window: w, name: p.alias, price: prices[p.upstream]})
 		}
 		return out
 	}
@@ -208,7 +213,9 @@ func (g serveGateway) client() *http.Client {
 
 func gwFetch(ctx context.Context, g serveGateway, key, path string) (map[string]any, error) {
 	r, _ := http.NewRequestWithContext(ctx, "GET", g.BaseURL+path, nil)
-	r.Header.Set("authorization", "Bearer "+key)
+	if key != "" {
+		r.Header.Set("authorization", "Bearer "+key)
+	}
 	resp, err := g.client().Do(r)
 	if err != nil {
 		return nil, errors.New("cannot connect: " + err.Error())
@@ -221,7 +228,9 @@ func gwFetch(ctx context.Context, g serveGateway, key, path string) (map[string]
 		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, path)
 	}
 	var obj map[string]any
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&obj); err != nil {
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 16<<20))
+	decoder.UseNumber()
+	if err := decoder.Decode(&obj); err != nil {
 		return nil, errors.New("unexpected response from " + path)
 	}
 	return obj, nil
@@ -242,8 +251,9 @@ func discoverGateway(g serveGateway, key string) ([]gwModel, error) {
 	}
 	window := func(m map[string]any, keys ...string) int {
 		for _, k := range keys {
-			if f, ok := m[k].(float64); ok {
-				return int(f)
+			if f, ok := m[k].(json.Number); ok {
+				n, _ := f.Int64()
+				return int(n)
 			}
 		}
 		return 0
@@ -258,19 +268,56 @@ func discoverGateway(g serveGateway, key string) ([]gwModel, error) {
 		}
 		w := window(m, "context_length", "max_input_tokens", "context_window")
 		missing = missing || w == 0
-		out = append(out, gwModel{id: id, window: w})
+		pricing, _ := m["pricing"].(map[string]any)
+		out = append(out, gwModel{id: id, window: w, price: snapshot(g.Name, id, "/v1/models", priceRates(pricing, true))})
 	}
-	if missing {
-		if info, err := gwFetch(ctx, g, key, "/model/info"); err == nil {
+	if missing || strings.EqualFold(g.Name, "LiteLLM") {
+		info, err := gwFetch(ctx, g, key, "/model/info")
+		if err != nil && strings.EqualFold(g.Name, "LiteLLM") {
+			for i := range out {
+				out[i].priceRefreshFailed = true
+			}
+		}
+		if err == nil {
 			windows := map[string]int{}
+			prices := map[string]*core.PriceSnapshot{}
 			data, _ := info["data"].([]any)
+			if data == nil && strings.EqualFold(g.Name, "LiteLLM") {
+				for i := range out {
+					out[i].priceRefreshFailed = true
+				}
+			}
+			rates := deploymentPrices(data, nil)
+			needsPublic := false
+			for _, it := range data {
+				m, _ := it.(map[string]any)
+				name, _ := m["model_name"].(string)
+				params, _ := m["litellm_params"].(map[string]any)
+				base, _ := params["model"].(string)
+				if rates[name] == nil && base != "" {
+					needsPublic = true
+				}
+			}
+			if needsPublic && strings.EqualFold(g.Name, "LiteLLM") {
+				if public, err := gwFetch(ctx, serveGateway{BaseURL: publicCostMapURL}, "", ""); err == nil {
+					rates = deploymentPrices(data, public)
+				} else {
+					for i := range out {
+						out[i].priceRefreshFailed = true
+					}
+				}
+			}
 			for _, it := range data {
 				m, _ := it.(map[string]any)
 				name, _ := m["model_name"].(string)
 				mi, _ := m["model_info"].(map[string]any)
 				windows[name] = window(mi, "max_input_tokens")
+				prices[name] = snapshot(g.Name, name, "/model/info", rates[name])
 			}
 			for i := range out {
+				if p := prices[out[i].id]; p != nil {
+					out[i].price = p
+				}
 				if out[i].window == 0 {
 					out[i].window = windows[out[i].id]
 				}
@@ -309,12 +356,14 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 		c.m[g.Name] = e
 	}
 	if e.ok && time.Since(e.at) < 5*time.Minute {
+		models := e.models
 		c.mu.Unlock()
-		return e.models
+		return models
 	}
 	if e.loading == nil && time.Since(e.failed) < 45*time.Second {
+		models := e.models
 		c.mu.Unlock()
-		return e.models
+		return models
 	}
 	if e.loading == nil {
 		done := make(chan struct{})
@@ -328,6 +377,16 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 			}
 			c.mu.Lock()
 			if err == nil {
+				for i := range ms {
+					if ms[i].price == nil && ms[i].priceRefreshFailed {
+						for _, old := range e.models {
+							if old.id == ms[i].id {
+								ms[i].price = old.price
+								break
+							}
+						}
+					}
+				}
 				e.models, e.ok, e.at, e.failed = ms, true, time.Now(), time.Time{}
 			} else {
 				e.failed = time.Now()
@@ -343,8 +402,9 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 	}
 	done := e.loading
 	if e.ok || !wait {
+		models := e.models
 		c.mu.Unlock()
-		return e.models
+		return models
 	}
 	c.mu.Unlock()
 	select {
@@ -357,20 +417,12 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 }
 
 // gatewayRoute: prvi prehod v vrstnem redu nastavitev z vklopljenim modelom (ID pri upstreamu ali objavljeni ID).
-// Najprej zadnji znani seznami; z wait (neznan model) še počaka na prehode, ki se nalagajo prvič.
-func (s *server) gatewayRoute(model string, wait bool) (serveGateway, gwModel, bool) {
-	for _, w := range []bool{false, true} {
-		if w && !wait {
-			break
-		}
-		if w {
-			s.loadGateways()
-		}
-		for _, g := range s.conf().Gateways {
-			for _, m := range s.gatewayRoutes(g) {
-				if !shadowsCLI(m.route()) && (m.route() == model || publishedID(m.route()) == model) {
-					return g, m, true
-				}
+// Inference uses the cached catalog; refresh never holds up a request.
+func (s *server) gatewayRoute(model string) (serveGateway, gwModel, bool) {
+	for _, g := range s.conf().Gateways {
+		for _, m := range s.gatewayRoutes(g) {
+			if !shadowsCLI(m.route()) && (m.route() == model || publishedID(m.route()) == model) {
+				return g, m, true
 			}
 		}
 	}
@@ -459,6 +511,11 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 	}
 	if r.event != nil {
 		r.event.UpstreamModel = m.id
+		r.event.BillingMode = "metered"
+		r.event.PriceSnapshot = m.price
+		if m.price != nil {
+			r.event.PriceSnapshotID = m.price.ID
+		}
 	}
 	s.dispatched(r) // the upstream request goes out (usage event)
 	resp, err := g.client().Do(up)

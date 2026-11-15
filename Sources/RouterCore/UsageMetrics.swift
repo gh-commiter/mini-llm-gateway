@@ -2,6 +2,9 @@ import Foundation
 
 // Buffer usage objects only; skip response text and tool payloads, including in SSE.
 struct UsageMetrics {
+    var cacheUsed = false
+    var cacheRead: Int?
+    var cacheWrite: Int?
     var input: Int?
     var output: Int?
     var cost: Int64?
@@ -78,7 +81,7 @@ struct UsageMetrics {
                 stack.append(key); key = ""
             case 125, 93:
                 if captureDepth == stack.count && captureDepth > 0 {
-                    if capture.count <= 65536 { readUsage(Data(capture)) }
+                    if capture.count <= 65536 { readUsage(Data(capture)) } else { cacheUsed = true }
                     capture = []; captureDepth = 0
                 }
                 if !stack.isEmpty { stack.removeLast() }; key = ""
@@ -93,13 +96,31 @@ struct UsageMetrics {
         struct Input: Decodable { let input_tokens: Int? }
         struct Output: Decodable { let output_tokens: Int? }
         struct Object: Decodable {}
+        struct CacheRead: Decodable { let cache_read_input_tokens: Int? }
+        struct CacheWrite: Decodable { let cache_creation_input_tokens: Int? }
+        if let u = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            for key in ["cache_read_input_tokens", "cache_creation_input_tokens", "cache_creation", "server_tool_use", "prompt_tokens_details", "input_tokens_details"] {
+                guard let value = u[key], !(value is NSNull) else { continue }
+                if Self.zeroDimension(value) { continue }
+                cacheUsed = true
+            }
+        }
         let decoder = JSONDecoder()
+        if let n = (try? decoder.decode(CacheRead.self, from: data))?.cache_read_input_tokens, n >= 0 { cacheRead = max(cacheRead ?? 0, n) }
+        if let n = (try? decoder.decode(CacheWrite.self, from: data))?.cache_creation_input_tokens, n >= 0 { cacheWrite = max(cacheWrite ?? 0, n) }
         if let n = (try? decoder.decode(Input.self, from: data))?.input_tokens, n >= 0 { input = max(input ?? 0, n) }
         if let n = (try? decoder.decode(Output.self, from: data))?.output_tokens, n >= 0 { output = max(output ?? 0, n) }
         if (try? decoder.decode(Object.self, from: data)) != nil,
            let raw = Self.costNumber(data), let nanos = Self.costNanos(raw), nanos <= Self.maxEventCostNanos {
             cost = nanos
         }
+    }
+
+    private static func zeroDimension(_ value: Any) -> Bool {
+        if value is NSNull { return true }
+        if let n = value as? NSNumber { return n.doubleValue == 0 }
+        if let d = value as? [String: Any] { return d.values.allSatisfy { zeroDimension($0) } }
+        return false
     }
 
     /// A reported cost above 1,000,000 USD per event is stored as unknown, so sums cannot overflow.
