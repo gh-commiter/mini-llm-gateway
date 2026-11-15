@@ -83,6 +83,25 @@ func (s *server) endEvent(r *req, status int, uw *usageWriter) {
 			e.TokensIn = -1
 		}
 	}
+	if uw != nil && r.tokenSource != "estimated" {
+		e.TokensIn, e.TokensOut = -1, -1
+		if uw.metrics.input != nil {
+			e.TokensIn = *uw.metrics.input
+		}
+		if uw.metrics.output != nil {
+			e.TokensOut = *uw.metrics.output
+		}
+		if e.TokensIn >= 0 || e.TokensOut >= 0 {
+			e.TokenSource = "reported"
+		} else {
+			e.TokenSource = "unknown"
+		}
+		// CLI subscription costs are not charges attributable to this gateway.
+		if e.UpstreamModel != "" && uw.metrics.cost != nil {
+			e.CostUsdNanos = uw.metrics.cost
+			e.CostSource = "reported"
+		}
+	}
 	s.api.EventFinish(*e)
 }
 

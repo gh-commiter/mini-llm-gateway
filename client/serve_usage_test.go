@@ -208,7 +208,11 @@ func TestEventOutcomesAndTokenSources(t *testing.T) {
 		if c.cancel {
 			cancel()
 		}
-		f.s.endEvent(r, c.status, &usageWriter{in: c.in, out: c.out, errSeen: c.errSeen})
+		uw := &usageWriter{in: c.in, out: c.out, errSeen: c.errSeen}
+		if c.in > 0 || c.out > 0 {
+			uw.metrics.feed([]byte(fmt.Sprintf(`{"usage":{"input_tokens":%d,"output_tokens":%d}}`, c.in, c.out)))
+		}
+		f.s.endEvent(r, c.status, uw)
 		cancel()
 	}
 	got := map[string]evRow{}
@@ -250,7 +254,9 @@ func TestEventAdmissionContext(t *testing.T) {
 	f.s.admitEvent(nested, "openrouter/some-model")
 	f.ok(f.s.core.SetBinding(t0, devID(f.dev["ana"]), f.uid["bor"])) // rebound between admission and finish
 	f.s.dispatched(nested)
-	f.s.endEvent(nested, 200, &usageWriter{in: 1, out: 1})
+	uw := &usageWriter{in: 1, out: 1}
+	uw.metrics.feed([]byte(`{"usage":{"input_tokens":1,"output_tokens":1}}`))
+	f.s.endEvent(nested, 200, uw)
 	if nested.event.UserID != f.uid["ana"] || nested.event.ProjectID != f.pid["fakture"] || nested.event.ParentID != root.event.ID {
 		t.Fatalf("%+v", nested.event)
 	}

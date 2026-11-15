@@ -450,6 +450,8 @@ final class UsageWriter: ResponseWriter, @unchecked Sendable {
     private let inner: ResponseWriter
     private let lock = NSLock()
     private var tail = Data()
+    private var metrics = UsageMetrics()
+    var eventMetrics: UsageMetrics { lock.withLock { metrics } }
     private var counts = (input: 0, output: 0)
     private var errors = false
     private static let re = try! NSRegularExpression(pattern: #""(input|output)_tokens"\s*:\s*(\d+)"#)
@@ -469,6 +471,7 @@ final class UsageWriter: ResponseWriter, @unchecked Sendable {
 
     func scan(_ data: Data) {
         lock.withLock {
+            metrics.feed(data)
             let buf = tail + data
             let s = String(decoding: buf, as: UTF8.self) as NSString
             if s.contains("event: error\n") { errors = true }

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type serveGateway struct {
@@ -456,6 +457,9 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 			up.Header.Set(h, v)
 		}
 	}
+	if r.event != nil {
+		r.event.UpstreamModel = m.id
+	}
 	s.dispatched(r) // the upstream request goes out (usage event)
 	resp, err := g.client().Do(up)
 	if err != nil {
@@ -512,11 +516,16 @@ func upstreamError(w http.ResponseWriter, rid, name string, resp *http.Response)
 		msg = string(data)
 	}
 	if msg = strings.TrimSpace(clean(msg)); len(msg) > 300 {
-		msg = msg[:300]
+		msg = capUsageError(msg)
 	}
 	status := resp.StatusCode
 	switch {
-	case status == 401 || status == 403: // brez besedila upstreama
+	case status == 403 && spendingLimit(name, data):
+		w.Header().Set("x-should-retry", "false")
+		return writeAgentError(w, rid, 502, "OpenRouter: spending limit reached")
+	case status == 403:
+		msg, status = "access denied: "+msg, 502
+	case status == 401:
 		msg, status = fmt.Sprintf("HTTP %d, check the API key (minigw gw provider add %s)", status, name), 502
 	case status < 400 || status > 599:
 		msg, status = fmt.Sprintf("HTTP %d: %s", status, msg), 502
@@ -557,4 +566,13 @@ func readKey(in io.Reader, what string) (string, error) {
 func isTerminal(f *os.File) bool {
 	st, err := f.Stat()
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
+}
+
+// Keep the same UTF-8 byte limit as the Mac gateway.
+func capUsageError(s string) string {
+	for len(s) > 300 {
+		_, n := utf8.DecodeLastRuneInString(s)
+		s = s[:len(s)-n]
+	}
+	return s
 }

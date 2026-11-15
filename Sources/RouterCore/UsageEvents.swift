@@ -21,11 +21,16 @@ struct UsageEvent: Sendable {
     var outcome = "open"      // open (begun), ok, error, cancelled
     var tokensIn = -1
     var tokensOut = -1
+    var upstreamModel = ""
+    var costUsdNanos: Int64?
+    var costSource = "unknown"
     var tokenSource = "unknown"  // reported, estimated, unknown
 
     var json: [String: Any] {
         var o: [String: Any] = ["id": id, "start": Self.iso(start), "provider": provider, "model": model, "outcome": outcome,
                                 "tokensIn": tokensIn, "tokensOut": tokensOut, "tokenSource": tokenSource]
+        if !upstreamModel.isEmpty { o["upstreamModel"] = upstreamModel }
+        if let costUsdNanos { o["costUsdNanos"] = costUsdNanos; o["costSource"] = costSource }
         if !parentId.isEmpty { o["parentId"] = parentId }
         if let end { o["end"] = Self.iso(end) }
         if userId != 0 { o["userId"] = userId }
@@ -48,12 +53,13 @@ final class RequestState: @unchecked Sendable {
     var tokenSource: String { get { lock.withLock { _tokenSource } } set { lock.withLock { _tokenSource = newValue } } }
     func admit(_ e: UsageEvent) { lock.withLock { _event = e } }
     /// The first caller gets the event (with the project it has now); later ones nil: one begin per request.
-    func dispatch(provider: String) -> UsageEvent? {
+    func dispatch(provider: String, upstreamModel: String = "") -> UsageEvent? {
         lock.withLock {
             guard var e = _event, !_dispatched else { return nil }
             _dispatched = true
             e.projectId = _project?.project ?? e.projectId
             e.provider = provider
+            e.upstreamModel = upstreamModel
             _event = e
             return e
         }
@@ -288,8 +294,8 @@ extension Router {
 
     /// The moment execution or the upstream request really begins (a provider request, an agent process, a Foundry request): the event
     /// is sent as begun, with its project (an interrupted run keeps it).
-    func dispatched(_ provider: String) {
-        if let e = Self.reqState?.dispatch(provider: provider) { usageSender.begin(e) }
+    func dispatched(_ provider: String, upstreamModel: String = "") {
+        if let e = Self.reqState?.dispatch(provider: provider, upstreamModel: upstreamModel) { usageSender.begin(e) }
     }
 
     /// Completes the event of a request that was dispatched; any status then is an outcome (an upstream 4xx is an error event). A request that
@@ -307,6 +313,11 @@ extension Router {
             e.tokensIn = u.input; e.tokensOut = u.output
             e.tokenSource = state.tokenSource.isEmpty ? "reported" : state.tokenSource  // estimated: Codex, Grok and Copilot give no counts
             if e.tokensIn == 0 && e.tokenSource == "estimated" { e.tokensIn = -1 }
+        }
+        if let m = counts?.eventMetrics, state.tokenSource != "estimated" {
+            e.tokensIn = m.input ?? -1; e.tokensOut = m.output ?? -1
+            e.tokenSource = m.input != nil || m.output != nil ? "reported" : "unknown"
+            if !e.upstreamModel.isEmpty, let cost = m.cost { e.costUsdNanos = cost; e.costSource = "reported" }
         }
         usageSender.finish(e)
     }

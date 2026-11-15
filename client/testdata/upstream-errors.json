@@ -1,0 +1,106 @@
+[
+  {
+    "name": "limit code",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "{\"error\": {\"code\": \"spending_limit_reached\", \"message\": \"private detail\"}}",
+    "message": "OpenRouter: spending limit reached",
+    "noRetry": true
+  },
+  {
+    "name": "limit message",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "{\"error\": {\"code\": 403, \"message\": \"Monthly spending limit exceeded\"}}",
+    "message": "OpenRouter: spending limit reached",
+    "noRetry": true
+  },
+  {
+    "name": "key limit (monthly)",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "{\"error\":{\"message\":\"Key limit exceeded (monthly limit). Manage it using https://openrouter.ai/settings/keys\",\"code\":403}}",
+    "message": "OpenRouter: spending limit reached",
+    "noRetry": true
+  },
+  {
+    "name": "guardrail",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "{\"error\": {\"code\": 403, \"message\": \"Guardrail denied model\"}}",
+    "message": "OpenRouter: access denied: Guardrail denied model",
+    "noRetry": false
+  },
+  {
+    "name": "auth",
+    "status": 401,
+    "provider": "OpenRouter",
+    "body": "{\"error\": {\"message\": \"secret\"}}",
+    "message": "OpenRouter: HTTP 401, check the API key (minigw gw provider add OpenRouter)",
+    "noRetry": false
+  },
+  {
+    "name": "other provider",
+    "status": 403,
+    "provider": "Other",
+    "body": "{\"error\": {\"message\": \"spending limit reached\"}}",
+    "message": "Other: access denied: spending limit reached",
+    "noRetry": false
+  },
+  {
+    "name": "sanitized access",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "{\"error\": {\"message\": \"blocked\\u202e\\u0001\"}}",
+    "message": "OpenRouter: access denied: blocked",
+    "noRetry": false
+  },
+  {
+    "name": "forbidden empty",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "",
+    "message": "OpenRouter: access denied: ",
+    "noRetry": false
+  },
+  {
+    "name": "UTF8 byte limit",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "{\"error\": {\"message\": \"\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\"}}",
+    "message": "OpenRouter: access denied: \u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+    "noRetry": false
+  },
+  {
+    "name": "line separators",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "{\"error\": {\"message\": \"a\\u2028b\\u2029c\"}}",
+    "message": "OpenRouter: access denied: abc",
+    "noRetry": false
+  },
+  {
+    "name": "limit code with non-string message",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "{\"error\":{\"code\":\"spending_limit_reached\",\"message\":null}}",
+    "message": "OpenRouter: spending limit reached",
+    "noRetry": true
+  },
+  {
+    "name": "escaped limit code",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "{\"error\":{\"code\":\"spending_limit_\\u0072eached\",\"message\":123}}",
+    "message": "OpenRouter: spending limit reached",
+    "noRetry": true
+  },
+  {
+    "name": "combining scalar byte limit",
+    "status": 403,
+    "provider": "OpenRouter",
+    "body": "{\"error\": {\"message\": \"a\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\"}}",
+    "message": "OpenRouter: access denied: a\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301",
+    "noRetry": false
+  }
+]

@@ -3,9 +3,15 @@ package core
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"modernc.org/sqlite"
 )
 
 // Usage events (contracts section 7): one row per model invocation, attribution frozen at admission.
@@ -23,19 +29,22 @@ const (
 
 // UsageEvent: UserID and ProjectID 0 = none (NULL); TokensIn/TokensOut -1 = unknown (NULL).
 type UsageEvent struct {
-	ID          string    `json:"id"`
-	ParentID    string    `json:"parentId,omitempty"`
-	Start       time.Time `json:"start"`
-	End         time.Time `json:"end"`
-	UserID      int64     `json:"userId,omitempty"`
-	ProjectID   int64     `json:"projectId,omitempty"`
-	DeviceID    string    `json:"deviceId,omitempty"`
-	Provider    string    `json:"provider"`
-	Model       string    `json:"model"`
-	Outcome     string    `json:"outcome"`
-	TokensIn    int64     `json:"tokensIn"`
-	TokensOut   int64     `json:"tokensOut"`
-	TokenSource string    `json:"tokenSource"` // reported, estimated, unknown
+	CostUsdNanos  *int64    `json:"costUsdNanos,omitempty"`
+	CostSource    string    `json:"costSource,omitempty"`
+	UpstreamModel string    `json:"upstreamModel,omitempty"`
+	ID            string    `json:"id"`
+	ParentID      string    `json:"parentId,omitempty"`
+	Start         time.Time `json:"start"`
+	End           time.Time `json:"end"`
+	UserID        int64     `json:"userId,omitempty"`
+	ProjectID     int64     `json:"projectId,omitempty"`
+	DeviceID      string    `json:"deviceId,omitempty"`
+	Provider      string    `json:"provider"`
+	Model         string    `json:"model"`
+	Outcome       string    `json:"outcome"`
+	TokensIn      int64     `json:"tokensIn"`
+	TokensOut     int64     `json:"tokensOut"`
+	TokenSource   string    `json:"tokenSource"` // reported, estimated, unknown
 }
 
 func migrate3(tx *sql.Tx) error {
@@ -61,6 +70,17 @@ func migrate4(tx *sql.Tx) error { // folded totals keep the counts a report show
 		}
 	}
 	return nil
+}
+
+func migrate5(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE usage_events ADD COLUMN cost_usd_nanos INTEGER CHECK(cost_usd_nanos>=0);
+ALTER TABLE usage_events ADD COLUMN cost_source TEXT NOT NULL DEFAULT 'unknown' CHECK(cost_source IN('reported','estimated','unknown'));
+ALTER TABLE usage_events ADD COLUMN upstream_model TEXT;
+ALTER TABLE usage_daily ADD COLUMN reported_cost INTEGER;
+ALTER TABLE usage_daily ADD COLUMN estimated_cost INTEGER;
+ALTER TABLE usage_daily ADD COLUMN unknown_cost INTEGER NOT NULL DEFAULT 0;
+UPDATE usage_daily SET unknown_cost=events;`)
+	return err
 }
 
 // capStr limits a stored string to n bytes (at a character boundary): an event is never refused for its model name.
@@ -91,8 +111,8 @@ func nullTok(n int64) any {
 // BeginEvent records an admitted invocation as open (idempotent by id).
 func (s *Store) BeginEvent(ctx context.Context, e UsageEvent) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT OR IGNORE INTO usage_events(id,parent_id,start,user_id,device_id,project_id,provider,model,outcome,token_source)
-VALUES(?,?,?,?,?,?,?,?,'open','unknown')`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), capStr(e.DeviceID, 256), nullID(e.ProjectID), capStr(e.Provider, 64), capStr(e.Model, 256))
+		_, err := tx.Exec(`INSERT OR IGNORE INTO usage_events(id,parent_id,start,user_id,device_id,project_id,provider,model,upstream_model,outcome,token_source)
+VALUES(?,?,?,?,?,?,?,?,?,'open','unknown')`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), capStr(e.DeviceID, 256), nullID(e.ProjectID), capStr(e.Provider, 64), capStr(e.Model, 256), nullStr(capStr(e.UpstreamModel, 256)))
 		return err
 	})
 }
@@ -113,12 +133,17 @@ func (s *Store) FinishEvent(ctx context.Context, e UsageEvent) error {
 }
 
 func finishEvent(tx *sql.Tx, e UsageEvent) error {
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO usage_events(id,parent_id,start,user_id,device_id,project_id,provider,model,outcome,token_source)
-VALUES(?,?,?,?,?,?,?,?,'open','unknown')`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), capStr(e.DeviceID, 256), nullID(e.ProjectID), capStr(e.Provider, 64), capStr(e.Model, 256)); err != nil {
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO usage_events(id,parent_id,start,user_id,device_id,project_id,provider,model,upstream_model,outcome,token_source)
+VALUES(?,?,?,?,?,?,?,?,?,'open','unknown')`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), capStr(e.DeviceID, 256), nullID(e.ProjectID), capStr(e.Provider, 64), capStr(e.Model, 256), nullStr(capStr(e.UpstreamModel, 256))); err != nil {
 		return err
 	}
-	_, err := tx.Exec(`UPDATE usage_events SET end=?, outcome=?, tokens_in=?, tokens_out=?, token_source=?, project_id=COALESCE(project_id,?), provider=CASE WHEN provider='' THEN ? ELSE provider END
-WHERE id=? AND outcome IN('open','interrupted')`, ms(e.End), e.Outcome, nullTok(e.TokensIn), nullTok(e.TokensOut), e.TokenSource, nullID(e.ProjectID), capStr(e.Provider, 64), e.ID)
+	source := e.CostSource
+	if e.CostUsdNanos == nil || *e.CostUsdNanos < 0 || (source != "reported" && source != "estimated") {
+		e.CostUsdNanos = nil
+		source = "unknown"
+	}
+	_, err := tx.Exec(`UPDATE usage_events SET cost_usd_nanos=?, cost_source=?, upstream_model=COALESCE(upstream_model,?), end=?, outcome=?, tokens_in=?, tokens_out=?, token_source=?, project_id=COALESCE(project_id,?), provider=CASE WHEN provider='' THEN ? ELSE provider END
+WHERE id=? AND outcome IN('open','interrupted')`, e.CostUsdNanos, source, nullStr(capStr(e.UpstreamModel, 256)), ms(e.End), e.Outcome, nullTok(e.TokensIn), nullTok(e.TokensOut), e.TokenSource, nullID(e.ProjectID), capStr(e.Provider, 64), e.ID)
 	return err
 }
 
@@ -148,12 +173,12 @@ func markInterrupted(tx *sql.Tx) error {
 func (s *Store) FoldOldUsage(ctx context.Context) (n int64, err error) {
 	cut := ms(s.now().UTC().AddDate(0, 0, -usageRetentionDays))
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`INSERT INTO usage_daily(day,user_id,project_id,provider,model,events,tokens_in,tokens_out,failed,nested,unknown_tokens)
+		if _, err := tx.Exec(`INSERT INTO usage_daily(day,user_id,project_id,provider,model,events,tokens_in,tokens_out,failed,nested,unknown_tokens,reported_cost,estimated_cost,unknown_cost)
 SELECT strftime('%Y-%m-%d', start/1000, 'unixepoch'), COALESCE(user_id,0), COALESCE(project_id,0), provider, model, count(*), COALESCE(sum(tokens_in),0), COALESCE(sum(tokens_out),0),
-  sum(outcome IN('error','cancelled','interrupted')), sum(parent_id IS NOT NULL), sum(tokens_in IS NULL AND tokens_out IS NULL)
+  sum(outcome IN('error','cancelled','interrupted')), sum(parent_id IS NOT NULL), sum(tokens_in IS NULL AND tokens_out IS NULL), sum(CASE WHEN cost_source='reported' THEN cost_usd_nanos END), sum(CASE WHEN cost_source='estimated' THEN cost_usd_nanos END), sum(cost_usd_nanos IS NULL)
 FROM usage_events WHERE start<? AND outcome!='open' GROUP BY 1,2,3,4,5
 ON CONFLICT(day,user_id,project_id,provider,model) DO UPDATE SET events=events+excluded.events, tokens_in=tokens_in+excluded.tokens_in, tokens_out=tokens_out+excluded.tokens_out,
-  failed=failed+excluded.failed, nested=nested+excluded.nested, unknown_tokens=unknown_tokens+excluded.unknown_tokens`, cut); err != nil {
+  failed=failed+excluded.failed, nested=nested+excluded.nested, unknown_tokens=unknown_tokens+excluded.unknown_tokens, reported_cost=CASE WHEN reported_cost IS NULL AND excluded.reported_cost IS NULL THEN NULL WHEN COALESCE(reported_cost,0)>9223372036854775807-COALESCE(excluded.reported_cost,0) THEN abs(-9223372036854775808) ELSE COALESCE(reported_cost,0)+COALESCE(excluded.reported_cost,0) END, estimated_cost=CASE WHEN estimated_cost IS NULL AND excluded.estimated_cost IS NULL THEN NULL WHEN COALESCE(estimated_cost,0)>9223372036854775807-COALESCE(excluded.estimated_cost,0) THEN abs(-9223372036854775808) ELSE COALESCE(estimated_cost,0)+COALESCE(excluded.estimated_cost,0) END, unknown_cost=unknown_cost+excluded.unknown_cost`, cut); err != nil {
 			return err
 		}
 		r, err := tx.Exec(`DELETE FROM usage_events WHERE start<? AND outcome!='open'`, cut)
@@ -163,6 +188,12 @@ ON CONFLICT(day,user_id,project_id,provider,model) DO UPDATE SET events=events+e
 		n, _ = r.RowsAffected()
 		return nil
 	})
+	// An unrepresentable total must not prevent startup. The transaction rolled back,
+	// so retain the detail; reports still return the overflow instead of a false total.
+	var sqlErr *sqlite.Error
+	if errors.As(err, &sqlErr) && sqlErr.Code() == 1 && strings.Contains(sqlErr.Error(), "integer overflow") {
+		return 0, nil
+	}
 	return n, err
 }
 
@@ -170,17 +201,20 @@ ON CONFLICT(day,user_id,project_id,provider,model) DO UPDATE SET events=events+e
 // event; Nested says how many of them were asked by another agent (their parent's own tokens exclude them, because
 // the provider reports each call separately).
 type UsageRow struct {
-	Day           string
-	Model         string
-	UserID        int64 // 0 = none
-	UserName      string
-	ProjectID     int64 // 0 = none
-	Events        int64
-	TokensIn      int64
-	TokensOut     int64
-	UnknownTokens int64 // events without token counts
-	Nested        int64
-	Failed        int64 // outcome error, cancelled or interrupted
+	Provider                    string
+	ReportedCost, EstimatedCost *int64
+	UnknownCost                 int64
+	Day                         string
+	Model                       string
+	UserID                      int64 // 0 = none
+	UserName                    string
+	ProjectID                   int64 // 0 = none
+	Events                      int64
+	TokensIn                    int64
+	TokensOut                   int64
+	UnknownTokens               int64 // events without token counts
+	Nested                      int64
+	Failed                      int64 // outcome error, cancelled or interrupted
 }
 
 type UsageGap struct {
@@ -196,6 +230,7 @@ type UsageReport struct {
 type UsageFilter struct {
 	User, Project int64
 	Model         string
+	Provider      string
 }
 
 // Usage is what a member may see (section 2): project given: an admin sees all events of the project, a developer
@@ -261,10 +296,13 @@ func (s *Store) usageRows(tx *sql.Tx, days int, f UsageFilter, withFolded, withG
 	if f.Model != "" {
 		where, args = append(where, "e.model=?"), append(args, f.Model)
 	}
-	q := `SELECT strftime('%Y-%m-%d', e.start/1000, 'unixepoch') d, e.model, COALESCE(e.user_id,0), COALESCE(u.name,''), COALESCE(e.project_id,0), count(*),
+	if f.Provider != "" {
+		where, args = append(where, "e.provider=?"), append(args, f.Provider)
+	}
+	q := `SELECT strftime('%Y-%m-%d', e.start/1000, 'unixepoch') d, e.provider, e.model, COALESCE(e.user_id,0), COALESCE(u.name,''), COALESCE(e.project_id,0), count(*),
   COALESCE(sum(e.tokens_in),0), COALESCE(sum(e.tokens_out),0), sum(e.tokens_in IS NULL AND e.tokens_out IS NULL), sum(e.parent_id IS NOT NULL),
-  sum(e.outcome IN('error','cancelled','interrupted'))
-FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(where, " AND ") + ` GROUP BY d, e.model, e.user_id, e.project_id ORDER BY d DESC, e.model, e.user_id`
+  sum(e.outcome IN('error','cancelled','interrupted')), sum(CASE WHEN e.cost_source='reported' THEN e.cost_usd_nanos END), sum(CASE WHEN e.cost_source='estimated' THEN e.cost_usd_nanos END), sum(e.cost_usd_nanos IS NULL)
+FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(where, " AND ") + ` GROUP BY d, e.provider, e.model, e.user_id, e.project_id ORDER BY d DESC, e.model, e.user_id`
 	rows, err := tx.Query(q, args...)
 	if err != nil {
 		return UsageReport{}, err
@@ -272,11 +310,15 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 	var rep UsageReport
 	for rows.Next() {
 		var r UsageRow
-		if err := rows.Scan(&r.Day, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut, &r.UnknownTokens, &r.Nested, &r.Failed); err != nil {
+		if err := rows.Scan(&r.Day, &r.Provider, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut, &r.UnknownTokens, &r.Nested, &r.Failed, &r.ReportedCost, &r.EstimatedCost, &r.UnknownCost); err != nil {
 			rows.Close()
 			return rep, err
 		}
 		rep.Rows = append(rep.Rows, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return rep, err
 	}
 	rows.Close()
 	if withFolded {
@@ -290,20 +332,88 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 		if f.Model != "" {
 			fw, fa = append(fw, "d.model=?"), append(fa, f.Model)
 		}
-		fr, err := tx.Query(`SELECT d.day, d.model, d.user_id, COALESCE(u.name,''), d.project_id, d.events, d.tokens_in, d.tokens_out, d.unknown_tokens, d.nested, d.failed FROM usage_daily d LEFT JOIN users u ON u.id=d.user_id WHERE `+strings.Join(fw, " AND ")+` ORDER BY d.day DESC`, fa...)
+		if f.Provider != "" {
+			fw, fa = append(fw, "d.provider=?"), append(fa, f.Provider)
+		}
+		fr, err := tx.Query(`SELECT d.day, d.provider, d.model, d.user_id, COALESCE(u.name,''), d.project_id, d.events, d.tokens_in, d.tokens_out, d.unknown_tokens, d.nested, d.failed, d.reported_cost, d.estimated_cost, d.unknown_cost FROM usage_daily d LEFT JOIN users u ON u.id=d.user_id WHERE `+strings.Join(fw, " AND ")+` ORDER BY d.day DESC`, fa...)
 		if err != nil {
 			return rep, err
 		}
 		for fr.Next() {
 			var r UsageRow
-			if err := fr.Scan(&r.Day, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut, &r.UnknownTokens, &r.Nested, &r.Failed); err != nil {
+			if err := fr.Scan(&r.Day, &r.Provider, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut, &r.UnknownTokens, &r.Nested, &r.Failed, &r.ReportedCost, &r.EstimatedCost, &r.UnknownCost); err != nil {
 				fr.Close()
 				return rep, err
 			}
 			rep.Rows = append(rep.Rows, r)
 		}
+		if err := fr.Err(); err != nil {
+			fr.Close()
+			return rep, err
+		}
 		fr.Close()
 	}
+	// Folded and live detail can overlap on the retention day.
+	type key struct {
+		day, provider, model string
+		user, project        int64
+	}
+	merged := map[key]UsageRow{}
+	addCost := func(a, b *int64) (*int64, error) {
+		if a == nil {
+			return b, nil
+		}
+		if b == nil {
+			return a, nil
+		}
+		if *a > math.MaxInt64-*b {
+			return nil, fmt.Errorf("usage cost total overflows nanodollars")
+		}
+		n := *a + *b
+		return &n, nil
+	}
+	for _, r := range rep.Rows {
+		k := key{r.Day, r.Provider, r.Model, r.UserID, r.ProjectID}
+		if a, ok := merged[k]; ok {
+			a.Events += r.Events
+			a.TokensIn += r.TokensIn
+			a.TokensOut += r.TokensOut
+			a.UnknownTokens += r.UnknownTokens
+			a.Nested += r.Nested
+			a.Failed += r.Failed
+			a.UnknownCost += r.UnknownCost
+			var err error
+			if a.ReportedCost, err = addCost(a.ReportedCost, r.ReportedCost); err != nil {
+				return rep, err
+			}
+			if a.EstimatedCost, err = addCost(a.EstimatedCost, r.EstimatedCost); err != nil {
+				return rep, err
+			}
+			merged[k] = a
+		} else {
+			merged[k] = r
+		}
+	}
+	rep.Rows = nil
+	for _, r := range merged {
+		rep.Rows = append(rep.Rows, r)
+	}
+	sort.Slice(rep.Rows, func(i, j int) bool {
+		a, b := rep.Rows[i], rep.Rows[j]
+		if a.Day != b.Day {
+			return a.Day > b.Day
+		}
+		if a.Provider != b.Provider {
+			return a.Provider < b.Provider
+		}
+		if a.Model != b.Model {
+			return a.Model < b.Model
+		}
+		if a.UserID != b.UserID {
+			return a.UserID < b.UserID
+		}
+		return a.ProjectID < b.ProjectID
+	})
 	if !withGaps {
 		return rep, nil
 	}
