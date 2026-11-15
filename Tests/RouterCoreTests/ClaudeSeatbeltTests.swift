@@ -480,6 +480,9 @@ private final class Clock: @unchecked Sendable {
     let base = URL(fileURLWithPath: rig.scratch + "/tmp")
     let slow = try fakeClaude(rig.root, body: "[ -n \"$CLAUDE_CODE_TMPDIR\" ] && sleep 6; cat canary.txt; cat >/dev/null")  // slow only under the profile
     #expect(ClaudeSeatbelt.checkNow(exe: slow, tmpBase: base, home: rig.home, requireTranscript: false, modelTimeout: 2) == .inconclusive)
+    // it answers at once and then hangs: what a killed run printed is no answer, whichever way the kill races with the shell (the canary is in the output, the verdict is still "timed out")
+    let answersThenHangs = try fakeClaude(rig.root, body: "if [ -n \"$CLAUDE_CODE_TMPDIR\" ]; then cat canary.txt; sleep 6; fi; cat canary.txt; cat >/dev/null")
+    #expect(ClaudeSeatbelt.checkNow(exe: answersThenHangs, tmpBase: base, home: rig.home, requireTranscript: false, modelTimeout: 2) == .inconclusive)
     // off, then expiry with an injected clock: the marker makes claude fail under the profile only
     let marker = rig.root.path + "/off-marker"
     try Data().write(to: URL(fileURLWithPath: marker))

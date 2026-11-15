@@ -176,6 +176,8 @@ public actor ClaudeSeatbelt {
         let prompt = "Read the file canary.txt in the current folder and reply with only its exact content."
         let boxed = confinedEnvironment(env, tmp: tmp)
         let sandboxed = capture("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, env: boxed, cwd: session, input: prompt, timeout: modelTimeout, log: root)
+        // a run that hit its timeout was killed: whatever it printed before or while dying is not an answer (checked again after `inconclusiveFor`)
+        if sandboxed.timedOut { return .inconclusive }
         if sandboxed.out.contains(canary) {
             // claude answers even when it cannot save its conversation, and then a resume finds nothing: the transcript must be there (and is removed, one per check would pile up)
             let transcript = (Sync.real(URL(fileURLWithPath: home))?.path ?? home) + "/.claude/projects/" + Native.claudeProjectFolder(session) + "/" + sessionID + ".jsonl"
@@ -187,8 +189,6 @@ public actor ClaudeSeatbelt {
         // not shown by the profile alone: the same run without it (network, login, a Claude Code outage are not the profile's fault)
         let control = capture(exe, args, env: env, cwd: session, input: prompt, timeout: modelTimeout, log: root)
         if !control.out.contains(canary) { return .inconclusive }
-        // too slow under the profile while the control run answers: a slow machine is not a broken profile (checked again after `inconclusiveFor`)
-        if sandboxed.timedOut { return .inconclusive }
         let why = firstLine(sandboxed.err) ?? firstLine(sandboxed.out) ?? "claude exited with \(sandboxed.status) under the profile"
         return .fail("claude does not run under the profile (\(why))")
     }
@@ -220,12 +220,20 @@ public actor ClaudeSeatbelt {
         s.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }.map { String($0.prefix(160)) }
     }
 
-    /// SIGKILL to a process and, first, all its descendants (found through libproc).
+    /// SIGKILL to a process and all its descendants (found through libproc). The parent goes FIRST: killing the children first lets a shell go on to its next command
+    /// (`sleep 6; cat canary.txt` printed the canary after its `sleep` was killed, and a timed-out run was judged a pass).
     static func killTreeByPid(_ pid: pid_t) {
-        var kids = [pid_t](repeating: 0, count: 256)
-        let n = Int(proc_listchildpids(pid, &kids, Int32(kids.count * MemoryLayout<pid_t>.size)))
-        for k in kids.prefix(max(0, min(n, kids.count))) where k > 1 { killTreeByPid(k) }
+        var found: [pid_t] = []
+        func walk(_ p: pid_t, _ depth: Int) {
+            guard depth < 16 else { return }
+            var kids = [pid_t](repeating: 0, count: 256)
+            let n = Int(proc_listchildpids(p, &kids, Int32(kids.count * MemoryLayout<pid_t>.size)))
+            for k in kids.prefix(max(0, min(n, kids.count))) where k > 1 { found.append(k); walk(k, depth + 1) }
+        }
+        _ = Darwin.kill(pid, SIGSTOP)  // frozen while the tree is listed: nothing forks meanwhile
+        walk(pid, 0)
         _ = Darwin.kill(pid, SIGKILL)
+        for k in found { _ = Darwin.kill(k, SIGKILL) }
     }
 
     /// Runs a program to its end (or kills its tree after `timeout`); output goes to files in `log` (no pipe to fill).
