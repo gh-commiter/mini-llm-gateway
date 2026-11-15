@@ -670,8 +670,31 @@ func (h *shareHub) syncGet(key, path, owner string) ([]byte, bool) {
 	return readRegular(s.copy, path, maxSyncFile, false) // agent ne podtakne povezave ven iz kopije
 }
 
-// syncCopies uses an opened root so a copy cannot redirect removal outside Scratch.
-func syncCopies(root, device, remove string) ([]string, int, string) {
+// syncCopyInUse is the 409 text of removing a copy that a session or agent uses (the same text in Shares.swift; testdata/sync_copy_in_use.txt).
+const syncCopyInUse = "sync: a minigw session or agent is using this copy; retry when it stops"
+
+// ifCopyFree runs act (a fast step: the rename that takes the copy away) only if no session is registered on `copy` and no
+// request of an agent holds it; true = in use. h.mu is also taken by register, so no session can register this copy between the
+// check and act: one that registers later starts a fresh copy.
+func (h *shareHub) ifCopyFree(copy string, act func() error) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c := filepath.Clean(copy)
+	for _, s := range h.bySession {
+		if filepath.Clean(s.copy) == c {
+			return true, nil
+		}
+	}
+	for k, sem := range h.busy {
+		if filepath.Clean(k) == c && len(sem) > 0 {
+			return true, nil
+		}
+	}
+	return false, act()
+}
+
+// syncCopies uses an opened root so a copy cannot redirect removal outside Scratch. `free` (nil = always free): see ifCopyFree.
+func syncCopies(root, device, remove string, free func(copy string, act func() error) (bool, error)) ([]string, int, string) {
 	copies := []string{}
 	if remove != "" && !validSyncCopyID(remove) {
 		return nil, 400, "sync: invalid copy ID"
@@ -717,7 +740,21 @@ func syncCopies(root, device, remove string) ([]string, int, string) {
 		return nil, 404, "sync: copy not found"
 	}
 	rel := filepath.Join(device, remove)
-	if err := r.RemoveAll(rel); err != nil {
+	// The copy leaves its name in one rename under the hub lock (no registration of it in between); the delete itself runs after,
+	// outside the lock, on the renamed folder (not listed, not reachable by a session).
+	gone := fmt.Sprintf("%s.removing-%d", rel, time.Now().UnixNano())
+	rename := func() error { return r.Rename(rel, gone) }
+	if free == nil {
+		free = func(_ string, act func() error) (bool, error) { return false, act() }
+	}
+	inUse, err := free(filepath.Join(root, device, remove), rename)
+	if inUse {
+		return nil, 409, syncCopyInUse
+	}
+	if err != nil {
+		return nil, 500, "sync: cannot remove copy"
+	}
+	if err := r.RemoveAll(gone); err != nil {
 		return nil, 500, "sync: cannot remove copy"
 	}
 	if err := r.Remove(rel + ".used"); err != nil && !os.IsNotExist(err) {

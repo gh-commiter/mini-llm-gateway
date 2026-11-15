@@ -1,0 +1,1 @@
+sync: a minigw session or agent is using this copy; retry when it stops
