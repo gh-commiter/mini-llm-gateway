@@ -724,7 +724,8 @@ func (s *server) checkFolderRecords(had map[string]folderRecord, missing []strin
 	s.checkedAgentFolders(s.cfg, "") // W3: the run-time checks (owner, link) also at start: log and `refused` agree
 }
 
-// saveFolderRecords: adds the records of folders that have none in the config file (nothing else changes).
+// saveFolderRecords: adds the records of folders that have none in the config file, including a folder given only by
+// --folder (nothing else changes).
 func saveFolderRecords(path string, records map[string]folderRecord, folders []string) error {
 	defer lockServeConfig(path)() // A5
 	file, err := loadServeConfig(path)
@@ -736,7 +737,10 @@ func saveFolderRecords(path string, records map[string]folderRecord, folders []s
 	}
 	changed := false
 	for _, f := range folders {
-		if _, ok := file.AllowedRecords[f]; !ok && slices.Contains(file.AllowedFolders, f) {
+		if _, ok := file.AllowedRecords[f]; !ok {
+			if !slices.Contains(file.AllowedFolders, f) {
+				file.AllowedFolders = append(file.AllowedFolders, f)
+			}
 			file.AllowedRecords[f], changed = records[f], true
 		}
 	}

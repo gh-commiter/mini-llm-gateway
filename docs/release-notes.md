@@ -43,6 +43,7 @@ Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and q
 
 ### Fixed
 
+- Fixed (#96, Windows and Linux gateways): a folder supplied with the deprecated `minigw serve --folder` option is saved with its identity record, so replacing it is refused on later starts.
 - Fixed (Mac app, 0.6.0 deny rules; the 0.5.28 regression is fixed in 0.5.29): the deny rules of the gateway's own folders (the app folder with the core, the credential homes) are not applied where the folder of a run (a remote client's mount under `~/Library/Application Support/Mini Gateway/mounts`, a sync copy) lives inside them, in the restricted mode, the sandboxed mode and Worktree mode; a deny wins over an allow. The rest of the app folder and the other clients' mounts stay refused (only the run's own folders are allowed). The refusal of overlapping allowed folders is the one of 0.5.29.
 
 ### Known limits
