@@ -115,7 +115,7 @@ func insideBases(bases []string, target string) (string, bool) {
 	return "", false
 }
 
-// finalPathFn: test hook (a UNC path must never reach it).
+// finalPathFn: test hook (an untrusted UNC path must never reach it).
 var finalPathFn = finalPath
 
 // sameVolume: target is on the volume or drive of one of the root's own names (compared lexically, nothing is opened).
@@ -131,16 +131,15 @@ func sameVolume(bases []string, target string) bool {
 }
 
 // safeFinalPath inspects each link before opening its target, including intermediate links and chains.
-// The caller supplies trusted base names; only an initial path inside a trusted UNC base may probe that share.
+// The caller supplies trusted base names; UNC paths may probe only inside those bases.
 func safeFinalPath(target string, bases []string) (string, error) {
 	p, err := filepath.Abs(target)
 	if err != nil {
 		return "", err
 	}
-	_, inside := insideBases(bases, p)
-	trustedUNC := runtime.GOOS == "windows" && strings.HasPrefix(filepath.VolumeName(p), `\\`) && inside
 	for rewrites := 0; rewrites <= maxLinkRewrites; rewrites++ {
-		if !(rewrites == 0 && trustedUNC) && !safeTarget(p, bases) {
+		trustedUNC := trustedUNCPath(p, bases)
+		if !trustedUNC && !safeTarget(p, bases) {
 			return "", fmt.Errorf("%s: %s", linkRefusal, target)
 		}
 		volume := filepath.VolumeName(p)
@@ -152,7 +151,7 @@ func safeFinalPath(target string, bases []string) (string, error) {
 				continue
 			}
 			cur = filepath.Join(cur, name)
-			if !(rewrites == 0 && trustedUNC) && !safeTarget(cur, bases) {
+			if !trustedUNC && !safeTarget(cur, bases) {
 				return "", fmt.Errorf("%s: %s", linkRefusal, target)
 			}
 			st, err := os.Lstat(cur)
@@ -175,7 +174,7 @@ func safeFinalPath(target string, bases []string) (string, error) {
 				}
 				next = filepath.Join(filepath.Dir(cur), next)
 			}
-			if !safeTarget(next, bases) {
+			if !trustedUNCPath(next, bases) && !safeTarget(next, bases) {
 				return "", fmt.Errorf("%s: %s", linkRefusal, target)
 			}
 			p = filepath.Join(append([]string{next}, parts[i+1:]...)...)
@@ -187,6 +186,15 @@ func safeFinalPath(target string, bases []string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("too many links: %s", target)
+}
+
+// trustedUNCPath checks containment before any probe of a UNC target, including link rewrites.
+func trustedUNCPath(target string, bases []string) bool {
+	if runtime.GOOS != "windows" || !strings.HasPrefix(filepath.VolumeName(target), `\\`) {
+		return false
+	}
+	_, inside := insideBases(bases, target)
+	return inside
 }
 
 func safeTarget(target string, bases []string) bool {

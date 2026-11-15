@@ -85,4 +85,64 @@ func TestDAVMoveCopyUNCRoot(t *testing.T) {
 			}
 		})
 	}
+	for _, kind := range []string{"relative", "absolute", "chain"} {
+		t.Run("MOVE-"+kind, func(t *testing.T) {
+			target := filepath.Join(local, "target-"+kind)
+			if err := os.Mkdir(target, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, "file"), []byte("inside"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			name := "link-" + kind
+			link := filepath.Join(local, name)
+			next := filepath.Base(target)
+			switch kind {
+			case "absolute":
+				next = filepath.Join(root, filepath.Base(target))
+			case "chain":
+				next = "middle"
+				if err := os.Symlink(filepath.Join(root, filepath.Base(target)), filepath.Join(local, next)); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			}
+			if err := os.Symlink(next, link); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			dest := "renamed-" + kind
+			r := davHandle("MOVE", "/s/"+name, map[string]string{"destination": "/s/" + dest}, nil, root, "/s")
+			if r.Status != 201 {
+				t.Fatalf("MOVE link on UNC root: status %d, body %s", r.Status, r.Body)
+			}
+			moved := filepath.Join(local, dest)
+			if got, err := os.Readlink(moved); err != nil || trimFinalPrefix(got) != next {
+				t.Fatalf("moved link = %q, %v; want %q", got, err, next)
+			}
+			if _, err := os.Lstat(link); !os.IsNotExist(err) {
+				t.Fatalf("source link remains: %v", err)
+			}
+			if b, err := os.ReadFile(filepath.Join(target, "file")); err != nil || string(b) != "inside" {
+				t.Fatalf("target changed: %q, %v", b, err)
+			}
+		})
+	}
+}
+
+// Rewritten UNC paths must stay inside a configured base, even on the same share.
+func TestSafeFinalPathUNCOutsideBase(t *testing.T) {
+	local := t.TempDir()
+	bases := []string{local}
+	for _, target := range []string{`\\minigw-invalid\share\outside`, `\\minigw-invalid\share\project-other\file`} {
+		t.Run(target, func(t *testing.T) {
+			link := filepath.Join(t.TempDir(), "link")
+			if err := os.Symlink(target, link); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			// A lexical UNC base must not authorize a sibling path on that share.
+			trusted := append(append([]string{}, bases...), `\\minigw-invalid\share\project`)
+			if _, err := safeFinalPath(link, trusted); err == nil || !strings.Contains(err.Error(), linkRefusal) {
+				t.Fatalf("untrusted UNC target was probed: %v", err)
+			}
+		})
+	}
 }
