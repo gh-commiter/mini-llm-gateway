@@ -97,10 +97,13 @@ struct UsageMetrics {
         if let n = (try? decoder.decode(Input.self, from: data))?.input_tokens, n >= 0 { input = max(input ?? 0, n) }
         if let n = (try? decoder.decode(Output.self, from: data))?.output_tokens, n >= 0 { output = max(output ?? 0, n) }
         if (try? decoder.decode(Object.self, from: data)) != nil,
-           let raw = Self.costNumber(data), let nanos = Self.costNanos(raw) {
+           let raw = Self.costNumber(data), let nanos = Self.costNanos(raw), nanos <= Self.maxEventCostNanos {
             cost = nanos
         }
     }
+
+    /// A reported cost above 1,000,000 USD per event is stored as unknown, so sums cannot overflow.
+    static let maxEventCostNanos: Int64 = 1_000_000_000_000_000
 
     // Keep the number's spelling: binary floating point and Decimal can lose the rounding boundary.
     private static func costNumber(_ data: Data) -> String? {
@@ -171,4 +174,12 @@ func spendingLimit(name: String, body: Data) -> Bool {
     let code = e["code"] as? String ?? ""
     let msg = (e["message"] as? String ?? "").lowercased()
     return ["spending_limit_reached", "spending_limit_exceeded"].contains(code) || msg.contains("spending limit reached") || msg.contains("spending limit exceeded") || msg.contains("key limit exceeded")
+}
+
+/// Removes the configured provider key and anything shaped like a bearer token or an sk- key from upstream text.
+func redactSecrets(_ text: String, key: String) -> String {
+    var s = key.isEmpty ? text : text.replacingOccurrences(of: key, with: "[redacted]")
+    let re = try! NSRegularExpression(pattern: #"bearer\s+[A-Za-z0-9._~+/=-]+|sk-[A-Za-z0-9_-]{8,}"#, options: .caseInsensitive)
+    s = re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "[redacted]")
+    return s
 }

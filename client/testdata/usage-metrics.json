@@ -182,11 +182,11 @@
     "cost": 1
   },
   {
-    "name": "nanodollar maximum",
+    "name": "nanodollar maximum is above the ceiling",
     "body": "{\"usage\":{\"cost\":9223372036.854775807}}",
     "input": null,
     "output": null,
-    "cost": 9223372036854775807
+    "cost": null
   },
   {
     "name": "nanodollar rounded overflow",
@@ -201,5 +201,19 @@
     "input": null,
     "output": null,
     "cost": 10000000
+  },
+  {
+    "name": "cost at the ceiling",
+    "body": "{\"usage\":{\"cost\":1000000}}",
+    "input": null,
+    "output": null,
+    "cost": 1000000000000000
+  },
+  {
+    "name": "cost above the ceiling",
+    "body": "{\"usage\":{\"input_tokens\":3,\"cost\":1000000.000000001}}",
+    "input": 3,
+    "output": null,
+    "cost": null
   }
 ]
