@@ -373,8 +373,9 @@ func protectedCanonicalFor(full, root string, git bool) bool {
 		return true
 	}
 	defer rooted.Close()
-	rel, err := filepath.Rel(root, full)
-	if err != nil {
+	// Sync may return the canonical name while root still uses a system link such as /var.
+	rel, ok := insideBases(rootBases(rooted), full)
+	if !ok {
 		return true
 	}
 	resolved, err := rootResolve(rooted, rel, true)

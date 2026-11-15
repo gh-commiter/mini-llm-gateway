@@ -409,3 +409,27 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
         }
     }
 }
+
+/// The canonical result from sync must remain inside a root opened through a system link.
+@Test func shareRootThroughSystemLink() throws {
+    let canonical = try tmp("system-link")
+    guard canonical.path.hasPrefix("/private/var/") || canonical.path.hasPrefix("/private/tmp/") else { return }
+    let root = URL(fileURLWithPath: String(canonical.path.dropFirst("/private".count)))
+    let system = "/" + (root.path.split(separator: "/").first.map(String.init) ?? "")
+    #expect(isLink(URL(fileURLWithPath: system)))
+    let rt = try #require(ShareRoot(root))
+    #expect(ShareRoot.safeTargetPath(root.path) == canonical.path)
+    #expect(try rt.resolve("new.txt", followLast: true) == "new.txt")
+    for name in ["new.txt", ".git/hooks/new"] {
+        let full = try #require(Sync.resolve(name, root: root))
+        for base in [root, canonical] {
+            #expect(Sync.protectedCanonical(full, root: base) == (name != "new.txt"))
+        }
+    }
+    #expect(dav(root, "PUT", "/new.txt", [:], "ok").status == 201)
+    #expect(read(canonical.appendingPathComponent("new.txt")) == "ok")
+    var state: [String: Sync.Entry] = [:]
+    let (notes, done) = Sync.apply(Sync.Changes(changed: [entry("sync.txt", "sync")]), root: root, state: &state) { _ in Data("sync".utf8) }
+    #expect(notes.isEmpty && done == ["sync.txt"], "\(notes)")
+    #expect(read(canonical.appendingPathComponent("sync.txt")) == "sync")
+}

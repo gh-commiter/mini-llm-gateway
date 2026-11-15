@@ -375,9 +375,9 @@ public enum Sync {
     /// z manjkajočim koncem, relativno na kanonični koren; nečitljiva pot ali pot zunaj korena = zaščitena.
     static func protectedCanonical(_ url: URL, root: URL, git: Bool = false) -> Bool {
         guard let rooted = ShareRoot(root) else { return true }
-        let base = root.standardizedFileURL.path, full = url.standardizedFileURL.path
-        guard full == base || full.hasPrefix(base + "/") else { return true }
-        let rel = full == base ? "." : String(full.dropFirst(base.count + 1))
+        // Sync may return the canonical name while root still uses a system link such as /var.
+        guard let parts = rooted.inside(url.standardizedFileURL.path) else { return true }
+        let rel = ShareRoot.join(parts)
         guard let resolved = try? rooted.resolve(rel, followLast: true) else { return true }
         return isProtected(resolved, git: git)
     }

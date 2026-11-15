@@ -103,7 +103,7 @@ final class ShareRoot: @unchecked Sendable {
     }
 
     /// Absolutni cilj (leksikalno) relativno na ime korena, v katerem leži; nil, če je zunaj. APFS ne loči velikosti črk.
-    private func inside(_ target: String) -> [String]? {
+    func inside(_ target: String) -> [String]? {
         let fold: (String) -> String = { self.caseSensitive ? $0 : $0.lowercased() }
         let t = Self.lexical(target), tl = t.map(fold)
         for b in bases where t.count >= b.count && tl[..<b.count].elementsEqual(b.map(fold)) {

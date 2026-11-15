@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -77,5 +78,41 @@ func TestAutomountTargetNeverResolved(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("finalPath called %d times for automount roots", calls)
+	}
+}
+
+func TestRootThroughSystemLink(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS system links")
+	}
+	canonical, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(canonical, "/private/var/") && !strings.HasPrefix(canonical, "/private/tmp/") {
+		t.Skip("temporary directory is outside the system-linked directories")
+	}
+	root := strings.TrimPrefix(canonical, "/private")
+	system := "/" + strings.Split(strings.TrimPrefix(root, "/"), "/")[0]
+	if st, err := os.Lstat(system); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("%s must be a system link", system)
+	}
+	if got, err := safeFinalPath(root, []string{root}); err != nil || got != canonical {
+		t.Fatalf("safeFinalPath = %q, %v; want %q", got, err, canonical)
+	}
+	for _, name := range []string{"new.txt", ".git/hooks/new"} {
+		full, ok := syncResolve(name, root)
+		if !ok {
+			t.Fatalf("syncResolve refused %s", name)
+		}
+		want := name != "new.txt"
+		for _, base := range []string{root, canonical} {
+			if got := protectedCanonical(full, base); got != want {
+				t.Errorf("protectedCanonical(%s, %s) = %v, want %v", full, base, got, want)
+			}
+		}
+	}
+	if _, _, ok := davResolve("/new.txt", "", root); !ok {
+		t.Fatal("DAV refused root through system link")
 	}
 }
