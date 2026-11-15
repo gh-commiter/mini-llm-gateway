@@ -1,6 +1,6 @@
 import Foundation
 
-// minigw gw user|bind|project|member|grant|core backup|core audit|usage-events: the owner's commands of the 0.6.0 core, thin calls of
+// minigw gw user|bind|project|member|grant|core backup|core audit|usage|usage-events: the owner's commands of the 0.6.0 core, thin calls of
 // the admin API (the app forwards the core's routes to the helper). A port of client/serve_core_cli.go: the same arguments, help,
 // output, requests and exit codes; client/testdata/admin-commands.json is asserted here and in client/admin_parity_test.go.
 // The glue that connects to the app is Sources/MiniGW/RouterCommand.swift.
@@ -14,9 +14,12 @@ public struct AdminCLIError: Error, Equatable {
 
 /// The flags of the owner commands (Go's coreOpts).
 public struct AdminOpts {
-    public var days = "7", user = "", project = "", model = "", claudeProbe = ""
-    public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "") {
+    public var days = "7", user = "", project = "", model = "", claudeProbe = "", provider = "", device = "", folder = ""
+    public var json = false, csv = false
+    public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
+                provider: String = "", device: String = "", folder: String = "", json: Bool = false, csv: Bool = false) {
         self.days = days; self.user = user; self.project = project; self.model = model; self.claudeProbe = claudeProbe
+        self.provider = provider; self.device = device; self.folder = folder; self.json = json; self.csv = csv
     }
 }
 
@@ -168,6 +171,19 @@ public final class AdminCommands {
                 try request("DELETE", "/grants?source=\(src)&reader=\(try projectID(pos[3]))&class=" + ProjectText.queryEscape(pos[4]))
             default: throw usage
             }
+        case "usage":  // the report of the new events (the folder and device counters: usage --legacy)
+            guard pos.count == 1, !(o.json && o.csv) else { throw fail(UsageReport.help.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            if !o.device.isEmpty || !o.folder.isEmpty { throw fail("--device and --folder belong to the old counters: use minigw gw usage --legacy") }
+            if !o.user.isEmpty || !o.project.isEmpty { throw fail("--user and --project belong to minigw gw usage-events") }
+            var q = ["days": o.days]
+            if !o.provider.isEmpty { q["provider"] = o.provider }
+            if !o.model.isEmpty { q["model"] = o.model }
+            let r = call("GET", "/usage/events" + ProjectText.query(q), nil)
+            guard r.status != 0 else { throw fail("lost the connection to Mini Gateway") }
+            if r.status >= 300 { throw fail(clean(JSONValue.parse(r.data)?.dict["error"]?.dict["message"]?.string ?? "")) }
+            if o.json { say(String(decoding: r.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)); break }
+            guard let (rows, gaps) = UsageReport.rows(r.data) else { throw fail("the usage answer is not understood") }
+            out(o.csv ? UsageReport.csv(rows) : UsageReport.text(rows, gaps))
         case "usage-events":
             try need(1, 1)
             var q = ["days": o.days]

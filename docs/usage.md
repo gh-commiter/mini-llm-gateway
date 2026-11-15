@@ -497,6 +497,7 @@ minigw -p --model claude-codex "Read the project notes and explain how the impor
 # 8. usage: Ana sees her own events, the owner sees everything
 minigw usage --days 7
 minigw gw usage-events --project fakture            # on the gateway computer
+minigw gw usage --days 30                           # on the gateway computer: requests, tokens and cost per provider and model (--csv for a spreadsheet)
 ```
 
 Back up the project database before you change things, and restore it with the gateway stopped:

@@ -33,7 +33,7 @@ runs; otherwise they go to serve.json.
   minigw gw devices [allow <device id> [--name N] | rename <device id> --name N | deny <device id>]
   minigw gw devices history <device id>                 the device's last connections
   minigw gw sessions [--device ID] [--folder DIR] | <session id> | clear
-  minigw gw usage [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)
+  ` + usageReportHelp + `
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
@@ -279,7 +279,11 @@ func routerCommand(args []string, in io.Reader) {
 	yes := fs.Bool("yes", false, "core restore: do not ask")
 	evUser := fs.String("user", "", "usage-events: only this user (name or number)")
 	evProject := fs.String("project", "", "usage-events: only this project (slug or number)")
-	evModel := fs.String("model", "", "usage-events: only this model")
+	evModel := fs.String("model", "", "usage, usage-events: only this model")
+	evProvider := fs.String("provider", "", "usage: only this provider")
+	asJSON := fs.Bool("json", false, "usage: the API answer unchanged")
+	asCSV := fs.Bool("csv", false, "usage: one CSV row per day, provider and model")
+	legacy := fs.Bool("legacy", false, "usage: the counters per folder and device")
 	claudeProbe := fs.String("claude-probe", "", "quota: on or off (the Claude quota probe)")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, routerHelp) }
 	var pos []string // ukazi in zastavice v poljubnem vrstnem redu
@@ -506,8 +510,12 @@ func routerCommand(args []string, in io.Reader) {
 		}
 
 	case "usage":
-		if len(pos) != 1 {
-			fail(routerHelp)
+		if !*legacy {
+			coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, provider: *evProvider, device: *device, folder: *folder, json: *asJSON, csv: *asCSV})
+			break
+		}
+		if len(pos) != 1 || *asJSON || *asCSV || *evModel != "" || *evProvider != "" || *evUser != "" || *evProject != "" {
+			fail(usageReportHelp)
 		}
 		var r struct{ Usage []projectUse }
 		a.do("GET", "/usage?days="+url.QueryEscape(*days)+"&device="+url.QueryEscape(*device)+"&folder="+url.QueryEscape(*folder), nil, &r)
@@ -780,7 +788,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "member", "grant", "core", "usage-events", "quota":
-		coreCommand(a, pos, coreOpts{*days, *evUser, *evProject, *evModel, *claudeProbe})
+		coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

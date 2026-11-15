@@ -23,6 +23,11 @@ type admCase struct {
 		Project     string `json:"project,omitempty"`
 		Model       string `json:"model,omitempty"`
 		ClaudeProbe string `json:"claudeProbe,omitempty"`
+		Provider    string `json:"provider,omitempty"`
+		Device      string `json:"device,omitempty"`
+		Folder      string `json:"folder,omitempty"`
+		JSON        bool   `json:"json,omitempty"`
+		CSV         bool   `json:"csv,omitempty"`
 	} `json:"opts"`
 	Responses []cmdResp `json:"responses"`
 	Want      *admWant  `json:"want,omitempty"`
@@ -79,7 +84,8 @@ func runAdminCase(c *admCase) *admWant {
 		}
 		return 599, []byte(`{"error":{"message":"no such response in the fixture"}}`)
 	}}
-	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe}
+	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
+		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, json: c.Opts.JSON, csv: c.Opts.CSV}
 	if c.Opts.Days != "" {
 		o.days = c.Opts.Days
 	}
@@ -120,5 +126,37 @@ func TestAdminParityCommands(t *testing.T) {
 	}
 	if updateFixtures() {
 		writeFixture(t, "admin-commands.json", fx)
+	}
+}
+
+// The provider/model report (minigw gw usage): client/testdata/usage-report.json, asserted here and in
+// Tests/RouterCoreTests/UsageReportTests.swift.
+func TestUsageReportParity(t *testing.T) {
+	var fx struct {
+		Cases []*admCase `json:"cases"`
+	}
+	readFixture(t, "usage-report.json", &fx)
+	if len(fx.Cases) < 10 {
+		t.Fatalf("only %d cases", len(fx.Cases))
+	}
+	for _, c := range fx.Cases {
+		t.Run(c.Name, func(t *testing.T) {
+			got := runAdminCase(c)
+			if updateFixtures() {
+				c.Want = got
+				return
+			}
+			if c.Want == nil {
+				t.Fatal("no expected values in the fixture")
+			}
+			gj, _ := json.Marshal(got)
+			wj, _ := json.Marshal(c.Want)
+			if !bytes.Equal(gj, wj) {
+				t.Fatalf("\n got %s\nwant %s", gj, wj)
+			}
+		})
+	}
+	if updateFixtures() {
+		writeFixture(t, "usage-report.json", fx)
 	}
 }

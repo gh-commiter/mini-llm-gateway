@@ -16,7 +16,7 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw devices [allow <device id> [--name N] | rename <device id> --name N | deny <device id>]
   minigw gw devices history <device id>                 the device's last connections
   minigw gw sessions [--device ID] [--folder DIR] | <session id> | clear
-  minigw gw usage [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)
+  \(UsageReport.help)
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
@@ -213,7 +213,7 @@ private func agentWork(_ a: AdminConnection, _ kind: String, _ work: String?) {
 func routerCommand(_ argv: [String]) {
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe"]
+    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider"]
     var i = 0
     while i < argv.count {
         let a = argv[i]
@@ -234,6 +234,9 @@ func routerCommand(_ argv: [String]) {
     if let w = flags["work"], !["direct", "sync", "worktree"].contains(w) { fail("--work: direct, sync or worktree") }
     if flags["work"] != nil, !["claude", "codex", "grok"].contains(pos[0]), pos != ["copilot"] {
         fail("--work only applies to minigw gw claude|codex|grok|copilot")
+    }
+    if pos[0] == "usage", let bad = flags.keys.first(where: { !["days", "provider", "model", "json", "csv", "legacy", "device", "folder", "user", "project"].contains($0) }) {
+        fail("minigw gw usage: unknown option --\(bad)\n" + UsageReport.help)
     }
     func need(_ min: Int, _ max: Int) { if pos.count < min || pos.count > max { fail(routerHelp) } }
     if pos.count == 3, pos[0] == "core", pos[1] == "restore" { coreRestore(pos[2], yes: flags["yes"] != nil) }  // the app must NOT run: no admin connection
@@ -329,8 +332,8 @@ func routerCommand(_ argv: [String]) {
             fail(routerHelp)
         }
 
-    case "usage":
-        guard pos.count == 1 else { fail(routerHelp) }
+    case "usage" where flags["legacy"] == "true":  // the folder and device counters of 0.5.x
+        guard pos.count == 1, ["json", "csv", "model", "provider", "user", "project"].allSatisfy({ flags[$0] == nil }) else { fail(UsageReport.help) }
         let query = "?days=" + esc(flags["days"] ?? "7") + "&device=" + esc(flags["device"] ?? "") + "&folder=" + esc(flags["folder"] ?? "")
         let list = a.call("GET", "/usage" + query)["usage"] as? [[String: Any]] ?? []
         list.forEach { say(usageLine($0)) }
@@ -460,14 +463,16 @@ func routerCommand(_ argv: [String]) {
         let argv = [tui, "--minigw", me].map { strdup($0) } + [nil]
         execv(tui, argv)
         fail("cannot start \(tui): \(String(cString: strerror(errno)))")
-    case "user", "bind", "project", "member", "grant", "core", "usage-events", "quota":  // 0.6.0: the owner's commands of the project database
+    case "user", "bind", "project", "member", "grant", "core", "usage", "usage-events", "quota":  // 0.6.0: the owner's commands of the project database
         let cmd = AdminCommands(call: { method, path, body in
             let (status, data) = a.raw(method, Router.adminPrefix + path, body, proof: true)
             return (status, data ?? Data())
         }, out: { try? out.write(contentsOf: Data($0.utf8)) })
         do {
             try cmd.run(pos, AdminOpts(days: flags["days"] ?? "7", user: flags["user"] ?? "", project: flags["project"] ?? "",
-                                       model: flags["model"] ?? "", claudeProbe: flags["claude-probe"] ?? ""))
+                                       model: flags["model"] ?? "", claudeProbe: flags["claude-probe"] ?? "",
+                                       provider: flags["provider"] ?? "", device: flags["device"] ?? "", folder: flags["folder"] ?? "",
+                                       json: flags["json"] == "true", csv: flags["csv"] == "true"))
         } catch let e as AdminCLIError { fail(e.message, code: e.code) } catch { fail("\(error)") }
 
     default:

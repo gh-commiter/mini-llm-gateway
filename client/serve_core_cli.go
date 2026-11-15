@@ -3,6 +3,7 @@ package main
 // minigw gw user|bind|project|member|grant|core …: the core's admin API from the terminal (serve_core_admin.go).
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"minigw/coreapi"
@@ -71,8 +72,11 @@ func projectID(a *adminClient, ref string) int64 {
 	return 0
 }
 
-// coreOpts: the flags of usage-events.
-type coreOpts struct{ days, user, project, model, claudeProbe string }
+// coreOpts: the flags of usage-events and usage.
+type coreOpts struct {
+	days, user, project, model, claudeProbe, provider, device, folder string
+	json, csv                                                         bool
+}
 
 func coreCommand(a *adminClient, pos []string, o coreOpts) {
 	need := func(min, max int) {
@@ -198,6 +202,38 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 			a.do("DELETE", "/grants?source="+src+"&reader="+id(projectID(a, pos[3]), 10)+"&class="+url.QueryEscape(pos[4]), nil, nil)
 		default:
 			fail(strings.TrimSpace(coreHelp))
+		}
+	case "usage": // the report of the new events (the folder and device counters: usage --legacy)
+		if len(pos) != 1 || o.json && o.csv {
+			fail(usageReportHelp)
+		}
+		if o.device != "" || o.folder != "" {
+			fail("--device and --folder belong to the old counters: use minigw gw usage --legacy")
+		}
+		if o.user != "" || o.project != "" {
+			fail("--user and --project belong to minigw gw usage-events")
+		}
+		q := url.Values{"days": {o.days}}
+		if o.provider != "" {
+			q.Set("provider", o.provider)
+		}
+		if o.model != "" {
+			q.Set("model", o.model)
+		}
+		var raw json.RawMessage
+		a.do("GET", "/usage/events?"+q.Encode(), nil, &raw)
+		if o.json {
+			os.Stdout.Write(append(raw, '\n'))
+			break
+		}
+		rows, gaps, err := parseUsageReply(raw)
+		if err != nil {
+			fail("the usage answer is not understood: " + err.Error())
+		}
+		if o.csv {
+			fmt.Print(usageReportCSV(rows))
+		} else {
+			fmt.Print(usageReportText(rows, gaps))
 		}
 	case "usage-events":
 		need(1, 1)
