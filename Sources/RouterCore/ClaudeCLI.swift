@@ -515,8 +515,7 @@ public enum ClaudeCLI {
         p.standardError = out
         p.standardInput = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return .failure(.init("Cannot run file")) }
-        let killer = DispatchWorkItem { Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }  // #73: tudi vnuk s cevjo
-        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: killer)
+        let killer = Native.KillTimer(after: 5) { Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }  // #73: tudi vnuk s cevjo; own thread (#109), not the dispatch pool
         let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         killer.cancel()
@@ -540,8 +539,7 @@ public enum ClaudeCLI {
             p.standardInput = FileHandle.nullDevice
             guard (try? p.run()) != nil else { return [] }
             // #73: drevo (tudi vnuk s cevjo), ne le claude: sicer branje spodaj obvisi
-            let killer = DispatchWorkItem { Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: killer)
+            let killer = Native.KillTimer(after: 15) { Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }  // own thread (#109), not the dispatch pool
             defer { killer.cancel(); Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }
             var line = Data()
             while let b = try? out.fileHandleForReading.read(upToCount: 1), let c = b.first, c != 10 { line.append(c) }
@@ -767,6 +765,8 @@ extension Router {
             + " Maven, Go, npm, pip, Cargo and Gradle caches are already set."
     }
     static let toolList = ToolList()
+    /// The Copilot package cache (the rules deny Edit there too): literal and real path, in the kernel profile's hidden list.
+    static var copilotCacheDenied: [String] { [RouterConfig.copilotCache.path, Sync.real(RouterConfig.copilotCache)?.path].compactMap { $0 } }
 
     /// Naslov tega routerja za lokalni mount_webdav.
     var localBase: String {
@@ -906,7 +906,7 @@ extension Router {
                 // a failed self-check (claude does not run under the profile at all) is the case that falls back, and says so in status and Settings.
                 guard let tmpReal = confinedTmp.flatMap({ Sync.real($0)?.path }), let real = Sync.real(URL(fileURLWithPath: exe))?.path,
                       let profile = Native.claudeRestrictedProfile(session: canon(cwd.path), folders: grants.folders.map(canon), writable: grants.writable && !readOnly,
-                                                                   tmp: tmpReal, exe: real, hidden: RouterConfig.hiddenScratch(config.scratchURL) + RouterConfig.agentDenied(kind: "claude", scratch: config.scratchURL),
+                                                                   tmp: tmpReal, exe: real, hidden: RouterConfig.hiddenScratch(config.scratchURL) + RouterConfig.agentDenied(kind: "claude", scratch: config.scratchURL) + Self.copilotCacheDenied,
                                                                    folderSettings: ClaudeCLIConfig.readsFolderSettings(grants.sources), userSettings: ClaudeCLIConfig.sourceEntries(grants.sources).contains("user"),
                                                                    sessionID: grants.sessionID, denyPorts: [Int(config.port)]) else {
                     Self.log.error("\(rid, privacy: .public) claude: the system sandbox profile for this run could not be built: the run is refused")

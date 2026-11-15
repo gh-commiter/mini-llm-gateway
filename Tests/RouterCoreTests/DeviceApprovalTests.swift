@@ -123,7 +123,7 @@ private func newID() -> String { Noise.base64url(Curve25519.Signing.PrivateKey()
     log.addPending(id: "id0", name: "n0", address: "b")
     #expect(log.pending.first?.address == "b" && log.pending.first?.client == "macOS, minigw 0.5.18")
     #expect(calls.value <= 2)  // največ enkrat na sekundo (+ zakasnjen klic)
-    for _ in 0..<30 where calls.value < 2 { try await Task.sleep(for: .milliseconds(100)) }  // zakasnjen klic (tudi pod obremenitvijo)
+    for _ in 0..<600 where calls.value < 2 { try await Task.sleep(for: .milliseconds(100)) }  // zakasnjen klic: 1 s po prvem; tudi ko bazen niti nekaj sekund nima proste niti (do 60 s)
     #expect(calls.value == 2, "\(calls.value)")
 }
 

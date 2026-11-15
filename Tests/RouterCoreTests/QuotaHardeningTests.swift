@@ -34,9 +34,10 @@ private func waitGone(_ pid: pid_t, seconds: Double = 3) async -> Bool {
         let dir = tempDir("q1a")
         let exe = try script(dir, "sleep 60 &\necho $! > \"\(dir.path)/child.pid\"\nprintf '%s' '\(envelope)'")  // claude ends, its child keeps stdout
         let t0 = Date()
-        let out = try await ClaudeUsageProbe.run(exe: exe, parent: tempDir("p"), limit: 10, drain: 0.5)
+        let out = try await ClaudeUsageProbe.run(exe: exe, parent: tempDir("p"), limit: 30, drain: 0.5)
         #expect(String(decoding: out, as: UTF8.self).contains("Current week"))
-        #expect(Date().timeIntervalSince(t0) < 6, "took \(Date().timeIntervalSince(t0)) s")
+        // the property: it returned by its drain, not by the limit (30 s) and not by the grandchild's own sleep (60 s); the margin is the load of the machine, not a guess at its speed
+        #expect(Date().timeIntervalSince(t0) < 25, "took \(Date().timeIntervalSince(t0)) s")
         let pid = pid_t(try String(contentsOf: dir.appendingPathComponent("child.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
         #expect(await waitGone(pid), "the grandchild lives")
     }
@@ -48,7 +49,7 @@ private func waitGone(_ pid: pid_t, seconds: Double = 3) async -> Bool {
         do { _ = try await ClaudeUsageProbe.run(exe: exe, parent: tempDir("p"), limit: 1, drain: 0.5); Issue.record("no error") } catch {
             #expect((error as? QuotaError)?.description == "claude /usage failed: timed out after 1 s")
         }
-        #expect(Date().timeIntervalSince(t0) < 8, "took \(Date().timeIntervalSince(t0)) s")
+        #expect(Date().timeIntervalSince(t0) < 25, "took \(Date().timeIntervalSince(t0)) s")  // ends by its 1 s limit, far below the 60 s sleeps
         for f in ["child.pid", "main.pid"] {
             let pid = pid_t(try String(contentsOf: dir.appendingPathComponent(f), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
             #expect(await waitGone(pid), "\(f) lives")
@@ -65,7 +66,7 @@ private func waitGone(_ pid: pid_t, seconds: Double = 3) async -> Bool {
         let i = QuotaInputs(claudeProbe: true, claudeExe: hung, claudeEnabled: true, providers: [], key: { _ in nil }, tmpParent: tempDir("p"))
         let t0 = Date()
         let first = await e.report(i, now: t0).filter { $0.name == "claude" }
-        #expect(first.first?.reason.contains("timed out") == true && Date().timeIntervalSince(t0) < 8)
+        #expect(first.first?.reason.contains("timed out") == true && Date().timeIntervalSince(t0) < 25)  // ends by its 1 s limit, far below the stub's 60 s sleeps
         _ = try script(dir, "printf '%s' '\(envelope)'")  // the same path now works
         let later = await e.report(i, now: t0.addingTimeInterval(61)).filter { $0.name.hasPrefix("claude") }  // after the back-off
         #expect(later.first?.name == "claude.week.all-models", "\(later)")
@@ -142,7 +143,8 @@ private func waitGone(_ pid: pid_t, seconds: Double = 3) async -> Bool {
         try h.close()
         let t0 = Date()
         let v = QuotaParse.lastRateLimits(path: path, observed: Date())
-        #expect(v.count == 1 && Date().timeIntervalSince(t0) < 2)
+        // the result is the property (the last record of a 300 MB file, found); the time is only a ceiling against a pathological scan: a tight one only measures the machine's load
+        #expect(v.count == 1 && Date().timeIntervalSince(t0) < 20, "took \(Date().timeIntervalSince(t0)) s")
     }
 
     @Test func aFolderOfMillionsOfNamesCostsABoundedAmount() throws {
@@ -204,22 +206,22 @@ private final class SocketServer: @unchecked Sendable {
         }
         defer { server.stop() }
         let t0 = Date()
-        let r = await QuotaHTTP.get(URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/x")!), limit: 1 << 20, deadline: 10)
+        let r = await QuotaHTTP.get(URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/x")!), limit: 1 << 20, deadline: 60)
         let got = try #require(r)
         #expect(got.status == 200 && got.data.count >= 1 << 20 && got.data.count < (1 << 20) + (256 << 10), "\(got.data.count) bytes")
-        #expect(Date().timeIntervalSince(t0) < 8)
+        #expect(Date().timeIntervalSince(t0) < 30, "took \(Date().timeIntervalSince(t0)) s")  // cut at the limit, not at the 60 s deadline (the byte count above is what proves the cut)
     }
 
     @Test func aSlowBodyHitsTheDeadlineForTheWholeTransfer() async throws {
         let server = SocketServer { c in
             _ = SocketServer.raw(c, Data("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".utf8))
-            for _ in 0..<100 { if !SocketServer.raw(c, Data("x".utf8)) { return }; usleep(200_000) }  // a byte every 0.2 s: no request timeout would ever fire
+            for _ in 0..<600 { if !SocketServer.raw(c, Data("x".utf8)) { return }; usleep(200_000) }  // a byte every 0.2 s for two minutes: no request timeout would ever fire
         }
         defer { server.stop() }
         let t0 = Date()
         let r = await QuotaHTTP.get(URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/x")!), limit: 1 << 20, deadline: 1.5)
         #expect(r == nil, "a trickle past the deadline was accepted")
-        #expect(Date().timeIntervalSince(t0) < 6)
+        #expect(Date().timeIntervalSince(t0) < 60, "took \(Date().timeIntervalSince(t0)) s")  // ends by its 1.5 s deadline, far below the 120 s the trickle lasts
     }
 
     @Test func aRedirectIsNotFollowed() async throws {

@@ -165,6 +165,16 @@ private struct Rig {
     #expect(try !rig.canWrite(p, rig.project + "/.claude/settings.json") && !rig.canWrite(p, rig.project + "/sub/.claude/settings.local.json"))  // folder settings are read
     let plain = try rig.profile(session: rig.project, writable: true)
     #expect(try rig.canWrite(plain, rig.project + "/.claude/x") && !rig.canWrite(plain, rig.project + "/.git/config"))  // `.claude` only with those sources
+    // M1: Seatbelt compares paths case-insensitively on APFS: `.GIT`, `.Git`, `.CLAUDE` are closed as `.git` and `.claude` are (the rows only mean something on a case-insensitive volume)
+    try Data("p".utf8).write(to: URL(fileURLWithPath: rig.root.path + "/CaseProbe"))
+    if FileManager.default.fileExists(atPath: rig.root.path + "/caseprobe") {
+        #expect(try !rig.canWrite(p, rig.project + "/.GIT/config") && !rig.canWrite(p, rig.project + "/.Git/hooks/x") && !rig.canWrite(p, rig.project + "/sub/.GIT/hooks/y"))
+        #expect(try !rig.ok(p, "/bin/mkdir", [rig.project + "/sub/.GIT"]) && !rig.ok(p, "/bin/mkdir", [rig.project + "/sub3/.Git"]) && !rig.ok(p, "/bin/mkdir", [rig.project + "/sub/.CLAUDE/x"]))
+        #expect(try !rig.canWrite(p, rig.project + "/.CLAUDE/settings.json") && !rig.canWrite(p, rig.project + "/sub/.Claude/settings.local.json"))
+        // the older macOS sandbox profile (minigw run, Copilot) has the same names: the same
+        let old = try #require(Native.sandboxProfile(dir: rig.project, home: rig.home, network: false, writable: [rig.project]))
+        #expect(try !rig.ok(old, "/usr/bin/touch", [rig.project + "/.GIT/config"]) && !rig.ok(old, "/bin/mkdir", [rig.project + "/sub/.GIT"]))
+    }
     // a read-only run has no write at all (the rows above, plus `.git`)
     let ro = try rig.profile(session: rig.project, writable: false)
     #expect(try !rig.canWrite(ro, rig.project + "/a2.txt"))
@@ -191,6 +201,7 @@ private struct Rig {
     let freshFolder = rig.home + "/.claude/projects/" + Native.claudeProjectFolder(rig.allowed)
     try FileManager.default.createDirectory(atPath: rig.home + "/.claude/projects", withIntermediateDirectories: true)
     #expect(try rig.ok(fresh, "/bin/mkdir", [freshFolder]) && FileManager.default.fileExists(atPath: freshFolder))
+    #expect(try !rig.ok(fresh, "/bin/chmod", ["700", freshFolder]) && !rig.ok(fresh, "/usr/bin/chflags", ["hidden", freshFolder]))  // L3: creating the folder, not changing the owner's folder
     #expect(try rig.canWrite(fresh, freshFolder + "/" + id + ".jsonl") && !rig.canWrite(fresh, freshFolder + "/" + other + ".jsonl"))
     // an id that is not a UUID-like token never goes into a regex
     let odd = try rig.profile(session: rig.project, sessionID: ".*")
@@ -235,16 +246,32 @@ private struct Rig {
         #expect(try rig.status(named, "/usr/bin/nc", ["-z", "-w", "2", h, String(port)]) != 0)
     }
     #expect(named.contains("(deny network-outbound (remote ip \"*:\(port)\"))") && p.contains("(deny network-bind)") && p.contains("(deny network-inbound)"))
-    // nothing can listen: a listener started inside the profile does not accept
-    let listen = Process()
-    listen.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-    let freePort = port + 1
-    listen.arguments = ["-p", p, "/usr/bin/nc", "-l", "127.0.0.1", String(freePort)]
-    listen.standardOutput = FileHandle.nullDevice; listen.standardError = FileHandle.nullDevice; listen.standardInput = FileHandle.nullDevice
-    try listen.run()
-    defer { if listen.isRunning { listen.terminate() } }
-    Thread.sleep(forTimeInterval: 0.6)
-    #expect(try rig.status(nil, "/usr/bin/nc", ["-z", "-w", "2", "127.0.0.1", String(freePort)]) != 0)
+    // nothing can listen: binding inside the profile is refused by the kernel ("Operation not permitted"), whatever the port is doing: no row depends on a port staying unused
+    let attempt = Process(), err = Pipe()
+    attempt.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+    attempt.arguments = ["-p", p, "/usr/bin/nc", "-l", "127.0.0.1", String(Int.random(in: 40000...60000))]
+    attempt.standardOutput = FileHandle.nullDevice; attempt.standardError = err; attempt.standardInput = FileHandle.nullDevice
+    try attempt.run()
+    let refused = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)  // returns when nc exits: at once when refused
+    attempt.waitUntilExit()
+    #expect(refused.contains("Operation not permitted") && attempt.terminationStatus != 0, "\(refused)")
+}
+
+/// L4: the root is never a grant, a trailing slash does not weaken the denies (the prefix `//` matched nothing); L5: the Copilot cache is in the hidden list of a run.
+@Test func rootAndTrailingSlashGrants() throws {
+    let rig = try Rig()
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    #expect(Native.claudeRestrictedProfile(session: "/", folders: [], writable: true, tmp: rig.tmp, exe: "/c", home: rig.home) == nil)
+    #expect(Native.claudeRestrictedProfile(session: rig.project, folders: ["/"], writable: false, tmp: rig.tmp, exe: "/c", home: rig.home) == nil)
+    let slash = try rig.profile(session: rig.project, folders: [rig.root.path + "/"])  // a grant around the whole rig, with a trailing slash
+    #expect(try rig.canRead(slash, rig.outside + "/x.txt"))
+    #expect(try !rig.canRead(slash, rig.home + "/.ssh/config") && !rig.canRead(slash, rig.scratch + "/state/s") && !rig.canRead(slash, rig.app + "/state.json") && !rig.canWrite(slash, rig.project + "/.git/config"))
+    #expect(Router.copilotCacheDenied.contains(RouterConfig.copilotCache.path))
+    let cache = rig.root.path + "/home/Library/Caches/copilot"
+    try FileManager.default.createDirectory(atPath: cache, withIntermediateDirectories: true)
+    try Data("code".utf8).write(to: URL(fileURLWithPath: cache + "/pkg.js"))
+    let p = try #require(Native.claudeRestrictedProfile(session: rig.project, folders: [rig.root.path], writable: true, tmp: rig.tmp, exe: "/c", home: rig.home, hidden: [cache]))
+    #expect(try !rig.canRead(p, cache + "/pkg.js") && !rig.canWrite(p, cache + "/new.js"))
 }
 
 @Test func devicesAreTheFewOnesClaudeUses() throws {
@@ -350,6 +377,14 @@ private struct Rig {
     #expect(ClaudeSeatbelt.kernelRows(profile: closed, session: rig.project, outside: rig.outside, canary: "CANARY") != nil)
 }
 
+/// Claude keeps a conversation folder in ~/.claude/projects for every working folder it ran in: the test's own (unique) folders are removed again.
+private func removeTranscriptFolders(_ paths: [String]) {
+    for p in paths {
+        let real = Sync.real(URL(fileURLWithPath: p))?.path ?? p
+        try? FileManager.default.removeItem(atPath: NSHomeDirectory() + "/.claude/projects/" + Native.claudeProjectFolder(real))
+    }
+}
+
 /// A fake claude: starts under the profile, reads canary.txt of its cwd and answers it, or fails as a broken profile would.
 private func fakeClaude(_ dir: URL, body: String) throws -> String {
     let f = dir.appendingPathComponent("claude")
@@ -424,6 +459,71 @@ private final class Clock: @unchecked Sendable {
     #expect(await seatbelt.state == .unchecked)  // never turned off by an outage
 }
 
+/// The self-check's runner kills a hung tree on timeout (it once killed nothing: Process is not a group leader, so a hung claude would have blocked every check).
+@Test func captureKillsAHungTreeOnTimeout() async throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("capture-" + UUID().uuidString.lowercased(), isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let t0 = Date()
+    let r = ClaudeSeatbelt.capture("/bin/sh", ["-c", "sleep 60 & echo $! > \"\(dir.path)/child\"; wait"], env: ProcessInfo.processInfo.environment, cwd: dir.path, input: "", timeout: 1, log: dir)
+    #expect(r.timedOut && Date().timeIntervalSince(t0) < 30)  // far below the 60 s sleep
+    let child = pid_t(try String(contentsOf: dir.appendingPathComponent("child"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
+    var gone = false
+    for _ in 0..<150 { if kill(child, 0) != 0 { gone = true; break }; try await Task.sleep(for: .milliseconds(20)) }
+    #expect(gone, "the descendant lives")
+}
+
+/// The kill timers do not depend on a free thread of the dispatch pool (under a loaded full run the pool had none for seconds and a timer fired after the process it guarded had finished:
+/// reproduced once by keeping the pool busy for 9 s, which also made other tests miss their limits, so the property is checked structurally): the action runs on its own named thread,
+/// once, and `cancel()` prevents it.
+@Test func killTimerRunsOnItsOwnThreadOnceAndCanBeCancelled() async throws {
+    final class Seen: @unchecked Sendable {
+        let lock = NSLock(); var names: [String] = []; var pool = false
+        func add(_ n: String, onMain: Bool) { lock.withLock { names.append(n); if onMain { pool = true } } }
+    }
+    let seen = Seen()
+    let timer = Native.KillTimer(after: 0.2) { seen.add(Thread.current.name ?? "", onMain: Thread.isMainThread) }
+    for _ in 0..<500 where seen.lock.withLock({ seen.names.isEmpty }) { try await Task.sleep(for: .milliseconds(20)) }  // generous: it must fire, however loaded
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(seen.names == [Native.KillTimer.threadName] && !seen.pool)  // once, on its own thread
+    #expect(!timer.cancel())  // too late: it ran
+    let cancelled = Seen()
+    let late = Native.KillTimer(after: 0.3) { cancelled.add("ran", onMain: false) }
+    #expect(late.cancel())
+    try await Task.sleep(for: .milliseconds(700))
+    #expect(cancelled.names.isEmpty)
+}
+
+/// L1: a run too slow under the profile while the control run answers is a slow machine, not a broken profile; an `off` verdict expires (30 minutes) and is checked again.
+@Test func timeoutIsInconclusiveAndOffExpires() async throws {
+    let rig = try Rig()
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    let base = URL(fileURLWithPath: rig.scratch + "/tmp")
+    let slow = try fakeClaude(rig.root, body: "[ -n \"$CLAUDE_CODE_TMPDIR\" ] && sleep 6; cat canary.txt; cat >/dev/null")  // slow only under the profile
+    #expect(ClaudeSeatbelt.checkNow(exe: slow, tmpBase: base, home: rig.home, requireTranscript: false, modelTimeout: 2) == .inconclusive)
+    // it answers at once and then hangs: what a killed run printed is no answer, whichever way the kill races with the shell (the canary is in the output, the verdict is still "timed out")
+    let answersThenHangs = try fakeClaude(rig.root, body: "if [ -n \"$CLAUDE_CODE_TMPDIR\" ]; then cat canary.txt; sleep 6; fi; cat canary.txt; cat >/dev/null")
+    #expect(ClaudeSeatbelt.checkNow(exe: answersThenHangs, tmpBase: base, home: rig.home, requireTranscript: false, modelTimeout: 2) == .inconclusive)
+    // off, then expiry with an injected clock: the marker makes claude fail under the profile only
+    let marker = rig.root.path + "/off-marker"
+    try Data().write(to: URL(fileURLWithPath: marker))
+    let exe = try fakeClaude(rig.root, body: "[ -n \"$CLAUDE_CODE_TMPDIR\" ] && [ -e \"\(marker)\" ] && { echo 'EPERM transient' >&2; exit 1; }; cat canary.txt; cat >/dev/null")
+    let clock = Clock()
+    let seatbelt = ClaudeSeatbelt(home: rig.home, now: { clock.now }, requireTranscript: false)
+    let cache = rig.root.appendingPathComponent("cache.json")
+    let first = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache)
+    let firstState = await seatbelt.state
+    #expect(!first && firstState != .on && firstState != .unchecked)
+    try FileManager.default.removeItem(atPath: marker)  // the cause is gone
+    clock.advance(ClaudeSeatbelt.offFor - 1)
+    let early = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache)
+    #expect(!early)  // not before the expiry
+    clock.advance(2)
+    let later = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache)
+    let laterState = await seatbelt.state
+    #expect(later && laterState == .on)  // checked again, on
+}
+
 @Test func ensureCachesOnDiskAndReportsAFailureOnce() async throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
@@ -464,9 +564,10 @@ private final class Clock: @unchecked Sendable {
 @Test func realClaudeWithWeakRulesIsStoppedByTheKernel() async throws {
     guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
     let home = NSHomeDirectory()
-    let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-test")  // a fixed path: claude keeps one transcript folder for it in ~/.claude/projects, not one per run
+    let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-test-" + UUID().uuidString.lowercased())  // unique (parallel runs of the suite); its transcript folders are removed below
     try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: base) }
+    defer { removeTranscriptFolders([base.path + "/Mini Gateway/mounts/aaaa", base.path + "/tmp/run-seatbelt/session"]) }
     // the layout of a remote client's mount: the session folder inside the app folder, a sibling mount next to it (the outside file)
     let app = base.appendingPathComponent("Mini Gateway")
     let session = app.appendingPathComponent("mounts/aaaa"), outside = app.appendingPathComponent("mounts/bbbb"), tmp = base.appendingPathComponent("tmp")
@@ -610,10 +711,11 @@ private final class Clock: @unchecked Sendable {
     @Test func realRestrictedRunReadsWritesAndResumes() async throws {
         await Router.claudeSeatbelt.setRequireTranscript(true)  // real claude: the transcript must be saved under the profile
         guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
-        let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-run")  // fixed: one transcript folder in ~/.claude/projects
+        let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-run-" + UUID().uuidString.lowercased())  // unique (parallel runs of the suite); its transcript folders are removed below
         let project = base.appendingPathComponent("proj"), logDir = base.appendingPathComponent("log")
         for d in [project, logDir] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
         defer { try? FileManager.default.removeItem(at: base) }
+        defer { removeTranscriptFolders([project.path, logDir.path, base.appendingPathComponent("scratch/Mini Gateway Scratch/tmp/run-seatbelt/session").path]) }
         var env = ProcessInfo.processInfo.environment
         for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" { env[k] = nil }
         let probe = ClaudeSeatbelt.capture(exe, ["-p", "--model", "haiku", "--tools", "", "--no-session-persistence"], env: env, cwd: logDir.path, input: "Reply with the word ok.", timeout: 120, log: logDir)
@@ -640,5 +742,41 @@ private final class Clock: @unchecked Sendable {
         #expect(on == .on, "\(on)")
         let (s2, a2) = await turn([["role": "user", "content": q1], ["role": "assistant", "content": a1], ["role": "user", "content": "Without using any tool: which file did you just create?"]])
         #expect(s2 == 200 && a2.contains("w.txt"), "\(s2) \(a2.prefix(300))")  // the conversation was resumed
+    }
+
+    /// What the rule layer relies on, measured with the real Claude Code (2.1.322): its path globs match any letter case (plain and bracket classes alike), for Edit and Read, allow and deny,
+    /// existing and new folders: `.GIT`, `.Git` and `.CLAUDE` are closed by the lowercase rules. A neutral folder name is used (Claude Code also guards `.git` itself, which would hide the rule).
+    @Test func realClaudeRuleGlobsMatchAnyCase() async throws {
+        guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
+        let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-glob-" + UUID().uuidString.lowercased())
+        let session = base.appendingPathComponent("s"), logDir = base.appendingPathComponent("log")
+        for d in [session.appendingPathComponent("sub/Zname"), logDir] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+        defer { try? FileManager.default.removeItem(at: base) }
+        defer { removeTranscriptFolders([session.path, logDir.path]) }
+        try Data("ZDATA".utf8).write(to: session.appendingPathComponent("sub/Zname/f.txt"))
+        var env = ProcessInfo.processInfo.environment
+        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" { env[k] = nil }
+        env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        let sp = try #require(Sync.real(session)).path
+        func run(_ tool: String, allowed: String?, denied: String?, _ prompt: String) -> String {
+            var a = ["-p", "--model", "haiku", "--output-format", "json", "--tools", tool, "--permission-mode", "dontAsk", "--setting-sources", "", "--no-session-persistence"]
+            if let allowed { a += ["--allowedTools", allowed] }
+            if let denied { a += ["--disallowedTools", denied] }
+            return ClaudeSeatbelt.capture(exe, a, env: env, cwd: sp, input: prompt, timeout: 120, log: logDir).out
+        }
+        let probe = run("Read", allowed: "Read(./**)", denied: nil, "Use the Read tool on \(sp)/sub/Zname/f.txt and print its content.")
+        guard probe.contains("ZDATA") else { try Test.cancel("claude is not logged in or not reachable here: \(probe.prefix(160))") }
+        let u = String(Int.random(in: 1000...9999))
+        let read = "Use the Read tool on \(sp)/sub/ZNAME/f.txt and print its content. If denied say DENIED."
+        #expect(!run("Read", allowed: "Read(./**)", denied: "Read(/\(sp)/**/zname/**)", read).contains("ZDATA"), "deny, plain lowercase glob, other case: not closed")
+        #expect(!run("Read", allowed: "Read(./**)", denied: "Read(/\(sp)/**/[zZ][nN][aA][mM][eE]/**)", read).contains("ZDATA"), "deny, bracket classes")
+        #expect(run("Read", allowed: "Read(/\(sp)/**/zname/**)", denied: nil, read).contains("ZDATA"), "allow, plain lowercase glob, other case")
+        let write = "Use the Write tool to create \(sp)/sub/NewDir\(u)/f with text X. If denied say DENIED."
+        _ = run("Write", allowed: "Edit(./**)", denied: "Edit(/\(sp)/**/newdir\(u)/**)", write)
+        #expect(!FileManager.default.fileExists(atPath: sp + "/sub/NewDir\(u)/f"), "Edit deny, plain lowercase glob, a new folder in other case: not closed")
+        _ = run("Write", allowed: "Edit(./**)", denied: "Edit(/\(sp)/**/[nN][eE][wW][dD][iI][rR]\(u)/**)", write)
+        #expect(!FileManager.default.fileExists(atPath: sp + "/sub/NewDir\(u)/f"), "Edit deny, bracket classes")
+        _ = run("Write", allowed: "Edit(/\(sp)/**/newdir\(u)/**)", denied: nil, write)
+        #expect(FileManager.default.fileExists(atPath: sp + "/sub/NewDir\(u)/f"), "Edit allow, plain lowercase glob, other case")
     }
 }
