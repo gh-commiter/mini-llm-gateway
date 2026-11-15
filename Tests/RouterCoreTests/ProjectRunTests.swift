@@ -188,18 +188,20 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
 
     @Test func agentRequestIsAdmittedOnlyForADirectMemberAndRefusedLocallyWithTheFixedBodies() async throws {
         let f = try await PFx()
+        let helper = { "helper ready \(f.h.isReady) restarts \(f.h.restarts) last failure \(f.h.lastFailure)" }  // #109: a 503 or a failed run = the helper was down
         f.makeRouter(claude: try f.script("claude", fakeClaude))
         await f.project("fakture"); await f.project("other"); await f.project("old")
         await f.user("ana", projects: ["fakture": "developer", "old": "developer"])
         _ = await f.admin("PATCH", "/projects/\(f.pid["old"]!)", #"{"archived":true}"#)
         // an archived project is admitted, as in Go (archiving only stops writes; the link-check of the core accepts it): the run reads
-        #expect(await f.ask(project: f.pid["old"]).status == 200)
+        let archived = await f.ask(project: f.pid["old"])
+        #expect(archived.status == 200, "archived: \(archived.status) \(archived.text) \(helper())")
         // a member: the run goes
         let ok = await f.ask(project: f.pid["fakture"])
-        #expect(ok.status == 200 && f.exists("ran.txt"), "\(ok.text)")
+        #expect(ok.status == 200 && f.exists("ran.txt"), "\(ok.text) \(helper())")
         // no header: today's behaviour, no project, no port (the ask switch is off)
         let plain = await f.ask()
-        #expect(plain.status == 200 && f.read("port.txt") == "none")
+        #expect(plain.status == 200 && f.read("port.txt") == "none", "\(plain.status) \(plain.text) port \(f.read("port.txt") ?? "-") \(helper())")
         let ranBefore = f.read("ran.txt")
         // refused: not a member, no such project, a header that is no id, no device in the tunnel; one fixed 403 body, the agent never runs
         for (name, w) in [("non-member", await f.ask(project: f.pid["other"])),
@@ -209,9 +211,9 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
                           ("unlisted device", await f.ask(project: f.pid["fakture"], device: "stranger"))] {
             #expect(w.status == 403 && w.text.contains(#""type":"no_project_access""#) && w.text.contains(#""message":"No project access""#)
                     && w.text.contains(#""type":"error""#) && w.text.contains("x-should-retry: false"),
-                    "\(name): \(w.status) \(w.text) helper ready \(f.h.isReady) restarts \(f.h.restarts) last failure \(f.h.lastFailure)")  // #109: a 503 here = the helper was down
+                    "\(name): \(w.status) \(w.text) \(helper())")
         }
-        #expect(f.read("ran.txt") == ranBefore)  // none of them started an agent
+        #expect(f.read("ran.txt") == ranBefore, "\(helper())")  // none of them started an agent
         // the fixed refusal is the body asserted by Go (testdata/no_project_access.json) inside the Anthropic shape
         let fixed = String(decoding: try Data(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("client/coreapi/testdata/no_project_access.json")), as: UTF8.self)
@@ -219,7 +221,7 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         // other agent kinds go through the same admission
         f.makeRouter(claude: try f.script("claude", fakeClaude), codex: try f.script("codex", fakeCodex))
         let codexRefused = await f.ask("claude-codex", project: f.pid["other"])
-        #expect(codexRefused.status == 403 && !f.exists("call-0.args"))
+        #expect(codexRefused.status == 403 && !f.exists("call-0.args"), "\(codexRefused.status) \(codexRefused.text) \(helper())")
     }
 
     @Test func helperDownIsA503AndNeverARunWithoutTheProject() async throws {

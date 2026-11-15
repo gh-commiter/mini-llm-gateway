@@ -235,8 +235,11 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         // Ponovitev pri pravem routerju: druga povezava, drug h → 401; pravi dokaz → 200.
         let real = AdminClient(port: port, routerKey: realKey.publicKey.rawRepresentation)
         let replay = String(captured)
-        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 30).0 == 401)
-        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30).0 == 200)
+        // #109: a 0 says where it failed (stage, errno); the earlier failures only showed "→ 0"
+        let replayed = real.attempt("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 30)
+        #expect(replayed.0 == 401, "replay: \(replayed.0) \(replayed.2)")
+        let proven = real.attempt("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30)
+        #expect(proven.0 == 200, "proof: \(proven.0) \(proven.2)")
         // Brez ključa routerja (program na vratih ne konča rokovanja): 0, nič poslano.
         #expect(AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation).request("GET", "/health/live", nil, timeout: 30).0 == 0)
     }
