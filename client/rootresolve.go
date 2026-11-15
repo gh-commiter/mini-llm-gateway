@@ -27,6 +27,7 @@ func rootResolve(rooted *os.Root, rel string, followLast bool) (string, error) {
 		return "", fmt.Errorf("invalid path: %s", rel)
 	}
 	var bases []string
+	lastLink := rel
 	for rewrites := 0; ; rewrites++ {
 		if rewrites > maxLinkRewrites {
 			return "", fmt.Errorf("too many links: %s", rel)
@@ -34,6 +35,13 @@ func rootResolve(rooted *os.Root, rel string, followLast bool) (string, error) {
 		parts := strings.Split(filepath.ToSlash(rel), "/")
 		cur, again := ".", false
 		for i, name := range parts {
+			if name == ".." {
+				if cur == "." {
+					return "", fmt.Errorf("%s: %s", linkRefusal, lastLink)
+				}
+				cur = filepath.Dir(cur)
+				continue
+			}
 			next := filepath.Join(cur, name)
 			rest := parts[i+1:]
 			if i == len(parts)-1 && !followLast {
@@ -41,6 +49,11 @@ func rootResolve(rooted *os.Root, rel string, followLast bool) (string, error) {
 			}
 			st, err := rooted.Lstat(next)
 			if err != nil { // absent: the operation reports it
+				for _, part := range rest {
+					if part == ".." {
+						return "", fmt.Errorf("%s: %s", linkRefusal, lastLink)
+					}
+				}
 				return filepath.Join(append([]string{next}, rest...)...), nil
 			}
 			target := ""
@@ -54,31 +67,49 @@ func rootResolve(rooted *os.Root, rel string, followLast bool) (string, error) {
 			if runtime.GOOS == "windows" {
 				target = trimFinalPrefix(target)
 			}
+			if bases == nil {
+				bases = rootBases(rooted)
+			}
+			probe := target
+			if !filepath.IsAbs(probe) {
+				probe = bases[len(bases)-1] + string(filepath.Separator) + cur + string(filepath.Separator) + target
+			}
+			if !trustedUNCPath(probe, bases) && !safeTarget(probe, bases) {
+				return "", fmt.Errorf("%s: %s", linkRefusal, next)
+			}
+			lastLink = next
 			var np string
 			switch {
 			case filepath.IsAbs(target):
-				if bases == nil {
-					bases = rootBases(rooted)
-				}
 				var ok bool
-				if np, ok = insideBases(bases, target); !ok {
-					np, ok = insideBases(bases, realTarget(target, bases)) // the link was made with another name of the share
+				if np, ok = insideLinkBases(bases, target); !ok {
+					np, ok = insideLinkBases(bases, realTarget(target, bases)) // the link was made with another name of the share
 				}
 				if !ok {
 					return "", fmt.Errorf("%s: %s", linkRefusal, next)
 				}
 			case filepath.VolumeName(target) != "" || strings.HasPrefix(target, `/`) || strings.HasPrefix(target, `\`):
 				return "", fmt.Errorf("%s: %s", linkRefusal, next)
-			default: // cur has no links, so joining is exact
-				if np = filepath.Join(cur, target); !filepath.IsLocal(np) {
-					return "", fmt.Errorf("%s: %s", linkRefusal, next)
+			default:
+				// Keep .. until every preceding link has been resolved.
+				np = cur + string(filepath.Separator) + target
+			}
+			rel, again = strings.Join(append([]string{np}, rest...), string(filepath.Separator)), true
+			// Match Swift's component list without cleaning away parent components.
+			var pending []string
+			for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+				if part != "" && part != "." {
+					pending = append(pending, part)
 				}
 			}
-			rel, again = filepath.Join(append([]string{np}, rest...)...), true
+			rel = strings.Join(pending, string(filepath.Separator))
+			if rel == "" {
+				rel = "."
+			}
 			break
 		}
 		if !again {
-			return rel, nil
+			return cur, nil
 		}
 	}
 }
@@ -133,9 +164,13 @@ func sameVolume(bases []string, target string) bool {
 // safeFinalPath inspects each link before opening its target, including intermediate links and chains.
 // The caller supplies trusted base names; UNC paths may probe only inside those bases.
 func safeFinalPath(target string, bases []string) (string, error) {
-	p, err := filepath.Abs(target)
-	if err != nil {
-		return "", err
+	p := target
+	if !filepath.IsAbs(p) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		p = wd + string(filepath.Separator) + p
 	}
 	for rewrites := 0; rewrites <= maxLinkRewrites; rewrites++ {
 		trustedUNC := trustedUNCPath(p, bases)
@@ -148,6 +183,10 @@ func safeFinalPath(target string, bases []string) (string, error) {
 		again := false
 		for i, name := range parts {
 			if name == "" {
+				continue
+			}
+			if name == ".." {
+				cur = filepath.Dir(cur)
 				continue
 			}
 			cur = filepath.Join(cur, name)
@@ -172,17 +211,17 @@ func safeFinalPath(target string, bases []string) (string, error) {
 				if filepath.VolumeName(next) != "" || strings.HasPrefix(next, `\`) || strings.HasPrefix(next, "/") {
 					return "", fmt.Errorf("%s: %s", linkRefusal, target)
 				}
-				next = filepath.Join(filepath.Dir(cur), next)
+				next = filepath.Dir(cur) + string(filepath.Separator) + next
 			}
 			if !trustedUNCPath(next, bases) && !safeTarget(next, bases) {
 				return "", fmt.Errorf("%s: %s", linkRefusal, target)
 			}
-			p = filepath.Join(append([]string{next}, parts[i+1:]...)...)
+			p = strings.Join(append([]string{next}, parts[i+1:]...), string(filepath.Separator))
 			again = true
 			break
 		}
 		if !again {
-			return finalPathFn(p)
+			return finalPathFn(cur)
 		}
 	}
 	return "", fmt.Errorf("too many links: %s", target)
@@ -205,9 +244,12 @@ func safeTarget(target string, bases []string) bool {
 	p := filepath.Clean(target)
 	if runtime.GOOS == "darwin" {
 		p = strings.ToLower(p)
-		return p != "/net" && !strings.HasPrefix(p, "/net/") && p != "/network" && !strings.HasPrefix(p, "/network/")
+		if p == "/net" || strings.HasPrefix(p, "/net/") || p == "/network" || strings.HasPrefix(p, "/network/") {
+			return false
+		}
+		return safeTargetFilesystem(target)
 	}
-	return p != "/net" && !strings.HasPrefix(p, "/net/") && p != "/Network" && !strings.HasPrefix(p, "/Network/")
+	return p != "/net" && !strings.HasPrefix(p, "/net/") && p != "/Network" && !strings.HasPrefix(p, "/Network/") && safeTargetFilesystem(target)
 }
 
 // realTarget: target with its existing part resolved (a link made as /var/x, the share opened as /private/var/x).
@@ -218,13 +260,25 @@ func realTarget(target string, bases []string) string {
 		return target
 	}
 	rest := ""
-	for p := filepath.Clean(target); ; {
+	for p := target; ; {
 		if r, err := safeFinalPath(p, bases); err == nil {
+			for _, part := range strings.Split(filepath.ToSlash(rest), "/") {
+				if part == ".." {
+					return target
+				}
+			}
 			return filepath.Join(r, rest)
 		} else if !os.IsNotExist(err) {
 			return target
 		}
+		if filepath.Base(p) == ".." {
+			return target
+		}
 		parent := filepath.Dir(p)
+		// Removing a missing suffix must not clean .. across an unresolved link.
+		if i := strings.LastIndexAny(p, `/\`); i > len(filepath.VolumeName(p)) {
+			parent = p[:i]
+		}
 		if parent == p {
 			return target
 		}
@@ -238,4 +292,75 @@ func relParts(p string) []string {
 		return nil
 	}
 	return strings.Split(filepath.ToSlash(p), "/")
+}
+
+// Walk from the root and stop at a mount before probing any of its children.
+var targetAutofs = isAutofs
+
+func safeTargetFilesystem(target string) bool {
+	parts := strings.Split(target, "/")
+	cur, rewrites := "/", 0
+	for len(parts) > 0 {
+		mounted, err := targetAutofs(cur)
+		if err != nil || mounted {
+			return false
+		}
+		name := parts[0]
+		parts = parts[1:]
+		if name == "" || name == "." {
+			continue
+		}
+		if name == ".." {
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, name)
+		if next == "/net" || strings.EqualFold(next, "/Network") {
+			return false
+		}
+		st, err := os.Lstat(next)
+		if os.IsNotExist(err) {
+			return true
+		}
+		if err != nil {
+			return false
+		}
+		if st.Mode()&os.ModeSymlink != 0 {
+			rewrites++
+			if rewrites > maxLinkRewrites {
+				return false
+			}
+			link, err := os.Readlink(next)
+			if err != nil {
+				return false
+			}
+			if filepath.IsAbs(link) {
+				cur = "/"
+			}
+			parts = append(strings.Split(link, "/"), parts...)
+		} else {
+			cur = next
+		}
+	}
+	mounted, err := targetAutofs(cur)
+	return err == nil && !mounted
+}
+
+// Preserve link-target components; the rooted walk applies .. after resolving links.
+func insideLinkBases(bases []string, target string) (string, bool) {
+	for _, base := range bases {
+		b := filepath.Clean(base)
+		prefix := strings.TrimRight(b, string(filepath.Separator)) + string(filepath.Separator)
+		t, p := target, prefix
+		if runtime.GOOS == "windows" {
+			t, p = strings.ToLower(t), strings.ToLower(p)
+		}
+		if strings.HasPrefix(t, p) {
+			return target[len(prefix):], true
+		}
+		if t == strings.TrimSuffix(p, string(filepath.Separator)) {
+			return ".", true
+		}
+	}
+	return "", false
 }

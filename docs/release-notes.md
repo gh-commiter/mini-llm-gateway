@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed (Go and Mac clients/gateways): shared-folder link resolution refuses autofs mounts before probing their children and resolves links before applying `..`, keeping the WebDAV MOVE self-nesting guard effective.
+
 - Fixed (Mac client): a refused folder share prints the gateway’s reason, including the synced-folder limit.
 - New (both gateways): `minigw gw sync list --device ID` and `minigw gw sync remove <copy id> --device ID` reclaim synced-folder slots without waiting 14 days; stop sessions and agents before removal (`local` selects local Mac copies); listing works during active sessions. Profile e2e cleanup removes only copies for its own temporary folder, preserving pre-existing copies and copies created by concurrent sessions.
 
@@ -62,6 +64,8 @@ Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and q
 - Fixed (#78, both clients, plugin skills): `minigw -p` with a model of another provider now tells the model in its system prompt to put the whole answer in the final message (the ask, codex, review and copilot skills say it in their prompts too), so a weak model no longer refers to text it wrote in an earlier message that `-p` does not return.
 
 ### Known limits
+
+- Allowed folders without a volume UUID use filesystem type, mount source and inode as their fallback identity. Another server export mounted with the same filesystem type and source string at the same path passes if the folder has the same inode number.
 
 - Mac app: the helper `minigw-core` serves the app's requests one at a time, so a slow call delays the next one.
 - Mac app: there are no project pages in Settings, only the Projects row; users, projects, members and grants are managed with `minigw gw …`. On the Mac, restore needs the app quit.
