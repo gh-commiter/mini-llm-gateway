@@ -39,7 +39,7 @@ struct SettingsView: View {
     @State private var foundryFound: String?  // samodejno najdena pot (iskanje v .task, ne ob vsakem izrisu)
 
     enum Pane: Hashable {
-        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok, devices, sessions
+        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok, devices, sessions, usage
     }
 
     private struct Item: Identifiable {
@@ -77,7 +77,9 @@ struct SettingsView: View {
                Item(pane: .devices, title: String(localized: "Devices"), symbol: "laptopcomputer.and.iphone", color: .blue,
                     about: String(localized: "Computers that may use this gateway. Compare a waiting device's ID with the one on the client before you allow it.")),
                Item(pane: .sessions, title: String(localized: "Sessions"), symbol: "clock.arrow.circlepath", color: .green,
-                    about: String(localized: "Recent client sessions: folder, work mode and use per model. Prompts and answers are never stored."))]
+                    about: String(localized: "Recent client sessions: folder, work mode and use per model. Prompts and answers are never stored.")),
+               Item(pane: .usage, title: String(localized: "Usage"), symbol: "chart.bar.xaxis", color: .mint,
+                    about: String(localized: "Requests, tokens and spend per day and model, from the gateway's project database. Days are UTC days."))]
     }
 
     @State private var removing = false
@@ -304,6 +306,9 @@ struct SettingsView: View {
         case .foundry: foundry
         case .devices: devices
         case .sessions: sessions
+        case .usage:
+            let item = items.first { $0.pane == .usage }
+            UsagePane(header: PaneHeader(symbol: item?.symbol ?? "chart.bar.xaxis", color: item?.color ?? .mint, title: item?.title ?? "", about: item?.about ?? ""))
         }
     }
 
