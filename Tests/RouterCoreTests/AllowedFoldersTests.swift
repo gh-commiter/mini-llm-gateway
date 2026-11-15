@@ -199,6 +199,10 @@ private func allowedTemp() throws -> URL {
     restarted.record(p, records: saved.allowedRecords)
     for _ in 0..<2 { #expect(restarted.folders(p, log: { logs.append($0) }).isEmpty) }
     #expect(logs.count == 1 && logs[0].contains("its real path changed to "))
+    #expect(restarted.refused(p) == [p])
+    #expect(restarted.refused("").isEmpty)
+    restarted.record(p, records: saved.allowedRecords)
+    #expect(restarted.refused(p) == [p])
     var kept = saved
     kept.recordFolders()
     #expect(kept.allowedRecords == saved.allowedRecords)
@@ -213,6 +217,9 @@ private func allowedTemp() throws -> URL {
     let readded = AllowedFolders()
     readded.record(p, records: cfg.allowedRecords)
     #expect(readded.folders(p) == [other.path])
+    #expect(readded.refused(p).isEmpty)
+    restarted.record("")
+    #expect(restarted.refused(p).isEmpty)
 }
 
 @Test func allowedFolderIdentityChangedAtStart() throws {
@@ -230,6 +237,7 @@ private func allowedTemp() throws -> URL {
     restarted.record(folder.path, records: cfg.allowedRecords)
     #expect(restarted.folders(folder.path, log: { logs.append($0) }).isEmpty)
     #expect(logs.first?.contains("its identity changed") == true)
+    #expect(restarted.refused(folder.path) == [folder.path])
 }
 
 // A1: the recorded identity is enforced on every check, also for a folder that was missing at start.
@@ -250,9 +258,11 @@ private func allowedTemp() throws -> URL {
     var logs: [String] = []
     for _ in 0..<2 { #expect(check.folders(p, log: { logs.append($0) }).isEmpty) }
     #expect(logs.count == 1 && logs[0].contains("its identity changed"))
+    #expect(check.refused(p) == [p])
     try fm.removeItem(at: folder)
     try fm.moveItem(at: old, to: folder)
     #expect(check.folders(p) == [p])
+    #expect(check.refused(p).isEmpty)
     // Missing at start, another folder appears: refused; the original returns: accepted.
     try fm.moveItem(at: folder, to: old)
     let restarted = AllowedFolders()
@@ -339,4 +349,24 @@ private func allowedTemp() throws -> URL {
     #expect(router.localMentionFolder(proj)?.path == proj)
     #expect(ClaudeCLI.resolveCwd(proj, roots: router.checkedRoots) != nil)
     #expect(Native.resolve(share: "S", path: "proj", shares: ["S": real.path], roots: router.checkedRoots)?.path == proj)
+}
+
+@Test func allowedFolderRefusedAdminAPI() async throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let p = base.path
+    var cfg = RouterConfig()
+    cfg.claudeCLI.allowedRoots = p
+    cfg.claudeCLI.allowedRecords[p] = FolderRecord(real: base.appendingPathComponent("previous").path)
+    let router = FakeApp(cfg).router()
+    // Router's start check must populate both responses before any agent runs.
+    for endpoint in ["/agents/claude", "/status"] {
+        let w = await admin(router, "GET", endpoint)
+        #expect(w.status == 200)
+        let body = try #require(w.text.range(of: "\r\n\r\n").map { Data(w.text[$0.upperBound...].utf8) })
+        let o = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let claude = endpoint == "/status" ? try #require(o["claude"] as? [String: Any]) : o
+        #expect(claude["refused"] as? [String] == [p])
+        #expect(claude["folders"] as? String == p)
+    }
 }

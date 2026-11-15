@@ -689,7 +689,7 @@ extension Router {
 
     func claudeInfo(_ c: ClaudeCLIConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await ClaudeCLI.executable(c.executable) != nil, "tools": c.tools,
-         "folders": c.allowedRoots, "allowLocalTools": c.allowLocalTools, "disabledTools": c.disabledTools,
+         "folders": c.allowedRoots, "refused": allowedFolders.refused(c.allowedRoots), "allowLocalTools": c.allowLocalTools, "disabledTools": c.disabledTools,
          "permissionMode": c.permissionMode, "settingSources": c.settingSources, "askOthers": c.askOthers,
          "work": Self.apiWork(c.work)]
     }

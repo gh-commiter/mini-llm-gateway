@@ -54,6 +54,7 @@ public final class AllowedFolders: @unchecked Sendable {
         var real: String?
         var missing: Bool
         var logged = false
+        var refused = ""
         var record: FolderRecord?  // M2, A1: the recorded identity; compared on every check (ino 0: adopted at the first use, B2)
     }
     private let lock = NSLock()
@@ -102,6 +103,13 @@ public final class AllowedFolders: @unchecked Sendable {
                     entries[p] = e
                 }
             }
+        }
+    }
+
+    /// Refused configured paths, cleared by a passing check or removal from the allowed list.
+    public func refused(_ roots: String) -> [String] {
+        lock.withLock {
+            Set(Self.paths(roots).filter { entries[$0]?.refused.isEmpty == false }).sorted()
         }
     }
 
@@ -178,6 +186,7 @@ public final class AllowedFolders: @unchecked Sendable {
                 else if e.missing && r != p { why = "it is reached through a link to " + r! }
                 else if !Self.owned(r!) || (e.missing && !Self.owned(p)) { why = "it is a link or owned by another user" }
                 if !why.isEmpty {
+                    e.refused = why
                     if !e.logged {
                         e.logged = true
                         log("WARNING: allowed folder \(p) is not used: \(why); if you trust it, remove and add it again in the allowed folders")
@@ -186,6 +195,7 @@ public final class AllowedFolders: @unchecked Sendable {
                 }
                 guard have, identity.st_mode & S_IFMT == S_IFDIR,
                       identity.st_uid == getuid() else { return nil }
+                e.refused = ""
                 if var rec = e.record, rec.ino == 0 {  // B2: recorded while missing: trust on first use
                     rec.volume = volumeID(r!)
                     rec.ino = UInt64(identity.st_ino)
