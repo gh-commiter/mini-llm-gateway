@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -105,10 +106,14 @@ func TestAllowedFolderRecordIgnoresDeviceNumber(t *testing.T) {
 	if got := s.agentFolders(s.conf(), base); len(got) != 0 {
 		t.Fatalf("other volume accepted: %v", got)
 	}
-	// Losing the current volume id must not weaken a recorded identity to an inode-only check.
+	// Linux and macOS require the recorded volume id; other Unix platforms retain the inode-only fallback.
 	volumeIDFn = func(string) uint64 { return 0 }
-	if got := s.agentFolders(s.conf(), base); len(got) != 0 {
-		t.Fatalf("missing current volume id accepted: %v", got)
+	want := 1
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		want = 0
+	}
+	if got := s.agentFolders(s.conf(), base); len(got) != want {
+		t.Fatalf("missing current volume id: got %v, want %d folders on %s", got, want, runtime.GOOS)
 	}
 	// Another inode (replaced folder) is refused whatever the volume id says.
 	volumeIDFn = func(string) uint64 { return 0xabc }

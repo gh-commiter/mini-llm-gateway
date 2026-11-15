@@ -5,22 +5,23 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-
-	"golang.org/x/sys/unix"
 )
 
 // volumeIDOf (B1): statfs f_fsid of the filesystem holding p, 0 if unavailable. The kernel derives it from the
-// filesystem UUID for ext4, xfs and btrfs (stable across reboots and reconnects). For other filesystems, use the
-// filesystem type and mount source so that different network shares do not fall back to the same inode-only identity.
+// filesystem UUID for ext4, xfs and btrfs (stable across reboots and reconnects). Preserve every nonzero ID for
+// existing records; when it is zero, fall back to the filesystem type and mount source.
 func volumeIDOf(p string) uint64 {
 	var st syscall.Statfs_t
 	if syscall.Statfs(p, &st) != nil {
 		return 0
 	}
+	return volumeIDFromStatfs(p, st)
+}
+
+func volumeIDFromStatfs(p string, st syscall.Statfs_t) uint64 {
 	id := uint64(uint32(st.Fsid.X__val[0]))<<32 | uint64(uint32(st.Fsid.X__val[1]))
-	// Only these filesystems derive f_fsid from a persistent on-disk UUID.
-	// tmpfs, overlay and FUSE may report a nonzero per-mount value instead.
-	if id != 0 && (st.Type == unix.EXT4_SUPER_MAGIC || st.Type == unix.XFS_SUPER_MAGIC || st.Type == unix.BTRFS_SUPER_MAGIC) {
+	// Existing records contain the raw nonzero f_fsid, regardless of filesystem type.
+	if id != 0 {
 		return id
 	}
 	data, err := os.ReadFile("/proc/self/mounts")

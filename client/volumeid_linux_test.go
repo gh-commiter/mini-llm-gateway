@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"syscall"
+	"testing"
+)
 
 func TestMountVolumeIDUsesSourceAndFilesystemType(t *testing.T) {
 	a := mountVolumeID("/mnt/share/folder", []byte("server-a:/share /mnt/share fuse.sshfs rw 0 0\n"))
@@ -26,5 +29,18 @@ func TestMountVolumeIDMountSelection(t *testing.T) {
 	}
 	if got := mountVolumeID("/mnt-other/folder", data); got != hashVolumeID("nfs", "server:/root") {
 		t.Fatalf("mount boundary: %x", got)
+	}
+}
+
+func TestVolumeIDPreservesLegacyUnlistedFilesystemRecord(t *testing.T) {
+	// exFAT was not in the UUID-derived filesystem allowlist.
+	st := syscall.Statfs_t{Type: 0x2011BAB0}
+	st.Fsid.X__val = [2]int32{0x12345678, -1}
+	const legacyID uint64 = 0x12345678ffffffff
+	record := folderRecord{Vol: legacyID, Ino: 42}
+	// A nonzero f_fsid must work without consulting the path or mount source.
+	current := volumeIDFromStatfs("/nonexistent-legacy-volume/folder", st)
+	if current != legacyID || !record.matches(fileID{dev: current, ino: 42}) {
+		t.Fatalf("legacy record refused: recorded %x, current %x", record.Vol, current)
 	}
 }
