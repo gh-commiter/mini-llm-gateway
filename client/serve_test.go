@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -595,14 +594,15 @@ func TestSyncPutSizeAndCopyLimit(t *testing.T) {
 		t.Fatalf("size mismatch: %d", st)
 	}
 	root := t.TempDir()
+	id := func(i int) string { return fmt.Sprintf("%016x", i) } // only real copy IDs count towards the limit
 	for i := range maxCopies {
-		if tooManyCopies(filepath.Join(root, strconv.Itoa(i))) {
+		if tooManyCopies(filepath.Join(root, id(i))) {
 			t.Fatalf("refused copy %d", i)
 		}
-		os.Mkdir(filepath.Join(root, strconv.Itoa(i)), 0o700)
-		os.WriteFile(filepath.Join(root, strconv.Itoa(i)+".used"), nil, 0o600)
+		os.Mkdir(filepath.Join(root, id(i)), 0o700)
+		os.WriteFile(filepath.Join(root, id(i)+".used"), nil, 0o600)
 	}
-	if !tooManyCopies(filepath.Join(root, "new")) || tooManyCopies(filepath.Join(root, "0")) {
+	if !tooManyCopies(filepath.Join(root, id(maxCopies))) || tooManyCopies(filepath.Join(root, id(0))) {
 		t.Fatal("copy limit")
 	}
 }

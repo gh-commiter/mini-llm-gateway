@@ -235,7 +235,8 @@ public enum Sync {
         let fm = FileManager.default
         if (try? fm.attributesOfItem(atPath: copy.path)) != nil { return false }
         let items = (try? fm.contentsOfDirectory(at: copy.deletingLastPathComponent(), includingPropertiesForKeys: [.isDirectoryKey])) ?? []
-        return items.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }.count >= maxCopies
+        // only real copy IDs count: a leftover "<id>.removing-<ns>" of a crashed removal is not a copy
+        return items.filter { ShareHub.validSyncCopyID($0.lastPathComponent) && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }.count >= maxCopies
     }
 
     /// #2: poti, ki se razlikujejo le v velikih črkah (A.txt in a.txt): na routerju brez razlikovanja črk bi bile ena

@@ -1620,12 +1620,13 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(await hub.syncPut(key: key, path: "a.txt", data: data) == 409)
 
     let dev = root.appendingPathComponent("dev")
+    let id = { (i: Int) in String(format: "%016x", i) }  // only real copy IDs count towards the limit
     for i in 0..<Sync.maxCopies {
-        #expect(!Sync.tooManyCopies(dev.appendingPathComponent("\(i)")))
-        try FileManager.default.createDirectory(at: dev.appendingPathComponent("\(i)"), withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: dev.appendingPathComponent("\(i).used").path, contents: nil)
+        #expect(!Sync.tooManyCopies(dev.appendingPathComponent(id(i))))
+        try FileManager.default.createDirectory(at: dev.appendingPathComponent(id(i)), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dev.appendingPathComponent(id(i) + ".used").path, contents: nil)
     }
-    #expect(Sync.tooManyCopies(dev.appendingPathComponent("new")) && !Sync.tooManyCopies(dev.appendingPathComponent("0")))
+    #expect(Sync.tooManyCopies(dev.appendingPathComponent(id(Sync.maxCopies))) && !Sync.tooManyCopies(dev.appendingPathComponent(id(0))))
 }
 
 /// #2: imena, ki se razlikujejo le v velikih črkah.

@@ -182,3 +182,64 @@ func TestSyncCopiesCLI(t *testing.T) {
 		t.Fatalf("empty list: %q", out)
 	}
 }
+
+func TestSyncLeftoverOfACrashedRemoval(t *testing.T) {
+	root := t.TempDir()
+	owner := filepath.Join(root, "local")
+	left := filepath.Join(owner, "0123456789abcdef.removing-1700000000000000000")
+	leftRO := filepath.Join(owner, "fedcba9876543210-ro.removing-5")
+	decoy := filepath.Join(owner, "0123456789abcdef.removing-x") // not the exact pattern: stays
+	for _, d := range []string{left, leftRO, decoy} {
+		if err := os.MkdirAll(filepath.Join(d, "sub"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(d, "sub", "f"), []byte("x"), 0600)
+	}
+	touchUsed(filepath.Join(owner, "0123456789abcdef")) // marker of the copy that is gone
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "keep"), []byte("k"), 0600)
+	linkName := filepath.Join(owner, "aaaaaaaaaaaaaaaa.removing-9")
+	if err := os.Symlink(outside, linkName); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	for i := 0; i < maxCopies-1; i++ {
+		os.MkdirAll(filepath.Join(owner, fmt.Sprintf("%016x", i)), 0700)
+	}
+	if tooManyCopies(filepath.Join(owner, "ffffffffffffffff")) {
+		t.Fatal("leftovers count towards the copy limit")
+	}
+	if copies, status, _ := syncCopies(root, "local", "", nil); status != 200 || len(copies) != maxCopies-1 {
+		t.Fatalf("list shows leftovers: %v %d", copies, status)
+	}
+	cleanLeftovers(root, "local")
+	for _, d := range []string{left, leftRO} {
+		if _, err := os.Lstat(d); !os.IsNotExist(err) {
+			t.Fatalf("leftover %s remains", d)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(owner, "0123456789abcdef.used")); !os.IsNotExist(err) {
+		t.Fatal("marker of the gone copy remains")
+	}
+	if _, err := os.Lstat(decoy); err != nil {
+		t.Fatal("a folder that does not match the exact pattern was removed")
+	}
+	if _, err := os.Lstat(linkName); err != nil {
+		t.Fatal("a link was touched")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Fatal("cleanup followed a link")
+	}
+}
+
+func TestSyncLeftoverNameCannotBeACopyID(t *testing.T) {
+	for _, n := range []string{"0123456789abcdef.removing-1", "0123456789abcdef-ro.removing-1"} {
+		if validSyncCopyID(n) || !removingName.MatchString(n) {
+			t.Fatalf("%q must be a leftover name and no copy ID", n)
+		}
+	}
+	for _, id := range []string{"0123456789abcdef", "0123456789abcdef-ro"} {
+		if removingName.MatchString(id) {
+			t.Fatalf("copy ID %q matches the leftover pattern", id)
+		}
+	}
+}
