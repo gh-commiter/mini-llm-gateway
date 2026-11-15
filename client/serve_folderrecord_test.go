@@ -252,7 +252,7 @@ func TestFolderRecordSaveDoesNotLoseConcurrentChange(t *testing.T) {
 	unlock := lockServeConfig(path) // another process is in the middle of its own read-modify-write
 	done := make(chan error)
 	go func() {
-		done <- saveFolderRecords(path, map[string]folderRecord{folder: {Real: folder}}, []string{folder})
+		done <- saveFolderRecords(path, map[string]folderRecord{folder: {Real: folder}}, []string{folder}, "")
 	}()
 	select {
 	case err := <-done:
