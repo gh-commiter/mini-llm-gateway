@@ -34,7 +34,7 @@ grep -q '^claude-cli-haiku@e2e-tmp ' $T/m.txt || fail "models: $(<$T/m.txt)"
 print "connect profiles status models ok"
 
 sync_admin() { sm gw "$@" }
-sync_copies_begin local || fail "cannot record gateway copies"
+sync_copies_begin local "$T/proj" || fail "cannot record gateway copies"
 
 # Session through the Swift ProfileMux: chat model first (no share), then an agent model (sync share with e2e-tmp).
 mkdir -p $T/bin $T/proj; print hello > $T/proj/a.txt

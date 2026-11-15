@@ -67,7 +67,7 @@ print "status models ok"
 sync_admin() { "$PWD/build/Mini Gateway.app/Contents/Helpers/minigw" gw "$@" }
 if [[ -z $S2PID ]]; then
   DEVICE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["device"])' "$CFG/connection.json")
-  sync_copies_begin "$DEVICE" || fail "cannot record gateway copies"
+  sync_copies_begin "$DEVICE" "$H/proj" || fail "cannot record gateway copies"
 fi
 
 # Seja: lažen claude prek lokalnega usmerjevalnika
