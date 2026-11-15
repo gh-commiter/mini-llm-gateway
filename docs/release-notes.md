@@ -4,9 +4,25 @@
 
 ### New
 - New (both gateways): usage statistics keep the provider and, when the provider reports it, the cost of each request (`/usage/events` rows: `provider`, `reportedCostUsd`, `eventsWithoutCost`); an OpenRouter spending or key limit is now reported as "OpenRouter: spending limit reached" instead of "check the API key".
+- New (`minigw serve`): the Settings page in the browser marks allowed folders that are refused, with the reason, as the Mac Settings do.
+
+### Changed
+- Changed (both gateways): a link that leaves a shared folder is listed over WebDAV as a refused entry (403 with the reason) instead of an empty file.
+- Changed: `minigw share remove` with a name that is not shared says so and exits with an error; before it answered "no longer shared".
+- Changed (both gateways): the answer when a device has reached its number of synced folders names the command to remove one (`minigw gw sync remove`).
+- Changed (both gateways): a refused allowed folder is logged once per folder and reason, with the folder name and reason quoted; at most 8 reasons per folder are remembered, then one line says further refusals are not logged.
+
+### Fixed
+- Fixed (Mac app): removing a synced copy (`minigw gw sync remove`) could answer with error 500 although the copy was removed, when the cleanup of leftovers ran at the same moment.
+- Fixed (Mac app): a message of the admin connection said "router" instead of "gateway".
 
 ### Known limits
 - Downgrade to 0.6.0: the first start of this version migrates the core database to schema 5 and first writes a snapshot `core-4-<time>.db` into the core folder (`<config>/core`; on the Mac `~/Library/Application Support/Mini Gateway/core`). A 0.6.0 program refuses schema 5 (projects answer 503 `core_unavailable`; models keep working). The way back: stop the gateway (on the Mac quit the app), run `minigw gw core restore <path to that core-4-<time>.db>`, start 0.6.0; what was written to the core after the migration is lost.
+
+### Known problems
+- The self-check of the Mac sandbox layer for restricted Claude runs can report "pass" when the check run exceeds its time limit (it should report "inconclusive"). A fix is in work.
+- Grok agent runs that last longer than a few minutes can fail with 502.
+- The exact answer of OpenRouter for a reached key limit is assumed; if it differs, the message is "access denied" with the provider's text instead of "spending limit reached".
 
 ## 0.6.0
 
