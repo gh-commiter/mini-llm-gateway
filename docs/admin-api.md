@@ -145,7 +145,7 @@ Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash"
          cleared with leftOut; the settings page builds the reason in its language from them). refused: allowed folders
          (still in the list) whose real path or identity differs from the record saved when they were added, refused
          at start or at a run; a folder leaves the list when it passes the checks again or is removed from the allowed
-         folders (Go gateway only; the Mac logs the reason once).
+         folders (both gateways; the reason is logged once).
 Login    {"state": string, "hint": string, "hasToken"?: bool, "apiKey"?: bool, "apiKeyNote"?: string}
          Go gateway only (#68), in GET /agents/{claude,codex,grok,copilot}: the agent's login, never a value. state:
          Claude "set" / "not set" (the stored token); Copilot "signed in (copilot login)" / "not available: <reason>"
