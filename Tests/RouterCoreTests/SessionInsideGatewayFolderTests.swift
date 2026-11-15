@@ -55,7 +55,7 @@ private struct Layout {
 @Test func grokDeniesTheNeighboursOfTheSessionInsideTheAppFolder() throws {
     let l = try Layout(); defer { l.cleanup() }
     let deny = try #require(Grok.scopedDenies(hidden: [l.app.path, l.app.path + "/core", "/Users/x/.codex"], scope: l.s1.path))
-    #expect(deny.contains(l.app.path + "/core") && deny.contains("/Users/x/.codex") && !deny.contains(l.app.path))
+    #expect(deny.contains("/Users/x/.codex") && !deny.contains(l.app.path) && !deny.contains(l.app.path + "/core"))  // the core is covered by the app folder's entries
     func denied(_ path: String) -> Bool {  // entry itself or a parent matched by a glob (the profile adds `/**` for contents)
         deny.contains { g in fnmatch(g, path, FNM_PATHNAME) == 0 || path.hasPrefix(g + "/") }
     }
@@ -83,7 +83,7 @@ private struct Layout {
 }
 
 /// The profile's matching for the test: a glob names the entry, `<glob>/**` and a literal path name everything below.
-private func grokDenies(_ deny: [String], _ path: String) -> Bool {
+func grokDenies(_ deny: [String], _ path: String) -> Bool {
     deny.contains { g in
         if g.hasSuffix("/**") { let base = String(g.dropLast(3)); return fnmatch(base, path, FNM_PATHNAME) == 0 || path.split(separator: "/").indices.contains { fnmatch(base, "/" + path.split(separator: "/").prefix($0 + 1).joined(separator: "/"), FNM_PATHNAME) == 0 } }
         return fnmatch(g, path, FNM_PATHNAME) == 0 || path.hasPrefix(g + "/")
@@ -114,4 +114,50 @@ private func grokDenies(_ deny: [String], _ path: String) -> Bool {
         for n in siblings + later { #expect(grokDenies(deny, base + "/" + n), "\(n)") }
         #expect(!grokDenies(deny, scope) && !grokDenies(deny, scope + "/f.txt") && !grokDenies(deny, scope + "/deep/er/file"))
     }
+}
+
+/// Finding 1 of the 0.6.0 review: Grok's list holds the hidden Scratch roots too (the sync copies, worktrees and mirrors of other clients), with the way down to the
+/// session carved out, and still fits what the real `grok` starts with. The list below is the shape of the gateway's own (`Grok.deniedRoots`: agentDenied + hiddenScratch,
+/// each root literal and real) with a Scratch folder on another volume, its `.old-` neighbour, the default Scratch, the app folder, the core, the credential homes.
+@Test func grokDenyListWithTheHiddenScratchRootsStaysUnderTheLimit() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("grok-hidden-" + UUID().uuidString, isDirectory: true).path
+    defer { try? fm.removeItem(atPath: base) }
+    let dev = String(repeating: "d", count: 43), proj = "0123456789abcdef", u = "0f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f"
+    let scratch = base + "/vol/Mini Gateway Scratch"
+    for d in ["vol/Mini Gateway Scratch/sync/" + dev + "/" + proj, "vol/Mini Gateway Scratch/sync/" + dev + "/0123456789abcdee", "vol/Mini Gateway Scratch/sync/" + String(repeating: "e", count: 43) + "/" + proj,
+              "vol/Mini Gateway Scratch/worktrees/" + dev + "/" + proj, "vol/Mini Gateway Scratch/state", "vol/Mini Gateway Scratch/copilot", "vol/Mini Gateway Scratch/grok-home",
+              "vol/Mini Gateway Scratch.old-2026-11-01", "caches/Scratch", "caches/Mini Gateway Scratch", "app/mounts/" + u, "app/mounts/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "app/core",
+              "home/.codex", "home/.copilot"] {
+        try fm.createDirectory(atPath: base + "/" + d, withIntermediateDirectories: true)
+    }
+    let hidden = [scratch, scratch + "/state", scratch + "/copilot", base + "/app", base + "/app/core", base + "/home/.codex", base + "/home/.copilot",
+                  base + "/caches/Mini Gateway Scratch", base + "/caches/Scratch", scratch + ".old-2026-11-01"]
+    let other = scratch + "/sync/" + dev + "/0123456789abcdee/x", otherDev = scratch + "/sync/" + String(repeating: "e", count: 43) + "/" + proj + "/x"
+    for (scope, mustDeny) in [(scratch + "/sync/" + dev + "/" + proj, [other, otherDev, scratch + "/worktrees/" + dev + "/" + proj + "/x", scratch + "/sync/later/x", scratch + "/state/s",
+                                                                      scratch + "/owner.json", base + "/app/mounts/" + u + "/x", base + "/app/state.json"]),
+                              (base + "/app/mounts/" + u, [scratch + "/sync/" + dev + "/" + proj + "/x", scratch + "/worktrees/x", base + "/app/mounts/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d/x", base + "/app/state.json",
+                                                          base + "/app/core/core.db"])] {
+        let deny = try #require(Grok.scopedDenies(hidden: hidden, scope: scope))
+        #expect(deny.count <= Grok.maxDenyEntries, "\(deny.count) entries: a real grok does not start above about 35")
+        for n in mustDeny { #expect(grokDenies(deny, n), "\(n)") }
+        #expect(!grokDenies(deny, scope) && !grokDenies(deny, scope + "/f.txt") && !grokDenies(deny, scope + "/deep/er/file"))
+    }
+}
+
+/// The roots Grok is given: the hidden Scratch roots are in, Grok's own login home is not.
+@Test func grokDeniedRootsHoldTheHiddenScratchButNotItsOwnLoginHome() throws {
+    let scratch = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("grok-roots-" + UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+    let roots = Grok.deniedRoots(scratch: scratch)
+    #expect(RouterConfig.hiddenScratch(scratch).filter { !RouterConfig.credentialHomes(except: "grok").contains($0) && RouterConfig.credentialHomes().contains($0) }.allSatisfy { !roots.contains($0) })
+    #expect(roots.contains(scratch.standardizedFileURL.path) && Set(RouterConfig.agentDenied(kind: "grok", scratch: scratch)).isSubset(of: Set(roots)))
+    #expect(Set(RouterConfig.hiddenScratch(scratch)).subtracting(RouterConfig.credentialHomes()).isSubset(of: Set(roots)))
+}
+
+/// A list grok cannot start with is never given to it: more roots than fit means the run is refused.
+@Test func grokDenyListThatCannotFitIsRefused() {
+    #expect(Grok.scopedDenies(hidden: (0..<Grok.maxDenyEntries + 1).map { "/nowhere/root-\($0)" }, scope: "/elsewhere/s1") == nil)
+    #expect(Grok.scopedDenies(hidden: ["/nowhere/root"], scope: "/elsewhere/s1") == ["/nowhere/root"])
 }

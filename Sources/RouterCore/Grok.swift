@@ -84,20 +84,44 @@ public enum Grok {
         return coreProfiles.map { "[profiles.\($0.0)]\nextends = \"\($0.1)\"\ndeny = [\(list.joined(separator: ", "))]\n" }.joined(separator: "\n")
     }
 
+    /// What Grok's kernel profile must not reach: what `agentDenied` lists plus the folders the sandboxes of the other agents hide (`hiddenScratch`: Scratch with the sync
+    /// copies, worktrees and mirrors of other clients, its `.old-*` siblings), except Grok's own login home (the CLI itself reads its auth there).
+    static func deniedRoots(scratch: URL?) -> [String] {
+        let own = Set(RouterConfig.credentialHomes().filter { !RouterConfig.credentialHomes(except: "grok").contains($0) })
+        var seen = Set<String>()
+        return (RouterConfig.agentDenied(kind: "grok", scratch: scratch) + RouterConfig.hiddenScratch(scratch).filter { !own.contains($0) }).filter { seen.insert($0).inserted }
+    }
+
     /// #114 for Grok: its profile has no allow side (it reads everywhere), so a hidden root that holds the session folder (`…/Mini Gateway/mounts/<dir>`,
     /// `Scratch/sync/<device>/<proj>`) cannot simply give way: the root's other content (state.json, the other clients' mounts, the core) must stay denied.
     /// The root is replaced by globs for every entry on every level down to the session folder except the one that leads to it (the profile's `deny` takes
     /// gitignore-style globs, kernel-enforced on macOS also for entries created later). Names are matched by character classes: for the name `s1`: `[!s]*`,
     /// `s[!1]*`, `s1?*` and the exact prefix `s`. nil = a name or path that cannot be written that way (a glob character, a space): the run is refused.
-    static func scopedDenies(hidden: [String], scope: String, prefix: Int = 8) -> [String]? {
+    /// The most entries Grok's profile starts with (a real run: 30 long entries pass, 37 do not). More hidden roots (the Scratch folder with the copies of other clients, the app
+    /// folder, the credential homes) need shorter class prefixes on the deeper levels: the longest one that fits is used, and if none does the run is refused (nil), never given a
+    /// list grok cannot start with.
+    static let maxDenyEntries = 34
+    static func scopedDenies(hidden: [String], scope: String) -> [String]? {
+        for prefix in [8, 6, 5, 4] {
+            guard let l = scopedDenies(hidden: hidden, scope: scope, prefix: prefix) else { return nil }
+            if l.count <= maxDenyEntries { return l }
+        }
+        return nil
+    }
+
+    static func scopedDenies(hidden: [String], scope: String, prefix: Int) -> [String]? {
         func real(_ p: String) -> String { Sync.realResolving(URL(fileURLWithPath: p))?.path ?? p }
         let scopeReal = real(scope)
         var out: [String] = [], seen = Set<String>()
         func add(_ p: String) { if seen.insert(p).inserted { out.append(p) } }
         func addGlob(_ p: String) { add(p); add(p + "/**") }  // a glob names the entry only (real run: `cat s2/x` still worked): its contents too
         func simple(_ n: String) -> Bool { !n.isEmpty && n.unicodeScalars.allSatisfy { ($0.value < 128) && (CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0)) } }
+        // A root inside another one is covered by the outer one (a plain entry denies everything below it; an expanded root denies every child that does not lead to
+        // the session, also the ones made later), except where the session itself lies in or below it: the entry count is what a real grok can start with.
+        let roots = hidden.map(real)
         for h in hidden {
             let hr = real(h)
+            if roots.contains(where: { $0 != hr && hr.hasPrefix($0 + "/") }), !(scopeReal == hr || scopeReal.hasPrefix(hr + "/") || hr.hasPrefix(scopeReal + "/")) { continue }
             guard scopeReal == hr || scopeReal.hasPrefix(hr + "/") else { add(h); continue }
             guard !hr.contains(where: { "*?[".contains($0) }), hr.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }
             let comps = scopeReal.dropFirst(hr.count).split(separator: "/").map(String.init)
@@ -349,7 +373,7 @@ extension Router {
         }
         if let home = coreHome {
             // #116 A2: the gateway's folders are denied to Grok's kernel profile, except the way down to the session folder (a remote client's mount lives inside the app folder)
-            guard let deny = Grok.scopedDenies(hidden: RouterConfig.agentDenied(kind: "grok", scratch: config.scratchURL), scope: cwd.path),
+            guard let deny = Grok.scopedDenies(hidden: Grok.deniedRoots(scratch: config.scratchURL), scope: cwd.path),
                   let e = Grok.prepareCoreHome(home, deny: deny) else {
                 return await error(503, "api_error", Grok.coreUnavailable, rid: rid, writer: writer)
             }

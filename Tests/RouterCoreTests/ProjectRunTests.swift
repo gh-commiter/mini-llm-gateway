@@ -512,7 +512,11 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         #expect(home.contains("/state/") && home.contains("-\(f.pid["fakture"]!)-e") && home.hasSuffix("/grok"))
         #expect(env.contains("GROK_AUTH_PATH="))
         let toml = try String(contentsOfFile: home + "/sandbox.toml", encoding: .utf8)
-        #expect(toml.contains("[profiles.minigw-core]") && toml.contains("/state\""))  // the profile denies the folder of the homes (every project's)
+        #expect(toml.contains("[profiles.minigw-core]"))
+        // the profile denies the folder of the homes (every project's): by its own entry or by the globs of the Scratch root it lies in
+        let entries = (toml.components(separatedBy: "\n").first { $0.hasPrefix("deny = [") } ?? "").components(separatedBy: "\"").enumerated().filter { $0.offset % 2 == 1 }.map(\.element)
+        let probe = f.router.config.scratch("state").path + "/dev/proj/x"
+        #expect(grokDenies(entries, probe), "no entry denies \(probe): \(entries)")
         #expect(f.read("call-grok-0.args")?.contains("minigw-core") == true)
         // without a project the shared gateway home as before
         #expect(await f.ask("claude-grok").status == 200)
