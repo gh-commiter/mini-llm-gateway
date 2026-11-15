@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.4
+
 ### New
 - New (both gateways): cost estimates for requests whose provider reports no cost. `minigw gw usage` shows an estimate with `~` (for example `~0.42`), a reported charge plain, a mix as `0.96 + ~0.42`, and still counts the unknown ones; the CSV has separate `reported_cost_usd` and `estimated_cost_usd` columns, and `/usage/events` rows gain `costUsd`, `estimatedCostEvents`, `subscriptionEvents` and `unknownBillingEvents`. The price comes from the provider's own list (OpenRouter models list, LiteLLM `/model/info`), is frozen when the request starts and never changes later. Requests with cached tokens, images, audio or tools, and all subscription agents (Claude, Codex, Grok, Copilot CLI), get no estimate.
 
