@@ -280,7 +280,6 @@ final class ShareClient: @unchecked Sendable {
     var worktree: Bool { kind == "worktree" }
     var refusal = ""  // zakaj router mape ni sprejel
     private var gitWatch: GitWatch?  // #116 B1: direct: the repository at the start (GitWatch.swift)
-    private var closing = false      // the end report of git is running: writes are refused (unregister); under `lock`
     static let gitDrainWait: TimeInterval = 30  // how long the end report waits for the requests that are running
     static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
     private let lock = NSLock()
@@ -331,8 +330,8 @@ final class ShareClient: @unchecked Sendable {
         if let g = gitWatch {  // #116 B1: what the agent did in the owner's repository
             gitWatch = nil
             // No more writes, then wait for the ones running (the exclusive folder lock: a request holds it shared or exclusive for its whole run, and a write that gets it after
-            // `closing` is set is refused), then audit and restore while nothing can write. Lock order as in work(): the folder lock, never syncLock.
-            lock.withLock { closing = true }
+            // `closeWrites` was called is refused), then audit and restore while nothing can write. Lock order as in work(): the folder lock, never syncLock.
+            folderLock?.closeWrites()
             g.finish(under: folderLock, wait: Self.gitDrainWait)
         }
         guard !key.isEmpty else { return }; _ = call(c, "DELETE", "/minigw/share", ["x-share-key": key], timeout: 3)
@@ -396,12 +395,7 @@ final class ShareClient: @unchecked Sendable {
     /// #82: posel pod zaklepom mape; drug proces ga drži predolgo → 503 z besedilom.
     private func locked(_ exclusive: Bool, _ wait: TimeInterval? = nil, _ job: () -> DAVResponse) -> DAVResponse {
         guard let folderLock else { return DAVResponse(403) }
-        return folderLock.with(exclusive: exclusive, wait: wait) {
-            if exclusive, lock.withLock({ closing }) {  // after the lock: a write that waited behind the end report
-                return DAVResponse(503, ["content-type": "text/plain", "retry-after": "5"], Data("minigw: the share is closing; the folder takes no more writes\n".utf8))
-            }
-            return SharedFolders.fileID(root.path) == rootID ? job() : DAVResponse(403)  // I2: koren znova pod zaklepom
-        } ?? DAVResponse(503, ["content-type": "text/plain", "retry-after": "5"], Data((FolderLock.busyText + "\n").utf8))
+        return folderLock.respond(exclusive: exclusive, wait: wait, rootOK: { SharedFolders.fileID(root.path) == rootID }, job)
     }
 
     private func note(_ s: String) { try? err.write(contentsOf: Data(("minigw: " + oneLine(s) + "\n").utf8)) }

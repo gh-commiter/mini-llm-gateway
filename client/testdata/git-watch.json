@@ -450,6 +450,34 @@
     "minigw: WARNING: the check of git in this folder is INCOMPLETE (more than 200 new commits: only the first 200 were checked; index not read in full): the absence of other warnings is not a clean result - review the repository before git checkout, reset --hard, restore, stash pop or your next commit"
    ],
    "reset": []
+  },
+  {
+   "name": "an existing tag moved",
+   "start": {
+    "head": "main",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "b",
+     "refs/tags/v1": "a"
+    },
+    "index": {},
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "headId": "a",
+    "refs": {
+     "refs/heads/main": "b",
+     "refs/tags/v1": "b"
+    },
+    "index": {},
+    "pending": []
+   },
+   "commits": [],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: moved tags: v1"
+   ],
+   "reset": []
   }
  ]
 }

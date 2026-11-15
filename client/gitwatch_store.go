@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // X2 (#116): the start state is stored while the share runs, so that a killed client does not lose the report: the next start in the folder compares and reports
@@ -29,6 +30,9 @@ type gitWatchStored struct {
 	IndexHash string            `json:"indexHash"`
 	Protected map[string]string `json:"protected"` // index entries of the protected paths: "mode id stage"
 }
+
+// gitWatchKeepIncomplete: how long a baseline that could not be compared in full is kept.
+const gitWatchKeepIncomplete = 7 * 24 * time.Hour
 
 const (
 	gitWatchMaxFile = 4 << 20
@@ -165,14 +169,19 @@ func gitWatchRecover(root string, self int, alive func(int) bool) []string {
 		}
 		data, _ := io.ReadAll(io.LimitReader(fh, gitWatchMaxFile+1))
 		fh.Close()
-		os.Remove(f)
 		st, err := parseGitWatchStored(data, root)
 		if err != nil {
+			os.Remove(f)
 			out = append(out, "minigw: ignoring a damaged git watch state file ("+err.Error()+")")
 			continue
 		}
-		for _, l := range (&gitWatch{root: root, start: st}).lines() {
+		lines, complete := (&gitWatch{root: root, start: st}).compare(nil, true)
+		for _, l := range lines {
 			out = append(out, strings.Replace(l, "minigw: ", "minigw: from the previous run that did not finish: ", 1))
+		}
+		// Only a complete comparison removes the baseline; an incomplete one is tried again at the next start, for a week at most.
+		if fi, err := os.Stat(f); complete || err != nil || time.Since(fi.ModTime()) > gitWatchKeepIncomplete {
+			os.Remove(f)
 		}
 	}
 	return out

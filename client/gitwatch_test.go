@@ -417,3 +417,77 @@ func TestGitWatchSeesACommitThatIsReplacedByAnotherOne(t *testing.T) {
 	out := captureStderr(t, func() { w.report(true) })
 	wantAll(t, out, "1 new commit(s)", "committed a protected path: .envrc", "replacement ref ("+n+")")
 }
+
+// Round 2, H3: the drain timed out (a request holds the folder lock): nothing is restored without the lock, the report says so, the baseline stays.
+func TestGitWatchDrainTimeoutRestoresNothing(t *testing.T) {
+	defer func(d time.Duration) { gitWatchDrainWait = d }(gitWatchDrainWait)
+	gitWatchDrainWait = 150 * time.Millisecond
+	root := watchRepo(t)
+	s := &shareClient{root: root}
+	s.git = gitWatchStart(root)
+	file := s.git.file
+	running := s.lockFolder(false, time.Second) // a request that outlasts the wait
+	if running == nil {
+		t.Fatal("no lock")
+	}
+	defer running()
+	os.WriteFile(filepath.Join(root, ".envrc"), []byte("echo hi"), 0o644)
+	gitIn(t, root, "add", ".envrc")
+	out := captureStderr(t, s.unregister)
+	wantAll(t, out, "INCOMPLETE", "requests of the agent were still running", "staged a protected path: .envrc", "NOT removed from the index")
+	if gitIn(t, root, "ls-files", "-s", ".envrc") == "" {
+		t.Error("the index was restored without the lock")
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Error("the baseline is gone")
+	}
+}
+
+// H4: the repository cannot be read at the end (a damaged packed-refs): a warning, and the baseline stays; a folder that was never watchable stays silent.
+func TestGitWatchUnreadableAtTheEndWarnsAndKeepsTheBaseline(t *testing.T) {
+	root := watchRepo(t)
+	w := gitWatchStart(root)
+	file := w.file
+	os.WriteFile(filepath.Join(root, ".git", "packed-refs"), []byte("garbage without a header\nnot a ref\n"), 0o644)
+	out := captureStderr(t, func() { w.report(true) })
+	wantAll(t, out, "INCOMPLETE", "could not be read at the end")
+	if _, err := os.Stat(file); err != nil {
+		t.Error("the baseline is gone after an unreadable end state")
+	}
+}
+
+// H5: the recovery at the next start removes the baseline only after a complete comparison.
+func TestGitWatchRecoveryKeepsAnIncompleteBaseline(t *testing.T) {
+	defer func(c int) { gitWatchMaxCommits = c }(gitWatchMaxCommits)
+	root := watchRepo(t)
+	w := gitWatchStart(root)
+	for i := 0; i < 5; i++ {
+		gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "more")
+	}
+	gone := func(int) bool { return false }
+	gitWatchMaxCommits = 3
+	out := strings.Join(gitWatchRecover(root, os.Getpid()+1, gone), "\n")
+	wantAll(t, out, "from the previous run that did not finish", "INCOMPLETE")
+	if _, err := os.Stat(w.file); err != nil {
+		t.Fatal("the baseline was removed after an incomplete comparison")
+	}
+	gitWatchMaxCommits = 200
+	out = strings.Join(gitWatchRecover(root, os.Getpid()+1, gone), "\n")
+	if strings.Contains(out, "INCOMPLETE") || !strings.Contains(out, "5 new commit(s)") {
+		t.Errorf("complete recovery:\n%s", out)
+	}
+	if _, err := os.Stat(w.file); err == nil {
+		t.Error("the baseline stays after a complete comparison")
+	}
+}
+
+// H6: an existing tag moved between two commits that were both in the history at the start.
+func TestGitWatchReportsAMovedTag(t *testing.T) {
+	root := watchRepo(t)
+	gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "second")
+	gitIn(t, root, "tag", "v1", "HEAD~1")
+	w := gitWatchStart(root)
+	gitIn(t, root, "tag", "-f", "v1", "HEAD")
+	out := captureStderr(t, func() { w.report(true) })
+	wantAll(t, out, "moved tags: v1")
+}

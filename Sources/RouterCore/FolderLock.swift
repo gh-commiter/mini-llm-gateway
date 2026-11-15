@@ -32,6 +32,21 @@ public final class FolderLock: @unchecked Sendable {
 
     deinit { pthread_rwlock_destroy(rw); rw.deallocate() }
 
+    private let closeMu = NSLock()
+    private var closed = false
+    public static let closedText = "minigw: the share is closing; the folder takes no more writes"
+    /// The end report of the git watch is about to run: from now on `respond` refuses every exclusive job (a write) that gets the lock.
+    public func closeWrites() { closeMu.withLock { closed = true } }
+
+    /// A job of the share under the lock (#82): 503 when the lock is not free in time, 503 for an exclusive job once the writes are closed (checked under the lock, so a write
+    /// that waited behind the end report is refused and one that ran before it has finished), 403 when the folder is not the one that was checked (`rootOK`, I2).
+    public func respond(exclusive: Bool, wait: TimeInterval? = nil, rootOK: () -> Bool, _ job: () -> DAVResponse) -> DAVResponse {
+        with(exclusive: exclusive, wait: wait) {
+            if exclusive, closeMu.withLock({ closed }) { return DAVResponse(503, ["content-type": "text/plain", "retry-after": "5"], Data((Self.closedText + "\n").utf8)) }
+            return rootOK() ? job() : DAVResponse(403)
+        } ?? DAVResponse(503, ["content-type": "text/plain", "retry-after": "5"], Data((Self.busyText + "\n").utf8))
+    }
+
     /// body pod zaklepom; nil = zaklepa ni bilo v roku (wait, sicer self.wait), tudi v tem procesu (L3).
     public func with<T>(exclusive: Bool, wait: TimeInterval? = nil, _ body: () -> T) -> T? {
         let deadline = Date().addingTimeInterval(wait ?? self.wait)

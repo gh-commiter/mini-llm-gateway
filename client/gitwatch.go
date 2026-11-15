@@ -59,7 +59,7 @@ func gitNames(l []string) string {
 // gitWatchReport: the lines for the owner and the staged protected paths to reset. Pure: the fixture asserts it.
 func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(string) bool) (lines []string, reset []string) {
 	short := func(r string) string { return strings.TrimPrefix(strings.TrimPrefix(r, "refs/heads/"), "refs/tags/") }
-	var newBranches, movedBranches, newTags, otherRefs, replaced, deleted []string
+	var newBranches, movedBranches, newTags, movedTags, otherRefs, replaced, deleted []string
 	for r, id := range end.Refs {
 		old, had := start.Refs[r]
 		if strings.HasPrefix(r, "refs/replace/") && (!had || old != id) {
@@ -72,6 +72,8 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 			movedBranches = append(movedBranches, short(r))
 		case strings.HasPrefix(r, "refs/tags/") && !had:
 			newTags = append(newTags, short(r))
+		case strings.HasPrefix(r, "refs/tags/") && old != id: // an existing tag now names another object: it can hide a commit that is already in the history
+			movedTags = append(movedTags, short(r))
 		case !strings.HasPrefix(r, "refs/heads/") && !strings.HasPrefix(r, "refs/tags/") && (!had || old != id): // every other namespace: stash, notes, replace, remotes, ...
 			otherRefs = append(otherRefs, r)
 		}
@@ -110,7 +112,7 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 	for _, p := range []struct {
 		what string
 		l    []string
-	}{{"new branches", newBranches}, {"moved branches", movedBranches}, {"new tags", newTags}, {"other refs changed", otherRefs}, {"deleted refs", deleted}} {
+	}{{"new branches", newBranches}, {"moved branches", movedBranches}, {"new tags", newTags}, {"moved tags", movedTags}, {"other refs changed", otherRefs}, {"deleted refs", deleted}} {
 		if len(p.l) > 0 {
 			parts = append(parts, p.what+": "+gitNames(p.l))
 		}
@@ -260,16 +262,18 @@ func gitWatchStart(root string) *gitWatch {
 
 // lines: the comparison of the stored start state with the repository now; the staged protected paths are taken out of the index (plumbing: the work tree is not touched).
 func (w *gitWatch) lines() []string {
-	l, _ := w.compare(nil)
+	l, _ := w.compare(nil, true)
 	return l
 }
 
 // compare: lines and whether the check was complete. The history is read from every ref and from HEAD itself (a detached HEAD is on no ref), minus what the start
 // state already had; merge commits are diffed against each parent (-m), so the paths a merge brings in show up.
-func (w *gitWatch) compare(incomplete []string) ([]string, bool) {
+// restore false (the share did not drain: a request may still be writing): nothing is taken out of the index, the staged protected paths are only reported.
+func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 	end, ok := gitWatchState(w.root)
-	if !ok {
-		return nil, true
+	if !ok { // the start was watchable, so this is not "nothing to watch": the repository cannot be read now (damaged refs, a removed .git)
+		return []string{"minigw: WARNING: the check of git in this folder is INCOMPLETE (the repository could not be read at the end" + strings.Join(append([]string{""}, incomplete...), "; ") +
+			"): review the repository before git checkout, reset --hard, restore, stash pop or your next commit"}, false
 	}
 	end.Incomplete = append(end.Incomplete, incomplete...)
 	tips, old := gitWatchTips(end), gitWatchTips(w.start)
@@ -300,7 +304,9 @@ func (w *gitWatch) compare(incomplete []string) ([]string, bool) {
 		}
 	}
 	lines, reset := gitWatchReport(w.start, end, commits, protectedPath)
-	if len(reset) > 0 && !w.resetIndex(reset) {
+	if len(reset) > 0 && !restore {
+		lines = append(lines, "minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): run git reset -- "+strings.Join(reset, " "))
+	} else if len(reset) > 0 && !w.resetIndex(reset) {
 		lines = append(lines, "minigw: could not remove the staged protected paths from the index: run git reset -- "+strings.Join(reset, " "))
 	}
 	return lines, len(end.Incomplete) == 0
@@ -327,7 +333,7 @@ func (w *gitWatch) report(drained bool) {
 	if !drained {
 		why = append(why, "requests of the agent were still running")
 	}
-	lines, complete := w.compare(why)
+	lines, complete := w.compare(why, drained)
 	for _, l := range lines {
 		fmt.Fprintln(os.Stderr, l)
 	}

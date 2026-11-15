@@ -192,3 +192,63 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     #expect(lines.joined(separator: "\n").contains("staged a protected path: .envrc"), "\(lines)")
     #expect(git(root.path, "git ls-files -s .envrc").isEmpty, "the staged path was not restored")
 }
+
+// MARK: round 2 (H3-H6 and the closing gate), the same scenarios as client/gitwatch_test.go
+
+@Test func gitWatchDrainTimeoutRestoresNothing() throws {
+    let (root, state) = try watched("dt"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    let lockDir = root.path + "-locks"; defer { try? FileManager.default.removeItem(atPath: lockDir) }
+    let lock = FolderLock(id: [UInt64.random(in: 1...UInt64.max), 2], dir: lockDir)
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    let file = try #require(w.file)
+    let started = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+    Thread { _ = lock.with(exclusive: false) { started.signal(); release.wait(); return 1 } }.start(); started.wait()
+    _ = git(root.path, "echo 'echo hi' > .envrc && git add .envrc")
+    let out = w.finish(under: lock, wait: 0.2).joined(separator: "\n")
+    release.signal()
+    for want in ["INCOMPLETE", "requests of the agent were still running", "staged a protected path: .envrc", "NOT removed from the index"] { #expect(out.contains(want), "missing \(want) in \(out)") }
+    #expect(!git(root.path, "git ls-files -s .envrc").isEmpty, "the index was restored without the lock")
+    #expect(FileManager.default.fileExists(atPath: file), "the baseline is gone")
+}
+
+@Test func gitWatchUnreadableAtTheEndWarnsAndKeepsTheBaseline() throws {
+    let (root, state) = try watched("ue"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    let file = try #require(w.file)
+    try Data("garbage without a header\nnot a ref\n".utf8).write(to: root.appendingPathComponent(".git/packed-refs"))
+    let out = w.finish().joined(separator: "\n")
+    #expect(out.contains("INCOMPLETE") && out.contains("could not be read at the end"), "\(out)")
+    #expect(FileManager.default.fileExists(atPath: file))
+}
+
+@Test func gitWatchRecoveryKeepsAnIncompleteBaseline() throws {
+    let (root, state) = try watched("rk"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    let file = try #require(w.file)
+    _ = git(root.path, "for i in 1 2 3 4 5; do git commit -q --allow-empty -m more; done")
+    var out = GitWatch.recover(root.path, dir: state, selfPID: getpid() + 1, alive: { _ in false }, maxCommits: 3).joined(separator: "\n")
+    #expect(out.contains("from the previous run that did not finish") && out.contains("INCOMPLETE"), "\(out)")
+    #expect(FileManager.default.fileExists(atPath: file), "the baseline was removed after an incomplete comparison")
+    out = GitWatch.recover(root.path, dir: state, selfPID: getpid() + 1, alive: { _ in false }).joined(separator: "\n")
+    #expect(!out.contains("INCOMPLETE") && out.contains("5 new commit(s)"), "\(out)")
+    #expect(!FileManager.default.fileExists(atPath: file), "the baseline stays after a complete comparison")
+}
+
+@Test func gitWatchReportsAMovedTag() throws {
+    let (root, state) = try watched("mt"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    _ = git(root.path, "git commit -q --allow-empty -m second && git tag v1 HEAD~1")
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    _ = git(root.path, "git tag -f v1 HEAD")
+    #expect(w.finish().joined(separator: "\n").contains("moved tags: v1"))
+}
+
+// The end report closes the writes: after closeWrites a write that gets the lock is refused with 503, a read is not, and the lock is still the one the running requests hold.
+@Test func folderLockRefusesWritesAfterTheyAreClosed() throws {
+    let lockDir = FileManager.default.temporaryDirectory.appendingPathComponent("fl-" + UUID().uuidString).path; defer { try? FileManager.default.removeItem(atPath: lockDir) }
+    let lock = FolderLock(id: [UInt64.random(in: 1...UInt64.max), 3], dir: lockDir)
+    func ask(_ exclusive: Bool) -> Int { lock.respond(exclusive: exclusive, rootOK: { true }) { DAVResponse(200) }.status }
+    #expect(ask(true) == 200 && ask(false) == 200)
+    lock.closeWrites()
+    #expect(ask(true) == 503 && ask(false) == 200)
+    #expect(lock.respond(exclusive: false, rootOK: { false }) { DAVResponse(200) }.status == 403)
+}

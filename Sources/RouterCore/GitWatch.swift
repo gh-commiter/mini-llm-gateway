@@ -37,6 +37,7 @@ public struct GitWatch: Sendable {
     public struct Commit: Codable, Equatable, Sendable { public var id: String; public var files: [String] }
 
     static let names = 20  // names shown per list
+    static let keepIncomplete: TimeInterval = 7 * 24 * 3600  // how long a baseline that could not be compared in full is kept
     static let maxCommitsDefault = 200, maxOutputDefault = 1 << 20
     static func list(_ l: [String]) -> String {
         let s = l.sorted()
@@ -46,12 +47,12 @@ public struct GitWatch: Sendable {
     /// The lines for the owner and the staged protected paths to reset. Pure: the fixture asserts it.
     public static func report(start: State, end: State, commits: [Commit], isProtected: (String) -> Bool) -> (lines: [String], reset: [String]) {
         func short(_ r: String) -> String { r.hasPrefix("refs/heads/") ? String(r.dropFirst(11)) : r.hasPrefix("refs/tags/") ? String(r.dropFirst(10)) : r }
-        var newBranches: [String] = [], moved: [String] = [], newTags: [String] = [], other: [String] = [], replaced: [String] = [], deleted: [String] = []
+        var newBranches: [String] = [], moved: [String] = [], newTags: [String] = [], movedTags: [String] = [], other: [String] = [], replaced: [String] = [], deleted: [String] = []
         for (r, id) in end.refs {
             let old = start.refs[r]
             if r.hasPrefix("refs/replace/"), old != id { replaced.append(String(r.dropFirst(13))) }
             if r.hasPrefix("refs/heads/") { if old == nil { newBranches.append(short(r)) } else if old != id { moved.append(short(r)) } }
-            else if r.hasPrefix("refs/tags/") { if old == nil { newTags.append(short(r)) } }
+            else if r.hasPrefix("refs/tags/") { if old == nil { newTags.append(short(r)) } else if old != id { movedTags.append(short(r)) } }  // a moved tag can hide a commit that is already in the history
             else if old != id { other.append(r) }  // every other namespace: stash, notes, replace, remotes, ...
         }
         for r in start.refs.keys where end.refs[r] == nil { deleted.append(short(r)) }
@@ -64,7 +65,7 @@ public struct GitWatch: Sendable {
         if end.head != start.head { parts.append(end.head.isEmpty ? "HEAD is detached" : "HEAD now on " + end.head) }
         else if end.head.isEmpty, end.headId != start.headId { parts.append("detached HEAD moved") }  // no branch moves with it: only the object id says so
         if !commits.isEmpty { parts.append("\(commits.count) new commit(s)") }
-        for (what, l) in [("new branches", newBranches), ("moved branches", moved), ("new tags", newTags), ("other refs changed", other), ("deleted refs", deleted)] where !l.isEmpty { parts.append(what + ": " + list(l)) }
+        for (what, l) in [("new branches", newBranches), ("moved branches", moved), ("new tags", newTags), ("moved tags", movedTags), ("other refs changed", other), ("deleted refs", deleted)] where !l.isEmpty { parts.append(what + ": " + list(l)) }
         if !staged.isEmpty && !start.partial { parts.append("\(staged.count) staged path(s)") } else if start.partial && start.indexHash != end.indexHash { parts.append("the index changed") }
         var lines: [String] = []
         if !parts.isEmpty { lines.append("minigw: git in this folder, changed by the agent: " + parts.joined(separator: "; ")) }
@@ -137,8 +138,11 @@ public struct GitWatch: Sendable {
 
     /// The lines and whether the check was complete. The history is read from every ref and from HEAD itself (a detached HEAD is on no ref), minus what the start state
     /// already had; merge commits are diffed against each parent (-m), so the paths a merge brings in show up.
-    func compare(incomplete: [String] = []) -> (lines: [String], complete: Bool) {
-        guard var end = Self.state(root, maxOutput: maxOutput) else { return ([], true) }
+    /// restore false (the share did not drain: a request may still be writing): nothing is taken out of the index, the staged protected paths are only reported.
+    func compare(incomplete: [String] = [], restore: Bool = true) -> (lines: [String], complete: Bool) {
+        guard var end = Self.state(root, maxOutput: maxOutput) else {  // the start was watchable, so this is not "nothing to watch": damaged refs, a removed .git
+            return (["minigw: WARNING: the check of git in this folder is INCOMPLETE (the repository could not be read at the end" + incomplete.map { "; " + $0 }.joined() + "): review the repository before git checkout, reset --hard, restore, stash pop or your next commit"], false)
+        }
         end.incomplete += incomplete
         let tips = Self.tips(end), old = Self.tips(start)
         var commits: [Commit] = []
@@ -155,7 +159,9 @@ public struct GitWatch: Sendable {
             }
         }
         var (lines, reset) = Self.report(start: start, end: end, commits: commits, isProtected: { Sync.isProtected($0) })
-        if !reset.isEmpty, !resetIndex(reset) { lines.append("minigw: could not remove the staged protected paths from the index: run git reset -- " + reset.joined(separator: " ")) }
+        if !reset.isEmpty, !restore {
+            lines.append("minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): run git reset -- " + reset.joined(separator: " "))
+        } else if !reset.isEmpty, !resetIndex(reset) { lines.append("minigw: could not remove the staged protected paths from the index: run git reset -- " + reset.joined(separator: " ")) }
         return (lines, end.incomplete.isEmpty)
     }
 
@@ -165,7 +171,7 @@ public struct GitWatch: Sendable {
     /// At the end of the share: prints to stderr, then forgets the stored start state, unless the check was incomplete: then the file stays and the next start in the folder checks
     /// again (`recover`). `drained` false: the requests of the share did not finish in time, the agent may still be writing.
     @discardableResult public func finish(drained: Bool = true) -> [String] {
-        let r = compare(incomplete: drained ? [] : ["requests of the agent were still running"])
+        let r = compare(incomplete: drained ? [] : ["requests of the agent were still running"], restore: drained)
         for l in r.lines { try? FileHandle.standardError.write(contentsOf: Data((l + "\n").utf8)) }
         if r.complete, let file { try? FileManager.default.removeItem(atPath: file) }
         return r.lines
@@ -232,7 +238,7 @@ public struct GitWatch: Sendable {
     }
 
     /// Files of runs that did not finish (their process is gone) in this folder: compare and report, prefixed, then remove them.
-    static func recover(_ root: String, dir: String, selfPID: pid_t, alive: (pid_t) -> Bool) -> [String] {
+    static func recover(_ root: String, dir: String, selfPID: pid_t, alive: (pid_t) -> Bool, maxCommits: Int = GitWatch.maxCommitsDefault, maxOutput: Int = GitWatch.maxOutputDefault) -> [String] {
         let fm = FileManager.default, prefix = key(root) + "-"
         var out: [String] = []
         for name in ((try? fm.contentsOfDirectory(atPath: dir)) ?? []).sorted() where name.hasPrefix(prefix) && name.hasSuffix(".json") {
@@ -240,10 +246,14 @@ public struct GitWatch: Sendable {
             let f = dir + "/" + name
             var data = Data()
             if let h = FileHandle(forReadingAtPath: f) { data = h.readData(ofLength: maxFile + 1); try? h.close() }
-            try? fm.removeItem(atPath: f)
             let (st, why) = parse(data, root: root)
-            guard let st else { out.append("minigw: ignoring a damaged git watch state file (\(why))"); continue }
-            for l in GitWatch(root: root, start: st).lines() { out.append(l.replacingOccurrences(of: "minigw: ", with: "minigw: from the previous run that did not finish: ", options: [], range: l.range(of: "minigw: "))) }
+            guard let st else { try? fm.removeItem(atPath: f); out.append("minigw: ignoring a damaged git watch state file (\(why))"); continue }
+            var w = GitWatch(root: root, start: st); w.maxCommits = maxCommits; w.maxOutput = maxOutput
+            let r = w.compare()
+            for l in r.lines { out.append(l.replacingOccurrences(of: "minigw: ", with: "minigw: from the previous run that did not finish: ", options: [], range: l.range(of: "minigw: "))) }
+            // Only a complete comparison removes the baseline; an incomplete one is tried again at the next start, for a week at most.
+            let age = ((try? fm.attributesOfItem(atPath: f))?[.modificationDate] as? Date).map { -$0.timeIntervalSinceNow } ?? .infinity
+            if r.complete || age > Self.keepIncomplete { try? fm.removeItem(atPath: f) }
         }
         return out
     }
