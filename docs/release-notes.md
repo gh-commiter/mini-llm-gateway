@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.0
+
 Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and quota. Read **Changed** and **Known limits** before you update a gateway that other people use.
 
 ### New
