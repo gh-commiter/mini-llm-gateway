@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Fixed (Mac client): a refused folder share prints the gateway’s reason, including the synced-folder limit.
-- New (both gateways): `minigw gw sync list --device ID` and `minigw gw sync remove <copy id> --device ID` reclaim synced-folder slots without waiting 14 days; stop sessions and agents before removal (`local` selects local Mac copies).
+- New (both gateways): `minigw gw sync list --device ID` and `minigw gw sync remove <copy id> --device ID` reclaim synced-folder slots without waiting 14 days; stop sessions and agents before removal (`local` selects local Mac copies); listing works during active sessions.
 
 Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and quota. Read **Changed** and **Known limits** before you update a gateway that other people use.
 

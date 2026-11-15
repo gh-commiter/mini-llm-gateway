@@ -5,8 +5,10 @@
 emulate -L zsh; set -eu
 W=${0:A:h}/..
 SM="$W/build/Mini Gateway.app/Contents/Helpers/minigw"
+source "$W/scripts/sync-copies-cleanup.zsh"
 T=${$(mktemp -d):A}; SPID=""
 cleanup() {
+  sync_copies_cleanup || print -u2 "gateway copies remain"
   perl -e 'alarm shift; exec @ARGV' 30 "$SM" disconnect --name e2e-tmp >/dev/null 2>&1 || true
   [[ -n $SPID ]] && kill $SPID 2>/dev/null; rm -rf $T
 }
@@ -31,6 +33,9 @@ sm models > $T/m.txt 2>&1 || fail "models: $(<$T/m.txt)"
 grep -q '^claude-cli-haiku@e2e-tmp ' $T/m.txt || fail "models: $(<$T/m.txt)"
 print "connect profiles status models ok"
 
+sync_admin() { sm gw "$@" }
+sync_copies_begin local || fail "cannot record gateway copies"
+
 # Session through the Swift ProfileMux: chat model first (no share), then an agent model (sync share with e2e-tmp).
 mkdir -p $T/bin $T/proj; print hello > $T/proj/a.txt
 cat > $T/bin/claude <<'EOF'
@@ -44,6 +49,7 @@ curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer wrong" $ANTHROP
 EOF
 chmod +x $T/bin/claude
 (cd $T/proj && E2E=$T PATH=$T/bin:$PATH MINIGW_SHARE=1 MINIGW_WORK=sync perl -e 'alarm shift; exec @ARGV' 300 "$SM" -p hi > $T/run.txt 2>&1) || fail "session: $(<$T/run.txt)"
+sync_copies_cleanup || fail "gateway copies remain"
 grep -q '2 gateways' $T/run.txt || fail "no local proxy: $(<$T/run.txt)"
 grep -q '"claude-cli-haiku@e2e-tmp"' $T/models.json || fail "session models: $(head -c 400 $T/models.json)"
 grep -qi pong $T/agent.json || fail "agent@e2e-tmp: $(head -c 600 $T/agent.json) / $(tail -5 $T/serve.log)"
