@@ -2146,8 +2146,10 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
     defer { try? FileManager.default.removeItem(at: scratch) }
     var c = RouterConfig()
     c.scratchFolder = scratch.path
+    // the router's sync folder is inside the chosen Scratch's own subfolder (scratchURL), which scratch("sync") resolves: never the real Scratch
+    let owner = c.scratch("sync").appendingPathComponent("local")
     for i in 0..<Sync.maxCopies {
-        try FileManager.default.createDirectory(at: scratch.appendingPathComponent("sync/local/" + String(format: "%016x", i)), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: owner.appendingPathComponent(String(format: "%016x", i)), withIntermediateDirectories: true)
     }
     let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
     var q = request("POST", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": "limit",

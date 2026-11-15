@@ -215,11 +215,12 @@ public actor ShareHub {
         // listed nor counted and is removed at the next start or list/remove, never a half-deleted copy under a valid ID.
         let gone = realOwner.appendingPathComponent("\(remove).removing-\(UInt64(Date().timeIntervalSince1970 * 1e9))")
         do { try fm.moveItem(at: copy, to: gone) } catch { throw AdminError(500, "sync: cannot remove copy") }
-        do { try fm.removeItem(at: gone) } catch { throw AdminError(500, "sync: cannot remove copy") }
+        removeHook?(gone)
+        // The detached leftover cleanup (below, started by this or an earlier call) may remove `gone` and its marker at the same time:
+        // a failure counts only if the folder / the marker is still there afterwards.
+        if (try? fm.removeItem(at: gone)) == nil, fm.fileExists(atPath: gone.path) { throw AdminError(500, "sync: cannot remove copy") }
         let marker = copy.appendingPathExtension("used")
-        if fm.fileExists(atPath: marker.path) {
-            do { try fm.removeItem(at: marker) } catch { throw AdminError(500, "sync: cannot remove copy marker") }
-        }
+        if (try? fm.removeItem(at: marker)) == nil, fm.fileExists(atPath: marker.path) { throw AdminError(500, "sync: cannot remove copy marker") }
         return copies
     }
 
@@ -757,6 +758,10 @@ public actor ShareHub {
     private var copyOps: [URL: Int] = [:]
     private func opStart(_ copy: URL) { copyOps[copy, default: 0] += 1 }
     private func opEnd(_ copy: URL) { if let n = copyOps[copy], n > 1 { copyOps[copy] = n - 1 } else { copyOps[copy] = nil } }
+
+    private var removeHook: ((URL) -> Void)?
+    /// Only for tests: runs between the rename and the delete of a removal (what a concurrent leftover cleanup would do there).
+    func setRemoveHook(_ h: ((URL) -> Void)?) { removeHook = h }
 
     private var scanHook: (@Sendable () async -> Void)?
     /// Only for tests: a suspension point of syncManifest before its scan.

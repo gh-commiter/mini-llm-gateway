@@ -98,3 +98,19 @@ import Testing
     _ = try await hub.syncCopies(root, device: "dev", remove: id)  // after the scan ended the copy is free
     #expect(!FileManager.default.fileExists(atPath: copy.path))
 }
+
+/// The leftover cleanup runs detached and may delete the renamed folder (and its marker) while the removal deletes it: that is not an error.
+@Test func syncCopyRemovalSurvivesTheLeftoverCleanupDeletingTheRenamedFolder() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let hub = ShareHub(), id = "0123456789abcdef"
+    let owner = root.appendingPathComponent("dev"), copy = owner.appendingPathComponent(id)
+    try FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
+    ShareHub.touchUsed(copy)
+    await hub.setRemoveHook { gone in
+        try? FileManager.default.removeItem(at: gone)  // the cleaner got there first ...
+        try? FileManager.default.removeItem(at: copy.appendingPathExtension("used"))  // ... and took the marker of the gone copy too
+    }
+    _ = try await hub.syncCopies(root, device: "dev", remove: id)
+    #expect(!FileManager.default.fileExists(atPath: copy.path))
+}
