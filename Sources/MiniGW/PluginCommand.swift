@@ -186,9 +186,7 @@ func pluginStatus() {
     case .success(let c):
         let (st, ready) = get(c, "/health/ready")
         guard st == 200, ready?["providers"] != nil else { say("Gateway:    \(p.conn.url) (not connected: minigw status)"); return }
-        var v = ready?["version"] as? String ?? ""
-        if v.isEmpty || v.contains(where: { !"0123456789.".contains($0) }) { v = "unknown (older than 0.5.20)" }
-        say("Gateway:    \(p.conn.url), version \(v)")
+        say("Gateway:    \(p.conn.url), version \(gatewayVersion(ready))")
     }
 }
 

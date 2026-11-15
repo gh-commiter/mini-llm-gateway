@@ -232,6 +232,9 @@ func profileStatus(p profile) bool {
 		state += ", encrypted"
 	}
 	say("Gateway:   " + p.conn.URL + " (" + state + ")")
+	if _, ok := ready["providers"]; st == 200 && ok { // providers (and the version) only with an accepted token
+		say("Version:   minigw " + version + ", gateway " + gatewayVersion(ready))
+	}
 	if pr, ok := ready["providers"].(map[string]any); ok {
 		names := make([]string, 0, len(pr))
 		for k := range pr {

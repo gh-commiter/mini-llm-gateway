@@ -674,6 +674,12 @@ func deviceID(_ c: Connection) -> String? {
 
 /// Naslov, dosegljivost, ponudniki, število modelov, ID naprave in razlog enega profila; true = povezan
 /// (prehod dosegljiv, žeton sprejet, naprava odobrena).
+/// The version in the health answer, or why there is none (a gateway older than 0.5.20 does not send it).
+func gatewayVersion(_ ready: [String: Any]?) -> String {
+    let v = ready?["version"] as? String ?? ""
+    return v.isEmpty || v.contains(where: { !"0123456789.".contains($0) }) ? "unknown (older than 0.5.20)" : v
+}
+
 func profileStatus(_ p: Profile) -> Bool {
     let c: Connection
     switch routeResult(p) {
@@ -685,6 +691,7 @@ func profileStatus(_ p: Profile) -> Bool {
     }
     let (s, ready) = get(c, "/health/ready")
     say("Gateway:   \(p.conn.url) (\(s == 200 ? "reachable" : s == 0 ? "unreachable" : "HTTP \(s)")\(p.conn.isLocal && p.conn.key == nil ? "" : ", encrypted"))")
+    if s == 200, ready?["providers"] != nil { say("Version:   minigw \(minigwVersion), gateway \(gatewayVersion(ready))") }  // providers (and the version) only with an accepted token
     if let pr = ready?["providers"] as? [String: Bool] {
         say("Providers: " + pr.keys.sorted().map { "\(oneLine($0)) \(pr[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
     }

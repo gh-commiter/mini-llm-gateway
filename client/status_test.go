@@ -73,3 +73,31 @@ func TestStatusOutputCannotBeForged(t *testing.T) {
 		}
 	}
 }
+
+// #118: minigw status names the gateway's version next to the client's (and says so when the gateway sends none).
+func TestProfileStatusShowsGatewayVersion(t *testing.T) {
+	for _, tc := range []struct{ ready, want string }{
+		{`{"version":"0.6.2","providers":{"a":true}}`, "Version:   minigw " + version + ", gateway 0.6.2\n"},
+		{`{"providers":{"a":true}}`, "Version:   minigw " + version + ", gateway unknown (older than 0.5.20)\n"},
+		{`{"version":"0.6.2"}`, ""}, // no accepted token: no version line
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1/models" {
+				w.Write([]byte(`{"data":[]}`))
+				return
+			}
+			w.Write([]byte(tc.ready))
+		}))
+		old := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+		profileStatus(profile{"default", connection{URL: srv.URL, Token: "t"}})
+		w.Close()
+		os.Stdout = old
+		b, _ := io.ReadAll(r)
+		srv.Close()
+		if has := strings.Contains(string(b), "Version:"); has != (tc.want != "") || !strings.Contains(string(b), tc.want) {
+			t.Errorf("%s: %q", tc.ready, b)
+		}
+	}
+}

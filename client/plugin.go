@@ -430,11 +430,16 @@ func pluginStatus(goos string) {
 		say("Gateway:    " + ps[0].conn.URL + " (not connected: minigw status)")
 		return
 	}
+	say("Gateway:    " + ps[0].conn.URL + ", version " + gatewayVersion(ready))
+}
+
+// gatewayVersion: the version in the health answer, or why there is none (a gateway older than 0.5.20 does not send it).
+func gatewayVersion(ready map[string]any) string {
 	v, _ := ready["version"].(string)
 	if v == "" || strings.Trim(v, "0123456789.") != "" {
-		v = "unknown (older than 0.5.20)"
+		return "unknown (older than 0.5.20)"
 	}
-	say("Gateway:    " + ps[0].conn.URL + ", version " + v)
+	return v
 }
 
 // refuseRoot (L5): kot root bi minigw pisal v korenove ~/.claude in povezave, ki jih nato uporablja uporabnik.

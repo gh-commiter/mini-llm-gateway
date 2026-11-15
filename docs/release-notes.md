@@ -5,6 +5,9 @@
 ### New
 - New (both gateways): `minigw gw usage` now shows where requests, tokens and money go: totals per provider and model (sorted by reported cost), a per-day table and a total line, from the usage events, for the last 7 days or `--days N`. Options `--provider`, `--model`, `--json` (the API answer unchanged) and `--csv` (one row per day, provider and model). The older per-folder and per-device counters, with their `--device` and `--folder` filters, are now `minigw gw usage --legacy`.
 
+### Changed
+- Changed (both clients): `minigw status` now shows the gateway's version next to the minigw version (a `Version:` line), as `minigw plugin status` already did (#118).
+
 ## 0.6.2
 
 ### Changed
