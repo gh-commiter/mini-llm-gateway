@@ -70,13 +70,16 @@ func agentAskArgs(args []string) (model string, words []string, bad string) {
 }
 
 // agentAsk: minigw -p --model <id> "vprašanje" (ali vprašanje na stdin); besedilo odgovora sproti na stdout.
-func agentAsk(c *connection, args []string) {
+func agentAsk(c *connection, args []string, toolsFlag string) {
 	model, words, bad := agentAskArgs(args)
 	if bad != "" {
 		fail("inside a gateway agent, minigw -p takes only --model <id> and the question, not " + bad)
 	}
 	if model == "" {
 		fail(`usage: minigw -p --model <id> "question"   (minigw models lists the models)`)
+	}
+	if _, e := toolsFor(model, toolsFlag, false); e != "" {
+		fail(e)
 	}
 	q := strings.Join(words, " ")
 	if q == "" {

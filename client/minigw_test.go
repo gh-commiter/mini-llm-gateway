@@ -1139,7 +1139,7 @@ func TestUnsafePromptStdin(t *testing.T) {
 	if r := promptRefusal(unsafePrompt(m, diff, env, false)); r != "@ before a file name on stdin (claude would attach that file) is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to 2.1.299 or newer" {
 		t.Errorf("diff without mentions off: %q", r)
 	}
-	if r := promptRefusal(unsafePrompt([]string{"-p", "--", "@x"}, "", env, true)); r != "@ before a file name (claude would attach that file) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt" {
+	if r := promptRefusal(unsafePrompt([]string{"-p", "--", "@x"}, "", env, true)); r != "@ before a file name (claude would attach that file) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt, or pass it on stdin (for example: minigw -p --model <model> < file.txt; needs Claude Code 2.1.299 or newer)" {
 		t.Errorf("argument: %q", r)
 	}
 	if unsafePrompt([]string{"-p", "--", "@x review"}, "", env, true) == "" || unsafePrompt([]string{"-p", "--", "ok"}, " /config x", env, true) == "" {

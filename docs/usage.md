@@ -379,6 +379,21 @@ minigw --minigw-role security -p --model claude-codex "…"
 read-only, Codex and Grok run in their read-only sandbox, Copilot runs without its write tool, and Claude CLI gets only
 its reading tools (Read, Grep, Glob, web search and fetch; commands only in a sandbox that cannot write to the
 folder). This also holds when the gateway runs on the same computer. `/minigw:ask --ro` and `/minigw:review` use it.
+**Tools of provider models** (`--minigw-tools=read` or `none`): a LiteLLM or OpenRouter model runs in the local Claude Code with the
+session's permissions (Bash, Edit, MCP tools, sub-agents), and `--tools` is refused inside Claude Code. `--minigw-tools=read` gives it only Read,
+Grep and Glob; `none` gives it no tools. minigw passes `--tools=<list>`, `--strict-mcp-config` (no MCP tools, not even the claude.ai connectors),
+`--disable-slash-commands` and `--setting-sources=` to claude: with the default setting sources a hook in your user, project or local settings
+still runs (measured with a real run), so for this run **your own settings and hooks are not loaded**. It is accepted inside Claude Code because it
+can only remove tools. While a restriction applies, minigw refuses options that could widen it, also outside Claude Code and with
+`MINIGW_ALLOW_UNSAFE_FLAGS=1` (`--tools`, `--allowedTools`, `--mcp-config`, `--permission-mode`, `--dangerously-skip-permissions`, `--settings`,
+`--setting-sources`, `--add-dir`, `--agents`, `--plugin-dir` …); `-c`, `-r` and `--session-id` stay allowed. `--minigw-ro` (also a folder
+saved read-only) means `read` for every model that is not certainly a gateway agent, also when no `--model` is given. Agent models
+(`claude-cli-…`, `claude-codex…`, `claude-grok…`, `claude-copilot…`, exact names as the gateway uses them) are limited on the gateway:
+`--minigw-tools` with one is an error (use `--minigw-ro`). `ANTHROPIC_MODEL` does not name the model (minigw does not pass it to claude).
+Inside a gateway agent (`MINIGW_AGENT_URL`) a provider model is asked directly and gets no tools at all, so the flag is accepted and has nothing
+to restrict. A prompt with `@` before a word
+(`@Test` in a diff) is refused inside Claude Code; pipe it on stdin instead (`git diff | minigw -p --model <model>`, Claude Code 2.1.299 or newer).
+
 Leaving `--minigw-ro` out is not prompted: a model call without it inside Claude Code is pre-approved like one with it,
 so the agent may write (in worktree mode only on its branch).
 

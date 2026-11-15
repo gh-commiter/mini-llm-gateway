@@ -1,0 +1,526 @@
+{
+ "parse": [
+  {
+   "args": [
+    "-p",
+    "--model",
+    "m",
+    "x"
+   ],
+   "rest": [
+    "-p",
+    "--model",
+    "m",
+    "x"
+   ],
+   "value": "",
+   "error": ""
+  },
+  {
+   "args": [
+    "--minigw-tools=read",
+    "-p",
+    "x"
+   ],
+   "rest": [
+    "-p",
+    "x"
+   ],
+   "value": "read",
+   "error": ""
+  },
+  {
+   "args": [
+    "-p",
+    "--minigw-tools",
+    "none",
+    "x"
+   ],
+   "rest": [
+    "-p",
+    "x"
+   ],
+   "value": "none",
+   "error": ""
+  },
+  {
+   "args": [
+    "--minigw-tools=none",
+    "--minigw-tools",
+    "read"
+   ],
+   "rest": [],
+   "value": "read",
+   "error": ""
+  },
+  {
+   "args": [
+    "--minigw-tools=all",
+    "-p"
+   ],
+   "rest": null,
+   "value": "",
+   "error": "--minigw-tools: unknown value \"all\" (use none or read)"
+  },
+  {
+   "args": [
+    "--minigw-tools="
+   ],
+   "rest": null,
+   "value": "",
+   "error": "--minigw-tools: unknown value \"\" (use none or read)"
+  },
+  {
+   "args": [
+    "--minigw-tools",
+    "Bash"
+   ],
+   "rest": null,
+   "value": "",
+   "error": "--minigw-tools: unknown value \"Bash\" (use none or read)"
+  },
+  {
+   "args": [
+    "-p",
+    "--minigw-tools"
+   ],
+   "rest": null,
+   "value": "",
+   "error": "--minigw-tools needs a value (none or read)"
+  },
+  {
+   "args": [
+    "-p",
+    "--",
+    "--minigw-tools=bad"
+   ],
+   "rest": [
+    "-p",
+    "--",
+    "--minigw-tools=bad"
+   ],
+   "value": "",
+   "error": ""
+  }
+ ],
+ "plan": [
+  {
+   "model": "litellm-gpt",
+   "flag": "",
+   "ro": false,
+   "tools": "",
+   "error": ""
+  },
+  {
+   "model": "litellm-gpt",
+   "flag": "read",
+   "ro": false,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "litellm-gpt",
+   "flag": "none",
+   "ro": false,
+   "tools": "none",
+   "error": ""
+  },
+  {
+   "model": "openrouter/x-ai/grok",
+   "flag": "",
+   "ro": true,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "litellm-gpt",
+   "flag": "none",
+   "ro": true,
+   "tools": "none",
+   "error": ""
+  },
+  {
+   "model": "",
+   "flag": "read",
+   "ro": false,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "claude-cli-opus",
+   "flag": "",
+   "ro": true,
+   "tools": "",
+   "error": ""
+  },
+  {
+   "model": "claude-codex-gpt-6.1-sol",
+   "flag": "read",
+   "ro": false,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-codex-gpt-6.1-sol: agents are limited on the gateway, use --minigw-ro"
+  },
+  {
+   "model": "claude-grok-4",
+   "flag": "none",
+   "ro": true,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-grok-4: agents are limited on the gateway, use --minigw-ro"
+  },
+  {
+   "model": "claude-copilot-x",
+   "flag": "read",
+   "ro": false,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-copilot-x: agents are limited on the gateway, use --minigw-ro"
+  },
+  {
+   "model": "claude-cli-opus",
+   "flag": "none",
+   "ro": false,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-cli-opus: agents are limited on the gateway, use --minigw-ro"
+  },
+  {
+   "model": "",
+   "flag": "",
+   "ro": true,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "",
+   "flag": "",
+   "ro": false,
+   "tools": "",
+   "error": ""
+  },
+  {
+   "model": "claude-codexa",
+   "flag": "",
+   "ro": true,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "claude-codexa",
+   "flag": "none",
+   "ro": false,
+   "tools": "none",
+   "error": ""
+  },
+  {
+   "model": "claude-codex",
+   "flag": "read",
+   "ro": false,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-codex: agents are limited on the gateway, use --minigw-ro"
+  },
+  {
+   "model": "claude-grok",
+   "flag": "none",
+   "ro": false,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-grok: agents are limited on the gateway, use --minigw-ro"
+  },
+  {
+   "model": "claude-copilot",
+   "flag": "none",
+   "ro": false,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-copilot: agents are limited on the gateway, use --minigw-ro"
+  },
+  {
+   "model": "Claude-CLI-opus",
+   "flag": "",
+   "ro": true,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "CLAUDE-CODEX-gpt",
+   "flag": "read",
+   "ro": false,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "claude-chat-opus",
+   "flag": "",
+   "ro": true,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "opus",
+   "flag": "",
+   "ro": true,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "claude-opus-4@20250514",
+   "flag": "",
+   "ro": true,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "claude-codex-gpt-6.1-sol",
+   "flag": "",
+   "ro": true,
+   "tools": "",
+   "error": ""
+  }
+ ],
+ "claudeArgs": [
+  {
+   "tools": "read",
+   "args": [
+    "-p",
+    "x"
+   ],
+   "out": [
+    "--tools=Read,Grep,Glob",
+    "--strict-mcp-config",
+    "--setting-sources=",
+    "--disable-slash-commands"
+   ]
+  },
+  {
+   "tools": "none",
+   "args": [
+    "-p",
+    "x"
+   ],
+   "out": [
+    "--tools=",
+    "--strict-mcp-config",
+    "--setting-sources=",
+    "--disable-slash-commands"
+   ]
+  },
+  {
+   "tools": "read",
+   "args": [
+    "--disable-slash-commands",
+    "-p",
+    "x"
+   ],
+   "out": [
+    "--tools=Read,Grep,Glob",
+    "--strict-mcp-config",
+    "--setting-sources="
+   ]
+  }
+ ],
+ "line": [
+  {
+   "tools": "read",
+   "line": "minigw: tools of this model: read only (Read, Grep, Glob)"
+  },
+  {
+   "tools": "none",
+   "line": "minigw: tools of this model: none"
+  }
+ ],
+ "folderRo": [
+  {
+   "model": "litellm-gpt",
+   "flag": "",
+   "flagRo": false,
+   "savedRo": true,
+   "tools": "read"
+  },
+  {
+   "model": "litellm-gpt",
+   "flag": "",
+   "flagRo": false,
+   "savedRo": false,
+   "tools": ""
+  },
+  {
+   "model": "litellm-gpt",
+   "flag": "none",
+   "flagRo": false,
+   "savedRo": true,
+   "tools": "none"
+  },
+  {
+   "model": "claude-cli-opus",
+   "flag": "",
+   "flagRo": false,
+   "savedRo": true,
+   "tools": ""
+  },
+  {
+   "model": "",
+   "flag": "",
+   "flagRo": false,
+   "savedRo": true,
+   "tools": "read"
+  },
+  {
+   "model": "litellm-gpt",
+   "flag": "",
+   "flagRo": true,
+   "savedRo": false,
+   "tools": "read"
+  }
+ ],
+ "widen": [
+  {
+   "args": [
+    "-p",
+    "--model",
+    "m",
+    "x"
+   ],
+   "flag": ""
+  },
+  {
+   "args": [
+    "-p",
+    "--tools",
+    "Bash",
+    "x"
+   ],
+   "flag": "--tools"
+  },
+  {
+   "args": [
+    "-p",
+    "--tools=Bash,Read",
+    "x"
+   ],
+   "flag": "--tools"
+  },
+  {
+   "args": [
+    "-p",
+    "--allowedTools",
+    "Bash",
+    "x"
+   ],
+   "flag": "--allowedTools"
+  },
+  {
+   "args": [
+    "-p",
+    "--allowed-tools=Bash",
+    "x"
+   ],
+   "flag": "--allowed-tools"
+  },
+  {
+   "args": [
+    "-p",
+    "--mcp-config",
+    "m.json",
+    "x"
+   ],
+   "flag": "--mcp-config"
+  },
+  {
+   "args": [
+    "-p",
+    "--permission-mode=bypassPermissions",
+    "x"
+   ],
+   "flag": "--permission-mode"
+  },
+  {
+   "args": [
+    "-p",
+    "--dangerously-skip-permissions",
+    "x"
+   ],
+   "flag": "--dangerously-skip-permissions"
+  },
+  {
+   "args": [
+    "-p",
+    "--settings",
+    "{}",
+    "x"
+   ],
+   "flag": "--settings"
+  },
+  {
+   "args": [
+    "-p",
+    "--setting-sources",
+    "user",
+    "x"
+   ],
+   "flag": "--setting-sources"
+  },
+  {
+   "args": [
+    "-p",
+    "--add-dir",
+    "/",
+    "x"
+   ],
+   "flag": "--add-dir"
+  },
+  {
+   "args": [
+    "-p",
+    "--agents",
+    "{}",
+    "x"
+   ],
+   "flag": "--agents"
+  },
+  {
+   "args": [
+    "-p",
+    "--plugin-dir",
+    "d",
+    "x"
+   ],
+   "flag": "--plugin-dir"
+  },
+  {
+   "args": [
+    "-p",
+    "--model",
+    "m",
+    "--",
+    "--tools",
+    "x"
+   ],
+   "flag": ""
+  },
+  {
+   "args": [
+    "-p",
+    "-c",
+    "--model",
+    "m",
+    "x"
+   ],
+   "flag": ""
+  },
+  {
+   "args": [
+    "-p",
+    "--resume",
+    "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01",
+    "--model",
+    "m",
+    "x"
+   ],
+   "flag": ""
+  },
+  {
+   "args": [
+    "-p",
+    "--session-id=0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01",
+    "x"
+   ],
+   "flag": ""
+  }
+ ]
+}
