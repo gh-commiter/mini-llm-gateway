@@ -438,3 +438,11 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
 - **Not on the Mac:** the settings page and its sessions (`/minigw/settings`, `POST /settings/login`): the app has
   its own Settings window, so only the admin secret (`minigw gw`) opens the API, and it never sets cookies.
 
+
+### Synced copies
+
+`GET /sync?device=ID` returns `{"copies":["<copy id>"]}` in sorted order.
+`DELETE /sync/<copy id>?device=ID` removes that copy and its usage marker, freeing a slot.
+Use a device ID from `minigw gw devices` (including a revoked device's ID), or `local` for local Mac copies.
+Removal refuses with 409 while sessions or agents are active. Stop them first; copy changes not pulled to the client are discarded.
+For temporary-folder tests, record the copy IDs before and after the run and remove newly created copies after stopping its client.

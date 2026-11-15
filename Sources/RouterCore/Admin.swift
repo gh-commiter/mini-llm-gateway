@@ -242,6 +242,12 @@ extension Router {
                 return o
             }
             return (200, ["requests": requests, "inflight": inflight])
+        case "GET sync", "DELETE sync/{}":
+            let device = URLComponents(string: "http://localhost/?" + (query ?? ""))?.queryItems?.first(where: { $0.name == "device" })?.value ?? ""
+            guard device == "local" || Self.validDeviceID(device) else { throw AdminError(400, "sync: --device must be a device ID or local") }
+            try Self.scratchGuard(c)
+            let copies = try await Self.shares.syncCopies(c.scratch("sync"), device: device, remove: method == "DELETE" ? arg : "")
+            return (200, ["copies": copies])
         case "GET sessions":
             let q = URLComponents(string: "?" + (query ?? ""))?.queryItems ?? []
             let v = { (n: String) in q.first { $0.name == n }?.value ?? "" }

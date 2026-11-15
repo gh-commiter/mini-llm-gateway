@@ -12,6 +12,7 @@ let routerHelp = """
 minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at once; the app must be running.
 
   minigw gw status
+  minigw gw sync list|remove <copy id> --device ID       list synced copies or remove an unused copy
   minigw gw devices [allow <device id> [--name N] | rename <device id> --name N | deny <device id>]
   minigw gw devices history <device id>                 the device's last connections
   minigw gw sessions [--device ID] [--folder DIR] | <session id> | clear
@@ -297,6 +298,17 @@ func routerCommand(_ argv: [String]) {
             fail(routerHelp)
         }
 
+    case "sync":
+        guard let device = flags["device"], !device.isEmpty, pos.count >= 2 else { fail("sync: list|remove <copy id> --device ID") }
+        let query = "?device=" + esc(device)
+        if pos[1] == "list", pos.count == 2 {
+            let copies = a.call("GET", "/sync" + query)["copies"] as? [String] ?? []
+            for id in copies { say(id) }
+            if copies.isEmpty { say("no synced copies") }
+        } else if pos[1] == "remove", pos.count == 3 {
+            _ = a.call("DELETE", "/sync/" + esc(pos[2]) + query)
+            say("synced copy removed")
+        } else { fail("sync: list|remove <copy id> --device ID") }
     case "sessions":
         if pos.count == 1 {
             let query = "?device=" + esc(flags["device"] ?? "") + "&folder=" + esc(flags["folder"] ?? "")
