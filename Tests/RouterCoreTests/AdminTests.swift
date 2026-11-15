@@ -206,19 +206,19 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         let got = Received()
         // Lastna nit, ne DispatchQueue.global(): pod obremenitvijo (vzporedni testi) blok tam začne prepozno.
         Thread {
-            let c = accept(l, nil, nil)
+            let c = Sock.retry { accept(l, nil, nil) }
             defer { close(c) }
             func read(_ n: Int) -> Data {
                 var d = Data(), buf = [UInt8](repeating: 0, count: 65536)
-                while d.count < n { let k = Darwin.read(c, &buf, min(buf.count, n - d.count)); if k <= 0 { break }; d += buf[0..<k] }
+                while d.count < n { let k = Sock.retry { Darwin.read(c, &buf, min(buf.count, n - d.count)) }; if k <= 0 { break }; d += buf[0..<k] }
                 return d
             }
             let msg = read(4 + Noise.handshakeLength)
             guard let (reply, session) = try? Noise.respond(Data(msg.dropFirst(4)), key: fakeKey, suite: .aesGCM) else { return }
-            _ = reply.withUnsafeBytes { write(c, $0.baseAddress, $0.count) }
+            _ = reply.withUnsafeBytes { b in Sock.retry { write(c, b.baseAddress, b.count) } }
             var raw = Data(), plain = Data(), buf = [UInt8](repeating: 0, count: 65536)
             while !String(decoding: plain, as: UTF8.self).contains("\r\n\r\n") {
-                let k = Darwin.read(c, &buf, buf.count)
+                let k = Sock.retry { Darwin.read(c, &buf, buf.count) }
                 if k <= 0 { break }
                 raw += buf[0..<k]
                 if let p = try? Noise.unframe(&raw, session.receive) { plain += p }
@@ -235,8 +235,11 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         // Ponovitev pri pravem routerju: druga povezava, drug h → 401; pravi dokaz → 200.
         let real = AdminClient(port: port, routerKey: realKey.publicKey.rawRepresentation)
         let replay = String(captured)
-        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 30).0 == 401)
-        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30).0 == 200)
+        // #109: a 0 says where it failed (stage, errno); the earlier failures only showed "→ 0"
+        let replayed = real.attempt("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 30)
+        #expect(replayed.0 == 401, "replay: \(replayed.0) \(replayed.2)")
+        let proven = real.attempt("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30)
+        #expect(proven.0 == 200, "proof: \(proven.0) \(proven.2)")
         // Brez ključa routerja (program na vratih ne konča rokovanja): 0, nič poslano.
         #expect(AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation).request("GET", "/health/live", nil, timeout: 30).0 == 0)
     }
