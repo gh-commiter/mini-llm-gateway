@@ -20,7 +20,12 @@ private struct Rig {
         mountA = app + "/mounts/aaaa"; mountB = app + "/mounts/bbbb"
         scratch = r + "/Scratch"; sync = scratch + "/sync/dev/sess"
         project = home + "/Development/proj"; allowed = home + "/Development/other"; outside = r + "/outside"; tmp = scratch + "/tmp/run-req_x"
-        for d in [mountA, mountB, sync, project, allowed, outside, tmp, home + "/.ssh", home + "/.claude/projects/-other", scratch + "/state", app + "/core",
+        for n in Rig.closedClaudeNames + ["dev-mods/m.json", "cache/model-catalog/c.json"] {
+            let f = home + "/.claude/" + n
+            try fm.createDirectory(atPath: (f as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try Data("secret".utf8).write(to: URL(fileURLWithPath: f))
+        }
+        for d in [project + "/.git/hooks", project + "/sub/.git/modules/m", project + "/sub/.claude", project + "/.claude", mountA, mountB, sync, project, allowed, outside, tmp, home + "/.ssh", home + "/.claude/projects/-other", scratch + "/state", app + "/core",
                   home + "/Library/Keychains/ids"] { try fm.createDirectory(atPath: d, withIntermediateDirectories: true) }
         for f in [mountA + "/a.txt", mountB + "/b.txt", sync + "/s.txt", project + "/p.txt", allowed + "/o.txt", outside + "/x.txt", home + "/.ssh/config",
                   home + "/.claude/history.jsonl", home + "/.claude/projects/-other/t.jsonl", home + "/.claude/settings.json", home + "/.claude/CLAUDE.md",
@@ -30,8 +35,14 @@ private struct Rig {
         }
     }
 
-    func profile(session: String, folders: [String] = [], writable: Bool = true) throws -> String {
-        try #require(Native.claudeRestrictedProfile(session: session, folders: folders, writable: writable, tmp: tmp, exe: "/opt/homebrew/bin/claude", home: home, hidden: hidden))
+    /// Names under ~/.claude that a restricted run must not read (shell snapshots hold the exported environment, .credentials.json a token, the rest is state of the owner's sessions).
+    static let closedClaudeNames = ["shell-snapshots/s.sh", ".credentials.json", "debug/d.txt", "todos/t.json", "plans/p.md", "tasks/t", "ide/i.lock", "teams/t", "statsig/s",
+                                    "plugins/installed_plugins.json", "telemetry/t.json", "CLAUDE.md", "settings.json", "settings.local.json", "history.jsonl", "file-history/f",
+                                    "paste-cache/p", "backups/b", "sessions/s.json", "session-env/e", "cache/other/c", "projects/-other/t.jsonl", "cache/changelog.md"]
+
+    func profile(session: String, folders: [String] = [], writable: Bool = true, folderSettings: Bool = false, userSettings: Bool = false) throws -> String {
+        try #require(Native.claudeRestrictedProfile(session: session, folders: folders, writable: writable, tmp: tmp, exe: "/opt/homebrew/bin/claude", home: home, hidden: hidden,
+                                                    folderSettings: folderSettings, userSettings: userSettings))
     }
 
     /// true when the tool ran with exit 0 under the profile.
@@ -60,7 +71,7 @@ private struct Rig {
     #expect(p.contains("login\\.keychain-db") && p.contains("(literal \"/usr/bin/security\")"))  // the login: the login keychain files, not the folder
     #expect(!p.contains("(subpath \"\(rig.home)/Library/Keychains\")"))
     #expect(p.contains("(deny network-outbound)") && p.contains("(remote tcp \"*:443\")") && p.contains("(deny network-outbound (remote ip \"localhost:*\"))"))
-    #expect(p.contains("\(rig.home)/.claude/projects/" + Native.claudeProjectSlug(rig.project)))
+    #expect(p.contains("\(rig.home)/.claude/projects/" + Native.claudeProjectFolder(rig.project)))
 }
 
 @Test func readOnlyRunHasNoWriteGrantOnItsFolders() throws {
@@ -86,18 +97,66 @@ private struct Rig {
     #expect(try !rig.canRead(p, rig.home + "/.ssh/config"))  // ~/.ssh stand-in
     #expect(try !rig.canRead(p, rig.home + "/.claude/history.jsonl"))  // history
     #expect(try !rig.canRead(p, rig.home + "/.claude/projects/-other/t.jsonl"))  // another project's transcript
-    #expect(try !rig.canRead(p, rig.home + "/.claude/settings.json"))
-    #expect(try rig.canRead(p, rig.home + "/.claude/CLAUDE.md"))  // the owner's memory file is read as before
+    #expect(try rig.canRead(p, rig.home + "/.claude/dev-mods/m.json"))  // what claude needs (Write is refused by Claude Code without it)
+    #expect(try rig.canRead(p, rig.home + "/.claude/cache/model-catalog/c.json") && rig.canWrite(p, rig.home + "/.claude/cache/model-catalog/c2.json"))
     #expect(try rig.canRead(p, rig.home + "/Library/Keychains/login.keychain-db"))  // the login (Claude Code rules still forbid it to the Read tool)
     #expect(try rig.canWrite(p, rig.home + "/Library/Keychains/login.keychain-db-wal"))  // a token refresh writes it (else the rotated refresh token is lost)
     #expect(try !rig.canRead(p, rig.home + "/Library/Keychains/ids/x") && !rig.canWrite(p, rig.home + "/Library/Keychains/other.db") && !rig.canWrite(p, rig.home + "/.claude/projects/-other/n.jsonl"))
     #expect(try !rig.canRead(p, rig.app + "/state.json") && !rig.canRead(p, rig.scratch + "/state/s"))  // the gateway's folders
     #expect(try !rig.canRead(p, "/private/etc/passwd"))  // not world-readable system files
     // claude's own state: this session's transcript folder is written, session-env too
-    let slug = rig.home + "/.claude/projects/" + Native.claudeProjectSlug(rig.project)
+    let slug = rig.home + "/.claude/projects/" + Native.claudeProjectFolder(rig.project)
     try FileManager.default.createDirectory(atPath: slug, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(atPath: rig.home + "/.claude/session-env", withIntermediateDirectories: true)
     #expect(try rig.canWrite(p, slug + "/t.jsonl") && rig.canWrite(p, rig.home + "/.claude/session-env/x"))
+}
+
+/// F1: ~/.claude is an allow list; every other name is closed to reading (one real sandbox-exec row per name).
+@Test func claudeHomeIsAnAllowList() throws {
+    let rig = try Rig()
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    let p = try rig.profile(session: rig.project)
+    for n in Rig.closedClaudeNames { #expect(try !rig.canRead(p, rig.home + "/.claude/" + n), "\(n) is readable") }
+    #expect(try !rig.canRead(p, rig.home + "/.claude/projects/-other/t.jsonl"))
+    // session-env and sessions are written, not read
+    #expect(try rig.canWrite(p, rig.home + "/.claude/session-env/new") && rig.canWrite(p, rig.home + "/.claude/sessions/new"))
+    #expect(try !rig.canWrite(p, rig.home + "/.claude/shell-snapshots/new") && !rig.canWrite(p, rig.home + "/.claude/.credentials.json") && !rig.canWrite(p, rig.home + "/.claude/settings.json"))
+    // a granted folder around the whole home (the gateway refuses it; the kernel does not rely on that) does not open ~/.claude
+    let wide = try rig.profile(session: rig.project, folders: [rig.home])
+    for n in ["shell-snapshots/s.sh", ".credentials.json", "history.jsonl", "projects/-other/t.jsonl", "CLAUDE.md"] { #expect(try !rig.canRead(wide, rig.home + "/.claude/" + n), "wide: \(n)") }
+    #expect(try rig.canRead(wide, rig.home + "/.claude/dev-mods/m.json"))
+}
+
+/// F5: with the setting source `user`, Claude Code reads ~/.claude/settings.json (hooks, permissions): readable then, never writable; otherwise closed.
+@Test func userSettingsAreReadableOnlyWithTheUserSource() throws {
+    let rig = try Rig()
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    let off = try rig.profile(session: rig.project), on = try rig.profile(session: rig.project, userSettings: true)
+    #expect(try !rig.canRead(off, rig.home + "/.claude/settings.json") && rig.canRead(on, rig.home + "/.claude/settings.json"))
+    #expect(try !rig.canWrite(on, rig.home + "/.claude/settings.json") && !rig.canRead(on, rig.home + "/.claude/settings.local.json"))
+    #expect(ClaudeSeatbelt.grants(args: ["--setting-sources", "user"]).sources == "user" && ClaudeSeatbelt.grants(args: ["-p"]).sources == "")
+}
+
+/// F2: the file tools never touch `.git` (the rule layer's gitDataEditDenies) nor, with project/local sources, `.claude`: the kernel refuses it too, in every writable granted folder.
+@Test func gitAndClaudeFoldersAreClosedForWriting() throws {
+    let rig = try Rig()
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    let p = try rig.profile(session: rig.project, folders: [rig.allowed], writable: true, folderSettings: true)
+    #expect(try rig.canWrite(p, rig.project + "/a.txt") && rig.canWrite(p, rig.project + "/sub/b.txt") && rig.canWrite(p, rig.allowed + "/a.txt"))
+    #expect(try !rig.canWrite(p, rig.project + "/.git/config") && !rig.canWrite(p, rig.project + "/.git/hooks/x") && !rig.canWrite(p, rig.project + "/sub/.git/hooks/x"))
+    // every name the rule layer lists, top-level and as a submodule's git folder
+    for n in ClaudeCLIConfig.gitDenies { #expect(try !rig.canWrite(p, rig.project + "/.git/" + n), "\(n)") }
+    for n in ClaudeCLIConfig.submoduleDenies { #expect(try !rig.canWrite(p, rig.project + "/.git/modules/m/" + n) && !rig.canWrite(p, rig.project + "/sub/.git/modules/m/" + n), "\(n)") }
+    #expect(try !rig.canWrite(p, rig.project + "/.git/HEAD") && !rig.canWrite(p, rig.project + "/.git/refs-x"))  // the rest of `.git` too: the file tools never write it
+    // `.git` replaced by a file (a gitdir redirect) is an entry of its own
+    try Data("gitdir: /elsewhere".utf8).write(to: URL(fileURLWithPath: rig.allowed + "/.git"))
+    #expect(try !rig.canWrite(p, rig.allowed + "/.git") && rig.canWrite(p, rig.allowed + "/gitignored.txt"))
+    #expect(try !rig.canWrite(p, rig.project + "/.claude/settings.json") && !rig.canWrite(p, rig.project + "/sub/.claude/settings.local.json"))  // folder settings are read
+    let plain = try rig.profile(session: rig.project, writable: true)
+    #expect(try rig.canWrite(plain, rig.project + "/.claude/x") && !rig.canWrite(plain, rig.project + "/.git/config"))  // `.claude` only with those sources
+    // a read-only run has no write at all (the rows above, plus `.git`)
+    let ro = try rig.profile(session: rig.project, writable: false)
+    #expect(try !rig.canWrite(ro, rig.project + "/a2.txt"))
 }
 
 @Test func sessionInsideTheAppFolderSeesOnlyItself() throws {  // #114: a remote client's mount lives inside the app folder
@@ -132,22 +191,33 @@ private struct Rig {
     #expect(try !rig.canRead(p, rig.home + "/.claude/history.jsonl"))
 }
 
-@Test func projectSlugIsClaudeCodesFolderName() {
-    #expect(Native.claudeProjectSlug("/Users/uros/Development/Claude/ClaudeMini") == "-Users-uros-Development-Claude-ClaudeMini")
-    #expect(Native.claudeProjectSlug("/Volumes/Fast SSD/a.b_c") == "-Volumes-Fast-SSD-a-b-c")
-    #expect(Native.claudeProjectSlug("/p/Šola") == "-p--ola")
-    let long = "/" + String(repeating: "x", count: 300)
-    let rig = try? Rig()
-    defer { rig.map { try? FileManager.default.removeItem(at: $0.root) } }
-    if let rig, let p = Native.claudeRestrictedProfile(session: long, folders: [], writable: false, tmp: rig.tmp, exe: "/c", home: rig.home) {
-        #expect(p.contains("(regex #\"^"))  // a path over 200 characters is cut by Claude Code: the prefix of the folder
+@Test func projectFolderIsClaudeCodesFolderName() throws {
+    #expect(Native.claudeProjectFolder("/Users/uros/Development/Claude/ClaudeMini") == "-Users-uros-Development-Claude-ClaudeMini")
+    #expect(Native.claudeProjectFolder("/Volumes/Fast SSD/a.b_c") == "-Volumes-Fast-SSD-a-b-c")
+    #expect(Native.claudeProjectFolder("/p/Šola") == "-p--ola")
+    #expect(Native.claudeProjectFolder("/p/😀") == "-p---")  // two UTF-16 units
+    // over 200 characters (checked with a real claude: the name of this 266-character path was `…-forq4m`): the first 200 characters, "-" and the hash of the path
+    let long = "/private/tmp/mgwseatbelt/" + String(repeating: "a", count: 120) + "/" + String(repeating: "b", count: 120)
+    let name = Native.claudeProjectFolder(long)
+    #expect(name.count == 207 && name.hasSuffix("-forq4m") && name.hasPrefix("-private-tmp-mgwseatbelt-aaaa"))
+    // a sibling session with the same first 200 characters has another folder, and the profile of one does not open the other
+    let sibling = long + "c"
+    #expect(Native.claudeProjectFolder(sibling) != name && Native.claudeProjectFolder(sibling).hasPrefix(String(name.prefix(200))))
+    let rig = try Rig()
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    for n in [name, Native.claudeProjectFolder(sibling)] {
+        try FileManager.default.createDirectory(atPath: rig.home + "/.claude/projects/" + n, withIntermediateDirectories: true)
+        try Data("t".utf8).write(to: URL(fileURLWithPath: rig.home + "/.claude/projects/" + n + "/t.jsonl"))
     }
+    let p = try rig.profile(session: long)
+    #expect(try rig.canRead(p, rig.home + "/.claude/projects/" + name + "/t.jsonl") && rig.canWrite(p, rig.home + "/.claude/projects/" + name + "/n.jsonl"))
+    #expect(try !rig.canRead(p, rig.home + "/.claude/projects/" + Native.claudeProjectFolder(sibling) + "/t.jsonl"))
 }
 
 @Test func grantsComeFromTheRestrictedArguments() {
     var c = ClaudeCLIConfig(); c.tools = "Read,Grep"
     let ro = ClaudeSeatbelt.grants(args: c.agentArgs(cwd: URL(fileURLWithPath: "/s"), allTools: [], folders: AllowedFolders(), checkedPaths: ["/w1", "/w2"]))
-    #expect(ro.folders == ["/w1", "/w2"] && !ro.writable)
+    #expect(ro.folders == ["/w1", "/w2"] && !ro.writable && ro.sources == "")
     c.tools = "Read,Edit"
     #expect(ClaudeSeatbelt.grants(args: c.agentArgs(cwd: URL(fileURLWithPath: "/s"), allTools: [], folders: AllowedFolders(), checkedPaths: [])).writable)
 }
@@ -196,6 +266,37 @@ private func fakeClaude(_ dir: URL, body: String) throws -> String {
     let down = try fakeClaude(rig.root, body: "echo 'Not logged in' ; exit 1")
     #expect(ClaudeSeatbelt.checkNow(exe: down, tmpBase: base, home: rig.home) == .inconclusive)
     #expect((try FileManager.default.contentsOfDirectory(atPath: base.path)).filter { $0.hasPrefix("run-seatbelt") }.isEmpty)  // its temp folder is gone
+}
+
+private final class Clock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var t = Date(timeIntervalSince1970: 1_000_000)
+    var now: Date { lock.lock(); defer { lock.unlock() }; return t }
+    func advance(_ s: TimeInterval) { lock.lock(); t += s; lock.unlock() }
+}
+
+/// F3: an outage or an expired login (the control run fails too) is not checked again on every request: for ten minutes per binary the run just uses the profile; then once more.
+@Test func inconclusiveCheckIsRememberedForTenMinutes() async throws {
+    let rig = try Rig()
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    let base = URL(fileURLWithPath: rig.scratch + "/tmp")
+    let counter = rig.root.appendingPathComponent("runs.txt")
+    let exe = try fakeClaude(rig.root, body: "echo x >> \"\(counter.path)\"; echo 'Not logged in'; exit 1")  // fails with and without the profile
+    let clock = Clock()
+    let seatbelt = ClaudeSeatbelt(home: rig.home, now: { clock.now })
+    let cache = rig.root.appendingPathComponent("cache.json")
+    func runs() -> Int { ((try? String(contentsOf: counter, encoding: .utf8)) ?? "").split(separator: "\n").count }
+    let first = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache)
+    #expect(first && runs() == 1)  // the check: the control run counts (the run under the profile cannot write the counter outside its folders)
+    for _ in 0..<3 { let again = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache); #expect(again) }
+    #expect(runs() == 1)  // not again
+    clock.advance(ClaudeSeatbelt.inconclusiveFor - 1)
+    _ = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache)
+    #expect(runs() == 1)
+    clock.advance(2)
+    _ = await seatbelt.ensure(exe: exe, tmpBase: base, cacheFile: cache)
+    #expect(runs() == 2)  // after the ten minutes: checked once more
+    #expect(await seatbelt.state == .unchecked)  // never turned off by an outage
 }
 
 @Test func ensureCachesOnDiskAndReportsAFailureOnce() async throws {
@@ -363,6 +464,11 @@ private func fakeClaude(_ dir: URL, body: String) throws -> String {
         #expect((try? String(contentsOf: project.appendingPathComponent("report.txt"), encoding: .utf8)) == "unwrapped\n")
         let reason = await Router.claudeSeatbelt.offReason
         #expect(reason.contains("EPERM") && reason.contains("under the profile"), "\(reason)")
+        // F4: the status line is there at once (admin status of a router that never ran it), no restart
+        let st = await admin(FakeApp(c).router(), "GET", "/status")
+        let json = try #require(st.text.firstIndex(of: "{").map { String(st.text[$0...]) })
+        let body = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        #expect(body["claudeSandbox"] as? String == "off" && (body["claudeSandboxReason"] as? String)?.contains("EPERM") == true, "\(st.text.prefix(400))")
     }
 
     /// Real claude through the router, no fake: the restricted argv of production under the profile reads, writes, and resumes the conversation. The one allowed skip:

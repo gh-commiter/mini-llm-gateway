@@ -23,8 +23,16 @@ public actor ClaudeSeatbelt {
     private var memo: (stamp: String, key: String)?
     private var verdicts: [String: State] = [:]
     private var inflight: [String: Task<Outcome, Never>] = [:]
+    private var inconclusiveUntil: [String: Date] = [:]
+    private let now: @Sendable () -> Date
+    /// An inconclusive check (network or login down: the control run failed too) is not repeated for this long per binary: during an outage every request would otherwise run
+    /// two claude runs (up to 120 s each) before it fails anyway. The runs use the profile meanwhile.
+    static let inconclusiveFor: TimeInterval = 600
 
-    public init(home: String = NSHomeDirectory()) { self.home = home }
+    public init(home: String = NSHomeDirectory(), now: @escaping @Sendable () -> Date = { Date() }) {
+        self.home = home
+        self.now = now
+    }
 
     /// The reason the layer is off ("" while it is on or not checked yet): `status.claudeSandbox`, Settings.
     public var offReason: String { if case .off(let r) = state { return r }; return "" }
@@ -38,6 +46,7 @@ public actor ClaudeSeatbelt {
         guard let key = await keyFor(exe) else { return true }  // no claude: the launch reports it
         if let v = verdicts[key] { state = v; return v == .on }
         if let disk = Self.stored(cacheFile), disk == key { verdicts[key] = .on; state = .on; return true }
+        if let until = inconclusiveUntil[key], now() < until { return true }
         let task: Task<Outcome, Never>
         if let t = inflight[key] { task = t } else {
             let home = self.home
@@ -56,7 +65,8 @@ public actor ClaudeSeatbelt {
             verdicts[key] = .off(why); state = .off(why)
             return false
         case .inconclusive:
-            return true  // the profile was not shown broken (network or login): the run is confined, the next request checks again
+            inconclusiveUntil[key] = now().addingTimeInterval(Self.inconclusiveFor)
+            return true  // the profile was not shown broken (network or login): the run is confined, the check is repeated after `inconclusiveFor`
         }
     }
 
@@ -84,12 +94,13 @@ public actor ClaudeSeatbelt {
 
     // MARK: the grants of a run, from the arguments the restricted branch built
 
-    /// The allowed folders (`--add-dir`) and whether the run may write (an edit tool is among `--tools`; a read-only run has none).
-    static func grants(args: [String]) -> (folders: [String], writable: Bool) {
+    /// The allowed folders (`--add-dir`), whether the run may write (an edit tool is among `--tools`; a read-only run has none) and the setting sources the run passes (`--setting-sources`).
+    static func grants(args: [String]) -> (folders: [String], writable: Bool, sources: String) {
         var folders: [String] = []
         for (i, a) in args.enumerated() where a == "--add-dir" && i + 1 < args.count { folders.append(args[i + 1]) }
         let tools = args.firstIndex(of: "--tools").map { args[$0 + 1] } ?? ""
-        return (folders, tools.split(separator: ",").contains { editTools.contains($0.trimmingCharacters(in: .whitespaces)) })
+        let sources = args.firstIndex(of: "--setting-sources").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? ""
+        return (folders, tools.split(separator: ",").contains { editTools.contains($0.trimmingCharacters(in: .whitespaces)) }, sources)
     }
 
     /// The environment of a confined run: claude's temp folder (`CLAUDE_CODE_TMPDIR`) and TMPDIR are the run's private folder.

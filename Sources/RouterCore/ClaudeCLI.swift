@@ -137,8 +137,10 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// T3: with setting sources `project` or `local` Claude Code reads `.claude/settings*.json` of the folder (hooks run unsandboxed on the next run; `allow` and
     /// `additionalDirectories` widen the rules): the edit tools may not write `.claude` in the session folder or an allowed folder, nested too (real run: stops Write).
     /// Claude Code reads `.claude/settings*.json` of the folder with the setting sources `project` or `local` (`user` is the owner's home): denied unless the sources are empty or only `user`.
-    var readsFolderSettings: Bool {  // V8: unless every source is exactly `user` (or there are none): Claude Code trims like JS, so no guessing about `project\n`
-        let entries = settingSources.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    var readsFolderSettings: Bool { Self.readsFolderSettings(settingSources) }
+    static func sourceEntries(_ sources: String) -> [String] { sources.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
+    static func readsFolderSettings(_ sources: String) -> Bool {  // V8: unless every source is exactly `user` (or there are none): Claude Code trims like JS, so no guessing about `project\n`
+        let entries = sourceEntries(sources)
         return !entries.isEmpty && !entries.allSatisfy { $0 == "user" }
     }
 
@@ -883,8 +885,8 @@ extension Router {
                                                                          : "claude not found at \(cfg.executable)", rid: rid, writer: writer)
         }
         // 0.6.0: the restricted run goes under a Seatbelt profile (second layer, kernel-enforced; the tool rules above stay). The run's private temp folder lives in
-        // Scratch/tmp (run-<rid>: the cleanup of `minigw run` removes it at the next start too). A failed self-check (ClaudeSeatbelt) or a profile that cannot be built:
-        // the rules alone, said in the log, status and Settings.
+        // Scratch/tmp (run-<rid>: the cleanup of `minigw run` removes it at the next start too). A failed self-check (ClaudeSeatbelt: claude does not run under the profile):
+        // the rules alone, said in the log, status and Settings. A profile that cannot be built for this run refuses the run.
         var launch = (exe, args)
         var confinedTmp: URL?
         var confinedPath: String?
@@ -899,14 +901,17 @@ extension Router {
                 if (try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil {
                     confinedTmp = tmp
                 }
-                if let tmpReal = confinedTmp.flatMap({ Sync.real($0)?.path }), let real = Sync.real(URL(fileURLWithPath: exe))?.path,
-                   let profile = Native.claudeRestrictedProfile(session: canon(cwd.path), folders: grants.folders.map(canon), writable: grants.writable && !readOnly,
-                                                               tmp: tmpReal, exe: real, hidden: RouterConfig.hiddenScratch(config.scratchURL) + RouterConfig.agentDenied(kind: "claude", scratch: config.scratchURL)) {
-                    launch = ("/usr/bin/sandbox-exec", ["-p", profile, exe] + args)
-                    confinedPath = tmpReal
-                } else {
-                    Self.log.warning("\(ClaudeSeatbelt.offLine("the profile for this run could not be built (a link instead of a folder?)"), privacy: .public)")
+                // The profile for this run cannot be built (the temp folder, or a path that is not canonical any more: swapped for a link): the run is refused, not run on the rules alone;
+                // a failed self-check (claude does not run under the profile at all) is the case that falls back, and says so in status and Settings.
+                guard let tmpReal = confinedTmp.flatMap({ Sync.real($0)?.path }), let real = Sync.real(URL(fileURLWithPath: exe))?.path,
+                      let profile = Native.claudeRestrictedProfile(session: canon(cwd.path), folders: grants.folders.map(canon), writable: grants.writable && !readOnly,
+                                                                   tmp: tmpReal, exe: real, hidden: RouterConfig.hiddenScratch(config.scratchURL) + RouterConfig.agentDenied(kind: "claude", scratch: config.scratchURL),
+                                                                   folderSettings: ClaudeCLIConfig.readsFolderSettings(grants.sources), userSettings: ClaudeCLIConfig.sourceEntries(grants.sources).contains("user")) else {
+                    Self.log.error("\(rid, privacy: .public) claude: the system sandbox profile for this run could not be built: the run is refused")
+                    return await error(503, "api_error", "claude: cannot prepare the system sandbox for this run (a folder changed into a link, or its temporary folder cannot be made): start a new conversation", rid: rid, writer: writer)
                 }
+                launch = ("/usr/bin/sandbox-exec", ["-p", profile, exe] + args)
+                confinedPath = tmpReal
             }
         }
         let p = Process()
