@@ -278,6 +278,7 @@ final class AppState: ObservableObject {
             }
         }, admin: adminHooks(), core: core, allowedFolders: allowedFolders)
         writeAdminItem()
+        Task { await router.checkClaudeSandbox() }  // 0.6.0: the kernel layer under Claude CLI without local tools: checked now, not at the first request
         let s = RouterServer(router: router, key: routerKey)
         s.onState = { [weak self] state in
             Task { @MainActor in self?.show(state) }

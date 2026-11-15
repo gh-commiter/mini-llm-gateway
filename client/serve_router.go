@@ -344,6 +344,12 @@ func routerCommand(args []string, in io.Reader) {
 		if st.Core != "" { // #106
 			say(clean(st.Core))
 		}
+		switch st.ClaudeSandbox { // 0.6.0 (macOS): the kernel layer under Claude CLI without local tools
+		case "on":
+			say("Claude CLI without local tools: runs in the system sandbox (Seatbelt profile) under the tool rules")
+		case "off":
+			say(clean("Claude CLI without local tools runs without the system sandbox: " + st.ClaudeSandboxReason))
+		}
 		if sb := st.AgentSandbox; sb != nil { // #68: Windows
 			if sb["kind"] == "mxc" {
 				say("agent sandbox: Windows sandbox (MXC " + sb["version"] + ")")

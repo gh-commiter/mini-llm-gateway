@@ -126,6 +126,9 @@ type apiStatus struct {
 	Core string `json:"core,omitempty"`
 	// AgentSandbox (#68, Windows): {"kind":"mxc","version":"1.0.1"} ali {"kind":"","reason":"…"}; drugje ga ni.
 	AgentSandbox map[string]string `json:"agentSandbox,omitempty"`
+	// ClaudeSandbox (0.6.0, macOS): the kernel layer under Claude CLI without "Allow local tools": "on" or "off" (with the reason); absent when not checked yet or not applicable.
+	ClaudeSandbox       string `json:"claudeSandbox,omitempty"`
+	ClaudeSandboxReason string `json:"claudeSandboxReason,omitempty"`
 	// Copilot (#81): zakaj vklopljeni Copilot ni na voljo (prijava copilot login, shramba ključev); "" = v redu ali izklopljen.
 	Copilot string `json:"copilot,omitempty"`
 }

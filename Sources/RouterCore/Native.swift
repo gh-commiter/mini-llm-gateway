@@ -330,6 +330,18 @@ public enum Native {
         return root + "/.TemporaryItems/folders.\(getuid())/TemporaryItems"
     }
 
+    /// Pot v narekovajih profila Seatbelt.
+    static func sbQuote(_ p: String) -> String { "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+
+    /// Peskovnik primerja razrešene poti: vsako pravilo za dobesedno in (če obstaja) kanonično pot (~/.swiftpm/configuration → …).
+    static func sbBoth(_ p: String) -> [String] { Sync.real(URL(fileURLWithPath: p)).map { $0.path == p ? [p] : [p, $0.path] } ?? [p] }
+
+    /// `(<kind> "<pot>")` za vsako pot (dobesedno in kanonično, brez dvojnikov), z vodilnim presledkom.
+    static func sbRules(_ kind: String, _ paths: [String]) -> String {
+        var seen = Set<String>()
+        return paths.flatMap(sbBoth).filter { seen.insert($0).inserted }.map { " (\(kind) \(sbQuote($0)))" }.joined()
+    }
+
     /// `runTmp`: TMPDIR in ModuleCache tega zagona (v Scratch, ki je sicer skrit); `derivedData`: DerivedData mape (Scratch).
     /// `writable`: namesto mape in predpomnilnikov gradnje (agent Copilot: le mapa s pisanjem, sicer nič).
     /// `visible`: izrecna pot v skriti mapi (sinhronizirana kopija ali klon iz ShareHub), ki ostane vidna (pisljiva, če je
@@ -338,19 +350,10 @@ public enum Native {
                                runTmp: String? = nil, derivedData: String? = nil, writable only: [String]? = nil, visible: String? = nil) -> String? {
         let writable = only ?? ([dir] + buildCaches(home: home))
         for p in writable where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
-        let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
-        // Peskovnik primerja razrešene poti: vsako pravilo za dobesedno in (če obstaja) kanonično pot (~/.swiftpm/configuration → …).
-        func both(_ p: String) -> [String] { Sync.real(URL(fileURLWithPath: p)).map { $0.path == p ? [p] : [p, $0.path] } ?? [p] }
-        func rules(_ kind: String, _ paths: [String]) -> String {
-            var seen = Set<String>()
-            return paths.flatMap(both).filter { seen.insert($0).inserted }.map { " (\(kind) \(q($0)))" }.joined()
-        }
+        let q = Native.sbQuote
+        func rules(_ kind: String, _ paths: [String]) -> String { Native.sbRules(kind, paths) }
         let denies = buildCacheDenies(home: home)
-        let secretDirs = [".ssh", ".aws", ".gnupg", ".config", ".docker", ".kube", "Library/Keychains", "Library/Cookies",
-                          "Library/Application Support", "Library/Containers", "Library/Group Containers", "Library/Mail",
-                          "Library/Messages"].map { home + "/" + $0 }
-        let secretFiles = [".netrc", ".git-credentials", ".npmrc", ".pypirc", ".gradle/gradle.properties", ".zsh_history",
-                           ".bash_history"].map { home + "/" + $0 }
+        let (secretDirs, secretFiles) = Native.homeSecretPaths(home: home)
         return "(version 1)\n(allow default)\n(deny file-write*)\n"
             + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
             + (darwinTempRules(dirs: [dir] + [runTmp, derivedData].compactMap { $0 }) ?? "")
@@ -383,6 +386,101 @@ public enum Native {
             + " (remote unix-socket (path-literal \"/private/var/run/syslog\")))\n"
             + (routerPort.map { "(deny network-outbound (remote ip \"localhost:\($0)\"))\n" } ?? "")
             + (network ? "" : "(deny network-outbound (remote ip))\n(deny mach-lookup (global-name-regex #\"^com\\.apple\\.nsurlsessiond\"))\n")
+    }
+
+    /// Skrivnosti domače mape, ki jih peskovniki ne dajo brati (mape, datoteke): skupno `sandboxProfile` in `claudeRestrictedProfile`.
+    static func homeSecretPaths(home: String) -> (dirs: [String], files: [String]) {
+        ([".ssh", ".aws", ".gnupg", ".config", ".docker", ".kube", "Library/Keychains", "Library/Cookies",
+          "Library/Application Support", "Library/Containers", "Library/Group Containers", "Library/Mail",
+          "Library/Messages"].map { home + "/" + $0 },
+         [".netrc", ".git-credentials", ".npmrc", ".pypirc", ".gradle/gradle.properties", ".zsh_history",
+          ".bash_history"].map { home + "/" + $0 })
+    }
+
+    /// Mapa pogovora Claude Code v `~/.claude/projects` za kanonično pot seje (preverjeno z `claude -p`): vsaka enota UTF-16 razen črk in številk v »-«; nad 200 znaki prvih 200
+    /// znakov, »-« in zgostitev poti (31-hash po enotah UTF-16, abs, osnova 36; npr. pot 266 znakov → `…-forq4m`).
+    static func claudeProjectFolder(_ realPath: String) -> String {
+        let slug = String(String.UnicodeScalarView(realPath.utf16.map { u in
+            (u < 128 && CharacterSet.alphanumerics.contains(Unicode.Scalar(u)!)) ? Unicode.Scalar(u)! : "-"
+        }))
+        guard slug.count > 200 else { return slug }
+        var h: Int32 = 0
+        for u in realPath.utf16 { h = h &* 31 &+ Int32(u) }  // (h << 5) - h + u in JS, 32-bit
+        return String(slug.prefix(200)) + "-" + String(UInt32(bitPattern: h == Int32.min ? h : abs(h)), radix: 36)
+    }
+
+    /// 0.6.0: druga, jedrna plast Claude CLI brez »Allow local tools« (pravila orodij Claude Code ostanejo nespremenjena in so prva plast): proces `claude`
+    /// teče v tem profilu, tako da jedro zavrne branje in pisanje zunaj naštetega, tudi če pravila Claude Code odpovedo (0.5.27). PRIVZETO ZAVRNJENO
+    /// (branje in pisanje datotek), dovoljeno le (vse preverjeno s pravimi zagoni `claude -p`: zagon, prijava, odgovor, Read, Grep, Glob, Write, Edit, nadaljevanje pogovora):
+    /// - sistem: /usr/lib, /usr/share, /System, /private/var/db/{dyld,timezone}, TLS (/private/etc/ssl, hosts, resolv.conf), naprave /dev/{null,tty,dtracehelper} (pisanje) in
+    ///   /dev/{random,urandom,zero}, metapodatki (stat) povsod;
+    /// - program claude (dobesedno, kanonično), zasebna začasna mapa zagona `tmp` (CLAUDE_CODE_TMPDIR in TMPDIR, bralno in pisalno);
+    /// - mapa seje in preverjene dovoljene mape (branje; pisanje le z `writable`: pisalna orodja nastavljena in seja ni le za branje); v pisalnih mapah je `.git` (vse, tudi
+    ///   gitDenies/submoduleDenies in `.git` kot datoteka) in z `folderSettings` (viri nastavitev project/local) tudi `.claude` zavrnjen za pisanje, kot pravila orodij (gitDataEditDenies,
+    ///   claudeSettingsEditDenies);
+    /// - prijava: `~/Library/Keychains/login.keychain-db*` (branje in pisanje: osvežitev žetona; pisanje same datoteke je potrebno, preverjeno), `metadata.keychain-db*`, `.fl*` (branje),
+    ///   mapa sama, /usr/bin/security; brez podmape iCloud/podatkovne zaščite. Posebej: `~/.claude.json` je SAMO ZA BRANJE (Claude Code piše vanj stanje, ki ga zagon ne potrebuje; brez pisanja
+    ///   zagoni delujejo; pisanje bi odprlo globalno nastavitev lastnika: strežnike MCP, zaupanje projektom);
+    /// - ~/.claude: SEZNAM DOVOLJENEGA: bere se le `dev-mods` (brez branja te mape Claude Code zavrne orodja za pisanje z »Permission … denied«); pogovor te seje: `projects/<mapa seje>`
+    ///   (ustvarjanje mape) in z `sessionID` le datoteke `<id>.*` in `<id>/` (branje in pisanje; nadaljevanje pogovora deluje; tuji pogovori v isti mapi, ker
+    ///   ime mape ni enolično, niso dostopni, tudi seznam mape ne); brez `sessionID` cela mapa; z `userSettings` (vir nastavitev `user`) še branje `settings.json`, sicer ga Claude
+    ///   Code brez opozorila ne bi videl. NE pišejo se `session-env`, `sessions`, `cache`, `~/.claude.json` (zagoni delujejo brez; zavrnitve so opozorila v dnevniku jedra).
+    ///   Zavrnjeno: shell-snapshots, .credentials.json, debug, todos, plans, tasks, ide, teams, statsig, plugins, telemetry, CLAUDE.md, history, `projects/<slug>/memory`, drugi projekti.
+    ///   Samostojna mapa nastavitev na zagon (CLAUDE_CONFIG_DIR) ni mogoča: Keychain hrani prijavo pod imenom, ki je odvisno od te mape (izmerjeno: »Not logged in«);
+    /// - omrežje: ven le tcp 443 (api.anthropic.com; naslov ni določljiv po imenu, torej katerikoli gostitelj na 443), DNS (udp 53, mDNSResponder), vtičnica syslog. Vsa druga vrata so zaprta
+    ///   na VSAKEM naslovu (tudi na lastnem naslovu LAN: pravilo je po vratih, ne po naslovu), `denyPorts` (vrata routerja) še izrecno, localhost nikoli; brez `network-bind` in `network-inbound`.
+    /// Mapa seje je lahko v skriti mapi (mounts/<uuid>, Scratch/sync/…): ker je privzeto vse zavrnjeno, je dovoljena le ta pot, ostalo (sosednje seje,
+    /// nastavitve, Scratch) ne. Skrita mapa ali skrivnost domače mape, ki je V dovoljeni mapi (ne obratno), je izrecno zavrnjena.
+    /// nil: pot ni kanonična (povezava; pisanje bi šlo drugam) ali vsebuje nadzorni znak (profil bi se razlomil): zagon se zavrne (ClaudeCLI), ne teče brez plasti.
+    static func claudeRestrictedProfile(session: String, folders: [String], writable: Bool, tmp: String, exe: String,
+                                        home: String = NSHomeDirectory(), hidden: [String] = [], folderSettings: Bool = false, userSettings: Bool = false,
+                                        sessionID: String? = nil, denyPorts: [Int] = []) -> String? {
+        let granted = [session] + folders
+        let all = granted + [tmp, exe, home] + hidden
+        guard !all.contains(where: { $0.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } }) else { return nil }
+        for p in granted + [tmp] where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
+        func rules(_ kind: String, _ paths: [String]) -> String { Native.sbRules(kind, paths) }
+        func inside(_ a: String, _ b: String) -> Bool { a.hasPrefix(b + "/") }
+        func re(_ s: String) -> String { NSRegularExpression.escapedPattern(for: s) }
+        let h = Sync.real(URL(fileURLWithPath: home))?.path ?? home
+        let claude = h + "/.claude"
+        let (secretDirs, secretFiles) = Native.homeSecretPaths(home: home)
+        let hSecrets = home == h ? ([], []) : Native.homeSecretPaths(home: h)
+        let contained = (hidden + secretDirs + secretFiles + hSecrets.0 + hSecrets.1 + [claude])
+            .filter { s in granted.contains { inside(s, $0) } }
+        let folder = claude + "/projects/" + Native.claudeProjectFolder(session)
+        // the conversation of this run: its files only (a UUID: nothing else goes into a regex); without an id the whole folder
+        let project: String
+        if let id = sessionID, id.range(of: #"^[0-9a-fA-F-]{8,64}$"#, options: .regularExpression) != nil {
+            project = "(allow file-write*" + rules("literal", [folder]) + ")\n(allow file-read* file-write* (regex #\"^" + re(folder + "/" + id) + "(\\.|/|$)\"))\n"
+        } else {
+            project = "(allow file-read* file-write*" + rules("subpath", [folder]) + ")\n"
+        }
+        // the file tools never touch `.git` (the rule layer: gitDataEditDenies denies `.git/**` and the entry, which includes gitDenies and submoduleDenies) nor, with the
+        // folder settings read, `.claude`: the same for the kernel, in every writable granted folder, nested too
+        let guarded = writable ? granted.map { g in " (regex #\"^" + re(g) + "/(.*/)?\\.git(/|$)\")" + (folderSettings ? " (regex #\"^" + re(g) + "/(.*/)?\\.claude(/|$)\")" : "") }.joined() : ""
+        return "(version 1)\n(allow default)\n(deny file-read* file-write*)\n(allow file-read-metadata)\n(allow file-read* (literal \"/\"))\n"
+            + "(allow file-read*" + rules("subpath", ["/usr/lib", "/usr/share", "/System", "/private/var/db/dyld", "/private/var/db/timezone", "/private/etc/ssl"])
+            + rules("literal", ["/private/etc/hosts", "/private/etc/resolv.conf", "/dev/random", "/dev/urandom", "/dev/zero"]) + ")\n"
+            + "(allow file-read* file-write*" + rules("literal", ["/dev/null", "/dev/tty", "/dev/dtracehelper"]) + ")\n"
+            + "(allow file-read*" + rules("literal", [exe]) + ")\n"
+            + "(allow file-read*" + rules("subpath", granted) + ")\n"
+            + (writable ? "(allow file-write*" + rules("subpath", granted) + ")\n" : "")
+            + (contained.isEmpty ? "" : "(deny file-read* file-write*" + rules("subpath", contained) + ")\n")
+            + (guarded.isEmpty ? "" : "(deny file-write*" + guarded + ")\n")
+            + "(allow file-read* file-write*" + rules("subpath", [tmp]) + ")\n"
+            // login (Keychain): `security` reads and, when the token is refreshed, writes the login keychain with its sidecars (-shm, -wal, .sb-…); without the write a refresh fails after the
+            // server has rotated the refresh token (the login would be lost for every run); it needs the folder itself, metadata.keychain-db, the .fl lock files and /usr/bin/security (code signature)
+            + "(allow file-read* file-write* (regex #\"^" + re(h + "/Library/Keychains/login.keychain-db") + "\"))\n"
+            + "(allow file-read* (regex #\"^" + re(h + "/Library/Keychains/") + "(metadata\\.keychain-db|\\.fl)\")"
+            + rules("literal", [h + "/Library/Keychains", "/usr/bin/security", h + "/.claude.json"]) + ")\n"
+            + "(allow file-read*" + rules("subpath", [claude + "/dev-mods"]) + (userSettings ? rules("literal", [claude + "/settings.json"]) : "") + ")\n"
+            + project
+            + "(deny network-outbound)\n(deny network-bind)\n(deny network-inbound)\n"
+            + "(allow network-outbound (remote tcp \"*:443\") (remote udp \"*:53\") (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\"))"
+            + " (remote unix-socket (path-literal \"/private/var/run/syslog\")))\n"
+            + "(deny network-outbound (remote ip \"localhost:*\"))\n"
+            + denyPorts.map { "(deny network-outbound (remote ip \"*:\($0)\"))\n" }.joined()
     }
 
     /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, SwiftPM (kanonične). Ne ~/Library/Developer (#72): DerivedData

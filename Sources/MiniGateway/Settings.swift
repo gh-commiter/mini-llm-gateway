@@ -882,6 +882,7 @@ struct SettingsView: View {
                     if draft.claudeCLI.enabled, let issue = draft.claudeCLI.restrictedIssue(mode: false) {
                         Text(verbatim: restrictedText(issue)).font(.caption).foregroundStyle(.red)
                     }
+                    if draft.claudeCLI.enabled { ClaudeSandboxRow() }
                     Picker("Permission mode", selection: $draft.claudeCLI.permissionMode) {
                         ForEach(ClaudeCLIConfig.restrictedModes, id: \.self) { Text(verbatim: $0) }  // the modes that enforce the path rules
                     }
@@ -1079,6 +1080,34 @@ struct ProjectsRow: View {
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
                 }
             }
+    }
+}
+
+/// 0.6.0: the kernel layer under Claude CLI without local tools (Seatbelt profile under the tool rules); when the self-check failed, the reason, never silently.
+struct ClaudeSandboxRow: View {
+    @State private var state = ClaudeSeatbelt.State.unchecked
+
+    var body: some View {
+        Group {
+            switch state {
+            case .unchecked: EmptyView()
+            case .on:
+                Label { Text("Claude CLI without local tools runs in the system sandbox (Seatbelt profile) under the tool rules.") } icon: {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.green)
+                }
+            case .off(let reason):
+                Label { Text(String(localized: "Claude CLI without local tools runs without the system sandbox: \(reason)")).textSelection(.enabled) } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.orange)
+                }
+            }
+        }
+        .font(.caption)
+        .task {
+            while !Task.isCancelled {
+                state = await Router.claudeSeatbelt.state
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
     }
 }
 
