@@ -252,3 +252,13 @@ func TestLinkDotDotResolvesBeforeMoveGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSplitComponentsKeepsDotDot(t *testing.T) {
+	got := splitComponents(`share\L2/../x//y`, `\/`)
+	if strings.Join(got, "|") != "share|L2|..|x|y" {
+		t.Fatalf("windows split = %v", got)
+	}
+	if got := splitComponents(`a\b/../c`, "/"); strings.Join(got, "|") != `a\b|..|c` {
+		t.Fatalf("unix split = %v", got)
+	}
+}

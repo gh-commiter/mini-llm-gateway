@@ -158,12 +158,9 @@ func safeFinalPath(target string, bases []string) (string, error) {
 		}
 		volume := filepath.VolumeName(p)
 		cur := volume + string(filepath.Separator)
-		parts := strings.Split(strings.TrimPrefix(p, cur), string(filepath.Separator))
+		parts := splitComponents(p[len(volume):], pathSeparators)
 		again := false
 		for i, name := range parts {
-			if name == "" {
-				continue
-			}
 			if name == ".." {
 				cur = filepath.Dir(cur)
 				continue
@@ -204,6 +201,21 @@ func safeFinalPath(target string, bases []string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("too many links: %s", target)
+}
+
+// pathSeparators: every character the OS accepts between components (Windows takes both / and \).
+var pathSeparators = string(filepath.Separator)
+
+func init() {
+	if runtime.GOOS == "windows" {
+		pathSeparators = `\/`
+	}
+}
+
+// splitComponents splits on any of seps without cleaning: a .. stays a component, so it is applied only after the
+// link before it has been resolved (C:\share\L2/../x must not become C:\share\x as text).
+func splitComponents(p, seps string) []string {
+	return strings.FieldsFunc(p, func(r rune) bool { return strings.ContainsRune(seps, r) })
 }
 
 // trustedUNCPath checks containment before any probe of a UNC target, including link rewrites.
