@@ -122,6 +122,9 @@ public final class AllowedFolders: @unchecked Sendable {
         }
     }
 
+    /// Quoted like Go's %q: control characters and newlines escaped (no forged log lines), an apostrophe left alone.
+    static func quoted(_ s: String) -> String { s.debugDescription.replacingOccurrences(of: "\\'", with: "'") }
+
     func loggedReasonCount(_ p: String) -> Int { lock.withLock { entries[p]?.logged.count ?? 0 } }
 
     /// Refused configured paths, cleared by a passing check or removal from the allowed list.
@@ -186,10 +189,10 @@ public final class AllowedFolders: @unchecked Sendable {
                 if RouterConfig.overlapsGatewayFolder(p, scratch: scratch) {  // #114: the app folder, Scratch, the Copilot cache: contains, equals or inside
                     let why = "it contains, equals or is inside one of the gateway's own folders (app folder, Scratch, Copilot cache)"
                     if e.logged.count < Self.maxLoggedReasons, e.logged.insert(why).inserted {
-                        log("WARNING: allowed folder \(p.debugDescription) is not used: \(why.debugDescription)")
+                        log("WARNING: allowed folder \(Self.quoted(p)) is not used: \(Self.quoted(why))")
                     } else if e.logged.count >= Self.maxLoggedReasons, !e.logged.contains(why), !e.capped {
                         e.capped = true
-                        log("WARNING: allowed folder \(p.debugDescription) was refused for many different reasons; further refusals of it are not logged")
+                        log("WARNING: allowed folder \(Self.quoted(p)) was refused for many different reasons; further refusals of it are not logged")
                     }
                     return nil
                 }
@@ -209,10 +212,10 @@ public final class AllowedFolders: @unchecked Sendable {
                 if !why.isEmpty {
                     e.refused = why
                     if e.logged.count < Self.maxLoggedReasons, e.logged.insert(why).inserted {
-                        log("WARNING: allowed folder \(p.debugDescription) is not used: \(why.debugDescription); if you trust it, remove and add it again in the allowed folders")
+                        log("WARNING: allowed folder \(Self.quoted(p)) is not used: \(Self.quoted(why)); if you trust it, remove and add it again in the allowed folders")
                     } else if e.logged.count >= Self.maxLoggedReasons, !e.logged.contains(why), !e.capped {
                         e.capped = true
-                        log("WARNING: allowed folder \(p.debugDescription) was refused for many different reasons; further refusals of it are not logged")
+                        log("WARNING: allowed folder \(Self.quoted(p)) was refused for many different reasons; further refusals of it are not logged")
                     }
                     return nil
                 }

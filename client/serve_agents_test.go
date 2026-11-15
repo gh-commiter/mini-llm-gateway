@@ -950,3 +950,13 @@ func TestLogRefusalIsCappedPerFolder(t *testing.T) {
 		t.Errorf("log lines = %d, want %d with a suppression line last:\n%s", len(lines), maxRefusalReasons+1, buf.String())
 	}
 }
+
+// A folder name with a newline or control character cannot forge a log line.
+func TestLogRefusalCannotForgeALogLine(t *testing.T) {
+	var buf bytes.Buffer
+	s := &server{log: log.New(&buf, "", 0)}
+	s.logRefusal("/x\nWARNING: forged\r\x01", "it is not a folder")
+	if n := strings.Count(buf.String(), "\n"); n != 1 || strings.ContainsAny(strings.TrimSuffix(buf.String(), "\n"), "\r\x01") {
+		t.Errorf("log = %q", buf.String())
+	}
+}

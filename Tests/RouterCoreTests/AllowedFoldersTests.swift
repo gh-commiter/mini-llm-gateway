@@ -425,3 +425,9 @@ private func allowedTemp() throws -> URL {
     }
     #expect(logs.count == 2)
 }
+
+@Test func quotedRefusalTextCannotForgeALogLine() {
+    let q = AllowedFolders.quoted("/x\nWARNING: forged\r\t\u{1}")
+    #expect(!q.contains("\n") && !q.contains("\r") && !q.contains("\u{1}") && q.hasPrefix("\"") && q.hasSuffix("\""))
+    #expect(AllowedFolders.quoted("gateway's own") == "\"gateway's own\"")  // a fixed reason reads plainly
+}
