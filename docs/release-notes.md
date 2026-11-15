@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### New
+- New (both gateways): usage statistics keep the provider and, when the provider reports it, the cost of each request (`/usage/events` rows: `provider`, `reportedCostUsd`, `eventsWithoutCost`); an OpenRouter spending or key limit is now reported as "OpenRouter: spending limit reached" instead of "check the API key".
+
 ## 0.6.0
 
 Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and quota. Read **Changed** and **Known limits** before you update a gateway that other people use.

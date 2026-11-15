@@ -170,5 +170,5 @@ func spendingLimit(name: String, body: Data) -> Bool {
           let e = o["error"] as? [String: Any] else { return false }
     let code = e["code"] as? String ?? ""
     let msg = (e["message"] as? String ?? "").lowercased()
-    return ["spending_limit_reached", "spending_limit_exceeded"].contains(code) || msg.contains("spending limit reached") || msg.contains("spending limit exceeded")
+    return ["spending_limit_reached", "spending_limit_exceeded"].contains(code) || msg.contains("spending limit reached") || msg.contains("spending limit exceeded") || msg.contains("key limit exceeded")
 }

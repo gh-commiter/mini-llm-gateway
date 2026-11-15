@@ -1,6 +1,7 @@
 package core
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"math"
@@ -354,6 +355,28 @@ func TestUsageCostMigration(t *testing.T) {
 	r := rep.Rows[0]
 	if r.Events != 3 || r.UnknownCost != 3 || r.ReportedCost != nil || r.EstimatedCost != nil {
 		t.Fatalf("%+v", r)
+	}
+	// The old event keeps its data; its cost is unknown (NULL, never zero) and the schema is current.
+	check := func(s *Store) {
+		var cost, upstream sql.NullString
+		var source, model string
+		f := s.DB().QueryRow(`SELECT CAST(cost_usd_nanos AS TEXT), cost_source, upstream_model, model FROM usage_events WHERE id='old'`)
+		if err := f.Scan(&cost, &source, &upstream, &model); err != nil || cost.Valid || source != "unknown" || upstream.Valid || model != "m" {
+			t.Fatalf("%v %v %q %v %q", cost, upstream, source, err, model)
+		}
+		var v int
+		if err := s.DB().QueryRow(`SELECT CAST(value AS INTEGER) FROM meta WHERE key='schema'`).Scan(&v); err != nil || v != len(migrations) {
+			t.Fatalf("schema %d %v", v, err)
+		}
+	}
+	check(s)
+	// Reopening is idempotent: nothing is migrated or changed twice.
+	s.Close()
+	s = openT(t, dir)
+	check(s)
+	rep, err = s.AdminUsage(ctx, 7, UsageFilter{})
+	if err != nil || len(rep.Rows) != 1 || rep.Rows[0].Events != 3 || rep.Rows[0].UnknownCost != 3 {
+		t.Fatalf("%+v %v", rep, err)
 	}
 }
 

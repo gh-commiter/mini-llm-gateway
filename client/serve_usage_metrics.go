@@ -246,5 +246,5 @@ func spendingLimit(name string, body []byte) bool {
 	_ = json.Unmarshal(e.Error.Code, &code)
 	_ = json.Unmarshal(e.Error.Message, &message)
 	msg := strings.ToLower(message)
-	return code == "spending_limit_reached" || code == "spending_limit_exceeded" || strings.Contains(msg, "spending limit reached") || strings.Contains(msg, "spending limit exceeded")
+	return code == "spending_limit_reached" || code == "spending_limit_exceeded" || strings.Contains(msg, "spending limit reached") || strings.Contains(msg, "spending limit exceeded") || strings.Contains(msg, "key limit exceeded")
 }
