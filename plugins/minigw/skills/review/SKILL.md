@@ -17,6 +17,7 @@ Goal of the change: <one or two sentences>
 The diff is on stdin. Review it together with the files in the current folder and report concrete problems first (bug, wrong assumption, missing case, security), with file and line, then smaller improvements briefly.
 Changed files, one line each (what changes):
 <short description per file, or the plan>
+Put the whole answer in your final message; earlier messages are not shown.
 PROMPT
 )"
 ```

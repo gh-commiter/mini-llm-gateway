@@ -846,6 +846,7 @@ sessionArgs:
 	if _, set := os.LookupEnv("ENABLE_CLAUDEAI_MCP_SERVERS"); !set { // prijava s prehodom: povezav claude.ai tako ni, brez opozorila claude ob vsakem zagonu
 		env = append(env, "ENABLE_CLAUDEAI_MCP_SERVERS=false")
 	}
+	args = finalAnswerArgs(args) // #78: the whole answer in the final message
 	args, stream := streamArgs(args)
 	held.Lock()
 	held.on = stream
