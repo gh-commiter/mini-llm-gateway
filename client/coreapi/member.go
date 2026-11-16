@@ -212,6 +212,8 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			return a.errResponse(err)
 		}
 		return resp(200, toProject(pr))
+	case len(seg) == 2 && seg[1] == "sessions" && r.Method == "GET":
+		return a.sessionRoute(ctx, st, p, seg[0], q, false)
 	case len(seg) == 2 && seg[1] == "link-check" && r.Method == "POST":
 		pr, err := st.ResolveForLink(ctx, p, seg[0])
 		if err != nil {

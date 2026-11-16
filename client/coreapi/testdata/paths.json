@@ -47,5 +47,8 @@
   {"kind": "member", "method": "POST", "path": "/minigw/v1/projects/1/kb/submissions", "want": true},
   {"kind": "member", "method": "GET", "path": "/minigw/v1/projects/1/kb/search", "want": true},
   {"kind": "member", "method": "GET", "path": "/minigw/v1/kb/search", "want": false},
-  {"kind": "admin", "method": "POST", "path": "/kb/search/rebuild", "want": true}
+  {"kind": "admin", "method": "POST", "path": "/kb/search/rebuild", "want": true},
+  {"kind": "admin", "method": "GET", "path": "/usage/sessions", "want": true},
+  {"kind": "admin", "method": "GET", "path": "/usage/sessions/x", "want": false},
+  {"kind": "member", "method": "GET", "path": "/minigw/v1/projects/1/sessions", "want": true}
 ]

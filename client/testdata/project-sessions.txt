@@ -1,0 +1,1 @@
+root  2026-11-14T10:00:00Z  Ana  Laptop  a,b  ok  2 requests  0+? in  unknown out  5 cache-read  unknown cache-write  USD 1.234567891+? (reported 1.234567890, estimated 0.000000001, 1 unknown)  7  end 2026-11-14T10:00:02Z  wall 2000ms

@@ -371,7 +371,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why",
+    "error": "usage:\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [\u003cproject\u003e] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -392,7 +392,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why",
+    "error": "usage:\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [\u003cproject\u003e] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -414,7 +414,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "unknown command minigw project frobnicate\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why",
+    "error": "unknown command minigw project frobnicate\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [\u003cproject\u003e] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"

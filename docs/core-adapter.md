@@ -36,6 +36,25 @@ revision, rate limit, size), 404 before validation, the fixed `no_project_access
 `{"error":{"type","message"}}`, body limits (`coreapi.MaxBody` = 512 KiB; the adapter reads at most that and sets `bodyTooLarge`),
 idempotency, rate limits, usage reports and gap visibility, the usage recorder (queue, spool file, replay, retention).
 
+## Project session history
+
+Member `GET /minigw/v1/projects/{id}/sessions` accepts `days`, `model`, `device`, `limit` and `after`.
+Owner `GET /usage/sessions` (below the admin prefix) takes the same filters and requires `project` (ID or slug).
+It is dispatched separately from `/usage/events`. Only `KindAdmin` authorizes the owner route; neither a query flag
+nor a user's owner marker does. The member query checks the principal and role again inside its read transaction;
+readers and developers see their own recorded user ID, project admins see all project rows. Parent edges are joined
+only within the same recorded project, user and device. Run capabilities do not authorize either route.
+
+The response is `{"sessions":[...],"next":"opaque cursor"}`; `next` is absent on the last page. Rows are metadata only:
+root ID, frozen project/user/device IDs, current user name, sorted model IDs, UTC start/end, wall duration, request
+count, nullable per-metric totals with unknown counts, exact USD cost and reported/estimated subtotals, unknown-cost
+count, outcome and incomplete flag. See [usage.md](usage.md#project-session-history) for selection and retention rules.
+
+After a successful core query, each gateway enriches only the returned device IDs from its existing registry.
+Names are current labels, with the ID as fallback for removed or unnamed devices. Do not provide members a device
+directory or use current bindings to reattribute history. The Go adapter enriches in `sessionNames`; Swift does the
+same after helper forwarding. Neither adapter reads conversation state to construct these rows.
+
 ## Internal calls
 
 All answers are 200 with the JSON shown, unless noted. Errors use the member envelope.

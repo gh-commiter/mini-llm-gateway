@@ -40,6 +40,7 @@ public final class AdminCommands {
           minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)
           minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups
           minigw gw core audit                                  the audit trail of the core
+          minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--json]
           minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)
           minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
           minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
@@ -196,6 +197,15 @@ public final class AdminCommands {
             if o.json { say(String(decoding: r.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)); break }
             guard let (rows, gaps) = UsageReport.rows(r.data) else { throw fail("the usage answer is not understood") }
             out(o.csv ? UsageReport.csv(rows) : UsageReport.text(rows, gaps, sortFailed: o.sort == "failed"))
+        case "project-sessions":
+            try need(1, 1)
+            guard !o.project.isEmpty else { throw fail("--project required") }
+            var q = ["project": s(try projectID(o.project)), "days": o.days, "model": o.model, "device": o.device]
+            let page = try SessionHistory.collect { after in
+                q["after"] = after
+                return try self.requestRaw("GET", "/usage/sessions" + ProjectText.query(q))
+            }
+            out(o.json ? try SessionHistory.json(page) + "\n" : SessionHistory.text(page))
         case "usage-events":
             try need(1, 1)
             var q = ["days": o.days]

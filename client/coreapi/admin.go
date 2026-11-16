@@ -2,6 +2,7 @@ package coreapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strconv"
@@ -47,8 +48,8 @@ func IsAdminPath(method, escapedPath string) bool {
 		return true
 	case "quota":
 		return len(seg) == 2 && seg[1] == "history"
-	case "usage": // only usage/events; GET /usage is the 0.5.x folder counters of the gateway
-		return len(seg) == 2 && seg[1] == "events"
+	case "usage": // GET /usage itself remains the gateway counter report
+		return len(seg) == 2 && (seg[1] == "events" || seg[1] == "sessions")
 	}
 	return false
 }
@@ -123,8 +124,8 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 	if len(seg) > 3 {
 		route += "/{}"
 	}
-	if seg[0] == "core" && len(seg) == 2 {
-		route = method + " core/" + seg[1]
+	if (seg[0] == "core" || seg[0] == "usage") && len(seg) == 2 {
+		route = method + " " + seg[0] + "/" + seg[1]
 	}
 	if seg[0] == "teams" {
 		return a.adminTeams(ctx, st, method, seg, body)
@@ -346,7 +347,10 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 			return 206, rep, true
 		}
 		return 200, rep, true
-	case "GET usage/{}": // /usage/events
+	case "GET usage/sessions":
+		r := a.sessionRoute(ctx, st, core.Principal{}, q.Get("project"), q, true)
+		return r.Status, json.RawMessage(r.Body), true
+	case "GET usage/events":
 		days := 7
 		if v := q.Get("days"); v != "" {
 			n, err := strconv.Atoi(v)

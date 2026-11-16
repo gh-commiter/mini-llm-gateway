@@ -31,6 +31,7 @@ const coreHelp = `
   minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)
   minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups
   minigw gw core audit                                  the audit trail of the core
+  minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--json]
   minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)
   minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
   minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
@@ -255,6 +256,33 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 			fmt.Print(usageReportCSV(rows))
 		} else {
 			fmt.Print(usageReportText(rows, gaps, o.sort == "failed"))
+		}
+	case "project-sessions":
+		need(1, 1)
+		if o.project == "" {
+			fail("--project required")
+		}
+		q := url.Values{"days": {o.days}, "project": {id(projectID(a, o.project), 10)}, "model": {o.model}, "device": {o.device}}
+		page := core.SessionPage{Sessions: []core.SessionRow{}}
+		seen := map[string]bool{}
+		for {
+			var part core.SessionPage
+			a.do("GET", "/usage/sessions?"+q.Encode(), nil, &part)
+			page.Sessions = append(page.Sessions, part.Sessions...)
+			if part.Next == "" {
+				break
+			}
+			if seen[part.Next] {
+				fail("repeated session page")
+			}
+			seen[part.Next] = true
+			q.Set("after", part.Next)
+		}
+		if o.json {
+			b, _ := json.Marshal(page)
+			fmt.Println(string(b))
+		} else {
+			fmt.Print(sessionText(page))
 		}
 	case "usage-events":
 		need(1, 1)

@@ -347,6 +347,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 	if coreapi.IsAdminPath(method, u.EscapedPath()) { // 0.6.0 core: the routes of coreapi
 		r := s.api.Handle(context.Background(), coreapi.Context{Kind: coreapi.KindAdmin},
 			coreapi.Request{Method: method, Path: u.EscapedPath(), RawQuery: u.RawQuery, Body: body})
+		if len(seg) == 2 && seg[0] == "usage" && seg[1] == "sessions" {
+			r = s.sessionNames(r)
+		}
 		var obj any
 		json.Unmarshal(r.Body, &obj)
 		return r.Status, obj
