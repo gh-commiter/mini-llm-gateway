@@ -23,6 +23,7 @@ extension ProjectEnv {
         if let d = value as? [String: Any] { return "{" + d.keys.sorted().map { GoJSON.string($0) + ":" + kbJSON(d[$0]!) }.joined(separator: ",") + "}" }
         if let a = value as? [Any] { return "[" + a.map(kbJSON).joined(separator: ",") + "]" }
         if let s = value as? String { return GoJSON.string(s) }
+        if let n = value as? MCPNumber { return n.raw }  // digits unchanged (also above 2^53)
         if let n = value as? NSNumber { return CFGetTypeID(n) == CFBooleanGetTypeID() ? (n.boolValue ? "true" : "false") : n.stringValue }
         return "null"
     }
