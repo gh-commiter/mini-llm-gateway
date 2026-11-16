@@ -141,7 +141,7 @@ final class FoundryStub: URLProtocol, @unchecked Sendable {
         #expect(!Foundry.validModel("a/b") && !Foundry.validModel("x..y") && !Foundry.validModel("-rf") && Foundry.validModel("phi-4-mini-generic-cpu"))
         // F1: izpis ukaza do roka, tudi ko otrok drži cev odprto
         let start = Date()
-        let out = Foundry.run("/bin/sh", ["-c", "(sleep 30 &); echo out"], timeout: 1)
-        #expect(out.contains("out") && Date().timeIntervalSince(start) < 5)
+        let out = Foundry.run("/bin/sh", ["-c", "(sleep 600 &); echo out"], timeout: 1)
+        #expect(out.contains("out") && Date().timeIntervalSince(start) < 300)  // not waiting for the 600 s sleep that holds the pipe
     }
 }

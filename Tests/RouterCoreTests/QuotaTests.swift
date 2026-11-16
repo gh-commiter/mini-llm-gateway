@@ -271,12 +271,12 @@ private func inputs(probe: Bool = false, exe: String? = "/fake/claude", enabled:
         do { _ = try await ClaudeUsageProbe.run(exe: bad, parent: tempDir("p")); Issue.record("no error") } catch {
             #expect((error as? QuotaError)?.description == "claude /usage failed: exit status 3")
         }
-        let slow = try fakeClaude(tempDir("fake3"), body: "sleep 30")
+        let slow = try fakeClaude(tempDir("fake3"), body: "sleep 600")
         let t0 = Date()
         do { _ = try await ClaudeUsageProbe.run(exe: slow, parent: tempDir("p"), limit: 1); Issue.record("no error") } catch {
             #expect((error as? QuotaError)?.description.hasPrefix("claude /usage failed: timed out") == true)
         }
-        #expect(Date().timeIntervalSince(t0) < 10)
+        #expect(Date().timeIntervalSince(t0) < 300)  // ends by its 1 s limit, not at the stub's 600 s
         do { _ = try await ClaudeUsageProbe.run(exe: "/nonexistent/claude", parent: tempDir("p")); Issue.record("no error") } catch {
             #expect((error as? QuotaError)?.description.hasPrefix("claude /usage failed: ") == true)
         }

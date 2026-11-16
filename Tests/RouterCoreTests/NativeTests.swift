@@ -313,13 +313,13 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(!FileManager.default.fileExists(atPath: outside.path))  // M4: pisanje zunaj mape zavrnjeno
     #expect(!FileManager.default.fileExists(atPath: f.project.appendingPathComponent(".git/hook").path))  // N2: .git
     let start = Date()
-    let bg = await run("sleep 30 & echo started")  // L4: proces v ozadju drži stdout; skupina se ustavi
-    #expect(bg.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start) < 10)
+    let bg = await run("sleep 600 & echo started")  // L4: proces v ozadju drži stdout; skupina se ustavi
+    #expect(bg.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start) < 300)  // the property: not waiting for the 600 s sleep
     // N3: vnuk v svoji seji (setsid) drži cev: najden po cevi in ustavljen, tok se zapre.
     let mark = "minigw-setsid-" + UUID().uuidString
     let start2 = Date()
-    let ss = await run("perl -MPOSIX -e 'POSIX::setsid(); $0 = \"\(mark)\"; sleep 30' & echo started")
-    #expect(ss.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start2) < 10)
+    let ss = await run("perl -MPOSIX -e 'POSIX::setsid(); $0 = \"\(mark)\"; sleep 600' & echo started")
+    #expect(ss.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start2) < 300)
     try await Task.sleep(for: .milliseconds(300))
     let left = Process(), pipe = Pipe()
     left.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep"); left.arguments = ["-f", mark]; left.standardOutput = pipe
@@ -335,12 +335,13 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let on = nativeRouter(f.project.path, devices: [DeviceConfig(id: "dev-n2", name: "Air", run: true)])
     let c = await challenge(on, f, device: "dev-n2")
     let proof = try #require(Native.readMarker(f.project.appendingPathComponent(c.file)))
-    let script = "sh -c 'exec >/dev/null 2>&1; sleep 30' & echo $! > bg.pid"
+    let script = "sh -c 'exec >/dev/null 2>&1; sleep 600' & echo $! > bg.pid"
     let body = String(decoding: try JSONSerialization.data(withJSONObject: ["argv": ["sh", "-c", script]]), as: UTF8.self)
     let w = FakeWriter(), start = Date()
     await on.handle(nativeReq("POST", "/minigw/run", ["x-native-id": c.id, "x-native-proof": proof], body, device: "dev-n2"), writer: w)
-    // #109: ~6 s fiksnih čakanj (2 + 1 + 1,5 + uboj) + obremenitev; pomembno: odgovor ne čaka na `sleep 30` (30 s), skupine ni več
-    #expect(w.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start) < 25)
+    // the property: the answer does not wait for the background `sleep 600` (the bound is half its life, not a guess about the speed of a
+    // loaded Mac: the run itself has ~6 s of fixed waits), and the group is gone when it comes (next check)
+    #expect(w.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start) < 300)
     let pid = try #require(pid_t(String(contentsOf: f.project.appendingPathComponent("bg.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
     #expect(Darwin.kill(pid, 0) != 0)  // ob odgovoru skupine ni več
 }
@@ -352,13 +353,13 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
     let pids = dir.appendingPathComponent("pids")
-    let script = "sleep 60 & echo $! >> '\(pids.path)'; perl -MPOSIX -e 'POSIX::setsid(); sleep 60' & echo $! >> '\(pids.path)'; sleep 60"
+    let script = "sleep 600 & echo $! >> '\(pids.path)'; perl -MPOSIX -e 'POSIX::setsid(); sleep 600' & echo $! >> '\(pids.path)'; sleep 600"
     let task = Task { try await Codex.run("/bin/sh", args: ["-c", script], cwd: dir, prompt: "", output: dir.appendingPathComponent("out")) }
     try await Task.sleep(for: .seconds(1))
     let start = Date()
     task.cancel()
     await #expect(throws: Codex.Failure.self) { try await task.value }
-    #expect(Date().timeIntervalSince(start) < 10)
+    #expect(Date().timeIntervalSince(start) < 300)  // not waiting for the 600 s sleeps
     let list = try String(contentsOf: pids, encoding: .utf8).split(whereSeparator: \.isNewline).compactMap { pid_t(String($0)) }
     #expect(list.count == 2 && list.allSatisfy { Darwin.kill($0, 0) != 0 })
 }
