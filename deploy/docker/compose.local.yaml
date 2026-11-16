@@ -1,0 +1,10 @@
+# Test override: use a locally built Linux binary instead of the release (no signature check, for development):
+#   MINIGW_LOCAL_DIR=/path/with/minigw-linux-arm64 docker compose -f compose.yaml -f compose.local.yaml up -d --build
+services:
+  minigw:
+    build:
+      args:
+        SOURCE: local
+      additional_contexts:
+        local: ${MINIGW_LOCAL_DIR:?folder with minigw-linux-<arch>}
+    image: minigw:local

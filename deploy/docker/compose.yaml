@@ -1,0 +1,35 @@
+# Mini Gateway in Docker Compose (docs/docker.md): providers only. Updating: change MINIGW_VERSION, then
+#   docker compose up -d --build
+# A separate Dockerfile (not dockerfile_inline): the signature check is long, and a file can be read and reviewed.
+name: ${COMPOSE_PROJECT_NAME:-minigw}
+
+services:
+  minigw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${MINIGW_VERSION:-0.7.0}   # a stable release; a beta only by its explicit version
+        SOURCE: release
+    image: minigw:${MINIGW_VERSION:-0.7.0}
+    command: ["--config", "/var/lib/minigw/config/serve.json"]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 45s
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777,noexec,nosuid
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 512
+    mem_limit: 1g
+    ports:
+      - "${MINIGW_BIND:-127.0.0.1}:${MINIGW_PORT:-8765}:8765"   # MINIGW_BIND=0.0.0.0 (or a LAN address) for other computers
+    volumes:
+      - config:/var/lib/minigw/config    # serve.json, keys, state and the core database (core/)
+      - scratch:/var/lib/minigw/scratch  # Scratch: copies and sessions; can hold undelivered work
+
+volumes:
+  config:
+  scratch:
