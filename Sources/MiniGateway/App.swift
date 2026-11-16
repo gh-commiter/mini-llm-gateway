@@ -196,7 +196,7 @@ final class AppState: ObservableObject {
     /// Kar kopira »Copy Token«: žeton in javni ključ routerja (minigw z drugega Maca z njim preveri router).
     var connectToken: String { token + (routerKey.map { "#" + Noise.base64url($0.publicKey.rawRepresentation) } ?? "") }
 
-    /// Skrivnost skrbniškega API (docs/admin-api.md) v Keychainu aplikacije, ne v datoteki: agenti Codex in Grok
+    /// Skrivnost skrbniškega API (docs/admin-api.md) v Keychainu aplikacije, ne v datoteki: agenti Codex
     /// berejo datoteke povsod, Keychaina ne. Po žici gre le dokaz MGW-Admin, nikoli ona.
     lazy var adminSecret: String = {
         if let o = adminItem.lookup("admin").value.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),

@@ -114,7 +114,6 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var allowLocalApps = false
     public var codex = CodexConfig()
     public var copilot = CopilotConfig()
-    public var grok = GrokConfig()
     public var foundry = FoundryConfig()  // Foundry Local na tem Macu (Foundry.swift)
     public var scratchFolder = ""  // osnova (odločitev 3); prazno = defaultBase (Caches); npr. hiter zunanji SSD
     /// N4 (0.5.24): trajni ID te namestitve (datoteka lastnika v Scratch, ScratchOwner); load() ga ustvari enkrat.
@@ -359,7 +358,6 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         allowLocalApps = try c.decodeIfPresent(Bool.self, forKey: .allowLocalApps) ?? false
         codex = try c.decodeIfPresent(CodexConfig.self, forKey: .codex) ?? d.codex
         copilot = try c.decodeIfPresent(CopilotConfig.self, forKey: .copilot) ?? d.copilot
-        grok = try c.decodeIfPresent(GrokConfig.self, forKey: .grok) ?? d.grok
         foundry = try c.decodeIfPresent(FoundryConfig.self, forKey: .foundry) ?? d.foundry
         scratchFolder = try c.decodeIfPresent(String.self, forKey: .scratchFolder) ?? d.scratchFolder
         instanceID = try c.decodeIfPresent(String.self, forKey: .instanceID) ?? ""
@@ -389,7 +387,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
             if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
         }
         take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.allowAnyDevice); take(\.allowLocalApps); take(\.claudeCLI); take(\.appleFM)
-        take(\.siri); take(\.codex); take(\.copilot); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.scratchName); take(\.runCommands); take(\.pendingRevocations); take(\.worktreeNetwork); take(\.worktreeCodexNetwork); take(\.claudeQuotaProbe)
+        take(\.siri); take(\.codex); take(\.copilot); take(\.foundry); take(\.scratchFolder); take(\.scratchName); take(\.runCommands); take(\.pendingRevocations); take(\.worktreeNetwork); take(\.worktreeCodexNetwork); take(\.claudeQuotaProbe)
         for (p, rec) in d.claudeCLI.allowedRecords where rec.ino == 0 {  // C1: an identity adopted meanwhile is not lost to an older draft
             if let cur = new.claudeCLI.allowedRecords[p], cur.ino != 0, cur.real == rec.real { d.claudeCLI.allowedRecords[p] = cur }
         }

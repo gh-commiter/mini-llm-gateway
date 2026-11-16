@@ -321,12 +321,7 @@ public final class Router: Sendable {
                     }
                     return (await runSiri(req, body: body, rid: rid, writer: writer), model, "siri-ai")
                 }
-                if config.grok.enabled, let grokModel = Grok.match(model), grokModel.map(config.grok.isModelEnabled) ?? true {
-                    if req.path.hasSuffix("/count_tokens") {
-                        return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "grok")
-                    }
-                    return (await syncRun(agent: "grok", req: req, rid: rid, writer: writer) { await runGrok(req, body: body, model: grokModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "grok")
-                }
+                if Grok.isGrok(model) { return (await refuseGrok(rid: rid, writer: writer), model, "grok") }
                 if config.codex.enabled, let codexModel = Codex.match(model), codexModel.map(config.codex.isModelEnabled) ?? true {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
@@ -587,14 +582,13 @@ public final class Router: Sendable {
     /// #45: zaupanje omejitve agenta (work) in načina seje; višje = manj zaupanja. chat nima mape (brez omejitve).
     static let workLevels = ["": 0, "direct": 0, "sync": 1, "worktree": 2]
     static let modeLevels = ["direct": 0, "native-direct": 0, "sync": 1, "native": 2, "worktree": 2]
-    static let agentNames = ["claude": "Claude CLI", "codex": "Codex", "grok": "Grok", "copilot": "Copilot"]
+    static let agentNames = ["claude": "Claude CLI", "codex": "Codex", "copilot": "Copilot"]
 
     /// Omejitev načina agenta `kind` (claude, codex, grok, copilot); "" = direct.
     func workCap(_ kind: String) -> String {
         switch kind {
         case "claude": config.claudeCLI.work
         case "codex": config.codex.work
-        case "grok": config.grok.work
         case "copilot": config.copilot.work
         default: ""
         }
@@ -703,7 +697,6 @@ public final class Router: Sendable {
                  "description": "copilot -p · \(m) · tools in your folder", "created_at": created]
             }
         }
-        // Grok is not listed while its runs are refused (Grok.runsDisabled), like a disabled agent.
         data += await foundryModelList(created: created)
         return ["data": data, "has_more": false,
                 "first_id": data.first?["id"] ?? NSNull(), "last_id": data.last?["id"] ?? NSNull()]

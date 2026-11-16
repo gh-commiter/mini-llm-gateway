@@ -402,7 +402,6 @@ public final class GatewayHistory: @unchecked Sendable {
             let write = c.codex.write && w
             return on([(write, "write"), (write && c.codex.network && (!tree || c.worktreeCodexNetwork), "network")])
         }
-        if agent("claude-grok") { return on([(c.grok.write && w, "write")]) }
         if agent("claude-copilot") { return on([(c.copilot.write && w, "write"), (c.copilot.network, "network"), (c.copilot.commands && w, "commands")]) }
         return ""
     }

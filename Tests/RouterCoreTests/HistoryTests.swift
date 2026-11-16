@@ -122,9 +122,9 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     }
     #expect(g.sessions().count == 3 && g.sessions().contains { $0.id.hasPrefix("t-") && $0.models.first?.requests == 2 })
     var c = RouterConfig()
-    c.claudeCLI.tools = "Read,Grep"; c.codex.write = true; c.codex.network = false; c.grok.write = true; c.copilot.network = true
+    c.claudeCLI.tools = "Read,Grep"; c.codex.write = true; c.codex.network = false; c.copilot.network = true
     for (model, want) in ["claude-cli": "Read,Grep", "claude-cli-opus": "Read,Grep", "claude-codex": "write", "claude-codex-gpt-5": "write",
-                          "claude-grok": "write", "claude-copilot": "network", "claude-sonnet": ""] {
+                          "claude-grok": "", "claude-copilot": "network", "claude-sonnet": ""] {
         #expect(GatewayHistory.restrictions(model, c) == want, "\(model)")
     }
     c.copilot.write = true; c.copilot.commands = true; c.claudeCLI.tools = "Read,Edit,Grep"
@@ -261,7 +261,7 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
 /// Enako kot TestWorkCap v Go, še direct in native-direct z work=sync.
 @Test func workCapPerAgent() async throws {
     var c = RouterConfig()
-    c.codex.work = "worktree"; c.claudeCLI.work = "sync"; c.grok.work = ""
+    c.codex.work = "worktree"; c.claudeCLI.work = "sync"
     let app = FakeApp(c), router = app.router()
     let id = UUID().uuidString, tmp = FileManager.default.temporaryDirectory
     let sessions = ["sync": "cap-s-" + id, "direct": "cap-d-" + id, "native-direct": "cap-n-" + id]
@@ -286,7 +286,7 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     #expect(notes == [true, false, true, false])
     for mode in ["sync", "direct", "native-direct"] { #expect(await cap(mode, "codex") == "worktree", "\(mode)") }
     for mode in ["direct", "native-direct"] { #expect(await cap(mode, "claude") == "sync", "\(mode)") }
-    for (mode, kind) in [("sync", "claude"), ("sync", "grok"), ("chat", "codex")] { #expect(await cap(mode, kind) == nil, "\(mode) \(kind)") }
+    for (mode, kind) in [("sync", "claude"), ("chat", "codex")] { #expect(await cap(mode, kind) == nil, "\(mode) \(kind)") }
     // #60: odgovor na registracijo mape pove omejene agente (začetna vrstica odjemalca); samo za branje in worktree brez njih.
     #expect(router.cappedKinds("sync") == ["codex"] && router.cappedKinds("direct") == ["claude", "codex"])
     #expect(router.cappedKinds("worktree").isEmpty && router.cappedKinds("native").isEmpty && router.cappedKinds("chat").isEmpty)
@@ -299,7 +299,7 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
         #expect(o?["key"] is String && o?["capped"] as? [String] == want, "\(ro) \(w.text)")
     }
     // Skrbniški API: work na /agents/*; druga vrednost 400 z istim besedilom kot v Go; direct = "".
-    for a in ["claude", "codex", "grok", "copilot"] {
+    for a in ["claude", "codex", "copilot"] {
         let bad = await admin(router, "PATCH", "/agents/\(a)", body: #"{"work":"readonly"}"#)
         #expect(bad.status == 400 && bad.text.contains("work: direct, sync or worktree"), "\(a) \(bad.text)")
         let ok = await admin(router, "PATCH", "/agents/\(a)", body: #"{"work":"sync"}"#)
@@ -418,12 +418,12 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
 /// #60: začetna vrstica odjemalca (iste besede kot TestCappedMode v Go); neznani agenti odpadejo, ponovitve štejejo enkrat.
 @Test func cappedStartLine() {
     #expect(SharedFolders.cappedMode([]) == "read-write")
-    #expect(SharedFolders.cappedMode(["codex", "grok"]) == "read-write (read-only for Codex, Grok: capped by the gateway)")
-    #expect(SharedFolders.cappedMode(["claude", "codex", "copilot", "grok"]) == "read-only (capped by the gateway)")
+    #expect(SharedFolders.cappedMode(["codex", "grok"]) == "read-write (read-only for Codex: capped by the gateway)")
+    #expect(SharedFolders.cappedMode(["claude", "codex", "copilot"]) == "read-only (capped by the gateway)")
     #expect(SharedFolders.cappedMode(["codex", "codex", "codex", "x\u{1b}[31m"]) == "read-write (read-only for Codex: capped by the gateway)")
     #expect(SharedFolders.cappedNative(["evil"]) == "")
-    #expect(SharedFolders.cappedNative(["grok", "codex"]) == ", read-only for Grok, Codex (capped by the gateway)")
-    #expect(SharedFolders.cappedNative(["grok", "codex", "claude", "copilot"]) == ", read-only (capped by the gateway)")
+    #expect(SharedFolders.cappedNative(["grok", "codex"]) == ", read-only for Codex (capped by the gateway)")
+    #expect(SharedFolders.cappedNative(["codex", "claude", "copilot"]) == ", read-only (capped by the gateway)")
 }
 
 /// #82 cilj 1: SYNC-PULL, ki ga minigw zavrne s 503, vrne napako »busy« (zahteva ni uspeh, spremembe ostanejo na prehodu).

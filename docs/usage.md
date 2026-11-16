@@ -57,7 +57,7 @@ In any Claude Code session with the plugin:
 
 ```
 /minigw:models
-/minigw:ask claude-grok What is the worst-case complexity of this algorithm in src/sort.go?
+/minigw:ask claude-codex What is the worst-case complexity of this algorithm in src/sort.go?
 /minigw:on-device Summarize these meeting notes in three lines: …
 /minigw:siri What is on my calendar tomorrow?
 ```
@@ -96,7 +96,9 @@ What you get back:
 | Gateway on the same Mac | – | In the folder itself (nothing is shared) |
 
 The agent's own permissions are set on the gateway (writing, network, commands). Codex, Grok and Copilot are off
-until the gateway owner turns them on. See [gateway.md → Settings](gateway.md#settings).
+until the gateway owner turns them on. Grok is not supported on the Mac gateway (Windows and Linux gateways only); a Mac
+gateway answers 400 "Grok is not supported on the Mac gateway. Use another agent, or Grok through minigw serve on Windows or
+Linux." See [gateway.md → Settings](gateway.md#settings).
 
 Agents can also ask each other: with **May ask other models** on for an agent, it can call another gateway model
 with `minigw -p --model <id> "…"`, one level deep and never its own kind.
@@ -367,7 +369,7 @@ Notes:
 - Claude CLI agents get Bash, always in Claude Code's sandbox. Codex uses its own sandbox with the clone as the
   writable folder.
 - Agents that may not write (Codex, Copilot or Grok with writing off) only read in the clone and bring back no branch.
-- Grok with writing on is refused in worktree mode: "rerun with minigw --minigw-work=sync …".
+- Grok with writing on is refused in worktree mode (Windows and Linux gateways): "rerun with minigw --minigw-work=sync …".
 - Agents write only under the Scratch folder: the clone, `$MINIGW_DEPS` (repositories they create, CMake, SwiftPM,
   DerivedData, Cargo, Gradle, the Go build cache, temporary files), the project's Maven repository and the shared
   download caches (Go modules, npm, pip). Not `/tmp`, never your `~/.m2` settings, plugins or SwiftPM configuration.
@@ -703,7 +705,7 @@ The gateway picks the provider by the model name.
 | `claude-cli-opus`, `-sonnet`, `-haiku`, `-fable` (also `opus` …) | Claude Code on the gateway (`claude -p`) | yes | all (`minigw serve` does not list `-fable`) |
 | `claude-chat-*` | the same, without tools | no | all |
 | `claude-codex`, `claude-codex-<model>` | OpenAI Codex CLI (`codex exec`) | yes | all, off by default |
-| `claude-grok`, `claude-grok-<model>` | xAI Grok Build CLI (`grok -p`) | yes | all, off by default |
+| `claude-grok`, `claude-grok-<model>` | xAI Grok Build CLI (`grok -p`); Windows and Linux gateways only, a Mac gateway answers "Grok is not supported on the Mac gateway" | yes | all, off by default |
 | `claude-copilot`, `claude-copilot-<model>` | GitHub Copilot CLI (`copilot -p`) | yes | all, off by default |
 | `claude-siri-ai` | Siri AI app | no | Mac (macOS 27) |
 | `claude-apple-fm` | Apple Foundation Models, on-device | no | Mac |
@@ -728,7 +730,7 @@ Remove and add the folder again after checking that it is the folder you intende
 the allowed folders. Within a conversation Codex continues its own thread (`codex exec resume`), also after
 `minigw -c` or `--resume`.
 
-**Grok** runs in its kernel sandbox: `workspace` (writes only to the session folder) or `read-only`. Within a
+**Grok** (`minigw serve` on Windows and Linux; not supported on the Mac gateway) runs in its kernel sandbox: `workspace` (writes only to the session folder) or `read-only`. Within a
 conversation it continues its own session (`-r`).
 
 **Copilot** runs in a sandbox (on the Mac a `sandbox-exec` profile, on Linux bwrap) with

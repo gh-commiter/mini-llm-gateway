@@ -720,7 +720,6 @@ struct StreamTranslator {
 extension Router {
     static let sessions = SessionRegistry()
     static let shares = ShareHub()
-    static let grokSessions = SessionRegistry()
     static let codexSessions = SessionRegistry()
 
     /// --minigw-ro: registrirana mapa le za branje ali glava x-claude-mini-ro (minigw brez deljenja, npr. prehod na istem Macu;

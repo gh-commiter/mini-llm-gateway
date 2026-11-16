@@ -68,7 +68,7 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
         defer { r2.stop() }
         #expect(r2.chain == ["claude", "codex"])
         AgentRun.$current.withValue(r2) {
-            #expect(AgentRun.refusal("grok")?.contains("cannot ask further models") == true)
+            #expect(AgentRun.refusal("copilot")?.contains("cannot ask further models") == true)
         }
     }
 }
@@ -186,7 +186,7 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
 /// Napaka CLI za odjemalca: le besedilo (brez »Internal error:«, ovoja JSON in »API error (status 402 …):«), kot v Go.
 @Test func agentMessageExtraction() {
     let line = Data(#"{"type":"error","message":"Internal error: {\n  \"message\": \"API error (status 402 Payment Required): personal-team-blocked:spending-limit: You have run out of credits or need a Grok subscription. Add credits at https://grok.com/?_s=usage or upgrade at https://grok.com/supergrok.\",\n  \"http_status\": 402\n}","cwd":"/Users/x/w"}"#.utf8)
-    guard case .error(let raw)? = Grok.event(line) else { Issue.record("no error event"); return }
+    let raw = ((try? JSONSerialization.jsonObject(with: line)) as? [String: Any])?["message"] as? String ?? ""
     let (status, _, msg) = AgentError.classify(raw)
     #expect(status == 429)
     #expect(msg == "You have run out of credits or need a Grok subscription. Add credits at https://grok.com/?_s=usage or upgrade at https://grok.com/supergrok.")
@@ -210,47 +210,47 @@ final class HeadWaitWriter: ResponseWriter, @unchecked Sendable {
 }
 
 /// The request of these tests (the repeat of a streamed request has the same content but for `stream`).
-func bodyG(_ stream: Bool) -> [String: Any] { ["model": "claude-grok", "messages": [["role": "user", "content": "hi"]], "stream": stream] }
+func bodyG(_ stream: Bool) -> [String: Any] { ["model": "claude-codex", "messages": [["role": "user", "content": "hi"]], "stream": stream] }
 
 /// Napaka pred glavo (tudi pri pretoku) je pravi 429 z x-should-retry: false (Claude Code ne ponovi); po glavi dogodek SSE,
 /// ponovitev brez pretoka dobi isti 429 brez novega zagona CLI.
 @Test func replyWhenDoneRetryHeaders() async throws {
     let router = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
     let req = request("POST", "/v1/messages", headers: ["x-claude-mini-session": "retry-\(UUID().uuidString)"])
-    let limit = Grok.Failure(message: #"Internal error: {"message":"API error (status 402 Payment Required): You have run out of credits."}"#)
+    let limit = Codex.Failure(message: #"Internal error: {"message":"API error (status 402 Payment Required): You have run out of credits."}"#)
     for stream in [true, false] {
         let w = FakeWriter()
-        let st = await router.replyWhenDone(body: bodyG(stream), model: "claude-grok", rid: "req_1", writer: w, req: req) { throw limit }
+        let st = await router.replyWhenDone(body: bodyG(stream), model: "claude-codex", rid: "req_1", writer: w, req: req) { throw limit }
         #expect(st == 429 && w.status == 429 && w.text.contains("x-should-retry: false") && w.text.contains(#""You have run out of credits.""#))
     }
-    #expect(AgentError.recent(AgentError.key(req, model: "claude-grok", body: bodyG(false))) == nil)  // HTTP 429 je končen
+    #expect(AgentError.recent(AgentError.key(req, model: "claude-codex", body: bodyG(false))) == nil)  // HTTP 429 je končen
     let failed = FakeWriter()  // HPX360: agent, ki je padel (502), Claude Code ne zažene znova
     let fst = await router.replyWhenDone(body: ["model": "claude-copilot"], model: "claude-copilot", rid: "req_3", writer: failed, req: req) {
         throw Copilot.Failure(message: "copilot failed (exit 1)")
     }
     #expect(fst == 502 && failed.status == 502 && failed.text.contains("x-should-retry: false"))
     let w = HeadWaitWriter()
-    _ = await router.replyWhenDone(body: bodyG(true), model: "claude-grok", rid: "req_2", writer: w, req: req,
+    _ = await router.replyWhenDone(body: bodyG(true), model: "claude-codex", rid: "req_2", writer: w, req: req,
                                    headDelay: .milliseconds(10)) {
         await w.waitForWrite()  // napaka šele po glavi, ne po uri: glava gre ven tudi pod obremenitvijo celotnega testnega teka
         throw limit
     }
     #expect(w.status == 200 && w.text.contains("x-should-retry: false") && w.text.contains("event: error") && w.text.contains("rate_limit_error"))
-    #expect(AgentError.recent(AgentError.key(req, model: "claude-grok", body: bodyG(false)))?.message == "You have run out of credits.")
-    #expect(AgentError.recent(AgentError.key(req, model: "claude-grok", body: bodyG(false))) == nil)  // enkrat
+    #expect(AgentError.recent(AgentError.key(req, model: "claude-codex", body: bodyG(false)))?.message == "You have run out of credits.")
+    #expect(AgentError.recent(AgentError.key(req, model: "claude-codex", body: bodyG(false))) == nil)  // enkrat
     let fallback = FakeWriter()
-    AgentError.note(AgentError.key(req, model: "claude-grok", body: bodyG(false)), "You have run out of credits.")
+    AgentError.note(AgentError.key(req, model: "claude-codex", body: bodyG(false)), "You have run out of credits.")
     await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": req.header("x-claude-mini-session")!],
-                                    body: #"{"model":"claude-grok","messages":[{"role":"user","content":"hi"}]}"#), writer: fallback)
+                                    body: #"{"model":"claude-codex","messages":[{"role":"user","content":"hi"}]}"#), writer: fallback)
     #expect(fallback.status == 429 && fallback.text.contains("x-should-retry: false") && fallback.text.contains("run out of credits"))
     // #82: neprevzeto delo agenta je končno: pred glavo 502 z x-should-retry: false, po glavi dogodek SSE in ponovitev brez
     // pretoka dobi isti 502 brez novega zagona (spremembe agenta bi se uveljavile dvakrat)
     let pull = ShareHub.PullFailed(message: "the agent's changes were not copied back to your folder: the shared folder is busy")
     let before = FakeWriter()
-    let bst = await router.replyWhenDone(body: ["model": "claude-grok"], model: "claude-grok", rid: "req_4", writer: before, req: req) { throw pull }
+    let bst = await router.replyWhenDone(body: ["model": "claude-codex"], model: "claude-codex", rid: "req_4", writer: before, req: req) { throw pull }
     #expect(bst == 502 && before.status == 502 && before.text.contains("x-should-retry: false") && before.text.contains("busy"))
     let after = HeadWaitWriter()
-    _ = await router.replyWhenDone(body: bodyG(true), model: "claude-grok", rid: "req_5", writer: after, req: req,
+    _ = await router.replyWhenDone(body: bodyG(true), model: "claude-codex", rid: "req_5", writer: after, req: req,
                                    headDelay: .milliseconds(10)) {
         await after.waitForWrite()
         throw pull
@@ -258,31 +258,11 @@ func bodyG(_ stream: Bool) -> [String: Any] { ["model": "claude-grok", "messages
     #expect(after.status == 200 && after.text.contains("event: error") && after.text.contains("busy"))
     let retry = FakeWriter()
     await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": req.header("x-claude-mini-session")!],
-                                body: #"{"model":"claude-grok","messages":[{"role":"user","content":"hi"}]}"#), writer: retry)
+                                body: #"{"model":"claude-codex","messages":[{"role":"user","content":"hi"}]}"#), writer: retry)
     #expect(retry.status == 502 && retry.text.contains("x-should-retry: false") && retry.text.contains("busy"))
-    // #121: every agent failure after the head is final (a 25-minute run does not start again), and an approval refusal is a 400, not a temporary 502
-    #expect(AgentError.classify(Grok.needsApproval) == (400, "invalid_request_error", Grok.needsApproval))
-    let refused = HeadWaitWriter()
-    _ = await router.replyWhenDone(body: bodyG(true), model: "claude-grok", rid: "req_6", writer: refused, req: req,
-                                   headDelay: .milliseconds(10)) {
-        await refused.waitForWrite()
-        throw Grok.Failure(message: Grok.needsApproval)
-    }
-    #expect(refused.status == 200 && refused.text.contains("event: error") && refused.text.contains("invalid_request_error"))
-    let again = FakeWriter()
-    await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": req.header("x-claude-mini-session")!],
-                                body: #"{"model":"claude-grok","messages":[{"role":"user","content":"hi"}]}"#), writer: again)
-    #expect(again.status == 400 && again.text.contains("x-should-retry: false") && again.text.contains("cannot give"))
-    // #121 (Astra 4): another request of the same session is not answered with this failure, and a later success clears it
-    let other = HeadWaitWriter()
-    _ = await router.replyWhenDone(body: bodyG(true), model: "claude-grok", rid: "req_7", writer: other, req: req, headDelay: .milliseconds(10)) {
-        await other.waitForWrite(); throw Grok.Failure(message: Grok.needsApproval)
-    }
-    var different = bodyG(false); different["messages"] = [["role": "user", "content": "something else"]]
-    #expect(AgentError.recent(AgentError.key(req, model: "claude-grok", body: different)) == nil)  // not this request's failure
     let ok = FakeWriter()
-    _ = await router.replyWhenDone(body: bodyG(false), model: "claude-grok", rid: "req_8", writer: ok, req: req) { ("fine", []) }
-    #expect(AgentError.recent(AgentError.key(req, model: "claude-grok", body: bodyG(false))) == nil)  // success cleared it
+    _ = await router.replyWhenDone(body: bodyG(false), model: "claude-codex", rid: "req_8", writer: ok, req: req) { ("fine", []) }
+    #expect(AgentError.recent(AgentError.key(req, model: "claude-codex", body: bodyG(false))) == nil)  // success cleared it
     // #121 (Astra 5): the memory is bounded
     for i in 0..<(AgentError.memoCapacity * 2) { AgentError.note("k\(i)", "m") }
     #expect(AgentError.memo.withLock { $0.count } <= AgentError.memoCapacity)
@@ -384,25 +364,4 @@ func bodyG(_ stream: Bool) -> [String: Any] { ["model": "claude-grok", "messages
         p.waitUntilExit()
         #expect(p.terminationStatus != 0 && text.contains("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): \(c) is not available here"), "\(c): \(text)")
     }
-}
-
-/// #121 (Astra 6): an approval refusal is a cancelled `end` AND the text of the refusal on stderr; one without the other is an ordinary failure. The same fixtures as the Go test.
-@Test func grokApprovalRefusalNeedsBothEvidences() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("grok-approval-" + UUID().uuidString)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
-    func script(_ name: String, end: String, stderr: String, exit code: Int = 0) throws -> String {
-        let f = dir.appendingPathComponent(name)
-        try "#!/bin/sh\ncat >/dev/null\n[ -n '\(stderr)' ] && echo '\(stderr)' >&2\necho '\(end)'\nexit \(code)\n".write(to: f, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f.path)
-        return f.path
-    }
-    let refusal = "permission required: Execute `find .` was not run, as a headless run cannot ask for approval"
-    func run(_ exe: String) async -> String? {
-        do { _ = try await Grok.run(exe, args: [], cwd: dir, prompt: "x") { _ in }; return nil } catch let f as Grok.Failure { return f.message } catch { return "\(error)" }
-    }
-    #expect(await run(try script("both", end: #"{"type":"end","stopReason":"cancelled"}"#, stderr: refusal)) == Grok.needsApproval)  // also without a session id
-    #expect(await run(try script("cancelled-only", end: #"{"type":"end","stopReason":"cancelled","sessionId":"s7"}"#, stderr: "")) != Grok.needsApproval)
-    #expect(await run(try script("exit3", end: #"{"type":"end","stopReason":"cancelled"}"#, stderr: refusal, exit: 3)) != Grok.needsApproval)  // the contract needs exit status 0
-    #expect(await run(try script("text-only", end: #"{"type":"end","stopReason":"end_turn","sessionId":"s7"}"#, stderr: refusal)) != Grok.needsApproval)
 }

@@ -22,7 +22,7 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
   minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
                   [--ask-others=true|false]   (may ask other models of this gateway; needs --allow-local-tools)
-  minigw gw claude|codex|grok|copilot [--work=direct|sync|worktree]
+  minigw gw claude|codex|copilot [--work=direct|sync|worktree]
                                                         the highest work mode in which the agent may change the
                                                         client's folder (in a lower mode it only reads)
   minigw gw copilot login                               Copilot's sign-in state (copilot login on this Mac), never a value
@@ -204,10 +204,10 @@ private func autostartLine(_ st: [String: Any]) -> String {
     st["installed"] as? Bool == true ? "starts at sign-in (Settings → General → Open at Login)" : "does not start at sign-in (Settings → General → Open at Login)"
 }
 
-/// #60: minigw gw codex|grok|copilot [--work=…]: omejitev načina agenta prek skrbniškega API (kot agentWork v Go).
+/// #60: minigw gw codex|copilot [--work=…]: omejitev načina agenta prek skrbniškega API (kot agentWork v Go).
 private func agentWork(_ a: AdminConnection, _ kind: String, _ work: String?) {
     let c = work.map { a.call("PATCH", "/agents/" + kind, ["work": $0]) } ?? a.call("GET", "/agents/" + kind)
-    say(clean("\(["codex": "Codex", "grok": "Grok", "copilot": "Copilot"][kind] ?? kind) work: \(c["work"] as? String ?? "")"))
+    say(clean("\(["codex": "Codex", "copilot": "Copilot"][kind] ?? kind) work: \(c["work"] as? String ?? "")"))
 }
 
 func routerCommand(_ argv: [String]) {
@@ -233,7 +233,7 @@ func routerCommand(_ argv: [String]) {
     }
     if let w = flags["work"], !["direct", "sync", "worktree"].contains(w) { fail("--work: direct, sync or worktree") }
     if flags["work"] != nil, !["claude", "codex", "grok"].contains(pos[0]), pos != ["copilot"] {
-        fail("--work only applies to minigw gw claude|codex|grok|copilot")
+        fail("--work only applies to minigw gw claude|codex|copilot")
     }
     if pos[0] == "usage", let bad = flags.keys.first(where: { !["days", "provider", "model", "sort", "json", "csv", "legacy", "device", "folder", "user", "project"].contains($0) }) {
         fail("minigw gw usage: unknown option --\(bad)\n" + UsageReport.help)
@@ -427,7 +427,7 @@ func routerCommand(_ argv: [String]) {
         }
         say("  " + (g["connect"] as? String ?? ""))
 
-    case "codex", "grok":  // #60: omejitev načina (work); brez --work le izpis
+    case "codex", "grok":  // grok: the gateway answers "not supported on the Mac gateway"; #60: omejitev načina (work); brez --work le izpis
         need(1, 1)
         agentWork(a, pos[0], flags["work"])
 

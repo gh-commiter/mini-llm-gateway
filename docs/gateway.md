@@ -21,7 +21,8 @@ The gateway runs on one computer and serves every client. Install it with `/mini
 | Runs as | Menu bar app | Tray icon (Windows), systemd user unit (Linux), or a terminal |
 | Settings | Settings window | Settings page in the browser ([below](#settings-page)) |
 | Autostart | Open at Login | At sign-in (Windows), at boot with linger or at sign-in (Linux) |
-| Claude CLI, Codex, Grok, Copilot (Copilot: not on a Windows gateway in this version), Foundry Local, providers | yes | yes |
+| Claude CLI, Codex, Copilot (Copilot: not on a Windows gateway in this version), Foundry Local, providers | yes | yes |
+| Grok | no: not supported on the Mac gateway | yes |
 | Siri AI, Apple Foundation Models | yes | – |
 | Work modes | auto, worktree, sync, direct, native, native-direct | auto, worktree, sync |
 | `minigw run` | yes | – |
@@ -90,14 +91,16 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
 - **Foundry Local:** off by default; Microsoft's on-device models, a switch per model, instructions.
 - **Claude CLI:** path to `claude`, allowed folders, **Allow local tools** with a table to exclude tools, the
   `minigw` command-line tool (Mac: Install). On Windows also **Allow commands without a sandbox**.
-- **Codex CLI / Grok CLI / Copilot CLI:** off by default; a switch per model, **Allow writing**, network (Codex,
+- **Codex CLI / Copilot CLI:** off by default; a switch per model, **Allow writing**, network (Codex,
   Copilot). Copilot has no commands (greyed out with the reason) and signs in with `copilot login`.
-  A Grok run that may not write (read-only, `--minigw-ro`, worktree) cannot run commands: a headless Grok cannot ask for
-  approval, and approving automatically would let a command use the network and read the whole disk. The run is told to
-  use its file tools (`list_dir`, `read_file`, `grep`); if it still needs a command it ends with 400 "grok needed
-  approval to run a command …" (not a 502, which Claude Code would retry). Use a run that may write, or ask for file reading only.
-  **On the Mac gateway Grok is switched off in this version:** a request answers 503 "Grok is switched off on the Mac
-  gateway in this version: its sandbox is being reworked …" (the models stay listed); Grok through `minigw serve` works.
+  **Grok is not supported on the Mac gateway** (there is no Grok pane in the Settings): every Grok request answers 400
+  "Grok is not supported on the Mac gateway. Use another agent, or Grok through minigw serve on Windows or Linux." with
+  `x-should-retry: false`, the Grok models are not listed, and the admin API and `minigw gw grok` answer the same text.
+  Grok through `minigw serve` on Windows and Linux works (a Mac client can use its models). There, a Grok run that may not
+  write (read-only, `--minigw-ro`, worktree) cannot run commands: a headless Grok cannot ask for approval, and approving
+  automatically would let a command use the network and read the whole disk. The run is told to use its file tools
+  (`list_dir`, `read_file`, `grep`); if it still needs a command it ends with 400 "grok needed approval to run a
+  command …" (not a 502, which Claude Code would retry). Use a run that may write, or ask for file reading only.
 - **Changes in the client's folder** (each agent pane): **In the folder or a copy (any mode)** (default), **Only in a
   copy or on a branch (sync, worktree)** or **Only on a branch (worktree)**. In a mode above it the agent only reads
   the folder, and minigw says so ("Mini Gateway lets Codex change files only in worktree mode, so it only read the
@@ -129,7 +132,7 @@ line with the token appears only after **Show the connect line**.
 | General | Status, version, address, port, token (show, new), this user's apps, scratch folder | Open at Login | Windows: Start at sign-in; Linux: how it starts |
 | Devices | Allow any device, allowed client addresses, unencrypted clients, waiting devices (allow with a name, reject), allowed devices (rename, history, remove) | | |
 | Providers | Enabled, name, base URL, Allow http, aliases, API key, models (search, a switch each, all, none), add, remove | | |
-| Agents | Claude CLI (enabled, path, local tools, tools, permission mode, setting sources, changes in the client's folder, ask others), Codex and Grok CLI (enabled, path, write, changes in the client's folder, network, ask others, models), Copilot CLI (models, write, changes in the client's folder, web, login; commands shown as not available), Foundry Local | | Allow commands without a sandbox (Windows, Linux without `bwrap`) |
+| Agents | Claude CLI (enabled, path, local tools, tools, permission mode, setting sources, changes in the client's folder, ask others), Codex CLI (enabled, path, write, changes in the client's folder, network, ask others, models), Grok CLI (`minigw serve` only: enabled, path, write, changes in the client's folder, ask others, models), Copilot CLI (models, write, changes in the client's folder, web, login; commands shown as not available), Foundry Local | | Allow commands without a sandbox (Windows, Linux without `bwrap`) |
 | Folders | Allowed folders: add, remove; folders left out at startup | | |
 | Sessions | Projects (7 days) per folder and device, recent sessions with details, Clear history | | |
 | Activity | Requests running now (model, time, the agent's latest step) at the top, then the last 200 requests to models (time, status, duration, model, device; Enter or a click shows the path, size and device ID). Read-only, reloads every 3 s. Metadata and the agent's current step (a tool or command), never prompt or answer text; an unknown model shows as `unknown`. A gateway older than 0.5.21 shows "Needs gateway 0.5.21 or newer" | | Empty after the gateway restarts |
@@ -249,14 +252,8 @@ minigw serve                 # or run it in this terminal (--port, --config)
   - **Mac** (app data folder `~/Library/Application Support/Mini Gateway`, the core in `core`): Codex always runs under its
     permission profile (every mode: write, read-only, chat, resume, worktree) with the folder set to `none`; Claude CLI
     (tool rules and sandbox `denyRead`), `minigw run` and Copilot (Seatbelt profile) hide it with the Scratch list
-    (`RouterConfig.hiddenScratch`). **Grok** runs (while the core is configured) only in a custom sandbox profile whose
-    `deny` is kernel-enforced: the gateway gives Grok its own home (`GROK_HOME` = `<Scratch>/grok-home`) holding
-    `sandbox.toml` with the profiles `minigw-core` and `minigw-core-ro`, rewritten and checked before every run, and keeps
-    the login in place (`GROK_AUTH_PATH`); `~/.grok` is not touched. If the profile cannot be set up the run is refused.
-    **Behaviour change:** because Grok's home is the gateway's, the defaults in your `~/.grok/config.toml` are not applied to
-    Grok runs on the Mac, and sessions from before in `~/.grok` are not resumed. On Windows and Linux Grok keeps a home of
+    (`RouterConfig.hiddenScratch`). Grok does not run on the Mac gateway. On Windows and Linux Grok keeps a home of
     its own per device in which `config.toml` is linked to yours, so its defaults apply there.
-    (Grok's own `--deny` is only a rule of its tools: `python3 -c open(...)` read a denied file, grok 1.0.77.)
   - **Linux** (`<config dir>/core`): `bwrap` masks the config folder with a tmpfs (Codex, Grok, Copilot); Claude Code's
     own sandbox has it in `denyRead`. Without `bwrap` agents run only with **Allow commands without a sandbox**, and then
     they read it: see the acceptance below.
@@ -288,7 +285,7 @@ minigw serve                 # or run it in this terminal (--port, --config)
     scopes the file tools to the session and allowed folders and denies the config folder.
   - **Other providers' credentials:** `~/.grok` (or `$GROK_HOME`), `~/.codex` (or `$CODEX_HOME`), `~/.copilot` (or
     `$COPILOT_HOME`) and the gateway's `Scratch/grok-home` and `Scratch/copilot` are denied to every agent of another
-    kind (Codex's profile, Grok's `sandbox.toml`, the Seatbelt hidden list, Claude's rules); an agent keeps its own home.
+    kind (Codex's profile, the Seatbelt hidden list, Claude's rules); an agent keeps its own home. Grok's folders stay on the list (a Grok login on this Mac stays hidden from the others).
   - **Claude CLI without "Allow local tools"** (the restricted mode): only file tools run there (Read,
     Grep, Glob, LS, Edit, Write, MultiEdit, NotebookEdit, WebSearch, WebFetch). A configuration that lists `Bash`, `Task`, an
     MCP tool or another tool is refused when it is saved, and a run with such an older stored configuration is refused (400),
@@ -540,7 +537,7 @@ sandboxes (Claude CLI sandbox rules, the Codex permission profile) let it write 
   the closed names; the file tools (Edit, Write) never touch `.git`. Without "Allow local tools" there is no Bash, so no
   commit, and the file tools stay out of `.git` as before.
 - **Codex**: the permission profile makes the folder's `.git` writable and the closed names read-only.
-- **Grok**: its sandbox has no `.git` rule. On a client's shared folder in direct mode the client's guard applies; in direct mode on a folder of the gateway Mac itself (an allowed folder) Grok has no `.git` protection of its own (issue #115).
+- **Grok** (Windows and Linux gateways): its sandbox has no `.git` rule. On a client's shared folder in direct mode the client's guard applies; in direct mode on a folder of the gateway computer itself (an allowed folder) Grok has no `.git` protection of its own (issue #115).
 - **Copilot**: no commands and no repository of its own (`GIT_DIR=/dev/null`); it cannot commit, and its profile keeps
   `.git` closed.
 - Worktree, sync and read-only (`--minigw-ro`) runs, and `minigw serve` (no direct mode), are unchanged.

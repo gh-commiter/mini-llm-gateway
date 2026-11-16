@@ -444,14 +444,14 @@ extension Router {
             case "claude": return (200, await claudeInfo(c.claudeCLI))
             case "codex": return (200, await codexInfo(c.codex))
             case "copilot": return (200, await copilotInfo(c.copilot))
-            case "grok": return (200, await grokInfo(c.grok))
+            case "grok": throw AdminError(400, Grok.notSupported)
             default: throw AdminError(404, "no agent \(arg)")
             }
         case "GET agents/{}/tools":
             guard arg == "claude" else { throw AdminError(404, "no agent \(arg)") }
             try Self.scratchGuard(c)
             return (200, ["tools": await Self.toolList.get(c.claudeCLI.executable)])
-        case "GET agents/{}/models":  // Codex, Grok: modeli računa (kot minigw serve)
+        case "GET agents/{}/models":  // Codex: modeli računa (kot minigw serve)
             try Self.scratchGuard(c)
             switch arg {
             case "codex":
@@ -463,10 +463,7 @@ extension Router {
                     if let w = m.window { o["window"] = w }
                     return o
                 }])
-            case "grok":
-                guard let exe = await Grok.executable(c.grok.executable) else { return (200, ["models": [Any]()]) }
-                let ms = await offPool { Grok.catalog(exe) }
-                return (200, ["models": ms.map { ["slug": $0, "name": $0, "enabled": c.grok.enabledModels?.contains($0) ?? true] }])
+            case "grok": throw AdminError(400, Grok.notSupported)
             default: throw AdminError(404, "no agent \(arg)")
             }
         // Apple Foundation Models (pano v Settings): vklop in navodila.
@@ -580,30 +577,22 @@ extension Router {
                     if let models { c.copilot.models = (models ?? []).joined(separator: ", ") }  // null = le privzeti model
                 }
                 return (200, await copilotInfo(n.copilot))
-            case "codex", "grok":
-                let b = try AdminBody(body, arg == "codex" ? ["enabled", "path", "write", "network", "models", "askOthers", "work"] : ["enabled", "path", "write", "models", "askOthers", "work"])
+            case "grok": throw AdminError(400, Grok.notSupported)
+            case "codex":
+                let b = try AdminBody(body, ["enabled", "path", "write", "network", "models", "askOthers", "work"])
                 let enabled = try b.bool("enabled"), path = try b.string("path"), write = try b.bool("write")
                 let network = try b.bool("network"), models = try b.models("models"), ask = try b.bool("askOthers"), work = try Self.work(b)
                 if let path, !path.isEmpty, !FileManager.default.isExecutableFile(atPath: path) { throw AdminError(400, "not an executable: \(path)") }
                 let n = try await hooks.update { c in
-                    if arg == "codex" {
-                        if let enabled { c.codex.enabled = enabled }
-                        if let path { c.codex.executable = path }
-                        if let write { c.codex.write = write }
-                        if let network { c.codex.network = network }
-                        if let models { c.codex.enabledModels = models }
-                        if let ask { c.codex.askOthers = ask }
-                        if let work { c.codex.work = work }
-                    } else {
-                        if let enabled { c.grok.enabled = enabled }
-                        if let path { c.grok.executable = path }
-                        if let write { c.grok.write = write }
-                        if let models { c.grok.enabledModels = models }
-                        if let ask { c.grok.askOthers = ask }
-                        if let work { c.grok.work = work }
-                    }
+                    if let enabled { c.codex.enabled = enabled }
+                    if let path { c.codex.executable = path }
+                    if let write { c.codex.write = write }
+                    if let network { c.codex.network = network }
+                    if let models { c.codex.enabledModels = models }
+                    if let ask { c.codex.askOthers = ask }
+                    if let work { c.codex.work = work }
                 }
-                return (200, arg == "codex" ? await codexInfo(n.codex) : await grokInfo(n.grok))
+                return (200, await codexInfo(n.codex))
             default:
                 throw AdminError(404, "no agent \(arg)")
             }
@@ -725,12 +714,6 @@ extension Router {
         let exe = await Foundry.executable(c.executable)
         return ["enabled": c.enabled, "path": c.executable, "found": exe != nil, "exe": exe ?? "", "running": await Router.foundry.running,
                 "error": await Router.foundry.lastError, "instructions": c.instructions, "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
-    }
-
-    func grokInfo(_ c: GrokConfig) async -> [String: Any] {
-        ["enabled": c.enabled, "path": c.executable, "found": await Grok.executable(c.executable) != nil, "write": c.write,
-         "models": c.enabledModels.map { $0 as Any } ?? NSNull(), "askOthers": c.askOthers,
-         "work": Self.apiWork(c.work)]
     }
 
     /// #45: omejitev načina agenta v API (direct, sync, worktree; v nastavitvah direct = ""), kot v minigw serve.

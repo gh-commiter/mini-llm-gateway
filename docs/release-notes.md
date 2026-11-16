@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Grok is not supported on the Mac gateway (the Mini Gateway app). It worked in 0.5.29 and could not start since 0.6.0. Every Grok request answers 400 "Grok is not supported on the Mac gateway. Use another agent, or Grok through minigw serve on Windows or Linux." with `x-should-retry: false`; the Mac Settings no longer have a Grok CLI pane, the Mac admin API answers the same 400 for `/agents/grok`, and `minigw gw grok` says so. Grok through `minigw serve` on Windows and Linux is not affected, and a Mac client can use its models.
+
 ## 0.7.0
 
 Mini Gateway 0.7.0 is a stable release. It collects the eleven beta versions 0.6.0 to 0.6.10, which stable users never saw, and is the first stable release since 0.5.29. It is the same code as beta 0.6.10. The sections below give the detail per beta. Read **Changed**, **Known limits** and **Known problems** before you update a gateway that other people use.
