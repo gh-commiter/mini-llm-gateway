@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### New
+- `minigw gw usage` shows the input tokens read from a provider's prompt cache in a column "cached in" (it appears when any model used a cache); `--csv` and `--json` carry cache read and cache write tokens. With automatic prompt caching most of the input is cache reads, which the report did not show.
+
 ## 0.7.6
 
 ### New
