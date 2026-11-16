@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### New
+- New (Mac app): a "Usage" page in Settings shows requests, tokens and spend per day as a stacked chart by model, with the top models listed next to it. Choose 7, 30 or 90 days. Estimated amounts are marked with "~", and a note says how many requests have no known cost.
+- New (`minigw serve`): the Settings page in the browser has the same "Usage" view.
+
+### Known problems
+- The two new Usage views have passed automated tests of their numbers but nobody has looked at them on screen yet; layout, colours and dark mode may need work.
+- LiteLLM models show a cost only when the proxy's model info has prices; the subscription agents (Claude, Codex, Grok, Copilot) show no money.
+- Usage days are UTC days.
+- Grok agent runs that last longer than a few minutes can fail with 502.
+
 ## 0.6.4
 
 ### New
