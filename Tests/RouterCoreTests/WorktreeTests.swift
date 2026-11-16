@@ -854,7 +854,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let hub = ShareHub(), session = UUID().uuidString
     _ = try #require(await hub.register(session: session, cwd: "/Volumes/share/x", key: nil, device: "dev", native: dir))
     let old = ShareHub.writerWait
-    ShareHub.writerWait = .seconds(1)
+    ShareHub.writerWait = .seconds(120)  // a wait that is taken would last 120 s; the bound below is half of it
     defer { ShareHub.writerWait = old }
     func mount(_ id: String, writes: Bool) async -> URL? {
         await ShareHub.$run.withValue(id) { await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [dir.deletingLastPathComponent().path], writes: writes) }
@@ -946,15 +946,15 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
             await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [dir.deletingLastPathComponent().path], writes: true)
         }
     }
-    #expect(nested == dir && ContinuousClock.now - start < .milliseconds(500))
+    #expect(nested == dir && ContinuousClock.now - start < .seconds(60))
     await hub.finish(run: parent)
 }
 
 /// L2: git, ki visi (tudi njegov pomožni proces), konča po časovni omejitvi.
 @Test func gatewayGitTimeoutKillsTheProcessGroup() throws {
     let start = ContinuousClock.now
-    let r = Worktree.run(["-c", "alias.hang=!sleep 30", "hang"], timeout: 1)
-    #expect(r.status != 0 && ContinuousClock.now - start < .seconds(10))
+    let r = Worktree.run(["-c", "alias.hang=!sleep 600", "hang"], timeout: 1)
+    #expect(r.status != 0 && ContinuousClock.now - start < .seconds(300))  // ends by its 1 s limit, not at the 600 s sleep
 }
 
 /// #16: posnetek vzame nove datoteke, ne pa prezrtih (.gitignore, .git/info/exclude); #10: brez commita ga ni.

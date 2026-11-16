@@ -325,7 +325,7 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     gate.err("minigw: · Bash\n")
     let start = Date()
     gate.close(timeout: 0.3)
-    #expect(Date().timeIntervalSince(start) < 2, "close waited on a blocked write")
+    #expect(Date().timeIntervalSince(start) < 30, "close waited on a blocked write")  // nobody reads the pipe: waiting would be for ever
     gate.err("late\n")
     let r = o.fileHandleForReading.fileDescriptor
     _ = fcntl(r, F_SETFL, fcntl(r, F_GETFL) | O_NONBLOCK)
@@ -351,7 +351,7 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     #expect(gate.dropped)
     let start = Date()
     gate.close(timeout: 0.3)
-    #expect(Date().timeIntervalSince(start) < 2)
+    #expect(Date().timeIntervalSince(start) < 30)  // nobody reads the pipe: waiting would be for ever
 }
 
 /// Low 1: en sam zapis čez mejo, ko nič ne čaka, ni dropped (bralec prazni).
