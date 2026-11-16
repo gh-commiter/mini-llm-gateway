@@ -16,8 +16,12 @@ the build.
 
 ```sh
 git clone https://github.com/gh-commiter/mini-llm-gateway && cd mini-llm-gateway/deploy/docker
+echo MINIGW_VERSION=0.7.6 > .env                     # the release to build: 0.7.6 (a beta) is the first with container mode
 MINIGW_BIND=0.0.0.0 docker compose up -d --build     # MINIGW_BIND: the host address to publish port 8765 on
 ```
+
+`MINIGW_VERSION` must be set: there is no default yet, because no stable release has container mode (0.7.0 would build but
+cannot run this way). When a stable release has it, this page will name it.
 
 `MINIGW_BIND` defaults to `127.0.0.1` (this computer only); use `0.0.0.0` or one LAN address so other computers can
 connect, and limit who can reach port 8765 with the host firewall. `MINIGW_PORT` changes the host port. Set the
@@ -66,7 +70,7 @@ docker compose exec minigw minigw gw provider add LiteLLM http://litellm.local:4
 
 ## Update
 
-Change the version and rebuild. The default is the latest stable release; a beta only by its explicit version:
+Change the version and rebuild (take a backup first, see below):
 
 ```sh
 MINIGW_VERSION=0.8.0 docker compose up -d --build    # or set it in .env
