@@ -33,7 +33,7 @@ func TestActivity(t *testing.T) {
 		t.Fatalf("empty: %s", raw)
 	}
 
-	r := &req{Request: httptest.NewRequest("POST", "/v1/messages", nil), rid: "req_1", body: []byte(`{"model":"claude-x","messages":[{"role":"user","content":"SECRET"}]}`)}
+	r := &req{Request: httptest.NewRequest("POST", "/v1/messages", nil), rid: "req_1", conn: &serveConn{}, body: []byte(`{"model":"claude-x","messages":[{"role":"user","content":"SECRET"}]}`)}
 	stop := s.activity.start(r, "claude-x")
 	s.activity.step("req_1", "Read a.go")
 	if a, raw := get(); len(a.Inflight) != 1 || a.Inflight[0].Model != "claude-x" || a.Inflight[0].Step != "Read a.go" || strings.Contains(raw, "SECRET") {

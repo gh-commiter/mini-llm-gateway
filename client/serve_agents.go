@@ -913,6 +913,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	ctx, cancel := context.WithTimeout(r.Context(), agentTimeout) // L5
 	defer cancel()
 	return s.replyWhenDone(w, r, body, func() (string, error) {
+		step := func(st string) { s.activity.step(r.rid, relStep(st, dir, c.Scratch)) } // paths relative to the shared folder (#131)
 		var text, thread string
 		var err error
 		tmp, err := os.MkdirTemp(c.scratch("tmp"), "req-*") // le ta zahteva (pod bwrap vidna namesto cele mape tmp)
@@ -1052,7 +1053,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				}
 				if st != "" {
 					s.log.Printf("%s step: %q", r.rid, st)
-					s.activity.step(r.rid, st)
+					step(st)
 				}
 			})
 			text, thread = strings.TrimSpace(answer), resume
@@ -1095,7 +1096,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				if st := codexStep(line); st != "" {
 					s.log.Printf("%s step: %q", r.rid, st)
 					if !codexMessage(line) { // besedilo agenta le v dnevnik
-						s.activity.step(r.rid, st)
+						step(st)
 					}
 				}
 			})
@@ -1122,7 +1123,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				case !ok:
 				case e.step != "":
 					s.log.Printf("%s step: %q", r.rid, e.step)
-					s.activity.step(r.rid, e.step)
+					step(e.step)
 					answer = "" // odgovor je besedilo po zadnjem orodju
 				case e.err != "":
 					failure = e.err
@@ -1530,6 +1531,20 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	return nil
 }
 
+// relStep: a step of an agent for the client: the shared folder's path made relative, any other path under the gateway's
+// scratch folder hidden (the client must not learn where the gateway keeps its files).
+func relStep(st, dir, scratch string) string {
+	for _, sep := range []string{"/", `\`} {
+		if dir != "" {
+			st = strings.ReplaceAll(st, strings.TrimRight(dir, `/\`)+sep, "")
+		}
+	}
+	if scratch != "" {
+		st = strings.ReplaceAll(st, strings.TrimRight(scratch, `/\`), "…")
+	}
+	return st
+}
+
 // agentHeadDelay: pri pretoku glava 200 šele po tem času (nato ping vsakih 10 s). Napaka prej (omejitev agenta) je pravi
 // status HTTP z x-should-retry: false; po glavi je le dogodek SSE »error«, na katerega Claude Code ponovi zahtevo brez
 // pretoka. Testi: krajši.
@@ -1545,6 +1560,7 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 	stream := body["stream"] == true
 	var mu sync.Mutex
 	headSent := false
+	var pending []byte // steps before the head (#131): sent with it, so an early error is still a real HTTP status
 	send := func(b []byte) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -1555,10 +1571,25 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 			w.Header().Set("request-id", r.rid)
 			w.WriteHeader(200)
 			w.Write(t.start())
+			w.Write(pending)
 			headSent = true
 		}
 		w.Write(b)
 		http.NewResponseController(w).Flush()
+	}
+	if stream { // each step of the agent to the client as it happens (minigw shows it as a progress line)
+		s.activity.onStep(r.rid, func(st string) {
+			mu.Lock()
+			b := t.stepMark(st)
+			if !headSent {
+				pending = append(pending, b...)
+				mu.Unlock()
+				return
+			}
+			mu.Unlock()
+			send(b)
+		})
+		defer s.activity.onStep(r.rid, nil)
 	}
 	done, stopped := make(chan struct{}), make(chan struct{})
 	if stream {

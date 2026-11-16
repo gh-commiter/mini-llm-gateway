@@ -118,7 +118,9 @@ var backRef = regexp.MustCompile(`(?i)\babove\b|\bsee (the )?previous\b|zgoraj`)
 
 // toolMark: oznaka orodja agenta prehoda v besedilu (StreamTranslator, translator.feed: »⏺ Bash«) kot cel delta; ime le
 // toolName, sicer je delta besedilo odgovora (model ne ponaredi vrstice minigw: z U+2028, bidi ali dolgim imenom).
-var toolMark = regexp.MustCompile(`^\n?⏺ ([A-Za-z0-9_.:@/-]{1,80})\n$`)
+// #131: after the name an optional detail (a gateway agent's step, e.g. the file it reads): one line of letters, marks,
+// digits, punctuation, symbols and spaces, so it cannot carry control, bidi or line-separator characters.
+var toolMark = regexp.MustCompile(`^\n?⏺ ([A-Za-z0-9_.:@/-]{1,80})(?: ([\p{L}\p{M}\p{N}\p{P}\p{S} ]{1,200}))?\n$`)
 
 // toolName: ime orodja, ki gre v vrstico minigw: · (drugačno je »tool«).
 var toolName = regexp.MustCompile(`^[A-Za-z0-9_.:@/-]{1,80}$`)
@@ -165,9 +167,12 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 		pend = min(pend+len(t)-len(body), 2)
 		lineEnd()
 	}
-	tool := func(name string) {
+	tool := func(name, detail string) {
 		if !toolName.MatchString(name) {
 			name = "tool"
+		}
+		if detail != "" {
+			name += " " + detail
 		}
 		fmt.Fprintln(errOut, "minigw: · "+name)
 	}
@@ -210,7 +215,7 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 						pend = 2
 						lineEnd()
 					}
-					tool(m[1])
+					tool(m[1], m[2])
 				} else {
 					text(ev.Event.Delta.Text)
 				}
@@ -225,7 +230,7 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 					text(c.Text)
 					end()
 				} else if c.Type == "tool_use" {
-					tool(c.Name)
+					tool(c.Name, "")
 				}
 			}
 		case "result":

@@ -100,6 +100,24 @@ until the gateway owner turns them on. Grok is not supported on the Mac gateway 
 gateway answers 400 "Grok is not supported on the Mac gateway. Use another agent, or Grok through minigw serve on Windows or
 Linux." See [gateway.md → Settings](gateway.md#settings).
 
+### Watching a long run
+
+While an agent works, `minigw -p` prints each of its steps on stderr as it happens (`minigw: · read_file src/a.go`;
+paths are relative to your shared folder). On a Windows or Linux gateway this holds for Codex, Grok and Copilot too. A run
+can take a long time, so the gateway also keeps the connection alive with a ping and an empty text delta every 10 seconds
+(Claude Code drops a stream that shows no real event for a long time).
+
+To ask what your requests are doing right now, from any terminal on the device that started them:
+
+```sh
+minigw running            # model, folder, time running, number of steps, last step and how long ago
+minigw running --json
+```
+
+You see only your own device's running requests, never a prompt and never another device's. It needs no admin rights
+(`minigw gw sessions` is the admin view on the gateway computer). Mac gateway: not yet available (a 404 reads "this
+gateway is too old"), and Mac agents show only the tool names.
+
 Agents can also ask each other: with **May ask other models** on for an agent, it can call another gateway model
 with `minigw -p --model <id> "…"`, one level deep and never its own kind.
 

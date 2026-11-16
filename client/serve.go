@@ -1557,6 +1557,8 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 	switch r.Method + " " + path {
 	case "GET /v1/models":
 		return writeJSON(w, r.rid, 200, s.modelList()), ""
+	case "GET /minigw/v1/running": // the asking device's own running requests (minigw running); nothing of other devices
+		return writeJSON(w, r.rid, 200, map[string]any{"running": s.activity.running(dev)}), ""
 	case "POST /v1/messages", "POST /v1/messages/count_tokens":
 		return s.messages(w, r)
 

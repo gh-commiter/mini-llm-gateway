@@ -421,6 +421,9 @@ func main() {
 	case "usage":
 		usageMain(args[1:])
 		return
+	case "running":
+		runningMain(args[1:])
+		return
 	case "plugin":
 		pluginCommand(args[1:])
 		return
@@ -601,6 +604,7 @@ func main() {
 		say("minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (" + storeName + "; - = stdin)\n" +
 			"minigw reconnect [--name P] [--token T|-]  new token for profile P; address, gateway key and device stay\n" +
 			"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P (the device key stays)\n" +
+			"minigw running [--json]                    your requests that run on the gateway now: model, folder, time, steps, last step\n" +
 			"minigw profiles [default P]                list profiles, or pick the default (its models also without @P)\n" +
 			"minigw --minigw-profile P …                 use only profile P for this command\n" +
 			"minigw share add|remove [folder] | list    share a system or hidden folder itself (contents are always shared)\n" +
