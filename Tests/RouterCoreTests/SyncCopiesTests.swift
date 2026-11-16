@@ -114,3 +114,24 @@ import Testing
     _ = try await hub.syncCopies(root, device: "dev", remove: id)
     #expect(!FileManager.default.fileExists(atPath: copy.path))
 }
+
+/// Security review (LOW): the delete of a removed copy runs off the shares actor, so another share operation completes while it is still running
+/// (controlled with a hook, no sleeps); the removed copy is not listed meanwhile (the renamed folder is neither listed nor counted) and the removal ends when released.
+@Test func syncCopyRemovalDeletesOffTheActor() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let hub = ShareHub(), id = "0123456789abcdef", other = "fedcba9876543210"
+    let owner = root.appendingPathComponent("dev"), copy = owner.appendingPathComponent(id)
+    for d in [id, other] { try FileManager.default.createDirectory(at: owner.appendingPathComponent(d), withIntermediateDirectories: true) }
+    let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+    await hub.setDeleteHook { _ in entered.signal(); release.wait() }  // the slow delete
+    let removal = Task { try await hub.syncCopies(root, device: "dev", remove: id) }
+    await withCheckedContinuation { c in Thread { entered.wait(); c.resume() }.start() }  // the delete has started, off the actor
+    let listed = try await hub.syncCopies(root, device: "dev")  // another operation on the actor completes meanwhile
+    #expect(listed == [other])
+    #expect(!FileManager.default.fileExists(atPath: copy.path))  // renamed already
+    release.signal()
+    _ = try await removal.value
+    await hub.setDeleteHook(nil)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: owner.path).sorted() == [other])
+}

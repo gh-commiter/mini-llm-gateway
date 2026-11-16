@@ -185,9 +185,9 @@ public actor ShareHub {
     }
 
     /// Removes one copy only while that copy (device and folder) has no registered session, no run and no request on it; other
-    /// sessions and agents do not matter. Runs without suspension on the actor, and register runs on the same actor: a session
-    /// registers either before the check (refused) or after the delete (starts a fresh copy), never in between.
-    func syncCopies(_ root: URL, device: String, remove: String = "") throws -> [String] {
+    /// sessions and agents do not matter. The check and the rename run without suspension on the actor, and register runs on the same actor: a session
+    /// registers either before the check (refused) or after the rename (starts a fresh copy), never in between; the delete of the renamed folder is off the actor.
+    func syncCopies(_ root: URL, device: String, remove: String = "") async throws -> [String] {
         if !remove.isEmpty && !Self.validSyncCopyID(remove) { throw AdminError(400, "sync: invalid copy ID") }
         let fm = FileManager.default
         let owner = root.appendingPathComponent(device)
@@ -216,11 +216,17 @@ public actor ShareHub {
         let gone = realOwner.appendingPathComponent("\(remove).removing-\(UInt64(Date().timeIntervalSince1970 * 1e9))")
         do { try fm.moveItem(at: copy, to: gone) } catch { throw AdminError(500, "sync: cannot remove copy") }
         removeHook?(gone)
-        // The detached leftover cleanup (below, started by this or an earlier call) may remove `gone` and its marker at the same time:
-        // a failure counts only if the folder / the marker is still there afterwards.
-        if (try? fm.removeItem(at: gone)) == nil, fm.fileExists(atPath: gone.path) { throw AdminError(500, "sync: cannot remove copy") }
+        // The marker goes now, inside the actor (cheap): a session that registers after the rename starts a fresh copy and touches a new marker, which a later delete must not take.
         let marker = copy.appendingPathExtension("used")
         if (try? fm.removeItem(at: marker)) == nil, fm.fileExists(atPath: marker.path) { throw AdminError(500, "sync: cannot remove copy marker") }
+        // The big delete runs off the actor (every share, sync and agent operation goes through it). The detached leftover cleanup (above, started by this or an
+        // earlier call) may remove `gone` at the same time: a failure counts only if the folder is still there afterwards.
+        let hook = deleteHook
+        let failed = await offPool { () -> Bool in
+            hook?(gone)
+            return (try? FileManager.default.removeItem(at: gone)) == nil && FileManager.default.fileExists(atPath: gone.path)
+        }
+        if failed { throw AdminError(500, "sync: cannot remove copy") }
         return copies
     }
 
@@ -762,6 +768,8 @@ public actor ShareHub {
     private var removeHook: ((URL) -> Void)?
     /// Only for tests: runs between the rename and the delete of a removal (what a concurrent leftover cleanup would do there).
     func setRemoveHook(_ h: ((URL) -> Void)?) { removeHook = h }
+    private var deleteHook: (@Sendable (URL) -> Void)?  // tests: runs off the actor just before the delete of the renamed copy
+    func setDeleteHook(_ h: (@Sendable (URL) -> Void)?) { deleteHook = h }
 
     private var scanHook: (@Sendable () async -> Void)?
     /// Only for tests: a suspension point of syncManifest before its scan.
