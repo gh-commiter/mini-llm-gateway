@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.1
+
 ### New
 - Teams (first step): the owner can group users and projects into teams with `minigw gw team add|list|rename|archive`, `minigw gw team member add|remove <team> <user>` and `minigw gw team project add|remove <team> <project>`; a member sees their own teams with `minigw team list|show <team>`. A project belongs to at most one team; a user can be in several. In this version a team is a directory only: being in a team gives no project role and no access to notes yet.
 
