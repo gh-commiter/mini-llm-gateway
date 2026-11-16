@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.10
+
 ### Changed
 - Changed (Mac app, security review): Grok is now refused on every run on the Mac gateway, not only while its home lies inside a hidden folder (before, a Scratch folder that fell back to the system temp folder would have let Grok run with the shared home that two reviews rejected). The refusal comes first, before anything is synced or started, as 400 `invalid_request_error` with `x-should-retry: false` and the same message (a 502/503 would get "try again" from the client); Grok is no longer listed among the Mac gateway's models while it is switched off. Grok through `minigw serve` is not affected.
 
