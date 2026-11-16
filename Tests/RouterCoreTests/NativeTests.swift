@@ -806,10 +806,19 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
                                   device: "dev-xcrun"), writer: w)
         return (w, Date().timeIntervalSince(start))
     }
+    // The bound is scaled by what one uncached xcrun costs on this Mac right now (~1.5 s idle, more under load): Swift Build calls it ~23 times,
+    // so a build without the run cache costs ~25 of these; with the cache the whole second build must stay under 15 of them. A fixed number of
+    // seconds would measure the load of the machine instead.
+    let probe = Process(), probeStart = Date()
+    probe.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun"); probe.arguments = ["--show-sdk-path"]
+    probe.environment = ProcessInfo.processInfo.environment.merging(["xcrun_nocache": "1"]) { $1 }
+    probe.standardOutput = FileHandle.nullDevice; probe.standardError = FileHandle.nullDevice
+    try probe.run(); probe.waitUntilExit()
+    let oneXcrun = max(1.5, Date().timeIntervalSince(probeStart))
     let (first, _) = await build()
     #expect(first.text.hasSuffix("x 0\n"), "\(first.text)")
     let (second, t2) = await build()  // nič za prevesti: le odkrivanje orodij (xcrun) in ~5,5 s pospravljanja run
-    #expect(second.text.hasSuffix("x 0\n") && t2 < 20, "second build took \(t2) s")
+    #expect(second.text.hasSuffix("x 0\n") && t2 < 15 * oneXcrun, "second build took \(t2) s, one uncached xcrun \(oneXcrun) s")
 }
 
 @Test func sharedFolderAddSameIdentity() throws {

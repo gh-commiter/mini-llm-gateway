@@ -200,7 +200,7 @@ echo "codex answer" > "$out"
                           ("unlisted device", await f.ask(project: f.pid["fakture"], device: "stranger"))] {
             #expect(w.status == 403 && w.text.contains(#""type":"no_project_access""#) && w.text.contains(#""message":"No project access""#)
                     && w.text.contains(#""type":"error""#) && w.text.contains("x-should-retry: false"),
-                    "\(name): \(w.status) \(w.text) \(helper())")
+                    "\(helper()) | \(name): \(w.status) \(w.text.prefix(400))")  // helper state first: the failure report cuts long messages
         }
         #expect(f.read("ran.txt") == ranBefore, "\(helper())")  // none of them started an agent
         // the fixed refusal is the body asserted by Go (testdata/no_project_access.json) inside the Anthropic shape
