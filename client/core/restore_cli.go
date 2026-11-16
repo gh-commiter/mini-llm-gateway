@@ -34,7 +34,7 @@ func RestoreCLI(store, file string, yes bool, in io.Reader, out, errw io.Writer,
 			file = filepath.Join(store, BackupFolder, file)
 		}
 	}
-	fmt.Fprintln(out, "Restoring "+file+" brings back the users, bindings, memberships and grants of that backup, also ones revoked since.")
+	fmt.Fprintln(out, "Restoring "+file+" brings back the users, bindings, memberships, team members, team projects, team assignments and grants of that backup, also ones revoked since.")
 	fmt.Fprintln(out, "The approved device list (serve.json) is not part of the backup and stays as it is. Every run and conversation ends (the epoch grows).")
 	if !yes {
 		fmt.Fprint(out, "Continue? [y/N] ")

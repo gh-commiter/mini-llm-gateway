@@ -401,7 +401,7 @@ holds a lock on it, so only one process uses it at a time.
 - **Restore:** `minigw gw core restore <file|name>` works only with the gateway stopped (a name is looked up in
   `backups`; an explicit path is accepted here, offline). It checks the file (same gateway,
   schema not newer, integrity), keeps the current database as a snapshot, and puts the backup in place with one
-  rename. It brings back the users, bindings, memberships and grants of the backup, also ones revoked since, so it asks
+  rename. It brings back the users, bindings, memberships, team members, team projects, team assignments and grants of the backup, also ones revoked since, so it asks
   you to confirm (`--yes` skips that). The epoch is set above both values (all runs and conversations end) and the
   project-id counter never goes back. An interrupted restore is finished or rolled back at the next start.
 - **Where backups go:** `minigw gw core backup [name]` writes only into `core/backups` (agents cannot read that folder); the

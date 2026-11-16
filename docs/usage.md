@@ -519,7 +519,7 @@ and bound to active users. `team list --archived` includes archived teams; membe
 Names or numeric IDs identify teams; use the ID for an all-digit name.
 
 `gw team rename <team> <name>` renames a team. Archiving a team hides it from the default member list,
-blocks new attachments and deletes its assignments; unarchiving does not recreate them. Removing a team
+blocks new attachments and deletes its assignments; unarchiving does not bring them back (deliberate: set them again with `gw team access set`). Removing a team
 member or project deletes the matching assignments in the same transaction. Archiving a team does not
 archive its projects. Explicit grants remain unchanged.
 
