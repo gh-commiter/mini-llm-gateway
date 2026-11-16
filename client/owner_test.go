@@ -46,6 +46,8 @@ func TestCommandsThatCreateStateAreRefused(t *testing.T) {
 		{"minigw.exe", []string{"note", "list"}, true},
 		{"minigw.exe", []string{"note", "read", "example"}, true},
 		{"minigw.exe", []string{"usage"}, true},
+		{"minigw.exe", []string{"team", "list"}, true},
+		{"minigw.exe", []string{"team", "show", "example"}, true},
 		{"minigw.exe", []string{"gw", "token"}, true},
 		{"minigw.exe", []string{"gw"}, false},
 		{"minigw.exe", []string{"gw", "help"}, false},
@@ -77,7 +79,7 @@ func TestOwnerPolicyCoversDispatch(t *testing.T) {
 	commands := map[string]bool{
 		"verify-sums": true, mxcProbeCmd: true, agentReaperCmd: true,
 		"serve": true, "gw": false, "router": false, "tray": true,
-		"share": false, "project": true, "note": true, "usage": true,
+		"share": false, "project": true, "note": true, "usage": true, "team": true,
 		"plugin": true, "uninstall": true, "run": true, "connect": true,
 		"reconnect": true, "disconnect": true, "profiles": true,
 		"status": true, "models": true,
