@@ -6,7 +6,7 @@ import Testing
 // fake or temporary: fake claude scripts, planted links in temp folders, a local socket server; no real CLI, network or Codex home.
 
 private func tempDir(_ name: String) -> URL {
-    let u = FileManager.default.temporaryDirectory.appendingPathComponent("mghard-\(name)-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    let u = FileManager.default.temporaryDirectory.appendingPathComponent("mghard-\(name)-\(UUID().uuidString.prefix(8))", isDirectory: true).cleanedAtExit()
     try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
     return u
 }

@@ -4,7 +4,7 @@ import Testing
 
 /// #82 (vmesno, kot folderlock_test.go): zaklep mape v začasni mapi, nikoli v pravi Application Support.
 private func tempDir(_ name: String) throws -> URL {
-    let u = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-test-\(name)-" + UUID().uuidString)
+    let u = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-test-\(name)-" + UUID().uuidString).cleanedAtExit()
     try FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
     return u.resolvingSymlinksInPath()
 }

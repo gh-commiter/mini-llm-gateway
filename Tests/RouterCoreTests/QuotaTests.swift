@@ -15,7 +15,7 @@ private func fixtureCases() throws -> [[String: Any]] {
 }
 
 private func tempDir(_ name: String) -> URL {
-    let u = FileManager.default.temporaryDirectory.appendingPathComponent("mgquota-\(name)-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    let u = FileManager.default.temporaryDirectory.appendingPathComponent("mgquota-\(name)-\(UUID().uuidString.prefix(8))", isDirectory: true).cleanedAtExit()
     try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
     return u
 }

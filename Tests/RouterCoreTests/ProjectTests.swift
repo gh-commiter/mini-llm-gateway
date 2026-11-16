@@ -14,7 +14,7 @@ private func fixtureJSON(_ name: String) throws -> [String: Any] { try JSONSeria
 
 /// A real temporary folder with its canonical path (macOS temp dirs are links).
 private func tempRoot() throws -> String {
-    let u = FileManager.default.temporaryDirectory.appendingPathComponent("mgproj-" + UUID().uuidString, isDirectory: true)
+    let u = FileManager.default.temporaryDirectory.appendingPathComponent("mgproj-" + UUID().uuidString, isDirectory: true).cleanedAtExit()
     try FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
     return try Projects.realFolder(u.path)
 }
