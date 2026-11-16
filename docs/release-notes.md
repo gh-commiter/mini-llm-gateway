@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Restoring a database backup now rebuilds the knowledge base search index from the notes, so a damaged index in a backup is not installed; if the rebuild fails, the restore fails and the old database stays.
+
 ## 0.7.6
 
 ### New
