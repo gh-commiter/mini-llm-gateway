@@ -3,7 +3,6 @@
 ## Unreleased
 
 ### Fixed
-
 - While Codex, Grok, Copilot or a Claude CLI agent works silently, the gateway now sends an empty text delta with every ping, so Claude Code sees a real model event and no longer drops a long agent request (#131).
 
 ## 0.7.3
