@@ -33,7 +33,7 @@ func aClaudeAgentCommitsInADirectModeFolderAndCannotPlantAHook(identity: Bool) a
     var env = ProcessInfo.processInfo.environment
     for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k.hasPrefix("GIT_") { env[k] = nil }
     env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-    env.merge(ClaudeCLIConfig.sandboxGitEnv) { $1 }
+    env.merge(ClaudeCLIConfig.sandboxGitEnv(mount: false)) { $1 }
     let ask = "Run these as separate Bash calls, one simple command each (no chaining, no echo, no redirection of exit codes): 1) printf hi > b.txt  2) git add b.txt  3) git commit -m 'add b'  4) printf x > .git/hooks/pre-commit  5) printf x > .git/COMMONDIR  6) printf x > .git/objects/info/ALTERNATES. Report the exact output of each."
     let r = ClaudeSeatbelt.capture(exe, args, env: env, cwd: repo.path, input: ask, timeout: 240, log: base)
     print("[direct-git identity=\(identity)] author: \(sh("git log -1 --format=%an,%ae", repo.path).out); claude said: \((r.out.components(separatedBy: "\"result\":").last ?? "").prefix(900))")
@@ -114,7 +114,7 @@ func aClaudeAgentCannotRewriteTheGitFileOfALinkedWorktree() async throws {
         var env = ProcessInfo.processInfo.environment
         for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k.hasPrefix("GIT_") { env[k] = nil }
         env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-        env.merge(ClaudeCLIConfig.sandboxGitEnv) { $1 }
+        env.merge(ClaudeCLIConfig.sandboxGitEnv(mount: false)) { $1 }
         let r = ClaudeSeatbelt.capture(exe, args, env: env, cwd: wt.path, input: "Run as one simple Bash call: printf 'gitdir: x' > .git   and report the exact output.", timeout: 240, log: base)
         print("[direct-git wt direct=\(direct)] \((r.out.components(separatedBy: "\"result\":").last ?? "").prefix(300))")
         #expect((try? String(contentsOf: wt.appendingPathComponent(".git"), encoding: .utf8)) == before, "the .git file was rewritten (direct=\(direct))")
@@ -132,5 +132,18 @@ func aClaudeAgentCannotRewriteTheGitFileOfALinkedWorktree() async throws {
         let n = a.reduce(0) { $0 + $1.utf8.count + 1 }
         print("[argv-length] allowLocalTools=\(allow), ten allowed folders of 120 characters: \(n) characters")
         #expect(n < 524_288, "\(n)")
+    }
+}
+
+/// 0.7.1: the environment of a sandboxed run: git ignores the executable bit only on a direct-mode mount (its files all show as -rwx------); a local folder keeps its real modes.
+@Test func theGitEnvironmentIgnoresTheExecutableBitOnlyOnAMount() {
+    func pairs(_ e: [String: String]) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: (0..<(Int(e["GIT_CONFIG_COUNT"] ?? "0") ?? 0)).map { (e["GIT_CONFIG_KEY_\($0)"] ?? "", e["GIT_CONFIG_VALUE_\($0)"] ?? "") })
+    }
+    let mount = ClaudeCLIConfig.sandboxGitEnv(mount: true), local = ClaudeCLIConfig.sandboxGitEnv(mount: false)
+    #expect(pairs(mount)["core.fileMode"] == "false" && pairs(local)["core.fileMode"] == nil)
+    for e in [mount, local] {
+        #expect(e["GIT_CONFIG_GLOBAL"] == "/dev/null" && e["GIT_CONFIG_NOSYSTEM"] == "1" && pairs(e)["core.hooksPath"] == "/dev/null" && pairs(e)["core.fsmonitor"] == "false")
+        #expect(e.keys.filter { $0.hasPrefix("GIT_CONFIG_KEY_") }.count == Int(e["GIT_CONFIG_COUNT"]!))
     }
 }

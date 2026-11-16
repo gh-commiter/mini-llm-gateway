@@ -42,7 +42,7 @@ enum GitNote {
         case "direct":
             let (works, refused) = directLists()
             return "Git: you can commit in this folder: " + works.joined(separator: ", ") + ". Not possible in this folder: " + refused.joined(separator: ", ")
-                + ". Use merge instead of rebase. Nested repositories and submodules are read-only for you. If the task needs one of these, say so and tell the user to run it themselves or to use worktree mode (minigw --minigw-work=worktree). Your git changes are reported to the user: do not commit or stage .claude/settings*.json, .envrc, .vscode/tasks.json or .husky (protected paths)."
+                + ". Use merge instead of rebase. Nested repositories and submodules are read-only for you. If the task needs one of these, say so and tell the user to run it themselves or to use worktree mode (minigw --minigw-work=worktree). A symlink may show as changed here: add files by name, not git add -A or commit -a. Your git changes are reported to the user: do not commit or stage .claude/settings*.json, .envrc, .vscode/tasks.json or .husky (protected paths)."
         default: return ""
         }
     }

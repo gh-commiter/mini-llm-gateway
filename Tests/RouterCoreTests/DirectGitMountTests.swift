@@ -168,7 +168,7 @@ func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
     let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
     for d in [client, mp] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
     defer { try? fm.removeItem(at: base) }
-    #expect(sh("git init -q && git config user.name Owner && git config user.email o@example.com && echo hi > a.txt && git add a.txt && git commit -qm init", cwd: client.path).status == 0)
+    #expect(sh("git init -q && git config user.name Owner && git config user.email o@example.com && echo hi > a.txt && printf '#!/bin/sh\\n' > exec.sh && chmod 755 exec.sh && git add a.txt exec.sh && git commit -qm init", cwd: client.path).status == 0)
     let server = try #require(DAVLoopback(root: client, prefix: "/dav/e2e"))
     defer { server.stop() }
     let mounted = ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) == 0
@@ -185,13 +185,13 @@ func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
     var env = ProcessInfo.processInfo.environment
     for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k.hasPrefix("GIT_") { env[k] = nil }
     env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-    env.merge(ClaudeCLIConfig.sandboxGitEnv) { $1 }
+    env.merge(ClaudeCLIConfig.sandboxGitEnv(mount: true)) { $1 }
     let watch = try #require(GitWatch.begin(client.path, stateDir: base.path + "-state"))  // the client's end-of-run git watch
     let errFile = base.appendingPathComponent("stderr.txt")
     let saved = dup(2), fd = open(errFile.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
     dup2(fd, 2)
     WebDAV.refused.withLock { $0 = WebDAV.RefusalLog() }
-    let ask = "Run these as separate Bash calls, one simple command each (no chaining, no echo): 1) printf hi > b.txt  2) git add b.txt  3) git commit -m 'add b'  4) printf x > .git/hooks/pre-commit  5) printf x > .git/COMMIT_EDITMSG  6) mv .git/COMMIT_EDITMSG .git/config. Report the exact output of each."
+    let ask = "Run these as separate Bash calls, one simple command each (no chaining, no echo): 1) printf hi > b.txt  2) git add b.txt  3) git commit -m 'add b'  4) printf x > .git/hooks/pre-commit  5) printf x > .git/COMMIT_EDITMSG  6) mv .git/COMMIT_EDITMSG .git/config  7) printf '# edit' >> exec.sh  8) git add exec.sh  9) git commit -m 'edit exec'. Report the exact output of each."
     let r = ClaudeSeatbelt.capture(exe, args, env: env, cwd: mp.path, input: ask, timeout: 300, log: base)
     for _ in 0..<50 { usleep(200_000) }  // webdavfs writes back after close
     dup2(saved, 2); close(saved); close(fd)
@@ -199,12 +199,44 @@ func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
     print("[mount-real] claude said: \((r.out.components(separatedBy: "\"result\":").last ?? "").prefix(1200))")
     print("[mount-real] client stderr: \(refusals)")
     print("[mount-real] requests: \(server.summary)\n[mount-real] writes: \(server.writes)")
-    let log = sh("git log --format=%s", cwd: client.path).out
+    let log = sh("git log --format=%s", cwd: client.path).out.components(separatedBy: "\n").dropFirst().first ?? ""  // the second newest: "add b"
     let report = watch.finish()
     print("[mount-real] git watch report: \(report)")
     #expect(log.hasPrefix("add b"), "no commit in the client's repository: \(log)")
-    #expect(report.joined().contains("1 new commit(s)"), "\(report)")
+    #expect(report.joined().contains("2 new commit(s)"), "\(report)")
+    // 0.7.1: the mount shows every file as -rwx------: the new file is recorded as 100644, the executable file keeps 100755 after the agent's edit
+    let tree = sh("git ls-tree HEAD", cwd: client.path).out
+    #expect(tree.range(of: #"100644 blob \w+\tb\.txt"#, options: .regularExpression) != nil, Comment(rawValue: tree))
+    #expect(tree.range(of: #"100755 blob \w+\texec\.sh"#, options: .regularExpression) != nil, Comment(rawValue: tree))
+    #expect(sh("git log --format=%s", cwd: client.path).out.hasPrefix("edit exec"))
     #expect(!refusals.contains("._"), "AppleDouble files are not reported: \(refusals)")
     #expect(!fm.fileExists(atPath: client.appendingPathComponent(".git/hooks/pre-commit").path))
     #expect(!sh("cat .git/config", cwd: client.path).out.contains("COMMIT_EDITMSG") && !sh("cat .git/config", cwd: client.path).out.hasPrefix("x"))
+}
+
+/// 0.7.1: the mount shows every file as -rwx------. With the environment of a sandboxed run on a mount (core.fileMode false) a new file is committed as 100644 and an executable
+/// file keeps 100755; what a tracked symlink looks like on the mount is measured here.
+@Test func modesOnADirectModeMountAreNotTheMountsModes() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("direct-mount-mode-" + UUID().uuidString, isDirectory: true)
+    let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
+    for d in [client, mp] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+    defer { try? fm.removeItem(at: base) }
+    #expect(sh("git init -q && echo '#!/bin/sh' > exec.sh && chmod 755 exec.sh && echo p > plain.txt && ln -s plain.txt link && git add -A && git commit -qm init", cwd: client.path).status == 0)
+    let server = try #require(DAVLoopback(root: client, prefix: "/dav/e2e"))
+    defer { server.stop() }
+    let mounted = ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) == 0
+    defer { forceUnmount(mp) }
+    try #require(mounted, "mount_webdav to the loopback server")
+    let env = ClaudeCLIConfig.sandboxGitEnv(mount: true).map { "export \($0.key)='\($0.value)'" }.joined(separator: "; ")
+    print("[mode] ls -l on the mount: \(sh("ls -l exec.sh plain.txt link", cwd: mp.path).out)")
+    print("[mode] status on the mount, default config: \(sh("git status --short; git config core.symlinks; git ls-files -s", cwd: mp.path).out)")
+    print("[mode] status with the run's environment: \(sh(env + "; git status --short; git diff --raw", cwd: mp.path).out)")
+    let r = sh(env + "; echo new > new.txt && echo '# edit' >> exec.sh && git add new.txt exec.sh && git commit -qm agent", cwd: mp.path)
+    #expect(r.status == 0, "\(r)")
+    let tree = sh("git ls-tree HEAD", cwd: client.path).out
+    print("[mode] tree after the agent's commit: \(tree)")
+    #expect(tree.range(of: #"100644 blob \w+\tnew\.txt"#, options: .regularExpression) != nil, Comment(rawValue: tree))
+    #expect(tree.range(of: #"100755 blob \w+\texec\.sh"#, options: .regularExpression) != nil, Comment(rawValue: tree))
+    print("[mode] client diff --raw after: \(sh("git status --short; git diff --raw HEAD", cwd: client.path).out)")
 }

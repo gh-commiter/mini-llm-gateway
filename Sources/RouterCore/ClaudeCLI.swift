@@ -283,9 +283,15 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Environment of a sandboxed run's git (direct mode too): the sandbox hides the home folder, and git treats an unreadable `~/.gitconfig` as fatal, so the run
     /// gets no user and system configuration (the owner's hooksPath, excludes, attributes and fsmonitor cannot act with the agent's hands either); `.git/config` of the
     /// folder (identity, remotes) stays. The same as the worktree's, minus its clone-only pairs.
-    static let sandboxGitEnv = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_COUNT": "4",
-                                "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "/dev/null", "GIT_CONFIG_KEY_1": "core.excludesFile", "GIT_CONFIG_VALUE_1": "/dev/null",
-                                "GIT_CONFIG_KEY_2": "core.attributesFile", "GIT_CONFIG_VALUE_2": "/dev/null", "GIT_CONFIG_KEY_3": "core.fsmonitor", "GIT_CONFIG_VALUE_3": "false"]
+    /// `mount` (the direct-mode mount of a remote client): the mount shows every file as -rwx------, so git ignores the executable bit there (core.fileMode false): a new file is
+    /// recorded as 100644 and an existing file keeps the mode it has in the repository. A local folder has its real modes.
+    static func sandboxGitEnv(mount: Bool) -> [String: String] {
+        var env = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_COUNT": mount ? "5" : "4",
+                   "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "/dev/null", "GIT_CONFIG_KEY_1": "core.excludesFile", "GIT_CONFIG_VALUE_1": "/dev/null",
+                   "GIT_CONFIG_KEY_2": "core.attributesFile", "GIT_CONFIG_VALUE_2": "/dev/null", "GIT_CONFIG_KEY_3": "core.fsmonitor", "GIT_CONFIG_VALUE_3": "false"]
+        if mount { env["GIT_CONFIG_KEY_4"] = "core.fileMode"; env["GIT_CONFIG_VALUE_4"] = "false" }
+        return env
+    }
 
     /// M4: .git, ki ga bere git lastnika: nastavitve, hooki, atributi in preusmeritve na drug gitdir (commondir,
     /// povezani worktree-ji z gitdir, commondir in config.worktree).
@@ -954,7 +960,7 @@ extension Router {
             env["CLAUDE_CODE_TMPDIR"] = link
             env["MINIGW_NETWORK_OFF"] = Worktree.networkOff("claude", config)  // #67: ovoj git
         } else if agent, cfg.allowLocalTools {  // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
-            env = env.filter { !$0.key.hasPrefix("GIT_") }.merging(ClaudeCLIConfig.sandboxGitEnv) { $1 }
+            env = env.filter { !$0.key.hasPrefix("GIT_") }.merging(ClaudeCLIConfig.sandboxGitEnv(mount: directGit)) { $1 }
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"
