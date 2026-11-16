@@ -19,4 +19,30 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: sudo xcode-select -s /Applications/Xcode_27.2.app
       - run: swift build
-      - run: swift test
+      # A hang must name itself: after 20 minutes the test process is sampled (stacks of every thread) and the tests that started but never finished are listed.
+      - name: swift test
+        run: |
+          swift test > "$RUNNER_TEMP/swift-test.log" 2>&1 &
+          test_pid=$!
+          tail -n +1 -f "$RUNNER_TEMP/swift-test.log" &
+          tail_pid=$!
+          deadline=$((SECONDS + 1200))
+          while kill -0 "$test_pid" 2>/dev/null && [ "$SECONDS" -lt "$deadline" ]; do sleep 5; done
+          if kill -0 "$test_pid" 2>/dev/null; then
+            echo "::error::swift test is still running after 20 minutes: sampling it"
+            echo "== started, never finished"
+            grep -E "Test .* (started|passed after|failed after|was cancelled|skipped)" "$RUNNER_TEMP/swift-test.log" | sed -E 's/^.*Test (.*) (started|passed after|failed after|was cancelled|skipped).*$/\1 \2/' | awk '$NF=="started"{s[$1]=1} $NF!="started"{delete s[$1]} END{for(k in s) print k}' | sort
+            for p in $(pgrep -f 'swiftpm-testing-helper|xctest'); do
+              echo "== sample of $p"
+              sample "$p" 5 -file "$RUNNER_TEMP/sample-$p.txt" > /dev/null 2>&1 || true
+              head -n 400 "$RUNNER_TEMP/sample-$p.txt" || true
+            done
+            kill "$test_pid" 2>/dev/null || true
+            kill "$tail_pid" 2>/dev/null || true
+            exit 1
+          fi
+          rc=0
+          wait "$test_pid" || rc=$?
+          sleep 1
+          kill "$tail_pid" 2>/dev/null || true
+          exit $rc
