@@ -143,6 +143,9 @@ func gatewayError(st int, data []byte, h http.Header) error {
 		case "archived":
 			return errors.New("the project is archived: nobody can write to it")
 		}
+		if m := oneLine(b.Error.Message); strings.HasPrefix(m, "no project access:") { // the gateway names the condition
+			return errors.New(m)
+		}
 		return errors.New("no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)")
 	case 404:
 		return errors.New("not found or not visible")

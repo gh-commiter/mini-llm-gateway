@@ -163,18 +163,39 @@ func TestEveryKindIsServedAsDocumented(t *testing.T) {
 	}
 }
 
-// The fixed no_project_access body is the same bytes whichever check refuses, and so is the unavailable body.
+// The fixed no_project_access body is the same bytes whichever generic check refuses, and so is the unavailable body.
+// A device the core can name (not on the list, not bound) gets the owner's command instead; access_errors.json holds
+// the same texts in the Mac app's tests.
 func TestFixedBodies(t *testing.T) {
 	f := newFixture(t)
 	want := `{"error":{"message":"No project access","type":"no_project_access"}}`
 	for _, c := range f.cases() {
-		if strings.HasPrefix(c.name, "member: no device") || strings.HasPrefix(c.name, "member: agent") || strings.HasPrefix(c.name, "member: unbound") ||
-			strings.HasPrefix(c.name, "member: device not approved") {
+		if strings.HasPrefix(c.name, "member: no device") || strings.HasPrefix(c.name, "member: agent") {
 			if got := string(f.api.Handle(bg, c.c, c.r).Body); got != want {
 				t.Errorf("%s: %s", c.name, got)
 			}
 		}
 	}
+	var texts struct {
+		NotListed string `json:"device_not_listed"`
+		NotBound  string `json:"device_not_bound"`
+	}
+	if err := json.Unmarshal([]byte(fixtureBody(t, "access_errors.json")), &texts); err != nil {
+		t.Fatal(err)
+	}
+	named := func(name string, c Context, text string) {
+		t.Helper()
+		r := f.api.Handle(bg, c, get("/minigw/v1/projects"))
+		var b struct {
+			Error struct{ Message, Type string }
+		}
+		json.Unmarshal(r.Body, &b)
+		if r.Status != 403 || b.Error.Type != "no_project_access" || b.Error.Message != strings.ReplaceAll(text, "{device}", c.DeviceID) {
+			t.Errorf("%s: %d %s", name, r.Status, r.Body)
+		}
+	}
+	named("device not on the list", Context{Kind: KindMember, DeviceID: "dev-ana"}, texts.NotListed)
+	named("device not bound", member("dev-x"), texts.NotBound)
 	none := New(Options{})
 	if r := none.Handle(bg, member("dev-ana"), get("/minigw/v1/projects")); r.Status != 503 || !strings.Contains(string(r.Body), "core_unavailable") {
 		t.Fatalf("%d %s", r.Status, r.Body)

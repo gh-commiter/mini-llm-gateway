@@ -88,7 +88,10 @@ public final class ProjectEnv {
             switch type {
             case "forbidden": return ProjectError("not allowed: your role in this project does not permit it (a grant alone only lets you read; linking needs a direct role)")
             case "archived": return ProjectError("the project is archived: nobody can write to it")
-            default: return ProjectError("no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)")
+            default:
+                let m = ProjectText.oneLine(message)
+                if m.hasPrefix("no project access:") { return ProjectError(m) }  // the gateway names the condition
+                return ProjectError("no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)")
             }
         case 404: return ProjectError("not found or not visible")
         case 409:

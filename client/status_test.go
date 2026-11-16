@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,39 @@ func TestProfileStatusNeedsAuth(t *testing.T) {
 			t.Errorf("models %d: profileStatus = %v", tc.models, got)
 		}
 		srv.Close()
+	}
+}
+
+// #137: a client on the gateway computer is accepted without being on the device list; the Device line names that,
+// since projects still refuse it. A device on the list (bound or not) keeps »approved«.
+func TestDeviceLineNamesLocalClientNotOnTheDeviceList(t *testing.T) {
+	id := base64url(make([]byte, ed25519.SeedSize))
+	errBody := func(text string) map[string]any {
+		return map[string]any{"error": map[string]any{"message": text}}
+	}
+	notListed := errBody(accessText(t, "device_not_listed", id))
+	notBound := errBody(accessText(t, "device_not_bound", id))
+	for _, tc := range []struct {
+		name   string
+		ms     int
+		local  bool
+		status int
+		body   map[string]any
+		want   string
+		probes int
+	}{
+		{"local client, not on the list", 200, true, 403, notListed, "local client; not on the device list: no project access", 1},
+		{"local client, on the list", 200, true, 200, map[string]any{"projects": []any{}}, "approved", 1},
+		{"local client, listed but unbound", 200, true, 403, notBound, "approved", 1},
+		{"another computer", 200, false, 403, notListed, "approved", 0},
+		{"waiting for approval", 403, true, 0, nil, "waiting for approval", 0},
+		{"no models answer", 0, true, 0, nil, "approval unknown", 0},
+	} {
+		probes := 0
+		got := deviceLine(id, tc.ms, tc.local, func() (int, map[string]any) { probes++; return tc.status, tc.body })
+		if want := "Device:    " + id + " (" + tc.want + ")"; got != want || probes != tc.probes {
+			t.Errorf("%s: %q (%d probes), want %q (%d)", tc.name, got, probes, want, tc.probes)
+		}
 	}
 }
 

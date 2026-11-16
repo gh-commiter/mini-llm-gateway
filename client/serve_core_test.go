@@ -40,6 +40,25 @@ var t0 = context.Background()
 
 const noAccessBody = `{"error":{"message":"No project access","type":"no_project_access"}}`
 
+// accessText: a named no_project_access message, from the shared text fixture (coreapi/testdata/access_errors.json).
+func accessText(t *testing.T, key, device string) string {
+	t.Helper()
+	b, err := coreapiFixtures.ReadFile("coreapi/testdata/access_errors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var texts map[string]string
+	if err := json.Unmarshal(b, &texts); err != nil {
+		t.Fatal(err)
+	}
+	return strings.ReplaceAll(texts[key], "{device}", device)
+}
+
+// accessBody: the named no_project_access body, from the shared text fixture.
+func accessBody(t *testing.T, key, device string) string {
+	return `{"error":{"message":"` + accessText(t, key, device) + `","type":"no_project_access"}}`
+}
+
 func devID(d *device) string { return base64url(d.key.Public().(ed25519.PublicKey)) }
 
 func newCoreFx(t *testing.T, mod func(*serveConfig)) *coreFx {
@@ -301,13 +320,15 @@ func TestCoreCase9Identity(t *testing.T) {
 	ana := f.dev["ana"]
 	status(t, f.raw(ana, "tok", "GET", projectsPrefix, ""), 200)
 
-	// a device on the list without a binding
+	// a device on the list without a binding: the refusal names the binding (only its own device id)
 	stranger := newDevice("stranger")
 	f.s.update(func(c *serveConfig) error {
 		c.Devices = append(c.Devices, serveDevice{ID: devID(stranger), Name: "stranger"})
 		return nil
 	})
-	denied("unbound", f.raw(stranger, "tok", "GET", projectsPrefix, ""))
+	if r := f.raw(stranger, "tok", "GET", projectsPrefix, ""); r.status != 403 || r.body != accessBody(t, "device_not_bound", devID(stranger)) {
+		t.Errorf("unbound: %d %s", r.status, r.body)
+	}
 	status(t, models(stranger), 200) // models still answer
 
 	// deactivated user
@@ -325,7 +346,9 @@ func TestCoreCase9Identity(t *testing.T) {
 	if st, _ := f.s.adminDo("DELETE", "/devices/"+devID(f.dev["bor"]), nil); st != 200 {
 		t.Fatal(st)
 	}
-	denied("removed", f.call("bor", "GET", projectsPrefix, ""))
+	if r := f.call("bor", "GET", projectsPrefix, ""); r.status != 403 || r.body != accessBody(t, "device_not_listed", devID(f.dev["bor"])) {
+		t.Errorf("removed: %d %s", r.status, r.body)
+	}
 	// a re-approved device is still bound and works again (old runs stay dead through the epoch)
 	f.s.adminDo("POST", "/devices", []byte(fmt.Sprintf(`{"id":%q,"name":"bor"}`, devID(f.dev["bor"]))))
 	status(t, f.call("bor", "GET", projectsPrefix, ""), 200)
@@ -360,7 +383,7 @@ func TestCoreCase9AllowAnyDevice(t *testing.T) {
 	any := newDevice("any")
 	f.ok(f.s.core.SetBinding(t0, devID(any), f.uid["ana"])) // bound, but not in the (empty) approved list
 	r := f.raw(any, "tok", "GET", projectsPrefix, "")
-	if r.status != 403 || r.body != noAccessBody {
+	if r.status != 403 || r.body != accessBody(t, "device_not_listed", devID(any)) {
 		t.Fatalf("%d %s", r.status, r.body)
 	}
 	status(t, f.raw(any, "tok", "GET", "/v1/models", ""), 200) // the model route accepts it

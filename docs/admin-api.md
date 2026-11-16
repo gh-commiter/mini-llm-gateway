@@ -312,9 +312,11 @@ project authorization epoch. Team-generated project roles are future work.
 
 Under `/minigw/v1/projects` the gateway serves the members' own API on the encrypted device connection (token
 and device key; see the contracts in docs/plans/contracts-0.6.0.md, section 6). Error body
-`{"error": {"type", "message"}}`: 403 `no_project_access` (no valid token or device key, the device is not on the
-approved list now, it is not bound, its user is inactive; one fixed body, also for plain loopback and the "allow any
-device" and local-app exceptions that apply to the model routes), 404 `not_found` (missing or not visible, one
+`{"error": {"type", "message"}}`: 403 `no_project_access` (no valid token or device key, or its user is inactive: one
+fixed body, also for plain loopback and the "allow any device" and local-app exceptions that apply to the model routes;
+when the device itself is the reason the message names it — not on the gateway's device list, with `minigw gw devices allow
+<device id>`, or not bound to a user, with `minigw gw bind <device id> <user>` — and gives only the caller's own id),
+404 `not_found` (missing or not visible, one
 body), 403 `forbidden`, 403 `archived`, 409 `revision_mismatch` (with `revision`) or `idempotency_conflict`, 413
 `too_large`, 429 `limit` with `Retry-After`, 400 `invalid`, 503 `core_unavailable`.
 

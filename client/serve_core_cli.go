@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -143,6 +144,12 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 			a.do("DELETE", "/bindings/"+url.PathEscape(pos[2]), nil, nil)
 		case len(pos) == 3 && validDeviceID(pos[1]):
 			a.do("PUT", "/bindings/"+url.PathEscape(pos[1]), map[string]any{"user": userID(a, pos[2])}, nil)
+			var d struct{ Devices []apiDevice }
+			a.do("GET", "/devices", nil, &d)
+			// A device may be bound before the owner allows it; without the list entry projects still refuse.
+			if !slices.ContainsFunc(d.Devices, func(x apiDevice) bool { return x.ID == pos[1] }) {
+				say("warning: this device is not on the device list yet: minigw gw devices allow " + pos[1])
+			}
 		default:
 			fail(strings.TrimSpace(coreHelp))
 		}

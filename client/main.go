@@ -301,13 +301,7 @@ func profileStatus(p profile) bool {
 		say("Models:    " + fmt.Sprint(len(d)))
 	}
 	if id := deviceID(c); id != "" && p.conn.Key != nil {
-		state := "approval unknown"
-		if ms == 200 {
-			state = "approved"
-		} else if ms == 403 {
-			state = "waiting for approval"
-		}
-		say("Device:    " + id + " (" + state + ")")
+		say(deviceLine(id, ms, p.conn.isLocal(), func() (int, map[string]any) { return getJSON(c, "/minigw/v1/projects") }))
 	}
 	bad, body := ms, models
 	if ms == 200 {
@@ -326,6 +320,32 @@ func getJSON(c connection, path string) (int, map[string]any) {
 	var m map[string]any
 	json.Unmarshal(data, &m)
 	return st, m
+}
+
+// notOnDeviceList: the member route's 403 naming the device list as the missing condition.
+func notOnDeviceList(st int, body map[string]any) bool {
+	if st != 403 {
+		return false
+	}
+	e, _ := body["error"].(map[string]any)
+	msg, _ := e["message"].(string)
+	return strings.Contains(msg, "not on the gateway's device list")
+}
+
+// deviceLine: the Device line of minigw status. A client on the gateway computer is accepted for models without
+// being on the device list, but projects need the list; the line says so. A listed device keeps »approved«.
+func deviceLine(id string, ms int, local bool, projects func() (int, map[string]any)) string {
+	state := "approval unknown"
+	switch {
+	case ms == 200:
+		state = "approved"
+		if local && notOnDeviceList(projects()) {
+			state = "local client; not on the device list: no project access"
+		}
+	case ms == 403:
+		state = "waiting for approval"
+	}
+	return "Device:    " + id + " (" + state + ")"
 }
 
 // createsState: refuse by default when the token owner cannot be set. Even read-only

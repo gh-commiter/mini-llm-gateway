@@ -672,6 +672,12 @@ func deviceID(_ c: Connection) -> String? {
         .map { Noise.base64url($0.publicKey.rawRepresentation) }
 }
 
+/// The member route's 403 naming the device list as the missing condition.
+func notOnDeviceList(_ answer: (Int, [String: Any]?)) -> Bool {
+    guard answer.0 == 403, let error = answer.1?["error"] as? [String: Any] else { return false }
+    return ((error["message"] as? String) ?? "").contains("not on the gateway's device list")
+}
+
 /// Naslov, dosegljivost, ponudniki, število modelov, ID naprave in razlog enega profila; true = povezan
 /// (prehod dosegljiv, žeton sprejet, naprava odobrena).
 /// The version in the health answer, or why there is none (a gateway older than 0.5.20 does not send it).
@@ -697,7 +703,14 @@ func profileStatus(_ p: Profile) -> Bool {
     }
     let (ms, models) = get(c, "/v1/models")
     if ms == 200 && s == 200 { say("Models:    \((models?["data"] as? [Any])?.count ?? 0)") }  // sicer razlog le v vrstici Status
-    if p.conn.key != nil, let id = deviceID(c) { say("Device:    \(id) (\(ms == 200 ? "approved" : ms == 403 ? "waiting for approval" : "approval unknown"))") }
+    if p.conn.key != nil, let id = deviceID(c) {
+        var state = ms == 200 ? "approved" : ms == 403 ? "waiting for approval" : "approval unknown"
+        // A client on the gateway computer is accepted without being on the device list, but projects need the list.
+        if ms == 200, p.conn.isLocal, notOnDeviceList(get(c, "/minigw/v1/projects")) {
+            state = "local client; not on the device list: no project access"
+        }
+        say("Device:    \(id) (\(state))")
+    }
     let bad = ms != 200 ? ms : s
     say("Status:    " + (bad == 200 ? "connected" : failureReason(bad, bad == ms ? models : ready, p.name)))
     return bad == 200

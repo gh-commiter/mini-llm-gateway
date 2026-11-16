@@ -716,9 +716,9 @@
       "args": [
         "list"
       ],
-      "body": "{}",
+      "body": "{\"error\":{\"message\":\"no project access: this device is not bound to a user (the owner runs: minigw gw bind BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB <user>)\",\"type\":\"no_project_access\"}}",
       "out": "",
-      "error": "no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)",
+      "error": "no project access: this device is not bound to a user (the owner runs: minigw gw bind BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB <user>)",
       "status": 403,
       "path": "/minigw/v1/teams"
     },

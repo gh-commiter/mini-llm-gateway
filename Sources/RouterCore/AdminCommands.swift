@@ -136,6 +136,11 @@ public final class AdminCommands {
                 try request("DELETE", "/bindings/" + ProjectText.pathEscape(pos[2]))
             case (3, _) where Self.validDeviceID(pos[1]):
                 try request("PUT", "/bindings/" + ProjectText.pathEscape(pos[1]), ["user": try userID(pos[2])])
+                let listed = try request("GET", "/devices")["devices"]?.array ?? []
+                // A device may be bound before the owner allows it; without the list entry projects still refuse.
+                if !listed.contains(where: { $0.dict["id"]?.string == pos[1] }) {
+                    say("warning: this device is not on the device list yet: minigw gw devices allow " + clean(pos[1]))
+                }
             default: throw usage
             }
         case "project":

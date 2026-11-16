@@ -32,7 +32,8 @@ What the adapter vouches for in the `Context`:
 - **internal**: a call of the gateway itself, `POST /internal/<name>` with a JSON body (below).
 
 Inside `coreapi` (not the adapter's business): the principal (binding, active user), authorization order (visible, allowed, archived,
-revision, rate limit, size), 404 before validation, the fixed `no_project_access` body, `Retry-After`, the error envelope
+revision, rate limit, size), 404 before validation, the `no_project_access` body (fixed, except that the two device
+conditions name the missing one), `Retry-After`, the error envelope
 `{"error":{"type","message"}}`, body limits (`coreapi.MaxBody` = 512 KiB; the adapter reads at most that and sets `bodyTooLarge`),
 idempotency, rate limits, usage reports and gap visibility, the usage recorder (queue, spool file, replay, retention).
 
@@ -130,7 +131,8 @@ captured at start), then a mutual HMAC handshake proves the secret both ways and
 reasons only (never bodies), answers a request within 30 s or with the `core_unavailable` 503, and exits on EOF (0),
 when its parent changes (3), or when the peer is refused (1). A store that cannot be opened is not an exit: every
 request is answered with the 503. `testdata/unavailable.json` and `testdata/no_project_access.json` (the two bodies the
-app may answer itself) and `testdata/paths.json` (`IsMemberPath`, `IsAdminPath`) are asserted by the Go and the Swift tests.
+app may answer itself), `testdata/paths.json` (`IsMemberPath`, `IsAdminPath`) and `testdata/access_errors.json` (the
+two named device refusals) are asserted by the Go and the Swift tests.
 
 | # | Duty | Mac, 0.6.0 task "core helper" |
 |---|---|---|

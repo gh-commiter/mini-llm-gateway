@@ -151,8 +151,14 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
         #expect(ok.status == 200 && ok.value("Content-Type") == "application/json")
         let list = try JSONSerialization.jsonObject(with: ok.body) as? [[String: Any]]
         #expect(list?.count == 1 && list?[0]["slug"] as? String == "fakture" && list?[0]["role"] as? String == "developer")
-        let notApproved = await ask("dev-A", false), noDevice = await ask("", true)
-        #expect(notApproved == CoreResponse.noProjectAccess && noDevice == CoreResponse.noProjectAccess)  // the helper's own bytes equal the fixture
+        // #137: the refusal names the missing condition (the shared text is client/coreapi/testdata/access_errors.json);
+        // a caller without a device keeps the fixed body.
+        let texts = try JSONSerialization.jsonObject(with: fixture("access_errors.json")) as! [String: String]
+        let notApproved = await ask("dev-A", false), unbound = await ask("dev-Z", true), noDevice = await ask("", true)
+        let message = { (r: CoreResponse) in ((json(r)["error"] as? [String: Any])?["message"] as? String) ?? "" }
+        #expect(notApproved.status == 403 && message(notApproved) == texts["device_not_listed"]!.replacingOccurrences(of: "{device}", with: "dev-A"))
+        #expect(unbound.status == 403 && message(unbound) == texts["device_not_bound"]!.replacingOccurrences(of: "{device}", with: "dev-Z"))
+        #expect(noDevice == CoreResponse.noProjectAccess)  // the helper's own bytes equal the fixture
         let nope = await h.call(context: CoreContext(kind: .member, device: "dev-A", approved: true), request: CoreRequest(method: "GET", path: "/minigw/v1/projects/nope"))
         #expect(nope.status == 404)
         let epoch = await h.epoch()

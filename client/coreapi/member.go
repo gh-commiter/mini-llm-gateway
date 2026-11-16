@@ -128,8 +128,9 @@ func UsageJSON(rep core.UsageReport) map[string]any {
 	return map[string]any{"days": rows, "gaps": gaps, "timezone": "UTC"}
 }
 
-// member serves the member routes. Failures of the device or the principal all answer the same 403
-// no_project_access; the gateway's own device refusals and the exceptions of the model routes do not apply.
+// member serves the member routes. Failures of the device or the principal are the 403 no_project_access; when the
+// device itself is the reason, principalRefusal names the condition. The gateway's own device refusals and the
+// exceptions of the model routes do not apply.
 func (a *API) member(ctx context.Context, c Context, r Request) Response {
 	if c.AgentPeer { // a process of one of the gateway's agents may not use the member routes
 		a.o.Log("project route refused: agent peer")
@@ -148,7 +149,7 @@ func (a *API) member(ctx context.Context, c Context, r Request) Response {
 			return a.errResponse(err)
 		}
 		a.o.Log("project route refused: %v", err) // the reason stays in the log
-		return noAccess()
+		return principalRefusal(c.DeviceID, err)
 	}
 	if a.o.AfterAdmission != nil {
 		a.o.AfterAdmission(ctx, c, r)
@@ -160,6 +161,19 @@ func (a *API) member(ctx context.Context, c Context, r Request) Response {
 		return a.teamRoute(ctx, st, p, r)
 	}
 	return a.projectRoute(ctx, st, p, r)
+}
+
+// principalRefusal: the member routes' 403 no_project_access. When the device itself is the reason it names the
+// missing condition and the owner's command, with the caller's own device id (it already knows it). Any other
+// reason (no device, an agent peer, an inactive user) keeps the fixed body.
+func principalRefusal(device string, err error) Response {
+	switch {
+	case errors.Is(err, core.ErrDeviceNotListed):
+		return jsonErr(403, "no_project_access", fmt.Sprintf("no project access: this device is not on the gateway's device list (the owner runs: minigw gw devices allow %s)", device))
+	case errors.Is(err, core.ErrDeviceNotBound):
+		return jsonErr(403, "no_project_access", fmt.Sprintf("no project access: this device is not bound to a user (the owner runs: minigw gw bind %s <user>)", device))
+	}
+	return noAccess()
 }
 
 type noteBody struct {

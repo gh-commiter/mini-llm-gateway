@@ -36,7 +36,10 @@ func TestGatewayTeamRoutes(t *testing.T) {
 		c.Devices = append(c.Devices, serveDevice{ID: devID(stranger), Name: "unbound"})
 		return nil
 	})
-	for _, r := range []resp{f.raw(stranger, "tok", "GET", "/minigw/v1/teams", ""), f.raw(nil, "tok", "GET", path, ""), f.raw(f.dev["ana"], "", "GET", path, "")} {
+	if r := f.raw(stranger, "tok", "GET", "/minigw/v1/teams", ""); r.status != 403 || r.body != accessBody(t, "device_not_bound", devID(stranger)) {
+		t.Fatalf("team unbound device: %d %s", r.status, r.body)
+	}
+	for _, r := range []resp{f.raw(nil, "tok", "GET", path, ""), f.raw(f.dev["ana"], "", "GET", path, "")} {
 		if r.status != 403 || r.body != noAccessBody {
 			t.Fatalf("team identity refusal: %d %s", r.status, r.body)
 		}

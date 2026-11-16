@@ -523,6 +523,11 @@ A **project** is a named place on the gateway where a team keeps short notes (de
 facts) that people and agents can read. The gateway owner creates projects, adds you as a member and binds your
 computer's device key to you; you see projects you belong to or can read through explicit grants. Works on every gateway: `minigw serve` and the Mac app (project runs of agents on the Mac app included).
 
+A client on the gateway computer itself (next to `minigw serve`, or the Mac app) works over loopback and is accepted for
+models without being on the gateway's device list, but projects need both: the owner allows the device with
+`minigw gw devices allow <device id>` and binds it to a user with `minigw gw bind <device id> <user>`. A refusal says
+which of the two is missing, and `minigw status` shows it on the `Device:` line.
+
 ### Team directory
 
 The owner groups users and projects into teams. Users can join several teams; a project belongs to at most

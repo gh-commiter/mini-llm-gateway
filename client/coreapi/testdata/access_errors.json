@@ -1,0 +1,4 @@
+{
+ "device_not_listed": "no project access: this device is not on the gateway's device list (the owner runs: minigw gw devices allow {device})",
+ "device_not_bound": "no project access: this device is not bound to a user (the owner runs: minigw gw bind {device} <user>)"
+}

@@ -11,7 +11,12 @@ var (
 	ErrHardLinked      = errors.New("a core file has more than one name") // the core refuses to open (#106)
 	ErrNoProjectAccess = errors.New("no project access")                  // 403 no_project_access; wrapped detail is for the log only
 	ErrNotFound        = errors.New("not found")                          // 404 (missing or not visible)
-	ErrForbidden       = errors.New("forbidden")                          // 403 forbidden
+
+	// Reasons of ErrNoProjectAccess that the member route names to the caller (with the owner's command): the
+	// device is not on the gateway's approved list, or it is but no user is bound to it.
+	ErrDeviceNotListed = errors.New("device not on the gateway's device list")
+	ErrDeviceNotBound  = errors.New("device not bound to a user")
+	ErrForbidden       = errors.New("forbidden") // 403 forbidden
 	ErrArchived        = errors.New("project is archived")
 	ErrIdempotency     = errors.New("idempotency key used with another payload") // 409 idempotency_conflict
 	ErrTooLarge        = errors.New("too large")                                 // 413
@@ -35,3 +40,6 @@ type ErrInvalid struct{ What string }
 func (e ErrInvalid) Error() string { return "invalid " + e.What }
 
 func noAccess(reason string) error { return fmt.Errorf("%w: %s", ErrNoProjectAccess, reason) }
+
+// noAccessErr: a no-project-access error whose reason the member route can name (errors.Is), not only log.
+func noAccessErr(reason error) error { return fmt.Errorf("%w: %w", ErrNoProjectAccess, reason) }

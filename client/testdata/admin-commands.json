@@ -715,10 +715,15 @@
      "match": "PUT /bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
      "status": 200,
      "body": "{}"
+    },
+    {
+     "match": "GET /devices",
+     "status": 200,
+     "body": "{\"devices\":[],\"allowAnyDevice\":false}"
     }
    ],
    "want": {
-    "out": "",
+    "out": "warning: this device is not on the device list yet: minigw gw devices allow AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -731,6 +736,11 @@
       "PUT",
       "/bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
       "{\"user\":2}"
+     ],
+     [
+      "GET",
+      "/devices",
+      ""
      ]
     ]
    }
@@ -753,6 +763,11 @@
      "match": "PUT /bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
      "status": 200,
      "body": "{}"
+    },
+    {
+     "match": "GET /devices",
+     "status": 200,
+     "body": "{\"devices\":[{\"id\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"name\":\"PC\"}],\"allowAnyDevice\":false}"
     }
    ],
    "want": {
@@ -769,6 +784,11 @@
       "PUT",
       "/bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
       "{\"user\":2}"
+     ],
+     [
+      "GET",
+      "/devices",
+      ""
      ]
     ]
    }

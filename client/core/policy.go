@@ -142,18 +142,18 @@ type Principal struct {
 	DeviceID string
 }
 
-// Principal checks steps 2 and 3 of section 1: approved now, bound, user active. Any failure is the one error
-// ErrNoProjectAccess; the wrapped text is only for the gateway log.
+// Principal checks steps 2 and 3 of section 1: approved now, bound, user active. Any failure is ErrNoProjectAccess;
+// ErrDeviceNotListed and ErrDeviceNotBound let the member route name the condition, the rest is for the log only.
 func (s *Store) Principal(ctx context.Context, deviceID string, approved bool) (Principal, error) {
 	if !approved {
-		return Principal{}, noAccess("device not approved")
+		return Principal{}, noAccessErr(ErrDeviceNotListed)
 	}
 	var p Principal
 	err := s.read(ctx, func(tx *sql.Tx) error {
 		var active bool
 		err := tx.QueryRow(`SELECT u.id,u.active FROM device_bindings b JOIN users u ON u.id=b.user_id WHERE b.device_id=?`, deviceID).Scan(&p.UserID, &active)
 		if err == sql.ErrNoRows {
-			return noAccess("device not bound")
+			return noAccessErr(ErrDeviceNotBound)
 		}
 		if err == nil && !active {
 			err = noAccess("user inactive")
