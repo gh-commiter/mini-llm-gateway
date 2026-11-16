@@ -713,6 +713,7 @@ public final class Router: Sendable {
                      rid: String, writer: ResponseWriter) async -> Int {
         var body = body
         body["model"] = r.upstream
+        ProviderBody.normalize(baseURL: r.provider.baseURL, &body)
         if let e = r.provider.urlError {  // http brez Allow http ali do javnega naslova: ključ ne gre nešifriran
             return await error(502, "api_error", "\(r.provider.name): \(e)", rid: rid, writer: writer)
         }
