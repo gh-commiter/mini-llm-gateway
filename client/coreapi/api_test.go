@@ -491,7 +491,7 @@ func TestUsageProviderFilterAndCostJSON(t *testing.T) {
 	if err := json.Unmarshal(response.Body, &body); err != nil {
 		t.Fatal(err)
 	}
-	if response.Status != 200 || len(body.Days) != 1 || body.Days[0].Provider != "OpenRouter" || body.Timezone != "UTC" || body.Days[0].ReportedCost == nil || *body.Days[0].ReportedCost != "0.000000000" || body.Days[0].EstimatedCost != nil || body.Days[0].UnknownCost != 0 {
+	if response.Status != 200 || len(body.Days) != 1 || body.Days[0].Provider != "openrouter" || body.Timezone != "UTC" || body.Days[0].ReportedCost == nil || *body.Days[0].ReportedCost != "0.000000000" || body.Days[0].EstimatedCost != nil || body.Days[0].UnknownCost != 0 {
 		t.Fatalf("%d %s", response.Status, response.Body)
 	}
 }
