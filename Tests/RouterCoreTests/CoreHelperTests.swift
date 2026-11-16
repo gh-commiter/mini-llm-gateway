@@ -19,7 +19,7 @@ private func run(_ args: [String], in dir: URL, env: [String: String] = [:]) asy
     e["PATH"] = (e["PATH"] ?? "/usr/bin:/bin") + ":/opt/homebrew/bin:/usr/local/go/bin"
     e.merge(env) { $1 }
     p.environment = e
-    let log = FileManager.default.temporaryDirectory.appendingPathComponent("mgcore-run-\(UUID().uuidString).log")
+    let log = FileManager.default.temporaryDirectory.appendingPathComponent("mgcore-run-\(UUID().uuidString).log").cleanedAtExit()
     FileManager.default.createFile(atPath: log.path, contents: nil)
     let out = try FileHandle(forWritingTo: log)
     p.standardOutput = out; p.standardError = out
@@ -35,7 +35,7 @@ private func run(_ args: [String], in dir: URL, env: [String: String] = [:]) asy
 }
 
 private func tempDir(_ name: String) -> URL {
-    let u = FileManager.default.temporaryDirectory.appendingPathComponent("mgcore-\(name)-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    let u = FileManager.default.temporaryDirectory.appendingPathComponent("mgcore-\(name)-\(UUID().uuidString.prefix(8))", isDirectory: true).cleanedAtExit()
     try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
     return u
 }

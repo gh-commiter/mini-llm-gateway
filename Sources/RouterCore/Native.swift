@@ -905,7 +905,7 @@ extension Router {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }
         let args = Array(Native.withoutNestedSandbox(argv, runTmp: realTmp, derivedData: derived).dropFirst())
-        let tempDirs = [dir.path, realTmp, derived], copies = Native.saveCopies(dirs: tempDirs), runStart = Date()  // #72: posnetek pred zagonom
+        let tempDirs = [dir.path, realTmp, derived], copies = await offPool { Native.saveCopies(dirs: tempDirs) }, runStart = Date()  // #72: posnetek pred zagonom; offPool: it lists the temp folders (a big folder takes seconds) and the pool must stay free for the router
         guard let (pid, out, err, _) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, dir: dir, env: env) else {
             return await self.error(500, "api_error", "minigw run: cannot start \(argv[0])", rid: rid, writer: writer)
         }

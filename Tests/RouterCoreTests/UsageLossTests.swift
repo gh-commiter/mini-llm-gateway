@@ -6,7 +6,7 @@ import Testing
 // quits. The REAL minigw-core over temp stores; the journal file is a temp file, never the app's.
 
 private func tempURL(_ name: String) -> URL {
-    let d = FileManager.default.temporaryDirectory.appendingPathComponent("mgloss-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    let d = FileManager.default.temporaryDirectory.appendingPathComponent("mgloss-\(UUID().uuidString.prefix(8))", isDirectory: true).cleanedAtExit()
     try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
     return d.appendingPathComponent(name)
 }

@@ -4,7 +4,7 @@ import Testing
 
 /// #107 (kot client/root_test.go): povezave v deljeni mapi in operacije prek odprtega korena. Vse v začasnih mapah.
 private func tmp(_ name: String, resolved: Bool = true) throws -> URL {
-    let u = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-test-\(name)-" + UUID().uuidString)
+    let u = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-test-\(name)-" + UUID().uuidString).cleanedAtExit()
     try FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
     return resolved ? Sync.real(u)! : u  // /private/var/…, kot F_GETPATH
 }
