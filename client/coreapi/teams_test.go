@@ -63,10 +63,29 @@ func TestTeamRoutes(t *testing.T) {
 	if !bytes.Equal(hidden.Body, missing.Body) {
 		t.Fatalf("hidden team differs: %s %s", hidden.Body, missing.Body)
 	}
-	for _, c := range []Context{member("unbound"), {Kind: KindMember}, {Kind: KindMember, DeviceID: "dev-ana"}, {Kind: KindMember, DeviceID: "dev-ana", Approved: true, AgentPeer: true}} {
+	// A request without a device, and an agent peer, keep the fixed body.
+	for _, c := range []Context{{Kind: KindMember}, {Kind: KindMember, DeviceID: "dev-ana", Approved: true, AgentPeer: true}} {
 		r = call(c, "GET", "/minigw/v1/teams", "", 403)
 		if !bytes.Equal(r.Body, NoProjectAccess().Body) {
 			t.Fatalf("identity envelope: %s", r.Body)
+		}
+	}
+	// When the device itself is the reason, the refusal names the missing condition and the owner's command,
+	// with the caller's own device id.
+	for _, c := range []struct {
+		ctx    Context
+		format string
+	}{
+		{member("unbound"), "no project access: this device is not bound to a user (the owner runs: minigw gw bind %s USER)"},
+		{{Kind: KindMember, DeviceID: "dev-ana"}, "no project access: this device is not on the gateway's device list (the owner runs: minigw gw devices allow %s)"},
+	} {
+		r = call(c.ctx, "GET", "/minigw/v1/teams", "", 403)
+		want := fmt.Sprintf(c.format, c.ctx.DeviceID)
+		var b struct {
+			Error struct{ Message, Type string }
+		}
+		if err := json.Unmarshal(r.Body, &b); err != nil || b.Error.Type != "no_project_access" || b.Error.Message != want {
+			t.Fatalf("device refusal for %q: %s (want %q)", c.ctx.DeviceID, r.Body, want)
 		}
 	}
 	call(admin, "PATCH", path, `{"name":"Renamed"}`, 200)

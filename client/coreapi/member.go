@@ -171,7 +171,7 @@ func principalRefusal(device string, err error) Response {
 	case errors.Is(err, core.ErrDeviceNotListed):
 		return jsonErr(403, "no_project_access", fmt.Sprintf("no project access: this device is not on the gateway's device list (the owner runs: minigw gw devices allow %s)", device))
 	case errors.Is(err, core.ErrDeviceNotBound):
-		return jsonErr(403, "no_project_access", fmt.Sprintf("no project access: this device is not bound to a user (the owner runs: minigw gw bind %s <user>)", device))
+		return jsonErr(403, "no_project_access", fmt.Sprintf("no project access: this device is not bound to a user (the owner runs: minigw gw bind %s USER)", device))
 	}
 	return noAccess()
 }

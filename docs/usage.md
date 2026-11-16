@@ -525,7 +525,7 @@ computer's device key to you; you see projects you belong to or can read through
 
 A client on the gateway computer itself (next to `minigw serve`, or the Mac app) works over loopback and is accepted for
 models without being on the gateway's device list, but projects need both: the owner allows the device with
-`minigw gw devices allow <device id>` and binds it to a user with `minigw gw bind <device id> <user>`. A refusal says
+`minigw gw devices allow DEVICE-ID` and binds it to a user with `minigw gw bind DEVICE-ID USER`. A refusal says
 which of the two is missing, and `minigw status` shows it on the `Device:` line.
 
 ### Team directory
