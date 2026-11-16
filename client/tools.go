@@ -5,12 +5,35 @@ import (
 	"strings"
 )
 
-// #119: --minigw-tools=none|read: orodja modela ponudnika (LiteLLM, OpenRouter), ki teče v lokalnem claude. Pod Claude Code
+// #119: --minigw-tools=none|read|edit: orodja modela ponudnika (LiteLLM, OpenRouter), ki teče v lokalnem claude. Pod Claude Code
 // jih sme le zmanjšati, zato ni na seznamu claudeSafe. Enako kot Swift Profiles.takeTools (client/testdata/minigw-tools-cases.json).
 // Izmerjeno (claude 2.1.322): --tools=<seznam> sam ne zadošča (MCP orodja iz povezav claude.ai ostanejo), zato še
 // --strict-mcp-config (brez --mcp-config = brez MCP) in --disable-slash-commands; podagenti in skilli so orodja (Agent,
 // Skill), ki jih --tools izpusti. »--tools <seznam>« pogoltne navodilo (variadična možnost), zato vedno »--tools=<seznam>«.
 const toolsRead = "Read,Grep,Glob"
+
+// toolsEdit: level edit: Read, Grep, Glob, Edit, Write, no Bash. The CLI matches path rules for Read and Edit only (Edit covers Write):
+// files only inside the current folder (./**), the paths below stay refused even inside it (the list of protectedPath in sync.go).
+const toolsEdit = "Read,Grep,Glob,Edit,Write"
+
+// editRules: --allowedTools and --disallowedTools of the level edit. A rule matches the folder itself and any subfolder (./ and ./**/),
+// every letter of a protected name in both cases (a case-insensitive file system).
+func editRules() (allow, deny string) {
+	var d []string
+	for _, base := range []string{"./", "./**/"} {
+		for _, p := range []string{".git/**", ".git", ".claude/settings*.json", ".claude/hooks/**", ".claude/commands/**", ".claude/agents/**",
+			".claude/skills/**", ".husky/**", ".githooks/**", ".vscode/tasks.json", ".envrc"} {
+			parts := strings.Split(p, "/")
+			for i, part := range parts {
+				if part != "**" {
+					parts[i] = caseClass(part)
+				}
+			}
+			d = append(d, "Edit("+base+strings.Join(parts, "/")+")")
+		}
+	}
+	return "Read(./**),Grep(./**),Glob(./**),Edit(./**)", strings.Join(d, ",")
+}
 
 // takeTools: --minigw-tools <v> ali =<v> (zadnji velja, do »--«) iz argumentov; value "" = ni podan; errMsg ≠ "" = neveljavno.
 func takeTools(args []string) (rest []string, value, errMsg string) {
@@ -22,7 +45,7 @@ func takeTools(args []string) (rest []string, value, errMsg string) {
 		v, ok := strings.CutPrefix(a, "--minigw-tools=")
 		if a == "--minigw-tools" {
 			if i+1 >= len(args) {
-				return nil, "", "--minigw-tools needs a value (none or read)"
+				return nil, "", "--minigw-tools needs a value (none, read or edit)"
 			}
 			v, ok = args[i+1], true
 			i++
@@ -31,8 +54,8 @@ func takeTools(args []string) (rest []string, value, errMsg string) {
 			rest = append(rest, a)
 			continue
 		}
-		if v != "none" && v != "read" {
-			return nil, "", fmt.Sprintf("--minigw-tools: unknown value %q (use none or read)", v)
+		if v != "none" && v != "read" && v != "edit" {
+			return nil, "", fmt.Sprintf("--minigw-tools: unknown value %q (use none, read or edit)", v)
 		}
 		value = v
 	}
@@ -61,6 +84,9 @@ func isAgentID(m string) bool {
 func toolsFor(model, flag string, readOnly bool) (tools, errMsg string) {
 	if flag != "" && isAgentID(model) {
 		return "", "--minigw-tools is not available for " + model + ": agents are limited on the gateway, use --minigw-ro"
+	}
+	if flag == "edit" && readOnly {
+		return "", "--minigw-tools=edit cannot be combined with --minigw-ro (the folder is read-only)"
 	}
 	if flag == "" && readOnly && !isAgentID(model) {
 		return "read", ""
@@ -99,9 +125,16 @@ func toolsArgs(tools string, args []string) []string {
 	if tools == "read" {
 		list = toolsRead
 	}
+	var out []string
+	if tools == "edit" {
+		allow, deny := editRules()
+		list = toolsEdit
+		// dontAsk: what is not allowed is refused, no prompt; the rules go with "=" (a variadic option would swallow the prompt)
+		out = []string{"--allowedTools=" + allow, "--disallowedTools=" + deny, "--permission-mode=dontAsk"}
+	}
 	// --setting-sources= : hooki in dovoljenja iz nastavitev uporabnika, projekta in mape bi tekli mimo seznama orodij (izmerjeno:
 	// UserPromptSubmit hook iz .claude/settings.json se zažene tudi pri --tools=Read,Grep,Glob); --settings minigw ostane.
-	out := []string{"--tools=" + list, "--strict-mcp-config", "--setting-sources="}
+	out = append([]string{"--tools=" + list, "--strict-mcp-config", "--setting-sources="}, out...)
 	for _, a := range args {
 		if a == "--disable-slash-commands" {
 			return out
@@ -114,6 +147,9 @@ func toolsArgs(tools string, args []string) []string {
 func toolsLine(tools string) string {
 	if tools == "none" {
 		return "minigw: tools of this model: none"
+	}
+	if tools == "edit" {
+		return "minigw: tools of this model: read and edit files in this folder (Read, Grep, Glob, Edit, Write; no commands)"
 	}
 	return "minigw: tools of this model: read only (Read, Grep, Glob)"
 }

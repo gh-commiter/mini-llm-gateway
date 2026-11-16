@@ -390,7 +390,7 @@ func TestMinigwToolsRefusals(t *testing.T) {
 		return string(out)
 	}
 	for args, want := range map[string]string{
-		"-p --model litellm-gpt --minigw-tools=all x":       `--minigw-tools: unknown value "all" (use none or read)`,
+		"-p --model litellm-gpt --minigw-tools=all x":       `--minigw-tools: unknown value "all" (use none, read or edit)`,
 		"-p --model claude-cli-opus --minigw-tools none x":  "agents are limited on the gateway, use --minigw-ro",
 		"-p --model litellm-gpt --tools Bash --minigw-ro x": "--tools is not accepted when minigw runs inside Claude Code",
 		"-p --model litellm-gpt --minigw-tools=read @x":     "paste the text itself into the prompt, or pass it on stdin",

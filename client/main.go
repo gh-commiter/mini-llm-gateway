@@ -607,7 +607,7 @@ func main() {
 			"minigw share add --work=native|native-direct|worktree|sync|direct|auto [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
 			projectHelp + "\n" + teamHelp + "\n" + noteHelp + "\n" + usageHelp + "\n" +
 			"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
-			"minigw --minigw-tools none|read [claude args]  tools of a provider model (LiteLLM, OpenRouter): none, or read = Read, Grep, Glob (--minigw-ro = read); allowed inside Claude Code\n" +
+			"minigw --minigw-tools none|read|edit [claude args]  tools of a provider model (LiteLLM, OpenRouter, xAI): none, read = Read, Grep, Glob (--minigw-ro = read), or edit = read plus Edit and Write in this folder, no commands; allowed inside Claude Code\n" +
 			"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +
 			"inside Claude Code minigw passes only -p, --model and other options that do not widen permissions (MINIGW_ALLOW_UNSAFE_FLAGS=1 = all)\n" +
 			"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +

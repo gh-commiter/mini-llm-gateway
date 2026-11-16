@@ -60,7 +60,7 @@
    ],
    "rest": null,
    "value": "",
-   "error": "--minigw-tools: unknown value \"all\" (use none or read)"
+   "error": "--minigw-tools: unknown value \"all\" (use none, read or edit)"
   },
   {
    "args": [
@@ -68,7 +68,7 @@
    ],
    "rest": null,
    "value": "",
-   "error": "--minigw-tools: unknown value \"\" (use none or read)"
+   "error": "--minigw-tools: unknown value \"\" (use none, read or edit)"
   },
   {
    "args": [
@@ -77,7 +77,7 @@
    ],
    "rest": null,
    "value": "",
-   "error": "--minigw-tools: unknown value \"Bash\" (use none or read)"
+   "error": "--minigw-tools: unknown value \"Bash\" (use none, read or edit)"
   },
   {
    "args": [
@@ -86,7 +86,7 @@
    ],
    "rest": null,
    "value": "",
-   "error": "--minigw-tools needs a value (none or read)"
+   "error": "--minigw-tools needs a value (none, read or edit)"
   },
   {
    "args": [
@@ -100,6 +100,29 @@
     "--minigw-tools=bad"
    ],
    "value": "",
+   "error": ""
+  },
+  {
+   "args": [
+    "--minigw-tools=edit",
+    "-p",
+    "x"
+   ],
+   "rest": [
+    "-p",
+    "x"
+   ],
+   "value": "edit",
+   "error": ""
+  },
+  {
+   "args": [
+    "--minigw-tools",
+    "edit",
+    "--minigw-tools=read"
+   ],
+   "rest": [],
+   "value": "read",
    "error": ""
   }
  ],
@@ -271,6 +294,55 @@
    "ro": true,
    "tools": "",
    "error": ""
+  },
+  {
+   "model": "litellm-gpt",
+   "flag": "edit",
+   "ro": false,
+   "tools": "edit",
+   "error": ""
+  },
+  {
+   "model": "",
+   "flag": "edit",
+   "ro": false,
+   "tools": "edit",
+   "error": ""
+  },
+  {
+   "model": "litellm-gpt",
+   "flag": "edit",
+   "ro": true,
+   "tools": "",
+   "error": "--minigw-tools=edit cannot be combined with --minigw-ro (the folder is read-only)"
+  },
+  {
+   "model": "claude-codex",
+   "flag": "edit",
+   "ro": false,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-codex: agents are limited on the gateway, use --minigw-ro"
+  },
+  {
+   "model": "claude-cli-opus",
+   "flag": "edit",
+   "ro": false,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-cli-opus: agents are limited on the gateway, use --minigw-ro"
+  },
+  {
+   "model": "claude-grok",
+   "flag": "edit",
+   "ro": false,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-grok: agents are limited on the gateway, use --minigw-ro"
+  },
+  {
+   "model": "claude-copilot",
+   "flag": "edit",
+   "ro": false,
+   "tools": "",
+   "error": "--minigw-tools is not available for claude-copilot: agents are limited on the gateway, use --minigw-ro"
   }
  ],
  "claudeArgs": [
@@ -312,6 +384,38 @@
     "--strict-mcp-config",
     "--setting-sources="
    ]
+  },
+  {
+   "tools": "edit",
+   "args": [
+    "-p",
+    "x"
+   ],
+   "out": [
+    "--tools=Read,Grep,Glob,Edit,Write",
+    "--strict-mcp-config",
+    "--setting-sources=",
+    "--allowedTools=Read(./**),Grep(./**),Glob(./**),Edit(./**)",
+    "--disallowedTools=Edit(./.[gG][iI][tT]/**),Edit(./.[gG][iI][tT]),Edit(./.[cC][lL][aA][uU][dD][eE]/[sS][eE][tT][tT][iI][nN][gG][sS]*.[jJ][sS][oO][nN]),Edit(./.[cC][lL][aA][uU][dD][eE]/[hH][oO][oO][kK][sS]/**),Edit(./.[cC][lL][aA][uU][dD][eE]/[cC][oO][mM][mM][aA][nN][dD][sS]/**),Edit(./.[cC][lL][aA][uU][dD][eE]/[aA][gG][eE][nN][tT][sS]/**),Edit(./.[cC][lL][aA][uU][dD][eE]/[sS][kK][iI][lL][lL][sS]/**),Edit(./.[hH][uU][sS][kK][yY]/**),Edit(./.[gG][iI][tT][hH][oO][oO][kK][sS]/**),Edit(./.[vV][sS][cC][oO][dD][eE]/[tT][aA][sS][kK][sS].[jJ][sS][oO][nN]),Edit(./.[eE][nN][vV][rR][cC]),Edit(./**/.[gG][iI][tT]/**),Edit(./**/.[gG][iI][tT]),Edit(./**/.[cC][lL][aA][uU][dD][eE]/[sS][eE][tT][tT][iI][nN][gG][sS]*.[jJ][sS][oO][nN]),Edit(./**/.[cC][lL][aA][uU][dD][eE]/[hH][oO][oO][kK][sS]/**),Edit(./**/.[cC][lL][aA][uU][dD][eE]/[cC][oO][mM][mM][aA][nN][dD][sS]/**),Edit(./**/.[cC][lL][aA][uU][dD][eE]/[aA][gG][eE][nN][tT][sS]/**),Edit(./**/.[cC][lL][aA][uU][dD][eE]/[sS][kK][iI][lL][lL][sS]/**),Edit(./**/.[hH][uU][sS][kK][yY]/**),Edit(./**/.[gG][iI][tT][hH][oO][oO][kK][sS]/**),Edit(./**/.[vV][sS][cC][oO][dD][eE]/[tT][aA][sS][kK][sS].[jJ][sS][oO][nN]),Edit(./**/.[eE][nN][vV][rR][cC])",
+    "--permission-mode=dontAsk",
+    "--disable-slash-commands"
+   ]
+  },
+  {
+   "tools": "edit",
+   "args": [
+    "-p",
+    "--disable-slash-commands",
+    "x"
+   ],
+   "out": [
+    "--tools=Read,Grep,Glob,Edit,Write",
+    "--strict-mcp-config",
+    "--setting-sources=",
+    "--allowedTools=Read(./**),Grep(./**),Glob(./**),Edit(./**)",
+    "--disallowedTools=Edit(./.[gG][iI][tT]/**),Edit(./.[gG][iI][tT]),Edit(./.[cC][lL][aA][uU][dD][eE]/[sS][eE][tT][tT][iI][nN][gG][sS]*.[jJ][sS][oO][nN]),Edit(./.[cC][lL][aA][uU][dD][eE]/[hH][oO][oO][kK][sS]/**),Edit(./.[cC][lL][aA][uU][dD][eE]/[cC][oO][mM][mM][aA][nN][dD][sS]/**),Edit(./.[cC][lL][aA][uU][dD][eE]/[aA][gG][eE][nN][tT][sS]/**),Edit(./.[cC][lL][aA][uU][dD][eE]/[sS][kK][iI][lL][lL][sS]/**),Edit(./.[hH][uU][sS][kK][yY]/**),Edit(./.[gG][iI][tT][hH][oO][oO][kK][sS]/**),Edit(./.[vV][sS][cC][oO][dD][eE]/[tT][aA][sS][kK][sS].[jJ][sS][oO][nN]),Edit(./.[eE][nN][vV][rR][cC]),Edit(./**/.[gG][iI][tT]/**),Edit(./**/.[gG][iI][tT]),Edit(./**/.[cC][lL][aA][uU][dD][eE]/[sS][eE][tT][tT][iI][nN][gG][sS]*.[jJ][sS][oO][nN]),Edit(./**/.[cC][lL][aA][uU][dD][eE]/[hH][oO][oO][kK][sS]/**),Edit(./**/.[cC][lL][aA][uU][dD][eE]/[cC][oO][mM][mM][aA][nN][dD][sS]/**),Edit(./**/.[cC][lL][aA][uU][dD][eE]/[aA][gG][eE][nN][tT][sS]/**),Edit(./**/.[cC][lL][aA][uU][dD][eE]/[sS][kK][iI][lL][lL][sS]/**),Edit(./**/.[hH][uU][sS][kK][yY]/**),Edit(./**/.[gG][iI][tT][hH][oO][oO][kK][sS]/**),Edit(./**/.[vV][sS][cC][oO][dD][eE]/[tT][aA][sS][kK][sS].[jJ][sS][oO][nN]),Edit(./**/.[eE][nN][vV][rR][cC])",
+    "--permission-mode=dontAsk"
+   ]
   }
  ],
  "line": [
@@ -322,6 +426,10 @@
   {
    "tools": "none",
    "line": "minigw: tools of this model: none"
+  },
+  {
+   "tools": "edit",
+   "line": "minigw: tools of this model: read and edit files in this folder (Read, Grep, Glob, Edit, Write; no commands)"
   }
  ],
  "folderRo": [

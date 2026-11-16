@@ -439,6 +439,28 @@ public enum Profiles {
     /// iz povezav claude.ai ostanejo), zato še --strict-mcp-config in --disable-slash-commands; »--tools <seznam>« pogoltne navodilo.
     static let toolsRead = "Read,Grep,Glob"
 
+    /// Raven edit (kot Go toolsEdit): Read, Grep, Glob, Edit, Write brez Bash. Pravila poti ujamejo le Read in Edit (Edit velja tudi za Write):
+    /// datoteke le v trenutni mapi (./**), zaščitene poti (seznam protectedPath v Sync.swift) ostanejo zavrnjene tudi v njej.
+    static let toolsEdit = "Read,Grep,Glob,Edit,Write"
+
+    /// --allowedTools in --disallowedTools ravni edit (kot Go editRules): ./ in ./**/, vsaka črka zaščitenega imena v obeh velikostih.
+    static func editRules() -> (allow: String, deny: String) {
+        func cls(_ n: String) -> String {
+            n.map { c in
+                let l = String(c).lowercased(), u = String(c).uppercased()
+                return l == u ? String(c) : "[\(l)\(u)]"
+            }.joined()
+        }
+        var deny: [String] = []
+        for base in ["./", "./**/"] {
+            for p in [".git/**", ".git", ".claude/settings*.json", ".claude/hooks/**", ".claude/commands/**", ".claude/agents/**",
+                      ".claude/skills/**", ".husky/**", ".githooks/**", ".vscode/tasks.json", ".envrc"] {
+                deny.append("Edit(" + base + p.split(separator: "/", omittingEmptySubsequences: false).map { $0 == "**" ? "**" : cls(String($0)) }.joined(separator: "/") + ")")
+            }
+        }
+        return ("Read(./**),Grep(./**),Glob(./**),Edit(./**)", deny.joined(separator: ","))
+    }
+
     /// --minigw-tools <v> ali =<v> (zadnji velja, do »--«); value nil = ni podan; error ≠ nil = neveljavno (kot Go takeTools).
     public static func takeTools(_ args: [String]) -> (rest: [String], value: String?, error: String?) {
         var rest: [String] = [], value: String?, i = 0
@@ -447,11 +469,11 @@ public enum Profiles {
             if a == "--" { return (rest + args[i...], value, nil) }
             var v: String?
             if a == "--minigw-tools" {
-                guard i + 1 < args.count else { return ([], nil, "--minigw-tools needs a value (none or read)") }
+                guard i + 1 < args.count else { return ([], nil, "--minigw-tools needs a value (none, read or edit)") }
                 v = args[i + 1]; i += 1
             } else if a.hasPrefix("--minigw-tools=") { v = String(a.dropFirst("--minigw-tools=".count)) }
             if let v {
-                guard v == "none" || v == "read" else { return ([], nil, "--minigw-tools: unknown value \"\(v)\" (use none or read)") }
+                guard v == "none" || v == "read" || v == "edit" else { return ([], nil, "--minigw-tools: unknown value \"\(v)\" (use none, read or edit)") }
                 value = v
             } else { rest.append(a) }
             i += 1
@@ -471,6 +493,7 @@ public enum Profiles {
         if flag != nil, isAgentID(model) {
             return (nil, "--minigw-tools is not available for \(model): agents are limited on the gateway, use --minigw-ro")
         }
+        if flag == "edit", readOnly { return (nil, "--minigw-tools=edit cannot be combined with --minigw-ro (the folder is read-only)") }
         if flag == nil, readOnly, !isAgentID(model) { return ("read", nil) }
         return (flag, nil)
     }
@@ -494,13 +517,19 @@ public enum Profiles {
     /// Argumenti claude za orodja; --disable-slash-commands le, če ga args še nimajo (kot Go toolsArgs).
     public static func toolsArgs(_ tools: String, args: [String]) -> [String] {
         // --setting-sources=: hooki in dovoljenja iz nastavitev bi tekli mimo seznama orodij (izmerjeno); --settings minigw ostane
-        let out = ["--tools=" + (tools == "read" ? toolsRead : ""), "--strict-mcp-config", "--setting-sources="]
+        var out = ["--tools=" + (tools == "read" ? toolsRead : tools == "edit" ? toolsEdit : ""), "--strict-mcp-config", "--setting-sources="]
+        if tools == "edit" {  // dontAsk: kar ni dovoljeno, je zavrnjeno brez vprašanja; pravila z »=« (variadična možnost bi pogoltnila navodilo)
+            let r = editRules()
+            out += ["--allowedTools=" + r.allow, "--disallowedTools=" + r.deny, "--permission-mode=dontAsk"]
+        }
         return args.contains("--disable-slash-commands") ? out : out + ["--disable-slash-commands"]
     }
 
     /// Vrstica ob zagonu na stderr.
     public static func toolsLine(_ tools: String) -> String {
-        tools == "none" ? "minigw: tools of this model: none" : "minigw: tools of this model: read only (Read, Grep, Glob)"
+        tools == "none" ? "minigw: tools of this model: none"
+            : tools == "edit" ? "minigw: tools of this model: read and edit files in this folder (Read, Grep, Glob, Edit, Write; no commands)"
+            : "minigw: tools of this model: read only (Read, Grep, Glob)"
     }
 
     /// Vrednost zadnjega --model (do »--«); "" = ni.

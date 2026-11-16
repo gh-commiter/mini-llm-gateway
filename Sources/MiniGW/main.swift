@@ -857,7 +857,7 @@ var args = Array(CommandLine.arguments.dropFirst())
 // --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
 var readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
 args.removeAll { $0 == "--minigw-ro" }
-// --minigw-tools=none|read (#119): orodja modela ponudnika; pod Claude Code dovoljeno, ker orodja le jemlje.
+// --minigw-tools=none|read|edit (#119): orodja modela ponudnika; pod Claude Code dovoljeno, ker orodja le jemlje.
 let toolsArg = Profiles.takeTools(args)
 if let e = toolsArg.error { fail(e) }
 args = toolsArg.rest
@@ -1026,7 +1026,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw plugin install|uninstall|status       the Claude Code plugin minigw@mini-gateway, using this minigw
         minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings, profiles, device key)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
-        minigw --minigw-tools none|read [claude args]  tools of a provider model (LiteLLM, OpenRouter): none, or read = Read, Grep, Glob (--minigw-ro = read); allowed inside Claude Code
+        minigw --minigw-tools none|read|edit [claude args]  tools of a provider model (LiteLLM, OpenRouter, xAI): none, read = Read, Grep, Glob (--minigw-ro = read), or edit = read plus Edit and Write in this folder, no commands; allowed inside Claude Code
         minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)
         inside Claude Code minigw passes only -p, --model and other options that do not widen permissions (MINIGW_ALLOW_UNSAFE_FLAGS=1 = all)
         minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)
