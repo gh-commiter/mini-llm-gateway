@@ -2,6 +2,76 @@
 
 ## Unreleased
 
+Mini Gateway 0.7.0 is a stable release. It collects the eleven beta versions 0.6.0 to 0.6.10, which stable users never saw, and is the first stable release since 0.5.29. It is the same code as beta 0.6.10. The sections below give the detail per beta. Read **Changed**, **Known limits** and **Known problems** before you update a gateway that other people use.
+
+### New
+- Project database ("core"): the gateway keeps users, device bindings, projects, members, grants, notes, usage events and an audit trail in a SQLite database. The owner manages it with `minigw gw user|bind|project|member|grant|core|usage-events|quota`, the same on the Mac app and on `minigw serve`. Roles are reader, developer and admin. If the database cannot be opened, model requests still work and project routes answer 503 `core_unavailable`. An upgrade or an uninstall never removes it; only `--purge` does.
+- Projects and notes on the client: `minigw project list|link|unlink|show` and `minigw note list|read|push|edit|rm`. A folder linked to a project passes the project to agent runs; the agent can read the project's notes (never `private` ones) with `minigw note list|read`. Plugin skills `/minigw:project`, `/minigw:notes` and `/minigw:usage` were added.
+- Usage statistics: `minigw gw usage` shows requests, tokens and cost per provider and model and per day (`--days`, `--provider`, `--model`, `--json`, `--csv`, `--sort failed`). A reported cost is shown plain, an estimated one with "~". Failed requests and failed agent minutes are counted. `minigw usage` shows a member's own events.
+- Usage page: the Mac Settings and the browser Settings of `minigw serve` show requests, tokens, spend and failed time per day and model for 7, 30 or 90 days.
+- Quota: `minigw gw quota` shows the Codex quota and the OpenRouter and LiteLLM credit; the Claude quota is off until you turn it on (`--claude-probe=on`). `minigw gw quota --history [--days N] [--provider P]` lists the stored probes of the last 400 days.
+- Tool limits for provider models (LiteLLM, OpenRouter) in the local Claude Code: `--minigw-tools=none|read`. `none` gives no tools, `read` gives Read, Grep and Glob only. `--minigw-ro` now means `read` for these models.
+- `minigw gw sync list --device ID` and `minigw gw sync remove <copy id> --device ID` free synced-folder slots without waiting 14 days.
+- Kernel sandbox on the Mac: the Claude CLI without "Allow local tools" runs inside a Seatbelt profile under the Claude Code rules. A self-check turns it off if `claude` cannot run under it, and says so in the log, in `minigw gw status` and in Settings.
+- Direct mode on the Mac gateway: an agent can commit in your repository (`git add`, `commit`, `branch`, `checkout`, `stash`, `tag`, `merge` of a local branch). The end-of-run git watch is stricter.
+- `minigw status` shows the gateway's version. `minigw project list` against an older gateway says which version it is.
+- `THIRD-PARTY-NOTICES.md` lists the licences of the built-in Go modules.
+
+### Changed
+- `minigw gw usage` is the new usage report. The old per-folder and per-device counters need `minigw gw usage --legacy`.
+- Usage reports show the provider in lowercase, and the `provider` filter ignores case.
+- Direct mode (all clients): git writes inside a submodule or a nested clone, and to `refs/replace`, are refused. Use worktree mode for them. `git rebase` and multi-commit cherry-pick by an agent fail.
+- `--minigw-ro` with a provider model gives Read, Grep and Glob only and loads no user, project or local Claude settings or hooks. A refused `@` in a prompt says to pass the text on stdin.
+- Mac, restricted Claude CLI runs: they do not load auto-memory or your user hooks and plugins, and `~/.claude.json` is read-only for them. A run whose session or allowed folder is `/` is refused.
+- Mac, Codex in write mode: only the session and allowed folders and a private temporary folder are writable; other places in `/tmp` are not.
+- Mac, Grok: see Known problems. (Grok runs in a home of its own, so your `~/.grok/config.toml` is not applied on the Mac.)
+- Windows and Linux (`minigw serve`), restricted Claude CLI: the same tool and path restrictions the Mac has had since 0.5.28 (no Task or MCP tools, permission mode `auto` or `plan` is used as `dontAsk`, stricter Write and `.git` rules, allowed folders with special characters are refused).
+- Windows and Linux: where an agent has no sandbox, the core stays closed until the owner runs `minigw gw claude --accept-agents-read-notes=true` and restarts. Until then project routes answer 503.
+- An allowed folder is refused, with the reason shown (Settings, log, `minigw serve` browser Settings), when its real path cannot be resolved, or when its recorded volume id is no longer reported. Remove the folder and add it again. A refused folder is logged once per reason.
+- A link that leaves a shared folder is listed over WebDAV as a refused entry (403 with the reason), not as an empty file.
+- `minigw share remove` with a name that is not shared is an error (exit status not 0).
+- The answer when a device has reached its number of synced folders names `minigw gw sync remove`.
+- A spending or key limit of OpenRouter is reported as "OpenRouter: spending limit reached" and does not make the client retry, also when the provider is renamed.
+- After a failed agent stream, the repeat request of Claude Code gets the same error at once (`x-should-retry: false`) and no second agent run starts. A Grok run that needs command approval ends with a clear 400.
+- `minigw gw core backup` writes only into `<core>/backups` (a name, not a path). Copy a backup out if you want to keep it, because it is deleted with the core folder.
+- Mac: requests with a project and the project routes answer 503 `core_unavailable` while the helper `minigw-core` is not running. Model requests without a project are not affected.
+- `minigw serve`: the Claude quota probe is off by default. The Windows and Linux `minigw` is about 4.5 MB larger (SQLite driver); the Mac app gains the helper `minigw-core`.
+- Allowed folders that contain or are inside the gateway's own folders are refused (since 0.5.29), and a hard link to a core file makes the core and every agent launch refuse until the link is removed.
+
+### Security
+- No agent can read the core folder (Mac, Linux, Windows); the credential homes of other agents are closed to every agent of another kind; a hard link to a core file or a junction to the core folder is refused.
+- A forged `X-Minigw-Project` header cannot choose a project; a request head that cannot be rewritten safely closes the connection.
+- DAV and sync check link chains first and refuse remote targets, other drives and automount paths.
+- Direct-mode git watch: reads the repository without replacements, checks every ref and detached HEAD, diffs merges against each parent, reports new refs and moved tags, and says INCOMPLETE when a limit is reached or git fails. The share drains before the end report and the index restore.
+- Deny rules for `.git` and `.claude` also match any letter case (NTFS, APFS).
+- Mac: time limits for hung `claude` checks run on their own thread; the restricted profile cannot signal processes outside it; the Grok profile denies the Scratch folder of other clients.
+- A refreshed login is carried back from a run's home only from a safe, regular file.
+
+### Fixed
+- Mac: Claude CLI in direct or sync mode on a remote client's mount or a sync copy could read or edit nothing (0.5.28 regression, already fixed in 0.5.29); the deny rules for the gateway's own folders now leave the run's own folders open.
+- Mac: removing a synced copy could answer 500 although it was removed, and a big removal no longer blocks other share and sync operations.
+- A link target that passes an autofs mount is refused; a `..` after a link applies to the link's target (WebDAV MOVE guard works again).
+- Mac: Settings marks refused allowed folders; a refused folder share prints the gateway's reason; a message said "router" instead of "gateway".
+- A folder given with `minigw serve --folder` is saved with its identity record. An elevated Windows `minigw` that cannot set the token owner refuses most commands.
+- `minigw -p` with a model of another provider puts the whole answer in the final message.
+- A stream that breaks after HTTP 200 is recorded as an error, not as a success. Token counts that cannot be read stay unknown, not 0.
+
+### Known limits
+- Database downgrade: this version's database schema is 8. An older program refuses it (projects answer 503 `core_unavailable`; models keep working). The first start that migrates an existing database first writes a snapshot `core-<old schema>-<time>.db` into the core folder (`<config>/core`; on the Mac `~/Library/Application Support/Mini Gateway/core`). The way back: stop the gateway (on the Mac quit the app), run `minigw gw core restore <path to that core-<old schema>-<time>.db>`, start the older version. What was written to the core after the migration is lost.
+- Coming from 0.5.29: 0.5.29 had no such database, so the first start creates a new one and writes no snapshot. There is nothing to restore; going back to 0.5.29 means installing it again, and the new core folder stays unused. Only users who ran a beta first have snapshots.
+- Direct-mode git watch reads what git reports; two packs with the same object id and different content, a forged commit-graph, and a nested bare repository are not detected.
+- Allowed folders without a volume UUID use the filesystem type, mount source and inode as their identity.
+- Mac: the helper `minigw-core` serves one request at a time. Settings has only a Projects row, no project pages; restore needs the app quit. The Claude CLI agent reads notes only with "Allow local tools", Codex only with its network switch on.
+- Only the owner manages members and grants. A role change cannot take back what a model has already read; a conversation that holds notes is not resumed after revocation.
+
+### Known problems
+- Grok is switched off on the Mac gateway in this version: its sandbox is being reworked. It worked in 0.5.29. If you need Grok on a Mac gateway, stay on 0.5.29 for now. Grok through `minigw serve` on Windows and Linux works.
+- A Grok run that may not write (read-only, `--minigw-ro`, worktree) cannot run commands: a headless Grok cannot ask for approval.
+- Agents started by the gateway inherit the gateway's environment variables.
+- LiteLLM models show a cost only when the proxy's model info has prices. The subscription agents (Claude, Codex, Grok, Copilot) show no money, and their token counts are what the agent's program reports.
+- Usage days are UTC days.
+- The Usage views show data only from the first start of 0.6.x or newer. Quota history has gaps by design (only probes that ran are stored). Failed minutes exist only for requests made with 0.6.7 or newer.
+
 ## 0.6.10
 
 ### Changed
