@@ -39,6 +39,7 @@ type gitState struct {
 type gitCommit struct {
 	ID    string   `json:"id"`
 	Files []string `json:"files"`
+	Modes []string `json:"modes"` // "path old->new": the file mode or type changed in this commit (0.7.1: a typechange, 120000 -> 100644, is named)
 }
 
 const gitWatchNames = 20 // names shown per list
@@ -124,6 +125,30 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 	}
 	if len(parts) > 0 {
 		lines = append(lines, "minigw: git in this folder, changed by the agent: "+strings.Join(parts, "; "))
+	}
+	// 0.7.1: a mode or type change (a symbolic link that became a regular file, the executable bit) in a new commit or in the index is named, whatever else the run did
+	var modeChanged []string
+	for _, c := range commits {
+		for _, m := range c.Modes {
+			if !slices.Contains(modeChanged, m) {
+				modeChanged = append(modeChanged, m)
+			}
+		}
+	}
+	if !start.Partial {
+		for p, v := range end.Index {
+			if sv, ok := start.Index[p]; ok {
+				if sf, ef := strings.Fields(sv), strings.Fields(v); len(sf) == 3 && len(ef) == 3 && sf[2] == ef[2] && sf[0] != ef[0] {
+					if m := p + " " + sf[0] + "->" + ef[0]; !slices.Contains(modeChanged, m) {
+						modeChanged = append(modeChanged, m)
+					}
+				}
+			}
+		}
+	}
+	if len(modeChanged) > 0 {
+		sort.Strings(modeChanged)
+		lines = append(lines, "minigw: WARNING: the agent changed the mode or type of "+gitNames(modeChanged)+" (120000 is a symbolic link, 100755 an executable file): review it before git checkout, reset --hard, restore, stash pop or your next commit")
 	}
 	var committed []string
 	for _, c := range commits {
@@ -316,11 +341,12 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 		}
 		for _, id := range ids {
 			// -m: a merge is diffed against each parent; --root: the first commit has files too
-			names, ok := gitWatchRun(w.root, "", "diff-tree", "-m", "-r", "-z", "--name-only", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id)
+			raw, ok := gitWatchRun(w.root, "", "diff-tree", "-m", "-r", "-z", "--raw", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id)
 			if !ok {
 				end.Incomplete = append(end.Incomplete, "files of a commit not read in full")
 			}
-			commits = append(commits, gitCommit{ID: id, Files: parseGitNames(names)})
+			files, modes := parseGitRaw(raw)
+			commits = append(commits, gitCommit{ID: id, Files: files, Modes: modes})
 		}
 	}
 	lines, reset := gitWatchReport(w.start, end, commits, protectedPath)
@@ -330,6 +356,29 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 		lines = append(lines, "minigw: could not remove the staged protected paths from the index: run git reset -- "+strings.Join(reset, " "))
 	}
 	return lines, len(end.Incomplete) == 0
+}
+
+// parseGitRaw: the output of `git diff-tree -z --raw --no-commit-id`: ":oldmode newmode oldid newid STATUS" NUL path NUL, per entry. The names as parseGitNames gives them, and
+// the entries whose mode or type changed (both modes present and different: a typechange T, or the executable bit), as "path old->new".
+func parseGitRaw(out string) (files, modes []string) {
+	toks := strings.Split(out, "\x00")
+	for i := 0; i+1 < len(toks); i++ {
+		meta, ok := strings.CutPrefix(toks[i], ":")
+		if !ok {
+			continue
+		}
+		path := toks[i+1]
+		i++
+		if path != "" && !slices.Contains(files, path) {
+			files = append(files, path)
+		}
+		if f := strings.Fields(meta); len(f) >= 5 && f[0] != f[1] && f[0] != "000000" && f[1] != "000000" {
+			if m := path + " " + f[0] + "->" + f[1]; !slices.Contains(modes, m) {
+				modes = append(modes, m)
+			}
+		}
+	}
+	return
 }
 
 // parseGitNames: the output of `git diff-tree -z --name-only --no-commit-id`: the names, NUL-separated and raw (a quote, a newline or a control character in a name is not

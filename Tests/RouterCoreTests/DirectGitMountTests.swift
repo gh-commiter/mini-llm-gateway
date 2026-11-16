@@ -240,3 +240,51 @@ func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
     #expect(tree.range(of: #"100755 blob \w+\texec\.sh"#, options: .regularExpression) != nil, Comment(rawValue: tree))
     print("[mode] client diff --raw after: \(sh("git status --short; git diff --raw HEAD", cwd: client.path).out)")
 }
+
+/// 0.7.1: the gateway reads a missing flag as closed: the client decides (it sees the real folder) and says so at share time.
+@Test func commitsThroughAMountNeedTheClientsFlag() async {
+    let hub = ShareHub()
+    _ = await hub.register(session: "s1", cwd: "/c/p", key: nil, device: "d")
+    let direct1 = await hub.isDirect(session: "s1"), open1 = await hub.commitsAllowed(session: "s1")
+    #expect(direct1 && !open1)
+    let k = await hub.register(session: "s2", cwd: "/c/q", key: nil, device: "d", gitWrites: true)
+    let open2 = await hub.commitsAllowed(session: "s2")
+    #expect(open2)
+    _ = await hub.register(session: "s2", cwd: "/c/q", key: k, device: "d")  // the next registration without the flag closes it again
+    let open3 = await hub.commitsAllowed(session: "s2")
+    #expect(!open3)
+}
+
+/// 0.7.1: a repository that tracks a symbolic link gets no commit opening (the client sends no flag): the real claude on the real mount stages everything and cannot commit; the link stays a link.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"))
+func aRealClaudeAgentCannotCommitThroughAMountOfARepositoryWithASymlink() async throws {
+    guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("direct-mount-link-" + UUID().uuidString, isDirectory: true)
+    let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
+    for d in [client, mp] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+    defer { try? fm.removeItem(at: base) }
+    #expect(sh("git init -q && git config user.name Owner && git config user.email o@example.com && echo hi > a.txt && ln -s a.txt link && git add -A && git commit -qm init", cwd: client.path).status == 0)
+    let hub = ShareHub()
+    _ = await hub.register(session: "s", cwd: client.path, key: nil, device: "d")  // no flag: the client found a tracked symbolic link
+    let open = await hub.commitsAllowed(session: "s")
+    #expect(!open)
+    let server = try #require(DAVLoopback(root: client, prefix: "/dav/e2e"))
+    defer { server.stop() }
+    let mounted = ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) == 0
+    defer { forceUnmount(mp) }
+    try #require(mounted, "mount_webdav to the loopback server")
+    var cfg = ClaudeCLIConfig(); cfg.allowLocalTools = true
+    let args = cfg.agentArgs(cwd: mp, allTools: ["Bash"], folders: AllowedFolders(), checkedPaths: [], directGit: open)
+        + ["-p", "--output-format", "json", "--model", "haiku", "--strict-mcp-config", "--setting-sources", ""]
+    var env = ProcessInfo.processInfo.environment
+    for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k.hasPrefix("GIT_") { env[k] = nil }
+    env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+    env.merge(ClaudeCLIConfig.sandboxGitEnv(mount: open)) { $1 }
+    let ask = "Run these as separate Bash calls, one simple command each (no chaining, no echo): 1) printf x > c.txt  2) git add -A  3) git commit -m sneaky. Report the exact output of each."
+    let r = ClaudeSeatbelt.capture(exe, args, env: env, cwd: mp.path, input: ask, timeout: 300, log: base)
+    for _ in 0..<25 { usleep(200_000) }
+    print("[mount-link] claude said: \((r.out.components(separatedBy: "\"result\":").last ?? "").prefix(700))")
+    #expect(sh("git log --format=%s", cwd: client.path).out == "init\n", "a commit was made")
+    #expect(sh("git ls-tree HEAD link", cwd: client.path).out.hasPrefix("120000"), "the link is no longer a link")
+}

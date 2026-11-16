@@ -35,40 +35,41 @@ type davReply struct {
 }
 
 type shareClient struct {
-	c        connection
-	session  string
-	root     string
-	readOnly bool                // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
-	sync     bool                // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
-	native   bool                // --minigw-work=native: router dela v svoji mapi (native.go); posla routerja ni
-	inPlace  bool                // native-direct: agenti v mapi sami (tudi v repozitoriju git), ne na svojih vejah
-	branches bool                // native v repozitoriju git: agenti na svojih vejah minigw/… (odgovor prehoda)
-	lock     bool                // native v mapi sami: en pisoči agent naenkrat (odgovor prehoda; starejši prehod ga ne pošlje)
-	capped   []string            // #60: agenti, ki zaradi omejitve prehoda le berejo (odgovor prehoda)
-	worktree bool                // --minigw-work=worktree: posnetek kot bundle, veja agenta nazaj kot ref (worktree.go)
-	top      string              // worktree: koren repozitorija git
-	snaps    []string            // worktree: posnetki, poslani prehodu (začetek dela agenta za vrstico o veji)
-	nested   map[string][]string // worktree: ugnezdeni repozitoriji (pot) → njihovi poslani posnetki
-	conv     wtConv              // worktree (#66): pogovor (wtConversation); prazen = brez nadaljevanja
-	chain    map[string]wtRecord // worktree (#66): poslani posnetek ali vrh → začetek verige pogovora (nil = še ni odločeno)
-	contTip  string              // worktree (#66): vrh, iz katerega začnejo vsi agenti zagona ("" = iz mape)
-	contRec  wtRecord            // worktree (#66): veriga vrha contTip
-	gateway  string              // worktree (#66): prehod (naslov profila); pogovor nadaljuje le na istem
-	mu       sync.Mutex
-	key      string
-	syncMu   sync.Mutex
-	synced   map[string]syncEntry       // manifest ob zadnjem prenosu (zgoščevanje, spori)
-	sent     map[string]map[string]bool // pot → različice (sha256), ki jih je router dobil od tega odjemalca (#20)
-	reported map[string]bool            // že javljene prevelike datoteke
-	unpulled bool                       // spremembe agenta, ki niso bile prevzete in potrjene
-	refusal  string                     // sporočilo routerja ob zavrnjeni registraciji (npr. le način sync)
-	checked  *fileID                    // #84: istovetnost, ki jo je preveril shareWanted (nil: preizkusi brez preverbe)
-	rootID   fileID                     // L6 (#84): istovetnost korena ob start; ničelna brez start (preizkusi)
-	rootErr  error                      // L6: ob start ni znana ali ni preverjena → vsi posli zavrnjeni
-	fsMu     sync.RWMutex               // #82: lockFolder v tem procesu (branje deljeno, pisanje izključno)
-	git      *gitWatch                  // #116 B1: direct mode: the repository at the start (gitwatch.go)
-	closing  atomic.Bool                // the end report of git is running: writes are refused (unregister)
-	fsWant   atomic.Int32               // #82 N1: čakajoča pisanja; branje se jim umakne (do svojega roka)
+	c         connection
+	session   string
+	root      string
+	readOnly  bool                // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
+	sync      bool                // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
+	native    bool                // --minigw-work=native: router dela v svoji mapi (native.go); posla routerja ni
+	inPlace   bool                // native-direct: agenti v mapi sami (tudi v repozitoriju git), ne na svojih vejah
+	branches  bool                // native v repozitoriju git: agenti na svojih vejah minigw/… (odgovor prehoda)
+	lock      bool                // native v mapi sami: en pisoči agent naenkrat (odgovor prehoda; starejši prehod ga ne pošlje)
+	capped    []string            // #60: agenti, ki zaradi omejitve prehoda le berejo (odgovor prehoda)
+	worktree  bool                // --minigw-work=worktree: posnetek kot bundle, veja agenta nazaj kot ref (worktree.go)
+	top       string              // worktree: koren repozitorija git
+	snaps     []string            // worktree: posnetki, poslani prehodu (začetek dela agenta za vrstico o veji)
+	nested    map[string][]string // worktree: ugnezdeni repozitoriji (pot) → njihovi poslani posnetki
+	conv      wtConv              // worktree (#66): pogovor (wtConversation); prazen = brez nadaljevanja
+	chain     map[string]wtRecord // worktree (#66): poslani posnetek ali vrh → začetek verige pogovora (nil = še ni odločeno)
+	contTip   string              // worktree (#66): vrh, iz katerega začnejo vsi agenti zagona ("" = iz mape)
+	contRec   wtRecord            // worktree (#66): veriga vrha contTip
+	gateway   string              // worktree (#66): prehod (naslov profila); pogovor nadaljuje le na istem
+	mu        sync.Mutex
+	key       string
+	syncMu    sync.Mutex
+	synced    map[string]syncEntry       // manifest ob zadnjem prenosu (zgoščevanje, spori)
+	sent      map[string]map[string]bool // pot → različice (sha256), ki jih je router dobil od tega odjemalca (#20)
+	reported  map[string]bool            // že javljene prevelike datoteke
+	unpulled  bool                       // spremembe agenta, ki niso bile prevzete in potrjene
+	refusal   string                     // sporočilo routerja ob zavrnjeni registraciji (npr. le način sync)
+	checked   *fileID                    // #84: istovetnost, ki jo je preveril shareWanted (nil: preizkusi brez preverbe)
+	rootID    fileID                     // L6 (#84): istovetnost korena ob start; ničelna brez start (preizkusi)
+	rootErr   error                      // L6: ob start ni znana ali ni preverjena → vsi posli zavrnjeni
+	fsMu      sync.RWMutex               // #82: lockFolder v tem procesu (branje deljeno, pisanje izključno)
+	git       *gitWatch                  // #116 B1: direct mode: the repository at the start (gitwatch.go)
+	closing   atomic.Bool                // the end report of git is running: writes are refused (unregister)
+	gitNotice atomic.Bool                // the start line about commits through the mount was printed
+	fsWant    atomic.Int32               // #82 N1: čakajoča pisanja; branje se jim umakne (do svojega roka)
 }
 
 var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
@@ -107,6 +108,13 @@ func (s *shareClient) register() bool {
 		h["x-claude-mini-work"] = "native"
 		if s.inPlace {
 			h["x-native-inplace"] = "1" // starejši prehod to že dela
+		}
+	}
+	if h["x-claude-mini-work"] == "direct" { // 0.7.1: the gateway lets the agent commit through the mount only when this flag says so (missing = closed)
+		if open, why := directGitOpen(s.root); open {
+			h["x-git-writes"] = "1"
+		} else if why != "" && s.gitNotice.CompareAndSwap(false, true) {
+			fmt.Fprintln(os.Stderr, "minigw: "+why)
 		}
 	}
 	st, data := call(s.c, "POST", "/minigw/share", h, nil, 10*time.Second)
@@ -415,4 +423,23 @@ func call(c connection, method, path string, headers map[string]string, body []b
 		return 0, []byte(err.Error())
 	}
 	return resp.StatusCode, data
+}
+
+// directGitOpen (0.7.1): may the agent commit through the mounted folder? A mounted folder shows a symbolic link as a plain file, so `git add -A` or `git commit -a` would
+// commit it as one (mode 120000 -> 100644). Only the client sees the real folder: a repository that tracks symbolic links (git ls-files -s shows 120000) gets no commits through
+// the mount, and a repository that cannot be read in full is not opened either. why is the start line ("" = no repository here, nothing to say).
+func directGitOpen(root string) (open bool, why string) {
+	if fi, err := os.Lstat(filepath.Join(root, ".git")); err != nil || !fi.IsDir() {
+		return false, ""
+	}
+	idx, ok := gitWatchRun(root, "", "ls-files", "-s", "-z")
+	if !ok {
+		return false, "this repository could not be read in full: the agent can edit files but not commit; use worktree mode for commits"
+	}
+	for _, e := range strings.Split(idx, "\x00") {
+		if strings.HasPrefix(e, "120000 ") {
+			return false, "this repository tracks symbolic links, which a mounted folder cannot represent; the agent can edit files but not commit; use worktree mode for commits"
+		}
+	}
+	return true, ""
 }

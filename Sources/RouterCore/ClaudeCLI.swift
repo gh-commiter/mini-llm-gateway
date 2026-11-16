@@ -747,9 +747,9 @@ extension Router {
     }
 
     /// `shell`: the agent can run commands (Claude without "Allow local tools" and Copilot cannot); the git sentence comes from GitNote (#112).
-    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil, gits: [String] = [], shell: Bool = true) -> String {
+    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil, gits: [String] = [], shell: Bool = true, gitClosed: Bool = false) -> String {
         let base = mountNoteBase(clientCwd, shared, readOnly: readOnly, synced: synced, branch: branch, gits: gits)
-        let git = GitNote.text(mode: branch != nil ? "worktree" : synced ? "sync" : "direct", shell: shell, readOnly: readOnly)
+        let git = GitNote.text(mode: branch != nil ? "worktree" : synced ? "sync" : gitClosed ? "direct-closed" : "direct", shell: shell, readOnly: readOnly)
         return git.isEmpty ? base : base + " " + git
     }
 
@@ -830,7 +830,8 @@ extension Router {
                                                  roots: checkedRoots, scratch: config.scratchURL, writes: true)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
-            let direct = await Self.shares.isDirect(session: req.header("x-claude-mini-session") ?? "")
+            let direct = await Self.shares.commitsAllowed(session: req.header("x-claude-mini-session") ?? "")  // 0.7.1: the client opens commits (no tracked symbolic links); unknown = closed
+            let directMount = await Self.shares.isDirect(session: req.header("x-claude-mini-session") ?? "")
             directGit = shared != nil && !synced && tree == nil && direct
             let cap = await capped(req, kind: "claude")  // #45: način seje nad omejitvijo → le branje
             readOnly = await Self.isReadOnly(req) || cap != nil
@@ -840,7 +841,7 @@ extension Router {
                 return await error(503, "api_error", Worktree.unsafeFolders, rid: rid, writer: writer)
             }
             if let shared, let clientCwd {
-                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch, gits: tree?.gits ?? [], shell: cfg.allowLocalTools && !cfg.disabledTools.contains("Bash"))]
+                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch, gits: tree?.gits ?? [], shell: cfg.allowLocalTools && !cfg.disabledTools.contains("Bash"), gitClosed: directMount && !directGit)]
             }
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: checkedRoots, scratch: config.scratchURL)) else {
                 if let why = await Self.shares.takeRefusal() {  // zaklep pisanja

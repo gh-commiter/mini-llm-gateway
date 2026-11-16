@@ -28,6 +28,7 @@ public actor ShareHub {
         let cwd: String                               // mapa na odjemalcu
         let readOnly: Bool                            // minigw --minigw-ro: odjemalec zavrne pisanje, priklop rdonly
         var jobs: [DAVJob] = []
+        var gitWrites = false                         // 0.7.1: the client allows commits in this mount (a repository without tracked symbolic links); missing = closed
         var pollers: [String: CheckedContinuation<DAVJob?, Never>] = [:]
         var replies: [String: CheckedContinuation<DAVResponse?, Never>] = [:]
         var lastSeen = Date()
@@ -279,14 +280,15 @@ public actor ShareHub {
     /// nil: seja že ima share drugega lastnika (brez njegovega ključa je ni mogoče prevzeti).
     /// `copy`: način sync (kopija v scratch/sync), `native`: dokazana mapa tega Maca, sicer priklop.
     func register(session: String, cwd: String, key: String?, readOnly: Bool = false, copy: URL? = nil, device: String? = nil,
-                  native: URL? = nil, tree: Tree? = nil) -> String? {
+                  native: URL? = nil, tree: Tree? = nil, gitWrites: Bool = false) -> String? {
         if let s = bySession[session] {
             guard s.key == key else { return nil }
-            if s.cwd == cwd, s.readOnly == readOnly, s.copy == copy, s.native == native, s.tree == tree { s.lastSeen = Date(); return s.key }
+            if s.cwd == cwd, s.readOnly == readOnly, s.copy == copy, s.native == native, s.tree == tree { s.lastSeen = Date(); s.gitWrites = gitWrites; return s.key }
             bySession[session] = nil
             close(s)
         }
         let s = Share(session: session, cwd: cwd, readOnly: readOnly, copy: copy, device: device, native: native, tree: tree)
+        s.gitWrites = gitWrites
         bySession[session] = s
         if reaper == nil {
             reaper = Task { [weak self] in
@@ -316,6 +318,9 @@ public actor ShareHub {
 
     /// Seja dela v priklopu odjemalčeve mape (WebDAV): ne v kopiji, klonu ali native.
     func isDirect(session: String) -> Bool { bySession[session].map { $0.copy == nil && $0.tree == nil && $0.native == nil } ?? false }
+
+    /// 0.7.1: a direct-mode mount in which the agent may commit: the client said so at share time (no tracked symbolic links); a missing flag is closed.
+    func commitsAllowed(session: String) -> Bool { bySession[session].map { $0.copy == nil && $0.tree == nil && $0.native == nil && $0.gitWrites } ?? false }
 
     /// Seja dela v sinhronizirani kopiji (ne v priklopu).
     func bySessionTree(_ session: String) -> Tree? { bySession[session]?.tree }

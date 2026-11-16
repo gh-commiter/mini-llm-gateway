@@ -663,3 +663,62 @@ func TestGitWatchSeesAProtectedNameThatStartsWithTheMarker(t *testing.T) {
 	out := captureStderr(t, func() { w.report(true) })
 	wantAll(t, out, "1 new commit(s)", "committed a protected path: @@payload/.claude/settings.json")
 }
+
+// 0.7.1: a symbolic link committed as a regular file (what a mounted folder does to it) and an executable file made plain are named by the real git, in the commit and in the index.
+func TestGitWatchNamesATypeChangeOfARealRepository(t *testing.T) {
+	isolateGitWatchState(t)
+	if _, err := exec.LookPath("git"); err != nil || runtime.GOOS == "windows" {
+		t.Skip("needs git and symbolic links")
+	}
+	root := t.TempDir()
+	gitIn(t, root, "init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("a"), 0o644)
+	os.WriteFile(filepath.Join(root, "run.sh"), []byte("#!/bin/sh\n"), 0o755)
+	os.Symlink("a.txt", filepath.Join(root, "link"))
+	gitIn(t, root, "add", "-A")
+	gitIn(t, root, "commit", "-qm", "init")
+	w := gitWatchStart(root)
+	if w == nil {
+		t.Fatal("no watch")
+	}
+	os.Remove(filepath.Join(root, "link"))
+	os.WriteFile(filepath.Join(root, "link"), []byte("a"), 0o644) // as the mount shows it
+	os.Chmod(filepath.Join(root, "run.sh"), 0o644)
+	gitIn(t, root, "-c", "core.fileMode=true", "add", "-A")
+	gitIn(t, root, "commit", "-qm", "agent")
+	os.Remove(filepath.Join(root, "a.txt"))
+	os.Symlink("link", filepath.Join(root, "a.txt")) // staged, not committed
+	gitIn(t, root, "add", "a.txt")
+	lines, _ := w.compare(nil, false)
+	got := strings.Join(lines, "\n")
+	for _, want := range []string{"link 120000->100644", "run.sh 100755->100644", "a.txt 100644->120000"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the report lacks %q:\n%s", want, got)
+		}
+	}
+}
+
+// 0.7.1: the client opens commits through the mount only for a repository without tracked symbolic links; the gateway reads the flag as closed when it is missing.
+func TestDirectGitOpenSaysNoForATrackedSymlink(t *testing.T) {
+	isolateGitWatchState(t)
+	if _, err := exec.LookPath("git"); err != nil || runtime.GOOS == "windows" {
+		t.Skip("needs git and symbolic links")
+	}
+	root := t.TempDir()
+	if open, why := directGitOpen(root); open || why != "" {
+		t.Errorf("a folder without a repository: %v %q", open, why)
+	}
+	gitIn(t, root, "init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("a"), 0o644)
+	gitIn(t, root, "add", "-A")
+	gitIn(t, root, "commit", "-qm", "init")
+	if open, why := directGitOpen(root); !open || why != "" {
+		t.Errorf("a plain repository: %v %q", open, why)
+	}
+	os.Symlink("a.txt", filepath.Join(root, "link"))
+	gitIn(t, root, "add", "-A")
+	gitIn(t, root, "commit", "-qm", "link")
+	if open, why := directGitOpen(root); open || !strings.Contains(why, "tracks symbolic links") {
+		t.Errorf("a repository with a tracked symbolic link: %v %q", open, why)
+	}
+}

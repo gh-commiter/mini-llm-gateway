@@ -317,3 +317,10 @@ private func fixtureRoot() -> URL { URL(fileURLWithPath: #filePath).deletingLast
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
     #expect(w.file == nil)
 }
+
+@Test func parseRawNamesTheModeAndTypeChanges() {
+    let out = ":120000 100644 aaa bbb T\0link\0:100755 100644 ccc ddd M\0run.sh\0:000000 100644 0000 eee A\0new.txt\0:100644 100644 fff ggg M\0same.txt\0"
+    let (files, modes) = GitWatch.parseRaw(out)
+    #expect(files == ["link", "run.sh", "new.txt", "same.txt"])
+    #expect(modes == ["link 120000->100644", "run.sh 100755->100644"])
+}

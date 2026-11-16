@@ -43,6 +43,8 @@ enum GitNote {
             let (works, refused) = directLists()
             return "Git: you can commit in this folder: " + works.joined(separator: ", ") + ". Not possible in this folder: " + refused.joined(separator: ", ")
                 + ". Use merge instead of rebase. Nested repositories and submodules are read-only for you. If the task needs one of these, say so and tell the user to run it themselves or to use worktree mode (minigw --minigw-work=worktree). A symlink may show as changed here: add files by name, not git add -A or commit -a. Your git changes are reported to the user: do not commit or stage .claude/settings*.json, .envrc, .vscode/tasks.json or .husky (protected paths)."
+        case "direct-closed":  // 0.7.1: the client found tracked symbolic links, which a mounted folder shows as plain files: no commit through the mount
+            return "Git: this repository tracks symbolic links, which a mounted folder cannot represent: you can edit files, but .git is read-only for you and you cannot commit. If the task needs a commit, say so; the user commits your changes, or uses worktree mode (minigw --minigw-work=worktree)."
         default: return ""
         }
     }

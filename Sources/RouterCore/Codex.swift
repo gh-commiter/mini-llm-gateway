@@ -333,12 +333,13 @@ extension Router {
             }
             let cap = await capped(req, kind: "codex")  // #45: način seje nad omejitvijo → le branje
             readOnly = await Self.isReadOnly(req) || cap != nil
-            if tree == nil, shared != nil, !synced, !readOnly, config.codex.write { directGit = await Self.shares.isDirect(session: req.header("x-claude-mini-session") ?? "") }
+            if tree == nil, shared != nil, !synced, !readOnly, config.codex.write { directGit = await Self.shares.commitsAllowed(session: req.header("x-claude-mini-session") ?? "") }  // 0.7.1: the client opens commits (no tracked symbolic links); unknown = closed
             Self.runBranch?.readOnly = readOnly || (tree != nil && !config.codex.write)  // #46a
             if readOnly, tree != nil, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
+                let directMount = await Self.shares.isDirect(session: req.header("x-claude-mini-session") ?? "")
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || !config.codex.write, synced: synced,
-                                        branch: tree?.branch, gits: tree?.gits ?? []) + "\n\n" + prompt
+                                        branch: tree?.branch, gits: tree?.gits ?? [], gitClosed: directMount && !directGit) + "\n\n" + prompt
             }
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)

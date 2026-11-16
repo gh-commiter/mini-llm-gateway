@@ -507,6 +507,82 @@
     "minigw: WARNING: the agent created a ref with a name that starts with \"-\" (refs/heads/-x, refs/heads/ok/-y/z): a script of yours could take it for an option - review it, then git update-ref -d <name>"
    ],
    "reset": []
+  },
+  {
+   "name": "a symbolic link committed as a regular file is named",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "link": "120000 aaaa 0",
+     "run.sh": "100644 bbbb 0"
+    },
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "b"
+    },
+    "index": {
+     "link": "100644 cccc 0",
+     "run.sh": "100755 bbbb 0"
+    },
+    "pending": [],
+    "cached": []
+   },
+   "commits": [
+    {
+     "id": "b",
+     "files": [
+      "link",
+      "run.sh"
+     ],
+     "modes": [
+      "link 120000->100644",
+      "run.sh 100644->100755"
+     ]
+    }
+   ],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: 1 new commit(s); moved branches: main",
+    "minigw: WARNING: the agent changed the mode or type of link 120000->100644, run.sh 100644->100755 (120000 is a symbolic link, 100755 an executable file): review it before git checkout, reset --hard, restore, stash pop or your next commit"
+   ],
+   "reset": []
+  },
+  {
+   "name": "a type change staged and not committed is named",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "link": "120000 aaaa 0"
+    },
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "link": "100644 cccc 0"
+    },
+    "pending": [],
+    "cached": [
+     "link"
+    ]
+   },
+   "commits": [],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: 1 staged path(s)",
+    "minigw: WARNING: the agent changed the mode or type of link 120000->100644 (120000 is a symbolic link, 100755 an executable file): review it before git checkout, reset --hard, restore, stash pop or your next commit"
+   ],
+   "reset": []
   }
  ],
  "logs": [

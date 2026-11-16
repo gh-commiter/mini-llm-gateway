@@ -34,7 +34,11 @@ public struct GitWatch: Sendable {
             incomplete = try c.decodeIfPresent([String].self, forKey: .incomplete) ?? []
         }
     }
-    public struct Commit: Codable, Equatable, Sendable { public var id: String; public var files: [String] }
+    public struct Commit: Codable, Equatable, Sendable {
+        public var id: String; public var files: [String]
+        public var modes: [String]?  // "path old->new": the file mode or type changed in this commit (0.7.1)
+        public init(id: String, files: [String], modes: [String]? = nil) { self.id = id; self.files = files; self.modes = modes }
+    }
 
     static let names = 20  // names shown per list
     static let keepIncomplete: TimeInterval = 7 * 24 * 3600  // how long a baseline that could not be compared in full is kept
@@ -69,6 +73,22 @@ public struct GitWatch: Sendable {
         if !staged.isEmpty && !start.partial { parts.append("\(staged.count) staged path(s)") } else if start.partial && start.indexHash != end.indexHash { parts.append("the index changed") }
         var lines: [String] = []
         if !parts.isEmpty { lines.append("minigw: git in this folder, changed by the agent: " + parts.joined(separator: "; ")) }
+        // 0.7.1: a mode or type change (a symbolic link that became a regular file, the executable bit) in a new commit or in the index is named, whatever else the run did
+        var modeChanged: [String] = []
+        for c in commits { for m in c.modes ?? [] where !modeChanged.contains(m) { modeChanged.append(m) } }
+        if !start.partial {
+            for (p, v) in end.index {
+                guard let sv = start.index[p] else { continue }
+                let sf = sv.split(separator: " ").map(String.init), ef = v.split(separator: " ").map(String.init)
+                if sf.count == 3, ef.count == 3, sf[2] == ef[2], sf[0] != ef[0] {
+                    let m = p + " " + sf[0] + "->" + ef[0]
+                    if !modeChanged.contains(m) { modeChanged.append(m) }
+                }
+            }
+        }
+        if !modeChanged.isEmpty {
+            lines.append("minigw: WARNING: the agent changed the mode or type of " + list(modeChanged) + " (120000 is a symbolic link, 100755 an executable file): review it before git checkout, reset --hard, restore, stash pop or your next commit")
+        }
         var committed: [String] = []
         for c in commits { for f in c.files where isProtected(f) && !committed.contains(f) { committed.append(f) } }
         if !committed.isEmpty { lines.append("minigw: WARNING: the agent committed a protected path: " + list(committed) + " - review before git checkout, reset --hard, restore, stash pop or your next commit") }
@@ -171,9 +191,10 @@ public struct GitWatch: Sendable {
             }
             for id in ids {
                 // -m: a merge is diffed against each parent; --root: the first commit has files too
-                let n = Self.git(root, maxOutput: maxOutput, ["diff-tree", "-m", "-r", "-z", "--name-only", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id])
+                let n = Self.git(root, maxOutput: maxOutput, ["diff-tree", "-m", "-r", "-z", "--raw", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id])
                 if !n.ok { end.incomplete.append("files of a commit not read in full") }
-                commits.append(Commit(id: id, files: Self.parseNames(n.out)))
+                let (files, modes) = Self.parseRaw(n.out)
+                commits.append(Commit(id: id, files: files, modes: modes))
             }
         }
         var (lines, reset) = Self.report(start: start, end: end, commits: commits, isProtected: { Sync.isProtected($0) })
@@ -189,6 +210,25 @@ public struct GitWatch: Sendable {
         var names: [String] = []
         for part in out.split(separator: "\0", omittingEmptySubsequences: true) where !names.contains(String(part)) { names.append(String(part)) }
         return names
+    }
+
+    /// The output of `git diff-tree -z --raw --no-commit-id`: ":oldmode newmode oldid newid STATUS" NUL path NUL per entry. The names as parseNames gives them, and the entries whose
+    /// mode or type changed (both modes present and different: a typechange T, or the executable bit) as "path old->new".
+    static func parseRaw(_ out: String) -> (files: [String], modes: [String]) {
+        var files: [String] = [], modes: [String] = []
+        let toks = out.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+        var i = 0
+        while i + 1 < toks.count {
+            guard toks[i].hasPrefix(":") else { i += 1; continue }
+            let f = toks[i].dropFirst().split(separator: " ").map(String.init), path = toks[i + 1]
+            i += 2
+            if !path.isEmpty, !files.contains(path) { files.append(path) }
+            if f.count >= 5, f[0] != f[1], f[0] != "000000", f[1] != "000000" {
+                let m = path + " " + f[0] + "->" + f[1]
+                if !modes.contains(m) { modes.append(m) }
+            }
+        }
+        return (files, modes)
     }
 
     /// The object ids to start the history from: every ref and HEAD.

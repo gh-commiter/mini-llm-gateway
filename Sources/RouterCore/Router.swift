@@ -433,7 +433,8 @@ public final class Router: Sendable {
                                     rid: rid, writer: writer), nil, "share")
             }
             guard let key = await Self.shares.register(session: session, cwd: cwd, key: req.header("x-share-key"),
-                                                       readOnly: readOnly, copy: copy, device: req.device?.id, native: native, tree: tree) else {
+                                                       readOnly: readOnly, copy: copy, device: req.device?.id, native: native, tree: tree,
+                                                       gitWrites: req.header("x-git-writes") == "1") else {
                 return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
             }
             // starejši odjemalci: le key; branches = veje v repozitoriju, lock = en pisoči agent naenkrat (native v mapi sami)

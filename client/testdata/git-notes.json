@@ -42,6 +42,12 @@
    "Shell": true,
    "ReadOnly": false,
    "Note": ""
+  },
+  {
+   "Mode": "direct-closed",
+   "Shell": true,
+   "ReadOnly": false,
+   "Note": "Git: this repository tracks symbolic links, which a mounted folder cannot represent: you can edit files, but .git is read-only for you and you cannot commit. If the task needs a commit, say so; the user commits your changes, or uses worktree mode (minigw --minigw-work=worktree)."
   }
  ],
  "Hints": [

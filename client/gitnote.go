@@ -56,6 +56,8 @@ func gitNote(mode string, shell, readOnly bool) string {
 		return "Git: the folder is read-only for you: no changes and no commits."
 	case mode == "sync":
 		return "Git: there is no .git in this copy (git data is not copied), so git commands do not see the user's repository and nothing you commit goes back. Do not run git init or git commit here; the changed files are copied back and the user commits them."
+	case mode == "direct-closed": // 0.7.1: the client found tracked symbolic links, which a mounted folder shows as plain files: no commit through the mount
+		return "Git: this repository tracks symbolic links, which a mounted folder cannot represent: you can edit files, but .git is read-only for you and you cannot commit. If the task needs a commit, say so; the user commits your changes, or uses worktree mode (minigw --minigw-work=worktree)."
 	case mode == "direct":
 		works, refused := gitDirectLists()
 		return "Git: you can commit in this folder: " + strings.Join(works, ", ") + ". Not possible in this folder: " + strings.Join(refused, ", ") +
