@@ -227,7 +227,12 @@ func TestLinkDotDotResolvesBeforeMoveGuard(t *testing.T) {
 	dirLink(t, "a/deep", filepath.Join(root, "L2"))
 	// ".." after a link is only kept by a real symlink: a Windows junction stores a resolved absolute path (mklink also reads
 	// "/.." as a switch), so without the symlink privilege this scenario cannot be built there.
-	for link, target := range map[string]string{"L1": filepath.FromSlash("L2/../x"), "absolute": root + string(filepath.Separator) + filepath.FromSlash("L2/../x")} {
+	// An absolute target also loses its ".." on Windows: CreateSymbolicLink stores the normalized path (root\x), so only the relative link is built there.
+	links := map[string]string{"L1": filepath.FromSlash("L2/../x")}
+	if runtime.GOOS != "windows" {
+		links["absolute"] = root + string(filepath.Separator) + filepath.FromSlash("L2/../x")
+	}
+	for link, target := range links {
 		symlinkOrSkip(t, target, filepath.Join(root, link))
 	}
 	rt, err := os.OpenRoot(root)
@@ -241,8 +246,10 @@ func TestLinkDotDotResolvesBeforeMoveGuard(t *testing.T) {
 	if got, err := safeFinalPath(filepath.Join(root, "L1"), []string{root}); err != nil || got != realTarget(filepath.Join(root, "a/x"), []string{root}) {
 		t.Fatalf("absolute resolve = %q, %v", got, err)
 	}
-	if got, err := rootResolve(rt, "absolute/new", false); err != nil || got != filepath.FromSlash("a/x/new") {
-		t.Fatalf("absolute root resolve = %q, %v", got, err)
+	if _, ok := links["absolute"]; ok {
+		if got, err := rootResolve(rt, "absolute/new", false); err != nil || got != filepath.FromSlash("a/x/new") {
+			t.Fatalf("absolute root resolve = %q, %v", got, err)
+		}
 	}
 	if got := realTarget(root+"/L2/../x/new", []string{root}); got != realTarget(filepath.Join(root, "a/x"), []string{root})+string(filepath.Separator)+"new" {
 		t.Fatalf("missing suffix resolved to %q", got)
