@@ -41,6 +41,7 @@ Mini Gateway 0.7.0 is a stable release. It collects the eleven beta versions 0.6
 
 ### Security
 - No agent can read the core folder (Mac, Linux, Windows); the credential homes of other agents are closed to every agent of another kind; a hard link to a core file or a junction to the core folder is refused.
+- Linux (`minigw serve`), Claude CLI with Allow local tools: the agent's shell could not be stopped from rewriting a `.git` that is a file (a linked worktree or submodule) to point git at a folder of its own, or from planting `.git/rebase-merge`, `shallow`, `grafts`, `remotes`, `branches`, `objects/info/alternates` or `refs/replace`, which the owner's git then runs or follows. They are closed now, the same list as on the Mac.
 - A forged `X-Minigw-Project` header cannot choose a project; a request head that cannot be rewritten safely closes the connection.
 - DAV and sync check link chains first and refuse remote targets, other drives and automount paths.
 - Direct-mode git watch: reads the repository without replacements, checks every ref and detached HEAD, diffs merges against each parent, reports new refs and moved tags, and says INCOMPLETE when a limit is reached or git fails. The share drains before the end report and the index restore.
@@ -49,7 +50,7 @@ Mini Gateway 0.7.0 is a stable release. It collects the eleven beta versions 0.6
 - A refreshed login is carried back from a run's home only from a safe, regular file.
 
 ### Fixed
-- Mac, Claude CLI in direct mode: the agent can now really commit. `git` failed on the unreadable `~/.gitconfig`, and the sandbox refused the folder's own `.git` (`index.lock`). Git runs without user and system configuration there (`.git/config` of the folder still applies; a folder without a git identity commits as your computer's user name and host name), and an AppleDouble `._` file inside `.git` is no longer printed as a refused agent write.
+- Mac, Claude CLI in direct mode: the agent can now really commit in the direct-mode folder of a remote client (a real `.git` directory; the client's guard and the git watch apply there). `git` failed on the unreadable `~/.gitconfig`, and the sandbox refused the folder's own `.git` (`index.lock`). Git runs without user and system configuration there (`.git/config` of the folder still applies; a folder without a git identity commits as your computer's user name and host name). The gateway Mac's own folders (local session folder, allowed folders, a linked worktree) keep their whole `.git` closed for the agent's shell. An AppleDouble `._` file inside `.git` is no longer printed as a refused agent write.
 - Mac: Claude CLI in direct or sync mode on a remote client's mount or a sync copy could read or edit nothing (0.5.28 regression, already fixed in 0.5.29); the deny rules for the gateway's own folders now leave the run's own folders open.
 - Mac: removing a synced copy could answer 500 although it was removed, and a big removal no longer blocks other share and sync operations.
 - A link target that passes an autofs mount is refused; a `..` after a link applies to the link's target (WebDAV MOVE guard works again).

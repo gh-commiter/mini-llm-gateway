@@ -206,7 +206,9 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// The rules for denied paths: the folder's contents and the entry itself (a file).
     static func denyRules(_ paths: [String], tools: [String]) -> [String] { paths.flatMap { p in tools.flatMap { ["\($0)(/\(p)/**)", "\($0)(/\(p))"] } } }
 
-    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders, checkedPaths: [String]? = nil) -> [String] {
+    /// `directGit` (0.7.0): the session folder is the mount of a remote client in direct mode (the client's guard and git watch apply); only then, and only when its `.git` is a
+    /// real directory, may the shell write git's own data there (sandboxDenyWrite). Every other folder keeps its whole `.git` entry closed.
+    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders, checkedPaths: [String]? = nil, directGit: Bool = false) -> [String] {
         // #111: without "Allow local tools" the tools have no sandbox, and a bare `--allowedTools Read` means any path (verified with a real
         // `claude -p`: ~/.ssh, a sibling folder, `../`, and Write outside the folder all worked). Every path tool is scoped as in Go (serve_cli.go
         // agentArgs): the session's folder and one rule per checked allowed folder (+ --add-dir); the deny rules below stay.
@@ -263,7 +265,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
             // --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
             "filesystem": ["denyRead": ["~"] + (scratch.map(RouterConfig.hiddenScratch) ?? []), "allowRead": dirs, "allowWrite": readOnly ? [] : dirs,
-                           "denyWrite": sandboxDenyWrite(dirs: dirs, readOnly: readOnly)],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
+                           "denyWrite": sandboxDenyWrite(dirs: dirs, readOnly: readOnly, directGit: directGit ? cwd.path : nil)],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
         ], "permissions": denySettings.settings]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         // --minigw-ro: --tools le iz seznama dovoljenih (in Bash v sandboxu brez pisanja), drugih orodij agent nima.
@@ -348,12 +350,18 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
 
     /// The sandbox's denyWrite: the Copilot package cache, the folders themselves with --minigw-ro, else the git paths the owner's git runs (config, hooks, info,
     /// redirects; nested; the submodules' config, hooks and info) and, with setting sources, `.claude`.
-    func sandboxDenyWrite(dirs: [String], readOnly: Bool) -> [String] {
+    func sandboxDenyWrite(dirs: [String], readOnly: Bool, directGit: String? = nil) -> [String] {
         var out: [String] = Self.scratchPaths(RouterConfig.copilotCache)
         if readOnly { return out + dirs }
         for d in dirs {
             for g in Self.directGitDenies { out += [d + "/.git/" + g, d + "/**/.git/" + g] }
-            out.append(d + "/*/**/.git")  // a nested `.git` entry itself (nested contents are the client guard's, see directGitDenies); not `d/**/.git`: Claude Code's sandbox then also closed the folder's own `.git` whole, no commit (real run, 0.7.0)
+            // The folder's own `.git` entry: closed (a `d/**/.git` glob also matches `d/.git` itself, so a `gitdir:` file cannot be rewritten and a missing one not created) except in the
+            // session folder of a direct-mode mount whose `.git` is a real directory (lstat: not a link, not a file): there the client's guard and git watch apply and a commit needs index,
+            // objects, refs, HEAD, logs. Inside it the literal and glob entries above stay closed for the shell: config, config.worktree, hooks, info, commondir, worktrees, shallow, grafts,
+            // rebase-merge, rebase-apply, sequencer, remotes, branches, objects/info/(http-)alternates, refs/replace, logs/refs/replace, modules; a commit writes none of them.
+            var st = stat()
+            let ownGitOpen = d == directGit && lstat(d + "/.git", &st) == 0 && st.st_mode & S_IFMT == S_IFDIR
+            out.append(ownGitOpen ? d + "/*/**/.git" : d + "/**/.git")
             for g in Self.directModuleDenies { out += [d + "/.git/modules/**/" + g, d + "/**/.git/modules/**/" + g] }
             // #113: the globs name the entries only, so `mv .git/modules m`, a write in m/sub/config and a move back got past them (a real run); a literal path also
             // makes the sandbox refuse a rename of the folders above it. The submodules' closed paths that exist now, literally.
@@ -807,6 +815,7 @@ extension Router {
         var editOffNote: String?  // T5: restricted run in a folder whose path cannot go into a rule
         var restricted = false  // 0.6.0: no "Allow local tools", no worktree: the kernel layer (ClaudeSeatbelt) goes under the tool rules
         var readOnly = false
+        var directGit = false  // 0.7.0: the session folder is the mount of a remote client in direct mode (agentArgs)
 
         if agent {
             // Mapa odjemalca (minigw na drugem Macu) ima prednost pred enako potjo na tem Macu.
@@ -816,6 +825,8 @@ extension Router {
                                                  roots: checkedRoots, scratch: config.scratchURL, writes: true)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
+            let direct = await Self.shares.isDirect(session: req.header("x-claude-mini-session") ?? "")
+            directGit = shared != nil && !synced && tree == nil && direct
             let cap = await capped(req, kind: "claude")  // #45: način seje nad omejitvijo → le branje
             readOnly = await Self.isReadOnly(req) || cap != nil
             Self.runBranch?.readOnly = readOnly  // #46a
@@ -860,7 +871,7 @@ extension Router {
             if tree == nil { checked = allowedFolders.checked(cfg.allowedRoots, scratch: config.scratchURL) }  // A2: also a cwd that is an allowed root is opened and verified at launch
             args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
                                                  scratch: config.scratchURL, read: $0.read, gits: $0.gits) }
-                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly, folders: allowedFolders, checkedPaths: checked.paths(without: dir)))  // the cwd itself is in the arguments already
+                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly, folders: allowedFolders, checkedPaths: checked.paths(without: dir), directGit: directGit))  // the cwd itself is in the arguments already
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = config.scratch("chat")

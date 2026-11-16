@@ -28,18 +28,19 @@ func aClaudeAgentCommitsInADirectModeFolderAndCannotPlantAHook(identity: Bool) a
     defer { try? FileManager.default.removeItem(at: base) }
     #expect(sh("git init -q && echo x > a.txt && git add a.txt && git -c user.name=Owner -c user.email=o@example.com commit -qm init" + (identity ? " && git config user.name Owner && git config user.email o@example.com" : ""), repo.path).status == 0)
     var cfg = ClaudeCLIConfig(); cfg.allowLocalTools = true
-    let args = cfg.agentArgs(cwd: repo, allTools: ["Bash"], folders: AllowedFolders(), checkedPaths: [])
+    let args = cfg.agentArgs(cwd: repo, allTools: ["Bash"], folders: AllowedFolders(), checkedPaths: [], directGit: true)
         + ["-p", "--output-format", "json", "--model", "haiku", "--strict-mcp-config", "--setting-sources", ""]
     var env = ProcessInfo.processInfo.environment
     for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k.hasPrefix("GIT_") { env[k] = nil }
     env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
     env.merge(ClaudeCLIConfig.sandboxGitEnv) { $1 }
-    let ask = "Run these as separate Bash calls, one simple command each (no chaining, no echo, no redirection of exit codes): 1) printf hi > b.txt  2) git add b.txt  3) git commit -m 'add b'  4) printf x > .git/hooks/pre-commit. Report the exact output of each."
+    let ask = "Run these as separate Bash calls, one simple command each (no chaining, no echo, no redirection of exit codes): 1) printf hi > b.txt  2) git add b.txt  3) git commit -m 'add b'  4) printf x > .git/hooks/pre-commit  5) printf x > .git/COMMONDIR  6) printf x > .git/objects/info/ALTERNATES. Report the exact output of each."
     let r = ClaudeSeatbelt.capture(exe, args, env: env, cwd: repo.path, input: ask, timeout: 240, log: base)
     print("[direct-git identity=\(identity)] author: \(sh("git log -1 --format=%an,%ae", repo.path).out); claude said: \((r.out.components(separatedBy: "\"result\":").last ?? "").prefix(900))")
     let log = sh("git log --format=%s", repo.path).out
     #expect(log.hasPrefix("add b"), "no commit: git log: \(log); claude: \(r.out.prefix(600)) \(r.err.prefix(200))")
     #expect(!FileManager.default.fileExists(atPath: repo.appendingPathComponent(".git/hooks/pre-commit").path), "a hook was planted")
+    for p in ["commondir", "objects/info/alternates"] { #expect(!FileManager.default.fileExists(atPath: repo.appendingPathComponent(".git/" + p).path), "\(p) was written (a case variant)") }
 }
 
 /// The launch of a sandboxed agent run (fake claude): git gets no user and system configuration (the sandbox hides ~/.gitconfig, which git treats as fatal) and no
@@ -70,10 +71,52 @@ func aClaudeAgentCommitsInADirectModeFolderAndCannotPlantAHook(identity: Bool) a
     #expect(w.status == 200, "\(w.text.prefix(300))")
     let env = (try? String(contentsOf: project.appendingPathComponent("env.txt"), encoding: .utf8)) ?? ""
     #expect(env.contains("GIT_CONFIG_GLOBAL=/dev/null") && env.contains("GIT_CONFIG_NOSYSTEM=1") && env.contains("GIT_CONFIG_KEY_0=core.hooksPath") && env.contains("GIT_CONFIG_VALUE_0=/dev/null"), "\(env)")
-    // the sandbox settings
+    // the sandbox settings: the folder's own `.git` is closed for the shell, except in the session folder of a direct-mode mount whose `.git` is a real directory
+    func deny(_ dir: URL, directGit: Bool, extra: [String] = []) throws -> [String] {
+        var cfg = ClaudeCLIConfig(); cfg.allowLocalTools = true
+        let a = cfg.agentArgs(cwd: dir, allTools: [], folders: AllowedFolders(), checkedPaths: extra, directGit: directGit)
+        let st = try #require(try JSONSerialization.jsonObject(with: Data(a[a.firstIndex(of: "--settings")! + 1].utf8)) as? [String: Any])
+        return try #require(((st["sandbox"] as? [String: Any])?["filesystem"] as? [String: Any])?["denyWrite"] as? [String])
+    }
+    let real = base.appendingPathComponent("real"), linked = base.appendingPathComponent("linked"), none = base.appendingPathComponent("none")
+    for d in [real.appendingPathComponent(".git"), linked, none] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+    try Data("gitdir: ../real/.git/worktrees/linked\n".utf8).write(to: linked.appendingPathComponent(".git"))
+    func closed(_ d: [String], _ dir: URL) -> Bool { d.contains(dir.path + "/**/.git") && !d.contains(dir.path + "/*/**/.git") }
+    func opened(_ d: [String], _ dir: URL) -> Bool { d.contains(dir.path + "/*/**/.git") && !d.contains(dir.path + "/**/.git") }
+    let dr = try deny(real, directGit: true), dlocal = try deny(real, directGit: false)
+    #expect(opened(dr, real))  // the mount's real .git directory
+    #expect(closed(dlocal, real))  // a local session folder
+    let dn = try deny(none, directGit: true), dl = try deny(linked, directGit: true)
+    #expect(closed(dn, none) && closed(dl, linked))  // missing, or a gitdir: file
+    let both = try deny(none, directGit: true, extra: [real.path])  // an allowed folder is never opened, even with a real .git
+    #expect(closed(both, real) && closed(both, none))
+    // what stays closed inside an opened .git
+    let o = dr
+    for g in ["config", "config.worktree", "hooks", "info", "commondir", "worktrees", "modules", "objects/info/alternates", "shallow", "grafts", "rebase-merge", "rebase-apply", "sequencer", "remotes", "branches", "refs/replace"] {
+        #expect(o.contains(real.path + "/.git/" + g), "\(g)")
+    }
+}
+
+/// B1: a linked worktree (its `.git` is a file) is a local folder, never opened; the real claude cannot point it at a directory of its own. Gated like the test above.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"))
+func aClaudeAgentCannotRewriteTheGitFileOfALinkedWorktree() async throws {
+    guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
+    let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-direct-git-wt-" + UUID().uuidString.lowercased())
+    let main = base.appendingPathComponent("main"), wt = base.appendingPathComponent("wt")
+    try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: base) }
+    #expect(sh("git init -q && echo x > a.txt && git add a.txt && git -c user.name=O -c user.email=o@example.com commit -qm init && git worktree add -q '\(wt.path)'", main.path).status == 0)
+    let before = try String(contentsOf: wt.appendingPathComponent(".git"), encoding: .utf8)
     var cfg = ClaudeCLIConfig(); cfg.allowLocalTools = true
-    let a = cfg.agentArgs(cwd: project, allTools: [], folders: AllowedFolders(), checkedPaths: [])
-    let st = try #require(try JSONSerialization.jsonObject(with: Data(a[a.firstIndex(of: "--settings")! + 1].utf8)) as? [String: Any])
-    let deny = try #require(((st["sandbox"] as? [String: Any])?["filesystem"] as? [String: Any])?["denyWrite"] as? [String])
-    #expect(deny.contains(project.path + "/*/**/.git") && !deny.contains(project.path + "/**/.git") && !deny.contains(project.path + "/.git"))
+    for direct in [false, true] {  // a local folder, and (a gitdir: file stays closed) a direct-mode mount
+        let args = cfg.agentArgs(cwd: wt, allTools: ["Bash"], folders: AllowedFolders(), checkedPaths: [], directGit: direct)
+            + ["-p", "--output-format", "json", "--model", "haiku", "--strict-mcp-config", "--setting-sources", ""]
+        var env = ProcessInfo.processInfo.environment
+        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k.hasPrefix("GIT_") { env[k] = nil }
+        env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        env.merge(ClaudeCLIConfig.sandboxGitEnv) { $1 }
+        let r = ClaudeSeatbelt.capture(exe, args, env: env, cwd: wt.path, input: "Run as one simple Bash call: printf 'gitdir: x' > .git   and report the exact output.", timeout: 240, log: base)
+        print("[direct-git wt direct=\(direct)] \((r.out.components(separatedBy: "\"result\":").last ?? "").prefix(300))")
+        #expect((try? String(contentsOf: wt.appendingPathComponent(".git"), encoding: .utf8)) == before, "the .git file was rewritten (direct=\(direct))")
+    }
 }

@@ -147,8 +147,12 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 		deny = append(deny, roDenied()...)
 	} else {
 		for _, d := range dirs {
-			for _, g := range gitDenies {
-				gitDeny = append(gitDeny, filepath.Join(d, ".git", g))
+			st, err := os.Lstat(filepath.Join(d, ".git"))
+			gitEntry := err == nil && !st.IsDir() // a gitdir: file or a link (linked worktree, submodule)
+			for _, g := range agentGitDenies {
+				if !gitEntry { // nothing can be under a file: the entry itself is denied below
+					gitDeny = append(gitDeny, filepath.Join(d, ".git", filepath.FromSlash(g)))
+				}
 				for _, t := range []string{"Edit", "Write"} { // tudi na Windows, kjer sandboxa ni
 					deny = append(deny, t+"("+ruleAbs(d)+"/.git/"+g+")", t+"("+ruleAbs(d)+"/.git/"+g+"/**)")
 				}
@@ -156,7 +160,12 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 				deny = append(deny, "Edit("+ruleAbs(d)+"/**/.git/"+g+")", "Edit("+ruleAbs(d)+"/**/.git/"+g+"/**)")
 			}
 			deny = append(deny, "Edit("+ruleAbs(d)+"/.git)", "Edit("+ruleAbs(d)+"/**/.git)") // a gitdir: file (submodule) or .git itself
-			for _, g := range submoduleDenies {                                              // V1: the submodules' config, hooks and info (top-level and nested), not the whole .git/modules tree
+			// P1 (0.7.0): the shell's own rule for the entry: a `.git` that is a gitdir: file or a link (a linked worktree, a submodule) cannot be rewritten to point git at a directory of the
+			// agent's; only where it exists (on Linux a rule for a missing path binds /dev/null there, which breaks git), a real directory is written by git itself and keeps its entries above
+			if gitEntry {
+				gitDeny = append(gitDeny, filepath.Join(d, ".git"))
+			}
+			for _, g := range submoduleDenies { // V1: the submodules' config, hooks and info (top-level and nested), not the whole .git/modules tree
 				for _, r := range []string{"/.git/modules/**/", "/**/.git/modules/**/"} {
 					deny = append(deny, "Edit("+ruleAbs(d)+r+g+")", "Edit("+ruleAbs(d)+r+g+"/**)")
 					gitDeny = append(gitDeny, filepath.ToSlash(d)+r+g)
@@ -253,7 +262,7 @@ var sandboxGitEnv = []string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSY
 // closed names in one case. Every rule that names one of them is also given in a form that matches any case (`[gG][iI][tT]`, gitignore-style classes), added to the
 // rule, never instead of it: where the matcher already ignores case, or does not take classes, the original keeps working as before.
 func withCaseVariants(rules []string) []string {
-	names := append([]string{".git", ".claude"}, gitDenies...)
+	names := append([]string{".git", ".claude"}, agentGitDenies...)
 	out := slices.Clone(rules)
 	for _, r := range rules {
 		if !strings.Contains(r, "/.git") && !strings.Contains(r, "/.claude") {
@@ -286,6 +295,11 @@ func caseClass(n string) string {
 }
 
 var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees"}
+
+// agentGitDenies (P1, 0.7.0): what the owner's git runs or follows inside the top-level `.git`, closed for a Claude CLI agent's shell and file tools: the same list as the Mac
+// (ClaudeCLIConfig.directGitDenies). Objects, index, HEAD, refs and logs stay writable (a commit writes them; the client's guard and the git watch cover direct-mode mounts).
+var agentGitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply", "sequencer", "remotes", "branches",
+	"objects/info/alternates", "objects/info/http-alternates", "refs/replace", "logs/refs/replace", "modules"}
 
 // submoduleDenies (V1, V5): a submodule's git directory (.git/modules/<sub>/) is read by the owner's git like the top-level one, so the same list
 // (config, hooks, info, and commondir or worktrees, which redirect git to another directory's config and hooks); objects, index, HEAD and refs stay writable.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -184,5 +185,50 @@ func TestWebToolEntriesAndSettingSources(t *testing.T) { // V6, V8
 		if got := readsFolderSettings(src); got != want {
 			t.Errorf("%q: %v", src, got)
 		}
+	}
+}
+
+// P1 (0.7.0): the sandbox's denyWrite of a Claude CLI run with Allow local tools holds the Mac's list inside `.git`, and the entry itself where it is a gitdir: file.
+func TestSandboxDenyWriteHoldsTheGitListAndAGitdirFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no sandbox settings on Windows")
+	}
+	root := t.TempDir()
+	dir, wtree, bare := filepath.Join(root, "repo"), filepath.Join(root, "linked"), filepath.Join(root, "inrepo")
+	for _, d := range []string{filepath.Join(dir, ".git"), wtree, bare} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(wtree, ".git"), []byte("gitdir: ../repo/.git/worktrees/linked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := testServer(t, func(c *serveConfig) { c.AllowLocalTools = true })
+	a := s.agentArgs(dir, false, []string{wtree, bare})
+	var st struct {
+		Sandbox struct{ Filesystem struct{ DenyWrite []string } }
+	}
+	if err := json.Unmarshal([]byte(a[slices.Index(a, "--settings")+1]), &st); err != nil {
+		t.Fatal(err)
+	}
+	deny := st.Sandbox.Filesystem.DenyWrite
+	for _, g := range []string{"config", "hooks", "info", "commondir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply", "sequencer", "remotes", "branches", "objects/info/alternates", "refs/replace", "modules"} {
+		if !slices.Contains(deny, filepath.Join(dir, ".git", filepath.FromSlash(g))) {
+			t.Errorf("missing %s in %v", g, deny)
+		}
+		if slices.Contains(deny, filepath.Join(wtree, ".git", filepath.FromSlash(g))) {
+			t.Errorf("%s under a .git file", g)
+		}
+	}
+	if !slices.Contains(deny, filepath.Join(wtree, ".git")) {
+		t.Error("a .git file is writable")
+	}
+	for _, d := range []string{dir, bare} { // a real directory is written by git itself; a missing .git is not bound as /dev/null
+		if slices.Contains(deny, filepath.Join(d, ".git")) {
+			t.Errorf("%s: the .git entry is denied", d)
+		}
+	}
+	if tools := a[slices.Index(a, "--disallowedTools")+1]; !strings.Contains(tools, "Edit(//"+strings.TrimPrefix(filepath.ToSlash(dir), "/")+"/.git/shallow)") {
+		t.Error("the file tools may edit .git/shallow")
 	}
 }
