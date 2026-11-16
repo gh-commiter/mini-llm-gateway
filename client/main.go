@@ -676,6 +676,9 @@ func main() {
 	if toolsErr != "" {
 		fail(toolsErr)
 	}
+	if msg := editWindowsRefusal(runtime.GOOS); tools == "edit" && msg != "" {
+		fail(msg)
+	}
 	if f := toolsWiden(args); tools != "" && f != "" {
 		fail(f + " is not accepted together with --minigw-tools (or --minigw-ro for a provider model): it could widen the tools of the model")
 	}

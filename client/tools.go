@@ -18,13 +18,30 @@ const toolsRead = "Read,Grep,Glob"
 // files only inside the current folder (./**), the paths below stay refused even inside it (the list of protectedPath in sync.go).
 const toolsEdit = "Read,Grep,Glob,Edit,Write"
 
+// editProtected: the protected paths as globs (below the folder or any subfolder). Only the plain names of macOS and Linux; Windows name forms
+// (trailing dot or space, 8.3 short names) are not covered, so edit is refused on Windows (editWindowsRefusal).
+var editProtected = []string{".git/**", ".git", ".claude/settings*.json", ".claude/hooks/**", ".claude/commands/**", ".claude/agents/**",
+	".claude/skills/**", ".husky/**", ".githooks/**", ".vscode/tasks.json", ".envrc"}
+
+// editWindowsRefusal: why edit cannot run on this system, "" = it may.
+func editWindowsRefusal(goos string) string {
+	if goos == "windows" {
+		return "--minigw-tools=edit is not available on Windows yet: its path rules cannot cover Windows name forms (trailing dots and spaces, 8.3 short names)"
+	}
+	return ""
+}
+
 // editRules: --allowedTools and --disallowedTools of the level edit. A rule matches the folder itself and any subfolder (./ and ./**/),
 // every letter of a protected name in both cases (a case-insensitive file system).
 func editRules() (allow, deny string) {
+	return "Read(./**),Grep(./**),Glob(./**),Edit(./**)", strings.Join(editDenyRules(), ",")
+}
+
+// editDenyRules: the Edit(...) deny rules, generated from editProtected (the test TestEditRulesCoverProtectedPaths checks them against protectedPath).
+func editDenyRules() []string {
 	var d []string
 	for _, base := range []string{"./", "./**/"} {
-		for _, p := range []string{".git/**", ".git", ".claude/settings*.json", ".claude/hooks/**", ".claude/commands/**", ".claude/agents/**",
-			".claude/skills/**", ".husky/**", ".githooks/**", ".vscode/tasks.json", ".envrc"} {
+		for _, p := range editProtected {
 			parts := strings.Split(p, "/")
 			for i, part := range parts {
 				if part != "**" {
@@ -34,7 +51,7 @@ func editRules() (allow, deny string) {
 			d = append(d, "Edit("+base+strings.Join(parts, "/")+")")
 		}
 	}
-	return "Read(./**),Grep(./**),Glob(./**),Edit(./**)", strings.Join(d, ",")
+	return d
 }
 
 // takeTools: --minigw-tools <v> ali =<v> (zadnji velja, do »--«) iz argumentov; value "" = ni podan; errMsg ≠ "" = neveljavno.
