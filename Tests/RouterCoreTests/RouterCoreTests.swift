@@ -426,12 +426,12 @@ func discoveryReady(_ r: Router) async {
 }
 
 @Test func firstOfDoesNotWaitForSlowTask() async {
-    // Počasna naloga 60 s, meja 30 s: pod obremenitvijo nadaljevanje testa zamudi, a še vedno ne čaka počasne.
-    let slow = Task { try? await Task.sleep(for: .seconds(60)); return 1 }
+    // Počasna naloga 600 s, meja 300 s: pod obremenitvijo (vsi niti bazena zasedeni, 94 s opaženo) nadaljevanje testa zamudi, a še vedno ne čaka počasne.
+    let slow = Task { try? await Task.sleep(for: .seconds(600)); return 1 }
     defer { slow.cancel() }
     let t0 = ContinuousClock.now
     #expect(await firstOf(slow, within: .milliseconds(100)) == nil)
-    #expect(ContinuousClock.now - t0 < .seconds(30))
+    #expect(ContinuousClock.now - t0 < .seconds(300))
     #expect(await firstOf(Task { 7 }, within: .seconds(1)) == 7)
 }
 

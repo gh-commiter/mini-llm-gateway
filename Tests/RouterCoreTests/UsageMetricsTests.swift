@@ -79,7 +79,7 @@ private final class SpendingLimitUpstream: URLProtocol, @unchecked Sendable {
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [SpendingLimitUpstream.self]
     let session = URLSession(configuration: config)
-    defer { session.invalidateAndCancel() }
+    // not invalidated: the router's catalog may still start a discovery request after the test body (an invalidated session raises an uncatchable NSGenericException and ends the whole run)
     let route = Route(provider: ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://openrouter.ai/api", aliases: ""),
                       name: "alias", alias: "claude-alias", upstream: "routed", window: nil)
     let state = RequestState()
@@ -116,10 +116,11 @@ private final class SpendingLimitUpstream: URLProtocol, @unchecked Sendable {
     }
     #expect(await router.usageSender.flush())
     var rows: [[String: Any]] = []
-    for _ in 0..<100 {
+    // A row exists from the first event of its model; its numbers arrive with the finished one: wait for the numbers, not for the rows (a loaded machine showed 0).
+    for _ in 0..<500 {
         let response = await helper.call(context: .admin, request: CoreRequest(method: "GET", path: "/usage/events"))
         rows = ((try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any])?["days"] as? [[String: Any]] ?? []
-        if rows.count == 3 { break }
+        if rows.count == 3, ["reported", "subscription"].allSatisfy({ m in rows.first { $0["model"] as? String == m }?["tokensOut"] as? Int == 4 }) { break }
         try await Task.sleep(for: .milliseconds(20))
     }
     #expect(rows.count == 3)
