@@ -43,7 +43,7 @@ func TestEventDurationAndFailureKinds(t *testing.T) {
 		hr := httptest.NewRequest("POST", "/v1/messages", nil).WithContext(ctx)
 		r := &req{Request: hr, conn: &serveConn{device: &serveDevice{ID: devID(f.dev["ana"])}}, rid: "r", body: []byte(`{"model":"m"}`), provider: "gw"}
 		f.s.admitEvent(r, name)
-		time.Sleep(300 * time.Millisecond) // admission to dispatch (a queue) is not execution time
+		r.event.Start = time.Now().Add(-time.Hour) // admitted an hour ago: a queue is not execution time
 		uw := &usageWriter{ResponseWriter: httptest.NewRecorder()}
 		status := 200
 		if agentFail == "" {
@@ -81,8 +81,8 @@ func TestEventDurationAndFailureKinds(t *testing.T) {
 	}{"ok": {"ok", "", 200}, "403": {"error", "http", 403}, "broken": {"error", "stream", 200}, "agent exit": {"error", "exit", 0}, "agent timeout": {"error", "timeout", 0}}
 	for name, w := range want {
 		x := got[name]
-		if x.outcome != w.outcome || x.kind.String != w.kind || x.status.Int64 != w.status || !x.dur.Valid || x.dur.Int64 >= 250 {
-			t.Errorf("%s: %+v, want %+v (duration below the 300 ms wait before dispatch)", name, x, w)
+		if x.outcome != w.outcome || x.kind.String != w.kind || x.status.Int64 != w.status || !x.dur.Valid || x.dur.Int64 >= 600000 {
+			t.Errorf("%s: %+v, want %+v (the duration must not include the hour before dispatch)", name, x, w)
 		}
 	}
 }

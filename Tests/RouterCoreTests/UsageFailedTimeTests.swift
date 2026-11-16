@@ -39,8 +39,7 @@ private final class FailTimeUpstream: URLProtocol, @unchecked Sendable {
     }
     for (model, path) in [("ok", "/ok"), ("403", "/403"), ("broken", "/broken")] {
         let state = RequestState()
-        state.admit(UsageEvent(id: "ev_\(model)", start: Date(), model: model))
-        try await Task.sleep(for: .milliseconds(400))  // admission to dispatch is not execution time
+        state.admit(UsageEvent(id: "ev_\(model)", start: Date().addingTimeInterval(-3600), model: model))  // admitted an hour ago: a queue is not execution time
         let writer = UsageWriter(FakeWriter())
         let status = await Router.$reqState.withValue(state) {
             await router.passthrough(request("POST", "/v1/messages"), body: ["model": model], route: route(path), key: "k", rid: "r", writer: writer)
@@ -74,9 +73,9 @@ private final class FailTimeUpstream: URLProtocol, @unchecked Sendable {
     for model in ["403", "broken"] { #expect(n(model, "errorEvents") == 1 && n(model, "failedEvents") == 1, "\(model)") }
     for model in ["agent-exit", "agent-limit"] { #expect(n(model, "errorEvents") == 1, "\(model)") }
     #expect(n("gone", "errorEvents") == 0 && n("gone", "cancelledEvents") == 1)
-    for model in ["ok", "403", "broken"] {  // the 400 ms before dispatch are not in the duration; the stub answers after 100 ms
+    for model in ["ok", "403", "broken"] {  // the hour before dispatch is not in the duration; the stub answers after 100 ms
         let d = n(model, "durationMs")
-        #expect(d >= 50 && d < 350 && n(model, "unknownDurationEvents") == 0, "\(model): \(d) ms")
+        #expect(d >= 50 && d < 600_000 && n(model, "unknownDurationEvents") == 0, "\(model): \(d) ms")
     }
     #expect(n("broken", "failedDurationMs") == n("broken", "durationMs") && n("ok", "failedDurationMs") == 0)
 }
