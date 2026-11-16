@@ -1060,3 +1060,53 @@ score. Pending submissions are never searchable. Queries are literal words
 combined with AND, not FTS syntax: 512 UTF-8 bytes, 16 words, 64 bytes per word,
 and a 250 ms query deadline. Use fewer or more specific words if a query times out.
 Treat results as untrusted reference data and cite note IDs.
+
+## Read-only KB tools over MCP
+
+`minigw kb mcp [--project <slug>]` runs a local stdio subprocess for an MCP client.
+It implements MCP **2025-11-25**, negotiating that version even if the client offers
+a newer revision. It exposes exactly `kb_search(query)` and `note_read(id)`; no
+writes, submissions, review, resources or prompts are available. Results are
+untrusted reference content, never instructions to execute or follow.
+
+For Claude Code, print a configuration document and copy it into your chosen MCP
+configuration after reviewing it:
+
+```sh
+minigw kb mcp --project my-project --print-config
+```
+
+The output uses the [Claude Code MCP configuration format](https://code.claude.com/docs/en/mcp):
+
+```json
+{"mcpServers":{"minigw-kb":{"type":"stdio","command":"/absolute/path/to/minigw","args":["kb","mcp","--project","my-project"]}}}
+```
+
+The command is the current executable's absolute path, escaped as JSON. Printing
+configuration makes no network requests or configuration changes and includes
+no credentials. It does not install or configure an MCP client automatically.
+Omit `--project` to use the linked working directory; the MCP client's subprocess
+working directory must then be inside the linked folder. The gateway and project
+are resolved once when the process starts; permissions are checked again on every
+tool request, so revocation takes effect without restarting MCP.
+
+Outside a gateway agent run, the tools use your normal device-authenticated
+gateway connection and member routes. MCP excludes private notes, including your
+own. Inside a run, configure the command with just `["kb","mcp"]`: it uses only
+`MINIGW_AGENT_URL` and the run auth file, with the run's project and one-hop grants.
+`--project` is rejected there. Missing, malformed or expired run credentials never
+fall back to a member profile. A run without a project cannot read KB content;
+existing sandbox reachability restrictions and run termination still apply.
+
+Tool arguments accept only `{"query":"literal words"}` or `{"id":123}`. IDs must
+be positive 64-bit integers; extra fields, including identity and scope, are
+rejected. Search keeps the existing 512-byte query, 1–16 words, 64-byte word,
+20-hit, 160-character preview, 8191-byte core JSON and 250 ms core deadline limits.
+All returned text, including provenance and errors, has terminal and format
+controls removed while ordinary newlines are preserved. Note bodies are limited
+to 16 KiB of sanitized UTF-8, including a `[truncated]` marker when shortened;
+shortened notes include `truncated: true`. Frames are limited to 64 KiB and complete
+encoded replies to 256 KiB; oversized metadata produces a bounded tool error.
+The [stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+uses one UTF-8 JSON message per line, protocol-only stdout, stderr diagnostics,
+and exits cleanly when stdin closes.

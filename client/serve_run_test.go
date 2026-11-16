@@ -735,6 +735,30 @@ func TestNoteReadCommandsInsideARun(t *testing.T) {
 	}
 	e, _, _ = env()
 	wantErr(t, e.project([]string{"list"}), "only minigw kb search, note list and note read work")
+	// MCP uses the same real run port, including its process-tree check.
+	mcpRead := func(id int64) string {
+		return fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"note_read","arguments":{"id":%d}}}`, id)
+	}
+	e, o, _ = env()
+	e.in = strings.NewReader(mcpInput(t, mcpRead(n), mcpRead(priv)))
+	if err := e.kbMCP(nil); err != nil {
+		t.Fatal(err)
+	}
+	msgs := mcpMessages(t, o.Bytes())
+	if msgs[1]["result"].(map[string]any)["isError"] != false || msgs[2]["result"].(map[string]any)["isError"] != true {
+		t.Fatal(o.String())
+	}
+	run.root.Store(0)
+	e, o, _ = env()
+	e.in = strings.NewReader(mcpInput(t, mcpRead(n)))
+	if err := e.kbMCP(nil); err != nil {
+		t.Fatal(err)
+	}
+	msgs = mcpMessages(t, o.Bytes())
+	if msgs[1]["result"].(map[string]any)["isError"] != true {
+		t.Fatal("MCP bypassed process-tree check")
+	}
+	run.started(os.Getpid())
 	// the epoch moves: the next read says so
 	f.s.core.BumpEpoch(t0, "test")
 	e, _, _ = env()

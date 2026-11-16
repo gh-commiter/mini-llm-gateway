@@ -41,3 +41,46 @@ func TestNoteOperationsRecheckAfterAdmission(t *testing.T) {
 		})
 	}
 }
+
+func TestRunNoteReadAuthorizationChanges(t *testing.T) {
+	for _, change := range []string{"approval", "binding", "epoch", "membership", "grant", "missing project"} {
+		t.Run(change, func(t *testing.T) {
+			f := newFixture(t)
+			epoch, _ := f.st.Epoch(bg)
+			cap := core.RunCap{UserID: f.uid["cene"], DeviceID: "dev-cene", ProjectID: f.pid["eureko"], Epoch: epoch}
+			cx := Context{Kind: KindRun, Run: &cap, Approved: true}
+			req := Request{Method: "GET", Path: fmt.Sprintf("/minigw/v1/notes/%d", f.nid["structure"]), RawQuery: "project=999&class=private"}
+			if v := f.api.Handle(bg, cx, req); v.Status != 200 {
+				t.Fatalf("%d %s", v.Status, v.Body)
+			}
+			for _, id := range []int64{f.nid["private"], f.nid["data"], 9999} {
+				r := get(fmt.Sprintf("/minigw/v1/notes/%d", id))
+				v := f.api.Handle(bg, cx, r)
+				if v.Status != 404 || string(v.Body) != string(f.api.errResponse(core.ErrNotFound).Body) {
+					t.Fatalf("hidden metadata: %d %s", v.Status, v.Body)
+				}
+			}
+			var err error
+			switch change {
+			case "approval":
+				cx.Approved = false
+			case "binding":
+				err = f.st.SetBinding(bg, "dev-cene", f.uid["ana"])
+			case "epoch":
+				_, err = f.st.BumpEpoch(bg, "test")
+			case "membership":
+				err = f.st.RemoveMember(bg, f.pid["eureko"], f.uid["cene"])
+			case "grant":
+				err = f.st.RemoveGrant(bg, f.pid["fakture"], f.pid["eureko"], core.Structure)
+			case "missing project":
+				cap.ProjectID = 0
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v := f.api.Handle(bg, cx, req); v.Status != 403 {
+				t.Fatalf("%d %s", v.Status, v.Body)
+			}
+		})
+	}
+}
