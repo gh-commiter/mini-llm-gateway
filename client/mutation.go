@@ -16,7 +16,12 @@ func mutationParent(root *os.Root, p string) (*os.Root, string, error) {
 
 // mutationParentFor: git true = direct mode, where git's own data is writable (protectedPathFor).
 func mutationParentFor(root *os.Root, p string, git bool) (*os.Root, string, error) {
-	if !filepath.IsLocal(p) || p == "." || protectedPathFor(filepath.ToSlash(p), git) {
+	return mutationParentOpt(root, p, git, false)
+}
+
+// mutationParentOpt: `placeholder` (a MKCOL in direct mode) lets the empty folders .git/remotes and .git/branches be created (gitPlaceholderDir); nothing inside them.
+func mutationParentOpt(root *os.Root, p string, git, placeholder bool) (*os.Root, string, error) {
+	if !filepath.IsLocal(p) || p == "." || protectedPathFor(filepath.ToSlash(p), git) && !(placeholder && git && gitPlaceholderDir(strings.Split(filepath.ToSlash(p), "/"))) {
 		return nil, "", fmt.Errorf("protected path: %s", p)
 	}
 	parent, err := root.OpenRoot(filepath.Dir(p))
@@ -43,8 +48,9 @@ func mutationParentFor(root *os.Root, p string, git bool) (*os.Root, string, err
 		return fail(err)
 	}
 	rel, err := filepath.Rel(rp, pp)
+	full := filepath.ToSlash(filepath.Join(rel, filepath.Base(p)))
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
-		protectedPathFor(filepath.ToSlash(filepath.Join(rel, filepath.Base(p))), git) {
+		protectedPathFor(full, git) && !(placeholder && git && gitPlaceholderDir(strings.Split(full, "/"))) {
 		return fail(fmt.Errorf("protected path: %s", p))
 	}
 	return parent, filepath.Base(p), nil
@@ -56,7 +62,7 @@ type mutationRoot struct {
 }
 
 func (r mutationRoot) Mkdir(p string, mode os.FileMode) error {
-	parent, name, err := mutationParentFor(r.Root, p, r.git)
+	parent, name, err := mutationParentOpt(r.Root, p, r.git, true)
 	if err != nil {
 		return err
 	}

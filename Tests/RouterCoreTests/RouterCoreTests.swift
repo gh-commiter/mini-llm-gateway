@@ -513,6 +513,12 @@ func discoveryReady(_ r: Router) async {
     #expect(dav("PUT", "/.git/objects/info/._commit-graphs", [:], "x").status == 201 && dav("DELETE", "/.git/objects/info/._commit-graphs").status == 204)
     #expect(!WebDAV.refused.withLock { $0.paths.contains(".git/objects/info/._commit-graphs") })
     #expect(dav("PUT", "/.git/objects/info/alternates", [:], "x").status == 403)
+    // Claude Code's sandbox makes the placeholder folders .git/remotes and .git/branches (else it closes the whole .git to the shell): the EMPTY folder only
+    #expect(dav("MKCOL", "/.git/remotes").status == 201 && dav("MKCOL", "/.git/branches").status == 201)
+    #expect(dav("PUT", "/.git/remotes/origin", [:], "x").status == 403 && dav("MKCOL", "/.git/remotes/sub").status == 403 && dav("MKCOL", "/.git/rebase-merge").status == 403 && dav("MKCOL", "/.git/hooks2").status == 403)
+    #expect(dav("DELETE", "/.git/remotes").status == 403 && dav("MOVE", "/.git/remotes", ["destination": "http://127.0.0.1:8765/dav/s/.git/hooks"]).status == 403)
+    #expect(dav("MOVE", "/.git/._index.lock", ["destination": "http://127.0.0.1:8765/dav/s/.git/._index"]).status == 204 && dav("LOCK", "/.git/._index.lock").status != 403)
+    #expect(!WebDAV.refused.withLock { $0.paths.contains(".git/._index.lock") })
     #expect(dav("DELETE", "/dir").status == 204)
     #expect(dav("DELETE", "/").status == 403)
 }

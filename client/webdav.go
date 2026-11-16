@@ -143,11 +143,11 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 	}
 	switch method {
 	case "PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH":
-		if !(junk && (method == "PUT" || method == "DELETE")) && protected(p, rel) { // an AppleDouble file (._x) is never written (answered below): not a refusal to print
+		if !(junk && (method == "PUT" || method == "DELETE" || method == "MOVE")) && !(method == "MKCOL" && !exists && gitPlaceholderDir(rel)) && protected(p, rel) { // an AppleDouble file (._x) is never written (answered below): not a refusal to print
 			return davRefuse(rel)
 		}
 	case "LOCK":
-		if !exists && protected(p, rel) {
+		if !exists && !junk && protected(p, rel) {
 			return davRefuse(rel)
 		}
 	}
@@ -500,6 +500,12 @@ func rootTreeProtected(rooted *os.Root, dir string, base []string, git bool) boo
 		return nil
 	})
 	return found
+}
+
+// gitPlaceholderDir (0.7.0): Claude Code's sandbox makes the empty folders `.git/remotes` and `.git/branches` (placeholders for the paths it denies) when they are missing, and
+// denies the whole `.git` to the agent's shell if it cannot. Creating the EMPTY folder is allowed (MKCOL only); anything inside, a rename or a delete stays refused.
+func gitPlaceholderDir(rel []string) bool {
+	return len(rel) == 2 && strings.EqualFold(rel[0], ".git") && (strings.EqualFold(rel[1], "remotes") || strings.EqualFold(rel[1], "branches"))
 }
 
 func isJunk(p string) bool {

@@ -127,3 +127,29 @@ func TestDavAppleDoubleInGitIsQuiet(t *testing.T) {
 		t.Errorf("a real protected path: status %d", r.Status)
 	}
 }
+
+// Claude Code's sandbox makes the placeholder folders .git/remotes and .git/branches (else it closes the whole .git to the shell): the EMPTY folder only; AppleDouble MOVE and LOCK are quiet.
+func TestDavGitPlaceholderFoldersAreEmptyOnly(t *testing.T) {
+	root := t.TempDir()
+	buildGitGuardTree(t, root, []string{"d:.git", "d:.git/hooks"})
+	st := func(m, p string, h map[string]string) int {
+		return davHandle(m, "/s/"+p, h, []byte("x"), root, "/s").Status
+	}
+	if st("MKCOL", ".git/remotes", nil) != 201 || st("MKCOL", ".git/branches", nil) != 201 {
+		t.Error("the placeholder folders were refused")
+	}
+	for _, c := range [][2]string{{"PUT", ".git/remotes/origin"}, {"MKCOL", ".git/remotes/sub"}, {"MKCOL", ".git/rebase-merge"}, {"MKCOL", ".git/hooks2"}, {"DELETE", ".git/remotes"}} {
+		if s := st(c[0], c[1], nil); s != 403 {
+			t.Errorf("%s %s: status %d", c[0], c[1], s)
+		}
+	}
+	if s := st("MOVE", ".git/._index.lock", map[string]string{"destination": "/s/.git/._index"}); s != 204 {
+		t.Errorf("AppleDouble MOVE: %d", s)
+	}
+	davRefusedMu.Lock()
+	shown := davRefused.paths[".git/._index.lock"]
+	davRefusedMu.Unlock()
+	if shown {
+		t.Error("the AppleDouble MOVE was reported")
+	}
+}

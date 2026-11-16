@@ -78,8 +78,9 @@ public enum WebDAV {
         func protected(_ r: String, _ c: [String]) -> Bool {
             Sync.isProtected(c.joined(separator: "/"), git: true) || Sync.protectedCanonical(URL(fileURLWithPath: root.path).appendingPathComponent(r), root: root, git: true)
         }
-        // an AppleDouble file (._x) is never written (PUT and DELETE answer below): not a refusal to print
-        if ["PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH"].contains(method) || (method == "LOCK" && !exists), !(junk && (method == "PUT" || method == "DELETE")), protected(p, rel) {
+        // an AppleDouble file (._x) is never written (PUT, DELETE, LOCK and a MOVE of it answer below): not a refusal to print
+        if ["PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH"].contains(method) || (method == "LOCK" && !exists), !(junk && ["PUT", "DELETE", "LOCK", "MOVE"].contains(method)),
+           !(method == "MKCOL" && !exists && Self.isGitPlaceholderDir(rel)), protected(p, rel) {
             return refuse(rel)
         }
         func parentExists(_ r: String) -> Bool { rt.isDir(ShareRoot.join(Array(ShareRoot.comps(r).dropLast()))) }
@@ -233,6 +234,12 @@ public enum WebDAV {
         guard let rooted = ShareRoot(root),
               (try? rooted.resolve(ShareRoot.join(comps), followLast: true)) != nil else { return nil }
         return (url, comps)
+    }
+
+    /// 0.7.0: Claude Code's sandbox makes the empty folders `.git/remotes` and `.git/branches` (placeholders for the paths it denies) when they are missing, and denies the whole
+    /// `.git` to the agent's shell if it cannot. Creating the EMPTY folder is allowed (MKCOL only); anything inside, a rename or a delete stays refused.
+    static func isGitPlaceholderDir(_ rel: [String]) -> Bool {
+        rel.count == 2 && rel[0].lowercased() == ".git" && ["remotes", "branches"].contains(rel[1].lowercased())
     }
 
     static func isJunk(_ path: String) -> Bool {

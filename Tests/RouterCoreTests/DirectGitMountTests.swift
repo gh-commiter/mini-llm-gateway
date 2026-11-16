@@ -13,6 +13,7 @@ private final class DAVLoopback: @unchecked Sendable {
     private var listener: Int32 = -1
     private(set) var port: UInt16 = 0
     private let seen = Mutex<[String]>([])  // requests that reached the client side, newest last (for the failure message)
+    var writes: [String] { seen.withLock { $0.filter { !$0.hasPrefix("PROPFIND") && !$0.hasPrefix("GET")  && !$0.hasPrefix("HEAD") && !$0.hasPrefix("OPTIONS") } } }
     var summary: String { seen.withLock { "\($0.count) requests reached the client side, last: " + $0.suffix(6).joined(separator: "; ") } }
 
     init?(root: URL, prefix: String) {
@@ -52,8 +53,8 @@ private final class DAVLoopback: @unchecked Sendable {
             case .error(let s, _):
                 send(c, HTTPResponse.head(status: s, headers: [], contentLength: 0)); return
             case .request(let req):
-                seen.withLock { $0.append(req.method + " " + req.path) }
                 let r = WebDAV.handle(method: req.method, path: req.path, headers: req.headers, body: req.body, root: root, prefix: prefix)
+                seen.withLock { $0.append(req.method + " " + req.path + (req.method == "PROPFIND" || req.method == "GET" ? "" : " -> \(r.status)")) }
                 var headers = r.headers.map { ($0.key, $0.value) }
                 let length = r.headers["Content-Length"] == nil ? r.body.count : nil
                 if length == nil { headers = headers.filter { $0.0 != "Content-Length" } + [("Content-Length", r.headers["Content-Length"]!)] }
@@ -155,4 +156,55 @@ private func forceUnmount(_ mp: URL) {
         #expect(!fm.fileExists(atPath: client.appendingPathComponent(".git/" + p).path), "\(p)")
     }
     #expect(!sh("cat .git/config", cwd: client.path).out.contains("evil") && !sh("cat .git/config", cwd: client.path).out.contains("# t"))
+}
+
+/// 0.7.0: the REAL claude, launched with the gateway's own arguments (`agentArgs(directGit: true)`) and environment, in a real direct-mode mount (mount_webdav of a folder served by the
+/// client's WebDAV code, `WebDAV.handle`, with its guard). Gated (the owner's subscription): MG_REAL_CLAUDE_GIT=1.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"))
+func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
+    guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("direct-mount-real-" + UUID().uuidString, isDirectory: true)
+    let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
+    for d in [client, mp] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+    defer { try? fm.removeItem(at: base) }
+    #expect(sh("git init -q && git config user.name Owner && git config user.email o@example.com && echo hi > a.txt && git add a.txt && git commit -qm init", cwd: client.path).status == 0)
+    let server = try #require(DAVLoopback(root: client, prefix: "/dav/e2e"))
+    defer { server.stop() }
+    let mounted = ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) == 0
+    defer { forceUnmount(mp) }
+    try #require(mounted, "mount_webdav to the loopback server")
+    var st = stat()
+    print("[mount-real] lstat .git: \(lstat(mp.path + "/.git", &st)) isDir=\(st.st_mode & S_IFMT == S_IFDIR) mp=\(mp.path) real=\(Sync.real(mp)?.path ?? "nil")")
+    var cfg = ClaudeCLIConfig(); cfg.allowLocalTools = true
+    var args = cfg.agentArgs(cwd: mp, allTools: ["Bash"], folders: AllowedFolders(), checkedPaths: [], directGit: true)
+    args += ["-p", "--output-format", "json", "--model", "haiku", "--strict-mcp-config", "--setting-sources", ""]
+    let settings = args[args.firstIndex(of: "--settings")! + 1]
+    let dw = ((((try? JSONSerialization.jsonObject(with: Data(settings.utf8))) as? [String: Any])?["sandbox"] as? [String: Any])?["filesystem"] as? [String: Any])?["denyWrite"] as? [String] ?? []
+    print("[mount-real] denyWrite git entries: \(dw.filter { $0.hasSuffix("/.git") || $0.hasSuffix("/.git/index.lock") })")
+    var env = ProcessInfo.processInfo.environment
+    for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k.hasPrefix("GIT_") { env[k] = nil }
+    env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+    env.merge(ClaudeCLIConfig.sandboxGitEnv) { $1 }
+    let watch = try #require(GitWatch.begin(client.path, stateDir: base.path + "-state"))  // the client's end-of-run git watch
+    let errFile = base.appendingPathComponent("stderr.txt")
+    let saved = dup(2), fd = open(errFile.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+    dup2(fd, 2)
+    WebDAV.refused.withLock { $0 = WebDAV.RefusalLog() }
+    let ask = "Run these as separate Bash calls, one simple command each (no chaining, no echo): 1) printf hi > b.txt  2) git add b.txt  3) git commit -m 'add b'  4) printf x > .git/hooks/pre-commit  5) printf x > .git/COMMIT_EDITMSG  6) mv .git/COMMIT_EDITMSG .git/config. Report the exact output of each."
+    let r = ClaudeSeatbelt.capture(exe, args, env: env, cwd: mp.path, input: ask, timeout: 300, log: base)
+    for _ in 0..<50 { usleep(200_000) }  // webdavfs writes back after close
+    dup2(saved, 2); close(saved); close(fd)
+    let refusals = (try? String(contentsOf: errFile, encoding: .utf8)) ?? ""
+    print("[mount-real] claude said: \((r.out.components(separatedBy: "\"result\":").last ?? "").prefix(1200))")
+    print("[mount-real] client stderr: \(refusals)")
+    print("[mount-real] requests: \(server.summary)\n[mount-real] writes: \(server.writes)")
+    let log = sh("git log --format=%s", cwd: client.path).out
+    let report = watch.finish()
+    print("[mount-real] git watch report: \(report)")
+    #expect(log.hasPrefix("add b"), "no commit in the client's repository: \(log)")
+    #expect(report.joined().contains("1 new commit(s)"), "\(report)")
+    #expect(!refusals.contains("._"), "AppleDouble files are not reported: \(refusals)")
+    #expect(!fm.fileExists(atPath: client.appendingPathComponent(".git/hooks/pre-commit").path))
+    #expect(!sh("cat .git/config", cwd: client.path).out.contains("COMMIT_EDITMSG") && !sh("cat .git/config", cwd: client.path).out.hasPrefix("x"))
 }

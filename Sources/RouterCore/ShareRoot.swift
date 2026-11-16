@@ -256,21 +256,23 @@ final class ShareRoot: @unchecked Sendable {
 
     /// Nadrejena mapa `rel`, odprta brez povezav, in ime. Preveri še pot odprte mape glede na koren: zaščitena pot
     /// (.git, .claude/settings*.json, …) ali mapa zunaj korena = nil (kot Go mutationParent). Klicatelj zapre deskriptor.
-    func parent(_ rel: String) -> (fd: Int32, name: String)? {
-        guard let c = Self.local(rel), let name = c.last, !Sync.isProtected(c.joined(separator: "/"), git: git) else { return nil }
+    /// `placeholder` (mkdir in direct mode): the empty folders `.git/remotes` and `.git/branches` may be created (WebDAV.isGitPlaceholderDir); nothing inside them.
+    func parent(_ rel: String, placeholder: Bool = false) -> (fd: Int32, name: String)? {
+        func protected(_ s: String) -> Bool { Sync.isProtected(s, git: git) && !(placeholder && git && WebDAV.isGitPlaceholderDir(s.split(separator: "/").map(String.init))) }
+        guard let c = Self.local(rel), let name = c.last, !protected(c.joined(separator: "/")) else { return nil }
         let p = openat(fd, Self.join(Array(c.dropLast())), O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
         guard p >= 0 else { return nil }
         // Ob vsaki spremembi znova iz deskriptorja; brez poti korena ali mape = zavrnjeno.
         // Pot odprte mape se od zahtevane razlikuje le prek povezave, ki jo O_NOFOLLOW_ANY že zavrne: obramba v globino.
         guard let root = path, let pp = Self.path(of: p), pp == root || pp.hasPrefix(root + "/"),
-              !Sync.isProtected(pp == root ? name : String(pp.dropFirst(root.count + 1)) + "/" + name, git: git)
+              !protected(pp == root ? name : String(pp.dropFirst(root.count + 1)) + "/" + name)
         else { close(p); return nil }
         return (p, name)
     }
 
     /// 0 = uspelo, sicer errno.
     func mkdir(_ rel: String, _ mode: mode_t = 0o755) -> Int32 {
-        guard let (p, name) = parent(rel) else { return EACCES }
+        guard let (p, name) = parent(rel, placeholder: true) else { return EACCES }
         defer { close(p) }
         return mkdirat(p, name, mode) == 0 ? 0 : errno
     }
