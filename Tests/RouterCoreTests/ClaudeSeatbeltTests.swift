@@ -611,7 +611,16 @@ private final class Clock: @unchecked Sendable {
         p.executableURL = URL(fileURLWithPath: boxed ? "/usr/bin/sandbox-exec" : "/usr/bin/security")
         p.arguments = (boxed ? ["-p", profile, "/usr/bin/security"] : []) + args
         p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice; p.standardInput = FileHandle.nullDevice
-        try p.run(); p.waitUntilExit()
+        let exited = DispatchSemaphore(value: 0)
+        p.terminationHandler = { _ in exited.signal() }
+        try p.run()
+        // A locked or missing login keychain without a GUI session (a clean CI runner) makes `security` wait for a dialog nobody can answer: bounded, and then
+        // the Mac cannot run this check, which is not a failure of the profile.
+        if exited.wait(timeout: .now() + 30) == .timedOut {
+            kill(p.processIdentifier, SIGKILL)
+            exited.wait()
+            try Test.cancel("security waited for a keychain dialog: no GUI session or the login keychain is locked here")
+        }
         return p.terminationStatus
     }
     defer { _ = try? security(["delete-generic-password", "-s", service], boxed: false) }
