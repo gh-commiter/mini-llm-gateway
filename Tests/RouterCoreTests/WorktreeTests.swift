@@ -47,7 +47,11 @@ private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocat
     Task {
         var chain: [String: Worktree.ConvRecord]?, sent: [String] = [], contTip: String?, contRec: Worktree.ConvRecord?
         while !Task.isCancelled {
-            guard case .some(.some(let job)) = await hub.poll(key: key, wait: 0.2) else { continue }
+            let polled = await hub.poll(key: key, wait: 0.2)
+            // poll answers .none at once (no suspension) while the share is not registered or already closed: without a pause this loop owns its pool thread for good
+            // (a client of a finished test is never cancelled), and three of them stop a 3-core runner
+            if case .none = polled { try? await Task.sleep(for: .milliseconds(50)) }
+            guard case .some(.some(let job)) = polled else { continue }
             var r = DAVResponse(403)
             if job.method == "WORKTREE-PULL", let st = pullStatus?.withLock({ $0 }), st != 200 {
                 r = DAVResponse(st)

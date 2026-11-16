@@ -120,10 +120,10 @@ private func inputs(probe: Bool = false, exe: String? = "/fake/claude", enabled:
     @Test func aStuckProbeDoesNotBlockCodexRecordingAndWaitersShareOneRun() async throws {
         let release = DispatchSemaphore(value: 0), started = DispatchSemaphore(value: 0)
         let cli = CLICounter(.success(Data(usageEnvelope.utf8)))
-        let e = QuotaEngine(runUsage: { _, _ in _ = try cli.call(); started.signal(); release.wait(); return Data(usageEnvelope.utf8) }, zone: utc)
+        let e = QuotaEngine(runUsage: { _, _ in _ = try cli.call(); started.signal(); await offPool { release.wait() }; return Data(usageEnvelope.utf8) }, zone: utc)
         let i = inputs(probe: true)
         let a = Task { await e.report(i, now: t0) }
-        await Task.detached { started.wait() }.value  // the probe runs and is stuck
+        await offPool { started.wait() }  // the probe runs and is stuck
         let b = Task { await e.report(i, now: t0) }  // a second caller waits for the first one
         // a Codex run finishes meanwhile: its numbers are recorded at once
         let home = tempDir("codex")
