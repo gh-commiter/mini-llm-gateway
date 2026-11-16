@@ -1,0 +1,134 @@
+{
+ "cases": [
+  {
+   "name": "name only",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ Bash\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "x\n",
+   "err": "minigw: · Bash\n"
+  },
+  {
+   "name": "name and detail",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ read_file src/a.go\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "x\n",
+   "err": "minigw: · read_file src/a.go\n"
+  },
+  {
+   "name": "leading newline and spaces in the detail",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"\\n⏺ grep -n  a b\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "x\n",
+   "err": "minigw: · grep -n  a b\n"
+  },
+  {
+   "name": "answer text never contains the steps",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"Looking.\"}}}",
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"\\n⏺ read_file a.go\\n\"}}}",
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"\\n⏺ grep x y/z\\n\"}}}",
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"Done.\"}}}",
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_stop\", \"index\": 0}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"Done.\"}"
+   ],
+   "out": "Looking.\n\nDone.\n",
+   "err": "minigw: · read_file a.go\nminigw: · grep x y/z\n"
+  },
+  {
+   "name": "control character in the detail is text",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ read_file a\\u001b[2J\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "⏺ read_file a[2J\n",
+   "err": ""
+  },
+  {
+   "name": "bidi override in the detail is text",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ read_file a‮b\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "⏺ read_file a‮b\n",
+   "err": ""
+  },
+  {
+   "name": "line separator in the detail is text",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ read_file a b\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "⏺ read_file a b\n",
+   "err": ""
+  },
+  {
+   "name": "no-break space in the detail is text",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ read_file a b\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "⏺ read_file a b\n",
+   "err": ""
+  },
+  {
+   "name": "detail of 200 characters",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "x\n",
+   "err": "minigw: · r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+  },
+  {
+   "name": "detail of 201 characters is text",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "⏺ r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+   "err": ""
+  },
+  {
+   "name": "trailing space without a detail is text",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ read_file \\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "⏺ read_file \n",
+   "err": ""
+  },
+  {
+   "name": "no final newline is text",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ read_file a\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "⏺ read_file a\n",
+   "err": ""
+  },
+  {
+   "name": "name with a newline is text",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ B\\nminigw: x\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "⏺ B\nminigw: x\n",
+   "err": ""
+  },
+  {
+   "name": "non-ASCII detail",
+   "in": [
+    "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"⏺ read_file src/č š.go\\n\"}}}",
+    "{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"result\": \"x\"}"
+   ],
+   "out": "x\n",
+   "err": "minigw: · read_file src/č š.go\n"
+  }
+ ]
+}

@@ -234,13 +234,33 @@ public enum Profiles {
             }))
         }
 
-        /// Oznaka orodja agenta prehoda v besedilu (StreamTranslator: »⏺ Bash«) kot cel delta z imenom validName (kot Go
-        /// toolMark), sicer je delta besedilo odgovora.
-        static func toolMark(_ s: String) -> String? {
-            let m = s.hasPrefix("\n") ? s.dropFirst() : Substring(s)
-            guard m.hasPrefix("⏺ "), m.hasSuffix("\n") else { return nil }
-            let name = String(m.dropFirst(2).dropLast())
-            return validName(name) ? name : nil
+        /// Oznaka orodja agenta prehoda v besedilu (StreamTranslator: »⏺ Bash«, #131 tudi »⏺ read_file src/a.go«: ime, presledek
+        /// in en podatek) kot cel delta (kot Go toolMark, skupni primeri client/testdata/stream-marks.json), sicer je delta
+        /// besedilo odgovora. Podatek: 1-200 znakov črk, oznak, števk, ločil, simbolov in presledkov (brez nadzornih, bidi,
+        /// ločila vrstic, nedeljivega presledka).
+        static func toolMark(_ s: String) -> (name: String, detail: String)? {
+            var m = Substring(s).unicodeScalars
+            if m.first == "\n" { m = m.dropFirst() }
+            guard String(m.prefix(2)) == "⏺ ", m.last == "\n" else { return nil }
+            let body = m.dropFirst(2).dropLast()
+            let name = String(body.prefix { $0 != " " })
+            guard validName(name) else { return nil }
+            let rest = body.dropFirst(name.unicodeScalars.count)
+            if rest.isEmpty { return (name, "") }
+            let detail = rest.dropFirst()  // the space after the name
+            guard (1...200).contains(detail.count), detail.allSatisfy(detailScalar) else { return nil }
+            return (name, String(detail))
+        }
+
+        static func detailScalar(_ c: Unicode.Scalar) -> Bool {
+            if c == " " { return true }
+            switch c.properties.generalCategory {
+            case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter,
+                 .nonspacingMark, .spacingMark, .enclosingMark, .decimalNumber, .letterNumber, .otherNumber,
+                 .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation, .initialPunctuation, .finalPunctuation, .otherPunctuation,
+                 .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol: return true
+            default: return false
+            }
         }
 
         /// Ime orodja za vrstico minigw: · : le [A-Za-z0-9_.:@/-], 1–80 znakov (model ne ponaredi vrstice z U+2028, bidi).
@@ -276,8 +296,8 @@ public enum Profiles {
             return "\n"
         }
 
-        static func tool(_ name: String) -> String {
-            "minigw: · \(validName(name) ? name : "tool")\n"
+        static func tool(_ name: String, _ detail: String = "") -> String {
+            "minigw: · \(validName(name) ? name : "tool")\(detail.isEmpty ? "" : " " + detail)\n"
         }
 
         /// Ena vrstica JSON → besedilo za stdout in stderr.
@@ -291,9 +311,9 @@ public enum Profiles {
                       let e = ev["event"] as? [String: Any] else { break }
                 if e["type"] as? String == "content_block_delta", let d = e["delta"] as? [String: Any],
                    d["type"] as? String == "text_delta", let t = d["text"] as? String {
-                    if let name = Self.toolMark(t) {
+                    if let mark = Self.toolMark(t) {
                         if open { pend = 2; out += lineEnd() }  // vrstica pred oznako je cela, preden gre oznaka na stderr
-                        err += Self.tool(name)
+                        err += Self.tool(mark.name, mark.detail)
                     } else {
                         out += text(t)
                     }

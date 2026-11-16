@@ -244,6 +244,21 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     #expect(Keychain.unlock(password: pw, verify: { _ in .ok }, unlock: unlock) == "cannot unlock the login keychain (OSStatus \(errSecInteractionNotAllowed))")
 }
 
+/// #131: the same cases as the Go client (client/testdata/stream-marks.json, TestStreamMarksShared): a gateway agent's step is a
+/// progress line on stderr and never part of the answer text on stdout.
+@Test func streamMarksSharedWithGo() throws {
+    struct Fixture: Decodable { struct Case: Decodable { let name: String; let `in`: [String]; let out: String; let err: String }; let cases: [Case] }
+    let url = ClaudeCodeCases.root.appendingPathComponent("client/testdata/stream-marks.json")
+    let fx = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+    #expect(!fx.cases.isEmpty)
+    for c in fx.cases {
+        var p = Profiles.StreamText(), o = "", e = ""
+        for l in c.in { let r = p.line(Data(l.utf8)); o += r.out; e += r.err }
+        let t = p.end()
+        #expect(o + t.out == c.out && e + t.err == c.err, "\(c.name): out=\(o + t.out) err=\(e + t.err)")
+    }
+}
+
 /// #78: stream-json → besedilo (enako kot client/stream_test.go).
 @Test func streamTextPrinter() {
     func run(_ lines: [String]) -> (String, String, Bool) {
