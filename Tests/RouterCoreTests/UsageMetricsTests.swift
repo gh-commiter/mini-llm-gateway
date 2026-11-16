@@ -80,7 +80,7 @@ private final class SpendingLimitUpstream: URLProtocol, @unchecked Sendable {
     config.protocolClasses = [SpendingLimitUpstream.self]
     let session = URLSession(configuration: config)
     defer { session.invalidateAndCancel() }
-    let route = Route(provider: ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://up.example/api", aliases: ""),
+    let route = Route(provider: ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://openrouter.ai/api", aliases: ""),
                       name: "alias", alias: "claude-alias", upstream: "routed", window: nil)
     let state = RequestState()
     state.admit(UsageEvent(id: "ev_limit", start: Date(), model: "claude-alias"))
