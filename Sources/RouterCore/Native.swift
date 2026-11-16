@@ -482,6 +482,7 @@ public enum Native {
             + "(allow file-read*" + rules("subpath", [claude + "/dev-mods"]) + (userSettings ? rules("literal", [claude + "/settings.json"]) : "") + ")\n"
             + project
             + "(deny network-outbound)\n(deny network-bind)\n(deny network-inbound)\n"
+            + "(deny signal (target others))\n"  // a run signals only its own processes (its children share the profile), nothing outside it
             + "(allow network-outbound (remote tcp \"*:443\") (remote udp \"*:53\") (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\"))"
             + " (remote unix-socket (path-literal \"/private/var/run/syslog\")))\n"
             + "(deny network-outbound (remote ip \"localhost:*\"))\n"

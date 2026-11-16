@@ -780,3 +780,19 @@ private final class Clock: @unchecked Sendable {
         #expect(FileManager.default.fileExists(atPath: sp + "/sub/NewDir\(u)/f"), "Edit allow, plain lowercase glob, other case")
     }
 }
+
+/// Security review (INFO): `(deny signal (target others))`: a process under the profile still signals its own children (Claude Code stops its tools that way), but not a process outside it.
+@Test func restrictedProfileSignalsOnlyItsOwnProcesses() throws {
+    let rig = try Rig()
+    defer { try? FileManager.default.removeItem(at: rig.root) }
+    let p = try rig.profile(session: rig.project)
+    #expect(p.contains("(deny signal (target others))"))
+    #expect(try rig.status(p, "/bin/sh", ["-c", "sleep 30 & kill $!"]) == 0, "a run must be able to signal its own child")
+    let outsider = Process()
+    outsider.executableURL = URL(fileURLWithPath: "/bin/sleep"); outsider.arguments = ["30"]
+    try outsider.run()
+    defer { outsider.terminate(); outsider.waitUntilExit() }
+    #expect(try rig.status(nil, "/bin/kill", ["-0", String(outsider.processIdentifier)]) == 0, "control: the outside process can be signalled without the profile")
+    #expect(try rig.status(p, "/bin/kill", ["-TERM", String(outsider.processIdentifier)]) != 0, "the profile let a signal through to a process outside it")
+    #expect(outsider.isRunning)
+}

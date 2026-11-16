@@ -8,6 +8,9 @@
 ### Fixed
 - Fixed (Mac app, security review): removing a big sync copy no longer blocks the shares actor. The copy is renamed inside the actor and the delete runs off it, so other share, sync and agent operations go on meanwhile (Go already deleted outside its lock). A removal still survives the leftover cleanup deleting the renamed folder, and leftovers of a crashed removal are still neither listed nor counted.
 
+### Security
+- Security (Mac app, security review): the restricted Claude profile now has `(deny signal (target others))`: a run can still signal its own processes (Claude Code stops its tools that way) but no process outside the profile.
+
 ### Known problems
 - Grok is switched off on the Mac gateway until its sandbox is reworked (#126); it works through `minigw serve` on Windows and Linux.
 - Agents started by the gateway inherit the gateway's environment.
