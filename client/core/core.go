@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -274,6 +275,9 @@ func readMetaFull(ctx context.Context, q interface {
 		n, _ := strconv.ParseInt(v, 10, 64)
 		switch k {
 		case "schema":
+			if n < 0 || n > math.MaxInt32 {
+				return m, fmt.Errorf("meta: schema %q out of range", v)
+			}
 			m.Schema = int(n)
 		case "gateway_id":
 			m.GatewayID = v
