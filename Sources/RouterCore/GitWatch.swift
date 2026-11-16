@@ -223,7 +223,8 @@ public struct GitWatch: Sendable {
             let f = toks[i].dropFirst().split(separator: " ").map(String.init), path = toks[i + 1]
             i += 2
             if !path.isEmpty, !files.contains(path) { files.append(path) }
-            if f.count >= 5, f[0] != f[1], f[0] != "000000", f[1] != "000000" {
+            let special = { (m: String) in m == "120000" || m == "100755" }  // a link or an executable file, also added or deleted (a rename with a type change is a delete and an add)
+            if f.count >= 5, f[0] != f[1], (f[0] != "000000" && f[1] != "000000") || special(f[0]) || special(f[1]) {
                 let m = path + " " + f[0] + "->" + f[1]
                 if !modes.contains(m) { modes.append(m) }
             }

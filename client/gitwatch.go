@@ -358,6 +358,9 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 	return lines, len(end.Incomplete) == 0
 }
 
+// gitSpecialMode: the modes a mounted folder cannot keep: a symbolic link and an executable file.
+func gitSpecialMode(m string) bool { return m == "120000" || m == "100755" }
+
 // parseGitRaw: the output of `git diff-tree -z --raw --no-commit-id`: ":oldmode newmode oldid newid STATUS" NUL path NUL, per entry. The names as parseGitNames gives them, and
 // the entries whose mode or type changed (both modes present and different: a typechange T, or the executable bit), as "path old->new".
 func parseGitRaw(out string) (files, modes []string) {
@@ -372,7 +375,7 @@ func parseGitRaw(out string) (files, modes []string) {
 		if path != "" && !slices.Contains(files, path) {
 			files = append(files, path)
 		}
-		if f := strings.Fields(meta); len(f) >= 5 && f[0] != f[1] && f[0] != "000000" && f[1] != "000000" {
+		if f := strings.Fields(meta); len(f) >= 5 && f[0] != f[1] && (f[0] != "000000" && f[1] != "000000" || gitSpecialMode(f[0]) || gitSpecialMode(f[1])) { // an added or deleted link or executable too: a rename with a type change is a delete and an add
 			if m := path + " " + f[0] + "->" + f[1]; !slices.Contains(modes, m) {
 				modes = append(modes, m)
 			}

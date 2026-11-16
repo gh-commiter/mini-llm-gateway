@@ -1,5 +1,16 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Mac, Claude CLI in a direct-mode mount: a file the agent creates and commits is recorded as 100644, not 100755 (git ignores the executable bit on the mount, whose files all show as -rwx------); a file that is executable in the repository keeps 100755.
+- Mac gateway, direct-mode mount: a repository that tracks symbolic links gets no commits by the agent through the mount, because a mounted folder shows a link as a plain file and `git add -A` committed it as one. The client decides at share time and prints why; the gateway reads a missing decision as closed (an older client therefore gets no commits through the mount). The agent's note says so.
+- The end-of-run git report (both clients) now names mode and type changes (a symbolic link or an executable file changed, added or deleted) in the commits reachable at the end and for the same path in the index, for example `link 120000->100644`. It covers the final reachable state: a commit amended away or left unreachable before the end, and an entry that was renamed and changed type in the index, are not seen.
+
+### Known problems
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered: a symbolic link staged or checked out later in the run can still be committed as a plain file; the report above names it afterwards.
+- Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0, #127).
+
 ## 0.7.3
 
 ### Fixed

@@ -722,3 +722,11 @@ func TestDirectGitOpenSaysNoForATrackedSymlink(t *testing.T) {
 		t.Errorf("a repository with a tracked symbolic link: %v %q", open, why)
 	}
 }
+
+func TestParseGitRawReportsLinksAndExecutablesAddedOrDeleted(t *testing.T) {
+	out := ":120000 100644 aaa bbb T\x00link\x00:000000 100644 0000 eee A\x00new.txt\x00:100644 000000 hhh 0000 D\x00plain.txt\x00:120000 000000 iii 0000 D\x00old-link\x00:000000 100755 0000 jjj A\x00new.sh\x00"
+	files, modes := parseGitRaw(out)
+	if len(files) != 5 || !slices.Equal(modes, []string{"link 120000->100644", "old-link 120000->000000", "new.sh 000000->100755"}) {
+		t.Errorf("%v %v", files, modes)
+	}
+}
