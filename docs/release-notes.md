@@ -13,6 +13,13 @@
 - Downgrade to 0.6.6 or older: the first start of this version migrates the core database to schema 7 and first writes a snapshot `core-6-<time>.db` into the core folder (`<config>/core`; on the Mac `~/Library/Application Support/Mini Gateway/core`). An older program refuses schema 7 (projects answer 503 `core_unavailable`; models keep working). The way back: stop the gateway (on the Mac quit the app), run `minigw gw core restore <path to that core-6-<time>.db>`, start the older version; what was written to the core after the migration is lost.
 - Requests recorded before this version have an unknown duration (counted as "unknown", never as zero minutes). Failed minutes of runs cut off by a crash are unknown too.
 
+### Known problems
+- The Usage views (Mac Settings and the browser Settings) have passed automated tests of their numbers but have not been checked on screen.
+- Failed agent minutes exist only for requests made with this version or newer; older days show the number of failed requests without their time.
+- LiteLLM models show a cost only when the proxy's model info has prices; the subscription agents (Claude, Codex, Grok, Copilot) show no money.
+- Usage days are UTC days.
+- Grok agent runs that last longer than a few minutes can fail with 502.
+
 ## 0.6.6
 
 ### Fixed
