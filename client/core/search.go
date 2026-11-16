@@ -28,6 +28,7 @@ func syncSearch(tx *sql.Tx, id int64) error {
 	_, err := tx.Exec(searchInsert+` WHERE id=?`, id)
 	return err
 }
+
 // rebuildSearch replaces every posting with one built from the notes.
 func rebuildSearch(tx *sql.Tx) error {
 	_, err := tx.Exec(`DELETE FROM note_search; ` + searchInsert)
