@@ -20,7 +20,7 @@ enum CoreRoutes {
         }
         guard let first = seg.first, !(seg.count == 1 && first.isEmpty) else { return false }
         switch first {
-        case "users", "bindings", "projects", "teams", "kb", "grants", "audit", "core": return true
+        case "users", "bindings", "projects", "teams", "kb", "grants", "audit", "core", "export", "import": return true
         case "quota": return seg.count == 2 && seg[1] == "history"
         case "usage": return seg.count == 2 && (seg[1] == "events" || seg[1] == "sessions")  // GET /usage is the 0.5.x folder counter of the gateway
         default: return false

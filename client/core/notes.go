@@ -514,6 +514,9 @@ func (s *Store) DeleteNote(ctx context.Context, p Principal, project, id, revisi
 		if lim != nil {
 			return lim
 		}
+		if _, err := tx.Exec(`DELETE FROM note_imports WHERE note_id=?`, id); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(`DELETE FROM notes WHERE id=?`, id); err != nil {
 			return err
 		}

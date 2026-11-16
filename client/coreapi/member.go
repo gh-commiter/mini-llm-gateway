@@ -230,6 +230,20 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			return a.errResponse(e)
 		}
 		return resp(200, v)
+	case len(seg) == 3 && seg[1] == "kb" && seg[2] == "import" && r.Method == "POST":
+		pid, ok := posID(seg[0])
+		if !ok {
+			return a.errResponse(core.ErrInvalid{What: "project id"})
+		}
+		var in core.MarkdownInput
+		if err := payload(r, &in); err != nil {
+			return a.errResponse(err)
+		}
+		result, err := st.ImportMarkdown(ctx, p, pid, in)
+		if err != nil {
+			return a.errResponse(err)
+		}
+		return resp(200, result)
 	case len(seg) >= 3 && seg[1] == "kb" && seg[2] == "submissions" && len(seg) <= 4:
 		pid, ok := posID(seg[0])
 		if !ok {

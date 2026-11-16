@@ -50,5 +50,8 @@
   {"kind": "admin", "method": "POST", "path": "/kb/search/rebuild", "want": true},
   {"kind": "admin", "method": "GET", "path": "/usage/sessions", "want": true},
   {"kind": "admin", "method": "GET", "path": "/usage/sessions/x", "want": false},
-  {"kind": "member", "method": "GET", "path": "/minigw/v1/projects/1/sessions", "want": true}
+  {"kind": "member", "method": "GET", "path": "/minigw/v1/projects/1/sessions", "want": true},
+  {"kind": "admin", "method": "POST", "path": "/export", "want": true},
+  {"kind": "admin", "method": "POST", "path": "/import", "want": true},
+  {"kind": "member", "method": "POST", "path": "/minigw/v1/projects/1/kb/import", "want": true}
 ]

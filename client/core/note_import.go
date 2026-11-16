@@ -1,0 +1,230 @@
+package core
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"path"
+	"strings"
+	"unicode"
+)
+
+func migrate13(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE note_imports(project_id INTEGER NOT NULL REFERENCES projects(id), key TEXT NOT NULL, note_id INTEGER NOT NULL DEFAULT 0, submission_id INTEGER NOT NULL DEFAULT 0, hash TEXT NOT NULL, origin_gateway TEXT NOT NULL DEFAULT '', exported TEXT NOT NULL DEFAULT '', PRIMARY KEY(project_id,key));`)
+	return err
+}
+
+type importReceipt struct {
+	note, submission int64
+	hash             string
+}
+
+func receipt(tx *sql.Tx, project int64, key string) (r importReceipt, err error) {
+	err = tx.QueryRow(`SELECT note_id,submission_id,hash FROM note_imports WHERE project_id=? AND key=?`, project, key).Scan(&r.note, &r.submission, &r.hash)
+	if err == sql.ErrNoRows {
+		err = nil
+	}
+	return
+}
+func saveImport(tx *sql.Tx, project int64, key string, r importReceipt, pr Provenance) error {
+	_, err := tx.Exec(`INSERT INTO note_imports(project_id,key,note_id,submission_id,hash,origin_gateway,exported) VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,key) DO UPDATE SET note_id=excluded.note_id,submission_id=excluded.submission_id,hash=excluded.hash,origin_gateway=excluded.origin_gateway,exported=excluded.exported`, project, key, r.note, r.submission, r.hash, pr.OriginGateway, pr.Exported)
+	return err
+}
+func pendingLimit(tx *sql.Tx, user, project, size, exclude int64) error {
+	var un, pn, ub, pb int64
+	if err := tx.QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM kb_submissions WHERE state='pending' AND user_id=? AND id<>?`, user, exclude).Scan(&un, &ub); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM kb_submissions WHERE state='pending' AND project_id=? AND id<>?`, project, exclude).Scan(&pn, &pb); err != nil {
+		return err
+	}
+	if un >= int64(maxPendingUser) || pn >= int64(maxPendingProject) || ub+size > maxPendingUserBytes || pb+size > maxPendingProjectBytes {
+		return ErrPendingLimit
+	}
+	return nil
+}
+
+// ImportMarkdown keeps a durable receipt, independently of push idempotency.
+func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, input MarkdownInput) (out ImportResult, err error) {
+	lim := s.rate(p.UserID, true)
+	in, key, parseErr := markdownInput(input)
+	out.Key = key
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		a, e := memberAccess(tx, p, project)
+		if e != nil {
+			return e
+		}
+		if parseErr != nil {
+			return parseErr
+		}
+		if !a.can(pCreate, in.Class, true) {
+			return ErrForbidden
+		}
+		if e = archivedErr(tx, project); e != nil {
+			return e
+		}
+		if lim != nil {
+			return lim
+		}
+		r, e := receipt(tx, project, key)
+		if e != nil {
+			return e
+		}
+		hash := contentHash(in.Title, in.Body)
+		out.NoteID, out.SubmissionID = r.note, r.submission
+		var old Note
+		var pending SubmissionInput
+		if r.note != 0 {
+			_, old, e = writeAccess(tx, p, project, r.note)
+			if e != nil {
+				return e
+			}
+			if !a.canMove(old.Class, in.Class, old.AuthorID == p.UserID) {
+				return ErrForbidden
+			}
+			old, e = getNote(tx, r.note)
+			if e != nil {
+				return e
+			}
+		}
+		if r.submission != 0 {
+			v, e := getSubmission(tx, p, project, r.submission, false, true)
+			if e != nil {
+				return e
+			}
+			pending = SubmissionInput{Replaces: v.Replaces, Revision: v.Revision}
+			if v.State != "pending" {
+				if v.State != "rejected" || r.hash == hash {
+					out.Action, out.Reason = "skip", "submission already reviewed"
+					return nil
+				}
+				// Keep reviewed submissions as history. Corrected content gets a new proposal.
+				r.submission, r.note = 0, v.Replaces
+				out.SubmissionID, out.NoteID = 0, r.note
+				if r.note != 0 {
+					_, _, e = writeAccess(tx, p, project, r.note)
+					if e != nil {
+						return e
+					}
+					old, e = getNote(tx, r.note)
+					if e != nil {
+						return e
+					}
+					if !a.canMove(old.Class, in.Class, old.AuthorID == p.UserID) {
+						return ErrForbidden
+					}
+					var encoded string
+					if e = tx.QueryRow(`SELECT provenance FROM note_revisions WHERE note_id=? AND revision=?`, r.note, v.Revision).Scan(&encoded); e != nil {
+						return e
+					}
+					var previous Provenance
+					if e = json.Unmarshal([]byte(encoded), &previous); e != nil {
+						return e
+					}
+					r.hash = previous.ContentHash
+				}
+			}
+		}
+		if r.hash == hash {
+			out.Action = "skip"
+			return nil
+		}
+		if r.note != 0 && contentHash(old.Title, old.Body) != r.hash {
+			out.Action, out.Reason = "skip", "local edit"
+			return nil
+		}
+		pr := writerProvenance(p, project, in, s.now())
+		pr.SourceKind, pr.SourceReference = SourceImport, path.Base(strings.ReplaceAll(input.Path, "\\", "/"))
+		size := int64(len(in.Title) + len(in.Body))
+		if input.Submit {
+			replacement := SubmissionInput{NoteInput: in, Replaces: r.note, Revision: old.Revision}
+			if r.submission != 0 {
+				replacement.Replaces, replacement.Revision = pending.Replaces, pending.Revision
+			}
+			if e = submissionAccess(tx, p, project, replacement, true); e != nil {
+				return e
+			}
+			for _, c := range in.Title {
+				if unicode.IsControl(c) {
+					return ErrInvalid{"title: control characters"}
+				}
+			}
+			if e = pendingLimit(tx, p.UserID, project, size, r.submission); e != nil {
+				return e
+			}
+			b, _ := json.Marshal(pr)
+			if r.submission == 0 {
+				res, e := tx.Exec(`INSERT INTO kb_submissions(project_id,user_id,device_id,class,title,body,bytes,replaces,revision,provenance,key,hash,received) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, project, p.UserID, p.DeviceID, in.Class, in.Title, in.Body, size, replacement.Replaces, replacement.Revision, string(b), key, hash, ms(s.now()))
+				if e != nil {
+					return e
+				}
+				r.submission, _ = res.LastInsertId()
+				r.note = 0
+				out.Action = "create"
+			} else {
+				_, e := tx.Exec(`UPDATE kb_submissions SET class=?,title=?,body=?,bytes=?,provenance=?,hash=?,received=? WHERE id=?`, in.Class, in.Title, in.Body, size, string(b), hash, ms(s.now()), r.submission)
+				if e != nil {
+					return e
+				}
+				out.Action = "merge"
+			}
+		} else {
+			if r.submission != 0 {
+				return ErrInvalid{"import key belongs to a submission"}
+			}
+			r.note, e = s.importNote(tx, project, p.UserID, r.note, in, pr)
+			if e != nil {
+				return e
+			}
+			out.Action = "create"
+			if old.ID != 0 {
+				out.Action = "merge"
+			}
+			if old.ID != 0 && old.Class != in.Class {
+				if e = setMeta(tx, "epoch", i64(max(s.st.Epoch, dbInt(tx, "epoch"))+1)); e != nil {
+					return e
+				}
+			}
+		}
+		r.hash = hash
+		out.NoteID, out.SubmissionID = r.note, r.submission
+		if e = saveImport(tx, project, key, r, pr); e != nil {
+			return e
+		}
+		return Audit(tx, actor(p), "kb.import", key, map[string]any{"project": project, "submit": input.Submit})
+	})
+	return
+}
+func (s *Store) importNote(tx *sql.Tx, project, author, id int64, in NoteInput, pr Provenance) (int64, error) {
+	size := int64(len(in.Title) + len(in.Body))
+	var oldSize, revision int64
+	if id != 0 {
+		if err := tx.QueryRow(`SELECT bytes,revision FROM notes WHERE id=?`, id).Scan(&oldSize, &revision); err != nil {
+			return 0, err
+		}
+	}
+	if err := checkProjectLimits(tx, project, id == 0, size-oldSize); err != nil {
+		return 0, err
+	}
+	if id == 0 {
+		r, err := tx.Exec(`INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated) VALUES(?,?,?,?,?,?,?,?)`, project, in.Class, in.Title, in.Body, size, author, ms(s.now()), ms(s.now()))
+		if err != nil {
+			return 0, err
+		}
+		id, _ = r.LastInsertId()
+	} else {
+		if _, err := tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1 WHERE id=?`, in.Class, in.Title, in.Body, size, ms(s.now()), id); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`UPDATE idempotency SET result='' WHERE note_id=?`, id); err != nil {
+			return 0, err
+		}
+	}
+	if err := syncSearch(tx, id); err != nil {
+		return 0, err
+	}
+	if err := saveProvenance(tx, id, revision+1, pr); err != nil {
+		return 0, err
+	}
+	return id, nil
+}

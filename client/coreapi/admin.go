@@ -44,7 +44,7 @@ func IsAdminPath(method, escapedPath string) bool {
 		return false
 	}
 	switch seg[0] {
-	case "users", "bindings", "projects", "teams", "kb", "grants", "audit", "core":
+	case "users", "bindings", "projects", "teams", "kb", "grants", "audit", "core", "export", "import":
 		return true
 	case "quota":
 		return len(seg) == 2 && seg[1] == "history"
@@ -91,6 +91,8 @@ func (a *API) admin(ctx context.Context, r Request) Response {
 			why = "the gateway is not running"
 		}
 		code, obj, _ = fail(503, "The project database is not available: "+why)
+	} else if seg[0] == "export" || seg[0] == "import" {
+		return a.adminBundle(ctx, st, r)
 	} else if seg[0] == "kb" {
 		return a.adminKB(ctx, st, r.Method, seg, q, r.Body)
 	} else {

@@ -3,6 +3,8 @@ import CoreFoundation
 
 extension ProjectEnv {
     public static let kbHelp = """
+        minigw kb export <project> <dir>
+        minigw kb import <project> <dir|file.md> [--class c] [--submit]
         minigw kb mcp [--project slug] [--print-config]
         minigw kb search [<project>] <query> [--json]
         minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
@@ -29,6 +31,7 @@ extension ProjectEnv {
     }
 
     public func kb(_ args: [String]) throws {
+        if args.first == "export" || args.first == "import" { try kbFiles(args); return }
         if args.first == "search" { try kbSearch(Array(args.dropFirst())); return }
         if agent { throw ProjectError(Self.agentRefusal) }
         let usage = ProjectError("usage:\n" + Self.kbHelp)

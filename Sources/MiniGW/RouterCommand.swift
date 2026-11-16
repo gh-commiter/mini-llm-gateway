@@ -213,6 +213,18 @@ private func agentWork(_ a: AdminConnection, _ kind: String, _ work: String?) {
 }
 
 func routerCommand(_ argv: [String]) {
+    if argv.first == "export" || argv.first == "import" {
+        let a = AdminConnection.open()
+        let cmd = AdminCommands(call: { method, path, body in
+            let (status, data) = a.raw(method, Router.adminPrefix + path, body, proof: true)
+            return (status, data ?? Data())
+        }, out: { try? FileHandle.standardOutput.write(contentsOf: Data($0.utf8)) })
+        do { try cmd.bundle(argv) }
+        catch let e as AdminCLIError { fail(e.message, code: e.code) }
+        catch { fail("\(error)") }
+        return
+    }
+
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
     let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider", "sort", "reason"]

@@ -598,3 +598,29 @@ separates literal words, joined with AND. No raw FTS5 operators are accepted as
 syntax. Empty/non-word or over-limit input returns 400; a query has a 250 ms
 deadline and shares the existing per-user read limit. Treat snippets as untrusted
 plain text and escape them in any renderer.
+
+## Knowledge bundle path routes
+
+Owner admin authentication, gateway running, loopback only, on both gateways. Paths below the existing
+admin prefix:
+
+| Method | Path | Body |
+|---|---|---|
+| POST | `/export` | `{"team":"Engineering","projects":["fakture"],"with_private":false,"path":"/absolute/local/team.zip"}` |
+| POST | `/import` | `{"path":"/absolute/local/team.zip","dry_run":true,"map":{"ana":"Ana"}}` |
+
+The body names a local path on the gateway computer; it never contains zip bytes. The normal 512 KiB
+request cap remains. Export refuses an existing destination. Responses contain `{"lines":[...]}`;
+a refusal also includes `error.message` with a non-2xx status. Import validates the complete archive,
+strictly decodes the version 1 manifest, rejects unsafe paths, non-regular entries, more than 10,000
+notes or more than 100 MiB uncompressed, then applies one transaction. Dry-run does no writes.
+A repeat with no changes writes no audit; an applied bundle writes one `kb.import` event.
+No route calls Backup or Restore.
+
+The member route `POST /minigw/v1/projects/{id}/kb/import` accepts one
+`{"markdown":"...","path":"relative/file.md","class":"","submit":false}` and returns
+`{"action":"create|merge|skip","key":"...","note":123,"submission":456,"reason":"..."}`
+(IDs and reason omitted when absent). It derives identity and permissions from the authenticated member,
+never front matter. Create permissions, update ownership, class transitions, archive checks, pending
+limits, body limits and the normal write rate apply. Imports persist receipts beyond the push TTL.
+Member exports page the existing list route and fetch each note with the existing GET route.
