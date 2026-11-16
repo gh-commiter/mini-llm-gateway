@@ -37,8 +37,14 @@ func TestSameDriveJunctionToRemote(t *testing.T) {
 	}
 	junction(t, outside, filepath.Join(root, "alias"))
 	old := finalPathFn
-	calls := 0
-	finalPathFn = func(p string) (string, error) { calls++; return old(p) }
+	// The walk may resolve the junction's local target (the "outside" folder, once per resolver); it must never resolve through the remote link.
+	var viaRemote []string
+	finalPathFn = func(p string) (string, error) {
+		if strings.Contains(strings.ToLower(p), `\remote`) {
+			viaRemote = append(viaRemote, p)
+		}
+		return old(p)
+	}
 	defer func() { finalPathFn = old }()
 	full := filepath.Join(root, "alias", "remote", "child")
 	if got := realTarget(full, []string{root}); got != full {
@@ -53,8 +59,8 @@ func TestSameDriveJunctionToRemote(t *testing.T) {
 	if !protectedCanonical(full, root) {
 		t.Fatal("remote junction chain is unprotected")
 	}
-	if calls != 0 {
-		t.Fatalf("finalPath called %d times for remote junction chain", calls)
+	if len(viaRemote) != 0 {
+		t.Fatalf("finalPath resolved through the remote link: %v", viaRemote)
 	}
 }
 
@@ -85,6 +91,12 @@ func TestDAVMoveCopyUNCRoot(t *testing.T) {
 			}
 		})
 	}
+	// davHandle names the share by its long path (EvalSymlinks expands 8.3 names such as RUNNER~1); a UNC link target is matched lexically
+	// before anything is probed (L2), so links in this test name the share the same way.
+	longRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, kind := range []string{"relative", "absolute", "chain"} {
 		t.Run("MOVE-"+kind, func(t *testing.T) {
 			target := filepath.Join(local, "target-"+kind)
@@ -99,10 +111,10 @@ func TestDAVMoveCopyUNCRoot(t *testing.T) {
 			next := filepath.Base(target)
 			switch kind {
 			case "absolute":
-				next = filepath.Join(root, filepath.Base(target))
+				next = filepath.Join(longRoot, filepath.Base(target))
 			case "chain":
 				next = "middle"
-				if err := os.Symlink(filepath.Join(root, filepath.Base(target)), filepath.Join(local, next)); err != nil {
+				if err := os.Symlink(filepath.Join(longRoot, filepath.Base(target)), filepath.Join(local, next)); err != nil {
 					t.Skipf("symlink unavailable: %v", err)
 				}
 			}
