@@ -24,7 +24,6 @@ Mini Gateway 0.7.0 is a stable release. It collects the eleven beta versions 0.6
 - `--minigw-ro` with a provider model gives Read, Grep and Glob only and loads no user, project or local Claude settings or hooks. A refused `@` in a prompt says to pass the text on stdin.
 - Mac, restricted Claude CLI runs: they do not load auto-memory or your user hooks and plugins, and `~/.claude.json` is read-only for them. A run whose session or allowed folder is `/` is refused.
 - Mac, Codex in write mode: only the session and allowed folders and a private temporary folder are writable; other places in `/tmp` are not.
-- Mac, Grok: see Known problems. (Grok runs in a home of its own, so your `~/.grok/config.toml` is not applied on the Mac.)
 - Windows and Linux (`minigw serve`), restricted Claude CLI: the same tool and path restrictions the Mac has had since 0.5.28 (no Task or MCP tools, permission mode `auto` or `plan` is used as `dontAsk`, stricter Write and `.git` rules, allowed folders with special characters are refused).
 - Windows and Linux: where an agent has no sandbox, the core stays closed until the owner runs `minigw gw claude --accept-agents-read-notes=true` and restarts. Until then project routes answer 503.
 - An allowed folder is refused, with the reason shown (Settings, log, `minigw serve` browser Settings), when its real path cannot be resolved, or when its recorded volume id is no longer reported. Remove the folder and add it again. A refused folder is logged once per reason.
@@ -44,7 +43,7 @@ Mini Gateway 0.7.0 is a stable release. It collects the eleven beta versions 0.6
 - DAV and sync check link chains first and refuse remote targets, other drives and automount paths.
 - Direct-mode git watch: reads the repository without replacements, checks every ref and detached HEAD, diffs merges against each parent, reports new refs and moved tags, and says INCOMPLETE when a limit is reached or git fails. The share drains before the end report and the index restore.
 - Deny rules for `.git` and `.claude` also match any letter case (NTFS, APFS).
-- Mac: time limits for hung `claude` checks run on their own thread; the restricted profile cannot signal processes outside it; the Grok profile denies the Scratch folder of other clients.
+- Mac: time limits for hung `claude` checks run on their own thread; the restricted profile cannot signal processes outside it.
 - A refreshed login is carried back from a run's home only from a safe, regular file.
 
 ### Fixed
