@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.2
+
 ### New
 - Teams (access): `minigw gw team access set <team> <project> <user> <role>` gives a team member a role in one of the team's projects, `... access remove` takes it back, `... access list <team>` shows them. A team assignment creates the same project membership as a direct one (`minigw gw member`); when a user has several, the strongest role wins, and removing a team assignment does not remove a direct one. Removing the user from the team, the project from the team, or archiving the team takes that access away at once. `minigw project list` shows the role and where it comes from.
 

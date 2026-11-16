@@ -29,7 +29,7 @@ import (
 	"unicode"
 )
 
-const version = "0.7.1" // bump-version.sh
+const version = "0.7.2" // bump-version.sh
 
 type connection struct {
 	URL    string  `json:"url"`
