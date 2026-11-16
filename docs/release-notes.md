@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- `minigw kb search --json`, `note read --json` and `kb submissions --json` write terminal control characters in note text as JSON `\\uXXXX` escapes, so a note cannot steer the terminal of a person who prints the JSON; a program that parses it gets the same text as before.
+- `minigw kb search` shows the time of a note in local time, like `note list`.
+
 ## 0.7.7
 
 ### New
