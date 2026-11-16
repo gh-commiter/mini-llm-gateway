@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.6
 
 ### New
 - `--minigw-tools=edit`: a provider model (LiteLLM, OpenRouter, xAI) in the local Claude Code may also use Edit and Write, only inside the current folder and never in `.git`, hooks, `.claude` settings, `.envrc` or `.vscode/tasks.json`; still no Bash, MCP or sub-agents. Allowed inside Claude Code; an error with `--minigw-ro` and for agent models. The gateway owner sets the highest level per provider or model (`minigw gw provider tools <name> [none|read|edit|default] [--model m]`, Settings, admin API; default `read`); clients refuse `edit` above it and the gateway refuses requests above it (a modified client can lie; the folder is protected by the client's own rules).
@@ -11,6 +11,13 @@
 ### Known limits
 - `--minigw-tools=edit` is refused on Windows clients: its path rules cannot cover trailing dots and spaces or 8.3 short names.
 - `--minigw-tools=edit` does not protect files that are run or obeyed later without a person reading them (`Makefile`, `package.json` scripts, `.github/workflows`, `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.vscode/settings.json`, …): review the diff.
+
+### Known problems
+- Docker Compose: tried only on arm64 (an amd64 build is not yet confirmed); a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot (`litellm.local`); the connect line shows the container's own address, replace it with the host's; the failure paths of the signature check were not exercised.
+- `--minigw-tools=edit` and the gateway's tool level are new: the level a client declares is checked by the gateway, but a modified client can declare less than it uses; the folder is protected by the client's own rules.
+- `minigw running` and the steps of a run: a real long Grok run against a Windows gateway is not yet confirmed.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.5
 
