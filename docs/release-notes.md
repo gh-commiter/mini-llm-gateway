@@ -5,6 +5,7 @@
 ### Fixed
 - Fixed (both gateways): a spending-limit error from OpenRouter is recognised by the provider's address (openrouter.ai), not by its name, so a renamed OpenRouter provider no longer makes the client retry.
 - Changed (both gateways): usage reports show the provider in lowercase and the `provider` filter ignores case, so `OpenRouter` and `openrouter` are one provider on both gateways.
+- Fixed (both gateways): a response whose token counts the new usage parser cannot read (deeply nested, a usage object over 64 KB, or usage in an unusual place) keeps the counts the older extraction finds instead of "unknown"; an aborted Claude CLI stream is "unknown" instead of "0 tokens".
 
 ## 0.6.5
 
