@@ -77,7 +77,7 @@ func TestTeamRoutes(t *testing.T) {
 		format string
 	}{
 		{member("unbound"), "no project access: this device is not bound to a user (the owner runs: minigw gw bind %s USER)"},
-		{{Kind: KindMember, DeviceID: "dev-ana"}, "no project access: this device is not on the gateway's device list (the owner runs: minigw gw devices allow %s)"},
+		{Context{Kind: KindMember, DeviceID: "dev-ana"}, "no project access: this device is not on the gateway's device list (the owner runs: minigw gw devices allow %s)"},
 	} {
 		r = call(c.ctx, "GET", "/minigw/v1/teams", "", 403)
 		want := fmt.Sprintf(c.format, c.ctx.DeviceID)
