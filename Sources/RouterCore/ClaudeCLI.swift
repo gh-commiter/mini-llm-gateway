@@ -997,7 +997,7 @@ extension Router {
         defer { AgentCount.running.subtract(1, ordering: .relaxed) }
         try? stdin.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
         try? stdin.fileHandleForWriting.close()
-        let errTask = Task { (try? stderr.fileHandleForReading.readToEnd()).flatMap { String(data: $0.suffix(4000), encoding: .utf8) } ?? "" }
+        let errTask = Task { await offPool { (try? stderr.fileHandleForReading.readToEnd()).flatMap { String(data: $0.suffix(4000), encoding: .utf8) } ?? "" } }  // a read until the process ends: not on a pool thread (one per core) for the whole run
 
         var pinger: Task<Void, Never>?
         do {
