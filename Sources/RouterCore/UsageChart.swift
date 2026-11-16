@@ -4,7 +4,7 @@ import Foundation
 // and summed by UsageReport (Sum, human, usd), so the app and the command show the same numbers; this file only groups them.
 // Pure and without a view, so RouterCoreTests can assert it.
 
-public enum UsageMeasure: String, CaseIterable, Sendable { case tokens, spend, requests }
+public enum UsageMeasure: String, CaseIterable, Sendable { case tokens, spend, requests, failedTime }
 
 public struct UsageChart: @unchecked Sendable {  // rows are immutable
     /// One bar segment: a UTC day ("2026-11-15") and one model (nil = "Other").
@@ -36,6 +36,7 @@ public struct UsageChart: @unchecked Sendable {  // rows are immutable
         public let bars: [Bar]        // by day, then series order; zero segments left out
         public let top: [Top]
         public let costUnknown: Int64 // events without a known cost (spend only; 0 otherwise)
+        public let durationUnknown: Int64 // events without a known duration (failed time only; 0 otherwise)
         public let isEmpty: Bool
     }
 
@@ -67,6 +68,7 @@ public struct UsageChart: @unchecked Sendable {  // rows are immutable
             case .tokens: s.tin + s.tout
             case .requests: s.events
             case .spend: s.nanos
+            case .failedTime: s.failedMs  // milliseconds of events that ended in error
             }
         }
         func text(_ s: UsageReport.Sum) -> String {
@@ -74,6 +76,7 @@ public struct UsageChart: @unchecked Sendable {  // rows are immutable
             case .tokens: UsageReport.human(s.tin + s.tout)
             case .requests: UsageReport.human(s.events)
             case .spend: s.known ? (s.estimateKnown ? "~" : "") + UsageReport.usd(s.nanos) : "-"  // unknown cost is not 0.00
+            case .failedTime: UsageReport.minutes(s.failedMs)
             }
         }
         func order<K>(_ k: [(K, UsageReport.Sum)], _ name: (K) -> String) -> [(K, UsageReport.Sum)] {
@@ -99,11 +102,11 @@ public struct UsageChart: @unchecked Sendable {  // rows are immutable
         let largest = pairs.first.map { value($0.1) } ?? 0
         let top = pairs.map { Top(provider: $0.0[0], model: $0.0[1], value: value($0.1), text: text($0.1), fraction: largest > 0 ? Double(value($0.1)) / Double(largest) : 0) }
         return Summary(total: value(all), totalText: text(all), series: series, bars: bars, top: top,
-                       costUnknown: measure == .spend ? all.unknown : 0, isEmpty: rows.isEmpty)
+                       costUnknown: measure == .spend ? all.unknown : 0, durationUnknown: measure == .failedTime ? all.unknownMs : 0, isEmpty: rows.isEmpty)
     }
 
     /// A value of the selected measure as an axis label ("46.1M", "12", "0.42"; spend in USD, no sign).
-    public static func axisText(_ m: UsageMeasure, _ v: Int64) -> String { m == .spend ? UsageReport.usd(v) : UsageReport.human(v) }
+    public static func axisText(_ m: UsageMeasure, _ v: Int64) -> String { m == .spend ? UsageReport.usd(v) : m == .failedTime ? UsageReport.minutes(v) : UsageReport.human(v) }
 
     /// The call of the page: the admin route through the helper, as the gateway's own admin API does; no second store.
     public enum Loaded: Sendable { case ok(UsageChart), failed(String) }
@@ -122,6 +125,7 @@ extension UsageReport.Sum {
     mutating func merge(_ o: UsageReport.Sum) {
         events += o.events; failed += o.failed; tin += o.tin; tout += o.tout; unknown += o.unknown; nanos += o.nanos
         estimated += o.estimated; reported += o.reported
+        errors += o.errors; durationMs += o.durationMs; failedMs += o.failedMs; unknownMs += o.unknownMs
         known = known || o.known; estimateKnown = estimateKnown || o.estimateKnown; reportedKnown = reportedKnown || o.reportedKnown
     }
 }

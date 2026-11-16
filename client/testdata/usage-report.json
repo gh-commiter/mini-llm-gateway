@@ -42,7 +42,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -122,7 +122,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n2026-11-14,codex,gpt-6.1-sol,5,0,1200,300,,,5\n2026-11-14,openrouter,claude-deepseek/deepseek-chat,7,1,12000,2400,0.006000000,,1\n2026-11-15,claude-cli,claude-opus,12,0,4200,900,,,12\n2026-11-15,codex,gpt-6.1-sol,90,4,200000,30000,,,90\n2026-11-15,litellm,gpt-x,50,0,999999,1,0.000040000,,0\n2026-11-15,openrouter,claude-deepseek/deepseek-chat,320,2,46100000,914000,2.157400000,,3\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n2026-11-14,codex,gpt-6.1-sol,5,0,1200,300,,,5,0,0,0,0\n2026-11-14,openrouter,claude-deepseek/deepseek-chat,7,1,12000,2400,0.006000000,,1,0,0,0,0\n2026-11-15,claude-cli,claude-opus,12,0,4200,900,,,12,0,0,0,0\n2026-11-15,codex,gpt-6.1-sol,90,4,200000,30000,,,90,0,0,0,0\n2026-11-15,litellm,gpt-x,50,0,999999,1,0.000040000,,0,0,0,0,0\n2026-11-15,openrouter,claude-deepseek/deepseek-chat,320,2,46100000,914000,2.157400000,,3,0,0,0,0\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -204,7 +204,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n2026-11-15,'-prov,m,1,0,1,1,,,1\n2026-11-15,openrouter,\"'=HYPERLINK(\"\"x\"\")\",1,0,10,5,0.010000000,,0\n2026-11-15,openrouter,\"'@sum +1\nline\",1,0,10,5,,,1\n2026-11-15,openrouter,\"vendor/model,v2\",2,0,100,50,0.500000000,,0\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n2026-11-15,'-prov,m,1,0,1,1,,,1,0,0,0,0\n2026-11-15,openrouter,\"'=HYPERLINK(\"\"x\"\")\",1,0,10,5,0.010000000,,0,0,0,0,0\n2026-11-15,openrouter,\"'@sum +1\nline\",1,0,10,5,,,1,0,0,0,0\n2026-11-15,openrouter,\"vendor/model,v2\",2,0,100,50,0.500000000,,0,0,0,0,0\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -258,7 +258,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--json|--csv]   requests, tokens and cost per provider, model and day (UTC)\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
     "exit": 1,
     "requests": []
    }
@@ -305,7 +305,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--json|--csv]   requests, tokens and cost per provider, model and day (UTC)\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
     "exit": 1,
     "requests": []
    }
@@ -378,7 +378,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n2026-11-15,LiteLLM,alias,3,0,1000,500,,0.420000000,1\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n2026-11-15,LiteLLM,alias,3,0,1000,500,,0.420000000,1,0,0,0,0\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -405,6 +405,161 @@
    ],
    "want": {
     "out": "provider  model  requests  failed  tokens in  tokens out  cost USD\nLiteLLM   alias         3       0         1K         500  0.01 + ~0.42 (+1 unknown)\n\nday         requests  tokens in+out  cost USD\n2026-11-15         3           1.5K  0.01 + ~0.42 (+1 unknown)\n\ntotal: 3 requests (0 failed), 1K tokens in, 500 tokens out, cost USD 0.01 + ~0.42 (+1 unknown)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "failed time text",
+   "args": [
+    "usage"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-14\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":7,\"tokensIn\":12000,\"tokensOut\":2400,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.500000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":420000,\"failedDurationMs\":0,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":40,\"tokensIn\":0,\"tokensOut\":0,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":31,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":40,\"errorEvents\":31,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":17400000,\"failedDurationMs\":15000000,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"claude-cli\",\"model\":\"claude-opus\",\"events\":12,\"tokensIn\":4200,\"tokensOut\":900,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":3,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":12,\"errorEvents\":2,\"cancelledEvents\":0,\"interruptedEvents\":1,\"durationMs\":600000,\"failedDurationMs\":123000,\"unknownDurationEvents\":3}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "provider    model                          requests  failed  failed min  tokens in  tokens out  cost USD\nopenrouter  claude-deepseek/deepseek-chat         7       0           -        12K        2.4K  0.50\ncodex       gpt-6.1-sol                          40      31       250.0          0           0  -\nclaude-cli  claude-opus                          12       3         2.1       4.2K         900  -\n\nday         requests  tokens in+out  cost USD\n2026-11-14         7          14.4K  0.50\n2026-11-15        52           5.1K  -\n\ntotal: 59 requests (34 failed), 16.2K tokens in, 3.3K tokens out, cost USD 0.50 (+52 unknown), 33 errors, 252.1 failed agent minutes\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "failed time sorted",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "sort": "failed"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-14\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":7,\"tokensIn\":12000,\"tokensOut\":2400,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.500000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":420000,\"failedDurationMs\":0,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":40,\"tokensIn\":0,\"tokensOut\":0,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":31,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":40,\"errorEvents\":31,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":17400000,\"failedDurationMs\":15000000,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"claude-cli\",\"model\":\"claude-opus\",\"events\":12,\"tokensIn\":4200,\"tokensOut\":900,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":3,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":12,\"errorEvents\":2,\"cancelledEvents\":0,\"interruptedEvents\":1,\"durationMs\":600000,\"failedDurationMs\":123000,\"unknownDurationEvents\":3}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "provider    model                          requests  failed  failed min  tokens in  tokens out  cost USD\ncodex       gpt-6.1-sol                          40      31       250.0          0           0  -\nclaude-cli  claude-opus                          12       3         2.1       4.2K         900  -\nopenrouter  claude-deepseek/deepseek-chat         7       0           -        12K        2.4K  0.50\n\nday         requests  tokens in+out  cost USD\n2026-11-14         7          14.4K  0.50\n2026-11-15        52           5.1K  -\n\ntotal: 59 requests (34 failed), 16.2K tokens in, 3.3K tokens out, cost USD 0.50 (+52 unknown), 33 errors, 252.1 failed agent minutes\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "failed time csv",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "csv": true
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-14\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":7,\"tokensIn\":12000,\"tokensOut\":2400,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.500000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":420000,\"failedDurationMs\":0,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":40,\"tokensIn\":0,\"tokensOut\":0,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":31,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":40,\"errorEvents\":31,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":17400000,\"failedDurationMs\":15000000,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"claude-cli\",\"model\":\"claude-opus\",\"events\":12,\"tokensIn\":4200,\"tokensOut\":900,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":3,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":12,\"errorEvents\":2,\"cancelledEvents\":0,\"interruptedEvents\":1,\"durationMs\":600000,\"failedDurationMs\":123000,\"unknownDurationEvents\":3}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n2026-11-14,openrouter,claude-deepseek/deepseek-chat,7,0,12000,2400,0.500000000,,0,0,420000,0,0\n2026-11-15,claude-cli,claude-opus,12,3,4200,900,,,12,2,600000,123000,3\n2026-11-15,codex,gpt-6.1-sol,40,31,0,0,,,40,31,17400000,15000000,0\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "sort needs a known key",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "sort": "cost"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-14\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":7,\"tokensIn\":12000,\"tokensOut\":2400,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.500000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":420000,\"failedDurationMs\":0,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":40,\"tokensIn\":0,\"tokensOut\":0,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":31,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":40,\"errorEvents\":31,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":17400000,\"failedDurationMs\":15000000,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"claude-cli\",\"model\":\"claude-opus\",\"events\":12,\"tokensIn\":4200,\"tokensOut\":900,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":3,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":12,\"errorEvents\":2,\"cancelledEvents\":0,\"interruptedEvents\":1,\"durationMs\":600000,\"failedDurationMs\":123000,\"unknownDurationEvents\":3}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "sort excludes json",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "json": true,
+    "sort": "failed"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-14\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":7,\"tokensIn\":12000,\"tokensOut\":2400,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.500000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":420000,\"failedDurationMs\":0,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":40,\"tokensIn\":0,\"tokensOut\":0,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":31,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":40,\"errorEvents\":31,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":17400000,\"failedDurationMs\":15000000,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"claude-cli\",\"model\":\"claude-opus\",\"events\":12,\"tokensIn\":4200,\"tokensOut\":900,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":3,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":12,\"errorEvents\":2,\"cancelledEvents\":0,\"interruptedEvents\":1,\"durationMs\":600000,\"failedDurationMs\":123000,\"unknownDurationEvents\":3}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "sort failed without failed time",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "sort": "failed"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-14\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":7,\"tokensIn\":12000,\"tokensOut\":2400,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":1,\"reportedCostUsd\":\"0.006000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":1},{\"day\":\"2026-11-15\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":300,\"tokensIn\":31000000,\"tokensOut\":512000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":2,\"reportedCostUsd\":\"0.957400000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":3,\"user\":2,\"userName\":\"U2\"},{\"day\":\"2026-11-15\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":20,\"tokensIn\":15100000,\"tokensOut\":402000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"1.200000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"user\":3,\"userName\":\"U3\"},{\"day\":\"2026-11-15\",\"provider\":\"litellm\",\"model\":\"gpt-x\",\"events\":50,\"tokensIn\":999999,\"tokensOut\":1,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.000040000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0},{\"day\":\"2026-11-15\",\"provider\":\"claude-cli\",\"model\":\"claude-opus\",\"events\":12,\"tokensIn\":4200,\"tokensOut\":900,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":12},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":90,\"tokensIn\":200000,\"tokensOut\":30000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":4,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":90},{\"day\":\"2026-11-14\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":5,\"tokensIn\":1200,\"tokensOut\":300,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":5}],\"gaps\":[{\"count\":7,\"from\":\"2026-11-12T08:00:00Z\",\"to\":\"2026-11-12T09:30:00Z\"}],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "provider    model                          requests  failed  tokens in  tokens out  cost USD\nopenrouter  claude-deepseek/deepseek-chat       327       3      46.1M        916K  2.16 (+4 unknown)\nlitellm     gpt-x                                50       0         1M           1  <0.0001\ncodex       gpt-6.1-sol                          95       4       201K       30.3K  -\nclaude-cli  claude-opus                          12       0       4.2K         900  -\n\nday         requests  tokens in+out  cost USD\n2026-11-14        12          15.9K  0.0060 (+6 unknown)\n2026-11-15       472          48.2M  2.16 (+105 unknown)\n\ntotal: 484 requests (7 failed), 47.3M tokens in, 947K tokens out, cost USD 2.16 (+111 unknown)\n7 events lost between 2026-11-12 08:00 and 2026-11-12 09:30 (UTC)\n",
     "err": "",
     "exit": 0,
     "requests": [

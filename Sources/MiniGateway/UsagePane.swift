@@ -89,6 +89,14 @@ struct UsagePane: View {
                     Text("Amounts with ~ are estimates; the others are reported by the provider.").font(.caption).foregroundStyle(.secondary)
                 }
             }
+            if measure == .failedTime {
+                Section {
+                    if s.durationUnknown > 0 {
+                        Label("\(s.durationUnknown) requests have an unknown duration and are not counted.", systemImage: "exclamationmark.triangle")
+                    }
+                    Text("Summed agent minutes are concurrent work time, not clock time. Only requests that ended in an error count.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
             if !chart.gaps.isEmpty {
                 Section {
                     ForEach(Array(chart.gaps.enumerated()), id: \.offset) { _, g in
@@ -102,7 +110,7 @@ struct UsagePane: View {
     private func dailyChart(_ s: UsageChart.Summary) -> some View {
         let names = s.series.map { $0 ?? String(localized: "Other") }
         let colors = s.series.indices.map { s.series[$0] == nil ? Color.gray : Self.palette[$0 % Self.palette.count] }
-        let scale = measure == .spend ? 1_000_000_000.0 : 1
+        let scale = measure == .spend ? 1_000_000_000.0 : measure == .failedTime ? 60_000.0 : 1  // nanodollars, milliseconds
         let day = picked.map { Self.utcDay.string(from: $0) }
         let shown = day.map { d in s.bars.filter { $0.day == d } } ?? []
         return Chart {
@@ -150,11 +158,13 @@ struct UsagePane: View {
         case .tokens: String(localized: "Tokens")
         case .spend: String(localized: "Spend")
         case .requests: String(localized: "Requests")
+        case .failedTime: String(localized: "Failed time")
         }
     }
 
     /// Spend gets a dollar sign ("~" stays in front); unknown ("-") stays as it is.
     static func money(_ text: String, _ m: UsageMeasure) -> String {
+        if m == .failedTime { return text + " min" }
         guard m == .spend, text != "-" else { return text }
         return text.hasPrefix("~") ? "~$" + text.dropFirst() : "$" + text
     }

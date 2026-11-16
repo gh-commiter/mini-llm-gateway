@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,7 +15,7 @@ import (
 	"unicode/utf8"
 )
 
-const usageReportHelp = `minigw gw usage [--days N] [--provider P] [--model M] [--json|--csv]   requests, tokens and cost per provider, model and day (UTC)
+const usageReportHelp = `minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
   minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)`
 
 type usageEventRow struct {
@@ -22,6 +23,8 @@ type usageEventRow struct {
 	Events, TokensIn, TokensOut, FailedEvents, EventsWithoutCost int64
 	EstimatedCostUsd                                             *string
 	ReportedCostUsd                                              *string
+	// Execution time (dispatch to finish) in ms of the events whose duration is known; failed = outcome error only.
+	ErrorEvents, DurationMs, FailedDurationMs, UnknownDurationEvents int64
 }
 
 type usageEventGap struct {
@@ -32,6 +35,7 @@ type usageEventGap struct {
 // usageSum adds known reported and estimated amounts; unknown counts events without cost.
 type usageSum struct {
 	events, failed, in, out, unknown, nanos int64
+	errors, durationMs, failedMs, unknownMs int64
 	known                                   bool
 	estimated                               int64
 	estimateKnown                           bool
@@ -41,6 +45,7 @@ type usageSum struct {
 
 func (s *usageSum) add(r usageEventRow) {
 	s.events, s.failed, s.in, s.out, s.unknown = s.events+r.Events, s.failed+r.FailedEvents, s.in+r.TokensIn, s.out+r.TokensOut, s.unknown+r.EventsWithoutCost
+	s.errors, s.durationMs, s.failedMs, s.unknownMs = s.errors+r.ErrorEvents, s.durationMs+r.DurationMs, s.failedMs+r.FailedDurationMs, s.unknownMs+r.UnknownDurationEvents
 	if r.EstimatedCostUsd != nil {
 		if n, ok := parseNanos(*r.EstimatedCostUsd); ok {
 			s.estimated += n
@@ -104,6 +109,24 @@ func (s usageSum) cost() string {
 	return cost
 }
 
+// minutes shows milliseconds as minutes with one decimal: 3480000 -> "58.0".
+func minutes(ms int64) string {
+	t := (ms + 3000) / 6000 // tenths of a minute, rounded
+	return fmt.Sprintf("%d.%d", t/10, t%10)
+}
+
+// failedSummary: ", 7 errors, 58.0 failed agent minutes" for the total line; "" when no event failed with an error.
+func (s usageSum) failedSummary() string {
+	if s.errors == 0 {
+		return ""
+	}
+	out := fmt.Sprintf(", %d errors", s.errors)
+	if s.failedMs > 0 {
+		out += ", " + minutes(s.failedMs) + " failed agent minutes"
+	}
+	return out
+}
+
 // human: 914, 1.2K, 914K, 46.1M, 3B.
 func human(n int64) string {
 	if n < 1000 {
@@ -161,7 +184,7 @@ func parseUsageReply(data []byte) (rows []usageEventRow, gaps []usageEventGap, e
 	return r.Days, r.Gaps, err
 }
 
-func usageReportText(rows []usageEventRow, gaps []usageEventGap) string {
+func usageReportText(rows []usageEventRow, gaps []usageEventGap, sortFailed bool) string {
 	if len(rows) == 0 {
 		return "no events\n"
 	}
@@ -186,6 +209,8 @@ func usageReportText(rows []usageEventRow, gaps []usageEventGap) string {
 	sort.Slice(keys, func(i, j int) bool {
 		a, b := groups[keys[i]], groups[keys[j]]
 		switch {
+		case sortFailed && a.failedMs != b.failedMs:
+			return a.failedMs > b.failedMs
 		case a.known != b.known:
 			return a.known
 		case a.nanos != b.nanos:
@@ -195,10 +220,19 @@ func usageReportText(rows []usageEventRow, gaps []usageEventGap) string {
 		}
 		return keys[i][0]+"\x00"+keys[i][1] < keys[j][0]+"\x00"+keys[j][1]
 	})
+	withFailedTime := total.failedMs > 0 // the column appears when any model has failed agent minutes
 	var mrows [][]string
 	for _, k := range keys {
 		s := groups[k]
-		mrows = append(mrows, []string{oneLine(k[0]), oneLine(k[1]), strconv.FormatInt(s.events, 10), strconv.FormatInt(s.failed, 10), human(s.in), human(s.out), s.cost()})
+		row := []string{oneLine(k[0]), oneLine(k[1]), strconv.FormatInt(s.events, 10), strconv.FormatInt(s.failed, 10)}
+		if withFailedTime {
+			ft := "-"
+			if s.failedMs > 0 {
+				ft = minutes(s.failedMs)
+			}
+			row = append(row, ft)
+		}
+		mrows = append(mrows, append(row, human(s.in), human(s.out), s.cost()))
 	}
 	names := make([]string, 0, len(days))
 	for d := range days {
@@ -210,9 +244,13 @@ func usageReportText(rows []usageEventRow, gaps []usageEventGap) string {
 		s := days[d]
 		drows = append(drows, []string{oneLine(d), strconv.FormatInt(s.events, 10), human(s.in + s.out), s.cost()})
 	}
-	out := usageTable([]string{"provider", "model", "requests", "failed", "tokens in", "tokens out", "cost USD"}, mrows, []bool{false, false, true, true, true, true, false}) +
+	head, right := []string{"provider", "model", "requests", "failed", "tokens in", "tokens out", "cost USD"}, []bool{false, false, true, true, true, true, false}
+	if withFailedTime {
+		head, right = slices.Insert(head, 4, "failed min"), slices.Insert(right, 4, true)
+	}
+	out := usageTable(head, mrows, right) +
 		"\n" + usageTable([]string{"day", "requests", "tokens in+out", "cost USD"}, drows, []bool{false, true, true, false}) +
-		fmt.Sprintf("\ntotal: %d requests (%d failed), %s tokens in, %s tokens out, cost USD %s\n", total.events, total.failed, human(total.in), human(total.out), total.cost())
+		fmt.Sprintf("\ntotal: %d requests (%d failed), %s tokens in, %s tokens out, cost USD %s%s\n", total.events, total.failed, human(total.in), human(total.out), total.cost(), total.failedSummary())
 	for _, g := range gaps {
 		out += fmt.Sprintf("%d events lost between %s and %s (UTC)\n", g.Count, g.From.UTC().Format("2006-01-02 15:04"), g.To.UTC().Format("2006-01-02 15:04"))
 	}
@@ -243,7 +281,7 @@ func usageReportCSV(rows []usageEventRow) string {
 		sums[k].add(r)
 	}
 	sort.Slice(keys, func(i, j int) bool { return strings.Join(keys[i][:], "\x00") < strings.Join(keys[j][:], "\x00") })
-	out := "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n"
+	out := "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n"
 	for _, k := range keys {
 		s := sums[k]
 		cost := ""
@@ -254,7 +292,7 @@ func usageReportCSV(rows []usageEventRow) string {
 		if s.estimateKnown {
 			estimated = fmt.Sprintf("%d.%09d", s.estimated/1_000_000_000, s.estimated%1_000_000_000)
 		}
-		out += fmt.Sprintf("%s,%s,%s,%d,%d,%d,%d,%s,%s,%d\n", csvCell(k[0], true), csvCell(k[1], true), csvCell(k[2], true), s.events, s.failed, s.in, s.out, cost, estimated, s.unknown)
+		out += fmt.Sprintf("%s,%s,%s,%d,%d,%d,%d,%s,%s,%d,%d,%d,%d,%d\n", csvCell(k[0], true), csvCell(k[1], true), csvCell(k[2], true), s.events, s.failed, s.in, s.out, cost, estimated, s.unknown, s.errors, s.durationMs, s.failedMs, s.unknownMs)
 	}
 	return out
 }

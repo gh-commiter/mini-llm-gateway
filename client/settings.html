@@ -136,12 +136,14 @@ async function signIn() {
 const SL = (navigator.language || "").toLowerCase().startsWith("sl");
 document.documentElement.lang = SL ? "sl" : "en";
 const S = {
-  usage:["Usage","Poraba"], tokens:["Tokens","Žetoni"], spend:["Spend","Stroški"], requests:["Requests","Zahteve"],
+  usage:["Usage","Poraba"], tokens:["Tokens","Žetoni"], spend:["Spend","Stroški"], requests:["Requests","Zahteve"], failed:["Failed time","Čas neuspehov"],
   period:["Period","Obdobje"], usageDays:["%s days","%s dni"], dailyModels:["Daily by model · UTC","Dnevno po modelih · UTC"],
   topModels:["Top models","Največ uporabljeni modeli"], usageModel:["Model","Model"], usageProvider:["Provider","Ponudnik"],
   usageOther:["Other","Drugi"], usageEmpty:["No events in this period.","V tem obdobju ni dogodkov."],
   usageError:["Could not load usage: %s","Porabe ni mogoče naložiti: %s"],
   unknownCost:["%s requests without a known cost","%s zahtev brez znanega stroška"],
+  failedHint:["Summed agent minutes are concurrent work time, not clock time. Only requests that ended in an error count.","Seštete minute agentov so čas dela, ki teče hkrati, ne ura na zidu. Štejejo le zahteve, ki so se končale z napako."],
+  unknownDuration:["%s requests without a known duration","%s zahtev brez znanega trajanja"],
   costHint:["USD · reported cost + ~estimated cost","USD · sporočeni strošek + ~ocenjeni strošek"],
   usageGap:["Recording gap: %s requests · %s – %s","Vrzel v beleženju: %s zahtev · %s – %s"],
   usageClock:["Returned days extend beyond this computer’s UTC window; all returned usage is shown.","Vrnjeni dnevi segajo izven obdobja UTC tega računalnika; prikazana je vsa vrnjena poraba."],
@@ -578,10 +580,12 @@ function usageNumber(n) {
   return String(Number(n.toFixed(2)));
 }
 function usageSum(rows) {
-  const sum = {tokens:0, requests:0, reported:0, estimated:0, unknown:0, known:false, hasReported:false, hasEstimate:false};
+  const sum = {tokens:0, requests:0, failed:0, unknownDuration:0, reported:0, estimated:0, unknown:0, known:false, hasReported:false, hasEstimate:false};
   for (const r of rows) {
     sum.tokens += Number(r.tokensIn || 0) + Number(r.tokensOut || 0);
     sum.requests += Number(r.events || 0);
+    sum.failed += Number(r.failedDurationMs || 0) / 60000;  // minutes of requests that ended in an error
+    sum.unknownDuration += Number(r.unknownDurationEvents || 0);
     sum.reported += Number(r.reportedCostUsd || 0);
     sum.estimated += Number(r.estimatedCostUsd || 0);
     sum.unknown += Number(r.eventsWithoutCost || 0);
@@ -615,6 +619,7 @@ function usageGroups(rows, measure, days, today, limit = 6) {
   return {total:usageSum(rows), ranked, series, bars};
 }
 function usageValue(sum, measure) {
+  if (measure === "failed") return (Math.round(sum.failed * 10) / 10).toFixed(1) + " min";
   if (measure !== "spend") return usageNumber(sum[measure]);
   if (!sum.known) return "—";
   const money = n => "$" + n.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:9});
@@ -624,6 +629,8 @@ function usageValue(sum, measure) {
 function usageNotes(report, total, measure) {
   return [measure === "spend" ? t("costHint") : "",
     measure === "spend" && total.unknown ? t("unknownCost", total.unknown) : "",
+    measure === "failed" ? t("failedHint") : "",
+    measure === "failed" && total.unknownDuration ? t("unknownDuration", total.unknownDuration) : "",
     ...(report.gaps || []).map(g => t("usageGap", g.count, g.from, g.to))].filter(Boolean);
 }
 function usageSVG(tag, attrs, text) {
@@ -636,7 +643,7 @@ function usageChart(data, measure, tooltip) {
   const svg = usageSVG("svg", {viewBox:"0 0 560 280", class:"usage-chart", role:"group", "aria-label":t("usageAlt")});
   const segments = [];
   const max = Math.max(0, ...data.bars.map(b => b.segments.reduce((n, s) => n + s[measure], 0)));
-  const ceiling = measure === "spend" ? max || 1 : Math.max(3, Math.ceil(max / 3) * 3);
+  const ceiling = measure === "spend" || measure === "failed" ? max || 1 : Math.max(3, Math.ceil(max / 3) * 3);
   for (let i = 0; i <= 3; i++) {
     const y = 230 - i * 70;
     svg.append(usageSVG("line", {x1:64, x2:550, y1:y, y2:y, stroke:"var(--line)"}),
@@ -689,7 +696,7 @@ function usagePane() {
   const body = el("div", {});
   const period = el("select", {}, ...[7, 30, 90].map(n => el("option", {value:n, textContent:t("usageDays", n)})));
   const tabs = el("div", {class:"hbar"});
-  const measures = ["tokens", "spend", "requests"];
+  const measures = ["tokens", "spend", "requests", "failed"];
   const tabButtons = measures.map((k, index) => {
     const b = button(t(k), () => { measure = k; render(); });
     b.id = "usage-tab-" + k;

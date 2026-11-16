@@ -470,6 +470,7 @@ extension Router {
                 ?? (error as? Native.TreeAlive).map { (500, "api_error", "\($0.agent): " + Native.notStopped(rid)) } ?? (500, "api_error", "\(error)")
             if error is Native.TreeAlive { await Self.shares.abandon() }  // #73: klon sync ne gre v kopijo
             Self.log.error("\(rid, privacy: .public) \(model, privacy: .public) failed: \(message, privacy: .public)")
+            Self.reqState?.fail(error is SiriError ? "other" : AgentError.kind(message))
             let agentLimit = status == 429 && !(error is SiriError)
             // #82: neprevzeto delo agenta je končno kot omejitev (ponovitev bi agenta zagnala znova in spremembe uveljavila dvakrat)
             if let req, agentLimit || error is ShareHub.PullFailed, stream, sent.head || writer is EarlyStreamWriter {  // napaka bo dogodek SSE
@@ -490,6 +491,12 @@ extension Router {
 enum AgentError {
     static let limits = ["usage limit", "rate limit", "quota", "too many requests", "payment required", "spending-limit", "out of credits",
                          "hit your", "reached your", "out of usage", "spend limit"]
+
+    /// The bounded reason of an agent's failure for its usage event (never the text): limit, exit (the process failed or exited non-zero), other.
+    static func kind(_ raw: String) -> String {
+        if limits.contains(where: { raw.lowercased().contains($0) }) { return "limit" }
+        return raw.contains("exited with") || raw.contains(" failed (") ? "exit" : "other"
+    }
 
     static func classify(_ raw: String) -> (Int, String, String) {
         let low = raw.lowercased(), status = limits.contains { low.contains($0) } ? 429 : 502  // tudi ovoj (»Payment Required«)

@@ -500,6 +500,14 @@ minigw gw usage-events --project fakture            # on the gateway computer
 minigw gw usage --days 30                           # on the gateway computer: requests, tokens and cost per provider and model (--csv for a spreadsheet)
 ```
 
+The provider/model usage report also shows failed agent time: the minutes between dispatch and the end of requests that
+ended in an error (a hung provider, a stream that broke after HTTP 200, an agent that failed or hit the 30 minute limit of `minigw serve`).
+It appears as a "failed min" column when any model has some and as "7 errors, 58.0 failed agent minutes" on the total line;
+`--sort failed` lists the models with the most failed time first. **Summed agent minutes are concurrent work time, not
+clock time**: 31 requests that each hang for 8 minutes at the same time are 250 agent minutes inside about 8 minutes of
+clock. Requests recorded before 0.6.7 and runs cut off by a crash have an unknown duration; they are counted separately,
+never as zero. The Usage views of the Mac app and the browser Settings have a "Failed time" measure.
+
 The provider/model usage report shows reported USD charges plain and estimated charges with `~` (for example
 `~0.42`). Mixed totals show `0.96 + ~0.42`; unknown costs retain their count. CSV exports have separate
 `reported_cost_usd` and `estimated_cost_usd` columns. Claude, Codex, Grok and Copilot subscription calls have no money.

@@ -30,6 +30,9 @@ struct UsageEvent: Sendable {
     var cacheReadTokens: Int?
     var cacheWriteTokens: Int?
     var tokenSource = "unknown"  // reported, estimated, unknown
+    var durationMs: Int64?       // dispatch to finish (not admission or queue time); nil = unknown
+    var upstreamStatus = 0       // the HTTP status the upstream answered; 0 = none
+    var errorKind = ""           // http, limit, timeout, unreachable, stream, exit, other: only with outcome error, never an error text
 
     var json: [String: Any] {
         var o: [String: Any] = ["id": id, "start": Self.iso(start), "provider": provider, "model": model, "outcome": outcome,
@@ -43,6 +46,9 @@ struct UsageEvent: Sendable {
         if let costUsdNanos { o["costUsdNanos"] = costUsdNanos; o["costSource"] = costSource }
         if !parentId.isEmpty { o["parentId"] = parentId }
         if let end { o["end"] = Self.iso(end) }
+        if let durationMs { o["durationMs"] = durationMs }
+        if upstreamStatus != 0 { o["upstreamStatus"] = upstreamStatus }
+        if outcome == "error", !errorKind.isEmpty { o["errorKind"] = errorKind }
         if userId != 0 { o["userId"] = userId }
         if projectId != 0 { o["projectId"] = projectId }
         if !deviceId.isEmpty { o["deviceId"] = deviceId }
@@ -58,15 +64,29 @@ final class RequestState: @unchecked Sendable {
     private var _event: UsageEvent?
     private var _dispatched = false
     private var _tokenSource = ""
+    private var _dispatchedAt: Date?
+    private var _upstreamStatus = 0
+    private var _errKind = ""
+    private var _clientGone = false
     var project: ProjectRun? { get { lock.withLock { _project } } set { lock.withLock { _project = newValue } } }
     var event: UsageEvent? { lock.withLock { _event } }
     var tokenSource: String { get { lock.withLock { _tokenSource } } set { lock.withLock { _tokenSource = newValue } } }
+    var dispatchedAt: Date? { lock.withLock { _dispatchedAt } }
+    var upstreamStatus: Int { get { lock.withLock { _upstreamStatus } } set { lock.withLock { _upstreamStatus = newValue } } }
+    var errKind: String { lock.withLock { _errKind } }
+    var clientGone: Bool { lock.withLock { _clientGone } }
+    /// The request failed although it answered with a success status (a stream that broke after 200, an agent that exited non-zero but gave
+    /// text); the first reason stays. `kind` is one of the closed set of error kinds.
+    func fail(_ kind: String) { lock.withLock { if _errKind.isEmpty { _errKind = kind } } }
+    /// The client went away (a write to it failed): a cancelled event, whatever status was sent.
+    func markClientGone() { lock.withLock { _clientGone = true } }
     func admit(_ e: UsageEvent) { lock.withLock { _event = e } }
     /// The first caller gets the event (with the project it has now); later ones nil: one begin per request.
     func dispatch(provider: String, upstreamModel: String = "", price: PriceSnapshot? = nil) -> UsageEvent? {
         lock.withLock {
             guard var e = _event, !_dispatched else { return nil }
             _dispatched = true
+            _dispatchedAt = Date()
             e.projectId = _project?.project ?? e.projectId
             e.provider = provider
             e.upstreamModel = upstreamModel
@@ -316,10 +336,14 @@ extension Router {
     func endEvent(_ state: RequestState, status: Int, usage counts: UsageWriter?) {
         guard state.wasDispatched, var e = state.event else { return }
         e.end = Date()
+        if let at = state.dispatchedAt { e.durationMs = max(0, Int64(e.end!.timeIntervalSince(at) * 1000)) }
+        e.upstreamStatus = state.upstreamStatus
         if e.provider.isEmpty { e.provider = "unknown" }
         switch true {
-        case status == 499 || Task.isCancelled: e.outcome = "cancelled"
-        case status >= 400 || counts?.errorSeen == true: e.outcome = "error"
+        case status == 499 || Task.isCancelled || state.clientGone: e.outcome = "cancelled"
+        case status >= 400 || !state.errKind.isEmpty || counts?.errorSeen == true:  // also a stream that broke or carried an error event after 200
+            e.outcome = "error"
+            e.errorKind = !state.errKind.isEmpty ? state.errKind : e.upstreamStatus >= 400 ? "http" : counts?.errorSeen == true ? "stream" : [408, 504].contains(status) ? "timeout" : "other"
         default: e.outcome = "ok"
         }
         if let u = counts?.usage, u.input > 0 || u.output > 0 {

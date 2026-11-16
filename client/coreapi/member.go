@@ -82,6 +82,12 @@ type UsageRowJSON struct {
 	UnknownTokens        int64   `json:"eventsWithoutTokens"`
 	Nested               int64   `json:"nestedEvents"`
 	Failed               int64   `json:"failedEvents"`
+	ErrorEvents          int64   `json:"errorEvents"`
+	CancelledEvents      int64   `json:"cancelledEvents"`
+	InterruptedEvents    int64   `json:"interruptedEvents"`
+	DurationMs           int64   `json:"durationMs"`
+	FailedDurationMs     int64   `json:"failedDurationMs"`
+	UnknownDuration      int64   `json:"unknownDurationEvents"`
 }
 
 type UsageGapJSON struct {
@@ -109,7 +115,7 @@ func UsageJSON(rep core.UsageReport) map[string]any {
 				total = nil
 			}
 		}
-		rows = append(rows, UsageRowJSON{costString(total), r.EstimatedEvents, r.SubscriptionEvents, r.UnknownBillingEvents, r.Provider, costString(r.ReportedCost), costString(r.EstimatedCost), r.UnknownCost, r.Day, r.Model, r.UserID, r.UserName, r.ProjectID, r.Events, r.TokensIn, r.TokensOut, r.UnknownTokens, r.Nested, r.Failed})
+		rows = append(rows, UsageRowJSON{costString(total), r.EstimatedEvents, r.SubscriptionEvents, r.UnknownBillingEvents, r.Provider, costString(r.ReportedCost), costString(r.EstimatedCost), r.UnknownCost, r.Day, r.Model, r.UserID, r.UserName, r.ProjectID, r.Events, r.TokensIn, r.TokensOut, r.UnknownTokens, r.Nested, r.Failed, r.ErrorEvents, r.CancelledEvents, r.InterruptedEvents, r.DurationMs, r.FailedDurationMs, r.UnknownDuration})
 	}
 	for _, g := range rep.Gaps {
 		gaps = append(gaps, UsageGapJSON{g.Count, g.From, g.To})

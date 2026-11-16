@@ -6,13 +6,14 @@ import Foundation
 
 public enum UsageReport {
     public static let help = """
-        minigw gw usage [--days N] [--provider P] [--model M] [--json|--csv]   requests, tokens and cost per provider, model and day (UTC)
+        minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
           minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)
         """
 
     /// Known reported and estimated sums; `unknown` counts events without cost.
     struct Sum {
         var events: Int64 = 0, failed: Int64 = 0, tin: Int64 = 0, tout: Int64 = 0, unknown: Int64 = 0, nanos: Int64 = 0
+        var errors: Int64 = 0, durationMs: Int64 = 0, failedMs: Int64 = 0, unknownMs: Int64 = 0
         var known = false
         var estimated: Int64 = 0, reported: Int64 = 0
         var estimateKnown = false, reportedKnown = false
@@ -24,9 +25,19 @@ public enum UsageReport {
             tin += r["tokensin"]?.int ?? 0
             tout += r["tokensout"]?.int ?? 0
             unknown += nocost
+            errors += r["errorevents"]?.int ?? 0
+            durationMs += r["durationms"]?.int ?? 0
+            failedMs += r["faileddurationms"]?.int ?? 0
+            unknownMs += r["unknowndurationevents"]?.int ?? 0
             if let c = r["estimatedcostusd"]?.string, let n = UsageReport.parseNanos(c) { estimated += n; nanos += n; known = true; estimateKnown = true }
             guard let c = r["reportedcostusd"]?.string else { return }
             if let n = UsageReport.parseNanos(c) { nanos += n; reported += n; known = true; reportedKnown = true } else { unknown += events - nocost }  // malformed: not a known cost
+        }
+
+        /// ", 7 errors, 58.0 failed agent minutes" for the total line; "" when no event failed with an error.
+        var failedSummary: String {
+            guard errors > 0 else { return "" }
+            return ", \(errors) errors" + (failedMs > 0 ? ", " + UsageReport.minutes(failedMs) + " failed agent minutes" : "")
         }
 
         var cost: String {
@@ -53,6 +64,12 @@ public enum UsageReport {
         if nanos < 10_000_000 { return String(format: "%lld.%04lld", (nanos + 50_000) / 1_000_000_000, (nanos + 50_000) % 1_000_000_000 / 100_000) }
         let c = (nanos + 5_000_000) / 10_000_000
         return String(format: "%lld.%02lld", c / 100, c % 100)
+    }
+
+    /// Milliseconds as minutes with one decimal: 3480000 -> "58.0".
+    static func minutes(_ ms: Int64) -> String {
+        let t = (ms + 3000) / 6000  // tenths of a minute, rounded
+        return "\(t / 10).\(t % 10)"
     }
 
     /// 914, 1.2K, 914K, 46.1M, 3B.
@@ -93,7 +110,7 @@ public enum UsageReport {
         return ((d["days"]?.array ?? []).map(\.dict), (d["gaps"]?.array ?? []).map(\.dict))
     }
 
-    static func text(_ rows: [JDict], _ gaps: [JDict]) -> String {
+    static func text(_ rows: [JDict], _ gaps: [JDict], sortFailed: Bool = false) -> String {
         if rows.isEmpty { return "no events\n" }
         var total = Sum()
         var groups: [[String]: Sum] = [:], days: [String: Sum] = [:]
@@ -105,22 +122,28 @@ public enum UsageReport {
         }
         let keys = groups.keys.sorted { x, y in
             let a = groups[x]!, b = groups[y]!
+            if sortFailed && a.failedMs != b.failedMs { return a.failedMs > b.failedMs }
             if a.known != b.known { return a.known }
             if a.nanos != b.nanos { return a.nanos > b.nanos }
             if a.events != b.events { return a.events > b.events }
             return before(x[0] + "\u{0}" + x[1], y[0] + "\u{0}" + y[1])
         }
+        let withFailedTime = total.failedMs > 0  // the column appears when any model has failed agent minutes
         let mrows = keys.map { k -> [String] in
             let s = groups[k]!
-            return [oneLine(k[0]), oneLine(k[1]), String(s.events), String(s.failed), human(s.tin), human(s.tout), s.cost]
+            var row = [oneLine(k[0]), oneLine(k[1]), String(s.events), String(s.failed)]
+            if withFailedTime { row.append(s.failedMs > 0 ? minutes(s.failedMs) : "-") }
+            return row + [human(s.tin), human(s.tout), s.cost]
         }
         let drows = days.keys.sorted(by: before).map { d -> [String] in
             let s = days[d]!
             return [oneLine(d), String(s.events), human(s.tin + s.tout), s.cost]
         }
-        var out = table(["provider", "model", "requests", "failed", "tokens in", "tokens out", "cost USD"], mrows, [false, false, true, true, true, true, false])
+        var head = ["provider", "model", "requests", "failed", "tokens in", "tokens out", "cost USD"], right = [false, false, true, true, true, true, false]
+        if withFailedTime { head.insert("failed min", at: 4); right.insert(true, at: 4) }
+        var out = table(head, mrows, right)
             + "\n" + table(["day", "requests", "tokens in+out", "cost USD"], drows, [false, true, true, false])
-            + "\ntotal: \(total.events) requests (\(total.failed) failed), \(human(total.tin)) tokens in, \(human(total.tout)) tokens out, cost USD \(total.cost)\n"
+            + "\ntotal: \(total.events) requests (\(total.failed) failed), \(human(total.tin)) tokens in, \(human(total.tout)) tokens out, cost USD \(total.cost)\(total.failedSummary)\n"
         let utc = TimeZone(identifier: "UTC")!
         for g in gaps {
             out += "\(g["count"]?.int ?? 0) events lost between \(ProjectText.stamp(g["from"]?.string.flatMap(ProjectText.parseTime), utc)) and \(ProjectText.stamp(g["to"]?.string.flatMap(ProjectText.parseTime), utc)) (UTC)\n"
@@ -140,12 +163,12 @@ public enum UsageReport {
     static func csv(_ rows: [JDict]) -> String {
         var sums: [[String]: Sum] = [:]
         for r in rows { sums[[r["day"]?.string ?? "", r["provider"]?.string ?? "", r["model"]?.string ?? ""], default: Sum()].add(r) }
-        var out = "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost\n"
+        var out = "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n"
         for k in sums.keys.sorted(by: { before($0.joined(separator: "\u{0}"), $1.joined(separator: "\u{0}")) }) {
             let s = sums[k]!
             let cost = s.reportedKnown ? String(format: "%lld.%09lld", s.reported / 1_000_000_000, s.reported % 1_000_000_000) : ""
             let estimated = s.estimateKnown ? String(format: "%lld.%09lld", s.estimated / 1_000_000_000, s.estimated % 1_000_000_000) : ""
-            out += "\(cell(k[0])),\(cell(k[1])),\(cell(k[2])),\(s.events),\(s.failed),\(s.tin),\(s.tout),\(cost),\(estimated),\(s.unknown)\n"
+            out += "\(cell(k[0])),\(cell(k[1])),\(cell(k[2])),\(s.events),\(s.failed),\(s.tin),\(s.tout),\(cost),\(estimated),\(s.unknown),\(s.errors),\(s.durationMs),\(s.failedMs),\(s.unknownMs)\n"
         }
         return out
     }

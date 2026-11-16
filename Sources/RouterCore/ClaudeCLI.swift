@@ -1002,6 +1002,7 @@ extension Router {
                 keepTmp = true
                 await Self.shares.abandon()  // #73: klon sync ne gre v kopijo
             }
+            Self.reqState?.markClientGone()  // a write to the client failed or the request was cancelled
             return headSent ? 200 : 499
         }
         let status = await exit.wait()
@@ -1014,9 +1015,12 @@ extension Router {
         pinger?.cancel()
         let errText = await errTask.value
 
-        if let msg = (stopped ? nil : Native.notStopped(rid)) ?? t.resultError
-            ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) ?? pullErr {
+        let failure = (stopped ? nil : Native.notStopped(rid)) ?? t.resultError
+            ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) ?? pullErr
+        if failure == nil, status != 0 { Self.reqState?.fail("exit") }  // exited non-zero but left text: the reply is 200, the run failed
+        if let msg = failure {
             Self.log.error("\(rid, privacy: .public) claude failed: \(msg, privacy: .public)")
+            Self.reqState?.fail(AgentError.kind(msg))
             let (code, type, text) = AgentError.classify(msg)
             // #82: neprevzeto delo agenta je končno (ponovitev bi agenta zagnala znova in spremembe uveljavila dvakrat)
             let final = code == 429 || pullErr != nil

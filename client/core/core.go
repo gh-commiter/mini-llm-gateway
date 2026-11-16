@@ -66,7 +66,7 @@ type state struct {
 }
 
 // migrations is ordered and forward only; migration i brings the schema to version i+1. Tests replace it.
-var migrations = []func(*sql.Tx) error{migrate1, migrate2, migrate3, migrate4, migrate5, migrate6}
+var migrations = []func(*sql.Tx) error{migrate1, migrate2, migrate3, migrate4, migrate5, migrate6, migrate7}
 
 func migrate1(tx *sql.Tx) error {
 	_, err := tx.Exec(`

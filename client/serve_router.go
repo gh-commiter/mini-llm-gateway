@@ -281,6 +281,7 @@ func routerCommand(args []string, in io.Reader) {
 	evProject := fs.String("project", "", "usage-events: only this project (slug or number)")
 	evModel := fs.String("model", "", "usage, usage-events: only this model")
 	evProvider := fs.String("provider", "", "usage: only this provider")
+	evSort := fs.String("sort", "", "usage: failed = models with the most failed agent time first")
 	asJSON := fs.Bool("json", false, "usage: the API answer unchanged")
 	asCSV := fs.Bool("csv", false, "usage: one CSV row per day, provider and model")
 	legacy := fs.Bool("legacy", false, "usage: the counters per folder and device")
@@ -511,10 +512,10 @@ func routerCommand(args []string, in io.Reader) {
 
 	case "usage":
 		if !*legacy {
-			coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, provider: *evProvider, device: *device, folder: *folder, json: *asJSON, csv: *asCSV})
+			coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, provider: *evProvider, device: *device, folder: *folder, sort: *evSort, json: *asJSON, csv: *asCSV})
 			break
 		}
-		if len(pos) != 1 || *asJSON || *asCSV || *evModel != "" || *evProvider != "" || *evUser != "" || *evProject != "" {
+		if len(pos) != 1 || *asJSON || *asCSV || *evModel != "" || *evProvider != "" || *evSort != "" || *evUser != "" || *evProject != "" {
 			fail(usageReportHelp)
 		}
 		var r struct{ Usage []projectUse }

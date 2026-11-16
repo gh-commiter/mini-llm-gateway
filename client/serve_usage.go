@@ -41,7 +41,7 @@ func (s *server) dispatched(r *req) {
 	if e == nil || r.evDispatched {
 		return
 	}
-	r.evDispatched = true
+	r.evDispatched, r.evStarted = true, time.Now()
 	if r.project != nil {
 		e.ProjectID = r.project.project
 	}
@@ -63,6 +63,7 @@ func (s *server) endEvent(r *req, status int, uw *usageWriter) {
 		return
 	}
 	e.End = time.Now()
+	e.DurationMs = new(e.End.Sub(r.evStarted).Milliseconds())
 	e.Provider = r.provider
 	if e.Provider == "" {
 		if a := agentOfModel(e.Model); a != "" {
@@ -74,8 +75,9 @@ func (s *server) endEvent(r *req, status int, uw *usageWriter) {
 	switch {
 	case status == 499 || r.Context().Err() != nil:
 		e.Outcome = core.OutcomeCancelled
-	case status >= 400 || uw != nil && uw.errSeen: // 429, 5xx, an upstream 4xx, or an error event inside a stream that began with 200
+	case status >= 400 || r.errKind != "" || uw != nil && uw.errSeen: // 429, 5xx, an upstream 4xx, a stream that broke or carried an error event after 200, an agent that failed
 		e.Outcome = core.OutcomeError
+		e.ErrorKind = errorKind(r, status, uw)
 	default:
 		e.Outcome = core.OutcomeOK
 	}
@@ -118,6 +120,42 @@ func (s *server) endEvent(r *req, status int, uw *usageWriter) {
 		e.UnpricedDimensions = true
 	}
 	s.api.EventFinish(*e)
+}
+
+// fail marks a request as failed although it answered with a success status (a stream that broke after 200, an agent
+// that exited non-zero but gave text); the first reason stays. kind is one of core.ErrorKinds.
+func (r *req) fail(kind string) {
+	if r.errKind == "" {
+		r.errKind = kind
+	}
+}
+
+// errorKind: the bounded reason of an error event, never an error text.
+func errorKind(r *req, status int, uw *usageWriter) string {
+	switch {
+	case r.errKind != "":
+		return r.errKind
+	case r.event.UpstreamStatus >= 400:
+		return "http"
+	case uw != nil && uw.errSeen:
+		return "stream"
+	case status == 408 || status == 504:
+		return "timeout"
+	}
+	return "other"
+}
+
+// agentErrKind: the reason of an agent run's error (the messages of runAgentProcess and the Claude CLI path).
+func agentErrKind(msg string) string {
+	switch {
+	case strings.Contains(msg, "stopped after"):
+		return "timeout"
+	case agentLimit(msg):
+		return "limit"
+	case strings.Contains(msg, " failed ("):
+		return "exit"
+	}
+	return "other"
 }
 
 // usageErrSeen reports an SSE error event in a chunk of the stream.

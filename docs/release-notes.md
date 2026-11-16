@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### New
+- New (both gateways): failed agent time. Every request that reached its model now records how long it ran (from dispatch, not from admission or the queue) and, for an error, why (a closed list: `http`, `limit`, `timeout`, `unreachable`, `stream`, `exit`, `other`; never an error text) and the status the upstream answered. `minigw gw usage` adds a "failed min" column when any model has failed agent minutes and a total line such as "7 errors, 58.0 failed agent minutes"; `--sort failed` lists the models with the most failed time first; the CSV gains `errors`, `duration_ms`, `failed_duration_ms` and `unknown_duration_events` at the end. `/usage/events` rows gain `errorEvents`, `cancelledEvents`, `interruptedEvents`, `durationMs`, `failedDurationMs` and `unknownDurationEvents`; nothing existing changes.
+- New (Mac app and browser Settings): the Usage view has a fourth measure, "Failed time" (minutes of requests that ended in an error per day and model).
+
+### Fixed
+- Fixed (both gateways): an upstream stream that breaks after HTTP 200 (connection lost, timeout) is recorded as an error, not as a success; an agent run that exits non-zero or is stopped by the 30 minute limit of `minigw serve` but still left text is recorded as an error; a client that goes away mid-stream is "cancelled"; a run cut off by a stop of the gateway is "interrupted" with an unknown duration, as before.
+
+### Known limits
+- Downgrade to 0.6.6 or older: the first start of this version migrates the core database to schema 7 and first writes a snapshot `core-6-<time>.db` into the core folder (`<config>/core`; on the Mac `~/Library/Application Support/Mini Gateway/core`). An older program refuses schema 7 (projects answer 503 `core_unavailable`; models keep working). The way back: stop the gateway (on the Mac quit the app), run `minigw gw core restore <path to that core-6-<time>.db>`, start the older version; what was written to the core after the migration is lost.
+- Requests recorded before this version have an unknown duration (counted as "unknown", never as zero minutes). Failed minutes of runs cut off by a crash are unknown too.
+
 ## 0.6.6
 
 ### Fixed

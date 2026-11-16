@@ -14,12 +14,12 @@ public struct AdminCLIError: Error, Equatable {
 
 /// The flags of the owner commands (Go's coreOpts).
 public struct AdminOpts {
-    public var days = "7", user = "", project = "", model = "", claudeProbe = "", provider = "", device = "", folder = ""
+    public var days = "7", user = "", project = "", model = "", claudeProbe = "", provider = "", device = "", folder = "", sort = ""
     public var json = false, csv = false
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
-                provider: String = "", device: String = "", folder: String = "", json: Bool = false, csv: Bool = false) {
+                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false) {
         self.days = days; self.user = user; self.project = project; self.model = model; self.claudeProbe = claudeProbe
-        self.provider = provider; self.device = device; self.folder = folder; self.json = json; self.csv = csv
+        self.provider = provider; self.device = device; self.folder = folder; self.sort = sort; self.json = json; self.csv = csv
     }
 }
 
@@ -175,6 +175,7 @@ public final class AdminCommands {
             guard pos.count == 1, !(o.json && o.csv) else { throw fail(UsageReport.help.trimmingCharacters(in: .whitespacesAndNewlines)) }
             if !o.device.isEmpty || !o.folder.isEmpty { throw fail("--device and --folder belong to the old counters: use minigw gw usage --legacy") }
             if !o.user.isEmpty || !o.project.isEmpty { throw fail("--user and --project belong to minigw gw usage-events") }
+            if !o.sort.isEmpty && (o.sort != "failed" || o.json || o.csv) { throw fail(UsageReport.help.trimmingCharacters(in: .whitespacesAndNewlines)) }
             var q = ["days": o.days]
             if !o.provider.isEmpty { q["provider"] = o.provider }
             if !o.model.isEmpty { q["model"] = o.model }
@@ -183,7 +184,7 @@ public final class AdminCommands {
             if r.status >= 300 { throw fail(clean(JSONValue.parse(r.data)?.dict["error"]?.dict["message"]?.string ?? "")) }
             if o.json { say(String(decoding: r.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)); break }
             guard let (rows, gaps) = UsageReport.rows(r.data) else { throw fail("the usage answer is not understood") }
-            out(o.csv ? UsageReport.csv(rows) : UsageReport.text(rows, gaps))
+            out(o.csv ? UsageReport.csv(rows) : UsageReport.text(rows, gaps, sortFailed: o.sort == "failed"))
         case "usage-events":
             try need(1, 1)
             var q = ["days": o.days]

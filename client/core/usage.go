@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -30,6 +31,9 @@ const (
 
 // UsageEvent: UserID and ProjectID 0 = none (NULL); TokensIn/TokensOut -1 = unknown (NULL).
 type UsageEvent struct {
+	DurationMs         *int64         `json:"durationMs,omitempty"`     // dispatch to finish; nil = unknown
+	UpstreamStatus     int            `json:"upstreamStatus,omitempty"` // HTTP status the upstream answered; 0 = none or unknown
+	ErrorKind          string         `json:"errorKind,omitempty"`      // one of ErrorKinds when Outcome is error
 	CacheReadTokens    *int64         `json:"cacheReadTokens,omitempty"`
 	CacheWriteTokens   *int64         `json:"cacheWriteTokens,omitempty"`
 	PriceSnapshotID    string         `json:"priceSnapshotId,omitempty"`
@@ -67,6 +71,26 @@ CREATE INDEX usage_events_parent ON usage_events(parent_id);
 CREATE TABLE usage_daily(day TEXT NOT NULL, user_id INTEGER NOT NULL, project_id INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
   events INTEGER NOT NULL, tokens_in INTEGER NOT NULL, tokens_out INTEGER NOT NULL, PRIMARY KEY(day,user_id,project_id,provider,model));
 CREATE TABLE usage_gaps(id TEXT PRIMARY KEY, count INTEGER NOT NULL, from_ms INTEGER NOT NULL, to_ms INTEGER NOT NULL);`)
+	return err
+}
+
+// ErrorKinds is the closed set an event's error_kind may hold; never raw error text.
+var ErrorKinds = []string{"http", "limit", "timeout", "unreachable", "stream", "exit", "other"}
+
+// maxEventDurationMs bounds a stored duration (about 115 days) so that sums cannot overflow.
+const maxEventDurationMs = 1e10
+
+func migrate7(tx *sql.Tx) error { // execution time and error kind per event; sums per day. Old rows: duration unknown (NULL), never zero.
+	_, err := tx.Exec(`ALTER TABLE usage_events ADD COLUMN duration_ms INTEGER CHECK(duration_ms>=0);
+ALTER TABLE usage_events ADD COLUMN upstream_status INTEGER CHECK(upstream_status>=100 AND upstream_status<=599);
+ALTER TABLE usage_events ADD COLUMN error_kind TEXT CHECK(error_kind IN('http','limit','timeout','unreachable','stream','exit','other'));
+ALTER TABLE usage_daily ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_daily ADD COLUMN failed_duration_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_daily ADD COLUMN unknown_duration INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_daily ADD COLUMN error_events INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_daily ADD COLUMN cancelled_events INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_daily ADD COLUMN interrupted_events INTEGER NOT NULL DEFAULT 0;
+UPDATE usage_daily SET unknown_duration=events;`)
 	return err
 }
 
@@ -165,8 +189,18 @@ func finishEvent(tx *sql.Tx, e UsageEvent) error {
 		e.CostUsdNanos = nil
 		source = "unknown"
 	}
-	_, err := tx.Exec(`UPDATE usage_events SET cost_usd_nanos=?, cost_source=?, cache_read_tokens=?, cache_write_tokens=?, upstream_model=COALESCE(upstream_model,?), end=?, outcome=?, tokens_in=?, tokens_out=?, token_source=?, project_id=COALESCE(project_id,?), provider=CASE WHEN provider='' THEN ? ELSE provider END
-WHERE id=? AND outcome IN('open','interrupted')`, e.CostUsdNanos, source, validCacheTokens(e.CacheReadTokens), validCacheTokens(e.CacheWriteTokens), nullStr(capStr(e.UpstreamModel, 256)), ms(e.End), e.Outcome, nullTok(e.TokensIn), nullTok(e.TokensOut), e.TokenSource, nullID(e.ProjectID), capStr(e.Provider, 64), e.ID)
+	var dur, status, kind any // a duration or kind that is not valid is unknown, not refused
+	if e.DurationMs != nil && *e.DurationMs >= 0 && *e.DurationMs <= maxEventDurationMs && e.Outcome != OutcomeInterrupted {
+		dur = *e.DurationMs
+	}
+	if e.UpstreamStatus >= 100 && e.UpstreamStatus <= 599 {
+		status = e.UpstreamStatus
+	}
+	if e.Outcome == OutcomeError && slices.Contains(ErrorKinds, e.ErrorKind) {
+		kind = e.ErrorKind
+	}
+	_, err := tx.Exec(`UPDATE usage_events SET duration_ms=?, upstream_status=?, error_kind=?, cost_usd_nanos=?, cost_source=?, cache_read_tokens=?, cache_write_tokens=?, upstream_model=COALESCE(upstream_model,?), end=?, outcome=?, tokens_in=?, tokens_out=?, token_source=?, project_id=COALESCE(project_id,?), provider=CASE WHEN provider='' THEN ? ELSE provider END
+WHERE id=? AND outcome IN('open','interrupted')`, dur, status, kind, e.CostUsdNanos, source, validCacheTokens(e.CacheReadTokens), validCacheTokens(e.CacheWriteTokens), nullStr(capStr(e.UpstreamModel, 256)), ms(e.End), e.Outcome, nullTok(e.TokensIn), nullTok(e.TokensOut), e.TokenSource, nullID(e.ProjectID), capStr(e.Provider, 64), e.ID)
 	return err
 }
 
@@ -203,12 +237,12 @@ func markInterrupted(tx *sql.Tx) error {
 func (s *Store) FoldOldUsage(ctx context.Context) (n int64, err error) {
 	cut := ms(s.now().UTC().AddDate(0, 0, -usageRetentionDays))
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`INSERT INTO usage_daily(day,user_id,project_id,provider,model,events,tokens_in,tokens_out,failed,nested,unknown_tokens,reported_cost,estimated_cost,unknown_cost,estimated_events,subscription_events,unknown_billing_events)
+		if _, err := tx.Exec(`INSERT INTO usage_daily(day,user_id,project_id,provider,model,events,tokens_in,tokens_out,failed,nested,unknown_tokens,reported_cost,estimated_cost,unknown_cost,estimated_events,subscription_events,unknown_billing_events,duration_ms,failed_duration_ms,unknown_duration,error_events,cancelled_events,interrupted_events)
 SELECT strftime('%Y-%m-%d', start/1000, 'unixepoch'), COALESCE(user_id,0), COALESCE(project_id,0), provider, model, count(*), COALESCE(sum(tokens_in),0), COALESCE(sum(tokens_out),0),
-  sum(outcome IN('error','cancelled','interrupted')), sum(parent_id IS NOT NULL), sum(tokens_in IS NULL AND tokens_out IS NULL), sum(CASE WHEN cost_source='reported' THEN cost_usd_nanos END), sum(CASE WHEN cost_source='estimated' THEN cost_usd_nanos END), sum(cost_usd_nanos IS NULL), sum(cost_source='estimated'), sum(billing_mode='subscription'), sum(billing_mode='unknown')
+  sum(outcome IN('error','cancelled','interrupted')), sum(parent_id IS NOT NULL), sum(tokens_in IS NULL AND tokens_out IS NULL), sum(CASE WHEN cost_source='reported' THEN cost_usd_nanos END), sum(CASE WHEN cost_source='estimated' THEN cost_usd_nanos END), sum(cost_usd_nanos IS NULL), sum(cost_source='estimated'), sum(billing_mode='subscription'), sum(billing_mode='unknown'), COALESCE(sum(duration_ms),0), COALESCE(sum(CASE WHEN outcome='error' THEN duration_ms END),0), sum(duration_ms IS NULL), sum(outcome='error'), sum(outcome='cancelled'), sum(outcome='interrupted')
 FROM usage_events WHERE start<? AND outcome!='open' GROUP BY 1,2,3,4,5
 ON CONFLICT(day,user_id,project_id,provider,model) DO UPDATE SET events=events+excluded.events, tokens_in=tokens_in+excluded.tokens_in, tokens_out=tokens_out+excluded.tokens_out,
-  failed=failed+excluded.failed, nested=nested+excluded.nested, unknown_tokens=unknown_tokens+excluded.unknown_tokens, reported_cost=CASE WHEN reported_cost IS NULL AND excluded.reported_cost IS NULL THEN NULL WHEN COALESCE(reported_cost,0)>9223372036854775807-COALESCE(excluded.reported_cost,0) THEN abs(-9223372036854775808) ELSE COALESCE(reported_cost,0)+COALESCE(excluded.reported_cost,0) END, estimated_cost=CASE WHEN estimated_cost IS NULL AND excluded.estimated_cost IS NULL THEN NULL WHEN COALESCE(estimated_cost,0)>9223372036854775807-COALESCE(excluded.estimated_cost,0) THEN abs(-9223372036854775808) ELSE COALESCE(estimated_cost,0)+COALESCE(excluded.estimated_cost,0) END, unknown_cost=unknown_cost+excluded.unknown_cost, estimated_events=estimated_events+excluded.estimated_events, subscription_events=subscription_events+excluded.subscription_events, unknown_billing_events=unknown_billing_events+excluded.unknown_billing_events`, cut); err != nil {
+  failed=failed+excluded.failed, nested=nested+excluded.nested, unknown_tokens=unknown_tokens+excluded.unknown_tokens, reported_cost=CASE WHEN reported_cost IS NULL AND excluded.reported_cost IS NULL THEN NULL WHEN COALESCE(reported_cost,0)>9223372036854775807-COALESCE(excluded.reported_cost,0) THEN abs(-9223372036854775808) ELSE COALESCE(reported_cost,0)+COALESCE(excluded.reported_cost,0) END, estimated_cost=CASE WHEN estimated_cost IS NULL AND excluded.estimated_cost IS NULL THEN NULL WHEN COALESCE(estimated_cost,0)>9223372036854775807-COALESCE(excluded.estimated_cost,0) THEN abs(-9223372036854775808) ELSE COALESCE(estimated_cost,0)+COALESCE(excluded.estimated_cost,0) END, unknown_cost=unknown_cost+excluded.unknown_cost, estimated_events=estimated_events+excluded.estimated_events, subscription_events=subscription_events+excluded.subscription_events, unknown_billing_events=unknown_billing_events+excluded.unknown_billing_events, duration_ms=duration_ms+excluded.duration_ms, failed_duration_ms=failed_duration_ms+excluded.failed_duration_ms, unknown_duration=unknown_duration+excluded.unknown_duration, error_events=error_events+excluded.error_events, cancelled_events=cancelled_events+excluded.cancelled_events, interrupted_events=interrupted_events+excluded.interrupted_events`, cut); err != nil {
 			return err
 		}
 		r, err := tx.Exec(`DELETE FROM usage_events WHERE start<? AND outcome!='open'`, cut)
@@ -246,6 +280,10 @@ type UsageRow struct {
 	UnknownTokens                                             int64 // events without token counts
 	Nested                                                    int64
 	Failed                                                    int64 // outcome error, cancelled or interrupted
+	// Execution time (dispatch to finish) of events whose duration is known; UnknownDuration events have none.
+	// FailedDurationMs is the time of outcome-error events only.
+	DurationMs, FailedDurationMs, UnknownDuration   int64
+	ErrorEvents, CancelledEvents, InterruptedEvents int64
 }
 
 type UsageGap struct {
@@ -332,7 +370,7 @@ func (s *Store) usageRows(tx *sql.Tx, days int, f UsageFilter, withFolded, withG
 	}
 	q := `SELECT strftime('%Y-%m-%d', e.start/1000, 'unixepoch') d, lower(e.provider), e.model, COALESCE(e.user_id,0), COALESCE(u.name,''), COALESCE(e.project_id,0), count(*),
   COALESCE(sum(e.tokens_in),0), COALESCE(sum(e.tokens_out),0), sum(e.tokens_in IS NULL AND e.tokens_out IS NULL), sum(e.parent_id IS NOT NULL),
-  sum(e.outcome IN('error','cancelled','interrupted')), sum(CASE WHEN e.cost_source='reported' THEN e.cost_usd_nanos END), sum(CASE WHEN e.cost_source='estimated' THEN e.cost_usd_nanos END), sum(e.cost_usd_nanos IS NULL), sum(e.cost_source='estimated'), sum(e.billing_mode='subscription'), sum(e.billing_mode='unknown')
+  sum(e.outcome IN('error','cancelled','interrupted')), sum(CASE WHEN e.cost_source='reported' THEN e.cost_usd_nanos END), sum(CASE WHEN e.cost_source='estimated' THEN e.cost_usd_nanos END), sum(e.cost_usd_nanos IS NULL), sum(e.cost_source='estimated'), sum(e.billing_mode='subscription'), sum(e.billing_mode='unknown'), COALESCE(sum(e.duration_ms),0), COALESCE(sum(CASE WHEN e.outcome='error' THEN e.duration_ms END),0), sum(e.duration_ms IS NULL), sum(e.outcome='error'), sum(e.outcome='cancelled'), sum(e.outcome='interrupted')
 FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(where, " AND ") + ` GROUP BY d, lower(e.provider), e.model, e.user_id, e.project_id ORDER BY d DESC, e.model, e.user_id`
 	rows, err := tx.Query(q, args...)
 	if err != nil {
@@ -341,7 +379,7 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 	var rep UsageReport
 	for rows.Next() {
 		var r UsageRow
-		if err := rows.Scan(&r.Day, &r.Provider, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut, &r.UnknownTokens, &r.Nested, &r.Failed, &r.ReportedCost, &r.EstimatedCost, &r.UnknownCost, &r.EstimatedEvents, &r.SubscriptionEvents, &r.UnknownBillingEvents); err != nil {
+		if err := rows.Scan(&r.Day, &r.Provider, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut, &r.UnknownTokens, &r.Nested, &r.Failed, &r.ReportedCost, &r.EstimatedCost, &r.UnknownCost, &r.EstimatedEvents, &r.SubscriptionEvents, &r.UnknownBillingEvents, &r.DurationMs, &r.FailedDurationMs, &r.UnknownDuration, &r.ErrorEvents, &r.CancelledEvents, &r.InterruptedEvents); err != nil {
 			rows.Close()
 			return rep, err
 		}
@@ -366,13 +404,13 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 		if f.Provider != "" {
 			fw, fa = append(fw, "lower(d.provider)=lower(?)"), append(fa, f.Provider)
 		}
-		fr, err := tx.Query(`SELECT d.day, lower(d.provider), d.model, d.user_id, COALESCE(u.name,''), d.project_id, d.events, d.tokens_in, d.tokens_out, d.unknown_tokens, d.nested, d.failed, d.reported_cost, d.estimated_cost, d.unknown_cost, d.estimated_events, d.subscription_events, d.unknown_billing_events FROM usage_daily d LEFT JOIN users u ON u.id=d.user_id WHERE `+strings.Join(fw, " AND ")+` ORDER BY d.day DESC`, fa...)
+		fr, err := tx.Query(`SELECT d.day, lower(d.provider), d.model, d.user_id, COALESCE(u.name,''), d.project_id, d.events, d.tokens_in, d.tokens_out, d.unknown_tokens, d.nested, d.failed, d.reported_cost, d.estimated_cost, d.unknown_cost, d.estimated_events, d.subscription_events, d.unknown_billing_events, d.duration_ms, d.failed_duration_ms, d.unknown_duration, d.error_events, d.cancelled_events, d.interrupted_events FROM usage_daily d LEFT JOIN users u ON u.id=d.user_id WHERE `+strings.Join(fw, " AND ")+` ORDER BY d.day DESC`, fa...)
 		if err != nil {
 			return rep, err
 		}
 		for fr.Next() {
 			var r UsageRow
-			if err := fr.Scan(&r.Day, &r.Provider, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut, &r.UnknownTokens, &r.Nested, &r.Failed, &r.ReportedCost, &r.EstimatedCost, &r.UnknownCost, &r.EstimatedEvents, &r.SubscriptionEvents, &r.UnknownBillingEvents); err != nil {
+			if err := fr.Scan(&r.Day, &r.Provider, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut, &r.UnknownTokens, &r.Nested, &r.Failed, &r.ReportedCost, &r.EstimatedCost, &r.UnknownCost, &r.EstimatedEvents, &r.SubscriptionEvents, &r.UnknownBillingEvents, &r.DurationMs, &r.FailedDurationMs, &r.UnknownDuration, &r.ErrorEvents, &r.CancelledEvents, &r.InterruptedEvents); err != nil {
 				fr.Close()
 				return rep, err
 			}
@@ -416,6 +454,12 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 			a.EstimatedEvents += r.EstimatedEvents
 			a.SubscriptionEvents += r.SubscriptionEvents
 			a.UnknownBillingEvents += r.UnknownBillingEvents
+			a.DurationMs += r.DurationMs
+			a.FailedDurationMs += r.FailedDurationMs
+			a.UnknownDuration += r.UnknownDuration
+			a.ErrorEvents += r.ErrorEvents
+			a.CancelledEvents += r.CancelledEvents
+			a.InterruptedEvents += r.InterruptedEvents
 			var err error
 			if a.ReportedCost, err = addCost(a.ReportedCost, r.ReportedCost); err != nil {
 				return rep, err

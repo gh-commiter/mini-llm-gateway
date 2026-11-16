@@ -142,6 +142,10 @@ assert.equal(usageValue(usageSum([{reportedCostUsd:'0',estimatedCostUsd:'0.2'}])
 assert.equal(usageValue(usageSum([{estimatedCostUsd:'0.2'}]),'spend'),'~$0.20');
 assert.equal(usageValue(usageSum([{reportedCostUsd:'1',estimatedCostUsd:'0.2'}]),'spend'),'$1.00 + ~$0.20');
 assert.ok(usageNotes({gaps:[]},usageSum(rows),'spend').includes('unknownCost:2'));
+const failedTime = usageSum([{failedDurationMs:3480000,unknownDurationEvents:2},{failedDurationMs:60000}]);
+assert.equal(usageValue(failedTime,'failed'),'59.0 min');
+assert.ok(usageNotes({gaps:[]},failedTime,'failed').includes('unknownDuration:2'));
+assert.equal(usageGroups([{day:'2026-11-15',provider:'p',model:'m',events:1,failedDurationMs:120000}],'failed',7,'2026-11-16').total.failed,2);
 assert.deepEqual(usageNotes({gaps:[{count:3,from:'a',to:'b'}]},usageSum([]),'tokens'),['usageGap:3|a|b']);
 const d = usageGroups([rows[0]],'requests',7,'2026-11-16');
 assert.equal(d.series.length,1);

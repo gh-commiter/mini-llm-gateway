@@ -1463,8 +1463,16 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	if msg == "" {
 		msg = pullErr
 	}
+	if msg == "" && werr != nil { // killed by the timeout or exited non-zero: a failed run even if it left text and the reply is 200
+		if ctx.Err() == context.DeadlineExceeded {
+			r.fail("timeout")
+		} else {
+			r.fail("exit")
+		}
+	}
 	if msg != "" {
 		s.log.Printf("%s claude failed: %s", r.rid, msg)
+		r.fail(agentErrKind(msg))
 		status, clean := classifyAgentError(msg)
 		if pullErr != "" { // #82: končna; Claude Code agenta ne zažene znova (spremembe bi se uveljavile dvakrat)
 			w.Header().Set("x-should-retry", "false")

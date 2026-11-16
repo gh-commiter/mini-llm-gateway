@@ -512,9 +512,13 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 		if r.Context().Err() != nil {
 			return 499
 		}
+		r.fail(upstreamFailKind(err, "unreachable"))
 		return writeError(w, r.rid, 502, g.Name+" unreachable: "+err.Error())
 	}
 	defer resp.Body.Close()
+	if r.event != nil {
+		r.event.UpstreamStatus = resp.StatusCode
+	}
 	if resp.StatusCode == 404 && strings.HasSuffix(r.URL.Path, "/count_tokens") { // #78: OpenRouter nima count_tokens → ocena kot pri agentih
 		return writeJSON(w, r.rid, 200, map[string]int{"input_tokens": len(r.body) / 4})
 	}
@@ -541,9 +545,24 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 			rc.Flush() // dogodki SSE gredo naprej sproti
 		}
 		if err != nil {
+			if err != io.EOF { // the upstream stream broke after the head (200): not a success
+				if r.Context().Err() != nil {
+					return 499
+				}
+				r.fail(upstreamFailKind(err, "stream"))
+			}
 			return resp.StatusCode
 		}
 	}
+}
+
+// upstreamFailKind: "timeout" when the upstream request ran into a deadline, else the given kind.
+func upstreamFailKind(err error, kind string) string {
+	var ne net.Error
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout() {
+		return "timeout"
+	}
+	return kind
 }
 
 // upstreamError: napaka upstreama kot napaka Anthropic. 401/403 → 502: Claude Code bi ju prikazal kot napačno prijavo v router.

@@ -743,12 +743,14 @@ public final class Router: Sendable {
         }
 
         var headSent = false
+        var writing = false  // a write to the client is under way (if it throws, the client went away)
         var status = 502
         dispatched(r.provider.id, upstreamModel: r.upstream, price: r.price)  // the upstream request goes out (usage event)
         do {
             let (bytes, resp) = try await session.bytes(for: up)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             status = http.statusCode
+            Self.reqState?.upstreamStatus = status
             if status == 404, req.path.hasSuffix("/count_tokens") {  // #78: OpenRouter nima count_tokens → ocena kot pri agentih
                 return await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer)
             }
@@ -775,14 +777,20 @@ public final class Router: Sendable {
             for try await byte in bytes {
                 chunk.append(byte)
                 if byte == 0x0A || chunk.count >= 16 * 1024 {  // SSE dogodki gredo naprej sproti
+                    writing = true
                     try await writer.write(chunk)
+                    writing = false
                     chunk.removeAll(keepingCapacity: true)
                 }
             }
-            if !chunk.isEmpty { try await writer.write(chunk) }
+            if !chunk.isEmpty { writing = true; try await writer.write(chunk) }
             return status
         } catch {
-            if headSent { return status }  // odjemalec ali upstream je prekinil med tokom
+            if headSent {  // the client or the upstream broke the stream: only the upstream's break is a failure of this request
+                if writing || Task.isCancelled { Self.reqState?.markClientGone() } else { Self.reqState?.fail((error as? URLError)?.code == .timedOut ? "timeout" : "stream") }
+                return status
+            }
+            Self.reqState?.fail(Task.isCancelled ? "" : (error as? URLError)?.code == .timedOut ? "timeout" : "unreachable")
             return await self.error(502, "api_error", "\(r.provider.name) unreachable: \(error.localizedDescription)", rid: rid, writer: writer)
         }
     }

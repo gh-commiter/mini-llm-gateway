@@ -213,7 +213,7 @@ private func agentWork(_ a: AdminConnection, _ kind: String, _ work: String?) {
 func routerCommand(_ argv: [String]) {
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider"]
+    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider", "sort"]
     var i = 0
     while i < argv.count {
         let a = argv[i]
@@ -235,7 +235,7 @@ func routerCommand(_ argv: [String]) {
     if flags["work"] != nil, !["claude", "codex", "grok"].contains(pos[0]), pos != ["copilot"] {
         fail("--work only applies to minigw gw claude|codex|grok|copilot")
     }
-    if pos[0] == "usage", let bad = flags.keys.first(where: { !["days", "provider", "model", "json", "csv", "legacy", "device", "folder", "user", "project"].contains($0) }) {
+    if pos[0] == "usage", let bad = flags.keys.first(where: { !["days", "provider", "model", "sort", "json", "csv", "legacy", "device", "folder", "user", "project"].contains($0) }) {
         fail("minigw gw usage: unknown option --\(bad)\n" + UsageReport.help)
     }
     func need(_ min: Int, _ max: Int) { if pos.count < min || pos.count > max { fail(routerHelp) } }
@@ -333,7 +333,7 @@ func routerCommand(_ argv: [String]) {
         }
 
     case "usage" where flags["legacy"] == "true":  // the folder and device counters of 0.5.x
-        guard pos.count == 1, ["json", "csv", "model", "provider", "user", "project"].allSatisfy({ flags[$0] == nil }) else { fail(UsageReport.help) }
+        guard pos.count == 1, ["json", "csv", "model", "provider", "sort", "user", "project"].allSatisfy({ flags[$0] == nil }) else { fail(UsageReport.help) }
         let query = "?days=" + esc(flags["days"] ?? "7") + "&device=" + esc(flags["device"] ?? "") + "&folder=" + esc(flags["folder"] ?? "")
         let list = a.call("GET", "/usage" + query)["usage"] as? [[String: Any]] ?? []
         list.forEach { say(usageLine($0)) }
@@ -471,7 +471,7 @@ func routerCommand(_ argv: [String]) {
         do {
             try cmd.run(pos, AdminOpts(days: flags["days"] ?? "7", user: flags["user"] ?? "", project: flags["project"] ?? "",
                                        model: flags["model"] ?? "", claudeProbe: flags["claude-probe"] ?? "",
-                                       provider: flags["provider"] ?? "", device: flags["device"] ?? "", folder: flags["folder"] ?? "",
+                                       provider: flags["provider"] ?? "", device: flags["device"] ?? "", folder: flags["folder"] ?? "", sort: flags["sort"] ?? "",
                                        json: flags["json"] == "true", csv: flags["csv"] == "true"))
         } catch let e as AdminCLIError { fail(e.message, code: e.code) } catch { fail("\(error)") }
 

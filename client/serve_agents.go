@@ -1561,6 +1561,7 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 	}
 	if err != nil {
 		s.log.Printf("%s %s failed: %v", r.rid, model, err)
+		r.fail(agentErrKind(err.Error()))
 		status, msg := classifyAgentError(err.Error())
 		var pe pullError
 		if _, early := w.(*earlyWriter); stream && (headSent || early) && errors.As(err, &pe) { // napaka bo dogodek SSE

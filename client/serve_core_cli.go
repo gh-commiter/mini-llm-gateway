@@ -74,8 +74,8 @@ func projectID(a *adminClient, ref string) int64 {
 
 // coreOpts: the flags of usage-events and usage.
 type coreOpts struct {
-	days, user, project, model, claudeProbe, provider, device, folder string
-	json, csv                                                         bool
+	days, user, project, model, claudeProbe, provider, device, folder, sort string
+	json, csv                                                               bool
 }
 
 func coreCommand(a *adminClient, pos []string, o coreOpts) {
@@ -213,6 +213,9 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		if o.user != "" || o.project != "" {
 			fail("--user and --project belong to minigw gw usage-events")
 		}
+		if o.sort != "" && o.sort != "failed" || o.sort != "" && (o.json || o.csv) {
+			fail(usageReportHelp)
+		}
 		q := url.Values{"days": {o.days}}
 		if o.provider != "" {
 			q.Set("provider", o.provider)
@@ -233,7 +236,7 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		if o.csv {
 			fmt.Print(usageReportCSV(rows))
 		} else {
-			fmt.Print(usageReportText(rows, gaps))
+			fmt.Print(usageReportText(rows, gaps, o.sort == "failed"))
 		}
 	case "usage-events":
 		need(1, 1)
