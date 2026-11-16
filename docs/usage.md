@@ -103,7 +103,8 @@ Linux." See [gateway.md → Settings](gateway.md#settings).
 ### Watching a long run
 
 While an agent works, `minigw -p` prints each of its steps on stderr as it happens (`minigw: · read_file src/a.go`;
-paths are relative to your shared folder). On a Windows or Linux gateway this holds for Codex, Grok and Copilot too. A run
+paths are relative to your shared folder, never the gateway's own folders). This holds for Codex, Grok and Copilot on a
+Windows or Linux gateway, and for Codex and Copilot on a Mac gateway; the answer on stdout never contains the steps. A run
 can take a long time, so the gateway also keeps the connection alive with a ping and an empty text delta every 10 seconds
 (Claude Code drops a stream that shows no real event for a long time).
 
@@ -115,8 +116,8 @@ minigw running --json
 ```
 
 You see only your own device's running requests, never a prompt and never another device's. It needs no admin rights
-(`minigw gw sessions` is the admin view on the gateway computer). Mac gateway: not yet available (a 404 reads "this
-gateway is too old"), and Mac agents show only the tool names.
+(`minigw gw sessions` is the admin view on the gateway computer). Both gateways answer it; a gateway older than this
+version answers 404, which `minigw` reports as "too old".
 
 Agents can also ask each other: with **May ask other models** on for an agent, it can call another gateway model
 with `minigw -p --model <id> "…"`, one level deep and never its own kind.

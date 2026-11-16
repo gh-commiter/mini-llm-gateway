@@ -3,8 +3,8 @@
 ## Unreleased
 
 ### New
-- A Codex, Grok or Copilot run on a Windows or Linux gateway shows its steps in `minigw -p` as they happen (paths relative to your folder).
-- `minigw running` lists your device's requests that run on the gateway now: model, folder, time, steps and last step. Windows and Linux gateway only for now.
+- A Codex, Grok or Copilot run (Mac gateway: Codex and Copilot) shows its steps in `minigw -p` as they happen, paths relative to your folder; the answer on stdout never contains them. The Mac client understands the step lines of a Windows or Linux gateway.
+- `minigw running` lists your device's requests that run on the gateway now: model, folder, time, steps and last step. Both gateways.
 
 ### Fixed
 - While Codex, Grok, Copilot or a Claude CLI agent works silently, the gateway now sends an empty text delta with every ping, so Claude Code sees a real model event and no longer drops a long agent request (#131).
