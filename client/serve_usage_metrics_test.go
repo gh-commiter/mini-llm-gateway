@@ -42,8 +42,8 @@ func TestUsageMetricsFixtures(t *testing.T) {
 func TestUpstreamErrorFixtures(t *testing.T) {
 	var cases []struct {
 		Name, Provider, BaseURL, Body, Message, Key string
-		Status                             int
-		NoRetry                            bool
+		Status                                      int
+		NoRetry                                     bool
 	}
 	if err := json.Unmarshal(srcFile(t, "testdata/upstream-errors.json"), &cases); err != nil {
 		t.Fatal(err)
