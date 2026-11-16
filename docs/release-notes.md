@@ -14,6 +14,12 @@
 ### Known limits
 - Database downgrade: this version's database schema is 9. An older program refuses it; the way back is restoring the snapshot `core-8-<time>.db` from the core folder by path with `minigw gw core restore`.
 
+### Known problems
+- Direct mode on a Mac gateway with a remote client: files that an agent creates and commits are recorded as executable (mode 100755), and a tracked symbolic link can be committed as a regular file (the mounted folder cannot represent links). Do not let an agent commit in a repository that tracks symbolic links; use worktree mode there. Fixes follow.
+- Grok is not supported on the Mac gateway (see Changed).
+- Agents started by the gateway inherit the gateway's environment variables.
+- A commit by an agent in a repository without `user.name` and `user.email` gets git's automatic identity of the gateway computer.
+- LiteLLM models show a cost only when the proxy's model info has prices. Usage days are UTC days.
 
 ## 0.7.0
 
