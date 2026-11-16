@@ -45,7 +45,7 @@ private struct Repo {
 }
 
 @Test func codexDirectProfileLetsTheAgentCommitAndNothingElseInGit() throws {
-    let exe = try #require(["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].first { FileManager.default.isExecutableFile(atPath: $0) }, "codex is installed on the Mac that runs this gate")
+    let exe = try requireCodex()
     let r = try Repo(); defer { r.cleanup() }
     let out = r.base.appendingPathComponent("o.txt")
     func cfg(write: Bool = true, direct: Bool = true) -> [String] {

@@ -43,6 +43,14 @@ private func run(_ exe: String, _ args: [String], timeout: Double = 60) -> (stat
 
 // MARK: the list of denied paths
 
+/// The release gate runs on a Mac with Codex installed and fails without it. GitHub's hosted runner cannot have it: there the test is skipped (GITHUB_ACTIONS is set only by GitHub).
+func requireCodex() throws -> String {
+    if ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true", !["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].contains(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+        try Test.cancel("codex is not installed on GitHub's runner")
+    }
+    return try #require(["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].first { FileManager.default.isExecutableFile(atPath: $0) }, "codex is installed on the Mac that runs this gate")
+}
+
 @Test func coreDeniedHasRealPathAndLink() throws {
     let f = try Fixture(); defer { f.cleanup() }
     // by its real path: the folder, the app folder around it, and the real target when the store is reached through a link
@@ -116,7 +124,7 @@ private func profileConfig(_ a: [String]) -> [String] {
 }
 
 @Test func codexProfileDeniesCoreForRealProcesses() throws {
-    let exe = try #require(["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].first { FileManager.default.isExecutableFile(atPath: $0) }, "codex is installed on the Mac that runs this gate")
+    let exe = try requireCodex()
     let f = try Fixture(); defer { f.cleanup() }
     let out = f.base.appendingPathComponent("o.txt")
     let modes: [(String, [String])] = [
@@ -258,7 +266,7 @@ private func profileConfig(_ a: [String]) -> [String] {
     }
     #expect(run("/usr/bin/sandbox-exec", ["-p", profile, "/bin/cat", f.work.path + "/f.txt"]).out.contains("ALLOWED"))
     // Codex: its own home stays readable, the others' are not
-    let exe = try #require(["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].first { fm.isExecutableFile(atPath: $0) }, "codex is installed on the Mac that runs this gate")
+    let exe = try requireCodex()
     let deny = RouterConfig.agentDenied(kind: "codex", scratch: scratch, home: home, env: [:]) + f.denied
     let cfg = profileConfig(Codex.args(cwd: f.work, extraDirs: [], agent: true, output: f.base.appendingPathComponent("o"), deny: deny))
     func under(_ p: String) -> (status: Int32, out: String) { run(exe, ["sandbox"] + cfg + ["--", "/bin/cat", p]) }
