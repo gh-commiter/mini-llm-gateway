@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+### New
+- `minigw gw usage` shows the input tokens read from a provider's prompt cache in a column "cached in" (it appears when any model used a cache); `--csv` and `--json` carry cache read and cache write tokens. With automatic prompt caching most of the input is cache reads, which the report did not show.
+
 ### Fixed
 - Mac gateway: every running Claude CLI agent held one thread of the app's shared thread pool while it read the agent's error output, and listeners and connections were started on queues that cannot start while that pool is full. With as many agent runs or blocked calls as the Mac has cores, the gateway could stop answering until one of them ended. The read now runs on its own thread and the queues have their own priority.
 - Restoring a database backup now rebuilds the knowledge base search index from the notes, so a damaged index in a backup is not installed; if the rebuild fails, the restore fails and the old database stays.
+
 
 ## 0.7.6
 

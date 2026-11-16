@@ -7,7 +7,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +20,7 @@ const usageReportHelp = `minigw gw usage [--days N] [--provider P] [--model M] [
 type usageEventRow struct {
 	Day, Provider, Model                                         string
 	Events, TokensIn, TokensOut, FailedEvents, EventsWithoutCost int64
+	CacheReadTokens, CacheWriteTokens                            int64
 	EstimatedCostUsd                                             *string
 	ReportedCostUsd                                              *string
 	// Execution time (dispatch to finish) in ms of the events whose duration is known; failed = outcome error only.
@@ -35,6 +35,7 @@ type usageEventGap struct {
 // usageSum adds known reported and estimated amounts; unknown counts events without cost.
 type usageSum struct {
 	events, failed, in, out, unknown, nanos int64
+	cachedIn, cachedOut                     int64
 	errors, durationMs, failedMs, unknownMs int64
 	known                                   bool
 	estimated                               int64
@@ -45,6 +46,7 @@ type usageSum struct {
 
 func (s *usageSum) add(r usageEventRow) {
 	s.events, s.failed, s.in, s.out, s.unknown = s.events+r.Events, s.failed+r.FailedEvents, s.in+r.TokensIn, s.out+r.TokensOut, s.unknown+r.EventsWithoutCost
+	s.cachedIn, s.cachedOut = s.cachedIn+r.CacheReadTokens, s.cachedOut+r.CacheWriteTokens
 	s.errors, s.durationMs, s.failedMs, s.unknownMs = s.errors+r.ErrorEvents, s.durationMs+r.DurationMs, s.failedMs+r.FailedDurationMs, s.unknownMs+r.UnknownDurationEvents
 	if r.EstimatedCostUsd != nil {
 		if n, ok := parseNanos(*r.EstimatedCostUsd); ok {
@@ -224,6 +226,7 @@ func usageReportText(rows []usageEventRow, gaps []usageEventGap, sortFailed bool
 		return keys[i][0]+"\x00"+keys[i][1] < keys[j][0]+"\x00"+keys[j][1]
 	})
 	withFailedTime := total.failedMs > 0 // the column appears when any model has failed agent minutes
+	withCache := total.cachedIn > 0      // the column appears when any model read a prompt cache
 	var mrows [][]string
 	for _, k := range keys {
 		s := groups[k]
@@ -235,7 +238,11 @@ func usageReportText(rows []usageEventRow, gaps []usageEventGap, sortFailed bool
 			}
 			row = append(row, ft)
 		}
-		mrows = append(mrows, append(row, human(s.in), human(s.out), s.cost()))
+		row = append(row, human(s.in))
+		if withCache {
+			row = append(row, human(s.cachedIn))
+		}
+		mrows = append(mrows, append(row, human(s.out), s.cost()))
 	}
 	names := make([]string, 0, len(days))
 	for d := range days {
@@ -245,15 +252,33 @@ func usageReportText(rows []usageEventRow, gaps []usageEventGap, sortFailed bool
 	var drows [][]string
 	for _, d := range names {
 		s := days[d]
-		drows = append(drows, []string{oneLine(d), strconv.FormatInt(s.events, 10), human(s.in + s.out), s.cost()})
+		row := []string{oneLine(d), strconv.FormatInt(s.events, 10), human(s.in + s.out)}
+		if withCache {
+			row = append(row, human(s.cachedIn))
+		}
+		drows = append(drows, append(row, s.cost()))
 	}
-	head, right := []string{"provider", "model", "requests", "failed", "tokens in", "tokens out", "cost USD"}, []bool{false, false, true, true, true, true, false}
+	head, right := []string{"provider", "model", "requests", "failed"}, []bool{false, false, true, true}
 	if withFailedTime {
-		head, right = slices.Insert(head, 4, "failed min"), slices.Insert(right, 4, true)
+		head, right = append(head, "failed min"), append(right, true)
+	}
+	head, right = append(head, "tokens in"), append(right, true)
+	if withCache {
+		head, right = append(head, "cached in"), append(right, true)
+	}
+	head, right = append(head, "tokens out", "cost USD"), append(right, true, false)
+	dhead, dright := []string{"day", "requests", "tokens in+out"}, []bool{false, true, true}
+	if withCache {
+		dhead, dright = append(dhead, "cached in"), append(dright, true)
+	}
+	dhead, dright = append(dhead, "cost USD"), append(dright, false)
+	totalIn := human(total.in) + " tokens in, "
+	if withCache {
+		totalIn += human(total.cachedIn) + " cached in, "
 	}
 	out := usageTable(head, mrows, right) +
-		"\n" + usageTable([]string{"day", "requests", "tokens in+out", "cost USD"}, drows, []bool{false, true, true, false}) +
-		fmt.Sprintf("\ntotal: %d requests (%d failed), %s tokens in, %s tokens out, cost USD %s%s\n", total.events, total.failed, human(total.in), human(total.out), total.cost(), total.failedSummary())
+		"\n" + usageTable(dhead, drows, dright) +
+		fmt.Sprintf("\ntotal: %d requests (%d failed), %s%s tokens out, cost USD %s%s\n", total.events, total.failed, totalIn, human(total.out), total.cost(), total.failedSummary())
 	for _, g := range gaps {
 		out += fmt.Sprintf("%d events lost between %s and %s (UTC)\n", g.Count, g.From.UTC().Format("2006-01-02 15:04"), g.To.UTC().Format("2006-01-02 15:04"))
 	}
@@ -284,7 +309,7 @@ func usageReportCSV(rows []usageEventRow) string {
 		sums[k].add(r)
 	}
 	sort.Slice(keys, func(i, j int) bool { return strings.Join(keys[i][:], "\x00") < strings.Join(keys[j][:], "\x00") })
-	out := "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n"
+	out := "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events,cache_read_tokens,cache_write_tokens\n"
 	for _, k := range keys {
 		s := sums[k]
 		cost := ""
@@ -295,7 +320,7 @@ func usageReportCSV(rows []usageEventRow) string {
 		if s.estimateKnown {
 			estimated = fmt.Sprintf("%d.%09d", s.estimated/1_000_000_000, s.estimated%1_000_000_000)
 		}
-		out += fmt.Sprintf("%s,%s,%s,%d,%d,%d,%d,%s,%s,%d,%d,%d,%d,%d\n", csvCell(k[0], true), csvCell(k[1], true), csvCell(k[2], true), s.events, s.failed, s.in, s.out, cost, estimated, s.unknown, s.errors, s.durationMs, s.failedMs, s.unknownMs)
+		out += fmt.Sprintf("%s,%s,%s,%d,%d,%d,%d,%s,%s,%d,%d,%d,%d,%d,%d,%d\n", csvCell(k[0], true), csvCell(k[1], true), csvCell(k[2], true), s.events, s.failed, s.in, s.out, cost, estimated, s.unknown, s.errors, s.durationMs, s.failedMs, s.unknownMs, s.cachedIn, s.cachedOut)
 	}
 	return out
 }

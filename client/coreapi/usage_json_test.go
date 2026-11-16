@@ -25,3 +25,21 @@ func TestUsageJSONFailedTimeFields(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageJSONCacheFields(t *testing.T) {
+	b, err := json.Marshal(UsageJSON(core.UsageReport{Rows: []core.UsageRow{{Day: "2026-11-15", Provider: "openrouter", Model: "m", Events: 1,
+		CacheReadTokens: 900, CacheWriteTokens: 50}, {Day: "2026-11-15", Provider: "codex", Model: "m", Events: 1}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct{ Days []map[string]any }
+	if err := json.Unmarshal(b, &got); err != nil || len(got.Days) != 2 {
+		t.Fatal(string(b), err)
+	}
+	if got.Days[0]["cacheReadTokens"] != float64(900) || got.Days[0]["cacheWriteTokens"] != float64(50) {
+		t.Errorf("cache fields: %v", got.Days[0])
+	}
+	if got.Days[1]["cacheReadTokens"] != float64(0) || got.Days[1]["cacheWriteTokens"] != float64(0) {
+		t.Errorf("missing cache fields must be zero: %v", got.Days[1])
+	}
+}
