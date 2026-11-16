@@ -1472,7 +1472,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	if msg != "" {
 		s.log.Printf("%s claude failed: %s", r.rid, msg)
-		r.fail(agentErrKind(msg))
+		r.fail(agentFailKind(ctx, msg))
 		status, clean := classifyAgentError(msg)
 		if pullErr != "" { // #82: končna; Claude Code agenta ne zažene znova (spremembe bi se uveljavile dvakrat)
 			w.Header().Set("x-should-retry", "false")

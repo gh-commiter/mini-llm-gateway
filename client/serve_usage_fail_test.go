@@ -86,3 +86,16 @@ func TestEventDurationAndFailureKinds(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentFailKindDeadlineFirst(t *testing.T) {
+	msg := "claude failed (signal: killed); details are in the gateway log, request r"
+	if got := agentFailKind(context.Background(), msg); got != "exit" {
+		t.Fatal(got)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+	if got := agentFailKind(ctx, msg); got != "timeout" {
+		t.Fatal(got)
+	}
+}

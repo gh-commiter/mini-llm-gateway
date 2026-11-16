@@ -37,7 +37,7 @@ public enum UsageReport {
         /// ", 7 errors, 58.0 failed agent minutes" for the total line; "" when no event failed with an error.
         var failedSummary: String {
             guard errors > 0 else { return "" }
-            return ", \(errors) errors" + (failedMs > 0 ? ", " + UsageReport.minutes(failedMs) + " failed agent minutes" : "")
+            return ", \(errors) errors" + (failedMs > 0 ? ", " + UsageReport.minutes(failedMs) + " failed agent minutes" : "") + (unknownMs > 0 ? " (\(unknownMs) events of unknown duration)" : "")
         }
 
         var cost: String {

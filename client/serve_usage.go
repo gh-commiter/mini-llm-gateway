@@ -5,6 +5,7 @@ package main
 // request (queue, spool, replay) and serves the usage routes.
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -143,6 +144,14 @@ func errorKind(r *req, status int, uw *usageWriter) string {
 		return "timeout"
 	}
 	return "other"
+}
+
+// agentFailKind: the deadline decides first, because a killed run also gets a "failed (...)" message.
+func agentFailKind(ctx context.Context, msg string) string {
+	if ctx.Err() == context.DeadlineExceeded {
+		return "timeout"
+	}
+	return agentErrKind(msg)
 }
 
 // agentErrKind: the reason of an agent run's error (the messages of runAgentProcess and the Claude CLI path).

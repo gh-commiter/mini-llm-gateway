@@ -64,14 +64,21 @@ final class RequestState: @unchecked Sendable {
     private var _event: UsageEvent?
     private var _dispatched = false
     private var _tokenSource = ""
-    private var _dispatchedAt: Date?
+    private var _dispatchedAt: ContinuousClock.Instant?  // monotonic: a change of the wall clock must not change a duration
+    /// The clock of the duration; tests replace it.
+    nonisolated(unsafe) var clock: @Sendable () -> ContinuousClock.Instant = { .now }
     private var _upstreamStatus = 0
     private var _errKind = ""
     private var _clientGone = false
     var project: ProjectRun? { get { lock.withLock { _project } } set { lock.withLock { _project = newValue } } }
     var event: UsageEvent? { lock.withLock { _event } }
     var tokenSource: String { get { lock.withLock { _tokenSource } } set { lock.withLock { _tokenSource = newValue } } }
-    var dispatchedAt: Date? { lock.withLock { _dispatchedAt } }
+    /// Milliseconds since dispatch; nil before it.
+    func elapsedMs() -> Int64? {
+        guard let at = lock.withLock({ _dispatchedAt }) else { return nil }
+        let d = at.duration(to: clock())
+        return max(0, d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000)
+    }
     var upstreamStatus: Int { get { lock.withLock { _upstreamStatus } } set { lock.withLock { _upstreamStatus = newValue } } }
     var errKind: String { lock.withLock { _errKind } }
     var clientGone: Bool { lock.withLock { _clientGone } }
@@ -86,7 +93,7 @@ final class RequestState: @unchecked Sendable {
         lock.withLock {
             guard var e = _event, !_dispatched else { return nil }
             _dispatched = true
-            _dispatchedAt = Date()
+            _dispatchedAt = clock()
             e.projectId = _project?.project ?? e.projectId
             e.provider = provider
             e.upstreamModel = upstreamModel
@@ -336,7 +343,7 @@ extension Router {
     func endEvent(_ state: RequestState, status: Int, usage counts: UsageWriter?) {
         guard state.wasDispatched, var e = state.event else { return }
         e.end = Date()
-        if let at = state.dispatchedAt { e.durationMs = max(0, Int64(e.end!.timeIntervalSince(at) * 1000)) }
+        e.durationMs = state.elapsedMs()
         e.upstreamStatus = state.upstreamStatus
         if e.provider.isEmpty { e.provider = "unknown" }
         switch true {

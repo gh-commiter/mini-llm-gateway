@@ -124,6 +124,9 @@ func (s usageSum) failedSummary() string {
 	if s.failedMs > 0 {
 		out += ", " + minutes(s.failedMs) + " failed agent minutes"
 	}
+	if s.unknownMs > 0 {
+		out += fmt.Sprintf(" (%d events of unknown duration)", s.unknownMs)
+	}
 	return out
 }
 

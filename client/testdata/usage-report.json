@@ -430,7 +430,7 @@
     }
    ],
    "want": {
-    "out": "provider    model                          requests  failed  failed min  tokens in  tokens out  cost USD\nopenrouter  claude-deepseek/deepseek-chat         7       0           -        12K        2.4K  0.50\ncodex       gpt-6.1-sol                          40      31       250.0          0           0  -\nclaude-cli  claude-opus                          12       3         2.1       4.2K         900  -\n\nday         requests  tokens in+out  cost USD\n2026-11-14         7          14.4K  0.50\n2026-11-15        52           5.1K  -\n\ntotal: 59 requests (34 failed), 16.2K tokens in, 3.3K tokens out, cost USD 0.50 (+52 unknown), 33 errors, 252.1 failed agent minutes\n",
+    "out": "provider    model                          requests  failed  failed min  tokens in  tokens out  cost USD\nopenrouter  claude-deepseek/deepseek-chat         7       0           -        12K        2.4K  0.50\ncodex       gpt-6.1-sol                          40      31       250.0          0           0  -\nclaude-cli  claude-opus                          12       3         2.1       4.2K         900  -\n\nday         requests  tokens in+out  cost USD\n2026-11-14         7          14.4K  0.50\n2026-11-15        52           5.1K  -\n\ntotal: 59 requests (34 failed), 16.2K tokens in, 3.3K tokens out, cost USD 0.50 (+52 unknown), 33 errors, 252.1 failed agent minutes (3 events of unknown duration)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -458,7 +458,7 @@
     }
    ],
    "want": {
-    "out": "provider    model                          requests  failed  failed min  tokens in  tokens out  cost USD\ncodex       gpt-6.1-sol                          40      31       250.0          0           0  -\nclaude-cli  claude-opus                          12       3         2.1       4.2K         900  -\nopenrouter  claude-deepseek/deepseek-chat         7       0           -        12K        2.4K  0.50\n\nday         requests  tokens in+out  cost USD\n2026-11-14         7          14.4K  0.50\n2026-11-15        52           5.1K  -\n\ntotal: 59 requests (34 failed), 16.2K tokens in, 3.3K tokens out, cost USD 0.50 (+52 unknown), 33 errors, 252.1 failed agent minutes\n",
+    "out": "provider    model                          requests  failed  failed min  tokens in  tokens out  cost USD\ncodex       gpt-6.1-sol                          40      31       250.0          0           0  -\nclaude-cli  claude-opus                          12       3         2.1       4.2K         900  -\nopenrouter  claude-deepseek/deepseek-chat         7       0           -        12K        2.4K  0.50\n\nday         requests  tokens in+out  cost USD\n2026-11-14         7          14.4K  0.50\n2026-11-15        52           5.1K  -\n\ntotal: 59 requests (34 failed), 16.2K tokens in, 3.3K tokens out, cost USD 0.50 (+52 unknown), 33 errors, 252.1 failed agent minutes (3 events of unknown duration)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -560,6 +560,32 @@
    ],
    "want": {
     "out": "provider    model                          requests  failed  tokens in  tokens out  cost USD\nopenrouter  claude-deepseek/deepseek-chat       327       3      46.1M        916K  2.16 (+4 unknown)\nlitellm     gpt-x                                50       0         1M           1  <0.0001\ncodex       gpt-6.1-sol                          95       4       201K       30.3K  -\nclaude-cli  claude-opus                          12       0       4.2K         900  -\n\nday         requests  tokens in+out  cost USD\n2026-11-14        12          15.9K  0.0060 (+6 unknown)\n2026-11-15       472          48.2M  2.16 (+105 unknown)\n\ntotal: 484 requests (7 failed), 47.3M tokens in, 947K tokens out, cost USD 2.16 (+111 unknown)\n7 events lost between 2026-11-12 08:00 and 2026-11-12 09:30 (UTC)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "failed time unknown duration",
+   "args": [
+    "usage"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-14\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":7,\"tokensIn\":12000,\"tokensOut\":2400,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.500000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":420000,\"failedDurationMs\":0,\"unknownDurationEvents\":0},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":40,\"tokensIn\":0,\"tokensOut\":0,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":31,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":40,\"errorEvents\":31,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":17400000,\"failedDurationMs\":15000000,\"unknownDurationEvents\":3},{\"day\":\"2026-11-15\",\"provider\":\"claude-cli\",\"model\":\"claude-opus\",\"events\":12,\"tokensIn\":4200,\"tokensOut\":900,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":3,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":12,\"errorEvents\":2,\"cancelledEvents\":0,\"interruptedEvents\":1,\"durationMs\":600000,\"failedDurationMs\":123000,\"unknownDurationEvents\":3}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "provider    model                          requests  failed  failed min  tokens in  tokens out  cost USD\nopenrouter  claude-deepseek/deepseek-chat         7       0           -        12K        2.4K  0.50\ncodex       gpt-6.1-sol                          40      31       250.0          0           0  -\nclaude-cli  claude-opus                          12       3         2.1       4.2K         900  -\n\nday         requests  tokens in+out  cost USD\n2026-11-14         7          14.4K  0.50\n2026-11-15        52           5.1K  -\n\ntotal: 59 requests (34 failed), 16.2K tokens in, 3.3K tokens out, cost USD 0.50 (+52 unknown), 33 errors, 252.1 failed agent minutes (6 events of unknown duration)\n",
     "err": "",
     "exit": 0,
     "requests": [

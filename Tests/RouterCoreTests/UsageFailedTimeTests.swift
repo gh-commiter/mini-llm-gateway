@@ -101,3 +101,15 @@ private final class FailTimeUpstream: URLProtocol, @unchecked Sendable {
     #expect(UsageChart.axisText(.failedTime, 3_480_000) == "58.0")
     #expect(chart.summary(.tokens).durationUnknown == 0)
 }
+
+@Test func durationIsMonotonicNotWallClock() {
+    final class Clock: @unchecked Sendable { var t = ContinuousClock.now }
+    let c = Clock()
+    let state = RequestState()
+    state.clock = { c.t }
+    state.admit(UsageEvent(id: "ev_clock", start: Date(), model: "m"))
+    #expect(state.elapsedMs() == nil)  // before dispatch
+    _ = state.dispatch(provider: "p")
+    c.t = c.t.advanced(by: .milliseconds(4500))
+    #expect(state.elapsedMs() == 4500)  // no Date involved: a wall-clock jump cannot change it
+}
