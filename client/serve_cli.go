@@ -873,6 +873,23 @@ func (t *translator) keepalive() []byte {
 		sse("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "text_delta", "text": ""}})...)
 }
 
+// stepMark: an agent's step as a progress line for minigw ("⏺ name detail", see toolMark in stream.go). The name is the
+// step's first word, the detail one printable line; it also becomes part of the reply text, as in feed.
+func (t *translator) stepMark(step string) []byte {
+	name, detail, _ := strings.Cut(strings.TrimSpace(step), " ")
+	if !toolName.MatchString(name) {
+		name, detail = "tool", step
+	}
+	if detail = shortLine(detail, 160); detail != "" {
+		name += " " + detail
+	}
+	nl := "\n"
+	if t.text == "" || strings.HasSuffix(t.text, "\n") {
+		nl = ""
+	}
+	return t.emit(nl + "⏺ " + name + "\n")
+}
+
 func (t *translator) feed(line []byte) []byte {
 	var obj map[string]any
 	if json.Unmarshal(line, &obj) != nil {

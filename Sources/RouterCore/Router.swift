@@ -50,6 +50,7 @@ public final class Router: Sendable {
     let onLog: @Sendable (RequestLog) -> Void
     let onDevice: @Sendable (Noise.Device) -> Void  // aplikacija doda novo napravo v nastavitve, beleži »zadnjič«
     let onActivity: @Sendable (Activity) -> Void
+    let running = RunningRegistry()  // #131: the running requests per device (GET /minigw/v1/running)
     let admin: AdminHooks?  // skrbniški API (aplikacija); nil = ni ga
     let core: CoreHelper?  // 0.6.0: the helper that hosts the project core (CoreForward.swift); nil = every project route answers 503
     let quotaSender: UsageSender
@@ -78,7 +79,11 @@ public final class Router: Sendable {
         self.history = history
         self.admin = admin
         self.onDevice = onDevice
-        self.onActivity = onActivity
+        let running = self.running
+        self.onActivity = { event in
+            if case .step(let id, let text) = event { running.step(id: id, text: text) }  // also the step hook of the stream
+            onActivity(event)
+        }
         self.token = token
         self.secrets = secrets
         self.session = session
@@ -115,8 +120,9 @@ public final class Router: Sendable {
         let trackedModel = tracked ? (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any])?["model"] as? String : nil
         if let model = trackedModel {
             onActivity(.started(id: rid, time: start, model: Self.activityModel(model, status: 0)))
+            running.start(id: rid, owner: RunningRegistry.owner(req), model: Self.activityModel(model, status: 0), folder: req.header("x-claude-mini-cwd") ?? "", at: start)
         }
-        defer { if tracked { onActivity(.finished(id: rid)) } }
+        defer { if tracked { onActivity(.finished(id: rid)); running.finish(id: rid) } }
         let usage = tracked ? UsageWriter(writer) : nil
         let branch = RunBranch()  // veja izvajanja te zahteve (syncRun), za zgodovino seje
         let state = RequestState()  // 0.6.0: the project of this request and its usage event (ProjectRun.swift, UsageEvents.swift)
@@ -296,6 +302,9 @@ public final class Router: Sendable {
         }
 
         switch (req.method, req.path) {
+        case ("GET", "/minigw/v1/running"):  // the asking device's own running requests (minigw running); nothing of other devices
+            return (await json(200, running.reply(owner: RunningRegistry.owner(req)), rid: rid, writer: writer), nil, nil)
+
         case ("GET", "/v1/models"):
             return (await json(200, await modelList(siri: config.siriAllowed(peer: req.peer, device: req.device)), rid: rid, writer: writer), nil, nil)
 

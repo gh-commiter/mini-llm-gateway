@@ -1,0 +1,67 @@
+{
+ "cases": [
+  {
+   "name": "file made relative",
+   "step": "read_file /scr/sync/p/src/a.go",
+   "dir": "/scr/sync/p",
+   "scratch": "/scr",
+   "mark": "⏺ read_file src/a.go\n"
+  },
+  {
+   "name": "windows separators",
+   "step": "read_file C:\\scr\\sync\\p\\src\\a.go",
+   "dir": "C:\\scr\\sync\\p",
+   "scratch": "C:\\scr",
+   "mark": "⏺ read_file src\\a.go\n"
+  },
+  {
+   "name": "other scratch path hidden",
+   "step": "read_file /scr/tmp/x",
+   "dir": "/scr/sync/p",
+   "scratch": "/scr",
+   "mark": "⏺ read_file …/tmp/x\n"
+  },
+  {
+   "name": "trailing slash on the folders",
+   "step": "read_file /scr/sync/p/a",
+   "dir": "/scr/sync/p/",
+   "scratch": "/scr/",
+   "mark": "⏺ read_file a\n"
+  },
+  {
+   "name": "name only",
+   "step": "Bash",
+   "dir": "/d",
+   "scratch": "/s",
+   "mark": "⏺ Bash\n"
+  },
+  {
+   "name": "invalid name becomes tool",
+   "step": "a\nb c",
+   "dir": "/d",
+   "scratch": "/s",
+   "mark": "⏺ tool a b c\n"
+  },
+  {
+   "name": "control characters removed",
+   "step": "read_file a\u001b[2Jb",
+   "dir": "/d",
+   "scratch": "/s",
+   "mark": "⏺ read_file a[2Jb\n"
+  },
+  {
+   "name": "detail cut at 160 characters",
+   "step": "r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "dir": "/d",
+   "scratch": "/s",
+   "mark": "⏺ r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…\n"
+  },
+  {
+   "name": "surrounding white space",
+   "step": "  grep x  \n",
+   "dir": "/d",
+   "scratch": "/s",
+   "mark": "⏺ grep x\n"
+  }
+ ]
+}

@@ -5,6 +5,10 @@
 ### New
 - xAI works as a provider (base URL `https://api.x.ai`): mid-conversation `system` messages and tool schemas without `required` are rewritten for it on both gateways.
 
+### New
+- A Codex, Grok or Copilot run (Mac gateway: Codex and Copilot) shows its steps in `minigw -p` as they happen, paths relative to your folder; the answer on stdout never contains them. The Mac client understands the step lines of a Windows or Linux gateway.
+- `minigw running` lists your device's requests that run on the gateway now: model, folder, time, steps and last step. Both gateways.
+
 ### Fixed
 - Mac, Claude CLI in a direct-mode mount: a file the agent creates and commits is recorded as 100644, not 100755 (git ignores the executable bit on the mount, whose files all show as -rwx------); a file that is executable in the repository keeps 100755.
 - Mac gateway, direct-mode mount: a repository that tracks symbolic links gets no commits by the agent through the mount, because a mounted folder shows a link as a plain file and `git add -A` committed it as one. The client decides at share time and prints why; the gateway reads a missing decision as closed (an older client therefore gets no commits through the mount). The agent's note says so.

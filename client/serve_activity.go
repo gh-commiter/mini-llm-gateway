@@ -18,6 +18,12 @@ type activityRun struct {
 	Time  string `json:"time"`
 	Model string `json:"model"`
 	Step  string `json:"step,omitempty"`
+	Steps int    `json:"steps,omitempty"`
+	// for GET /minigw/v1/running (never in the admin list): the device that sent the request, its folder, the time of the last
+	// step, and the stream's step hook (replyWhenDone)
+	owner, folder   string
+	started, stepAt time.Time
+	sink            func(string)
 }
 
 // activityReq: končana zahteva, ki je prišla do modela.
@@ -56,7 +62,9 @@ func (a *activityLog) start(r *req, model string) func() {
 		return func() {}
 	}
 	a.mu.Lock()
-	a.runs = slices.Insert(a.runs, 0, activityRun{ID: r.rid, Time: time.Now().UTC().Format(time.RFC3339), Model: activityModel(model, 0)})
+	now := time.Now()
+	a.runs = slices.Insert(a.runs, 0, activityRun{ID: r.rid, Time: now.UTC().Format(time.RFC3339), Model: activityModel(model, 0),
+		owner: r.owner(), folder: shortLine(r.h("x-claude-mini-cwd"), 300), started: now})
 	a.mu.Unlock()
 	return func() {
 		a.mu.Lock()
@@ -65,12 +73,60 @@ func (a *activityLog) start(r *req, model string) func() {
 	}
 }
 
+// step: the agent's newest step (also to the response stream when replyWhenDone registered a hook).
 func (a *activityLog) step(rid, text string) {
+	a.mu.Lock()
+	var sink func(string)
+	if i := slices.IndexFunc(a.runs, func(x activityRun) bool { return x.ID == rid }); i >= 0 {
+		a.runs[i].Step, a.runs[i].stepAt, sink = text, time.Now(), a.runs[i].sink
+		a.runs[i].Steps++
+	}
+	a.mu.Unlock()
+	if sink != nil {
+		sink(text)
+	}
+}
+
+// onStep: the hook that sends each step of this request to its response stream (nil removes it).
+func (a *activityLog) onStep(rid string, f func(string)) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if i := slices.IndexFunc(a.runs, func(x activityRun) bool { return x.ID == rid }); i >= 0 {
-		a.runs[i].Step = text
+		a.runs[i].sink = f
 	}
+}
+
+// runningRun: one running request of the asking device (GET /minigw/v1/running); no prompt, no other device's requests.
+type runningRun struct {
+	Model      string `json:"model"`
+	Folder     string `json:"folder,omitempty"`
+	ElapsedSec int64  `json:"elapsedSec"`
+	Steps      int    `json:"steps"`
+	LastStep   string `json:"lastStep,omitempty"`
+	StepAgoSec int64  `json:"stepAgoSec,omitempty"`
+}
+
+// running: the requests of one owner (device id or "local") that run now; an empty owner sees nothing.
+func (a *activityLog) running(owner string) []runningRun { return a.runningAt(owner, time.Now()) }
+
+func (a *activityLog) runningAt(owner string, now time.Time) []runningRun {
+	out := []runningRun{}
+	if owner == "" {
+		return out
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, x := range a.runs {
+		if x.owner != owner {
+			continue
+		}
+		y := runningRun{Model: x.Model, Folder: x.folder, ElapsedSec: int64(now.Sub(x.started).Seconds()), Steps: x.Steps, LastStep: x.Step}
+		if !x.stepAt.IsZero() {
+			y.StepAgoSec = int64(now.Sub(x.stepAt).Seconds())
+		}
+		out = append(out, y)
+	}
+	return out
 }
 
 func (a *activityLog) done(x activityReq) {

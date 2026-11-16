@@ -60,6 +60,7 @@ type projectEnv struct {
 func projectMain(args []string) { runProjectCmd("project", args) }
 func noteMain(args []string)    { runProjectCmd("note", args) }
 func usageMain(args []string)   { runProjectCmd("usage", args) }
+func runningMain(args []string) { runProjectCmd("running", args) }
 
 func runProjectCmd(kind string, args []string) {
 	cwd, _ := os.Getwd()
@@ -80,6 +81,8 @@ func runProjectCmd(kind string, args []string) {
 		err = e.note(args)
 	case "usage":
 		err = e.usage(args)
+	case "running":
+		err = e.running(args)
 	default:
 		err = e.project(args)
 	}
@@ -754,4 +757,50 @@ func (e *projectEnv) gwError(st int, data []byte, h http.Header) error {
 		return errors.New("the notes are not reachable from this sandbox (it has no access to the gateway's run port)")
 	}
 	return gatewayError(st, data, h)
+}
+
+// running: GET /minigw/v1/running. The requests of this device that run on the gateway now: model, folder, elapsed time,
+// number of steps and the last step. The gateway answers only with this device's own requests (never a prompt).
+func (e *projectEnv) running(args []string) error {
+	if e.agent {
+		return errors.New(agentRefusal)
+	}
+	fs := flag.NewFlagSet("running", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "JSON")
+	pos, err := parseFlags(fs, args)
+	if err != nil || len(pos) != 0 {
+		return errors.New("usage: minigw running [--json]")
+	}
+	c, _ := e.connect()
+	st, data, h := e.do(c, "GET", "/minigw/v1/running", nil, nil)
+	if st == 404 {
+		return errors.New("this gateway is too old for minigw running: update it")
+	}
+	if st != 200 {
+		return gatewayError(st, data, h)
+	}
+	if *asJSON {
+		e.say(strings.TrimSpace(string(data)))
+		return nil
+	}
+	var r struct {
+		Running []struct {
+			Model, Folder, LastStep string
+			ElapsedSec, StepAgoSec  int64
+			Steps                   int
+		}
+	}
+	json.Unmarshal(data, &r)
+	if len(r.Running) == 0 {
+		e.say("nothing of yours is running on the gateway")
+		return nil
+	}
+	for _, x := range r.Running {
+		line := fmt.Sprintf("%s  %s  running %s  %s", oneLine(x.Model), oneLine(x.Folder), (time.Duration(x.ElapsedSec) * time.Second).String(), plural(x.Steps, "step", "steps"))
+		if x.LastStep != "" {
+			line += fmt.Sprintf("  last: %s (%s ago)", shortLine(x.LastStep, 160), (time.Duration(x.StepAgoSec) * time.Second).String())
+		}
+		e.say(line)
+	}
+	return nil
 }

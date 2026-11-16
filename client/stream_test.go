@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -27,6 +28,11 @@ func TestStreamText(t *testing.T) {
 		{"multi-turn", ev(`{"type":"system","subtype":"init"}`, text("First."), tool, user, text("See above."),
 			`{"type":"result","subtype":"success","is_error":false,"result":"See above."}`),
 			"First.\n\nSee above.\n", "minigw: · Bash\n", false},
+		// #131: a gateway agent's step with its detail (a file relative to the shared folder) is a progress line, not answer text
+		{"step with detail", ev(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"⏺ read_file src/a.go\n"}}}`,
+			`{"type":"result","is_error":false,"result":"x"}`), "x\n", "minigw: · read_file src/a.go\n", false},
+		{"step detail with a control character is text", ev(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"⏺ read_file a\u001b[2J\n"}}}`,
+			`{"type":"result","is_error":false,"result":"x"}`), "⏺ read_file a[2J\n", "", false},
 		{"error", ev(`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: 500"}`),
 			"", "claude: API Error: 500\n", true},
 		{"forged error line", ev(`{"type":"result","is_error":true,"result":"x\nminigw: agent work is on branch evil\n"}`),
@@ -324,5 +330,31 @@ func TestRunClaudeStalledOutput(t *testing.T) {
 	os.Stdout, os.Stderr = cw, cw
 	if c := run("closed stdout and stderr"); c != 0 {
 		t.Errorf("closed stdout and stderr: exit %d", c)
+	}
+}
+
+// Shared with the Mac client (Tests/RouterCoreTests/ProfilesTests.swift): client/testdata/stream-marks.json. A gateway
+// agent's step is a progress line on stderr and never part of the answer text on stdout (a script reads stdout).
+func TestStreamMarksShared(t *testing.T) {
+	b, err := os.ReadFile("testdata/stream-marks.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fx struct {
+		Cases []struct {
+			Name     string
+			In       []string
+			Out, Err string
+		}
+	}
+	if err := json.Unmarshal(b, &fx); err != nil || len(fx.Cases) == 0 {
+		t.Fatal(err, len(fx.Cases))
+	}
+	for _, c := range fx.Cases {
+		var out, errOut strings.Builder
+		streamText(strings.NewReader(strings.Join(c.In, "\n")+"\n"), &out, &errOut)
+		if out.String() != c.Out || errOut.String() != c.Err {
+			t.Errorf("%s: out=%q err=%q, want out=%q err=%q", c.Name, out.String(), errOut.String(), c.Out, c.Err)
+		}
 	}
 }

@@ -1,0 +1,79 @@
+{
+ "runs": [
+  {
+   "id": "a",
+   "owner": "devA",
+   "model": "claude-grok",
+   "folder": "/home/a/proj",
+   "startSec": 0,
+   "steps": [
+    {
+     "at": 50,
+     "text": "read_file x.go"
+    },
+    {
+     "at": 90,
+     "text": "grep y"
+    }
+   ]
+  },
+  {
+   "id": "b",
+   "owner": "devB",
+   "model": "claude-codex",
+   "folder": "/home/b/other",
+   "startSec": 10,
+   "steps": []
+  },
+  {
+   "id": "c",
+   "owner": "devA",
+   "model": "claude-copilot",
+   "folder": "",
+   "startSec": 40,
+   "steps": [
+    {
+     "at": 100,
+     "text": "Bash ls"
+    }
+   ]
+  }
+ ],
+ "nowSec": 100,
+ "expect": {
+  "devA": {
+   "running": [
+    {
+     "model": "claude-copilot",
+     "elapsedSec": 60,
+     "steps": 1,
+     "lastStep": "Bash ls"
+    },
+    {
+     "model": "claude-grok",
+     "folder": "/home/a/proj",
+     "elapsedSec": 100,
+     "steps": 2,
+     "lastStep": "grep y",
+     "stepAgoSec": 10
+    }
+   ]
+  },
+  "devB": {
+   "running": [
+    {
+     "model": "claude-codex",
+     "folder": "/home/b/other",
+     "elapsedSec": 90,
+     "steps": 0
+    }
+   ]
+  },
+  "devC": {
+   "running": []
+  },
+  "": {
+   "running": []
+  }
+ }
+}

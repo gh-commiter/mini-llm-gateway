@@ -892,7 +892,7 @@ if let c = agentConn(), args.first?.hasPrefix("-") == true, args.contains("-p") 
 switch args.first {
 case "share":
     shareCommand(Array(args.dropFirst()))
-case "project", "team", "note", "usage":
+case "project", "team", "note", "usage", "running":
     projectCommand(args[0], Array(args.dropFirst()))
 case "plugin":
     pluginCommand(Array(args.dropFirst()))
@@ -1022,6 +1022,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         \(ProjectEnv.teamHelp)
         \(ProjectEnv.noteHelp)
         \(ProjectEnv.usageHelp)
+        \(ProjectEnv.runningHelp)
         minigw gw status|devices|provider|claude|token …    change the Mini Gateway app on this Mac (minigw gw help)
         minigw plugin install|uninstall|status       the Claude Code plugin minigw@mini-gateway, using this minigw
         minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings, profiles, device key)
