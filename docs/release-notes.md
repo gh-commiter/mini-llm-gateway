@@ -2,11 +2,17 @@
 
 ## Unreleased
 
+### New
+- Teams (first step): the owner can group users and projects into teams with `minigw gw team add|list|rename|archive`, `minigw gw team member add|remove <team> <user>` and `minigw gw team project add|remove <team> <project>`; a member sees their own teams with `minigw team list|show <team>`. A project belongs to at most one team; a user can be in several. In this version a team is a directory only: being in a team gives no project role and no access to notes yet.
+
 ### Changed
 - Grok is not supported on the Mac gateway (the Mini Gateway app). It worked in 0.5.29 and could not start since 0.6.0. Every Grok request answers 400 "Grok is not supported on the Mac gateway. Use another agent, or Grok through minigw serve on Windows or Linux." with `x-should-retry: false`; the Mac Settings no longer have a Grok CLI pane, the Mac admin API answers the same 400 for `/agents/grok`, and `minigw gw grok` says so. Grok through `minigw serve` on Windows and Linux is not affected, and a Mac client can use its models.
 
 ### Security
 - Notes: the gateway now checks the permission before it loads a note's text (for member reads, reads by an agent run, edit, delete and class change), and checks it again before it repeats a saved answer to a retried request. A note that is missing and a note you may not see give the same answer.
+
+### Known limits
+- Database downgrade: this version's database schema is 9. An older program refuses it; the way back is restoring the snapshot `core-8-<time>.db` from the core folder by path with `minigw gw core restore`.
 
 
 ## 0.7.0

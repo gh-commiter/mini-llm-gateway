@@ -387,6 +387,13 @@ holds a lock on it, so only one process uses it at a time.
 - **Migrations:** forward only. Before the first pending migration the gateway writes a snapshot
   `core-<schema>-<time>.db` next to the database (the last 3 are kept); a failing migration leaves the earlier ones
   applied and the schema version at the last good one. A database written by a newer minigw is refused (503).
+- **Team directory (schema 9):** adds `teams`, `team_members` and `team_projects` to schema 8 with the same
+  snapshot-before-migration lifecycle. Existing projects remain unassigned; existing permissions stay unchanged.
+  Users can join several teams; a project belongs to at most one team. Directory membership grants no project
+  role or note access. Owner mutations write transactional audit events without changing the authorization epoch.
+  Archiving preserves directory reads and attachments, blocks new attachments and does not archive projects.
+  Removal affects only the directory. Backup and offline restore include teams; the restore allowlist is derived
+  from migrations. Restoring can bring back earlier directory names and membership as well as permissions.
 - **Backup:** `minigw gw core backup [name]` writes a consistent copy while the gateway runs into the core folder's
   `backups` folder (a name, no path: a copy in an allowed folder would be a copy of all notes that agents can read; the
   name must not exist; the file is readable by you only; without a name `core-<UTC time>.db`). Move it out by hand

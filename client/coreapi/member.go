@@ -21,7 +21,7 @@ const (
 
 // IsMemberPath: the paths of the member routes (the adapter routes them to Handle before the model routes' checks).
 func IsMemberPath(p string) bool {
-	return p == projectsPrefix || strings.HasPrefix(p, projectsPrefix+"/") || p == usagePath
+	return p == projectsPrefix || strings.HasPrefix(p, projectsPrefix+"/") || p == usagePath || p == teamsPrefix || strings.HasPrefix(p, teamsPrefix+"/")
 }
 
 // --- JSON shapes (identical on both gateways) ---
@@ -150,6 +150,9 @@ func (a *API) member(ctx context.Context, c Context, r Request) Response {
 	}
 	if r.Path == usagePath {
 		return a.usageRoute(ctx, st, p, r)
+	}
+	if r.Path == teamsPrefix || strings.HasPrefix(r.Path, teamsPrefix+"/") {
+		return a.teamRoute(ctx, st, p, r)
 	}
 	return a.projectRoute(ctx, st, p, r)
 }

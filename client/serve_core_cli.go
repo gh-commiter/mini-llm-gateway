@@ -21,6 +21,9 @@ const coreHelp = `
   minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>
   minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to
   minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
+  minigw gw team add <name> | list | rename <team> <name> | archive <team>
+  minigw gw team member add|remove <team> <user>
+  minigw gw team project add|remove <team> <project>
   minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin
   minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data
   minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)
@@ -87,6 +90,8 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 	}
 	id := strconv.FormatInt
 	switch pos[0] {
+	case "team":
+		teamAdmin(a, pos)
 	case "user":
 		need(2, 4)
 		switch {

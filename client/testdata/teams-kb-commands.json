@@ -1,0 +1,474 @@
+{
+  "admin": [
+    {
+      "name": "owner list",
+      "args": [
+        "team",
+        "list"
+      ],
+      "opts": {},
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"},{\"id\":2,\"name\":\"Old\",\"archived\":true}]}"
+        }
+      ],
+      "want": {
+        "out": "1  Engineering\n2  Old  (archived)\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "owner add",
+      "args": [
+        "team",
+        "add",
+        "Engineering"
+      ],
+      "opts": {},
+      "responses": [
+        {
+          "match": "POST /teams",
+          "status": 200,
+          "body": "{}"
+        }
+      ],
+      "want": {
+        "out": "team Engineering added\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "POST",
+            "/teams",
+            "{\"name\":\"Engineering\"}"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "owner rename",
+      "args": [
+        "team",
+        "rename",
+        "engineering",
+        "New"
+      ],
+      "opts": {},
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"},{\"id\":2,\"name\":\"Old\",\"archived\":true}]}"
+        },
+        {
+          "match": "PATCH /teams/1",
+          "status": 200,
+          "body": "{}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "PATCH",
+            "/teams/1",
+            "{\"name\":\"New\"}"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "owner archive",
+      "args": [
+        "team",
+        "archive",
+        "engineering"
+      ],
+      "opts": {},
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"},{\"id\":2,\"name\":\"Old\",\"archived\":true}]}"
+        },
+        {
+          "match": "PATCH /teams/1",
+          "status": 200,
+          "body": "{}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "PATCH",
+            "/teams/1",
+            "{\"archived\":true}"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "owner member add",
+      "args": [
+        "team",
+        "member",
+        "add",
+        "Engineering",
+        "Matic"
+      ],
+      "opts": {},
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"},{\"id\":2,\"name\":\"Old\",\"archived\":true}]}"
+        },
+        {
+          "match": "GET /users",
+          "status": 200,
+          "body": "{\"users\":[{\"id\":3,\"name\":\"Matic\"}]}"
+        },
+        {
+          "match": "PUT /teams/1/members/3",
+          "status": 200,
+          "body": "{}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "GET",
+            "/users",
+            ""
+          ],
+          [
+            "PUT",
+            "/teams/1/members/3",
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "owner member remove",
+      "args": [
+        "team",
+        "member",
+        "remove",
+        "Engineering",
+        "Matic"
+      ],
+      "opts": {},
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"},{\"id\":2,\"name\":\"Old\",\"archived\":true}]}"
+        },
+        {
+          "match": "GET /users",
+          "status": 200,
+          "body": "{\"users\":[{\"id\":3,\"name\":\"Matic\"}]}"
+        },
+        {
+          "match": "DELETE /teams/1/members/3",
+          "status": 200,
+          "body": "{}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "GET",
+            "/users",
+            ""
+          ],
+          [
+            "DELETE",
+            "/teams/1/members/3",
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "owner project add",
+      "args": [
+        "team",
+        "project",
+        "add",
+        "Engineering",
+        "app"
+      ],
+      "opts": {},
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"},{\"id\":2,\"name\":\"Old\",\"archived\":true}]}"
+        },
+        {
+          "match": "GET /projects",
+          "status": 200,
+          "body": "{\"projects\":[{\"id\":4,\"slug\":\"app\"}]}"
+        },
+        {
+          "match": "PUT /teams/1/projects/4",
+          "status": 200,
+          "body": "{}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "GET",
+            "/projects",
+            ""
+          ],
+          [
+            "PUT",
+            "/teams/1/projects/4",
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "owner project remove",
+      "args": [
+        "team",
+        "project",
+        "remove",
+        "Engineering",
+        "app"
+      ],
+      "opts": {},
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"},{\"id\":2,\"name\":\"Old\",\"archived\":true}]}"
+        },
+        {
+          "match": "GET /projects",
+          "status": 200,
+          "body": "{\"projects\":[{\"id\":4,\"slug\":\"app\"}]}"
+        },
+        {
+          "match": "DELETE /teams/1/projects/4",
+          "status": 200,
+          "body": "{}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "GET",
+            "/projects",
+            ""
+          ],
+          [
+            "DELETE",
+            "/teams/1/projects/4",
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "numeric id wins",
+      "args": [
+        "team",
+        "archive",
+        "2"
+      ],
+      "opts": {},
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"2\"},{\"id\":2,\"name\":\"Other\"}]}"
+        },
+        {
+          "match": "PATCH /teams/2",
+          "status": 200,
+          "body": "{}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "PATCH",
+            "/teams/2",
+            "{\"archived\":true}"
+          ]
+        ]
+      }
+    }
+  ],
+  "member": [
+    {
+      "name": "list",
+      "args": [
+        "list"
+      ],
+      "body": "[{\"id\":1,\"name\":\"Engineering\"},{\"id\":2,\"name\":\"Old\",\"archived\":true}]",
+      "out": "1  Engineering\n2  Old  (archived)\n",
+      "status": 200,
+      "path": "/minigw/v1/teams"
+    },
+    {
+      "name": "empty",
+      "args": [
+        "list"
+      ],
+      "body": "[]",
+      "out": "no teams: ask the gateway owner to add you to one\n",
+      "status": 200,
+      "path": "/minigw/v1/teams"
+    },
+    {
+      "name": "show",
+      "args": [
+        "show",
+        "1"
+      ],
+      "body": "{\"id\":1,\"name\":\"Engineering\",\"members\":[{\"user\":3,\"name\":\"Matic\"}],\"projects\":[{\"id\":4,\"slug\":\"app\",\"name\":\"App\",\"archived\":true}]}",
+      "out": "1  Engineering\nmember 3  Matic\nproject 4  app  App  (archived)\n",
+      "status": 200,
+      "path": "/minigw/v1/teams/1"
+    },
+    {
+      "name": "hidden",
+      "args": [
+        "show",
+        "99"
+      ],
+      "body": "{}",
+      "out": "",
+      "error": "not found or not visible",
+      "status": 404,
+      "path": "/minigw/v1/teams/99"
+    },
+    {
+      "name": "unbound",
+      "args": [
+        "list"
+      ],
+      "body": "{}",
+      "out": "",
+      "error": "no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)",
+      "status": 403,
+      "path": "/minigw/v1/teams"
+    },
+    {
+      "name": "archived list",
+      "args": [
+        "list",
+        "--archived"
+      ],
+      "body": "[]",
+      "out": "no teams: ask the gateway owner to add you to one\n",
+      "status": 200,
+      "path": "/minigw/v1/teams?archived=1"
+    },
+    {
+      "name": "json",
+      "args": [
+        "list",
+        "--json"
+      ],
+      "body": "[]",
+      "out": "[]\n",
+      "status": 200,
+      "path": "/minigw/v1/teams"
+    },
+    {
+      "name": "clean names",
+      "args": [
+        "list"
+      ],
+      "body": "[{\"id\": 3, \"name\": \"Bad\\u001b[31m\\u202eName\"}]",
+      "out": "3  Bad[31mName\n",
+      "status": 200,
+      "path": "/minigw/v1/teams"
+    },
+    {
+      "name": "slash name",
+      "args": [
+        "show",
+        "A/B"
+      ],
+      "lookup": "[{\"id\":1,\"name\":\"A/B\"}]",
+      "body": "{\"id\":1,\"name\":\"A/B\",\"members\":[],\"projects\":[]}",
+      "out": "1  A/B\n",
+      "status": 200,
+      "path": "/minigw/v1/teams/1"
+    }
+  ]
+}

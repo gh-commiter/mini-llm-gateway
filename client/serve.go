@@ -1420,7 +1420,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 		r.URL.Path == "/minigw/settings/pick" {
 		return s.settingsHTTP(w, r), ""
 	}
-	if r.URL.Path == projectsPrefix || strings.HasPrefix(r.URL.Path, projectsPrefix+"/") || r.URL.Path == usagePath {
+	if coreapi.IsMemberPath(r.URL.Path) {
 		return s.projectHTTP(w, r), "" // its own token, device and principal rules (serve_core.go)
 	}
 	if r.h(agentChainHeader) != "" && runOf(r) == nil { // veriga agentov je le v prehodu; od zunaj je ponarejena

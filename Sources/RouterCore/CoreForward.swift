@@ -8,7 +8,7 @@ import Foundation
 /// against both implementations, so they cannot drift.
 enum CoreRoutes {
     static func isMemberPath(_ p: String) -> Bool {
-        p == "/minigw/v1/projects" || p.hasPrefix("/minigw/v1/projects/") || p == "/minigw/v1/usage"
+        p == "/minigw/v1/projects" || p.hasPrefix("/minigw/v1/projects/") || p == "/minigw/v1/usage" || p == "/minigw/v1/teams" || p.hasPrefix("/minigw/v1/teams/")
     }
 
     /// `escapedPath` is the path below the admin prefix.
@@ -20,7 +20,7 @@ enum CoreRoutes {
         }
         guard let first = seg.first, !(seg.count == 1 && first.isEmpty) else { return false }
         switch first {
-        case "users", "bindings", "projects", "grants", "audit", "core": return true
+        case "users", "bindings", "projects", "teams", "grants", "audit", "core": return true
         case "quota": return seg.count == 2 && seg[1] == "history"
         case "usage": return seg.count == 2 && seg[1] == "events"  // GET /usage is the 0.5.x folder counter of the gateway
         default: return false
