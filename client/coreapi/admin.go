@@ -43,7 +43,7 @@ func IsAdminPath(method, escapedPath string) bool {
 		return false
 	}
 	switch seg[0] {
-	case "users", "bindings", "projects", "grants", "audit", "core":
+	case "users", "bindings", "projects", "teams", "grants", "audit", "core":
 		return true
 	case "quota":
 		return len(seg) == 2 && seg[1] == "history"
@@ -117,6 +117,9 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 	}
 	if seg[0] == "core" && len(seg) == 2 {
 		route = method + " core/" + seg[1]
+	}
+	if seg[0] == "teams" {
+		return a.adminTeams(ctx, st, method, seg, body)
 	}
 	switch route {
 	case "GET users":

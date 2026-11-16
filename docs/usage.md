@@ -492,6 +492,31 @@ A **project** is a named place on the gateway where a team keeps short notes (de
 facts) that people and agents can read. The gateway owner creates projects, adds you as a member and binds your
 computer's device key to you; you see only the projects you belong to. Works on every gateway: `minigw serve` and the Mac app (project runs of agents on the Mac app included).
 
+### Team directory
+
+The owner groups users and projects into teams. Users can join several teams; a project belongs to at most
+one team. **Team membership grants no project role or access to notes.** Existing users, projects,
+memberships and grants stay unchanged. Keep assigning project roles with `gw member` and sharing classes
+with `gw grant`.
+
+```sh
+minigw gw team add Engineering
+minigw gw team member add Engineering ana
+minigw gw team project add Engineering fakture
+minigw team list
+minigw team show Engineering
+```
+
+Members see only their own teams, their teammates' names, and attached projects they can already read through
+project membership or explicit grants. Missing and hidden teams give the same answer. Devices must be approved
+and bound to active users. `team list --archived` includes archived teams; member list and show accept `--json`.
+Names or numeric IDs identify teams; use the ID for an all-digit name.
+
+`gw team rename <team> <name>` renames a team. `gw team archive <team>` preserves reads and attachments,
+hides the team from the default member list and blocks new attachments. `gw team member remove <team> <user>`
+and `gw team project remove <team> <project>` change only the directory: existing roles and grants survive.
+Archiving a team does not archive projects. Team-generated project access is future work.
+
 ### Projects in 10 minutes
 
 The commands are the same on a Mac gateway (the app) and on `minigw serve` (Windows, Linux). Steps 1 to 4 are the

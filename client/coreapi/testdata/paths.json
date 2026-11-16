@@ -1,4 +1,13 @@
 [
+  {"kind":"member","method":"GET","path":"/minigw/v1/teams","want":true},
+  {"kind":"member","method":"GET","path":"/minigw/v1/teams/","want":true},
+  {"kind":"member","method":"GET","path":"/minigw/v1/teams/3","want":true},
+  {"kind":"member","method":"GET","path":"/minigw/v1/teamsx","want":false},
+  {"kind":"admin","method":"GET","path":"/teams","want":true},
+  {"kind":"admin","method":"PATCH","path":"/teams/1","want":true},
+  {"kind":"admin","method":"PUT","path":"/teams/1/members/2","want":true},
+  {"kind":"admin","method":"DELETE","path":"/teams/1/projects/3","want":true},
+  {"kind":"admin","method":"GET","path":"/%74eams","want":true},
   {"kind":"admin","method":"GET","path":"/quota/history","want":true},
   {"kind":"admin","method":"GET","path":"/quota","want":false},
   {"kind":"admin","method":"GET","path":"/quota/history/x","want":false},

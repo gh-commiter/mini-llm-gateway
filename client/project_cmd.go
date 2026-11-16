@@ -74,6 +74,8 @@ func runProjectCmd(kind string, args []string) {
 	}
 	var err error
 	switch kind {
+	case "team":
+		err = e.team(args)
 	case "note":
 		err = e.note(args)
 	case "usage":

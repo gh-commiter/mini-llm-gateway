@@ -28,6 +28,9 @@ public final class AdminCommands {
         minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>
           minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to
           minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
+          minigw gw team add <name> | list | rename <team> <name> | archive <team>
+          minigw gw team member add|remove <team> <user>
+          minigw gw team project add|remove <team> <project>
           minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin
           minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data
           minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)
@@ -96,6 +99,7 @@ public final class AdminCommands {
         func need(_ lo: Int, _ hi: Int) throws { if pos.count < lo || pos.count > hi { throw usage } }
         func s(_ n: Int64) -> String { String(n) }
         switch pos[0] {
+        case "team": try team(pos)
         case "user":
             try need(2, 4)
             switch (pos[1], pos.count) {

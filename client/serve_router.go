@@ -790,7 +790,7 @@ func routerCommand(args []string, in io.Reader) {
 		var out json.RawMessage
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
-	case "user", "bind", "project", "member", "grant", "core", "usage-events", "quota":
+	case "user", "bind", "project", "team", "member", "grant", "core", "usage-events", "quota":
 		coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, history: *history, provider: *evProvider, json: *asJSON})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {

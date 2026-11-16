@@ -24,6 +24,8 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw share add [--work=MODE] [--ro] [folder]` | Share a folder that is not shared automatically, and/or save its default work mode |
 | `minigw share remove [folder]` | Remove a folder from the share list |
 | `minigw share list` | Show shared folders and their saved modes |
+| `minigw team list [--archived] [--json]` | Your teams; directory membership gives no project access |
+| `minigw team show <team> [--json]` | Your teammates and attached projects you can already read |
 | `minigw project list [--archived] [--json]` | The gateway projects you can see, with your role and grants (see [usage.md](usage.md#projects-and-notes)) |
 | `minigw project link <slug>` / `unlink` / `show` | Link this folder tree to a project you are a direct member of, remove the link, or show which link applies here |
 | `minigw note list [--class c] [--limit n] [--after cursor] [--json]` / `read <id> [--json]` | Notes of the linked project (also inside an agent run, on the run's own project) |
@@ -113,6 +115,9 @@ only on the gateway computer.
 | `minigw gw user list` \| `add <name>` \| `rename <user> <name>` \| `activate <user>` \| `deactivate <user>` | The users of the project database (0.6.0; also on the Mac). `<user>`: name or number. Deactivating ends the user's runs and capabilities |
 | `minigw gw bind list` \| `<device id> <user>` \| `remove <device id>` | Which user a device belongs to |
 | `minigw gw project list` \| `add <slug> <name>` \| `archive <project>` \| `unarchive <project>` | The projects (`<project>`: slug or number) |
+| `minigw gw team add <name>` \| `list` \| `rename <team> <name>` \| `archive <team>` | Owner-managed directory; `<team>` is a name or number |
+| `minigw gw team member add\|remove <team> <user>` | Change directory membership without changing project roles |
+| `minigw gw team project add\|remove <team> <project>` | Group a project under at most one team without changing permissions |
 | `minigw gw member <project> list` \| `set <user> <role>` \| `remove <user>` | Members of a project; role: reader, developer, admin |
 | `minigw gw grant <source> list` \| `add <reader> <class>` \| `remove <reader> <class>` | Which project reads which class (structure, data) of another |
 | `minigw gw core backup [name]` | A consistent copy of the core database into `<core>/backups` (the gateway or app running); a name, not a path |

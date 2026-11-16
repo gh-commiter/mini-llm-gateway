@@ -46,7 +46,7 @@ func TestSchema7QuotaMigration(t *testing.T) {
 	if snaps, _ := filepath.Glob(filepath.Join(dir, "core-7-*.db")); len(snaps) != 1 {
 		t.Fatal(snaps)
 	}
-	if err = checkSchemaObjects(ctx, s.DB(), 8); err != nil {
+	if err = checkSchemaObjects(ctx, s.DB(), len(migrations)); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.write(ctx, migrate8); err != nil {

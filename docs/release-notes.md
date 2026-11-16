@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### New
+- Teams (first step): the owner can group users and projects into teams with `minigw gw team add|list|rename|archive`, `minigw gw team member add|remove <team> <user>` and `minigw gw team project add|remove <team> <project>`; a member sees their own teams with `minigw team list|show <team>`. A project belongs to at most one team; a user can be in several. In this version a team is a directory only: being in a team gives no project role and no access to notes yet.
+
+### Known limits
+- Database downgrade: this version's database schema is 9. An older program refuses it; the way back is restoring the snapshot `core-8-<time>.db` from the core folder by path with `minigw gw core restore`.
+
 ## 0.7.0
 
 Mini Gateway 0.7.0 is a stable release. It collects the eleven beta versions 0.6.0 to 0.6.10, which stable users never saw, and is the first stable release since 0.5.29. It is the same code as beta 0.6.10. The sections below give the detail per beta. Read **Changed**, **Known limits** and **Known problems** before you update a gateway that other people use.

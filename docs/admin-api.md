@@ -274,6 +274,36 @@ Claude probe); the Claude probe is also the Settings → Claude CLI switch "Show
 Members read their own usage on the member route `GET /minigw/v1/usage?project=<id or slug>&days=<1-400>` (same
 shape; a reader, a grant-only user or a stranger gets 404).
 
+### Team directory (both gateways)
+
+The following routes use owner admin authentication and the same prefix and core failure handling as `/projects`.
+Names use the existing display-name validation (nonblank, at most 128 UTF-8 bytes), with case-insensitive
+uniqueness as for users. Project display names are not unique; projects have separately validated unique slugs.
+
+| Method and path | Body | Response |
+|---|---|---|
+| `GET /teams` | – | `{teams: [{id, name, archived}]}` including archived teams |
+| `POST /teams` | `{name}` | `{team: {id, name, archived}}` |
+| `GET /teams/{id}` | – | `{id, name, archived, members: [{user, name}], projects: [Project]}` |
+| `PATCH /teams/{id}` | `{name}` or `{archived: bool}` | `{ok: true}`; archive instead of hard delete |
+| `GET /teams/{id}/members` | – | `{members: [{user, name}]}` |
+| `PUT /teams/{id}/members/{user}` | – | `{ok: true}` |
+| `DELETE /teams/{id}/members/{user}` | – | `{ok: true}` |
+| `GET /teams/{id}/projects` | – | `{projects: [Project]}` |
+| `PUT /teams/{id}/projects/{project}` | – | `{ok: true}`; at most one team per project |
+| `DELETE /teams/{id}/projects/{project}` | – | `{ok: true}` |
+
+Every successful mutation writes an audit event. Teams are a directory only: these routes never change project
+memberships, grants or note access. Archiving preserves attachments and readable details but blocks new
+attachments; removals remain available. Move a project by removing its old attachment first.
+
+Member routes use `/minigw/v1`: `GET /teams[?archived=1]` returns an array of the caller's teams;
+`GET /teams/{id-or-name}` returns the detail shape above. Numeric references select IDs. Only team members
+see its name and member names. Attached projects are filtered by existing project membership and explicit
+grants. Missing and invisible teams both return the existing 404; an unbound device or inactive user gets
+`no_project_access`. Gateway-agent peers cannot use these routes. Directory operations do not change the
+project authorization epoch. Team-generated project roles are future work.
+
 ### Member routes (not admin routes)
 
 Under `/minigw/v1/projects` the gateway serves the members' own API on the encrypted device connection (token
