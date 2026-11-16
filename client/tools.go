@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -75,6 +77,24 @@ func isAgentID(m string) bool {
 		}
 	}
 	return false
+}
+
+// toolsRank: the tool levels from the lowest. The owner of a gateway sets the highest level a provider's models may get (minigw gw provider
+// tools); the client reads it from /v1/models (minigw_tools) and refuses a higher level, and sends the level it runs with in the header
+// x-claude-mini-tools, which the gateway checks on every request. The tools run in the client's Claude Code: the gateway can only refuse to
+// serve, and a modified client can send a lower level than it runs; the real protection of the folder is the client's own permission rules.
+var toolsRank = map[string]int{"none": 0, "read": 1, "edit": 2}
+
+// toolsLevelRefusal: "" = the level is within the cap; the capped provider's name goes into the owner's command.
+func toolsLevelRefusal(level, cap, provider, model string) string {
+	r, ok := toolsRank[level]
+	if !ok || r <= toolsRank[cap] {
+		if !ok {
+			return "unknown tools level " + level
+		}
+		return ""
+	}
+	return "--minigw-tools=" + level + " is not allowed for " + model + ": the gateway allows " + cap + " at most. The owner of the gateway can allow it with: minigw gw provider tools " + provider + " " + level + " [--model " + model + "]"
 }
 
 // toolsFor: orodja modela (model brez pripone profila, "" = ni --model): "" = brez omejitve. --minigw-ro (readOnly: tudi
@@ -168,4 +188,60 @@ func modelArg(args []string) string {
 		}
 	}
 	return model
+}
+
+// providerToolsLines: the answer of minigw gw provider tools (same text on the Mac client, testdata/provider-tools.json). tools: the provider's
+// level, models: the exceptions per model; model != "" = that one model.
+func providerToolsLines(name, tools string, models map[string]string, model string) []string {
+	if tools == "" {
+		tools = "read"
+	}
+	if model != "" {
+		m := strings.TrimPrefix(model, "claude-")
+		if v, ok := models[m]; ok {
+			return []string{name + "  " + m + "  tools: " + v}
+		}
+		return []string{name + "  " + m + "  tools: " + tools + " (the provider's)"}
+	}
+	out := []string{name + "  tools: " + tools}
+	for _, m := range slices.Sorted(maps.Keys(models)) {
+		out = append(out, "  "+m+"  tools: "+models[m])
+	}
+	return out
+}
+
+// toolsCapOf: the tool cap and the provider of a model from the /v1/models answer (fields minigw_tools and minigw_provider); a gateway
+// without the field (older, or the model is not a provider model) counts as read. found = the model is in the list.
+func toolsCapOf(list map[string]any, model string) (cap, provider string, found bool) {
+	data, _ := list["data"].([]any)
+	for _, e := range data {
+		m, _ := e.(map[string]any)
+		if id, _ := m["id"].(string); id == model || id == "claude-"+model {
+			cap, _ = m["minigw_tools"].(string)
+			provider, _ = m["minigw_provider"].(string)
+			if _, ok := toolsRank[cap]; !ok {
+				cap = "read"
+			}
+			return cap, provider, true
+		}
+	}
+	return "", "", false
+}
+
+// editRefusal: why --minigw-tools=edit cannot run, "" = it may. list: the /v1/models answer (nil = the gateway did not answer).
+func editRefusal(list map[string]any, model string) string {
+	if model == "" {
+		return "--minigw-tools=edit needs --model: the gateway sets the highest tool level per model"
+	}
+	if list == nil {
+		return "--minigw-tools=edit: cannot read from the gateway which tools " + model + " may get"
+	}
+	cap, provider, found := toolsCapOf(list, model)
+	if !found {
+		return "--minigw-tools=edit: the gateway does not list the model " + model
+	}
+	if provider == "" {
+		provider = "<provider>"
+	}
+	return toolsLevelRefusal("edit", cap, provider, model)
 }

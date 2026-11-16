@@ -20,6 +20,8 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
+  minigw gw provider tools <name> [none|read|edit|default] [--model m]   the highest tool level its models may get in the client's
+                                                        Claude Code (default: read); no value shows it; --model: only that model
   minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
                   [--ask-others=true|false]   (may ask other models of this gateway; needs --allow-local-tools)
   minigw gw claude|codex|copilot [--work=direct|sync|worktree]
@@ -363,6 +365,18 @@ func routerCommand(_ argv: [String]) {
                 say(clean("\(g["name"] as? String ?? "")  \(g["baseURL"] as? String ?? "")  models enabled: \(n)"))
             }
             if list.isEmpty { say("no providers (add one with: minigw gw provider add <name> <baseURL>)") }
+        case "tools":
+            need(3, 4)
+            if pos.count == 4 {
+                guard pos[3] == "default" || Profiles.toolsRank[pos[3]] != nil else { fail("tools: none, read, edit or default") }
+                var body: [String: Any] = ["tools": pos[3] == "default" ? "" : pos[3]]
+                if let m = flags["model"] { body["model"] = m }
+                _ = a.call("PATCH", "/gateways/" + esc(pos[2]), body)
+            }
+            let list = a.call("GET", "/gateways")["gateways"] as? [[String: Any]] ?? []
+            guard let g = list.first(where: { $0["name"] as? String == pos[2] }) else { fail("no provider \(pos[2])") }
+            for l in Profiles.providerToolsLines(name: pos[2], tools: g["tools"] as? String ?? "", models: g["modelTools"] as? [String: String] ?? [:],
+                                                 model: flags["model"] ?? "") { say(clean(l)) }
         case "models":
             need(3, 4)
             if flags["enable"] != nil || flags["disable"] != nil {

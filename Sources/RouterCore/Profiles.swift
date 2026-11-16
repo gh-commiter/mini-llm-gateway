@@ -461,6 +461,41 @@ public enum Profiles {
         return ("Read(./**),Grep(./**),Glob(./**),Edit(./**)", deny.joined(separator: ","))
     }
 
+    /// Ravni orodij od najnižje (kot Go toolsRank). Lastnik prehoda določi najvišjo raven za modele ponudnika (minigw gw provider tools); odjemalec jo
+    /// prebere iz /v1/models (minigw_tools), višje zavrne in v glavi x-claude-mini-tools pošlje raven, s katero teče; prehod jo preveri ob vsaki zahtevi.
+    /// Orodja tečejo v Claude Code odjemalca: prehod lahko le noče postreči, spremenjen odjemalec pa lahko pošlje nižjo raven, kot jo uporablja;
+    /// prava zaščita mape so dovoljenja Claude Code pri odjemalcu.
+    public static let toolsRank = ["none": 0, "read": 1, "edit": 2]
+
+    /// nil = raven je v mejah; sicer sporočilo z ukazom lastnika (kot Go toolsLevelRefusal).
+    public static func toolsLevelRefusal(level: String, cap: String, provider: String, model: String) -> String? {
+        guard let r = toolsRank[level] else { return "unknown tools level " + level }
+        if r <= toolsRank[cap] ?? 1 { return nil }
+        return "--minigw-tools=\(level) is not allowed for \(model): the gateway allows \(cap) at most. The owner of the gateway can allow it with: minigw gw provider tools \(provider) \(level) [--model \(model)]"
+    }
+
+    /// Odgovor »minigw gw provider tools« (kot Go providerToolsLines; client/testdata/provider-tools.json).
+    public static func providerToolsLines(name: String, tools: String, models: [String: String], model: String) -> [String] {
+        let tools = tools.isEmpty ? "read" : tools
+        if !model.isEmpty {
+            let m = model.hasPrefix("claude-") ? String(model.dropFirst(7)) : model
+            if let v = models[m] { return ["\(name)  \(m)  tools: \(v)"] }
+            return ["\(name)  \(m)  tools: \(tools) (the provider's)"]
+        }
+        return ["\(name)  tools: \(tools)"] + models.keys.sorted().map { "  \($0)  tools: \(models[$0] ?? "")" }
+    }
+
+    /// Zakaj --minigw-tools=edit ne sme teči; nil = sme. list: odgovor /v1/models (nil = prehod ni odgovoril); kot Go editRefusal.
+    public static func editRefusal(list: [String: Any]?, model: String) -> String? {
+        if model.isEmpty { return "--minigw-tools=edit needs --model: the gateway sets the highest tool level per model" }
+        guard let list else { return "--minigw-tools=edit: cannot read from the gateway which tools \(model) may get" }
+        guard let m = (list["data"] as? [[String: Any]])?.first(where: { ($0["id"] as? String).map { $0 == model || $0 == "claude-" + model } ?? false }) else {
+            return "--minigw-tools=edit: the gateway does not list the model \(model)"
+        }
+        let cap = (m["minigw_tools"] as? String).flatMap { toolsRank[$0] != nil ? $0 : nil } ?? "read"  // an older gateway: read
+        return toolsLevelRefusal(level: "edit", cap: cap, provider: (m["minigw_provider"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "<provider>", model: model)
+    }
+
     /// --minigw-tools <v> ali =<v> (zadnji velja, do »--«); value nil = ni podan; error ≠ nil = neveljavno (kot Go takeTools).
     public static func takeTools(_ args: [String]) -> (rest: [String], value: String?, error: String?) {
         var rest: [String] = [], value: String?, i = 0

@@ -331,6 +331,7 @@ func providers(u *ui) ([]row, error) {
 		rows = append(rows,
 			ed("Base URL", str(p, "baseURL"), func(v string) (string, error) { return patch(map[string]any{"baseURL": v}) }),
 			tog("Allow http (local network only)", yes(p, "insecure"), func(v bool) (string, error) { return patch(map[string]any{"insecure": v}) }),
+			ed("Tools of its models (none, read or edit; per model: minigw gw provider tools)", str(p, "tools"), func(v string) (string, error) { return patch(map[string]any{"tools": v}) }),
 			// One per line in the API ("alias = upstream ID, context window"); here separated by ";".
 			ed("Aliases (advanced; a = id, 128k; …)", strings.Join(strings.Split(strings.TrimSpace(str(p, "aliases")), "\n"), "; "), func(v string) (string, error) {
 				return patch(map[string]any{"aliases": strings.Join(csvSep(v, ";"), "\n")})

@@ -1,0 +1,234 @@
+{
+ "caps": [
+  {
+   "tools": "",
+   "modelTools": {},
+   "route": "grok-4",
+   "cap": "read"
+  },
+  {
+   "tools": "edit",
+   "modelTools": {},
+   "route": "grok-4",
+   "cap": "edit"
+  },
+  {
+   "tools": "none",
+   "modelTools": {},
+   "route": "claude-grok-4",
+   "cap": "none"
+  },
+  {
+   "tools": "read",
+   "modelTools": {
+    "grok-4": "edit"
+   },
+   "route": "grok-4",
+   "cap": "edit"
+  },
+  {
+   "tools": "read",
+   "modelTools": {
+    "grok-4": "edit"
+   },
+   "route": "claude-grok-4",
+   "cap": "edit"
+  },
+  {
+   "tools": "edit",
+   "modelTools": {
+    "grok-3": "none"
+   },
+   "route": "grok-3",
+   "cap": "none"
+  },
+  {
+   "tools": "edit",
+   "modelTools": {
+    "grok-3": "none"
+   },
+   "route": "grok-4",
+   "cap": "edit"
+  },
+  {
+   "tools": "edit",
+   "modelTools": {
+    "grok-4": "bogus"
+   },
+   "route": "grok-4",
+   "cap": "edit"
+  },
+  {
+   "tools": "bogus",
+   "modelTools": {},
+   "route": "grok-4",
+   "cap": "read"
+  }
+ ],
+ "levels": [
+  {
+   "level": "none",
+   "cap": "none",
+   "want": ""
+  },
+  {
+   "level": "read",
+   "cap": "none",
+   "want": "--minigw-tools=read is not allowed for grok-4: the gateway allows none at most. The owner of the gateway can allow it with: minigw gw provider tools xAI read [--model grok-4]"
+  },
+  {
+   "level": "read",
+   "cap": "read",
+   "want": ""
+  },
+  {
+   "level": "edit",
+   "cap": "read",
+   "want": "--minigw-tools=edit is not allowed for grok-4: the gateway allows read at most. The owner of the gateway can allow it with: minigw gw provider tools xAI edit [--model grok-4]"
+  },
+  {
+   "level": "edit",
+   "cap": "none",
+   "want": "--minigw-tools=edit is not allowed for grok-4: the gateway allows none at most. The owner of the gateway can allow it with: minigw gw provider tools xAI edit [--model grok-4]"
+  },
+  {
+   "level": "edit",
+   "cap": "edit",
+   "want": ""
+  },
+  {
+   "level": "read",
+   "cap": "edit",
+   "want": ""
+  },
+  {
+   "level": "all",
+   "cap": "edit",
+   "want": "unknown tools level all"
+  }
+ ],
+ "lines": [
+  {
+   "name": "xAI",
+   "tools": "",
+   "models": {},
+   "model": "",
+   "want": [
+    "xAI  tools: read"
+   ]
+  },
+  {
+   "name": "xAI",
+   "tools": "edit",
+   "models": {
+    "grok-3": "none",
+    "grok-4": "read"
+   },
+   "model": "",
+   "want": [
+    "xAI  tools: edit",
+    "  grok-3  tools: none",
+    "  grok-4  tools: read"
+   ]
+  },
+  {
+   "name": "xAI",
+   "tools": "edit",
+   "models": {
+    "grok-3": "none"
+   },
+   "model": "grok-3",
+   "want": [
+    "xAI  grok-3  tools: none"
+   ]
+  },
+  {
+   "name": "xAI",
+   "tools": "edit",
+   "models": {
+    "grok-3": "none"
+   },
+   "model": "claude-grok-4",
+   "want": [
+    "xAI  grok-4  tools: edit (the provider's)"
+   ]
+  }
+ ],
+ "lists": [
+  {
+   "list": {
+    "data": [
+     {
+      "id": "claude-grok-4",
+      "minigw_tools": "edit",
+      "minigw_provider": "xAI"
+     }
+    ]
+   },
+   "model": "claude-grok-4",
+   "refusal": ""
+  },
+  {
+   "list": {
+    "data": [
+     {
+      "id": "claude-grok-4",
+      "minigw_tools": "edit",
+      "minigw_provider": "xAI"
+     }
+    ]
+   },
+   "model": "grok-4",
+   "refusal": ""
+  },
+  {
+   "list": {
+    "data": [
+     {
+      "id": "claude-grok-4",
+      "minigw_tools": "read",
+      "minigw_provider": "xAI"
+     }
+    ]
+   },
+   "model": "grok-4",
+   "refusal": "--minigw-tools=edit is not allowed for grok-4: the gateway allows read at most. The owner of the gateway can allow it with: minigw gw provider tools xAI edit [--model grok-4]"
+  },
+  {
+   "list": {
+    "data": [
+     {
+      "id": "claude-grok-4"
+     }
+    ]
+   },
+   "model": "claude-grok-4",
+   "refusal": "--minigw-tools=edit is not allowed for claude-grok-4: the gateway allows read at most. The owner of the gateway can allow it with: minigw gw provider tools <provider> edit [--model claude-grok-4]"
+  },
+  {
+   "list": {
+    "data": [
+     {
+      "id": "claude-grok-4",
+      "minigw_tools": "edit",
+      "minigw_provider": "xAI"
+     }
+    ]
+   },
+   "model": "claude-other",
+   "refusal": "--minigw-tools=edit: the gateway does not list the model claude-other"
+  },
+  {
+   "list": {
+    "data": []
+   },
+   "model": "",
+   "refusal": "--minigw-tools=edit needs --model: the gateway sets the highest tool level per model"
+  },
+  {
+   "list": null,
+   "model": "grok-4",
+   "refusal": "--minigw-tools=edit: cannot read from the gateway which tools grok-4 may get"
+  }
+ ]
+}

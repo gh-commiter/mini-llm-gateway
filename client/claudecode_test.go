@@ -417,3 +417,49 @@ func TestMinigwToolsRefusals(t *testing.T) {
 		t.Error("claude was started")
 	}
 }
+
+// Owner's cap on tools per provider and model: client/testdata/provider-tools.json, asserted by Swift (ProviderToolsTests) too.
+func TestProviderToolsCap(t *testing.T) {
+	var f struct {
+		Caps []struct {
+			Tools      string
+			ModelTools map[string]string
+			Route, Cap string
+		}
+		Levels []struct{ Level, Cap, Want string }
+		Lines  []struct {
+			Name, Tools string
+			Models      map[string]string
+			Model       string
+			Want        []string
+		}
+		Lists []struct {
+			List    map[string]any
+			Model   string
+			Refusal string
+		}
+	}
+	if err := json.Unmarshal(srcFile(t, "testdata/provider-tools.json"), &f); err != nil || len(f.Caps) == 0 {
+		t.Fatal(err)
+	}
+	for _, c := range f.Caps {
+		if got := (serveGateway{Tools: c.Tools, ModelTools: c.ModelTools}).toolsCap(c.Route); got != c.Cap {
+			t.Errorf("cap %+v: got %q", c, got)
+		}
+	}
+	for _, c := range f.Levels {
+		if got := toolsLevelRefusal(c.Level, c.Cap, "xAI", "grok-4"); got != c.Want {
+			t.Errorf("level %+v: got %q", c, got)
+		}
+	}
+	for _, c := range f.Lines {
+		if got := providerToolsLines(c.Name, c.Tools, c.Models, c.Model); !slices.Equal(got, c.Want) {
+			t.Errorf("lines %+v: got %q", c, got)
+		}
+	}
+	for _, c := range f.Lists {
+		if got := editRefusal(c.List, c.Model); got != c.Refusal {
+			t.Errorf("list %+v: got %q", c, got)
+		}
+	}
+}

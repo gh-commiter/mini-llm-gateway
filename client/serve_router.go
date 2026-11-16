@@ -37,6 +37,8 @@ runs; otherwise they go to serve.json.
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
+  minigw gw provider tools <name> [none|read|edit|default] [--model m]   the highest tool level its models may get in the client's
+                                                        Claude Code (default: read); no value shows it; --model: only that model
   minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
                   [--ask-others=true|false]   (may ask other models of this gateway; needs --allow-local-tools)
                   [--allow-unsandboxed-bash=true|false]   (minigw serve only)
@@ -568,6 +570,30 @@ func routerCommand(args []string, in io.Reader) {
 			}
 			if len(r.Gateways) == 0 {
 				say("no providers (add one with: minigw gw provider add <name> <baseURL>)")
+			}
+		case "tools":
+			need(3, 4)
+			if len(pos) == 4 {
+				v := pos[3]
+				if v == "default" {
+					v = ""
+				} else if _, ok := toolsRank[v]; !ok {
+					fail("tools: none, read, edit or default")
+				}
+				body := map[string]any{"tools": v}
+				if *evModel != "" {
+					body["model"] = *evModel
+				}
+				a.do("PATCH", "/gateways/"+esc(pos[2]), body, nil)
+			}
+			var r struct{ Gateways []apiGateway }
+			a.do("GET", "/gateways", nil, &r)
+			i := slices.IndexFunc(r.Gateways, func(g apiGateway) bool { return g.Name == pos[2] })
+			if i < 0 {
+				fail("no provider " + pos[2])
+			}
+			for _, l := range providerToolsLines(r.Gateways[i].Name, r.Gateways[i].Tools, r.Gateways[i].ModelTools, *evModel) {
+				say(clean(l))
 			}
 		case "models":
 			need(3, 4)

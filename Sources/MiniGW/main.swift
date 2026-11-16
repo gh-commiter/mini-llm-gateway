@@ -1087,6 +1087,10 @@ do {  // 0.6.0: the project of this folder; the proxy sets it on every request a
     proxyProject = h.replacingOccurrences(of: "x-minigw-project: ", with: "")
 } catch { fail((error as? ProjectError)?.message ?? "\(error)") }
 let c = route(profiles[0])
+if toolsPlan.tools == "edit" {  // the gateway's owner sets the highest level per model (minigw gw provider tools); the gateway checks it again per request
+    let (st, list) = get(c, "/v1/models")
+    if let msg = Profiles.editRefusal(list: st == 200 ? list : nil, model: Profiles.modelArg(args)) { fail(msg) }
+}
 proxyProject = ""  // only the default profile's gateway knows this project id; other profiles' proxies never send it
 let promptGuard = Profiles.promptGuard(args, env: ProcessInfo.processInfo.environment, stdinTerminal: isatty(0) == 1)  // pred #7 (CLAUDECODE)
 let mentionSettings = promptGuard && Profiles.checkClaudeArgs(ProcessInfo.processInfo.environment)  // I17, pred #7
@@ -1171,7 +1175,8 @@ let implicitWork = SharedFolders.implicitWork(asked: askedWork, work: work)
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : "")
        + (role.isEmpty ? "" : "\nx-claude-mini-role: \(role)")
-       + (readOnly ? "\nx-claude-mini-ro: 1" : ""), 1)  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
+       + (readOnly ? "\nx-claude-mini-ro: 1" : "")
+       + (toolsPlan.tools.map { "\nx-claude-mini-tools: " + $0 } ?? ""), 1)  // the level of this run: the gateway refuses one above its cap for the model  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
 
 // Brez proxyja in brez mape: minigw ni več potreben → exec (razen s prebranim stdin: tega claude dobi po cevi).
 guard streamed || claudeStdin != nil || !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 || recordSession else {

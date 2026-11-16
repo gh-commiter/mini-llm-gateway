@@ -375,7 +375,7 @@ extension Router {
             return (200, ["provider": gateway(p, ready: false), "gateway": gateway(p, ready: false), "keyStore": "the Keychain", "models": apiModels(p, models, filter: "")])
         case "PATCH gateways/{}":  // ime, vklop, URL (ključ ostane pod id), aliasi; kot minigw serve
             guard var p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
-            let b = try AdminBody(body, ["name", "enabled", "baseURL", "insecure", "aliases"])
+            let b = try AdminBody(body, ["name", "enabled", "baseURL", "insecure", "aliases", "tools", "model"])
             let newURL = try b.string("baseURL"), insecure = try b.bool("insecure")
             if newURL != nil || insecure != nil {  // kot Go: tudi sam »insecure« znova preveri URL
                 p.baseURL = try Self.checkGatewayURL(newURL ?? p.baseURL, insecure: insecure ?? false)
@@ -384,6 +384,18 @@ extension Router {
             if let a = try b.string("aliases") {
                 guard a.utf8.count <= 64 << 10 else { throw AdminError(400, "aliases: too long") }
                 p.aliases = a
+            }
+            let toolsModel = try b.string("model")
+            if toolsModel != nil, try b.string("tools") == nil { throw AdminError(400, "model needs tools") }
+            if let t = try b.string("tools") {  // none, read or edit; empty = back to the default (read); with model: only that model
+                guard t.isEmpty || Profiles.toolsRank[t] != nil else { throw AdminError(400, "tools: none, read or edit") }
+                if let m0 = toolsModel {
+                    let m = m0.hasPrefix("claude-") ? String(m0.dropFirst(7)) : m0
+                    guard !m.isEmpty, m.utf8.count <= 128, !m.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) else {
+                        throw AdminError(400, "model: the /model name of one model")
+                    }
+                    p.modelTools[m] = t.isEmpty ? nil : t
+                } else { p.tools = t }
             }
             if let n = try b.string("name"), n != arg {
                 guard !RouterConfig.builtInProviders.contains(p.id), !RouterConfig.builtInProviders.contains(n.lowercased()) else {
@@ -755,7 +767,8 @@ extension Router {
 
     func gateway(_ p: ProviderConfig, ready: Bool) -> [String: Any] {
         ["name": p.name, "baseURL": p.baseURL, "insecure": p.insecure, "enabled": p.enabled,
-         "models": p.enabledModels.map { $0 as Any } ?? NSNull(), "hasKey": !(secrets.get(p.id) ?? "").isEmpty, "ready": ready]
+         "models": p.enabledModels.map { $0 as Any } ?? NSNull(), "hasKey": !(secrets.get(p.id) ?? "").isEmpty, "ready": ready,
+         "tools": p.toolsCap(""), "modelTools": p.modelTools]
     }
 
     func gateways(_ c: RouterConfig) async -> [[String: Any]] {

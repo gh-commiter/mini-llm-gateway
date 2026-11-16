@@ -11,6 +11,10 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     public var enabledModels: [String]?  // nil = vsi odkriti (tudi prihodnji); seznam = le ti
     /// Allow http (insecure), kot minigw serve: http le do localhost ali zasebnega IP in le s tem stikalom.
     public var insecure = false
+    /// Najvišja raven orodij modelov ponudnika v Claude Code odjemalca (none, read, edit; prazno = read) in izjeme po modelu (ime za /model);
+    /// nastavi jo lastnik (minigw gw provider tools). Kot Go serveGateway.Tools in ModelTools.
+    public var tools = ""
+    public var modelTools: [String: String] = [:]
 
     public init(id: String, name: String, enabled: Bool, baseURL: String, aliases: String, enabledModels: [String]? = nil,
                 insecure: Bool? = nil) {
@@ -28,6 +32,16 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         aliases = try c.decodeIfPresent(String.self, forKey: .aliases) ?? ""
         enabledModels = try c.decodeIfPresent([String].self, forKey: .enabledModels)
         insecure = try c.decodeIfPresent(Bool.self, forKey: .insecure) ?? baseURL.hasPrefix("http://")
+        tools = try c.decodeIfPresent(String.self, forKey: .tools) ?? ""
+        modelTools = try c.decodeIfPresent([String: String].self, forKey: .modelTools) ?? [:]
+    }
+
+    /// Najvišja raven orodij za model (ime za /model ali ID z claude-): vrednost modela, sicer ponudnika, sicer read (kot Go toolsCap).
+    public func toolsCap(_ route: String) -> String {
+        for k in [route, route.hasPrefix("claude-") ? String(route.dropFirst(7)) : route] {
+            if let v = modelTools[k], Profiles.toolsRank[v] != nil { return v }
+        }
+        return Profiles.toolsRank[tools] != nil ? tools : "read"
     }
 
     /// Razlog, zakaj naslova ni mogoče uporabiti (isto pravilo kot skrbniški API in minigw serve); nil = v redu.

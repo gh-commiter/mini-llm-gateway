@@ -699,6 +699,15 @@ func main() {
 		proxyProject = strings.TrimPrefix(h, "x-minigw-project: ")
 	}
 	c := route(ps[0])
+	if tools == "edit" { // the gateway's owner sets the highest level per model (minigw gw provider tools); the gateway checks it again per request
+		var list map[string]any
+		if st, m := getJSON(c, "/v1/models"); st == 200 {
+			list = m
+		}
+		if msg := editRefusal(list, modelArg(args)); msg != "" {
+			fail(msg)
+		}
+	}
 	proxyProject = "" // only the default profile's gateway knows this project id; other profiles' proxies never send it
 	env := []string{
 		"ANTHROPIC_BASE_URL=" + c.URL,
@@ -784,6 +793,9 @@ sessionArgs:
 	}
 	if readOnly { // --minigw-ro velja tudi brez deljenja (prehod na tem računalniku)
 		headers += "\nx-claude-mini-ro: 1"
+	}
+	if tools != "" { // the level this run uses: the gateway refuses one above its cap for the model
+		headers += "\nx-claude-mini-tools: " + tools
 	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 	if promptGuard(args, os.Getenv, stdinTerminal()) {
