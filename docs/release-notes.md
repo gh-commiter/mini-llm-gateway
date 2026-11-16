@@ -3,18 +3,13 @@
 ## Unreleased
 
 ### New
-- A Codex, Grok or Copilot run (Mac gateway: Codex and Copilot) shows its steps in `minigw -p` as they happen, paths relative to your folder; the answer on stdout never contains them. The Mac client understands the step lines of a Windows or Linux gateway.
-- `minigw running` lists your device's requests that run on the gateway now: model, folder, time, steps and last step. Both gateways.
-## 0.7.4
-- xAI works as a provider (base URL `https://api.x.ai`): mid-conversation `system` messages and tool schemas without `required` are rewritten for it on both gateways.
 - Knowledge base, provenance: every note records who wrote it and from where (user, device, project, kind of source, content hash, times, reviewer). `minigw note read <id> --json` shows it. Notes written before this version show `UNKNOWN` for the device and the source.
 - Knowledge base, submissions: `minigw kb submit <project> <file|->` proposes a note (or a new revision with `--replaces <id> --revision <n>`) instead of publishing it; `minigw kb submissions` lists your own. The owner reviews with `minigw gw kb review`, `gw kb accept <id>` and `gw kb reject <id> [--reason text]`. A pending submission is visible only to its author and the owner and never appears in note lists, reads, agent runs or counts. `minigw note push` still publishes directly.
 - Knowledge base, search: `minigw kb search [<project>] <query> [--json]` searches the published notes you may read (title and text; at most 20 hits with short snippets). An agent started by the gateway can search the notes of its run's project the same way and is told so; note texts are still not put into its context. Pending submissions and notes you may not read never show up, also not in counts. The owner can rebuild the index.
+- A Codex, Grok or Copilot run (Mac gateway: Codex and Copilot) shows its steps in `minigw -p` as they happen, paths relative to your folder; the answer on stdout never contains them. The Mac client understands the step lines of a Windows or Linux gateway.
+- `minigw running` lists your device's requests that run on the gateway now: model, folder, time, steps and last step. Both gateways.
 
 ### Fixed
-- Mac, Claude CLI in a direct-mode mount: a file the agent creates and commits is recorded as 100644, not 100755 (git ignores the executable bit on the mount, whose files all show as -rwx------); a file that is executable in the repository keeps 100755.
-- Mac gateway, direct-mode mount: a repository that tracks symbolic links gets no commits by the agent through the mount, because a mounted folder shows a link as a plain file and `git add -A` committed it as one. The client decides at share time and prints why; the gateway reads a missing decision as closed (an older client therefore gets no commits through the mount). The agent's note says so.
-- The end-of-run git report (both clients) now names mode and type changes (a symbolic link or an executable file changed, added or deleted) in the commits reachable at the end and for the same path in the index, for example `link 120000->100644`. It covers the final reachable state: a commit amended away or left unreachable before the end, and an entry that was renamed and changed type in the index, are not seen.
 - While Codex, Grok, Copilot or a Claude CLI agent works silently, the gateway now sends an empty text delta with every ping, so Claude Code sees a real model event and no longer drops a long agent request (#131).
 
 ### Known limits
@@ -22,12 +17,22 @@
 - Only the owner reviews submissions; project admins cannot yet. Agents started by the gateway cannot hand in submissions yet.
 - Search is by words, in one project at a time; search across related projects and by meaning comes later.
 
+## 0.7.4
+
+### New
+- xAI works as a provider (base URL `https://api.x.ai`): mid-conversation `system` messages and tool schemas without `required` are rewritten for it on both gateways.
+
+### Fixed
+- Mac, Claude CLI in a direct-mode mount: a file the agent creates and commits is recorded as 100644, not 100755 (git ignores the executable bit on the mount, whose files all show as -rwx------); a file that is executable in the repository keeps 100755.
+- Mac gateway, direct-mode mount: a repository that tracks symbolic links gets no commits by the agent through the mount, because a mounted folder shows a link as a plain file and `git add -A` committed it as one. The client decides at share time and prints why; the gateway reads a missing decision as closed (an older client therefore gets no commits through the mount). The agent's note says so.
+- The end-of-run git report (both clients) now names mode and type changes (a symbolic link or an executable file changed, added or deleted) in the commits reachable at the end and for the same path in the index, for example `link 120000->100644`. It covers the final reachable state: a commit amended away or left unreachable before the end, and an entry that was renamed and changed type in the index, are not seen.
+- While Codex, Grok, Copilot or a Claude CLI agent works silently, the gateway now sends an empty text delta with every ping, so Claude Code sees a real model event and no longer drops a long agent request (#131).
+
 ### Known problems
 - The Mac permission to commit through a mount is a snapshot taken when the share is registered: a symbolic link staged or checked out later in the run can still be committed as a plain file; the report above names it afterwards.
 - Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0, #127).
 - Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 - A long agent request that is cut is started again by Claude Code without a message; the cause seen so far (a silent stream) is fixed in this version on both gateways, but a real long run against a Windows gateway is not yet confirmed.
-
 
 ## 0.7.3
 
