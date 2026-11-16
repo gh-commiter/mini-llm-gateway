@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.5
 
 ### New
 - Knowledge base, provenance: every note records who wrote it and from where (user, device, project, kind of source, content hash, times, reviewer). `minigw note read <id> --json` shows it. Notes written before this version show `UNKNOWN` for the device and the source.
@@ -13,6 +13,12 @@
 - Database downgrade: this version's database schema is 12. An older program refuses it; the way back is restoring the snapshot written before the first migration.
 - Only the owner reviews submissions; project admins cannot yet. Agents started by the gateway cannot hand in submissions yet.
 - Search is by words, in one project at a time; search across related projects and by meaning comes later.
+
+### Known problems
+- `minigw running` and the steps of a run are new and proved only with test agents; a real long Grok run against a Windows gateway is not yet confirmed.
+- `kb search --json` prints note titles and snippets without removing terminal control characters (the plain output removes them). After restoring a backup the search index is not rebuilt automatically: the owner can rebuild it.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.4
 
