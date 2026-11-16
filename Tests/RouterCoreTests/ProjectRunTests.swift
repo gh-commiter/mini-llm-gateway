@@ -504,21 +504,23 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         #expect(homes.count <= 20)  // maxHomes of the core's agent-home
     }
 
-    /// #121: while Grok's home (the shared one, or a project's in `<Scratch>/state`) lies inside a root its own profile denies, grok cannot read its config: the run is refused
-    /// early, with a clear message and without a retry, and no process is started. It lifts by itself when the home is reachable (`homeHidden` is decided from the same lists).
-    @Test func grokIsRefusedEarlyWhileItsHomeLiesInsideAHiddenRoot() async throws {
+    /// Stabilization 0.7.0 (security review, LOW): every Grok run is refused on the Mac gateway until the sandbox rework (#126), with or without a project core and wherever
+    /// Scratch lies: 400 invalid_request_error (the client adds "try again" to a 502/503), no retry, nothing started. Not listed among the models, like a disabled agent.
+    /// (Replaces the #121 test that refused only while Grok's home lay inside a hidden root.)
+    @Test func grokIsRefusedForEveryRun() async throws {
         let f = try await PFx()
         await f.project("fakture"); await f.user("ana", projects: ["fakture": "developer"])
         f.makeRouter(grok: try f.script("grok", fakeGrok))
         for project in [f.pid["fakture"], nil] {
             let w = await f.ask("claude-grok", project: project)
-            #expect(w.status == 503 && w.text.contains("x-should-retry: false") && w.text.contains("Grok is switched off on the Mac gateway"), "\(w.text.prefix(300))")
+            #expect(w.status == 400 && w.text.contains("invalid_request_error") && w.text.contains("x-should-retry: false") && w.text.contains("Grok is switched off on the Mac gateway"), "\(w.text.prefix(300))")
         }
         #expect(f.read("call-grok-0.env") == nil && f.read("call-grok-0.args") == nil)  // nothing was started
-        let scratch = f.router.config.scratchURL
-        let roots = Grok.deniedRoots(scratch: scratch)
-        #expect(Grok.homeHidden(scratch.appendingPathComponent("grok-home"), roots: roots) && Grok.homeHidden(scratch.appendingPathComponent("state/x/proj/p/grok"), roots: roots))
-        #expect(!Grok.homeHidden(f.base.appendingPathComponent("elsewhere/grok-home"), roots: roots))  // a reachable home is not refused
+        f.makeRouter(grok: try f.script("grok", fakeGrok), noCore: true)  // no core: the same
+        let w = await f.ask("claude-grok", project: nil)
+        #expect(w.status == 400 && w.text.contains("Grok is switched off on the Mac gateway") && f.read("call-grok-0.args") == nil, "\(w.text.prefix(300))")
+        let list = await f.router.modelList(siri: false)
+        #expect(!((list["data"] as? [[String: Any]]) ?? []).contains { ($0["id"] as? String)?.hasPrefix("claude-grok") == true })
     }
 
     @Test func codexProjectHomeLinksTheLoginAndCarriesAReplacedOneBack() throws {

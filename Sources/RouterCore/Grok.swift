@@ -72,13 +72,8 @@ public enum Grok {
     /// <GROK_HOME>/sandbox.toml, which Grok's sandbox write-protects; the gateway gives Grok its own home (GROK_HOME,
     /// under Scratch) and keeps the login where it is (GROK_AUTH_PATH), so the user's ~/.grok/sandbox.toml is never touched.
     static let coreProfiles = [("minigw-core", "workspace"), ("minigw-core-ro", "read-only")]
-    /// #121: the home (`<Scratch>/grok-home`, a project's home in `<Scratch>/state`) lies inside the roots the profile denies (the Scratch folder and its `state`): grok then ends with
-    /// "Failed to load config: Operation not permitted" in every request. Decided from the same lists the profile is built from, so it lifts by itself when the home is reachable.
-    static func homeHidden(_ home: URL, roots: [String]) -> Bool {
-        func real(_ p: String) -> String { Sync.realResolving(URL(fileURLWithPath: p))?.path ?? p }
-        let h = real(home.path)
-        return roots.contains { let r = real($0); return h == r || h.hasPrefix(r + "/") }
-    }
+    /// Stabilization 0.7.0: no Grok run on the Mac gateway until the sandbox rework (#126); `runGrok` refuses first. The rest of the run path stays for the rework.
+    static let runsDisabled = true
     static let switchedOff = "Grok is switched off on the Mac gateway in this version: its sandbox is being reworked (Grok cannot read its own folder under the current rules). Use another agent, or Grok through minigw serve on Windows or Linux."
     static let coreUnavailable = "Grok cannot run on this gateway while projects are enabled: its sandbox profile that keeps it out of the core data folder could not be set up"
 
@@ -333,6 +328,11 @@ extension Router {
     }
 
     func runGrok(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
+        // Stabilization 0.7.0: refused for every run, before anything is synced or started, until the sandbox rework (#126) is done. 400, like the other permanent
+        // refusals (a 502/503 would get "try again" from the client), and no retry.
+        guard !Grok.runsDisabled else {
+            return await error(400, "invalid_request_error", Grok.switchedOff, rid: rid, extra: [("x-should-retry", "false")], writer: writer)
+        }
         // 0.6.0 (#106): with the project core Grok runs only in its kernel-enforced profile that denies the core data folder
         // (Grok.prepareCoreHome); if that cannot be set up (also while the helper is merely not ready) it does not run.
         var coreEnv: [String: String] = [:]
@@ -349,10 +349,6 @@ extension Router {
                 home = h
             }
             coreHome = home
-            // #121: refused early (before any folder is synced or a process started) while the home lies inside a root the profile hides: Grok cannot read its own folder then
-            if Grok.homeHidden(home, roots: Grok.deniedRoots(scratch: config.scratchURL)) {
-                return await error(503, "api_error", Grok.switchedOff, rid: rid, extra: [("x-should-retry", "false")], writer: writer)
-            }
         }
         // Grok nima zaščite .git v peskovniku, njegov program pa poganja git zunaj njega (in ~/.grok je pisljiv): s pisanjem
         // zavrni; brez pisanja v worktree le bere v klonu (veje ne vrne).

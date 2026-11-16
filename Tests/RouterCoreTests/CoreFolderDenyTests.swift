@@ -322,13 +322,11 @@ actor NoMarks: CoreRevocationMarks {
     var cfg = RouterConfig()
     cfg.grok.enabled = true
     cfg.scratchName = ""
-    let helper = CoreHelper(binary: nil, store: f.core, marks: NoMarks())  // configured, not ready: still fail-closed
-    let router = Router(config: cfg, token: "tok", secrets: FakeSecrets(values: [:]), core: helper)
-    let w = FakeWriter()
-    _ = await router.runGrok(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok"], body: ""), body: ["model": "claude-grok"], model: nil, rid: "r1", writer: w)
-    // not refused for the core: the profile was set up (the request stops later, at the missing program or message)
-    #expect(!w.text.contains(Grok.coreUnavailable))
-    let home = cfg.scratch("grok-home").appendingPathComponent("sandbox.toml")
-    let written = try String(contentsOf: home, encoding: .utf8)
+    // 0.7.0: runGrok refuses first (Grok.runsDisabled), so the profile is written by prepareCoreHome itself, which the rework brings back into the run
+    let home = cfg.scratch("grok-home")
+    let login = f.core.appendingPathComponent("login")
+    try FileManager.default.createDirectory(at: login, withIntermediateDirectories: true)
+    _ = try #require(Grok.prepareCoreHome(home, deny: RouterConfig.coreDenied(), login: login))
+    let written = try String(contentsOf: home.appendingPathComponent("sandbox.toml"), encoding: .utf8)
     for d in RouterConfig.coreDenied() { #expect(written.contains("\"\(d)\"")) }
 }

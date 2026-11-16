@@ -703,14 +703,7 @@ public final class Router: Sendable {
                  "description": "copilot -p · \(m) · tools in your folder", "created_at": created]
             }
         }
-        if config.grok.enabled, let exe = await Grok.executable(config.grok.executable) {
-            data.append(["type": "model", "id": "claude-grok", "display_name": "Grok · Grok CLI",
-                         "description": "grok -p · default model · tools in your folder", "created_at": created])
-            data += Grok.catalog(exe).filter { config.grok.isModelEnabled($0) }.map { m in
-                ["type": "model", "id": Grok.prefix + m, "display_name": "\(m) · Grok CLI",
-                 "description": "grok -p · \(m) · tools in your folder", "created_at": created]
-            }
-        }
+        // Grok is not listed while its runs are refused (Grok.runsDisabled), like a disabled agent.
         data += await foundryModelList(created: created)
         return ["data": data, "has_more": false,
                 "first_id": data.first?["id"] ?? NSNull(), "last_id": data.last?["id"] ?? NSNull()]

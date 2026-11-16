@@ -322,7 +322,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
         let w = FakeWriter()
         await r.handle(q, writer: w)
         if model == "claude-grok" {
-            #expect(w.status == 400 && w.text.contains("rerun with minigw --minigw-work=sync"), "\(model): \(w.text)")
+            #expect(w.status == 400 && w.text.contains("Grok is switched off on the Mac gateway"), "\(model): \(w.text)")  // 0.7.0: refused before the worktree check (Grok.runsDisabled)
         } else {
             #expect(!w.text.contains("may not write"), "\(model): \(w.text)")
         }
