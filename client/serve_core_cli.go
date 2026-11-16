@@ -18,6 +18,7 @@ import (
 )
 
 const coreHelp = `
+  minigw gw kb review [<project>] | accept <id> | reject <id> [--reason text]
   minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>
   minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to
   minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
@@ -79,8 +80,8 @@ func projectID(a *adminClient, ref string) int64 {
 
 // coreOpts: the flags of usage-events and usage.
 type coreOpts struct {
-	days, user, project, model, claudeProbe, provider, device, folder, sort string
-	json, csv, history, explain                                             bool
+	days, user, project, model, claudeProbe, provider, device, folder, sort, reason string
+	json, csv, history, explain                                                     bool
 }
 
 func coreCommand(a *adminClient, pos []string, o coreOpts) {
@@ -91,6 +92,8 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 	}
 	id := strconv.FormatInt
 	switch pos[0] {
+	case "kb":
+		kbAdmin(a, pos, o.reason)
 	case "team":
 		teamAdmin(a, pos)
 	case "user":

@@ -79,7 +79,7 @@ func TestOwnerPolicyCoversDispatch(t *testing.T) {
 	commands := map[string]bool{
 		"verify-sums": true, mxcProbeCmd: true, agentReaperCmd: true,
 		"serve": true, "gw": false, "router": false, "tray": true,
-		"share": false, "project": true, "note": true, "usage": true, "running": true, "team": true,
+		"share": false, "project": true, "note": true, "usage": true, "running": true, "team": true, "kb": true,
 		"plugin": true, "uninstall": true, "run": true, "connect": true,
 		"reconnect": true, "disconnect": true, "profiles": true,
 		"status": true, "models": true,

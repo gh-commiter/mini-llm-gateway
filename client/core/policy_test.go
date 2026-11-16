@@ -185,7 +185,7 @@ func (f *fx) seed(project int64, c Class, author int64) int64 {
 			return err
 		}
 		id, _ = r.LastInsertId()
-		return nil
+		return saveProvenance(tx, id, 1, Provenance{ActorKind: "member", User: author, Project: project, Device: "UNKNOWN", SourceKind: "UNKNOWN", Authored: fromMs(1), Received: fromMs(1), ContentHash: contentHash("s", "b")})
 	}))
 	return id
 }

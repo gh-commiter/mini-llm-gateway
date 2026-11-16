@@ -213,7 +213,7 @@ private func agentWork(_ a: AdminConnection, _ kind: String, _ work: String?) {
 func routerCommand(_ argv: [String]) {
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider", "sort"]
+    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider", "sort", "reason"]
     var i = 0
     while i < argv.count {
         let a = argv[i]
@@ -463,7 +463,7 @@ func routerCommand(_ argv: [String]) {
         let argv = [tui, "--minigw", me].map { strdup($0) } + [nil]
         execv(tui, argv)
         fail("cannot start \(tui): \(String(cString: strerror(errno)))")
-    case "user", "bind", "project", "team", "member", "grant", "core", "usage", "usage-events", "quota":  // 0.6.0: the owner's commands of the project database
+    case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage", "usage-events", "quota":  // 0.6.0: the owner's commands of the project database
         let cmd = AdminCommands(call: { method, path, body in
             let (status, data) = a.raw(method, Router.adminPrefix + path, body, proof: true)
             return (status, data ?? Data())
@@ -472,7 +472,7 @@ func routerCommand(_ argv: [String]) {
             try cmd.run(pos, AdminOpts(days: flags["days"] ?? "7", user: flags["user"] ?? "", project: flags["project"] ?? "",
                                        model: flags["model"] ?? "", claudeProbe: flags["claude-probe"] ?? "",
                                        provider: flags["provider"] ?? "", device: flags["device"] ?? "", folder: flags["folder"] ?? "", sort: flags["sort"] ?? "",
-                                       json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true", explain: flags["explain"] == "true"))
+                                       json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true", explain: flags["explain"] == "true", reason: flags["reason"] ?? ""))
         } catch let e as AdminCLIError { fail(e.message, code: e.code) } catch { fail("\(error)") }
 
     default:

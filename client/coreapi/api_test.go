@@ -92,6 +92,14 @@ func (f *fixture) cases() []struct {
 		status int
 	}
 	return []tc{
+		{"member: own submissions", member("dev-ana"), get(fmt.Sprintf("/minigw/v1/projects/%d/kb/submissions", f.pid["fakture"])), 200},
+		{"admin: pending submissions", Context{Kind: KindAdmin}, get("/kb/submissions"), 200},
+		{"run: no submissions", Context{Kind: KindRun, Run: &cap, Approved: true}, get("/minigw/v1/projects/1/kb/submissions"), 404},
+		{"member: submit with a bad body", member("dev-ana"), Request{Method: "POST", Path: fmt.Sprintf("/minigw/v1/projects/%d/kb/submissions", f.pid["fakture"]), Body: []byte(`{"nope":1}`)}, 400},
+		{"member: submission that does not exist", member("dev-ana"), get(fmt.Sprintf("/minigw/v1/projects/%d/kb/submissions/999", f.pid["fakture"])), 404},
+		{"admin: submission that does not exist", Context{Kind: KindAdmin}, get("/kb/submissions/999"), 404},
+		{"admin: accept a submission that does not exist", Context{Kind: KindAdmin}, Request{Method: "POST", Path: "/kb/submissions/999/accept", Body: []byte(`{}`)}, 404},
+		{"admin: reject with a bad body", Context{Kind: KindAdmin}, Request{Method: "POST", Path: "/kb/submissions/999/reject", Body: []byte(`{"nope":1}`)}, 400},
 		{"member: project list", member("dev-ana"), get("/minigw/v1/projects"), 200},
 		{"member: project by slug", member("dev-ana"), get("/minigw/v1/projects/fakture"), 200},
 		{"member: grant-only project", member("dev-cene"), get("/minigw/v1/projects/fakture"), 200},

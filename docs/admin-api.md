@@ -538,3 +538,60 @@ surviving `role` and `origins` when membership survives. Member lists include al
 `{kind: "direct", role}` or `{kind: "team", team: id, name, role}`.
 The member project list includes the caller's origins alongside the effective role. Runtime permission
 checks still read only `memberships`, including grant and note-class checks. No new member write API is added.
+# KB submissions API
+
+Member routes require an approved authenticated device bound to an active user:
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/minigw/v1/projects/{id}/kb/submissions` | Submit `{class,title,body,replaces,revision}`; required `Idempotency-Key`; 201 |
+| GET | `/minigw/v1/projects/{id}/kb/submissions?after=0` | Own metadata, `{submissions,next}` |
+| GET | `/minigw/v1/projects/{id}/kb/submissions/{id}` | Own submission with body |
+
+Owner routes use the existing owner admin authentication and base URL:
+
+| Method | Path | Result |
+|---|---|---|
+| GET | `/kb/submissions?project=0&after=0` | Pending metadata; project 0 means all |
+| GET | `/kb/submissions/{id}` | Submission with body |
+| POST | `/kb/submissions/{id}/accept` | Publish; JSON `{}` |
+| POST | `/kb/submissions/{id}/reject` | Reject; JSON `{"reason":"text"}` |
+
+Pages contain at most 100 rows; follow nonzero `next` as `after`. Same-outcome
+review retries do not publish twice; reversing a review is refused. Submission
+keys retain the existing 24-hour scope. Identity/provenance claims in payloads are
+rejected. Authorization precedes body retrieval, with invisible/missing 404s.
+Project admins cannot review. Called agents cannot submit or review.
+
+Acceptance rechecks the authenticated writer binding, current project permissions,
+archive status, note limits and replacement revision. Pending entries are separate
+from notes and excluded from note counts and run reads. Pending limits: 100 / 5 MiB
+per user, 500 / 20 MiB per project. Reasons are at most 1024 bytes; reasons and
+submission titles reject control characters. Existing request/note/rate limits apply.
+Note read JSON gains `provenance` with actorKind, user, device, project, sourceKind,
+sourceReference, contentHash, authored, received, reviewer and reviewed.
+Legacy device/source are explicitly `UNKNOWN`. Schema 11 uses snapshot-first
+migration; backups retain submissions and revision provenance. No automatic expiry
+or customer-data detection is implemented.
+
+# KB lexical search API
+
+| Method | Path | Result |
+|---|---|---|
+| GET | `/minigw/v1/projects/{id}/kb/search?q=words` | Member-authenticated search of that project's authorized classes and authors |
+| GET | `/minigw/v1/kb/search?q=words` | Run port only; scope exclusively from the capability |
+| POST | Admin `/kb/search/rebuild` | Owner-only transactional rebuild; `{"rebuilt":true}` |
+
+Search returns `{"hits":[{"id":1,"title":"Title","project":1,"class":"structure","snippet":"Preview","updated":"2026-11-16T10:00:00Z"}]}`.
+No total count or corpus score is returned. Hits are ordered by revision time
+descending then note ID, capped at 20 and 8192 JSON bytes. The snippet is the
+first 160 Unicode characters of the body. Authorization precedes body retrieval,
+ordering and limiting; pending submissions are excluded. Run query parameters
+cannot select another project, class or principal. Epoch revocation applies to
+search just as to note reads. The rebuild route offers no owner search bypass.
+
+Queries are UTF-8 text up to 512 bytes and 16 words (64 bytes each); punctuation
+separates literal words, joined with AND. No raw FTS5 operators are accepted as
+syntax. Empty/non-word or over-limit input returns 400; a query has a 250 ms
+deadline and shares the existing per-user read limit. Treat snippets as untrusted
+plain text and escape them in any renderer.

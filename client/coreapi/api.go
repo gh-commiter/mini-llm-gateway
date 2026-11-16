@@ -153,6 +153,8 @@ func (a *API) errResponse(err error) Response {
 		return jsonErr(409, "revision_mismatch", "The note has changed", map[string]any{"revision": rev.Current})
 	case errors.Is(err, core.ErrIdempotency):
 		return jsonErr(409, "idempotency_conflict", "The Idempotency-Key was used with another payload")
+	case errors.Is(err, core.ErrPendingLimit):
+		return jsonErr(413, "pending_limit", core.ErrPendingLimit.Error())
 	case errors.Is(err, core.ErrTooLarge):
 		return jsonErr(413, "too_large", "Too large")
 	case errors.As(err, &lim):

@@ -43,7 +43,7 @@ func IsAdminPath(method, escapedPath string) bool {
 		return false
 	}
 	switch seg[0] {
-	case "users", "bindings", "projects", "teams", "grants", "audit", "core":
+	case "users", "bindings", "projects", "teams", "kb", "grants", "audit", "core":
 		return true
 	case "quota":
 		return len(seg) == 2 && seg[1] == "history"
@@ -73,6 +73,12 @@ func (a *API) admin(ctx context.Context, r Request) Response {
 		return Response{}
 	}
 	seg := adminSeg(r.Path)
+	if seg[0] == "kb" && (r.BodyTooLarge || len(r.Body) > MaxBody) {
+		return a.errResponse(core.ErrTooLarge)
+	}
+	if seg[0] == "kb" && r.BodyUnreadable {
+		return a.errResponse(core.ErrInvalid{What: "body"})
+	}
 	q, _ := url.ParseQuery(r.RawQuery)
 	st := a.store()
 	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
@@ -84,6 +90,8 @@ func (a *API) admin(ctx context.Context, r Request) Response {
 			why = "the gateway is not running"
 		}
 		code, obj, _ = fail(503, "The project database is not available: "+why)
+	} else if seg[0] == "kb" {
+		return a.adminKB(ctx, st, r.Method, seg, q, r.Body)
 	} else {
 		code, obj, _ = a.adminDo(ctx, st, r.Method, seg, q, r.Body)
 	}

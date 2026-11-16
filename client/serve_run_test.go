@@ -734,7 +734,7 @@ func TestNoteReadCommandsInsideARun(t *testing.T) {
 		}
 	}
 	e, _, _ = env()
-	wantErr(t, e.project([]string{"list"}), "only minigw note list and note read work")
+	wantErr(t, e.project([]string{"list"}), "only minigw kb search, note list and note read work")
 	// the epoch moves: the next read says so
 	f.s.core.BumpEpoch(t0, "test")
 	e, _, _ = env()

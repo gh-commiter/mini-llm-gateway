@@ -6,7 +6,7 @@ import RouterCore
 var proxyProject = ""
 
 func projectCommand(_ kind: String, _ args: [String]) -> Never {
-    let agent = agentConn()  // inside an agent run: the run port and its token; only note list|read work, on the run's own project
+    let agent = agentConn()  // inside an agent run: the run port and its token; KB reads use the run's scope
     let env = ProjectEnv(
         connect: {
             if let a = agent { return (ProjectConn(url: a.url, token: a.token), "") }
@@ -28,6 +28,7 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
         })
     do {
         switch kind {
+        case "kb": try env.kb(args)
         case "team": try env.team(args)
         case "note": try env.note(args)
         case "usage": try env.usage(args)

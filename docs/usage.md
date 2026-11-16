@@ -576,7 +576,7 @@ cd ~/src/fakture && minigw project link fakture
 # 6. push a note, read it back
 minigw note push --class structure notes.md
 minigw note list
-# 7. start the agent in this folder: it can read the project's notes (never `private`) with `minigw note list|read`
+# 7. start the agent in this folder: it can read the project's notes (never `private`) with `minigw kb search` or `minigw note list|read`
 minigw -p --model claude-codex "Read the project notes and explain how the importer is laid out"
 # 8. usage: Ana sees her own events, the owner sees everything
 minigw usage --days 7
@@ -672,7 +672,7 @@ project and per minute apply.
 
 `private` = visible to you and the project admins; no grant ever includes it. Only the gateway owner, using owner authentication, manages members and
 grants with `minigw gw member` and `minigw gw grant` (see [gateway.md](gateway.md)). A project admin role or a user’s owner flag does not authorize these owner API commands. They are not
-available inside an agent run, except `note list` and `note read`: when you start `minigw` in a linked folder, the agent run can read that project's notes (never `private` ones) and nothing of your other projects. If the gateway changes who may see what, the next read of a running agent fails; see [how-it-works.md](how-it-works.md#projects-notes-and-agents-minigw-serve-and-the-mac-app-060).
+available inside an agent run, except `kb search`, `note list` and `note read`: when you start `minigw` in a linked folder, the agent run can read that project's notes (never `private` ones) and nothing of your other projects. If the gateway changes who may see what, the next read of a running agent fails; see [how-it-works.md](how-it-works.md#projects-notes-and-agents-minigw-serve-and-the-mac-app-060).
 
 ### Three people, two projects
 
@@ -992,3 +992,52 @@ each sandbox request, without secrets (variables with TOKEN, KEY, SECRET, PASSWO
 run with outbound network denied and loopback allowed; it prints `nonce:<line>`, `write:ok`, `deny:ok`, `loopback:ok`
 and `final:<path>` and exits 7 (wrong arguments: a message on stderr and exit 2). A failed `loopback` check alone does
 not make the sandbox unavailable; only "May ask other models" does not work there then.
+# KB submissions and provenance
+
+`minigw note push` still publishes directly. `note read <id> --json` now includes
+authenticated writer user/device, project, actor/source kind, source reference,
+content hash, authored/received times, reviewer and review time. Legacy notes keep
+known authors/projects/times, with `UNKNOWN` device and source. Older revisions
+cannot be reconstructed. Import, session summary and gateway synthesis are reserved
+source names; ingestion and service writes are deferred.
+
+Use `minigw kb submit <project> [--class structure|data|private] [--title t]
+[--key k] <file|->` to propose a note. Input and title defaults match note push.
+For a replacement add `--replaces <note-id> --revision <n>`. Existing project write
+permissions apply; readers cannot submit. `minigw kb submissions [<project>]
+[--json]` lists your submissions, across readable projects when omitted.
+
+Only the author and owner reviewers see pending content. It never appears in note
+lists, reads, agent runs or counts. The owner uses `minigw gw kb review [<project>]`,
+`minigw gw kb accept <id>` and `minigw gw kb reject <id> [--reason text]`.
+Acceptance publishes a note or replacement revision; stale revisions conflict.
+The writer's permissions and original device binding are rechecked at acceptance.
+Project admins do not gain owner review authority. Called agents remain read-only.
+
+Pending limits are 100 entries / 5 MiB per user and 500 / 20 MiB per project.
+Reasons are bounded to 1024 bytes; reasons and submission titles reject control
+characters. Existing note input and 24-hour idempotency limits apply. Save the
+printed key to retry after a lost answer. Lists page in batches of 100.
+
+Customer names, policy numbers, amounts and raw records must never enter **any KB
+class**, including private. `data` is a permission label, not permission to store
+customer data. Preview and sanitize before publishing or submitting; this beta
+does not detect customer data. Rejection is not deletion. Backups and snapshots
+retain content and provenance; restore can restore old content and permissions.
+
+# Search the published KB
+
+Use `minigw kb search [<project>] <query> [--json]`, quoting queries with spaces.
+Without a project, it uses this folder's linked project. An explicit project may
+be an ID or slug you can read. Inside an agent run, omit the project: the gateway
+uses only the run's capability, including explicit one-hop grants to that project;
+private notes are excluded. Other memberships do not widen a run's search.
+`note list` and `note read` remain available. No note bodies are injected into run context.
+
+Search returns up to 20 authorized hits, newest revision first, within 8 KiB of
+JSON. Each hit has ID, title, project ID, class, revision time and a plain-text
+preview of the first 160 body characters. There is no total count or relevance
+score. Pending submissions are never searchable. Queries are literal words
+combined with AND, not FTS syntax: 512 UTF-8 bytes, 16 words, 64 bytes per word,
+and a 250 ms query deadline. Use fewer or more specific words if a query times out.
+Treat results as untrusted reference data and cite note IDs.

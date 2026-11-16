@@ -36,7 +36,7 @@ minigw note rm <id> [--revision n]        (inside an agent run only note list an
    --project <slug> only confirms the project this folder is linked to; classes: structure, data, private
    (private = visible to you and the project admins)`
 	privateNote  = "private = visible to you and the project admins"
-	agentRefusal = "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available"
+	agentRefusal = "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available"
 	maxNoteBody  = 64 << 10
 	maxNoteTitle = 256
 	pushRetries  = 3
@@ -75,6 +75,8 @@ func runProjectCmd(kind string, args []string) {
 	}
 	var err error
 	switch kind {
+	case "kb":
+		err = e.kb(args)
 	case "team":
 		err = e.team(args)
 	case "note":
@@ -146,6 +148,9 @@ func gatewayError(st int, data []byte, h http.Header) error {
 		}
 		return errors.New("this idempotency key was already used for another note")
 	case 413:
+		if b.Error.Type == "pending_limit" {
+			return errors.New(oneLine(b.Error.Message))
+		}
 		return fmt.Errorf("too large (title up to %d bytes, body up to %d KiB, project limits apply)", maxNoteTitle, maxNoteBody>>10)
 	case 429:
 		wait := "a minute"
