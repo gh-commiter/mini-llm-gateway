@@ -861,6 +861,18 @@ func (t *translator) emit(s string) []byte {
 	return sse("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "text_delta", "text": s}})
 }
 
+// keepaliveEvery: interval of keepalive() while an agent works without output. Tests: shorter.
+var keepaliveEvery = 10 * time.Second
+
+// keepalive (#131): a ping plus an empty text delta. Claude Code abandons a streamed request after ~300 s without a
+// real model event (CLAUDE_STREAM_IDLE_TIMEOUT_MS, minimum 300000); pings alone only count towards a byte watchdog, so a
+// long silent agent run was cut by the client and restarted. The empty delta adds nothing to the reply (t.text unchanged).
+// Valid only after start() (block 0 is open).
+func (t *translator) keepalive() []byte {
+	return append(sse("ping", map[string]string{"type": "ping"}),
+		sse("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "text_delta", "text": ""}})...)
+}
+
 func (t *translator) feed(line []byte) []byte {
 	var obj map[string]any
 	if json.Unmarshal(line, &obj) != nil {
@@ -1427,12 +1439,12 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		w.WriteHeader(200)
 		send(t.start())
 		go func() { // notranji agent lahko dolgo dela brez dogodkov
-			tick := time.NewTicker(15 * time.Second)
+			tick := time.NewTicker(keepaliveEvery)
 			defer tick.Stop()
 			for {
 				select {
 				case <-tick.C:
-					send(sse("ping", map[string]string{"type": "ping"}))
+					send(t.keepalive())
 				case <-stopPing:
 					return
 				}

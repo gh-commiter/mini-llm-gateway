@@ -1020,3 +1020,22 @@ func TestLogRefusalCannotForgeALogLine(t *testing.T) {
 		t.Errorf("log = %q", buf.String())
 	}
 }
+
+// #131: a silent agent run must keep sending real model events (not only pings): Claude Code cuts a stream after ~300 s
+// without one and restarts the request. The limits are injected, so the test takes a fraction of a second.
+func TestReplyWhenDoneKeepsStreamAliveWithRealEvents(t *testing.T) {
+	defer func(d, k time.Duration) { agentHeadDelay, keepaliveEvery = d, k }(agentHeadDelay, keepaliveEvery)
+	agentHeadDelay, keepaliveEvery = 20*time.Millisecond, 20*time.Millisecond
+	s := &server{log: log.New(io.Discard, "", 0)}
+	hr := httptest.NewRequest("POST", "/v1/messages", nil)
+	r := &req{Request: hr, rid: "req_1", conn: &serveConn{peer: "127.0.0.1"}}
+	w := httptest.NewRecorder()
+	st := s.replyWhenDone(w, r, bodyG(true), func() (string, error) { time.Sleep(300 * time.Millisecond); return "answer", nil })
+	b := w.Body.String()
+	if st != 200 || strings.Count(b, "event: ping") < 3 || strings.Count(b, `"text":""`) < 3 {
+		t.Fatalf("silent run: want pings and empty text deltas, got %d %s", st, b)
+	}
+	if !strings.Contains(b, `"text":"answer"`) {
+		t.Fatalf("answer: %s", b)
+	}
+}
