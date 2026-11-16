@@ -108,7 +108,7 @@ On Windows the [MSI](#windows-installer-msi) does this for you, on Linux [`insta
 By hand on Linux: [check the download](#check-a-download) and put it in `~/.local/bin` as `minigw`: there the plugin
 finds it and `minigw serve install` updates it. Claude Code (`claude`) must be in your `PATH` too. Then add the plugin
 with `minigw plugin install`. A gateway on Linux: `install.sh --gateway`, or `minigw serve init && minigw serve install`
-([below](#gateway-on-windows-or-linux)).
+([below](#gateway-on-windows-or-linux)). In Docker Compose (providers only): [docker.md](docker.md).
 
 ## Check a download
 
