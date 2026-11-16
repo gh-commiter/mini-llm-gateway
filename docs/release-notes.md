@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### New
+- `--minigw-tools=edit`: a provider model (LiteLLM, OpenRouter, xAI) in the local Claude Code may also use Edit and Write, only inside the current folder and never in `.git`, hooks, `.claude` settings, `.envrc` or `.vscode/tasks.json`; still no Bash, MCP or sub-agents. Allowed inside Claude Code; an error with `--minigw-ro` and for agent models.
+
 ## 0.7.4
 
 ### New
