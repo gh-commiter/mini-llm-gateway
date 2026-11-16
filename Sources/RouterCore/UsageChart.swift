@@ -123,7 +123,7 @@ public struct UsageChart: @unchecked Sendable {  // rows are immutable
 
 extension UsageReport.Sum {
     mutating func merge(_ o: UsageReport.Sum) {
-        events += o.events; failed += o.failed; tin += o.tin; tout += o.tout; unknown += o.unknown; nanos += o.nanos
+        events += o.events; failed += o.failed; tin += o.tin; tout += o.tout; cin += o.cin; cout += o.cout; unknown += o.unknown; nanos += o.nanos
         estimated += o.estimated; reported += o.reported
         errors += o.errors; durationMs += o.durationMs; failedMs += o.failedMs; unknownMs += o.unknownMs
         known = known || o.known; estimateKnown = estimateKnown || o.estimateKnown; reportedKnown = reportedKnown || o.reportedKnown

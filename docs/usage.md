@@ -606,6 +606,15 @@ The provider/model usage report shows reported USD charges plain and estimated c
 `~0.42`). Mixed totals show `0.96 + ~0.42`; unknown costs retain their count. CSV exports have separate
 `reported_cost_usd` and `estimated_cost_usd` columns. Claude, Codex, Grok and Copilot subscription calls have no money.
 
+Prompt-cache reads are part of the report. When any model read from the provider's prompt cache, the model table gains
+a "cached in" column after "tokens in" (the sum of cache-read input tokens; a row without cache data shows 0), the
+per-day table gains the same column, and the total line says for example
+`..., 1K tokens in, 900K cached in, 200 tokens out, ...`. This matters for providers with automatic prompt caching,
+where about 95% of the input is a cache read, so "tokens in" alone hides most of the traffic. CSV rows end with
+`cache_read_tokens` and `cache_write_tokens` (existing columns do not move); `--json` carries `cacheReadTokens` and
+`cacheWriteTokens`. Requests without cache data print as before. Cache counts of events folded into the daily totals
+after the 400-day retention are not kept (the daily table has no cache columns), so such rows report 0.
+
 Prices refresh in the background with a timeout and one refresh per provider at a time; failures keep the last good
 catalog. OpenRouter prices come from its `/v1/models` list, LiteLLM prices from the owner's own proxy (`/model/info`; complete input and
 output rates only), both USD per token. The gateway calls no other host for prices; a LiteLLM model without rates there has unknown cost.

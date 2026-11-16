@@ -42,7 +42,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events,cache_read_tokens,cache_write_tokens\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -122,7 +122,89 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n2026-11-14,codex,gpt-6.1-sol,5,0,1200,300,,,5,0,0,0,0\n2026-11-14,openrouter,claude-deepseek/deepseek-chat,7,1,12000,2400,0.006000000,,1,0,0,0,0\n2026-11-15,claude-cli,claude-opus,12,0,4200,900,,,12,0,0,0,0\n2026-11-15,codex,gpt-6.1-sol,90,4,200000,30000,,,90,0,0,0,0\n2026-11-15,litellm,gpt-x,50,0,999999,1,0.000040000,,0,0,0,0,0\n2026-11-15,openrouter,claude-deepseek/deepseek-chat,320,2,46100000,914000,2.157400000,,3,0,0,0,0\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events,cache_read_tokens,cache_write_tokens\n2026-11-14,codex,gpt-6.1-sol,5,0,1200,300,,,5,0,0,0,0,0,0\n2026-11-14,openrouter,claude-deepseek/deepseek-chat,7,1,12000,2400,0.006000000,,1,0,0,0,0,0,0\n2026-11-15,claude-cli,claude-opus,12,0,4200,900,,,12,0,0,0,0,0,0\n2026-11-15,codex,gpt-6.1-sol,90,4,200000,30000,,,90,0,0,0,0,0,0\n2026-11-15,litellm,gpt-x,50,0,999999,1,0.000040000,,0,0,0,0,0,0,0\n2026-11-15,openrouter,claude-deepseek/deepseek-chat,320,2,46100000,914000,2.157400000,,3,0,0,0,0,0,0\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "cache text",
+   "args": [
+    "usage"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-15\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":5,\"tokensIn\":1000,\"tokensOut\":200,\"cacheReadTokens\":900000,\"cacheWriteTokens\":50000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":2,\"tokensIn\":100,\"tokensOut\":20,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":2}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "provider    model                          requests  failed  tokens in  cached in  tokens out  cost USD\nopenrouter  claude-deepseek/deepseek-chat         5       0         1K       900K         200  0.01\ncodex       gpt-6.1-sol                           2       0        100          0          20  -\n\nday         requests  tokens in+out  cached in  cost USD\n2026-11-15         7           1.3K       900K  0.01 (+2 unknown)\n\ntotal: 7 requests (0 failed), 1.1K tokens in, 900K cached in, 220 tokens out, cost USD 0.01 (+2 unknown)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "cache csv",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "csv": true
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-15\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":5,\"tokensIn\":1000,\"tokensOut\":200,\"cacheReadTokens\":900000,\"cacheWriteTokens\":50000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":2,\"tokensIn\":100,\"tokensOut\":20,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":2}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events,cache_read_tokens,cache_write_tokens\n2026-11-15,codex,gpt-6.1-sol,2,0,100,20,,,2,0,0,0,0,0,0\n2026-11-15,openrouter,claude-deepseek/deepseek-chat,5,0,1000,200,0.010000000,,0,0,0,0,0,900000,50000\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "cache json",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "json": true
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-15\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":5,\"tokensIn\":1000,\"tokensOut\":200,\"cacheReadTokens\":900000,\"cacheWriteTokens\":50000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":2,\"tokensIn\":100,\"tokensOut\":20,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":2}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "{\"days\":[{\"day\":\"2026-11-15\",\"provider\":\"openrouter\",\"model\":\"claude-deepseek/deepseek-chat\",\"events\":5,\"tokensIn\":1000,\"tokensOut\":200,\"cacheReadTokens\":900000,\"cacheWriteTokens\":50000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0},{\"day\":\"2026-11-15\",\"provider\":\"codex\",\"model\":\"gpt-6.1-sol\",\"events\":2,\"tokensIn\":100,\"tokensOut\":20,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"reportedCostUsd\":null,\"estimatedCostUsd\":null,\"eventsWithoutCost\":2}],\"gaps\":[],\"timezone\":\"UTC\"}\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -204,7 +286,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n2026-11-15,'-prov,m,1,0,1,1,,,1,0,0,0,0\n2026-11-15,openrouter,\"'=HYPERLINK(\"\"x\"\")\",1,0,10,5,0.010000000,,0,0,0,0,0\n2026-11-15,openrouter,\"'@sum +1\nline\",1,0,10,5,,,1,0,0,0,0\n2026-11-15,openrouter,\"vendor/model,v2\",2,0,100,50,0.500000000,,0,0,0,0,0\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events,cache_read_tokens,cache_write_tokens\n2026-11-15,'-prov,m,1,0,1,1,,,1,0,0,0,0,0,0\n2026-11-15,openrouter,\"'=HYPERLINK(\"\"x\"\")\",1,0,10,5,0.010000000,,0,0,0,0,0,0,0\n2026-11-15,openrouter,\"'@sum +1\nline\",1,0,10,5,,,1,0,0,0,0,0,0\n2026-11-15,openrouter,\"vendor/model,v2\",2,0,100,50,0.500000000,,0,0,0,0,0,0,0\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -378,7 +460,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n2026-11-15,LiteLLM,alias,3,0,1000,500,,0.420000000,1,0,0,0,0\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events,cache_read_tokens,cache_write_tokens\n2026-11-15,LiteLLM,alias,3,0,1000,500,,0.420000000,1,0,0,0,0,0,0\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -486,7 +568,7 @@
     }
    ],
    "want": {
-    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events\n2026-11-14,openrouter,claude-deepseek/deepseek-chat,7,0,12000,2400,0.500000000,,0,0,420000,0,0\n2026-11-15,claude-cli,claude-opus,12,3,4200,900,,,12,2,600000,123000,3\n2026-11-15,codex,gpt-6.1-sol,40,31,0,0,,,40,31,17400000,15000000,0\n",
+    "out": "day,provider,model,requests,failed,tokens_in,tokens_out,reported_cost_usd,estimated_cost_usd,events_without_cost,errors,duration_ms,failed_duration_ms,unknown_duration_events,cache_read_tokens,cache_write_tokens\n2026-11-14,openrouter,claude-deepseek/deepseek-chat,7,0,12000,2400,0.500000000,,0,0,420000,0,0,0,0\n2026-11-15,claude-cli,claude-opus,12,3,4200,900,,,12,2,600000,123000,3,0,0\n2026-11-15,codex,gpt-6.1-sol,40,31,0,0,,,40,31,17400000,15000000,0,0,0\n",
     "err": "",
     "exit": 0,
     "requests": [

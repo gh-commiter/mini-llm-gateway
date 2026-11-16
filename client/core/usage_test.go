@@ -83,6 +83,26 @@ func TestUsageMatrixAndTotals(t *testing.T) { // contracts section 2 row "Usage 
 
 func (f *fx) now() time.Time { return f.Store.now() }
 
+func TestUsageSumsCacheTokens(t *testing.T) {
+	f := newFx(t)
+	at := f.now()
+	read, write := int64(900), int64(50)
+	event := func(id string, r, w *int64) UsageEvent {
+		return UsageEvent{ID: id, Start: at, End: at, DeviceID: "d", Provider: "p", Model: "m", Outcome: OutcomeOK,
+			TokensIn: 10, TokensOut: 1, TokenSource: "reported", CacheReadTokens: r, CacheWriteTokens: w}
+	}
+	f.ok(f.FinishEvent(ctx, event("c1", &read, &write)))
+	f.ok(f.FinishEvent(ctx, event("c2", nil, nil))) // no cache data counts as zero, not as unknown
+	rep, err := f.AdminUsage(ctx, 7, UsageFilter{})
+	f.ok(err)
+	if len(rep.Rows) != 1 {
+		t.Fatalf("%+v", rep.Rows)
+	}
+	if r := rep.Rows[0]; r.CacheReadTokens != read || r.CacheWriteTokens != write {
+		t.Fatalf("cache read %d write %d", r.CacheReadTokens, r.CacheWriteTokens)
+	}
+}
+
 func TestUsageEventLifeCycleIsIdempotentAndFrozen(t *testing.T) {
 	f := newFx(t)
 	at := f.now()
