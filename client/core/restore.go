@@ -27,8 +27,9 @@ var (
 )
 
 // Restore replaces <dir>/core.db with the backup src. The gateway must be stopped: it takes the folder lock an
-// open store holds. src is validated first (integrity, schema not newer, same gateway id). The epoch is set above
-// both the old and the restored value, the project-id mark is the maximum of all.
+// open store holds. src is validated first (integrity, schema not newer, same gateway id). A database of schema 12 or
+// newer has its search index rebuilt from the notes before the swap; if that fails, the restore fails with the old
+// database in place. The epoch is set above both the old and the restored value, the project-id mark is the maximum of all.
 //
 // Crash safety: core.db is never absent. The new file is prepared as a temp file, the old database is hard-linked
 // (or copied) to its snapshot, an intent line is fsynced to core.audit.log, and ONE rename puts the new file in
@@ -341,13 +342,18 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// stamp writes the new state and the restore event into the copy, and folds its WAL into the file.
+// stamp writes the new state and the restore event into the copy, folds its WAL into the file, and, for a database
+// of schema 12 or newer, rebuilds the search index from the notes so a damaged index in the backup is not installed.
 func stamp(ctx context.Context, path string, st state, src string) error {
 	db, err := openDB(path)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	version, err := schemaVersion(ctx, db)
+	if err != nil {
+		return err
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -356,6 +362,12 @@ func stamp(ctx context.Context, path string, st state, src string) error {
 		if err = setMeta(tx, k, v); err != nil {
 			tx.Rollback()
 			return err
+		}
+	}
+	if version >= 12 { // older backups get the index from the migration
+		if err = rebuildSearch(tx); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("the search index could not be rebuilt: %w", err)
 		}
 	}
 	if err = Audit(tx, "core", "restore", filepath.Base(src), map[string]any{"epoch": st.Epoch}); err != nil {

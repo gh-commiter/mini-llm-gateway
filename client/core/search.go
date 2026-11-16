@@ -28,9 +28,14 @@ func syncSearch(tx *sql.Tx, id int64) error {
 	_, err := tx.Exec(searchInsert+` WHERE id=?`, id)
 	return err
 }
+// rebuildSearch replaces every posting with one built from the notes.
+func rebuildSearch(tx *sql.Tx) error {
+	_, err := tx.Exec(`DELETE FROM note_search; ` + searchInsert)
+	return err
+}
 func (s *Store) RebuildSearch(ctx context.Context) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`DELETE FROM note_search; ` + searchInsert); err != nil {
+		if err := rebuildSearch(tx); err != nil {
 			return err
 		}
 		return Audit(tx, adminActor, "kb.search.rebuild", "", nil)

@@ -590,7 +590,9 @@ Indexed project/class/author tokens also constrain MATCH itself; query words
 match only the title and body columns, never these internal permission tokens.
 
 Note creation, revision, deletion, reclassification and submission acceptance
-update the index in the same transaction. Explicit index writes preserve
+update the index in the same transaction. Restoring a backup of schema 12 or newer
+rebuilds the index from the notes before the swap; an older backup gets it from
+the migration. Explicit index writes preserve
 `trusted_schema=0`; no virtual-table triggers are needed. The query language is
 bounded literal words with AND, with a 250 ms deadline. The shared core enforces
 20 hits and an 8 KiB JSON budget. Swift forwards trusted context and results.

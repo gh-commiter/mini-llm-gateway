@@ -274,3 +274,109 @@ func TestRestoreRefusesAndRemovesACorruptStagedCopy(t *testing.T) {
 		t.Fatalf("the old database changed: %q", got)
 	}
 }
+
+// searchRestoreFixture: a schema-12 folder with two notes of ana, and a backup of it.
+func searchRestoreFixture(t *testing.T) (dir, bak string, pr Principal, project int64, alpha, beta Note) {
+	t.Helper()
+	dir = t.TempDir()
+	s := openT(t, dir)
+	u, err := s.CreateUser(ctx, "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr = Principal{UserID: u.ID, DeviceID: "dev-ana"}
+	p, err := s.CreateProject(ctx, "fakture", "Fakture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project = p.ID
+	if err := s.SetBinding(ctx, pr.DeviceID, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMember(ctx, project, u.ID, Developer); err != nil {
+		t.Fatal(err)
+	}
+	if alpha, _, err = s.CreateNote(ctx, pr, project, "restore-alpha", NoteInput{Class: Structure, Title: "first", Body: "alpha body"}); err != nil {
+		t.Fatal(err)
+	}
+	if beta, _, err = s.CreateNote(ctx, pr, project, "restore-beta", NoteInput{Class: Structure, Title: "second", Body: "beta body"}); err != nil {
+		t.Fatal(err)
+	}
+	bak = filepath.Join(t.TempDir(), "search.db")
+	if err := s.Backup(ctx, bak); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	return
+}
+
+// damageIndex writes to the backup and folds its WAL into the main file: the restore validates and copies the main
+// file only.
+func damageIndex(t *testing.T, bak, query string, args ...any) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dsn(bak, "_pragma=trusted_schema(0)"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(query, args...); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Issue 136: a backup whose search index disagrees with its notes is installed with the index rebuilt from the notes.
+func TestRestoreRebuildsTheSearchIndex(t *testing.T) {
+	dir, bak, pr, project, alpha, beta := searchRestoreFixture(t)
+	// "zebra" exists only in the damaged index; alpha's text and beta's row are gone.
+	damageIndex(t, bak, `UPDATE note_search SET body='zebra' WHERE rowid=?`, alpha.ID)
+	damageIndex(t, bak, `DELETE FROM note_search WHERE rowid=?`, beta.ID)
+	if err := Restore(dir, bak); err != nil {
+		t.Fatal(err)
+	}
+	s := openT(t, dir)
+	defer s.Close()
+	search := func(q string) (ids []int64) {
+		pg, err := s.SearchNotes(ctx, pr, project, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, h := range pg.Hits {
+			ids = append(ids, h.ID)
+		}
+		return ids
+	}
+	if got := search("alpha"); len(got) != 1 || got[0] != alpha.ID {
+		t.Fatalf("alpha: %v, want [%d]", got, alpha.ID)
+	}
+	if got := search("beta"); len(got) != 1 || got[0] != beta.ID {
+		t.Fatalf("beta: %v, want [%d]", got, beta.ID)
+	}
+	if got := search("zebra"); len(got) != 0 {
+		t.Fatalf("a word only in the damaged index: %v", got)
+	}
+}
+
+func TestRestoreFailsWhenTheSearchIndexCannotBeRebuilt(t *testing.T) {
+	dir, bak, _, _, _, _ := searchRestoreFixture(t)
+	before := hash(t, filepath.Join(dir, dbFile))
+	damageIndex(t, bak, `DROP TABLE note_search`)
+	err := Restore(dir, bak)
+	if err == nil || !strings.Contains(err.Error(), "search index") {
+		t.Fatalf("got %v", err)
+	}
+	if hash(t, filepath.Join(dir, dbFile)) != before {
+		t.Fatal("the live database changed")
+	}
+	for _, n := range []string{restoreTmp, restoreTmp + "-wal", restoreTmp + "-shm"} {
+		if _, err := os.Stat(filepath.Join(dir, n)); err == nil {
+			t.Fatalf("%s left behind", n)
+		}
+	}
+	if !strings.Contains(auditLog(t, dir), "restore.failed") {
+		t.Fatalf("the failure is not in the audit: %s", auditLog(t, dir))
+	}
+}
