@@ -689,6 +689,10 @@ in Claude Code's sandbox (no reads of the home folder, writes only in these fold
 gateway the whole Claude Code runs in the Windows sandbox (see [Windows gateway](#windows-gateway-sandbox)) and runs
 commands with its PowerShell tool; without the Windows sandbox commands need **Allow commands without a sandbox**.
 
+The browser Settings page of `minigw serve` includes **Usage**: 7, 30 or 90 UTC days of tokens, spend or requests,
+with daily model stacks and a Top models table. Spend separates reported and ~estimated USD and notes requests
+without a known cost and recording gaps. Empty periods and API errors appear in the view.
+
 The browser Settings page marks refused allowed folders with a warning and an explanation next to the path.
 Remove and add the folder again after checking that it is the folder you intended to allow.
 
