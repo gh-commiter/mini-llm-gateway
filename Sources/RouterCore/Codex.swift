@@ -437,7 +437,7 @@ extension Router {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(10))
                 if Task.isCancelled { break }
-                try? await writer.write(StreamTranslator.sse("ping", ["type": "ping"]))
+                try? await writer.write(StreamTranslator.keepalive)
             }
         } : nil
         do {

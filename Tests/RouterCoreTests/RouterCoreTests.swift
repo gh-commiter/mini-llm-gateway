@@ -220,6 +220,14 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(e.resultError == "error_during_execution")
 }
 
+// #131: the keepalive of a silent agent run is a ping plus an empty text delta (a real model event for Claude Code's idle watchdog)
+@Test func agentKeepaliveCarriesARealEventThatAddsNoText() {
+    let sse = String(decoding: StreamTranslator.keepalive, as: UTF8.self)
+    #expect(sse.contains("event: ping\n"))
+    #expect(sse.contains("event: content_block_delta\n"))
+    #expect(sse.contains(#""text":"""#))
+}
+
 @Test func cliModelsListedOnlyWhenEnabledAndUnknownWhenDisabled() async {
     var c = RouterConfig()
     c.providers = []

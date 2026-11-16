@@ -1568,8 +1568,8 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 			for {
 				select {
 				case <-time.After(wait):
-					send(sse("ping", map[string]string{"type": "ping"}))
-					wait = 10 * time.Second
+					send(t.keepalive())
+					wait = keepaliveEvery
 				case <-done:
 					return
 				}

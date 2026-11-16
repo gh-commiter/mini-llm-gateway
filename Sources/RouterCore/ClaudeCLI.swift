@@ -711,6 +711,12 @@ struct StreamTranslator {
         return Self.sse("content_block_delta", ["type": "content_block_delta", "index": 0, "delta": ["type": "text_delta", "text": s]])
     }
 
+    /// #131: a ping plus an empty text delta (adds nothing to the reply). Claude Code abandons a streamed request after ~300 s
+    /// without a real model event (CLAUDE_STREAM_IDLE_TIMEOUT_MS, minimum 300000); pings alone do not count. Only after start().
+    static var keepalive: Data {
+        sse("ping", ["type": "ping"]) + sse("content_block_delta", ["type": "content_block_delta", "index": 0, "delta": ["type": "text_delta", "text": ""]])
+    }
+
     static func sse(_ event: String, _ obj: [String: Any]) -> Data {
         let json = (try? JSONSerialization.data(withJSONObject: obj, options: [.withoutEscapingSlashes])) ?? Data("{}".utf8)
         return Data("event: \(event)\ndata: ".utf8) + json + Data("\n\n".utf8)
@@ -999,7 +1005,7 @@ extension Router {
                         while !Task.isCancelled {
                             try? await Task.sleep(for: .seconds(15))
                             if Task.isCancelled { break }
-                            try? await writer.write(StreamTranslator.sse("ping", ["type": "ping"]))
+                            try? await writer.write(StreamTranslator.keepalive)
                         }
                     }
                 }
