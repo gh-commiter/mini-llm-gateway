@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.5
+
 ### New
 - New (Mac app): a "Usage" page in Settings shows requests, tokens and spend per day as a stacked chart by model, with the top models listed next to it. Choose 7, 30 or 90 days. Estimated amounts are marked with "~", and a note says how many requests have no known cost.
 - New (`minigw serve`): the Settings page in the browser has the same "Usage" view.
