@@ -1,5 +1,22 @@
 # Release notes
 
+## 0.7.9
+
+### Changed
+- `minigw kb mcp`: the two tools now say what they do in their descriptions (search the project's knowledge base; read one note by id), so a model that lists the tools knows when to use them. The warning that results are untrusted reference content stays in the descriptions, in the server's instructions and in front of every result.
+
+### Fixed
+- Mac gateway: shares are no longer dropped when the gateway itself was stalled or the Mac slept. A share is dropped after a minute without a sign of its client; when the gateway's own check ran late, it used to drop every share at once, and the next request of a running session failed. Now a late check gives every share a fresh minute.
+- Go gateway: a project whose slug is `sessions` got a wrong answer for its own project page.
+- `minigw kb mcp` on the Mac client keeps large note ids exact.
+
+### Known problems
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
+
 ## 0.7.8
 
 ### New
