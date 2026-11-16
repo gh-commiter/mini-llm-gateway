@@ -578,3 +578,83 @@ func TestServeGatewayForwardsOnlyBetaQuery(t *testing.T) {
 		}
 	}
 }
+
+// Owner policy: the highest tool level per provider and per model; the gateway lists it and refuses a request whose
+// x-claude-mini-tools header is above it (the upstream is not called). Same rules on the Mac (ProviderToolsTests).
+func TestGatewayToolsCap(t *testing.T) {
+	keys := fakeKeys(t)
+	keys["gw"] = gwKey
+	got := make(chan map[string]json.RawMessage, 4)
+	up := fakeUpstream(t, nil, got, nil)
+	s, _, base := liveServer(t, func(c *serveConfig) {
+		c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL, Insecure: true}}
+	})
+	admin := func(method, path, body string) (int, string) {
+		return adminNoise(t, s, base, s.admin, method, path, body)
+	}
+	listed := func() string {
+		_, b := adminReq(t, base, strings.TrimPrefix(base, "http://"), "tok", "GET", "/v1/models", "")
+		return b
+	}
+	ask := func(level string) int { // gpt-y: the upstream answers 429, so 429 = served, 400 = refused here
+		r, _ := http.NewRequest("POST", base+"/v1/messages", strings.NewReader(`{"model":"gpt-y","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}`))
+		r.Header.Set("authorization", "Bearer tok")
+		r.Header.Set("anthropic-version", "2023-06-01")
+		if level != "" {
+			r.Header.Set("x-claude-mini-tools", level)
+		}
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	drain := func() {
+		for len(got) > 0 {
+			<-got
+		}
+	}
+	if !strings.Contains(listed(), `"id":"claude-gpt-y"`) || !strings.Contains(listed(), `"minigw_tools":"read"`) || !strings.Contains(listed(), `"minigw_provider":"gw"`) {
+		t.Fatalf("default cap not listed as read: %s", listed())
+	}
+	// default: a client that asks for nothing is served as before; none and read pass, edit is refused without calling the upstream
+	if a, b, c := ask(""), ask("read"), ask("none"); a != 429 || b != 429 || c != 429 {
+		t.Fatalf("within the default cap: %d %d %d", a, b, c)
+	}
+	drain()
+	if st := ask("edit"); st != 400 || len(got) != 0 {
+		t.Fatalf("edit above the default cap: %d, upstream called: %v", st, len(got) != 0)
+	}
+	if st := ask("bogus"); st != 400 {
+		t.Fatalf("unknown level: %d", st)
+	}
+	// the owner raises the provider to edit
+	if st, b := admin("PATCH", adminPrefix+"/gateways/gw", `{"tools":"edit"}`); st != 200 || !strings.Contains(b, `"tools":"edit"`) {
+		t.Fatalf("set tools: %d %s", st, b)
+	}
+	if !strings.Contains(listed(), `"minigw_tools":"edit"`) || ask("edit") != 429 {
+		t.Fatalf("provider cap edit: %s", listed())
+	}
+	// one model lowered to none: its own value wins, and read is refused for it
+	if st, b := admin("PATCH", adminPrefix+"/gateways/gw", `{"tools":"none","model":"claude-gpt-y"}`); st != 200 || !strings.Contains(b, `"modelTools":{"gpt-y":"none"}`) {
+		t.Fatalf("set model tools: %d %s", st, b)
+	}
+	if ask("none") != 429 || ask("read") != 400 || ask("edit") != 400 || ask("") != 429 {
+		t.Fatalf("model cap none")
+	}
+	// clearing the model value goes back to the provider's; bad values are refused
+	if st, _ := admin("PATCH", adminPrefix+"/gateways/gw", `{"tools":"","model":"gpt-y"}`); st != 200 || ask("edit") != 429 {
+		t.Fatalf("model cap cleared")
+	}
+	for _, bad := range []string{`{"tools":"root"}`, `{"model":"gpt-y"}`, `{"tools":"edit","model":""}`, `{"tools":"edit","model":"a\nb"}`} {
+		if st, _ := admin("PATCH", adminPrefix+"/gateways/gw", bad); st != 400 {
+			t.Fatalf("%s: %d", bad, st)
+		}
+	}
+	// the provider's value back to the default
+	admin("PATCH", adminPrefix+"/gateways/gw", `{"tools":""}`)
+	if ask("edit") != 400 {
+		t.Fatalf("default restored")
+	}
+}

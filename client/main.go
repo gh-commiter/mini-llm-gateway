@@ -614,7 +614,7 @@ func main() {
 			"minigw share add --work=native|native-direct|worktree|sync|direct|auto [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
 			projectHelp + "\n" + teamHelp + "\n" + kbHelp + "\n" + noteHelp + "\n" + usageHelp + "\n" +
 			"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
-			"minigw --minigw-tools none|read [claude args]  tools of a provider model (LiteLLM, OpenRouter): none, or read = Read, Grep, Glob (--minigw-ro = read); allowed inside Claude Code\n" +
+			"minigw --minigw-tools none|read|edit [claude args]  tools of a provider model (LiteLLM, OpenRouter, xAI): none, read = Read, Grep, Glob (--minigw-ro = read), or edit = read plus Edit and Write in this folder, no commands; allowed inside Claude Code\n" +
 			"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +
 			"inside Claude Code minigw passes only -p, --model and other options that do not widen permissions (MINIGW_ALLOW_UNSAFE_FLAGS=1 = all)\n" +
 			"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +
@@ -683,6 +683,9 @@ func main() {
 	if toolsErr != "" {
 		fail(toolsErr)
 	}
+	if msg := editWindowsRefusal(runtime.GOOS); tools == "edit" && msg != "" {
+		fail(msg)
+	}
 	if f := toolsWiden(args); tools != "" && f != "" {
 		fail(f + " is not accepted together with --minigw-tools (or --minigw-ro for a provider model): it could widen the tools of the model")
 	}
@@ -706,6 +709,15 @@ func main() {
 		proxyProject = strings.TrimPrefix(h, "x-minigw-project: ")
 	}
 	c := route(ps[0])
+	if tools == "edit" { // the gateway's owner sets the highest level per model (minigw gw provider tools); the gateway checks it again per request
+		var list map[string]any
+		if st, m := getJSON(c, "/v1/models"); st == 200 {
+			list = m
+		}
+		if msg := editRefusal(list, modelArg(args)); msg != "" {
+			fail(msg)
+		}
+	}
 	proxyProject = "" // only the default profile's gateway knows this project id; other profiles' proxies never send it
 	env := []string{
 		"ANTHROPIC_BASE_URL=" + c.URL,
@@ -791,6 +803,9 @@ sessionArgs:
 	}
 	if readOnly { // --minigw-ro velja tudi brez deljenja (prehod na tem računalniku)
 		headers += "\nx-claude-mini-ro: 1"
+	}
+	if tools != "" { // the level this run uses: the gateway refuses one above its cap for the model
+		headers += "\nx-claude-mini-tools: " + tools
 	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 	if promptGuard(args, os.Getenv, stdinTerminal()) {

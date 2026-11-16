@@ -857,7 +857,7 @@ var args = Array(CommandLine.arguments.dropFirst())
 // --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
 var readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
 args.removeAll { $0 == "--minigw-ro" }
-// --minigw-tools=none|read (#119): orodja modela ponudnika; pod Claude Code dovoljeno, ker orodja le jemlje.
+// --minigw-tools=none|read|edit (#119): orodja modela ponudnika; pod Claude Code dovoljeno, ker orodja le jemlje.
 let toolsArg = Profiles.takeTools(args)
 if let e = toolsArg.error { fail(e) }
 args = toolsArg.rest
@@ -1028,7 +1028,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw plugin install|uninstall|status       the Claude Code plugin minigw@mini-gateway, using this minigw
         minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings, profiles, device key)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
-        minigw --minigw-tools none|read [claude args]  tools of a provider model (LiteLLM, OpenRouter): none, or read = Read, Grep, Glob (--minigw-ro = read); allowed inside Claude Code
+        minigw --minigw-tools none|read|edit [claude args]  tools of a provider model (LiteLLM, OpenRouter, xAI): none, read = Read, Grep, Glob (--minigw-ro = read), or edit = read plus Edit and Write in this folder, no commands; allowed inside Claude Code
         minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)
         inside Claude Code minigw passes only -p, --model and other options that do not widen permissions (MINIGW_ALLOW_UNSAFE_FLAGS=1 = all)
         minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)
@@ -1089,6 +1089,10 @@ do {  // 0.6.0: the project of this folder; the proxy sets it on every request a
     proxyProject = h.replacingOccurrences(of: "x-minigw-project: ", with: "")
 } catch { fail((error as? ProjectError)?.message ?? "\(error)") }
 let c = route(profiles[0])
+if toolsPlan.tools == "edit" {  // the gateway's owner sets the highest level per model (minigw gw provider tools); the gateway checks it again per request
+    let (st, list) = get(c, "/v1/models")
+    if let msg = Profiles.editRefusal(list: st == 200 ? list : nil, model: Profiles.modelArg(args)) { fail(msg) }
+}
 proxyProject = ""  // only the default profile's gateway knows this project id; other profiles' proxies never send it
 let promptGuard = Profiles.promptGuard(args, env: ProcessInfo.processInfo.environment, stdinTerminal: isatty(0) == 1)  // pred #7 (CLAUDECODE)
 let mentionSettings = promptGuard && Profiles.checkClaudeArgs(ProcessInfo.processInfo.environment)  // I17, pred #7
@@ -1173,7 +1177,8 @@ let implicitWork = SharedFolders.implicitWork(asked: askedWork, work: work)
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : "")
        + (role.isEmpty ? "" : "\nx-claude-mini-role: \(role)")
-       + (readOnly ? "\nx-claude-mini-ro: 1" : ""), 1)  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
+       + (readOnly ? "\nx-claude-mini-ro: 1" : "")
+       + (toolsPlan.tools.map { "\nx-claude-mini-tools: " + $0 } ?? ""), 1)  // the level of this run: the gateway refuses one above its cap for the model  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
 
 // Brez proxyja in brez mape: minigw ni več potreben → exec (razen s prebranim stdin: tega claude dobi po cevi).
 guard streamed || claudeStdin != nil || !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 || recordSession else {

@@ -1213,6 +1213,12 @@ struct ProviderPane: View {
                     .disabled(RouterConfig.builtInProviders.contains(provider.id))  // vgrajena: ime ostane (kot minigw serve)
                 TextField("Base URL", text: $provider.baseURL)
                 Toggle("Allow http (localhost, a private IP or a .local name only)", isOn: $provider.insecure)
+                Picker("Tools of its models", selection: $provider.tools) {  // the most a client's Claude Code may give them (per model: minigw gw provider tools)
+                    Text("None").tag("none")
+                    Text("Read, Grep, Glob (default)").tag("")
+                    Text("Also edit files in the folder").tag("edit")
+                }
+                .help(String(localized: "The most that a client's Claude Code may give these models. Per model: minigw gw provider tools."))
                 if let e = provider.urlError, !provider.baseURL.isEmpty, provider.baseURL != "https://" {
                     Text(verbatim: e).font(.caption).foregroundStyle(.red)
                 }

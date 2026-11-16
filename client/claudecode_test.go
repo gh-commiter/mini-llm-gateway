@@ -390,7 +390,7 @@ func TestMinigwToolsRefusals(t *testing.T) {
 		return string(out)
 	}
 	for args, want := range map[string]string{
-		"-p --model litellm-gpt --minigw-tools=all x":       `--minigw-tools: unknown value "all" (use none or read)`,
+		"-p --model litellm-gpt --minigw-tools=all x":       `--minigw-tools: unknown value "all" (use none, read or edit)`,
 		"-p --model claude-cli-opus --minigw-tools none x":  "agents are limited on the gateway, use --minigw-ro",
 		"-p --model litellm-gpt --tools Bash --minigw-ro x": "--tools is not accepted when minigw runs inside Claude Code",
 		"-p --model litellm-gpt --minigw-tools=read @x":     "paste the text itself into the prompt, or pass it on stdin",
@@ -415,5 +415,51 @@ func TestMinigwToolsRefusals(t *testing.T) {
 	}
 	if _, err := os.Stat(log); err == nil {
 		t.Error("claude was started")
+	}
+}
+
+// Owner's cap on tools per provider and model: client/testdata/provider-tools.json, asserted by Swift (ProviderToolsTests) too.
+func TestProviderToolsCap(t *testing.T) {
+	var f struct {
+		Caps []struct {
+			Tools      string
+			ModelTools map[string]string
+			Route, Cap string
+		}
+		Levels []struct{ Level, Cap, Want string }
+		Lines  []struct {
+			Name, Tools string
+			Models      map[string]string
+			Model       string
+			Want        []string
+		}
+		Lists []struct {
+			List    map[string]any
+			Model   string
+			Refusal string
+		}
+	}
+	if err := json.Unmarshal(srcFile(t, "testdata/provider-tools.json"), &f); err != nil || len(f.Caps) == 0 {
+		t.Fatal(err)
+	}
+	for _, c := range f.Caps {
+		if got := (serveGateway{Tools: c.Tools, ModelTools: c.ModelTools}).toolsCap(c.Route); got != c.Cap {
+			t.Errorf("cap %+v: got %q", c, got)
+		}
+	}
+	for _, c := range f.Levels {
+		if got := toolsLevelRefusal(c.Level, c.Cap, "xAI", "grok-4"); got != c.Want {
+			t.Errorf("level %+v: got %q", c, got)
+		}
+	}
+	for _, c := range f.Lines {
+		if got := providerToolsLines(c.Name, c.Tools, c.Models, c.Model); !slices.Equal(got, c.Want) {
+			t.Errorf("lines %+v: got %q", c, got)
+		}
+	}
+	for _, c := range f.Lists {
+		if got := editRefusal(c.List, c.Model); got != c.Refusal {
+			t.Errorf("list %+v: got %q", c, got)
+		}
 	}
 }

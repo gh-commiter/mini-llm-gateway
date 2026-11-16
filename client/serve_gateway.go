@@ -33,6 +33,23 @@ type serveGateway struct {
 	Insecure bool     `json:"insecure,omitempty"` // http do localhost ali zasebnega IP (gateway add --insecure)
 	Disabled bool     `json:"disabled,omitempty"` // izklopljen v nastavitvah (privzeto vklopljen)
 	Aliases  string   `json:"aliases,omitempty"`  // vrstice »alias = upstream ID, okno«; določijo modele namesto tabele (kot na Macu)
+	// Tools: the highest tool level the models of this provider may get in the client's Claude Code (none, read, edit; empty = read);
+	// ModelTools: the same per model (the /model name), which wins. The owner sets it (minigw gw provider tools), see tools.go.
+	Tools      string            `json:"tools,omitempty"`
+	ModelTools map[string]string `json:"modelTools,omitempty"`
+}
+
+// toolsCap: the highest tool level for the model route (the /model name or its claude- ID).
+func (g serveGateway) toolsCap(route string) string {
+	for _, k := range []string{route, strings.TrimPrefix(route, "claude-")} {
+		if _, ok := toolsRank[g.ModelTools[k]]; ok {
+			return g.ModelTools[k]
+		}
+	}
+	if _, ok := toolsRank[g.Tools]; ok {
+		return g.Tools
+	}
+	return "read"
 }
 
 // builtinGateways: kot vgrajena ponudnika na Macu: vedno na seznamu, izklopljena, dokler nimata ključa; izklop da,
@@ -456,7 +473,8 @@ func (s *server) gatewayModelList() []map[string]any {
 				window = fmt.Sprintf(" · %dK", m.window/1000)
 			}
 			data = append(data, map[string]any{"type": "model", "id": id, "display_name": m.route() + " · " + g.Name,
-				"description": g.Name + " · " + m.id + window, "created_at": "2026-01-01T00:00:00Z"})
+				"description": g.Name + " · " + m.id + window, "created_at": "2026-01-01T00:00:00Z",
+				"minigw_tools": g.toolsCap(m.route()), "minigw_provider": g.Name}) // the client refuses a level above it (tools.go)
 		}
 	}
 	return data
@@ -467,6 +485,11 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 	if m.window > 0 && r.URL.Path == "/v1/messages" && len(r.body)/4 > m.window {
 		// ponytail: ocena bajti/4 (kot na Macu); upstream count_tokens, če bo premalo natančna
 		return writeError(w, r.rid, 400, fmt.Sprintf("prompt is too long: %d tokens > %d maximum", len(r.body)/4, m.window))
+	}
+	if level := r.h("x-claude-mini-tools"); level != "" { // the level the client's Claude Code runs with: above the owner's cap = refused
+		if msg := toolsLevelRefusal(level, g.toolsCap(m.route()), g.Name, m.route()); msg != "" {
+			return writeError(w, r.rid, 400, msg)
+		}
 	}
 	select { // največ 16 hkratnih zahtev k prehodom
 	case s.gwSlots <- struct{}{}:

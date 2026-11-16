@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"minigw/coreapi"
 	"net"
 	"net/http"
@@ -58,6 +59,9 @@ type apiGateway struct {
 	Ready    bool     `json:"ready"` // seznam modelov naložen (le pri tekočem routerju)
 	Enabled  bool     `json:"enabled"`
 	Aliases  string   `json:"aliases"`
+	// Tools: the highest tool level of the provider's models (none, read, edit), ModelTools: the exceptions per model (tools.go)
+	Tools      string            `json:"tools"`
+	ModelTools map[string]string `json:"modelTools"`
 }
 
 type apiClaude struct {
@@ -613,6 +617,8 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			BaseURL  *string `json:"baseURL"`
 			Insecure *bool   `json:"insecure"`
 			Aliases  *string `json:"aliases"`
+			Tools    *string `json:"tools"` // none, read or edit; empty = back to the default (read)
+			Model    *string `json:"model"` // with tools: only this model (the /model name); the model's own value wins over the provider's
 		}
 		if err := decodeStrict(body, &b); err != nil {
 			return fail(400, err.Error())
@@ -643,6 +649,31 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				return fail(400, "aliases: too long")
 			}
 			g.Aliases = *b.Aliases
+		}
+		if b.Model != nil && b.Tools == nil {
+			return fail(400, "model needs tools")
+		}
+		if b.Tools != nil {
+			if _, known := toolsRank[*b.Tools]; !known && *b.Tools != "" {
+				return fail(400, "tools: none, read or edit")
+			}
+			if b.Model == nil {
+				g.Tools = *b.Tools
+			} else {
+				m := strings.TrimPrefix(*b.Model, "claude-")
+				if m == "" || len(m) > 128 || strings.ContainsFunc(m, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+					return fail(400, "model: the /model name of one model")
+				}
+				g.ModelTools = maps.Clone(g.ModelTools)
+				if *b.Tools == "" {
+					delete(g.ModelTools, m)
+				} else {
+					if g.ModelTools == nil {
+						g.ModelTools = map[string]string{}
+					}
+					g.ModelTools[m] = *b.Tools
+				}
+			}
 		}
 		if b.Name != nil && *b.Name != arg {
 			if builtinGateway(arg) || builtinGateway(*b.Name) {
@@ -1387,7 +1418,7 @@ func claudeVersion(exe []string) string {
 func (s *server) apiGateway(g serveGateway) apiGateway {
 	key, _ := keyGet(s.cfgDir, g.Name)
 	return apiGateway{Name: g.Name, BaseURL: g.BaseURL, Insecure: g.Insecure, Models: g.Models, HasKey: key != "", Ready: s.gateways.ready(g.Name),
-		Enabled: !g.Disabled, Aliases: g.Aliases}
+		Enabled: !g.Disabled, Aliases: g.Aliases, Tools: g.toolsCap(""), ModelTools: g.ModelTools}
 }
 
 func (s *server) apiGateways(c serveConfig) []apiGateway {

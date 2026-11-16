@@ -1,5 +1,14 @@
 # Release notes
 
+## Unreleased
+
+### New
+- `--minigw-tools=edit`: a provider model (LiteLLM, OpenRouter, xAI) in the local Claude Code may also use Edit and Write, only inside the current folder and never in `.git`, hooks, `.claude` settings, `.envrc` or `.vscode/tasks.json`; still no Bash, MCP or sub-agents. Allowed inside Claude Code; an error with `--minigw-ro` and for agent models. The gateway owner sets the highest level per provider or model (`minigw gw provider tools <name> [none|read|edit|default] [--model m]`, Settings, admin API; default `read`); clients refuse `edit` above it and the gateway refuses requests above it (a modified client can lie; the folder is protected by the client's own rules).
+
+### Known limits
+- `--minigw-tools=edit` is refused on Windows clients: its path rules cannot cover trailing dots and spaces or 8.3 short names.
+- `--minigw-tools=edit` does not protect files that are run or obeyed later without a person reading them (`Makefile`, `package.json` scripts, `.github/workflows`, `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.vscode/settings.json`, …): review the diff.
+
 ## 0.7.5
 
 ### New

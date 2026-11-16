@@ -420,12 +420,22 @@ minigw --minigw-role security -p --model claude-codex "…"
 read-only, Codex and Grok run in their read-only sandbox, Copilot runs without its write tool, and Claude CLI gets only
 its reading tools (Read, Grep, Glob, web search and fetch; commands only in a sandbox that cannot write to the
 folder). This also holds when the gateway runs on the same computer. `/minigw:ask --ro` and `/minigw:review` use it.
-**Tools of provider models** (`--minigw-tools=read` or `none`): a LiteLLM or OpenRouter model runs in the local Claude Code with the
+**Tools of provider models** (`--minigw-tools=read`, `edit` or `none`): a LiteLLM or OpenRouter model runs in the local Claude Code with the
 session's permissions (Bash, Edit, MCP tools, sub-agents), and `--tools` is refused inside Claude Code. `--minigw-tools=read` gives it only Read,
-Grep and Glob; `none` gives it no tools. minigw passes `--tools=<list>`, `--strict-mcp-config` (no MCP tools, not even the claude.ai connectors),
+Grep and Glob; `none` gives it no tools; `edit` adds Edit and Write, still no Bash, MCP or sub-agents. With `edit` the model changes files only
+inside the current folder (`Edit(./**)`, `--permission-mode=dontAsk`: anything else is refused without a prompt), never through a symlink that leads out of it
+or through a symlink inside the folder to a protected place (`hooks` → `.git/hooks`, a link to `.git/config` or to `.claude`: the CLI resolves the link and
+refuses; measured with Claude Code 2.1.322 on macOS, for existing and new files), and never in `.git` (also a gitdir file), `.claude/settings*.json`,
+`.claude/{hooks,commands,agents,skills}`, `.husky`, `.githooks`, `.vscode/tasks.json` or `.envrc`, in any subfolder and in any letter case (a deny rule per
+name, checked in the tests against the paths that direct mode protects on macOS and Linux). Claude Code itself also refuses other files inside `.claude`
+and `.vscode`. **Windows:** `edit` is refused on a Windows client for now, because its path rules cannot cover Windows name forms (a trailing dot or space,
+8.3 short names such as `CLAUDE~1`); Unicode look-alikes such as `ſ` are not covered either (they are not the same name on APFS or NTFS). **Not protected**,
+and later run or obeyed without a person reading them: `Makefile`, `package.json` scripts, `.github/workflows`, `.pre-commit-config.yaml`, `CLAUDE.md`,
+`AGENTS.md`, `.cursor/rules`, `.mcp.json`, `.vscode/settings.json`, `.gitmodules`. A model that may write can change any of them, so give `edit` only to
+models and folders where a review of the diff follows. `edit` with `--minigw-ro` is an error, and so is `edit` above what the gateway's owner allows for the model (`minigw gw provider tools <provider> edit [--model m]`, default `read`); the error names that command. minigw passes `--tools=<list>`, `--strict-mcp-config` (no MCP tools, not even the claude.ai connectors),
 `--disable-slash-commands` and `--setting-sources=` to claude: with the default setting sources a hook in your user, project or local settings
-still runs (measured with a real run), so for this run **your own settings and hooks are not loaded**. It is accepted inside Claude Code because it
-can only remove tools. While a restriction applies, minigw refuses options that could widen it, also outside Claude Code and with
+still runs (measured with a real run), so for this run **your own settings and hooks are not loaded**. It is accepted inside Claude Code because the set
+is fixed by minigw (read-only, or edit limited to the folder), not chosen by the caller. While a restriction applies, minigw refuses options that could widen it, also outside Claude Code and with
 `MINIGW_ALLOW_UNSAFE_FLAGS=1` (`--tools`, `--allowedTools`, `--mcp-config`, `--permission-mode`, `--dangerously-skip-permissions`, `--settings`,
 `--setting-sources`, `--add-dir`, `--agents`, `--plugin-dir` …); `-c`, `-r` and `--session-id` stay allowed. `--minigw-ro` (also a folder
 saved read-only) means `read` for every model that is not certainly a gateway agent, also when no `--model` is given: the default model then

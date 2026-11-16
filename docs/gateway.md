@@ -185,6 +185,7 @@ minigw gw provider list
 - The gateway passes requests through unchanged, streaming and tools included. Only for `https://api.x.ai` (xAI) it
   first rewrites two things xAI rejects: a `system` message inside `messages` becomes a `<system-reminder>` text block in
   the neighbouring user message, and a tool schema without `required` gets `"required": []`.
+- **Tools of its models:** `minigw gw provider tools <name> [none|read|edit|default] [--model m]` (also Settings → Providers) sets the most a client's Claude Code may give the models of a provider: `read` (default: Read, Grep, Glob), `none`, or `edit` (also Edit and Write inside the client's folder, see [usage.md](usage.md#models)). The gateway lists the level per model (`minigw_tools` in `/v1/models`), the client refuses `--minigw-tools=edit` above it, and the gateway refuses a request whose `x-claude-mini-tools` header is above it. The tools run in the client's Claude Code, so the gateway can only refuse to serve: a modified client can send a lower level than it runs with, and the real protection of the folder is the client's own permission rules.
 - **xAI**: base URL `https://api.x.ai`, billed per token by xAI. Turn the image and video models off in the model list.
 - A provider with more than 20 models starts with none enabled.
 - The URL must be `https`. `http` works only to localhost, a private IP or a `.local` name, with `--insecure`

@@ -290,7 +290,9 @@ const S = {
   key: ["API key", "Ključ API"], keyStored: ["Stored in the system's secret store (Credential Manager); never shown.", "V shrambi skrivnosti sistema (Credential Manager); nikoli prikazan."],
   keyNew: ["Type a new key to replace it", "Vpiši nov ključ za zamenjavo"], noKey: ["No key", "Brez ključa"],
   urlNeedsKey: ["Type the API key again to save a new URL.", "Za nov URL znova vpiši ključ API."],
-  insecure: ["Allow http (localhost, a private IP or a .local name only)", "Dovoli http (le localhost, zasebni IP ali ime .local)"], add: ["Add", "Dodaj"],
+  insecure: ["Allow http (localhost, a private IP or a .local name only)", "Dovoli http (le localhost, zasebni IP ali ime .local)"],
+  gwTools: ["Tools of its models", "Orodja njegovih modelov"], gwToolsHelp: ["The most that a client's Claude Code may give these models. Per model: minigw gw provider tools.", "Največ, kar sme Claude Code odjemalca dati tem modelom. Po modelu: minigw gw provider tools."],
+  gwToolsNone: ["None", "Brez"], gwToolsRead: ["Read, Grep, Glob (default)", "Read, Grep, Glob (privzeto)"], gwToolsEdit: ["Also edit files in the folder", "Tudi urejanje datotek v mapi"], add: ["Add", "Dodaj"],
   models: ["Models", "Modeli"], filter: ["Filter", "Filter"], showAll: ["Show all", "Vsi"], enableAll: ["Enable All", "Vklopi vse"], disableAll: ["Disable All", "Izklopi vse"],
   enabledOf: ["%s of %s enabled", "vklopljenih %s od %s"], loading: ["Loading…", "Nalagam …"], hidden: ["%s disabled models hidden: use the filter or Show all.", "Skritih izklopljenih modelov: %s; uporabi filter ali Vsi."],
   removeGateway: ["Remove provider %s and its key?", "Odstranim ponudnika %s in njegov ključ?"],
@@ -995,12 +997,16 @@ const pages = {
     search.addEventListener("input", render);
     const bulk = on => save(n2, async () => { await api("POST", "/providers/" + enc + "/models", {all: on}); await load(); });
     load();
+    const toolsCap = el("select", {}, ...[["none", "gwToolsNone"], ["read", "gwToolsRead"], ["edit", "gwToolsEdit"]]
+      .map(([v, k]) => el("option", {value: v, textContent: t(k), selected: (g.tools || "read") === v})));
+    toolsCap.addEventListener("change", () => save(n1, () => patch({tools: toolsCap.value})));
     return [
       card(gwIcon(g)[0], gwIcon(g)[1], name, t("gatewayDesc")),
       group(
         row(labelSub(t("enabled"), g.hasKey ? null : t("enterKey")), toggle(g.enabled && g.hasKey, v => save(n1, async () => { await patch({enabled: v}); show("gateway", name); }), !g.hasKey)),
         row(t("name"), nameIn), row(t("url"), url),
         row(labelSub(t("insecure"), null), toggle(g.insecure, v => save(n1, () => patch({insecure: v})))),
+        row(labelSub(t("gwTools"), t("gwToolsHelp")), toolsCap),
         row(labelSub(t("key"), t("keyStoredShort")), key)),
       n1,
       el("h3", {}, el("span", {textContent: t("models")}), el("div", {class: "hbar"},

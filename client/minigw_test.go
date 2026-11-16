@@ -543,15 +543,19 @@ func TestShareJobsOnlyInTheirMode(t *testing.T) {
 	}
 }
 
+// protectedCases / unprotectedCases: shared with TestEditRulesCoverProtectedPaths (tools_test.go): the deny rules of --minigw-tools=edit must cover them.
+var protectedCases = []string{".git/config", ".GIT/hooks/post-checkout", "a/.Git./hooks/x", ".git /x", ".claude/settings.json",
+	".Claude/Settings.Local.json", "sub/.vscode/tasks.json", ".envrc", "x/.ENVRC", ".claude/hooks/x.sh", ".claude/hooks",
+	".Claude/Commands/c.md", ".claude/agents/a.md", "sub/.claude/skills/s/SKILL.md", ".husky/pre-commit", ".husky", "a/.githooks/pre-push"}
+var unprotectedCases = []string{"src/git.go", ".gitignore", ".claude/notes.md", "src/hooks/use.ts", "skills/a.md", ".vscode/settings.json", "envrc"}
+
 func TestSyncNeverTouchesGitOrCommandSettings(t *testing.T) {
-	for _, p := range []string{".git/config", ".GIT/hooks/post-checkout", "a/.Git./hooks/x", ".git /x", ".claude/settings.json",
-		".Claude/Settings.Local.json", "sub/.vscode/tasks.json", ".envrc", "x/.ENVRC", ".claude/hooks/x.sh", ".claude/hooks",
-		".Claude/Commands/c.md", ".claude/agents/a.md", "sub/.claude/skills/s/SKILL.md", ".husky/pre-commit", ".husky", "a/.githooks/pre-push"} {
+	for _, p := range protectedCases {
 		if !protectedPath(p) {
 			t.Errorf("%q not protected", p)
 		}
 	}
-	for _, p := range []string{"src/git.go", ".gitignore", ".claude/notes.md", "src/hooks/use.ts", "skills/a.md", ".vscode/settings.json", "envrc"} {
+	for _, p := range unprotectedCases {
 		if protectedPath(p) {
 			t.Errorf("%q protected", p)
 		}

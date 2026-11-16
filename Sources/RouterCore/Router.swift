@@ -371,6 +371,11 @@ public final class Router: Sendable {
                 return (await error(400, "invalid_request_error", "prompt is too long: \(req.body.count / 4) tokens > \(window) maximum",
                                     rid: rid, writer: writer), model, r.provider.id)
             }
+            // The level the client's Claude Code runs with: above the owner's cap for the model = refused, the upstream is not called.
+            if let level = req.header("x-claude-mini-tools"), !level.isEmpty,
+               let msg = Profiles.toolsLevelRefusal(level: level, cap: r.provider.toolsCap(r.name), provider: r.provider.name, model: r.name) {
+                return (await error(400, "invalid_request_error", msg, rid: rid, writer: writer), model, r.provider.id)
+            }
             guard let key = secrets.get(r.provider.id), !key.isEmpty else {
                 return (await error(503, "api_error", "No API key configured for \(r.provider.name)", rid: rid, writer: writer), model, r.provider.id)
             }
@@ -674,7 +679,8 @@ public final class Router: Sendable {
             guard seen.insert(r.alias).inserted else { return nil }  // prvi ponudnik z imenom zmaga
             let window = r.window.map { " · \($0 / 1000)K" } ?? ""
             return ["type": "model", "id": r.alias, "display_name": "\(r.name) · \(r.provider.name)",
-                    "description": "\(r.provider.name) · \(r.upstream)\(window)", "created_at": created]
+                    "description": "\(r.provider.name) · \(r.upstream)\(window)", "created_at": created,
+                    "minigw_tools": r.provider.toolsCap(r.name), "minigw_provider": r.provider.name]  // the client refuses a level above it (Profiles.editRefusal)
         }
         if config.siri.enabled, siriAllowed, SiriAX.trusted(prompt: false), FileManager.default.fileExists(atPath: SiriAX.appPath) {
             data.append(["type": "model", "id": "claude-siri-ai", "display_name": "Siri AI",
