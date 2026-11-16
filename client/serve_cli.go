@@ -150,7 +150,7 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 			st, err := os.Lstat(filepath.Join(d, ".git"))
 			gitEntry := err == nil && !st.IsDir() // a gitdir: file or a link (linked worktree, submodule)
 			for _, g := range agentGitDenies {
-				if !gitEntry { // nothing can be under a file: the entry itself is denied below
+				if !gitEntry && linuxBindable(d, g) { // nothing can be under a file: the entry itself is denied below
 					gitDeny = append(gitDeny, filepath.Join(d, ".git", filepath.FromSlash(g)))
 				}
 				for _, t := range []string{"Edit", "Write"} { // tudi na Windows, kjer sandboxa ni
@@ -298,6 +298,24 @@ var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondi
 
 // agentGitDenies (P1, 0.7.0): what the owner's git runs or follows inside the top-level `.git`, closed for a Claude CLI agent's shell and file tools: the same list as the Mac
 // (ClaudeCLIConfig.directGitDenies). Objects, index, HEAD, refs and logs stay writable (a commit writes them; the client's guard and the git watch cover direct-mode mounts).
+// linuxBindable (P1): the sandbox of Claude Code on Linux binds /dev/null over a denied path that does not exist (#40), at the first missing component. A real run in Docker showed
+// what that does to git: `shallow` as an empty file breaks `git gc` and repack ("shallow file has changed"), and a missing `logs` (a repository without a commit) as a file breaks the
+// first commit. So of the entries added in 0.7.0 `shallow` is denied only where it exists, and the others only where the path or its parent exists. The older entries (gitDenies) are as before.
+func linuxBindable(dir, g string) bool {
+	if slices.Contains(gitDenies, g) {
+		return true
+	}
+	p := filepath.Join(dir, ".git", filepath.FromSlash(g))
+	if _, err := os.Lstat(p); err == nil {
+		return true
+	}
+	if g == "shallow" {
+		return false
+	}
+	_, err := os.Lstat(filepath.Dir(p))
+	return err == nil
+}
+
 var agentGitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply", "sequencer", "remotes", "branches",
 	"objects/info/alternates", "objects/info/http-alternates", "refs/replace", "logs/refs/replace", "modules"}
 

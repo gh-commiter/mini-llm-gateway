@@ -195,7 +195,7 @@ func TestSandboxDenyWriteHoldsTheGitListAndAGitdirFile(t *testing.T) {
 	}
 	root := t.TempDir()
 	dir, wtree, bare := filepath.Join(root, "repo"), filepath.Join(root, "linked"), filepath.Join(root, "inrepo")
-	for _, d := range []string{filepath.Join(dir, ".git"), wtree, bare} {
+	for _, d := range []string{filepath.Join(dir, ".git", "objects", "info"), filepath.Join(dir, ".git", "refs"), wtree, bare} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -212,13 +212,26 @@ func TestSandboxDenyWriteHoldsTheGitListAndAGitdirFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	deny := st.Sandbox.Filesystem.DenyWrite
-	for _, g := range []string{"config", "hooks", "info", "commondir", "worktrees", "shallow", "grafts", "rebase-merge", "rebase-apply", "sequencer", "remotes", "branches", "objects/info/alternates", "refs/replace", "modules"} {
+	for _, g := range []string{"config", "hooks", "info", "commondir", "worktrees", "grafts", "rebase-merge", "rebase-apply", "sequencer", "remotes", "branches", "objects/info/alternates", "refs/replace", "modules"} {
 		if !slices.Contains(deny, filepath.Join(dir, ".git", filepath.FromSlash(g))) {
 			t.Errorf("missing %s in %v", g, deny)
 		}
 		if slices.Contains(deny, filepath.Join(wtree, ".git", filepath.FromSlash(g))) {
 			t.Errorf("%s under a .git file", g)
 		}
+	}
+	// Linux binds /dev/null over a denied path that does not exist: shallow (breaks git gc) only where it exists, logs/refs/replace (a missing logs breaks the first commit) only where logs/refs does
+	for _, g := range []string{"shallow", "logs/refs/replace"} {
+		if slices.Contains(deny, filepath.Join(dir, ".git", filepath.FromSlash(g))) {
+			t.Errorf("%s denied while it and its parent are missing", g)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", "shallow"), []byte("0000000000000000000000000000000000000000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := s.agentArgs(dir, false, []string{wtree, bare})
+	if !strings.Contains(b[slices.Index(b, "--settings")+1], filepath.Join(dir, ".git", "shallow")) {
+		t.Error("an existing shallow file is writable")
 	}
 	if !slices.Contains(deny, filepath.Join(wtree, ".git")) {
 		t.Error("a .git file is writable")
