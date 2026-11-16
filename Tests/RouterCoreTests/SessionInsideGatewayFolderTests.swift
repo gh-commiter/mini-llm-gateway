@@ -32,7 +32,7 @@ private struct Layout {
 }
 
 @Test func codexKeepsTheSessionInsideTheAppFolderAndNotItsNeighbours() throws {
-    let exe = try #require(["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].first { FileManager.default.isExecutableFile(atPath: $0) })
+    let exe = try requireCodex()
     let l = try Layout(); defer { l.cleanup() }
     let a = Codex.args(cwd: l.s1, extraDirs: [], agent: true, output: l.base.appendingPathComponent("o"), write: true, deny: [l.app.path], tmp: l.tmp.path)
     var cfg: [String] = []

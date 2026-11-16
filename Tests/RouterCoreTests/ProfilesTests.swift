@@ -47,6 +47,9 @@ import Testing
     #expect(Profiles.merge([nil, nil], names: ["mini", "win"]) == nil)
 }
 
+/// Not default QoS: the tests block pool threads while the listener comes up, and a default-QoS queue cannot start when they are all blocked (3-core CI runner).
+private let fakeGatewayQueue = DispatchQueue(label: "fake-gateway", qos: .userInitiated, attributes: .concurrent)
+
 /// Lažen prehod: ena zahteva na povezavo; zabeleži avtorizacijo, model in glavo mape.
 private final class FakeGateway: @unchecked Sendable {
     let listener: NWListener
@@ -62,10 +65,10 @@ private final class FakeGateway: @unchecked Sendable {
         let ready = DispatchSemaphore(value: 0)
         listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
         listener.newConnectionHandler = { [unowned self] c in
-            c.start(queue: .global())
+            c.start(queue: fakeGatewayQueue)
             self.read(c, Data(), models, redirect)
         }
-        listener.start(queue: .global())
+        listener.start(queue: fakeGatewayQueue)
         ready.wait()
     }
 

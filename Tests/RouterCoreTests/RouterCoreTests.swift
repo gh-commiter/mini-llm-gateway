@@ -228,7 +228,9 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(sse.contains(#""text":"""#))
 }
 
-@Test func cliModelsListedOnlyWhenEnabledAndUnknownWhenDisabled() async {
+@Test func cliModelsListedOnlyWhenEnabledAndUnknownWhenDisabled() async throws {
+    // the models are listed once a claude executable is found: GitHub's runner has none
+    if ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true", await ClaudeCLI.executable("") == nil { try Test.cancel("claude is not installed on GitHub's runner") }
     var c = RouterConfig()
     c.providers = []
     let off = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
@@ -1048,7 +1050,9 @@ final class FakeMinigw: @unchecked Sendable {
     func serve() -> Task<Void, Never> {
         Task {
             while !Task.isCancelled {
-                guard case .some(.some(let job)) = await hub.poll(key: key, wait: 1) else { continue }
+                let polled = await hub.poll(key: key, wait: 1)
+                if case .none = polled { try? await Task.sleep(for: .milliseconds(50)) }  // poll answers .none without suspending when the share is gone: see fakeClient in WorktreeTests
+                guard case .some(.some(let job)) = polled else { continue }
                 if job.method == "SYNC-PUSH" {
                     let files = Sync.scan(root, previous: state).files
                     for p in await hub.syncManifest(key: key, Array(files.values))?.need ?? [] {

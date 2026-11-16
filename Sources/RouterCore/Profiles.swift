@@ -11,7 +11,12 @@ public enum Profiles {
     final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         func urlSession(_ s: URLSession, task: URLSessionTask, willPerformHTTPRedirection r: HTTPURLResponse, newRequest: URLRequest) async -> URLRequest? { nil }
     }
-    public static let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
+    /// The delegate queue runs at userInitiated: callers block a thread on a semaphore until it answers (ProjectHTTP, ProfileMux), and on a default-QoS queue that cannot start
+    /// while the cooperative pool threads (one per core) are all blocked the same way.
+    public static let session: URLSession = {
+        let q = OperationQueue(); q.qualityOfService = .userInitiated
+        return URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: q)
+    }()
 
     /// Modeli agentov, ki delajo v mapi odjemalca: le zanje se mapa deli z drugim prehodom.
     public static func isAgentModel(_ m: String) -> Bool {
@@ -684,7 +689,8 @@ public final class ProfileMux: @unchecked Sendable {
     private let shareHooks: [String: @Sendable () -> Bool]  // mapa pri drugem prehodu ob prvi zahtevi zanj
     private let lock = NSLock()
     private var shared: [String: Bool] = [:]
-    private let queue = DispatchQueue(label: "dev.trojar.minigw.mux", attributes: .concurrent)
+    // userInitiated: a default-QoS queue is starved when the cooperative pool threads (one per core) are all blocked waiting for it (a 3-core CI runner)
+    private let queue = DispatchQueue(label: "dev.trojar.minigw.mux", qos: .userInitiated, attributes: .concurrent)
     private var listener: NWListener?
     public private(set) var localPort: UInt16 = 0
     public var localURL: String { "http://127.0.0.1:\(localPort)" }
