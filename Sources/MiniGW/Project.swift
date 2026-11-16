@@ -31,6 +31,7 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
         case "team": try env.team(args)
         case "note": try env.note(args)
         case "usage": try env.usage(args)
+        case "running": try env.running(args)
         default: try env.project(args)
         }
     } catch { fail((error as? ProjectError)?.message ?? "\(error)") }

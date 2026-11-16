@@ -467,8 +467,8 @@ extension Router {
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-copilot", rid: rid, writer: writer, req: req) {
             self.dispatched("copilot")  // the agent process starts (usage event)
-            let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox, dirs: await Self.shares.runDirs(), started: { run?.started($0) }) { [onActivity] s in
-                onActivity(.step(id: rid, text: s))
+            let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox, dirs: await Self.shares.runDirs(), started: { run?.started($0) }) { [onActivity, scratch = config.scratchURL.path] s in
+                onActivity(.step(id: rid, text: RunningRegistry.relStep(s, dir: cwd.path, scratch: scratch)))  // #131: relative to the shared folder
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             // sync: spremembe agenta k odjemalcu pred odgovorom; #82: neprevzete niso uspeh

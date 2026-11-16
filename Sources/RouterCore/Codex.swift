@@ -394,8 +394,8 @@ extension Router {
             self.dispatched("codex")  // the agent process starts (usage event)
             defer { if let projectAuth { Self.restoreProjectAuth(home: projectAuth.home, real: projectAuth.real, since: runStart) } }
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
-                                                         env: codexEnv, dirs: await Self.shares.runDirs(), checked: checked, stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in
-                onActivity(.step(id: rid, text: s))
+                                                         env: codexEnv, dirs: await Self.shares.runDirs(), checked: checked, stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity, scratch = config.scratchURL.path] s in
+                onActivity(.step(id: rid, text: RunningRegistry.relStep(s, dir: cwd.path, scratch: scratch)))  // #131: relative to the shared folder
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             if let thread { Router.quota.queueCodex(home: codexEnv["CODEX_HOME"] ?? Self.realCodexHome, thread: thread, record: { [quotaSender] in quotaSender.probe($0, at: $1) }) }  // rate_limits of this run's log, read off the answer path
@@ -427,29 +427,49 @@ extension Router {
         let head = HTTPResponse.head(status: 200, headers: [
             ("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"), ("request-id", rid), ("x-should-retry", "false"),
         ]) + t.start().reduce(Data(), +)
-        final class Sent: @unchecked Sendable { var head = false }  // piše le pinger; prebere se po njegovem koncu
-        let sent = Sent()
+        // One consumer writes everything, so the head, the held steps, the pings and the steps keep their order (#131): a step
+        // before the head waits for it (an early agent error stays a real HTTP status), later ones go out at once.
+        enum Ev { case head, ping, step(Data) }
+        let (events, feed) = AsyncStream<Ev>.makeStream()
+        let feeder: Task<Bool, Never>? = stream ? Task {
+            var sent = false, held = Data()
+            for await e in events {
+                switch e {
+                case .head: sent = true; try? await writer.write(head + held); held = Data()
+                case .ping: if sent { try? await writer.write(StreamTranslator.keepalive) }
+                case .step(let d): if sent { try? await writer.write(d) } else { held += d }
+                }
+            }
+            return sent
+        } : nil
         let pinger: Task<Void, Never>? = stream ? Task {
             try? await Task.sleep(for: headDelay)
             guard !Task.isCancelled else { return }
-            sent.head = true
-            try? await writer.write(head)
+            feed.yield(.head)
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(10))
                 if Task.isCancelled { break }
-                try? await writer.write(StreamTranslator.keepalive)
+                feed.yield(.ping)
             }
         } : nil
+        if stream { running.onStep(id: rid) { feed.yield(.step(StreamTranslator.stepMark($0))) } }
+        /// The work is over: no more steps or pings; whether the head went out.
+        func stopFeed() async -> Bool {
+            running.onStep(id: rid, nil)
+            pinger?.cancel()
+            await pinger?.value
+            feed.finish()
+            return await feeder?.value ?? false
+        }
         do {
             let (text, extra) = try await work()
             if let req { AgentError.clear(AgentError.key(req, model: t.model, body: body)) }  // #121 (Astra 4): a later success ends the memory of the failure
-            pinger?.cancel()
-            await pinger?.value
+            let headSent = await stopFeed()
             let delta = t.emit(text)
             t.usage = ["output_tokens": text.utf8.count / 4]
             Self.reqState?.tokenSource = "estimated"  // Codex, Grok, Copilot and Siri give no counts: the output is estimated from its length
             if stream {
-                try await writer.write((sent.head ? Data() : head) + delta + t.finish().reduce(Data(), +))
+                try await writer.write((headSent ? Data() : head) + delta + t.finish().reduce(Data(), +))
                 return 200
             }
             let data = (try? JSONSerialization.data(withJSONObject: t.message(), options: [.withoutEscapingSlashes])) ?? Data()
@@ -457,8 +477,7 @@ extension Router {
                                                       contentLength: data.count) + data)
             return 200
         } catch {
-            pinger?.cancel()
-            await pinger?.value
+            let headSent = await stopFeed()
             let (status, type, message) = (error as? SiriError)?.status
                 ?? (error as? Codex.Failure).map { AgentError.classify($0.message) }
                 ?? (error as? Copilot.Failure).map { f -> (Int, String, String) in  // omejitev: stderr le v dnevnik, kot minigw serve
@@ -474,10 +493,10 @@ extension Router {
             Self.reqState?.fail(error is SiriError ? "other" : AgentError.kind(message))
             // #82: neprevzeto delo agenta je končno kot omejitev (ponovitev bi agenta zagnala znova in spremembe uveljavila dvakrat)
             // #121: tudi vsaka druga napaka agenta (ne Siri): ponovitev brez pretoka bi 25-minutni tek zagnala znova
-            if let req, !(error is SiriError), stream, sent.head || writer is EarlyStreamWriter {  // napaka bo dogodek SSE
+            if let req, !(error is SiriError), stream, headSent || writer is EarlyStreamWriter {  // napaka bo dogodek SSE
                 AgentError.note(AgentError.key(req, model: t.model, body: body), message, status: status)
             }
-            if sent.head {
+            if headSent {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": message]]))
                 return status
             }

@@ -21,6 +21,7 @@ public struct ProjectReply: Sendable {
 
 public final class ProjectEnv {
     public static let usageHelp = "minigw usage [--project slug] [--days n] [--json]   your model usage (a developer sees own events in a project, an admin all of it)"
+    public static let runningHelp = "minigw running [--json]                    your requests that run on the gateway now: model, folder, time, steps, last step"
     public static let projectHelp = """
         minigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)
         minigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of
@@ -71,6 +72,7 @@ public final class ProjectEnv {
     public func project(_ args: [String]) throws { try runProject(args) }
     public func note(_ args: [String]) throws { try runNote(args) }
     public func usage(_ args: [String]) throws { try runUsage(args) }
+    public func running(_ args: [String]) throws { try runRunning(args) }
 
     // MARK: gateway answers
 
@@ -449,6 +451,37 @@ public final class ProjectEnv {
         if fl.bool("json") { say(ProjectText.trim(String(decoding: r.data, as: UTF8.self))); return }
         say(slug.isEmpty ? "your own usage, all projects" : "project " + slug)
         printUsage(JSONValue.parse(r.data)?.dict ?? JDict())
+    }
+
+    // MARK: running
+
+    /// GET /minigw/v1/running: the requests of this device that run on the gateway now (the same as the Go client's running).
+    private func runRunning(_ args: [String]) throws {
+        if agent { throw ProjectError(Self.agentRefusal) }
+        guard let fl = try? GoFlags.parse([("json", .bool)], args), fl.positional.isEmpty else {
+            throw ProjectError("usage: minigw running [--json]")
+        }
+        let (c, _) = connect()
+        let r = request(c, "GET", "/minigw/v1/running")
+        if r.status == 404 { throw ProjectError("this gateway is too old for minigw running: update it") }
+        guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+        if fl.bool("json") { say(ProjectText.trim(String(decoding: r.data, as: UTF8.self))); return }
+        let list = (JSONValue.parse(r.data)?.dict["running"]?.array ?? []).map(\.dict)
+        if list.isEmpty { say("nothing of yours is running on the gateway"); return }
+        for x in list {
+            let n = x["steps"]?.int ?? 0
+            var line = "\(ProjectText.oneLine(x["model"]?.string ?? ""))  \(ProjectText.oneLine(x["folder"]?.string ?? ""))  running \(Self.goDuration(Int(x["elapsedSec"]?.int ?? 0)))  \(n) \(n == 1 ? "step" : "steps")"
+            if let last = x["lastStep"]?.string, !last.isEmpty {
+                line += "  last: \(RunningRegistry.shortLine(last, 160)) (\(Self.goDuration(Int(x["stepAgoSec"]?.int ?? 0))) ago)"
+            }
+            say(line)
+        }
+    }
+
+    /// Go's time.Duration.String for whole seconds: 12s, 6m12s, 1h2m3s.
+    static func goDuration(_ sec: Int) -> String {
+        let h = sec / 3600, m = sec % 3600 / 60, s = sec % 60
+        return h > 0 ? "\(h)h\(m)m\(s)s" : m > 0 ? "\(m)m\(s)s" : "\(s)s"
     }
 
     /// One line per day, model and user, the totals (each event once; nested events are inside them), and the gaps.

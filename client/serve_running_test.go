@@ -1,10 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -90,5 +94,64 @@ func TestRunningCommand(t *testing.T) {
 	e.agent = true
 	if e.running(nil) == nil {
 		t.Fatal("an agent run must not use it")
+	}
+}
+
+// Shared with the Mac gateway (RunningTests in Tests/RouterCoreTests): client/testdata/running.json and step-marks.json.
+func TestRunningSharedFixture(t *testing.T) {
+	b, err := os.ReadFile("testdata/running.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fx struct {
+		Runs []struct {
+			ID, Owner, Model, Folder string
+			StartSec                 int
+			Steps                    []struct {
+				At   int
+				Text string
+			}
+		}
+		NowSec int
+		Expect map[string]any
+	}
+	if err := json.Unmarshal(b, &fx); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1_700_000_000, 0)
+	a := &activityLog{}
+	for _, r := range fx.Runs { // newest first, as start() inserts
+		x := activityRun{ID: r.ID, Model: r.Model, owner: r.Owner, folder: r.Folder, started: base.Add(time.Duration(r.StartSec) * time.Second)}
+		for _, st := range r.Steps {
+			x.Step, x.stepAt, x.Steps = st.Text, base.Add(time.Duration(st.At)*time.Second), x.Steps+1
+		}
+		a.runs = slices.Insert(a.runs, 0, x)
+	}
+	for owner, want := range fx.Expect {
+		got, _ := json.Marshal(map[string]any{"running": a.runningAt(owner, base.Add(time.Duration(fx.NowSec)*time.Second))})
+		var g any
+		json.Unmarshal(got, &g)
+		if !reflect.DeepEqual(g, want) {
+			t.Errorf("owner %q: got %s, want %v", owner, got, want)
+		}
+	}
+
+	b, err = os.ReadFile("testdata/step-marks.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sm struct {
+		Cases []struct{ Name, Step, Dir, Scratch, Mark string }
+	}
+	if err := json.Unmarshal(b, &sm); err != nil || len(sm.Cases) == 0 {
+		t.Fatal(err)
+	}
+	for _, c := range sm.Cases {
+		sse := string((&translator{}).stepMark(relStep(c.Step, c.Dir, c.Scratch)))
+		var d struct{ Delta struct{ Text string } }
+		json.Unmarshal([]byte(strings.TrimPrefix(strings.SplitN(sse, "data: ", 2)[1], "")), &d)
+		if d.Delta.Text != c.Mark {
+			t.Errorf("%s: got %q, want %q", c.Name, d.Delta.Text, c.Mark)
+		}
 	}
 }

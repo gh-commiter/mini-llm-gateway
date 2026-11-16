@@ -107,14 +107,15 @@ type runningRun struct {
 }
 
 // running: the requests of one owner (device id or "local") that run now; an empty owner sees nothing.
-func (a *activityLog) running(owner string) []runningRun {
+func (a *activityLog) running(owner string) []runningRun { return a.runningAt(owner, time.Now()) }
+
+func (a *activityLog) runningAt(owner string, now time.Time) []runningRun {
 	out := []runningRun{}
 	if owner == "" {
 		return out
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	now := time.Now()
 	for _, x := range a.runs {
 		if x.owner != owner {
 			continue
