@@ -1,5 +1,14 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Knowledge base as Markdown: `minigw kb export <project> <dir>` writes one Markdown file per published note you may read, with an index; `minigw kb import <project> <dir|file.md> [--class c] [--submit]` creates notes from Markdown files (with `--submit`: proposals for review). A second import of the same files updates or skips, it does not duplicate, and a note edited here since the last import is kept and reported.
+- Copying a team and its knowledge base to another gateway (owner, on the gateway computer): `minigw gw export --team <team> [--project p ...] [--with-private] <file.zip>` writes one file with the team, its projects, members and roles, and the notes; `minigw gw import <file.zip> [--dry-run] [--map old=new ...]` on the other gateway shows what would be created and then imports in one step. The file carries no devices, tokens, keys, usage or gateway identity; private notes only with `--with-private`; users who do not exist on the target are created inactive and without devices. It is a one-way copy, not a sync, and it is not a database backup.
+
+### Known limits
+- Database downgrade: this version's database schema is 13. An older program refuses it; the way back is restoring the snapshot written before the first migration.
+
 ## 0.7.9
 
 ### Changed

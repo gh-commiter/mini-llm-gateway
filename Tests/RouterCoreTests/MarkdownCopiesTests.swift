@@ -20,7 +20,7 @@ import Testing
             if path == "/minigw/v1/projects/demo" { return ProjectReply(status: 200, data: Data(#"{"id":1}"#.utf8)) }
             if path.contains("/notes?") { return ProjectReply(status: 200, data: Data(#"{"notes":[{"id":17}]}"#.utf8)) }
             if path.hasSuffix("/notes/17") { return ProjectReply(status: 200, data: note) }
-            #expect(path == "/minigw/v1/projects/1/kb/import")
+            #expect(path == "/minigw/v1/projects/1/kb/import", "\(method) \(path)")
             if !limitedImport { limitedImport = true; return ProjectReply(status: 429, retryAfter: "1") }
             let input = try! JSONSerialization.jsonObject(with: body!) as! [String: Any]
             #expect(input["markdown"] as? String == expected)

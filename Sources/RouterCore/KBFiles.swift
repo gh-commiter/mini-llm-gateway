@@ -95,7 +95,11 @@ extension ProjectEnv {
             try handle.close()
             guard data.count < 96 << 10 else { throw ProjectError("too large") }
             guard let text = String(data: data, encoding: .utf8) else { throw ProjectError("the note must be text (UTF-8)") }
-            let rel = isDir ? String(file.path.dropFirst(root.path.count + 1)) : file.lastPathComponent
+            // The enumerator returns resolved paths (/private/var/…) also for a root given through a symbolic link (/var/…): compare resolved
+            // paths, or the relative path (the stable import key) would start in the middle of a folder name.
+            let rootPath = root.resolvingSymlinksInPath().path, full = file.resolvingSymlinksInPath().path
+            guard !isDir || full.hasPrefix(rootPath + "/") else { throw ProjectError("not inside the import folder: " + file.path) }
+            let rel = isDir ? String(full.dropFirst(rootPath.count + 1)) : file.lastPathComponent
             let payload = try JSONSerialization.data(withJSONObject: ["markdown": text, "path": rel, "class": fl.string("class"), "submit": fl.bool("submit")])
             guard payload.count <= 512 << 10 else { throw ProjectError("too large") }
             let r = try request("POST", base + "/kb/import", payload)
