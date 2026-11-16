@@ -60,4 +60,13 @@ import Testing
             #expect(throws: ProjectError.self) { try env.team(args) }
         }
     }
+
+    @Test func malformedAnswersAreErrors() throws {
+        for (args, body) in [(["list"], "{}"), (["list"], "oops"), (["show", "5"], "[]"), (["show", "5"], "oops"), (["show", "Alpha"], "{}")] {
+            var out = ""
+            let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { out += $0 }, err: { _ in }, agent: false, send: { _, _, _, _, _ in ProjectReply(status: 200, data: Data(body.utf8)) })
+            #expect(throws: ProjectError.self) { try env.team(args) }
+            #expect(out == "")
+        }
+    }
 }

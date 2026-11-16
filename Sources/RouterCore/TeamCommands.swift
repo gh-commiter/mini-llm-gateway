@@ -56,6 +56,8 @@ extension ProjectEnv {
         ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["name"]?.string ?? "")\(d["archived"]?.bool == true ? "  (archived)" : "")")
     }
 
+    static let malformed = ProjectError("the gateway sent an answer minigw cannot read")
+
     public func team(_ args: [String]) throws {
         if agent { throw ProjectError(Self.agentRefusal) }
         let usage = ProjectError("usage:\n" + Self.teamHelp)
@@ -70,7 +72,7 @@ extension ProjectEnv {
             if (Int64(ref) ?? 0) <= 0 {
                 let r = send(c, "GET", path + "?archived=1", [:], nil)
                 guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
-                let teams = JSONValue.parse(r.data)?.array ?? []
+                guard case .arr(let teams)? = JSONValue.parse(r.data) else { throw Self.malformed }
                 guard let t = teams.first(where: { ($0.dict["name"]?.string ?? "").caseInsensitiveCompare(ref) == .orderedSame }) else { throw Self.gatewayError(404, Data(), nil) }
                 ref = String(t.dict["id"]?.int ?? 0)
             }
@@ -80,10 +82,11 @@ extension ProjectEnv {
         guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
         if fl.bool("json") { say(ProjectText.trim(String(decoding: r.data, as: UTF8.self))); return }
         if pos[0] == "list" {
-            let teams = JSONValue.parse(r.data)?.array ?? []
+            guard case .arr(let teams)? = JSONValue.parse(r.data) else { throw Self.malformed }
             for t in teams { say(Self.teamLine(t.dict)) }
             if teams.isEmpty { say("no teams: ask the gateway owner to add you to one") }
         } else {
+            guard case .obj? = JSONValue.parse(r.data) else { throw Self.malformed }
             let d = JSONValue.parse(r.data)?.dict ?? JDict()
             say(Self.teamLine(d))
             for m in d["members"]?.array ?? [] {
