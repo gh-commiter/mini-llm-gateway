@@ -308,7 +308,7 @@ settings is removed), and the member routes refuse requests that come from an ag
 
 - **What the agent can read.** A run with a project gets a read-only notes capability (run, user, device, project,
   epoch) in the gateway, independent of "May ask other models". The run port then also serves
-  `GET /minigw/v1/notes` and `GET /minigw/v1/notes/{id}` (and nothing else new), and `minigw note list|read` work
+  `GET /minigw/v1/kb/search`, `GET /minigw/v1/notes` and `GET /minigw/v1/notes/{id}`, and `minigw kb search` or `minigw note list|read` work
   inside the run. The notes are the `structure` and `data` notes of the run's project that the user may read now, plus
   the notes that grants **to the run's project** give. `private` notes are never given to a run, and neither are other
   projects the user happens to belong to. No project id from the agent is read (path, query, header or body). A nested
@@ -576,3 +576,23 @@ stays on the gateway computer. See it in **Settings → Sessions** or with `mini
   powerful permission.
 - **Release downloads** are checked against `SHA256SUMS`, which is signed with a key that is not on GitHub
   ([install.md → Check a download](install.md#check-a-download)).
+
+# Permission-aware KB search
+
+Schema 12 adds a rebuildable FTS5 title/body index over published notes only.
+The Go core resolves the authenticated member's project/class/author scope, or
+revalidates the run capability, before searching. SQL materializes authorized
+metadata, intersects it with the FTS index, orders and limits those candidates,
+then loads only their bounded body previews. No body scan, global top-N filter,
+corpus-based ranking or hidden total count is used. Results use revision time
+and note ID, so hidden content cannot change another note's score.
+Indexed project/class/author tokens also constrain MATCH itself; query words
+match only the title and body columns, never these internal permission tokens.
+
+Note creation, revision, deletion, reclassification and submission acceptance
+update the index in the same transaction. Explicit index writes preserve
+`trusted_schema=0`; no virtual-table triggers are needed. The query language is
+bounded literal words with AND, with a 250 ms deadline. The shared core enforces
+20 hits and an 8 KiB JSON budget. Swift forwards trusted context and results.
+Both gateways advertise `kb search` alongside `note list|read` to project runs,
+without injecting bodies. Search results remain reference data, never orders.

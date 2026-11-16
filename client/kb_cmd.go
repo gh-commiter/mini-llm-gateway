@@ -15,9 +15,11 @@ import (
 	"time"
 )
 
-const kbHelp = `minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
+const kbHelp = `minigw kb search [<project>] <query> [--json]
+minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
 minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)`
-const kbAdminHelp = `minigw gw kb review [<project>]   pending submissions, including bodies
+const kbAdminHelp = `minigw gw kb rebuild-search
+minigw gw kb review [<project>]   pending submissions, including bodies
 minigw gw kb accept <id>
 minigw gw kb reject <id> [--reason text]`
 
@@ -29,6 +31,9 @@ func submissionResult(v core.Submission) string {
 }
 
 func (e *projectEnv) kb(args []string) error {
+	if len(args) > 0 && args[0] == "search" {
+		return e.kbSearch(args[1:])
+	}
 	if e.agent {
 		return errors.New(agentRefusal)
 	}
@@ -166,10 +171,77 @@ func (e *projectEnv) kb(args []string) error {
 	return nil
 }
 
+func searchLine(v core.SearchHit) string {
+	return clean(fmt.Sprintf("%d  %s  project %d  %s  %s\n%s", v.ID, v.Title, v.Project, v.Class, v.Updated.Format(time.RFC3339Nano), v.Snippet))
+}
+func (e *projectEnv) kbSearch(args []string) error {
+	fs := flag.NewFlagSet("kb search", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "")
+	pos, err := parseFlags(fs, args)
+	if err != nil || len(pos) < 1 || len(pos) > 2 {
+		return errors.New("usage: minigw kb search [<project>] <query> [--json]")
+	}
+	var c connection
+	base := "/minigw/v1/kb/search"
+	if e.runConn != nil {
+		if len(pos) != 1 {
+			return errors.New("inside an agent run the project is the run's own: a project argument is not accepted")
+		}
+		c = *e.runConn
+	} else {
+		if e.agent {
+			return errors.New(agentRefusal)
+		}
+		if len(pos) == 1 {
+			cc, link, err := e.linkedProject("")
+			if err != nil {
+				return err
+			}
+			c = cc
+			base = fmt.Sprintf("%s/%d/kb/search", apiProjects, link.Project)
+		} else {
+			c, _ = e.connect()
+			st, b, h := e.do(c, "GET", apiProjects+"/"+url.PathEscape(pos[0]), nil, nil)
+			if st != 200 {
+				return gatewayError(st, b, h)
+			}
+			var p struct{ ID int64 }
+			if err = json.Unmarshal(b, &p); err != nil {
+				return err
+			}
+			base = fmt.Sprintf("%s/%d/kb/search", apiProjects, p.ID)
+		}
+	}
+	st, b, h := e.do(c, "GET", base+"?q="+url.QueryEscape(pos[len(pos)-1]), nil, nil)
+	if st != 200 {
+		return gatewayError(st, b, h)
+	}
+	if *asJSON {
+		e.say(strings.TrimSpace(string(b)))
+		return nil
+	}
+	var pg core.SearchPage
+	if err = json.Unmarshal(b, &pg); err != nil {
+		return err
+	}
+	for _, v := range pg.Hits {
+		e.say(searchLine(v))
+	}
+	if len(pg.Hits) == 0 {
+		e.say("no hits")
+	}
+	return nil
+}
+
 func kbAdmin(a *adminClient, pos []string, reason string) {
 	usage := func() { fail("usage:\n" + kbAdminHelp) }
 	if len(pos) < 2 {
 		usage()
+		return
+	}
+	if len(pos) == 2 && pos[1] == "rebuild-search" {
+		a.do("POST", "/kb/search/rebuild", nil, nil)
+		say("search index rebuilt")
 		return
 	}
 	if pos[1] == "review" && len(pos) <= 3 {

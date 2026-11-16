@@ -130,7 +130,8 @@ files. See [docs/usage.md → Work modes](docs/usage.md#work-modes-what-happens-
 A gateway can keep projects for a team: the owner creates users, binds each person's device to a user, creates a project
 and adds members (`minigw gw user|bind|project|member|grant`). A member links a folder to a project
 (`minigw project link`), pushes and reads short notes (`minigw note`), and an agent started in that folder can read the
-project's notes. `minigw usage` shows model usage per project, user and model. It works on the Mac app and on
+project's notes. `minigw kb search [<project>] <query>` searches published notes within the caller's permissions;
+inside an agent run, omit the project to use only that run's scope. `minigw usage` shows model usage per project, user and model. It works on the Mac app and on
 `minigw serve`; the Mac app keeps the database in a helper. Backups with `minigw gw core backup`. Walk-through:
 [docs/usage.md → Projects in 10 minutes](docs/usage.md#projects-in-10-minutes).
 

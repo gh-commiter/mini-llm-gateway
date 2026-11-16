@@ -44,5 +44,22 @@ import Testing
         try env.note(["read", "7", "--json"])
         #expect(out == body + "\n")
         #expect(throws: ProjectError.self) { try env.kb(["submissions"]) }
+        for c in f["runSearch"] as! [[String: Any]] {
+            var out = "", calls = 0
+            let env = ProjectEnv(connect: { (conn, "") }, state: "", cwd: "", stdin: { Data() }, out: { out += $0 }, err: { _ in }, agent: true, runConn: conn, send: { _, m, p, _, _ in
+                calls += 1
+                #expect(m == "GET" && p == c["path"] as! String)
+                #expect(Router.notesPath(m, String(p.split(separator: "?")[0])))
+                return ProjectReply(status: 200, data: Data((c["body"] as! String).utf8))
+            })
+            if let error = c["error"] as? String, !error.isEmpty {
+                do { try env.kb(c["args"] as! [String]); Issue.record("expected refusal") }
+                catch { #expect(String(describing: error) == c["error"] as! String) }
+                #expect(calls == 0)
+            } else {
+                try env.kb(c["args"] as! [String])
+                #expect(out == c["out"] as! String && calls == 1)
+            }
+        }
     }
 }

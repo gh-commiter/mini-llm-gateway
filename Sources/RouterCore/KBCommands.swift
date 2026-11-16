@@ -3,10 +3,12 @@ import CoreFoundation
 
 extension ProjectEnv {
     public static let kbHelp = """
+        minigw kb search [<project>] <query> [--json]
         minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
         minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)
         """
     public static let kbAdminHelp = """
+        minigw gw kb rebuild-search
         minigw gw kb review [<project>]   pending submissions, including bodies
         minigw gw kb accept <id>
         minigw gw kb reject <id> [--reason text]
@@ -25,6 +27,7 @@ extension ProjectEnv {
     }
 
     public func kb(_ args: [String]) throws {
+        if args.first == "search" { try kbSearch(Array(args.dropFirst())); return }
         if agent { throw ProjectError(Self.agentRefusal) }
         let usage = ProjectError("usage:\n" + Self.kbHelp)
         guard let fl = try? GoFlags.parse([("class", .string), ("title", .string), ("key", .string), ("replaces", .int), ("revision", .int), ("json", .bool)], args) else { throw usage }
@@ -86,12 +89,46 @@ extension ProjectEnv {
         for v in all { say(Self.submissionLine(v.dict)) }
         if all.isEmpty { say("no submissions") }
     }
+
+    static func searchLine(_ d: JDict) -> String {
+        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  project \(d["project"]?.int ?? 0)  \(d["class"]?.string ?? "")  \(d["updated"]?.string ?? "")\n\(d["snippet"]?.string ?? "")")
+    }
+    func kbSearch(_ args: [String]) throws {
+        let usage = ProjectError("usage: minigw kb search [<project>] <query> [--json]")
+        guard let fl = try? GoFlags.parse([("json", .bool)], args), (1...2).contains(fl.positional.count) else { throw usage }
+        let pos = fl.positional
+        let c: ProjectConn
+        var base = "/minigw/v1/kb/search"
+        if let rc = runConn {
+            guard pos.count == 1 else { throw ProjectError("inside an agent run the project is the run's own: a project argument is not accepted") }
+            c = rc
+        } else {
+            if agent { throw ProjectError(Self.agentRefusal) }
+            if pos.count == 1 {
+                let (cc, link) = try linkedProject(""); c = cc
+                base = "\(Self.apiProjects)/\(link.project)/kb/search"
+            } else {
+                let (cc, _) = connect(); c = cc
+                let r = request(c, "GET", Self.apiProjects + "/" + ProjectText.pathEscape(pos[0]), [:], nil)
+                guard r.status == 200 else { throw gwError(r) }
+                guard let id = JSONValue.parse(r.data)?.dict["id"]?.int else { throw Self.malformed }
+                base = "\(Self.apiProjects)/\(id)/kb/search"
+            }
+        }
+        let r = request(c, "GET", base + "?q=" + ProjectText.queryEscape(pos.last!), [:], nil)
+        guard r.status == 200 else { throw gwError(r) }
+        if fl.bool("json") { say(ProjectText.trim(String(decoding: r.data, as: UTF8.self))); return }
+        guard let hits = JSONValue.parse(r.data)?.dict["hits"]?.array else { throw Self.malformed }
+        for h in hits { say(Self.searchLine(h.dict)) }
+        if hits.isEmpty { say("no hits") }
+    }
 }
 
 extension AdminCommands {
     func kb(_ pos: [String], reason: String) throws {
         let usage = fail("usage:\n" + ProjectEnv.kbAdminHelp)
         guard pos.count >= 2 else { throw usage }
+        if pos.count == 2 && pos[1] == "rebuild-search" { _ = try request("POST", "/kb/search/rebuild"); say("search index rebuilt"); return }
         if pos[1] == "review" && pos.count <= 3 {
             let project = pos.count == 3 ? try projectID(pos[2]) : 0
             var after: Int64 = 0

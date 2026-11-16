@@ -450,6 +450,9 @@ func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, rea
 				v.NoteID = v.Replaces
 				rev = old.Revision + 1
 			}
+			if e = syncSearch(tx, v.NoteID); e != nil {
+				return e
+			}
 			if e = saveProvenance(tx, v.NoteID, rev, v.Provenance); e != nil {
 				return e
 			}

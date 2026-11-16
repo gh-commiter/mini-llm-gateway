@@ -92,6 +92,30 @@
           ]
         ]
       }
+    },
+    {
+      "name": "rebuild search",
+      "args": [
+        "kb",
+        "rebuild-search"
+      ],
+      "responses": [
+        {
+          "match": "POST /kb/search/rebuild",
+          "status": 200,
+          "body": "{\"rebuilt\":true}"
+        }
+      ],
+      "want": {
+        "out": "search index rebuilt\n",
+        "requests": [
+          [
+            "POST",
+            "/kb/search/rebuild",
+            ""
+          ]
+        ]
+      }
     }
   ],
   "member": [
@@ -234,7 +258,101 @@
           ""
         ]
       ]
+    },
+    {
+      "args": [
+        "search",
+        "fakture",
+        "comet ž"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/fakture",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/search?q=comet+%C5%BE",
+          "status": 200,
+          "body": "{\"hits\":[{\"id\":7,\"title\":\"Proposal ž\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Reference <text>\",\"updated\":\"2026-11-16T10:00:00Z\"}]}"
+        }
+      ],
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/fakture",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/search?q=comet+%C5%BE",
+          ""
+        ]
+      ],
+      "out": "7  Proposal ž  project 1  structure  2026-11-16T10:00:00Z\nReference <text>\n"
+    },
+    {
+      "args": [
+        "search",
+        "fakture",
+        "comet ž",
+        "--json"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/fakture",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/search?q=comet+%C5%BE",
+          "status": 200,
+          "body": "{\"hits\":[{\"id\":7,\"title\":\"Proposal ž\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Reference <text>\",\"updated\":\"2026-11-16T10:00:00Z\"}]}"
+        }
+      ],
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/fakture",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/search?q=comet+%C5%BE",
+          ""
+        ]
+      ],
+      "out": "{\"hits\":[{\"id\":7,\"title\":\"Proposal ž\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Reference <text>\",\"updated\":\"2026-11-16T10:00:00Z\"}]}\n"
     }
   ],
-  "noteJSON": "{\"id\":7,\"body\":\"published\",\"provenance\":{\"actorKind\":\"member\",\"user\":2,\"device\":\"device\",\"project\":1,\"sourceKind\":\"pushed note\",\"sourceReference\":\"\",\"contentHash\":\"abc\",\"authored\":\"2026-11-16T10:00:00Z\",\"received\":\"2026-11-16T10:00:00Z\",\"reviewer\":\"owner\",\"reviewed\":\"2026-11-16T11:00:00Z\"}}"
+  "noteJSON": "{\"id\":7,\"body\":\"published\",\"provenance\":{\"actorKind\":\"member\",\"user\":2,\"device\":\"device\",\"project\":1,\"sourceKind\":\"pushed note\",\"sourceReference\":\"\",\"contentHash\":\"abc\",\"authored\":\"2026-11-16T10:00:00Z\",\"received\":\"2026-11-16T10:00:00Z\",\"reviewer\":\"owner\",\"reviewed\":\"2026-11-16T11:00:00Z\"}}",
+  "runSearch": [
+    {
+      "args": [
+        "search",
+        "comet ž"
+      ],
+      "path": "/minigw/v1/kb/search?q=comet+%C5%BE",
+      "body": "{\"hits\":[{\"id\":7,\"title\":\"Proposal ž\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Reference <text>\",\"updated\":\"2026-11-16T10:00:00Z\"}]}",
+      "out": "7  Proposal ž  project 1  structure  2026-11-16T10:00:00Z\nReference <text>\n"
+    },
+    {
+      "args": [
+        "search",
+        "comet ž",
+        "--json"
+      ],
+      "path": "/minigw/v1/kb/search?q=comet+%C5%BE",
+      "body": "{\"hits\":[{\"id\":7,\"title\":\"Proposal ž\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Reference <text>\",\"updated\":\"2026-11-16T10:00:00Z\"}]}",
+      "out": "{\"hits\":[{\"id\":7,\"title\":\"Proposal ž\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Reference <text>\",\"updated\":\"2026-11-16T10:00:00Z\"}]}\n"
+    },
+    {
+      "args": [
+        "search",
+        "other",
+        "comet"
+      ],
+      "error": "inside an agent run the project is the run's own: a project argument is not accepted"
+    }
+  ]
 }

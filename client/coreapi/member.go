@@ -216,6 +216,16 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			return a.errResponse(err)
 		}
 		return resp(200, toProject(pr))
+	case len(seg) == 3 && seg[1] == "kb" && seg[2] == "search" && r.Method == "GET":
+		pid, ok := posID(seg[0])
+		if !ok {
+			return a.errResponse(core.ErrInvalid{What: "project id"})
+		}
+		v, e := st.SearchNotes(ctx, p, pid, q.Get("q"))
+		if e != nil {
+			return a.errResponse(e)
+		}
+		return resp(200, v)
 	case len(seg) >= 3 && seg[1] == "kb" && seg[2] == "submissions" && len(seg) <= 4:
 		pid, ok := posID(seg[0])
 		if !ok {
@@ -354,10 +364,18 @@ func (a *API) run(ctx context.Context, c Context, r Request) Response {
 	if st == nil {
 		return unavailable()
 	}
-	if c.Run == nil || r.Method != "GET" || !(r.Path == notesPath || strings.HasPrefix(r.Path, notesPath+"/")) {
+	if c.Run == nil || r.Method != "GET" || !(r.Path == "/minigw/v1/kb/search" || r.Path == notesPath || strings.HasPrefix(r.Path, notesPath+"/")) {
 		return a.errResponse(core.ErrNotFound)
 	}
 	cap := *c.Run
+	if r.Path == "/minigw/v1/kb/search" {
+		q, _ := url.ParseQuery(r.RawQuery)
+		v, e := st.RunSearchNotes(ctx, cap, c.Approved, q.Get("q"))
+		if e != nil {
+			return a.errResponse(e)
+		}
+		return resp(200, v)
+	}
 	rest := strings.TrimPrefix(strings.TrimPrefix(r.Path, notesPath), "/")
 	q, _ := url.ParseQuery(r.RawQuery)
 	if rest == "" {

@@ -3443,7 +3443,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -3468,7 +3468,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -3493,7 +3493,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -3519,7 +3519,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -3544,7 +3544,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -3567,7 +3567,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -3591,7 +3591,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -3714,7 +3714,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
     "requests": [],
     "links": [
      "fakture:7@proj"

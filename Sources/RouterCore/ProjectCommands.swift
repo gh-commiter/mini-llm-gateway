@@ -37,7 +37,7 @@ public final class ProjectEnv {
            (private = visible to you and the project admins)
         """
     static let privateNote = "private = visible to you and the project admins"
-    static let agentRefusal = "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available"
+    static let agentRefusal = "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available"
     public static let maxNoteBody = 64 << 10
     static let maxNoteTitle = 256
     static let pushRetries = 3
@@ -112,7 +112,7 @@ public final class ProjectEnv {
         return Self.gatewayError(r.status, r.data, r.retryAfter)
     }
 
-    private func request(_ c: ProjectConn, _ method: String, _ path: String, _ headers: [String: String] = [:], _ body: Data? = nil) -> ProjectReply {
+    func request(_ c: ProjectConn, _ method: String, _ path: String, _ headers: [String: String] = [:], _ body: Data? = nil) -> ProjectReply {
         send(c, method, path, headers, body)
     }
 
@@ -253,7 +253,7 @@ public final class ProjectEnv {
     }
 
     /// The project of the current folder for the note commands; --project only confirms it.
-    private func linkedProject(_ flagSlug: String) throws -> (ProjectConn, ProjectLink) {
+    func linkedProject(_ flagSlug: String) throws -> (ProjectConn, ProjectLink) {
         let (c, gw) = connect()
         let st = try loadState()
         let res = try Projects.resolve(st, gateway: gw, cwd: cwd)

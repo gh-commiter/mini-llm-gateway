@@ -462,7 +462,7 @@ with a project when "May ask other models" is off). A removed device, a changed 
 the reads of runs already going. Conversations are keyed by user, project and epoch, and Codex, Grok and Copilot
 keep their transcripts in a home of their own per user, project and epoch under `Scratch/state` (hidden from every
 agent). Usage events are sent to the helper, which stores them; while the helper is down they wait in the app (4096
-at most, a longer outage becomes a gap). The Claude CLI agent reads notes with `minigw note list|read` only with
+at most, a longer outage becomes a gap). The Claude CLI agent reads notes with `minigw kb search` or `minigw note list|read` only with
 **Allow local tools**, Codex only with its network switch on.
 
 ## Usage events and quota (0.6.0, `minigw serve` and the Mac app)
@@ -598,4 +598,18 @@ Members propose notes with `minigw kb submit <project> <file|->`; owners review 
 Acceptance rechecks writer access and replacement revision. Ordinary note push
 continues publishing directly. See usage.md for input limits and the rule excluding
 customer names, policy numbers, amounts and raw records from every KB class.
-No imports, synthesis, search or automatic expiry are enabled in this beta.
+Imports, synthesis and automatic expiry remain deferred.
+
+# Published KB search maintenance
+
+Schema 12 backfills an FTS5 title/body index from published notes; pending
+submissions stay outside it. Existing databases receive the usual pre-migration
+snapshot, and older binaries refuse the newer schema. Snapshot failure blocks
+migration. Backups and snapshots contain note content and the search index.
+
+The owner can run `minigw gw kb rebuild-search` (admin
+`POST /kb/search/rebuild`) to rebuild the index transactionally, with a metadata
+audit event. This maintenance route does not search or bypass member/run policy.
+Index maintenance stays in the Go core with `trusted_schema=0`. Runtime FTS5
+creation and mutation tests are release gates; cross-compilation alone does not
+prove runtime behavior on another OS.

@@ -416,6 +416,9 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 			return err
 		}
 		id, _ := r.LastInsertId()
+		if err = syncSearch(tx, id); err != nil {
+			return err
+		}
 		if err = saveProvenance(tx, id, 1, writerProvenance(p, project, in, fromMs(now))); err != nil {
 			return err
 		}
@@ -482,6 +485,9 @@ func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revisi
 				return err
 			}
 		}
+		if err = syncSearch(tx, id); err != nil {
+			return err
+		}
 		if err = saveProvenance(tx, id, old.Revision+1, writerProvenance(p, project, in, fromMs(ms(s.now())))); err != nil {
 			return err
 		}
@@ -509,6 +515,9 @@ func (s *Store) DeleteNote(ctx context.Context, p Principal, project, id, revisi
 			return lim
 		}
 		if _, err := tx.Exec(`DELETE FROM notes WHERE id=?`, id); err != nil {
+			return err
+		}
+		if err := syncSearch(tx, id); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`UPDATE idempotency SET result='' WHERE note_id=?`, id); err != nil {

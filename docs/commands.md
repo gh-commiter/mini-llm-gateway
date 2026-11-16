@@ -224,3 +224,17 @@ Submission input matches note push; it requires existing project write access.
 Review is owner-only. Pending entries are visible only to their author and the
 owner. Acceptance publishes a new note or replacement revision. Note push still
 publishes immediately. `minigw note read <id> --json` includes provenance.
+
+## KB lexical search
+
+```text
+minigw kb search [<project>] <query> [--json]
+minigw gw kb rebuild-search
+```
+
+Quote a multi-word query. The optional project is an ID or slug; without it,
+search uses the linked folder's project. A called agent must omit the project
+and searches only its run capability. Results contain at most 20 hits and 8 KiB,
+with note ID, title, project, class, a bounded preview and revision time, ordered
+by revision time then ID. `note list|read` remain available. The owner rebuild
+command repairs the published-note index; it grants no search access.

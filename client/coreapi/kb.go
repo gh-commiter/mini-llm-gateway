@@ -73,6 +73,12 @@ func submissionPage(v []core.Submission) Response {
 	return resp(200, map[string]any{"submissions": v, "next": next})
 }
 func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []string, q url.Values, body []byte) Response {
+	if len(seg) == 3 && seg[1] == "search" && seg[2] == "rebuild" && method == "POST" {
+		if e := st.RebuildSearch(ctx); e != nil {
+			return a.errResponse(e)
+		}
+		return resp(200, map[string]bool{"rebuilt": true})
+	}
 	if len(seg) < 2 || seg[1] != "submissions" {
 		return a.errResponse(core.ErrNotFound)
 	}

@@ -118,4 +118,48 @@ func TestKBClientGatewayFlow(t *testing.T) {
 	if note.Body != "Reviewed knowledge" || note.Provenance.Device != devID(c.f.dev["ana"]) || note.Provenance.Reviewer != "owner" {
 		t.Fatal(out.String())
 	}
+	out.Reset()
+	if err := e.kb([]string{"search", "knowledge"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Proposal") || !strings.Contains(out.String(), "Reviewed knowledge") {
+		t.Fatal(out.String())
+	}
+}
+
+func TestKBRunSearchParity(t *testing.T) {
+	var f struct {
+		RunSearch []struct {
+			Args                   []string
+			Path, Body, Out, Error string
+		}
+	}
+	if err := json.Unmarshal(srcFile(t, "testdata/teams-kb-submissions.json"), &f); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.RunSearch {
+		var out bytes.Buffer
+		calls := 0
+		e := &projectEnv{agent: true, runConn: &connection{}, out: &out, do: func(_ connection, m, p string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+			calls++
+			if m != "GET" || p != c.Path || !notesPath(m, p[:strings.Index(p, "?")]) {
+				t.Fatal(m, p)
+			}
+			return 200, []byte(c.Body), nil
+		}}
+		err := e.kb(c.Args)
+		if c.Error != "" {
+			if err == nil || err.Error() != c.Error || calls != 0 {
+				t.Fatal(err, calls)
+			}
+			continue
+		}
+		if err != nil || out.String() != c.Out || calls != 1 {
+			t.Fatal(err, out.String(), calls)
+		}
+	}
+	e := &projectEnv{agent: true}
+	if err := e.kb([]string{"search", "comet"}); err == nil || err.Error() != agentRefusal {
+		t.Fatal(err)
+	}
 }
