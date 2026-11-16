@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+- Fixed (both gateways, #121): a read-only Grok agent run (`minigw --minigw-ro`, a worktree or "Allow writing" off) is told that shell commands cannot be approved and that it must look at files with `list_dir`, `read_file` and `grep`. Before, Grok reached for `find` or `ls`, a headless run cannot approve a command, and the request ended in 502 "permission required". If a run still stops on a command it gets a clear 400 ("grok needed approval to run a command, which a headless run cannot give: a read-only run runs no commands. Ask for file tools only, or run without --minigw-ro …") instead of a 502 that Claude Code shows as "try again". Commands in a read-only run stay off on purpose: the read-only profile still lets a command read the whole disk and use the network.
+- Fixed (both gateways, #121): every agent failure that happens after the stream has started (the 200 head goes out after 30 seconds) is remembered for a minute, so the non-streaming repeat that Claude Code sends after a stream error gets the same error at once instead of starting the agent again. Before, only usage limits and changes that could not be copied back were remembered, so a failed 25 minute run ran twice.
+
+### Known problems
+- A long Grok run (#121: 8 minutes and more on 0.5.29) was reported to end in 502 and, on 0.5.29, to be retried ten times by Claude Code. Not reproduced here: the Grok CLI itself finished a silent 11 minute command, and the gateway keeps the stream alive with a ping every 10 seconds. The ten retries were the 0.5.29 answer: a 502 without `x-should-retry: false`; since 0.6.x an agent failure carries it. The cause of the 502 at 8 minutes is therefore still open (Grok's own error is shown in the message; report it with the request id).
+- A Grok run that must run a command (a shell) cannot be read-only: a headless Grok cannot ask for approval.
+
 ## 0.6.7
 
 ### New

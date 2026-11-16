@@ -257,6 +257,19 @@ final class HeadWaitWriter: ResponseWriter, @unchecked Sendable {
     await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": req.header("x-claude-mini-session")!],
                                 body: #"{"model":"claude-grok","messages":[{"role":"user","content":"hi"}]}"#), writer: retry)
     #expect(retry.status == 502 && retry.text.contains("x-should-retry: false") && retry.text.contains("busy"))
+    // #121: every agent failure after the head is final (a 25-minute run does not start again), and an approval refusal is a 400, not a temporary 502
+    #expect(AgentError.classify(Grok.needsApproval) == (400, "invalid_request_error", Grok.needsApproval))
+    let refused = HeadWaitWriter()
+    _ = await router.replyWhenDone(body: ["model": "claude-grok", "stream": true], model: "claude-grok", rid: "req_6", writer: refused, req: req,
+                                   headDelay: .milliseconds(10)) {
+        await refused.waitForWrite()
+        throw Grok.Failure(message: Grok.needsApproval)
+    }
+    #expect(refused.status == 200 && refused.text.contains("event: error") && refused.text.contains("invalid_request_error"))
+    let again = FakeWriter()
+    await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": req.header("x-claude-mini-session")!],
+                                body: #"{"model":"claude-grok","messages":[{"role":"user","content":"hi"}]}"#), writer: again)
+    #expect(again.status == 400 && again.text.contains("x-should-retry: false") && again.text.contains("cannot give"))
 }
 
 /// --minigw-ro brez deljenja (prehod na istem Macu): glava x-claude-mini-ro da Claude CLI brez orodij za pisanje in

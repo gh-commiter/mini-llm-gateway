@@ -92,6 +92,10 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   `minigw` command-line tool (Mac: Install). On Windows also **Allow commands without a sandbox**.
 - **Codex CLI / Grok CLI / Copilot CLI:** off by default; a switch per model, **Allow writing**, network (Codex,
   Copilot). Copilot has no commands (greyed out with the reason) and signs in with `copilot login`.
+  A Grok run that may not write (read-only, `--minigw-ro`, worktree) cannot run commands: a headless Grok cannot ask for
+  approval, and approving automatically would let a command use the network and read the whole disk. The run is told to
+  use its file tools (`list_dir`, `read_file`, `grep`); if it still needs a command it ends with 400 "grok needed
+  approval to run a command …" (not a 502, which Claude Code would retry). Use a run that may write, or ask for file reading only.
 - **Changes in the client's folder** (each agent pane): **In the folder or a copy (any mode)** (default), **Only in a
   copy or on a branch (sync, worktree)** or **Only on a branch (worktree)**. In a mode above it the agent only reads
   the folder, and minigw says so ("Mini Gateway lets Codex change files only in worktree mode, so it only read the

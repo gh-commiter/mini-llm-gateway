@@ -471,9 +471,9 @@ extension Router {
             if error is Native.TreeAlive { await Self.shares.abandon() }  // #73: klon sync ne gre v kopijo
             Self.log.error("\(rid, privacy: .public) \(model, privacy: .public) failed: \(message, privacy: .public)")
             Self.reqState?.fail(error is SiriError ? "other" : AgentError.kind(message))
-            let agentLimit = status == 429 && !(error is SiriError)
             // #82: neprevzeto delo agenta je končno kot omejitev (ponovitev bi agenta zagnala znova in spremembe uveljavila dvakrat)
-            if let req, agentLimit || error is ShareHub.PullFailed, stream, sent.head || writer is EarlyStreamWriter {  // napaka bo dogodek SSE
+            // #121: tudi vsaka druga napaka agenta (ne Siri): ponovitev brez pretoka bi 25-minutni tek zagnala znova
+            if let req, !(error is SiriError), stream, sent.head || writer is EarlyStreamWriter {  // napaka bo dogodek SSE
                 AgentError.note(AgentError.key(req, model: t.model), message, status: status)
             }
             if sent.head {
@@ -499,6 +499,7 @@ enum AgentError {
     }
 
     static func classify(_ raw: String) -> (Int, String, String) {
+        if raw == Grok.needsApproval { return (400, Router.errorType(400), raw) }  // #121: a refusal that repeats, not a temporary 502 (and no "try again" from Claude Code)
         let low = raw.lowercased(), status = limits.contains { low.contains($0) } ? 429 : 502  // tudi ovoj (»Payment Required«)
         return (status, Router.errorType(status), clean(message(raw)))
     }

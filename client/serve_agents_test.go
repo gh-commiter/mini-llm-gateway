@@ -154,7 +154,12 @@ var fakeGrokHi = fake("grok-hi", func(p fakeParams, args []string) {
 		fmt.Print("Available models:\n  * grok-4.7 (default)\n")
 		return
 	}
-	fakeArgs(p["args"], args)
+	prompt, _ := os.ReadFile(fakeFlag(args, "--prompt-file"))
+	fakeArgs(p["args"], args, "shellnote="+fmt.Sprint(strings.Contains(string(prompt), grokNoShellNote)))
+	if strings.Contains(string(prompt), "needs-approval") && !slices.Contains(args, "--always-approve") { // #121: a command Grok cannot get approved
+		fmt.Println(`{"type":"end","stopReason":"cancelled","sessionId":"s8"}`)
+		return
+	}
 	fmt.Println(`{"type":"text","data":"grok "}`)
 	fmt.Println(`{"type":"text","data":"says hi"}`)
 	fmt.Println(`{"type":"end","sessionId":"s9"}`)
@@ -215,8 +220,16 @@ func TestCodexAndGrokThroughRouter(t *testing.T) {
 	if st, b := chat("claude-codex", false, true); st != 200 || !strings.Contains(args(), "read-only") || strings.Contains(args(), "workspace-write") {
 		t.Fatalf("codex read-only header: %d %s %q", st, b, args())
 	}
+	// #121: read-only Grok is told it has no shell; a run that stops on an approval is a 400 (not a retryable 502), also as a later fallback
+	b121 := `{"model":"claude-grok","tools":[{"name":"x"}],"messages":[{"role":"user","content":"needs-approval"}]}`
+	if st, b := chat("claude-grok", false, true); st != 200 || !strings.Contains(args(), "shellnote=true") || strings.Contains(args(), "--always-approve") {
+		t.Fatalf("grok read-only note: %d %s %q", st, b, args())
+	}
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(b121), 30*time.Second); st != 400 || !strings.Contains(string(data), "cannot give") {
+		t.Fatalf("grok read-only approval: %d %s", st, data)
+	}
 	delete(h, "x-claude-mini-ro")
-	if st, b := chat("claude-grok", true, true); st != 200 || !strings.Contains(b, `"text":"grok says hi"`) || !strings.Contains(b, "message_stop") ||
+	if st, b := chat("claude-grok", true, true); st != 200 || !strings.Contains(args(), "shellnote=false") || !strings.Contains(b, `"text":"grok says hi"`) || !strings.Contains(b, "message_stop") ||
 		!strings.Contains(args(), "Read("+filepath.ToSlash(s.cfgDir)+"/**)") {
 		t.Fatalf("grok stream: %d %s %q", st, b, args())
 	}
@@ -333,6 +346,9 @@ func TestCodexUsageLimitIs429(t *testing.T) {
 	if st, _ := classifyAgentError("codex exited with 1"); st != 502 {
 		t.Fatal("plain failure must stay 502")
 	}
+	if st, m := classifyAgentError(grokNeedsApproval); st != 400 || m != grokNeedsApproval { // #121: a refusal that repeats is not a temporary 502
+		t.Fatalf("approval refusal: %d %q", st, m)
+	}
 }
 
 func TestAgentLimitKeywordsAndCleaning(t *testing.T) {
@@ -440,6 +456,12 @@ func TestReplyWhenDoneRetryHeaders(t *testing.T) {
 	}
 	if m, st, ok := s.recentLimit(newReq(), "claude-codex"); !ok || st != 502 || !strings.Contains(m, "busy") {
 		t.Fatalf("retry after a stream pull failure must be final: %q %d %v", m, st, ok)
+	}
+	// #121: every agent failure after the head is final (a 25-minute run must not start again), not only limits and pull failures
+	w = httptest.NewRecorder()
+	s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-grok", "stream": true}, func() (string, error) { time.Sleep(150 * time.Millisecond); return "", errors.New(grokNeedsApproval) })
+	if m, st, ok := s.recentLimit(newReq(), "claude-grok"); !ok || st != 400 || m != grokNeedsApproval {
+		t.Fatalf("retry after a stream failure must be final: %q %d %v", m, st, ok)
 	}
 	w = httptest.NewRecorder()
 	if st := s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-grok", "stream": true}, func() (string, error) { return "hi", nil }); st != 200 ||

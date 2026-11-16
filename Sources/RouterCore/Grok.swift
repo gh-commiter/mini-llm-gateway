@@ -215,6 +215,11 @@ public enum Grok {
 
     struct Failure: Error { let message: String }
 
+    /// #121: without `--always-approve` (read-only, worktree or no write permission) a headless run cannot approve a command; Grok prefers `find` and `ls` even to
+    /// look at files and then stops ("permission required"). Measured (grok 1.0.77): told this, it uses list_dir, read_file and grep. Same text in the Go gateway.
+    static let noShellNote = "In this run shell commands cannot be approved, so run_terminal_command does not work: do not call it. Look at files with list_dir, read_file and grep."
+    static let needsApproval = "grok needed approval to run a command, which a headless run cannot give: a read-only run runs no commands. Ask for file tools only, or run without --minigw-ro (and allow Grok to change the folder in Mini Gateway → Settings)."
+
     /// Dogodek `streaming-json`: korak (za Activity), besedilo ali konec.
     enum Event: Equatable { case step(String), text(String), toolCall, end(String?), error(String) }
 
@@ -292,6 +297,7 @@ public enum Grok {
                 let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard failure == nil, !text.isEmpty else {
                     let tail = String(decoding: stderr.data.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if failure == nil, tail.contains("headless run cannot ask for approval") { throw Failure(message: needsApproval) }  // #121
                     throw Failure(message: failure ?? "grok exited with \(p.terminationStatus)" + (tail.isEmpty ? "" : ": \(tail)"))
                 }
                 return (text, session)
@@ -410,7 +416,7 @@ extension Router {
             args += ["-r", existing]
             prompt = last.text
         }
-        if agent { prompt = agentNote("grok") + "\n\n" + prompt }
+        if agent { prompt = agentNote("grok") + (config.grok.write && !readOnly ? "" : "\n\n" + Grok.noShellNote) + "\n\n" + prompt }  // #121
         let sessions = Self.grokSessions, client = req.header("x-claude-mini-session") ?? ""
         let run = agent ? await startAgentRun(req, kind: "grok", dir: sharedDir, readOnly: readOnly || inTree) : nil
         defer { run?.stop() }

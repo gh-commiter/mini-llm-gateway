@@ -349,6 +349,11 @@ func codexTreeProfile(writable, gits, deny []string, network bool, path string) 
 		"-c", `shell_environment_policy.set.MINIGW_SANDBOXED="1"`} // #67: le ukazi (v peskovniku), ne harness
 }
 
+// #121 (kot Grok.noShellNote, needsApproval): brez --always-approve (le branje, worktree, brez pisanja) tek brez uporabnika ukaza ne more odobriti;
+// Grok sicer poseže po find in ls tudi za branje in obstane (»permission required«).
+const grokNoShellNote = "In this run shell commands cannot be approved, so run_terminal_command does not work: do not call it. Look at files with list_dir, read_file and grep."
+const grokNeedsApproval = "grok needed approval to run a command, which a headless run cannot give: a read-only run runs no commands. Ask for file tools only, or run without --minigw-ro (and allow Grok to change the folder in Mini Gateway → Settings)."
+
 // grokArgs: kot Grok.args na Macu; jedrni sandbox »workspace« piše le v mapo seje (dodatnih map ne dovoli).
 // Mapa nastavitev (žeton, ključ routerja, admin.secret, ključi prehodov) je prepovedana z --deny; Grok jih uporabi tudi
 // za poti v ukazih lupine. Pravilo ima absolutno pot z enim »/« (preverjeno z grok 1.0.77; »//« ne velja).
@@ -581,7 +586,10 @@ func codexThread(line []byte) string {
 }
 
 // grokEvent: dogodek »streaming-json«: korak, besedilo, konec (ID seje) ali napaka.
-type grokEvent struct{ step, text, session, err string }
+type grokEvent struct {
+	step, text, session, err string
+	cancelled                bool // »end« s stopReason »cancelled«: tek je obstal (#121: ukaz brez odobritve)
+}
 
 func parseGrokEvent(line []byte) (grokEvent, bool) {
 	var o map[string]any
@@ -608,7 +616,7 @@ func parseGrokEvent(line []byte) (grokEvent, bool) {
 		return grokEvent{step: strings.TrimSpace(title + " " + arg[:min(len(arg), 120)])}, true
 	case "end":
 		id, _ := o["sessionId"].(string)
-		return grokEvent{session: id}, true
+		return grokEvent{session: id, cancelled: o["stopReason"] == "cancelled"}, true
 	case "error":
 		m, _ := o["message"].(string)
 		if m == "" {
@@ -833,6 +841,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	}
 	if r.project != nil {
 		note += "\n\n" + notesText(minigwExe(), false, notesReachable(c.askOthers(k.name), windowsBox() && !outsideBox(k.name)))
+	}
+	if k.name == "grok" && agent && !(ac.canWrite(k) && !readOnly) { // #121
+		note += "\n\n" + grokNoShellNote
 	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	checked := s.checkedAgentFolders(c, dir)
@@ -1097,6 +1108,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 			args := grokArgs(dir, pf, s.cfgDir, agent, model, write, resume)
 			var answer, failure string
+			var cancelledEnd bool
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, "", func(line []byte) {
 				e, ok := parseGrokEvent(line)
 				switch {
@@ -1109,7 +1121,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 					failure = e.err
 					cancel() // napaka konča tek: ne čakaj, da grok konča sam
 				case e.session != "":
-					thread = e.session
+					thread, cancelledEnd = e.session, e.cancelled
 				default:
 					answer += e.text
 				}
@@ -1118,6 +1130,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				return "", errors.New(failure)
 			}
 			text = strings.TrimSpace(answer)
+			if err == nil && text == "" && cancelledEnd && ctx.Err() == nil && !write { // #121
+				return "", errors.New(grokNeedsApproval)
+			}
 		}
 		if err != nil || text == "" {
 			if err == nil {
@@ -1563,11 +1578,8 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 		s.log.Printf("%s %s failed: %v", r.rid, model, err)
 		r.fail(agentErrKind(err.Error()))
 		status, msg := classifyAgentError(err.Error())
-		var pe pullError
-		if _, early := w.(*earlyWriter); stream && (headSent || early) && errors.As(err, &pe) { // napaka bo dogodek SSE
+		if _, early := w.(*earlyWriter); stream && (headSent || early) { // napaka bo dogodek SSE; #121: vsaka napaka agenta je končna (ponovitev brez pretoka ne zažene agenta znova)
 			s.noteFinal(r, model, status, msg)
-		} else if stream && (headSent || early) {
-			s.noteLimit(r, model, status, msg)
 		}
 		if headSent {
 			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": msg}}))
@@ -1816,6 +1828,9 @@ func classifyAgentError(raw string) (int, string) {
 	}
 	if agentLimit(raw) { // tudi ovoj (»Payment Required«)
 		return 429, msg
+	}
+	if raw == grokNeedsApproval { // #121: zavrnitev, ki se ponovi, ne začasen 502
+		return 400, raw
 	}
 	return 502, msg
 }
