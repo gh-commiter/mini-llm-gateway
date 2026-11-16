@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -152,7 +153,35 @@ func (s *server) projectHTTP(w http.ResponseWriter, r *req) int {
 		c.DeviceID, c.Approved = dev.ID, s.conf().listed(dev.ID)
 	}
 	ctx := context.WithValue(r.Context(), reqCtxKey{}, r)
-	return writeAPI(w, r.rid, s.api.Handle(ctx, c, apiRequest(w, r, r.URL.Path)))
+	res := s.api.Handle(ctx, c, apiRequest(w, r, r.URL.Path))
+	if strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/sessions") {
+		res = s.sessionNames(res)
+	}
+	return writeAPI(w, r.rid, res)
+}
+
+// Only result IDs authorized by core are looked up in the current registry.
+func (s *server) sessionNames(r coreapi.Response) coreapi.Response {
+	if r.Status != 200 {
+		return r
+	}
+	var page core.SessionPage
+	if json.Unmarshal(r.Body, &page) != nil {
+		return r
+	}
+	cfg := s.conf()
+	for i := range page.Sessions {
+		row := &page.Sessions[i]
+		row.DeviceName = row.DeviceID
+		for _, d := range cfg.Devices {
+			if d.ID == row.DeviceID && d.Name != "" {
+				row.DeviceName = d.Name
+				break
+			}
+		}
+	}
+	r.Body, _ = json.Marshal(page)
+	return r
 }
 
 // noProjectAccess: the fixed 403 body (also for a request that fails the token or comes from the run port).

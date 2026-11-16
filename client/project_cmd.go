@@ -27,7 +27,8 @@ const (
 	projectHelp = `minigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)
 minigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of
 minigw project unlink                       remove the link that applies here
-minigw project show                         the link that applies here, and why`
+minigw project show                         the link that applies here, and why
+minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]`
 	noteHelp = `minigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project
 minigw note read <id> [--json]
 minigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)
@@ -206,6 +207,9 @@ func (e *projectEnv) project(args []string) error {
 	}
 	if len(args) == 0 {
 		return errors.New("usage:\n" + projectHelp)
+	}
+	if args[0] == "sessions" {
+		return e.projectSessions(args[1:])
 	}
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
 	archived := fs.Bool("archived", false, "also archived projects")

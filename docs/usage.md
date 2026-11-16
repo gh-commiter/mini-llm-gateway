@@ -788,6 +788,45 @@ project admin sees all of them, readers and people who only have a grant see not
 visible to them). Without a project you see your own events over all your projects. If the gateway lost events
 (its project store was down for a long time), the output says `N events lost between A and B`.
 
+### Project session history
+
+```sh
+minigw project sessions                       # linked project; a link is required
+minigw project sessions fakture --days 30 --model claude-cli-haiku
+minigw project sessions 7 --device DEVICE_ID --json
+minigw gw project-sessions --project fakture --days 30 --json
+```
+
+A session is one recorded top-level request and its transitive nested requests. Its ID is the root event ID.
+Repeated requests in the same conversation remain separate sessions: usage events do not store the client session
+string. History contains metadata only, with no prompts, responses, transcripts, folder paths or previews.
+It is separate from the older `minigw gw sessions` listing, detail and clearing commands.
+
+Readers and developers see their own recorded user IDs in the selected project; project admins see the whole project.
+The owner command requires `--project` and authenticated owner access and sees all project sessions. An owner marker
+on a user does not expand the member command's role. Grants and agent run capabilities do not authorize this history.
+Device rebinding does not change historical users. User and device names are current labels; a removed device displays
+its recorded ID. The member route does not expose the device directory.
+
+Days default to 7, accept 1–400 and use UTC calendar days. Selection uses the root's start. Descendants outside that
+period still contribute. Model IDs match exactly: a matching event selects the entire chain, including other models.
+The device filter matches the root's recorded device ID. Both clients follow every API page, ordered by descending
+root start then descending root ID. APIs accept `limit` (default 100, maximum 500) and an opaque `after` cursor.
+
+Each event contributes once. Input, output, cache-read and cache-write counts remain separate. JSON metrics contain
+`value` (null if entirely unknown) and `unknownEvents`; text uses `unknown` or `+?` for missing or partial counts.
+Costs are exact decimal USD from recorded integer nanodollars, with reported and estimated subtotals and an
+`eventsWithoutCost` count. Partial costs are known subtotals. Subscription and local costs may be unknown; they are
+not reconstructed from current prices. Zero always means recorded zero.
+
+Duration is chain wall time, latest end minus root start, rather than the sum of overlapping dispatch durations.
+Interrupted or incomplete chains have unknown duration. Chains with any open event are excluded. Otherwise errors
+and interruptions take precedence (`failed`), then cancellation (`cancelled`), then `ok`. A missing or invalid parent
+produces an explicitly `incomplete` retained component, without revealing the parent ID or claiming complete totals.
+Only 400 days of detail are retained; folded daily totals cannot recreate sessions. Corrupt cycles, arithmetic
+overflow and traversal bounds (100,000 authorized events or 10,000 ancestry steps) return an error, never partial pages.
+The Mac Settings Usage chart remains an aggregate report.
+
 ## Several gateways (profiles)
 
 One client can use several gateways in the same session, for example a Mac and a Windows gateway:

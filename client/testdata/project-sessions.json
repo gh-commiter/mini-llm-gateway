@@ -1,0 +1,42 @@
+{
+  "sessions": [
+    {
+      "id": "root",
+      "projectId": 7,
+      "userId": 3,
+      "userName": "Ana",
+      "deviceId": "d",
+      "deviceName": "Laptop",
+      "models": [
+        "a",
+        "b"
+      ],
+      "start": "2026-11-14T10:00:00.123Z",
+      "end": "2026-11-14T10:00:02.123Z",
+      "durationMs": 2000,
+      "requests": 2,
+      "tokensIn": {
+        "value": 0,
+        "unknownEvents": 1
+      },
+      "tokensOut": {
+        "value": null,
+        "unknownEvents": 2
+      },
+      "cacheReadTokens": {
+        "value": 5,
+        "unknownEvents": 0
+      },
+      "cacheWriteTokens": {
+        "value": null,
+        "unknownEvents": 2
+      },
+      "costUsd": "1.234567891",
+      "reportedCostUsd": "1.234567890",
+      "estimatedCostUsd": "0.000000001",
+      "eventsWithoutCost": 1,
+      "outcome": "ok",
+      "incomplete": false
+    }
+  ]
+}

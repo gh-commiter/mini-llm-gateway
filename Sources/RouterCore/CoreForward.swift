@@ -22,13 +22,28 @@ enum CoreRoutes {
         switch first {
         case "users", "bindings", "projects", "teams", "kb", "grants", "audit", "core": return true
         case "quota": return seg.count == 2 && seg[1] == "history"
-        case "usage": return seg.count == 2 && seg[1] == "events"  // GET /usage is the 0.5.x folder counter of the gateway
+        case "usage": return seg.count == 2 && (seg[1] == "events" || seg[1] == "sessions")  // GET /usage is the 0.5.x folder counter of the gateway
         default: return false
         }
     }
 }
 
 extension Router {
+    // Enrich only IDs already authorized by core; names are current labels.
+    func sessionNames(_ response: CoreResponse) -> CoreResponse {
+        guard response.status == 200,
+              var page = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any],
+              var rows = page["sessions"] as? [[String: Any]] else { return response }
+        for i in rows.indices {
+            let id = rows[i]["deviceId"] as? String ?? ""
+            let name = config.devices.first { $0.id == id }?.name ?? ""
+            rows[i]["deviceName"] = name.isEmpty ? id : name
+        }
+        page["sessions"] = rows
+        var r = response
+        r.body = (try? JSONSerialization.data(withJSONObject: page, options: [.sortedKeys, .withoutEscapingSlashes])) ?? response.body
+        return r
+    }
     /// A process of one of the gateway's own agents (a descendant of the app or sandboxed): may not use the member routes
     /// (L7, as for the admin API). Tests replace it.
     nonisolated(unsafe) static var agentPeer: @Sendable (_ peerPort: UInt16, _ routerPort: UInt16) -> Bool = {
@@ -54,7 +69,9 @@ extension Router {
         if let k = req.header("idempotency-key"), !k.isEmpty { q.header["Idempotency-Key"] = [k] }
         q.body = req.body.prefix(CoreHelper.maxBody)
         q.bodyTooLarge = req.body.count > CoreHelper.maxBody
-        return await coreReply(await core?.call(context: cx, request: q) ?? .unavailable, rid: rid, writer: writer)
+        var r = await core?.call(context: cx, request: q) ?? .unavailable
+        if q.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).hasSuffix("/sessions") { r = sessionNames(r) }
+        return await coreReply(r, rid: rid, writer: writer)
     }
 
     /// The core's admin routes, after the admin authentication (adminHTTP), unchanged. Raw passthrough of the core's JSON.
@@ -63,7 +80,7 @@ extension Router {
         if r == .unavailable {  // the helper itself is down: the gateway's own admin error shape (the helper's 503 is passed as is)
             return await adminError(503, "The project database is not available: the project helper (minigw-core) is not running", rid: rid, writer: writer)
         }
-        return await coreReply(r, rid: rid, writer: writer, admin: true)
+        return await coreReply(below.removingPercentEncoding?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "usage/sessions" ? sessionNames(r) : r, rid: rid, writer: writer, admin: true)
     }
 
     /// Writes a core response: its status, headers and body, plus the request id (as writeAPI in Go).

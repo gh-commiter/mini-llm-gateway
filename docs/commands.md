@@ -32,6 +32,8 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw note push [--class structure\|data\|private] [--title t] [--key k] <file\|->` | Create a note (default class `data`); `--key` repeats a push whose answer was lost |
 | `minigw note edit <id> [--class c] [--title t] [--revision n] [<file\|->]` / `rm <id> [--revision n]` | Change or delete a note (not inside an agent run) |
 | `minigw usage [--project slug] [--days n] [--json]` | Your model usage per day and model: the linked project's, or your own events in all projects (see [usage.md](usage.md#projects-and-notes)) |
+| `minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]` | Recorded request chains for the selected or linked project; metadata only, readers and developers see their own history |
+| `minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--json]` | Authenticated owner's session history for one project |
 | `minigw run [--] <command> [args …]` | Run a build in this folder on the gateway Mac (native mode, allowed per device) |
 | `minigw --version` | minigw's version (`claude --version` gives Claude Code's) |
 | `minigw plugin install` | Add the Claude Code plugin `minigw@mini-gateway` to `~/.claude/settings.json` with its marketplace on the `release` branch and `"autoUpdate": true` (an entry from minigw 0.5.21 or older is updated; a `false` you set stays; invalid JSON is not changed) and point the plugin's `bin/minigw` at this minigw |

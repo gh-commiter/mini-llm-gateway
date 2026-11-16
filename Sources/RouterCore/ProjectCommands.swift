@@ -27,6 +27,7 @@ public final class ProjectEnv {
         minigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of
         minigw project unlink                       remove the link that applies here
         minigw project show                         the link that applies here, and why
+        minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]
         """
     public static let noteHelp = """
         minigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project
@@ -150,9 +151,26 @@ public final class ProjectEnv {
 
     // MARK: project
 
+    private func projectSessions(_ args: [String]) throws {
+        guard let fl = try? GoFlags.parse([("days", .int), ("model", .string), ("device", .string), ("json", .bool)], args), fl.positional.count <= 1 else { throw ProjectError("usage: minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]") }
+        let c: ProjectConn, project: String
+        if let ref = fl.positional.first { (c, _) = connect(); project = ref }
+        else { let linked = try linkedProject(""); c = linked.0; project = String(linked.1.project) }
+        var q = ["days": fl.set.contains("days") ? fl.string("days") : "7", "model": fl.string("model"), "device": fl.string("device")]
+        let page = try SessionHistory.collect { after in
+            q["after"] = after
+            let r = self.request(c, "GET", Self.apiProjects + "/" + ProjectText.queryEscape(project) + "/sessions" + ProjectText.query(q))
+            guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+            guard let obj = try JSONSerialization.jsonObject(with: r.data) as? [String: Any] else { throw ProjectError("the sessions answer is not understood") }
+            return obj
+        }
+        out(fl.bool("json") ? try SessionHistory.json(page) + "\n" : SessionHistory.text(page))
+    }
+
     private func runProject(_ args: [String]) throws {
         if agent { throw ProjectError(Self.agentRefusal) }
         guard let sub = args.first else { throw ProjectError("usage:\n" + Self.projectHelp) }
+        if sub == "sessions" { try projectSessions(Array(args.dropFirst())); return }
         guard let fl = try? GoFlags.parse([("archived", .bool), ("json", .bool)], Array(args.dropFirst())) else {
             throw ProjectError("usage:\n" + Self.projectHelp)
         }
