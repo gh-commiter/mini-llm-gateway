@@ -215,5 +215,12 @@
     "input": 3,
     "output": null,
     "cost": null
+  },
+  {
+    "name": "duplicate cost keys, the last wins",
+    "body": "{\"usage\":{\"input_tokens\":1,\"cost\":0.001,\"cost\":0.002}}",
+    "input": 1,
+    "output": null,
+    "cost": 2000000
   }
 ]

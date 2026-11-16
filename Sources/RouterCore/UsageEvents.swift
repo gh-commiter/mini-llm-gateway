@@ -330,8 +330,12 @@ extension Router {
         if let m = counts?.eventMetrics, state.tokenSource != "estimated" {
             e.unpricedDimensions = m.cacheUsed
             e.cacheReadTokens = m.cacheRead; e.cacheWriteTokens = m.cacheWrite
-            e.tokensIn = m.input ?? -1; e.tokensOut = m.output ?? -1
-            e.tokenSource = m.input != nil || m.output != nil ? "reported" : "unknown"
+            var (input, output) = (m.input, m.output)
+            if e.upstreamModel.isEmpty, input == 0, output == 0 { (input, output) = (nil, nil) }  // an agent's message_start carries 0/0 before any count exists: an aborted run is unknown
+            if input != nil || output != nil {  // otherwise the pattern counts set above stay (nesting, a usage object over 64 KB, usage elsewhere)
+                e.tokensIn = input ?? -1; e.tokensOut = output ?? -1
+                e.tokenSource = "reported"
+            }
             if !e.upstreamModel.isEmpty, let cost = m.cost { e.costUsdNanos = cost; e.costSource = "reported" }
         }
         usageSender.finish(e)

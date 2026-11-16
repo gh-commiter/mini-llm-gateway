@@ -752,3 +752,41 @@ func TestNestedProviderCallCarriesTheRootsAttribution(t *testing.T) {
 		t.Fatalf("root: %+v", root)
 	}
 }
+
+// Token counts: the pattern counts stay when the structured parser finds nothing, and an agent's message_start 0/0 is unknown.
+func TestEventTokensFallbackAndAgentZero(t *testing.T) {
+	f := newCoreFx(t, nil)
+	cases := []struct {
+		name, body, upstream string
+		in, out              int64 // pattern counts (usageWriter.in/out)
+		wantSrc              string
+		wantIn, wantOut      int64
+	}{
+		{"parser finds counts", `{"usage":{"input_tokens":10,"output_tokens":5}}`, "routed", 10, 5, "reported", 10, 5},
+		{"parser finds nothing, pattern counts stay", `{"content":[]}`, "routed", 7, 3, "reported", 7, 3},
+		{"nothing at all", `{"content":[]}`, "routed", 0, 0, "unknown", -1, -1},
+		{"provider reports 0/0", `{"usage":{"input_tokens":0,"output_tokens":0}}`, "routed", 0, 0, "reported", 0, 0},
+		{"agent message_start 0/0 only", `{"message":{"usage":{"input_tokens":0,"output_tokens":0}}}`, "", 0, 0, "unknown", -1, -1},
+		{"agent with real counts", `{"usage":{"input_tokens":4,"output_tokens":2}}`, "", 4, 2, "reported", 4, 2},
+	}
+	for _, c := range cases {
+		hr := httptest.NewRequest("POST", "/v1/messages", nil)
+		r := &req{Request: hr, conn: &serveConn{device: &serveDevice{ID: devID(f.dev["ana"])}}, provider: "p"}
+		f.s.admitEvent(r, "m-"+strings.ReplaceAll(c.name, " ", "-"))
+		f.s.dispatched(r)
+		r.event.UpstreamModel = c.upstream
+		uw := &usageWriter{in: c.in, out: c.out}
+		uw.metrics.feed([]byte(c.body))
+		f.s.endEvent(r, 200, uw)
+	}
+	got := map[string]evRow{}
+	for _, e := range f.events() {
+		got[e.Model] = e
+	}
+	for _, c := range cases {
+		e := got["m-"+strings.ReplaceAll(c.name, " ", "-")]
+		if e.Source != c.wantSrc || e.In != c.wantIn || e.Out != c.wantOut {
+			t.Errorf("%s: %+v, want %s %d/%d", c.name, e, c.wantSrc, c.wantIn, c.wantOut)
+		}
+	}
+}

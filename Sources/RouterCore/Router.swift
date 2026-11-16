@@ -760,10 +760,10 @@ public final class Router: Sendable {
                         if d.count >= 64 << 10 { break }
                     }
                 } catch {}
-                let (st, msg) = Self.upstreamError(status: status, name: r.provider.name, body: d, key: key)
+                let (st, msg) = Self.upstreamError(status: status, name: r.provider.name, baseURL: r.provider.baseURL, body: d, key: key)
                 // 429 ponudnika (npr. brezplačni model na OpenRouterju) brez ponavljanja, kot omejitev agenta
                 return await self.error(st, Self.errorType(st), msg, rid: rid,
-                                        extra: st == 429 || status == 403 && spendingLimit(name: r.provider.name, body: d) ? [("x-should-retry", "false")] : [], writer: writer)
+                                        extra: st == 429 || status == 403 && spendingLimit(baseURL: r.provider.baseURL, body: d) ? [("x-should-retry", "false")] : [], writer: writer)
             }
             try await writer.write(HTTPResponse.head(status: status, headers: [
                 ("Content-Type", http.value(forHTTPHeaderField: "content-type") ?? "application/json"),
@@ -789,7 +789,7 @@ public final class Router: Sendable {
 
     /// Napaka upstreama kot napaka Anthropic (kot upstreamError v Go): le error.message, očiščeno, največ 300 bajtov.
     /// 401/403 → 502: Claude Code bi ju prikazal kot napačno prijavo v router.
-    static func upstreamError(status: Int, name: String, body: Data, key: String = "") -> (Int, String) {
+    static func upstreamError(status: Int, name: String, baseURL: String = "", body: Data, key: String = "") -> (Int, String) {
         var msg = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])
             .flatMap { $0["error"] as? [String: Any] }?["message"] as? String ?? ""
         if msg.isEmpty { msg = String(decoding: body, as: UTF8.self) }
@@ -800,7 +800,7 @@ public final class Router: Sendable {
         msg = String(String.UnicodeScalarView(msg.unicodeScalars.prefix(300)))
         while msg.utf8.count > 300 { msg.unicodeScalars.removeLast() }
         switch status {
-        case 403 where spendingLimit(name: name, body: body): return (502, "OpenRouter: spending limit reached")
+        case 403 where spendingLimit(baseURL: baseURL, body: body): return (502, "OpenRouter: spending limit reached")
         case 403: return (502, "\(name): access denied: \(msg)")
         case 401: return (502, "\(name): HTTP \(status), check the API key (minigw gw provider add \(name))")
         case 400...599: return (status, "\(name): \(msg)")

@@ -130,6 +130,7 @@ struct UsageMetrics {
     private static func costNumber(_ data: Data) -> String? {
         let bytes = Array(data)
         var depth = 0, i = 0
+        var found: String?  // a repeated "cost" key: the last one wins, as in the Go gateway
         while i < bytes.count {
             let b = bytes[i]
             if b == 34 {
@@ -150,14 +151,14 @@ struct UsageMetrics {
                         while j < bytes.count && [9, 10, 13, 32].contains(bytes[j]) { j += 1 }
                         let first = j
                         while j < bytes.count && ![9, 10, 13, 32, 44, 125].contains(bytes[j]) { j += 1 }
-                        return String(decoding: bytes[first..<j], as: UTF8.self)
+                        found = String(decoding: bytes[first..<j], as: UTF8.self)
                     }
                 }
             } else if b == 123 || b == 91 { depth += 1
             } else if b == 125 || b == 93 { depth -= 1 }
             i += 1
         }
-        return nil
+        return found
     }
 
     private static func costNanos(_ raw: String) -> Int64? {
@@ -188,8 +189,10 @@ struct UsageMetrics {
 }
 
 
-func spendingLimit(name: String, body: Data) -> Bool {
-    guard name.lowercased() == "openrouter",
+/// OpenRouter is recognised by the host of the provider base URL (openrouter.ai and subdomains), not by its configured name.
+func spendingLimit(baseURL: String, body: Data) -> Bool {
+    let host = URL(string: baseURL)?.host?.lowercased() ?? ""
+    guard host == "openrouter.ai" || host.hasSuffix(".openrouter.ai"),
           let o = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
           let e = o["error"] as? [String: Any] else { return false }
     let code = e["code"] as? String ?? ""

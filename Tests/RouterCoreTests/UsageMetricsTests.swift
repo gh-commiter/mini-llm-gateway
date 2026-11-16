@@ -24,13 +24,13 @@ private func usageFixture(_ name: String) throws -> Data {
 }
 
 @Test func sharedUpstreamErrorsFixtures() throws {
-    struct Case: Decodable { let name: String, provider: String, body: String, message: String; let status: Int; let noRetry: Bool; let key: String? }
+    struct Case: Decodable { let name: String, provider: String, baseURL: String, body: String, message: String; let status: Int; let noRetry: Bool; let key: String? }
     let cases = try JSONDecoder().decode([Case].self, from: usageFixture("upstream-errors.json"))
     for c in cases {
         let body = Data(c.body.utf8)
-        let (status, message) = Router.upstreamError(status: c.status, name: c.provider, body: body, key: c.key ?? "")
+        let (status, message) = Router.upstreamError(status: c.status, name: c.provider, baseURL: c.baseURL, body: body, key: c.key ?? "")
         #expect(status == 502 && message == c.message, "\(c.name)")
-        #expect(spendingLimit(name: c.provider, body: body) == c.noRetry, "\(c.name)")
+        #expect(spendingLimit(baseURL: c.baseURL, body: body) == c.noRetry, "\(c.name)")
     }
 }
 
@@ -80,7 +80,7 @@ private final class SpendingLimitUpstream: URLProtocol, @unchecked Sendable {
     config.protocolClasses = [SpendingLimitUpstream.self]
     let session = URLSession(configuration: config)
     defer { session.invalidateAndCancel() }
-    let route = Route(provider: ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://up.example/api", aliases: ""),
+    let route = Route(provider: ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://openrouter.ai/api", aliases: ""),
                       name: "alias", alias: "claude-alias", upstream: "routed", window: nil)
     let state = RequestState()
     state.admit(UsageEvent(id: "ev_limit", start: Date(), model: "claude-alias"))
@@ -132,4 +132,46 @@ private final class SpendingLimitUpstream: URLProtocol, @unchecked Sendable {
         #expect(row?["eventsWithoutCost"] as? Int == 1)
     }
     #expect(rows.first { $0["model"] as? String == "subscription" }?["tokensOut"] as? Int == 4)
+}
+
+/// Same rules as TestEventTokensFallbackAndAgentZero (client/serve_usage_test.go).
+@Test func usageTokensFallbackAndAgentZero() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("mgmetrics-\(UUID().uuidString)")
+    let store = base.appendingPathComponent("core")
+    try CoreHelper.prepareStoreFolder(store)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let helper = CoreHelper(binary: try await HelperBuild.shared.binary(), store: store, marks: MemoryMarks())
+    helper.start(); defer { helper.stop() }
+    #expect(await helper.waitReady(timeout: 20))
+    var config = RouterConfig(); config.providers = []
+    let router = Router(config: config, token: "test", secrets: FakeSecrets(values: [:]), core: helper)
+    let cases: [(name: String, body: String, upstream: String, tokens: Int?)] = [
+        ("fallback", #"{"x":{"usage":{"input_tokens":7,"output_tokens":3}}}"#, "routed", 7),
+        ("nothing", #"{"content":[]}"#, "routed", nil),
+        ("provider-zero", #"{"usage":{"input_tokens":0,"output_tokens":0}}"#, "routed", 0),
+        ("agent-zero", #"{"message":{"usage":{"input_tokens":0,"output_tokens":0}}}"#, "", nil),
+        ("agent-counts", #"{"usage":{"input_tokens":4,"output_tokens":2}}"#, "", 4),
+    ]
+    for c in cases {
+        let state = RequestState()
+        state.admit(UsageEvent(id: "ev_\(c.name)", start: Date(), model: c.name))
+        router.usageSender.begin(state.dispatch(provider: "p", upstreamModel: c.upstream)!)
+        let writer = UsageWriter(FakeWriter())
+        writer.scan(Data(c.body.utf8))
+        router.endEvent(state, status: 200, usage: writer)
+    }
+    #expect(await router.usageSender.flush())
+    var rows: [[String: Any]] = []
+    for _ in 0..<100 {
+        let response = await helper.call(context: .admin, request: CoreRequest(method: "GET", path: "/usage/events"))
+        rows = ((try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any])?["days"] as? [[String: Any]] ?? []
+        if rows.count == cases.count { break }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(rows.count == cases.count)
+    for c in cases {
+        let row = rows.first { $0["model"] as? String == c.name }
+        #expect(row?["tokensIn"] as? Int == (c.tokens ?? 0), "\(c.name)")
+        #expect(row?["eventsWithoutTokens"] as? Int == (c.tokens == nil ? 1 : 0), "\(c.name)")
+    }
 }

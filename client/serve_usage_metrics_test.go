@@ -41,9 +41,9 @@ func TestUsageMetricsFixtures(t *testing.T) {
 
 func TestUpstreamErrorFixtures(t *testing.T) {
 	var cases []struct {
-		Name, Provider, Body, Message, Key string
-		Status                             int
-		NoRetry                            bool
+		Name, Provider, BaseURL, Body, Message, Key string
+		Status                                      int
+		NoRetry                                     bool
 	}
 	if err := json.Unmarshal(srcFile(t, "testdata/upstream-errors.json"), &cases); err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestUpstreamErrorFixtures(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			status := upstreamError(w, "rid", c.Provider, c.Key, &http.Response{StatusCode: c.Status, Body: io.NopCloser(strings.NewReader(c.Body))})
+			status := upstreamError(w, "rid", c.Provider, c.BaseURL, c.Key, &http.Response{StatusCode: c.Status, Body: io.NopCloser(strings.NewReader(c.Body))})
 			var body struct{ Error struct{ Message string } }
 			json.Unmarshal(w.Body.Bytes(), &body)
 			if status != 502 || body.Error.Message != c.Message || (w.Header().Get("x-should-retry") == "false") != c.NoRetry {

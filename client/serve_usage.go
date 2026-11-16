@@ -90,17 +90,20 @@ func (s *server) endEvent(r *req, status int, uw *usageWriter) {
 		}
 	}
 	if uw != nil && r.tokenSource != "estimated" {
-		e.TokensIn, e.TokensOut = -1, -1
-		if uw.metrics.input != nil {
-			e.TokensIn = *uw.metrics.input
+		in, out := uw.metrics.input, uw.metrics.output
+		if e.UpstreamModel == "" && in != nil && out != nil && *in == 0 && *out == 0 {
+			in, out = nil, nil // an agent's message_start carries 0/0 before any count exists: an aborted run is unknown, not "reported 0/0"
 		}
-		if uw.metrics.output != nil {
-			e.TokensOut = *uw.metrics.output
-		}
-		if e.TokensIn >= 0 || e.TokensOut >= 0 {
+		// Nothing found by the structured parser (nesting, a usage object over 64 KB, usage elsewhere): the pattern counts set above stay.
+		if in != nil || out != nil {
+			e.TokensIn, e.TokensOut = -1, -1
+			if in != nil {
+				e.TokensIn = *in
+			}
+			if out != nil {
+				e.TokensOut = *out
+			}
 			e.TokenSource = "reported"
-		} else {
-			e.TokenSource = "unknown"
 		}
 		// CLI subscription costs are not charges attributable to this gateway.
 		if e.UpstreamModel != "" && uw.metrics.cost != nil {

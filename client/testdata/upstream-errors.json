@@ -5,7 +5,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\": {\"code\": \"spending_limit_reached\", \"message\": \"private detail\"}}",
     "message": "OpenRouter: spending limit reached",
-    "noRetry": true
+    "noRetry": true,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "limit message",
@@ -13,7 +14,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\": {\"code\": 403, \"message\": \"Monthly spending limit exceeded\"}}",
     "message": "OpenRouter: spending limit reached",
-    "noRetry": true
+    "noRetry": true,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "key limit (monthly)",
@@ -21,7 +23,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\":{\"message\":\"Key limit exceeded (monthly limit). Manage it using https://openrouter.ai/settings/keys\",\"code\":403}}",
     "message": "OpenRouter: spending limit reached",
-    "noRetry": true
+    "noRetry": true,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "guardrail",
@@ -29,7 +32,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\": {\"code\": 403, \"message\": \"Guardrail denied model\"}}",
     "message": "OpenRouter: access denied: Guardrail denied model",
-    "noRetry": false
+    "noRetry": false,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "auth",
@@ -37,7 +41,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\": {\"message\": \"secret\"}}",
     "message": "OpenRouter: HTTP 401, check the API key (minigw gw provider add OpenRouter)",
-    "noRetry": false
+    "noRetry": false,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "other provider",
@@ -45,7 +50,8 @@
     "provider": "Other",
     "body": "{\"error\": {\"message\": \"spending limit reached\"}}",
     "message": "Other: access denied: spending limit reached",
-    "noRetry": false
+    "noRetry": false,
+    "baseURL": "http://localhost:4000"
   },
   {
     "name": "sanitized access",
@@ -53,7 +59,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\": {\"message\": \"blocked\\u202e\\u0001\"}}",
     "message": "OpenRouter: access denied: blocked",
-    "noRetry": false
+    "noRetry": false,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "forbidden empty",
@@ -61,7 +68,8 @@
     "provider": "OpenRouter",
     "body": "",
     "message": "OpenRouter: access denied: ",
-    "noRetry": false
+    "noRetry": false,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "UTF8 byte limit",
@@ -69,7 +77,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\": {\"message\": \"\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\"}}",
     "message": "OpenRouter: access denied: \u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
-    "noRetry": false
+    "noRetry": false,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "line separators",
@@ -77,7 +86,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\": {\"message\": \"a\\u2028b\\u2029c\"}}",
     "message": "OpenRouter: access denied: abc",
-    "noRetry": false
+    "noRetry": false,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "limit code with non-string message",
@@ -85,7 +95,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\":{\"code\":\"spending_limit_reached\",\"message\":null}}",
     "message": "OpenRouter: spending limit reached",
-    "noRetry": true
+    "noRetry": true,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "escaped limit code",
@@ -93,7 +104,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\":{\"code\":\"spending_limit_\\u0072eached\",\"message\":123}}",
     "message": "OpenRouter: spending limit reached",
-    "noRetry": true
+    "noRetry": true,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "combining scalar byte limit",
@@ -101,7 +113,8 @@
     "provider": "OpenRouter",
     "body": "{\"error\": {\"message\": \"a\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\\u0301\"}}",
     "message": "OpenRouter: access denied: a\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301",
-    "noRetry": false
+    "noRetry": false,
+    "baseURL": "https://openrouter.ai/api"
   },
   {
     "name": "secrets in 403 text",
@@ -110,6 +123,34 @@
     "key": "my-secret-key-123",
     "body": "{\"error\": {\"message\": \"bad my-secret-key-123 and Authorization: Bearer abc.def-123 or sk-or-v1-abcdef0123456789 end\"}}",
     "message": "OpenRouter: access denied: bad [redacted] and Authorization: [redacted] or [redacted] end",
+    "noRetry": false,
+    "baseURL": "https://openrouter.ai/api"
+  },
+  {
+    "name": "renamed OpenRouter provider",
+    "status": 403,
+    "provider": "OR-work",
+    "baseURL": "https://openrouter.ai/api",
+    "body": "{\"error\": {\"code\": \"spending_limit_reached\"}}",
+    "message": "OpenRouter: spending limit reached",
+    "noRetry": true
+  },
+  {
+    "name": "named OpenRouter on another host",
+    "status": 403,
+    "provider": "OpenRouter",
+    "baseURL": "http://localhost:4000",
+    "body": "{\"error\": {\"code\": \"spending_limit_reached\", \"message\": \"limit\"}}",
+    "message": "OpenRouter: access denied: limit",
+    "noRetry": false
+  },
+  {
+    "name": "lookalike host",
+    "status": 403,
+    "provider": "X",
+    "baseURL": "https://notopenrouter.ai",
+    "body": "{\"error\": {\"code\": \"spending_limit_reached\", \"message\": \"limit\"}}",
+    "message": "X: access denied: limit",
     "noRetry": false
   }
 ]
