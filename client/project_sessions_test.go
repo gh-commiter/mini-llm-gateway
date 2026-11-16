@@ -65,6 +65,32 @@ func TestProjectSessionCommandsAndNames(t *testing.T) {
 	}
 }
 
+// A project whose slug is "sessions" is not a session page: only the real sessions route is rewritten.
+func TestSessionsSlugIsNotASessionPage(t *testing.T) {
+	f := newCoreFx(t, nil)
+	p, err := f.s.core.CreateProject(t0, "sessions", "Sessions")
+	f.ok(err)
+	f.ok(f.s.core.SetMember(t0, p.ID, f.uid["ana"], core.Developer))
+	r := f.call("ana", "GET", projectsPrefix+"/sessions", "")
+	status(t, r, 200)
+	var project map[string]any
+	f.ok(json.Unmarshal([]byte(r.body), &project))
+	if project["id"] != float64(p.ID) || project["slug"] != "sessions" {
+		t.Fatalf("project: %s", r.body)
+	}
+	if _, rewritten := project["sessions"]; rewritten {
+		t.Fatalf("a project was rewritten as a session page: %s", r.body)
+	}
+	// The real sessions route still resolves device names.
+	at := time.Now().UTC()
+	f.ok(f.s.core.FinishEvent(t0, core.UsageEvent{ID: "root-sessions-slug", Start: at, End: at.Add(time.Second), ProjectID: p.ID, UserID: f.uid["ana"], DeviceID: devID(f.dev["ana"]), Model: "m", Outcome: "ok", TokensIn: -1, TokensOut: 0, TokenSource: "reported"}))
+	r = f.call("ana", "GET", fmt.Sprintf("%s/%d/sessions", projectsPrefix, p.ID), "")
+	status(t, r, 200)
+	if !strings.Contains(r.body, `"sessions":[`) || !strings.Contains(r.body, `"deviceName":"ana"`) {
+		t.Fatalf("sessions: %s", r.body)
+	}
+}
+
 func TestSessionTextSharedFixture(t *testing.T) {
 	b, err := os.ReadFile("testdata/project-sessions.json")
 	if err != nil {

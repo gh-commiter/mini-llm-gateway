@@ -17,6 +17,7 @@ import (
 type mcpFixture struct {
 	Initialize, Initialized string
 	Tools                   []any
+	Search                  string
 	Cases                   []struct {
 		Name, Frame, Call, Query, ID string
 		Code                         int
@@ -161,6 +162,7 @@ func TestMCPBoundsEOFAndErrors(t *testing.T) {
 	}
 }
 func TestMCPFrozenRoutesAndSanitization(t *testing.T) {
+	f := mcpFX(t)
 	for _, run := range []bool{false, true} {
 		t.Run(fmt.Sprint(run), func(t *testing.T) {
 			var out bytes.Buffer
@@ -189,7 +191,7 @@ func TestMCPFrozenRoutesAndSanitization(t *testing.T) {
 					if p != base+"/kb/search?q=x+%26project%3D2" {
 						t.Fatal(p)
 					}
-					return 200, []byte(`{"hits":[{"class":"private","title":"secret"},{"class":"data","title":"ok"}]}`), nil
+					return 200, []byte(f.Search), nil
 				}}
 			args := []string{"--project", "slug"}
 			if run {
@@ -214,6 +216,10 @@ func TestMCPFrozenRoutesAndSanitization(t *testing.T) {
 			}
 			if strings.Contains(out.String(), "secret") {
 				t.Fatal("private search hit")
+			}
+			search := msgs[2]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+			if !strings.Contains(search, `"id":9007199254740993`) {
+				t.Fatal(search)
 			}
 		})
 	}

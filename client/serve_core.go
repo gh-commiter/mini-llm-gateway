@@ -154,7 +154,7 @@ func (s *server) projectHTTP(w http.ResponseWriter, r *req) int {
 	}
 	ctx := context.WithValue(r.Context(), reqCtxKey{}, r)
 	res := s.api.Handle(ctx, c, apiRequest(w, r, r.URL.Path))
-	if strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/sessions") {
+	if coreapi.IsSessionsPath(r.Method, r.URL.Path) {
 		res = s.sessionNames(res)
 	}
 	return writeAPI(w, r.rid, res)
@@ -165,13 +165,17 @@ func (s *server) sessionNames(r coreapi.Response) coreapi.Response {
 	if r.Status != 200 {
 		return r
 	}
-	var page core.SessionPage
-	if json.Unmarshal(r.Body, &page) != nil {
+	var page struct {
+		Sessions *[]core.SessionRow `json:"sessions"`
+		Next     string             `json:"next,omitempty"`
+	}
+	if json.Unmarshal(r.Body, &page) != nil || page.Sessions == nil { // a project whose slug is "sessions" is not a page
 		return r
 	}
+	rows := *page.Sessions
 	cfg := s.conf()
-	for i := range page.Sessions {
-		row := &page.Sessions[i]
+	for i := range rows {
+		row := &rows[i]
 		row.DeviceName = row.DeviceID
 		for _, d := range cfg.Devices {
 			if d.ID == row.DeviceID && d.Name != "" {
@@ -180,7 +184,7 @@ func (s *server) sessionNames(r coreapi.Response) coreapi.Response {
 			}
 		}
 	}
-	r.Body, _ = json.Marshal(page)
+	r.Body, _ = json.Marshal(core.SessionPage{Sessions: rows, Next: page.Next})
 	return r
 }
 

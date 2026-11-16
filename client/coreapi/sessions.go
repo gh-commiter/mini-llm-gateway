@@ -5,7 +5,24 @@ import (
 	"minigw/core"
 	"net/url"
 	"strconv"
+	"strings"
 )
+
+// IsSessionsPath: the routes that answer a session page: GET /minigw/v1/projects/{id}/sessions (member) and
+// GET /usage/sessions (admin, below the admin prefix). The adapter adds device names to those pages only.
+func IsSessionsPath(method, p string) bool {
+	if method != "GET" {
+		return false
+	}
+	if p == "/usage/sessions" {
+		return true
+	}
+	if !strings.HasPrefix(p, projectsPrefix+"/") {
+		return false
+	}
+	seg := strings.Split(strings.Trim(strings.TrimPrefix(p, projectsPrefix), "/"), "/")
+	return len(seg) == 2 && seg[1] == "sessions"
+}
 
 func sessionFilter(q url.Values) (core.SessionFilter, error) {
 	f := core.SessionFilter{Days: 7, Model: q.Get("model"), Device: q.Get("device"), After: q.Get("after")}

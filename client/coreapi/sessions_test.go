@@ -9,6 +9,25 @@ import (
 	"time"
 )
 
+func TestSessionsPathRecognition(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		want         bool
+	}{
+		{"GET", "/minigw/v1/projects/1/sessions", true},
+		{"GET", "/minigw/v1/projects/fakture/sessions", true},
+		{"GET", "/minigw/v1/projects/sessions", false}, // a project whose slug is sessions
+		{"GET", "/minigw/v1/projects/1/sessions/x", false},
+		{"POST", "/minigw/v1/projects/1/sessions", false},
+		{"GET", "/usage/sessions", true},
+		{"GET", "/minigw/v1/usage/sessions", false},
+	} {
+		if got := IsSessionsPath(tc.method, tc.path); got != tc.want {
+			t.Errorf("%s %s: got %v, want %v", tc.method, tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestSessionRoutesAndAdmissionChanges(t *testing.T) {
 	f := newFixture(t)
 	pid := f.pid["fakture"]

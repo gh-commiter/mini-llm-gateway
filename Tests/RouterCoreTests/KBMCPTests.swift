@@ -67,6 +67,7 @@ private func mcpRun(_ input: String, call: (String, [String: Any]) throws -> Any
     }
 
     @Test func frozenRoutesAndSanitization() throws {
+        let fixture = try mcpFixture()
         for run in [false, true] {
             var connects = 0, calls = 0, out = Data()
             var input = Data(try mcpInput([
@@ -84,7 +85,7 @@ private func mcpRun(_ input: String, call: (String, [String: Any]) throws -> Any
                     return ProjectReply(status: 200, data: try! JSONSerialization.data(withJSONObject: ["class": "data", "title": "a\u{1b}\u{202e}b", "author": "x\u{200b}y", "body": String(repeating: "界", count: 6000), "provenance": ["device": "d\u{1b}"]]))
                 }
                 #expect(path == base + "/kb/search?q=x+%26project%3D2")
-                return ProjectReply(status: 200, data: Data("{\"hits\":[{\"class\":\"private\",\"title\":\"secret\"},{\"class\":\"data\",\"title\":\"ok\"}]}".utf8))
+                return ProjectReply(status: 200, data: Data((fixture["search"] as! String).utf8))
             })
             try env.kbMCP(run ? [] : ["--project", "slug"], executable: "/minigw", read: { if input.isEmpty { return nil }; let d = input; input = Data(); return d }, write: { out.append($0) })
             #expect(connects == (run ? 0 : 1) && calls == 2)
@@ -95,6 +96,9 @@ private func mcpRun(_ input: String, call: (String, [String: Any]) throws -> Any
             #expect(note["title"] as? String == "ab" && note["author"] as? String == "xy")
             #expect(note["truncated"] as? Bool == true)
             #expect((note["body"] as! String).utf8.count <= 16 << 10 && (note["body"] as! String).hasSuffix("\n[truncated]"))
+            let search = replies[2]["result"] as! [String: Any]
+            let searchText = (search["content"] as! [[String: Any]])[0]["text"] as! String
+            #expect(searchText.contains("\"id\":9007199254740993"))
             #expect(!(String(decoding: out, as: UTF8.self).contains("secret")))
         }
     }
