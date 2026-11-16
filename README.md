@@ -78,7 +78,7 @@ it, the gateway computer included. The Claude Code plugin installs both.
    - **Mac:** installs the Mini Gateway app with Homebrew (it asks first) and turns on Open at Login.
    - **Windows:** installs `minigw serve` with the tray icon and starts it at sign-in.
    - **Linux:** installs `minigw serve` as a systemd user unit that starts at boot (or at sign-in; the skill then
-     shows the one `sudo` line that changes it).
+     shows the one `sudo` line that changes it). Or in Docker Compose, providers only: [docs/docker.md](docs/docker.md).
 
    It also connects the gateway computer's own `minigw`. `/minigw:gw status` shows the result.
    A Mac gateway listens only on this Mac at first: for other computers set the address to `0.0.0.0` in
@@ -144,6 +144,7 @@ inside an agent run, omit the project to use only that run's scope. `minigw usag
 | [docs/how-it-works.md](docs/how-it-works.md) | Request flow, encryption, devices, folder transport, protected paths, limits, security notes |
 | [docs/gateway.md](docs/gateway.md) | Mac app and `minigw serve`: network, devices, settings, providers, the project database, usage and quota, storage |
 | [docs/install.md](docs/install.md) | All install options, checking downloads, building from source |
+| [docs/docker.md](docs/docker.md) | Linux gateway in Docker Compose (providers only): install, providers, update, backup |
 | [docs/admin-api.md](docs/admin-api.md) | The gateway's admin API |
 | [docs/core-adapter.md](docs/core-adapter.md) | What a gateway must do itself for projects: the contract between a gateway and the core |
 | [docs/windows-parity.md](docs/windows-parity.md) | Every Mac setting and its Windows/Linux counterpart |

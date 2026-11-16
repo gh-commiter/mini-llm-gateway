@@ -4,6 +4,9 @@
 
 ### New
 - `--minigw-tools=edit`: a provider model (LiteLLM, OpenRouter, xAI) in the local Claude Code may also use Edit and Write, only inside the current folder and never in `.git`, hooks, `.claude` settings, `.envrc` or `.vscode/tasks.json`; still no Bash, MCP or sub-agents. Allowed inside Claude Code; an error with `--minigw-ro` and for agent models. The gateway owner sets the highest level per provider or model (`minigw gw provider tools <name> [none|read|edit|default] [--model m]`, Settings, admin API; default `read`); clients refuse `edit` above it and the gateway refuses requests above it (a modified client can lie; the folder is protected by the client's own rules).
+- Linux gateway in Docker Compose (`deploy/docker`, [docker.md](docker.md)), providers only: the image is built from the signed GitHub release (signature, signed version and checksum are checked); Claude CLI, Codex, Grok, Copilot and Foundry Local are off and cannot be turned on in container mode (`MINIGW_CONTAINER=1`, set by the image), in the settings, an imported `serve.json` or at run time. The first start creates the config without printing the token (`docker compose exec minigw minigw gw token`).
+- `minigw serve healthcheck`: a bounded request to `/health/live` on loopback, no credentials and no provider calls (used by the Docker `HEALTHCHECK`).
+- Shutdown (SIGTERM or Ctrl+C) of `minigw serve` now stops new requests, lets running ones finish for up to 30 seconds, cuts the rest, and only then closes the project database and saves the state.
 
 ### Known limits
 - `--minigw-tools=edit` is refused on Windows clients: its path rules cannot cover trailing dots and spaces or 8.3 short names.

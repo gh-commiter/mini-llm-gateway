@@ -114,6 +114,7 @@ const serveHelp = `minigw serve: Mini Gateway, the LLM gateway, on this computer
   minigw serve init [--port N] [--config FILE]   create the config, print the minigw connect line
   minigw serve install | uninstall [--config FILE]              start the gateway at sign-in (per user, no admin)
   minigw serve [--port N] [--config FILE]        run the gateway
+  minigw serve healthcheck [--port N]            exit 0 when the running gateway answers on loopback (Docker HEALTHCHECK)
   minigw gw status|devices|provider|claude|token …              show or change the gateway, live if it runs
   minigw serve allow|deny|devices|provider|status …             the same as minigw gw devices allow|deny, …
 
@@ -128,6 +129,9 @@ loopback (ssh -L, netsh portproxy, a reverse proxy), or remote clients get the s
 const defaultTools = "Read,Grep,Glob,Edit,Write,MultiEdit"
 
 func defaultServeConfigPath() string {
+	if containerMode() { // so `docker compose exec minigw minigw gw …` finds the gateway's config
+		return containerConfig
+	}
 	dir, err := configBase()
 	if err != nil {
 		dir = "."
@@ -335,7 +339,28 @@ func serveCommand(args []string) {
 	fs.Parse(args)
 
 	switch sub {
+	case "healthcheck":
+		p := *port
+		if p == 0 {
+			p = 8765
+			if c, err := loadServeConfig(*cfgPath); err == nil {
+				p = c.Port
+			}
+		}
+		if err := healthcheck(p, 3*time.Second); err != nil {
+			fail("unhealthy: " + err.Error())
+		}
+		return
 	case "init":
+		if containerMode() {
+			created, err := containerInit(*cfgPath, *port)
+			if err != nil {
+				fail(err.Error())
+			}
+			say("Config: " + *cfgPath + map[bool]string{true: " (created)", false: " (kept)"}[created])
+			say("The connect line for clients: minigw gw token")
+			return
+		}
 		abs, _ := filepath.Abs(filepath.Dir(*cfgPath)) // zasebna mapa pred prvim zapisom žetona in ključa
 		os.MkdirAll(abs, 0o700)
 		if err := protectConfigDir(abs); errors.Is(err, errForeignOwner) {
@@ -385,7 +410,12 @@ func serveCommand(args []string) {
 		fail("unknown command minigw serve " + sub + "\n\n" + serveHelp)
 	}
 
-	initReaper() // #52: kot PID 1 (vsebnik brez --init) prehod teče v otroku, ta proces le žanje
+	initReaper()         // #52: kot PID 1 (vsebnik brez --init) prehod teče v otroku, ta proces le žanje
+	if containerMode() { // the entrypoint is `minigw serve`: first start creates the config, later starts keep it
+		if _, err := containerInit(*cfgPath, *port); err != nil {
+			fail(err.Error())
+		}
+	}
 	c, err := loadServeConfig(*cfgPath)
 	if errors.Is(err, os.ErrNotExist) {
 		fail("cannot read " + *cfgPath + ": run minigw serve init first (" + err.Error() + ")")
@@ -570,6 +600,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	}
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
 	ensureBuiltinGateways(&c)
+	containerOff := containerForce(&c)
 	if c.Scratch == "" {
 		if c.Scratch = defaultScratch(); c.Scratch == "" {
 			return nil, errors.New("no cache folder for copies: set \"scratch\" in the config")
@@ -664,6 +695,9 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	case runtime.GOOS == "windows" || !hasBash(c.Tools):
 	default:
 		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
+	}
+	if containerOff {
+		s.log.Print("WARNING: " + containerRefusal + "; the agents in the config were turned off")
 	}
 	s.hub.logf = s.log.Printf
 	s.hub.nestedBlocker = s.nestedBlocker
@@ -1023,7 +1057,9 @@ func validAddress(a string) bool {
 func (s *server) conf() serveConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.cfg
+	c := s.cfg
+	containerForce(&c) // container mode: no local agent at execution time, whatever the settings say
+	return c
 }
 
 func (s *server) claudeExe() []string {
@@ -1051,11 +1087,15 @@ func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 	if err := f(&live); err != nil {
 		return err
 	}
+	if err := containerCheck(live); err != nil {
+		return err
+	}
 	file, err := loadServeConfig(s.cfgPath)
 	if err != nil {
 		return err
 	}
 	file = clone(file)
+	containerForce(&file)                    // an imported serve.json with agents on: f runs on the forced copy, as on the live one
 	for k, v := range s.cfg.AllowedRecords { // R1: a kept folder keeps the live record even if the file has none (failed save at start)
 		if _, ok := file.AllowedRecords[k]; !ok && slices.Contains(file.AllowedFolders, k) {
 			recs := maps.Clone(file.AllowedRecords)
@@ -1096,12 +1136,34 @@ func (s *server) serve(ln net.Listener) error {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGTERM, os.Interrupt)
 		<-sig
-		s.closeCore()
-		s.state.save()
-		s.dropTempRoot()
+		s.shutdown(srv, shutdownDeadline)
 		os.Exit(0)
 	}()
-	return srv.Serve(l)
+	err := srv.Serve(l)
+	if errors.Is(err, http.ErrServerClosed) {
+		select {} // SIGTERM: shutdown() is draining and then exits the process; Serve returns at once, the process must not
+	}
+	return err
+}
+
+// shutdownDeadline: how long SIGTERM lets running requests finish; shorter than the compose stop_grace_period (45 s).
+const shutdownDeadline = 30 * time.Second
+
+// shutdown: stop admission (the listener closes), let running requests finish until the deadline, cut the rest (their
+// contexts end, agent runs are cancelled), and only then close the core database and save the state.
+func (s *server) shutdown(srv *http.Server, deadline time.Duration) {
+	s.log.Print("shutting down: no new requests, waiting up to " + deadline.String() + " for running ones")
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		s.log.Print("shutdown deadline reached, cutting the remaining requests")
+		srv.Close()
+		time.Sleep(200 * time.Millisecond) // cancelled handlers release the database
+	}
+	s.closeCore()
+	s.state.save()
+	s.dropTempRoot()
+	s.log.Print("shutdown complete")
 }
 
 // acceptLoop: napaka sprejema (npr. preveč odprtih datotek) → počakaj in poskusi znova; konec le ob zaprtem poslušanju.
