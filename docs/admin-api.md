@@ -130,7 +130,7 @@ Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
          id: the ID at the provider; model: the name for /model (the id itself when it starts with "claude-" in any letter case,
          else "claude-" + id; the original id also works in requests); window: context window in tokens, if known.
 Provider  {"name": string, "baseURL": string, "insecure": bool, "models": [string] | null, "hasKey": bool, "ready": bool,
-          "enabled": bool, "aliases": string}
+          "enabled": bool, "aliases": string, "tools": "none"|"read"|"edit", "modelTools": {model: level}}
          models: enabled provider IDs; null = all discovered, now and later. ready: model list loaded.
 Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool, "acceptAgentsCanReadNotes"?: bool,
           "exe"?: string, "version"?: string, "off"?: string, "leftOut"?: [string],
@@ -177,7 +177,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /activity` | – | `{"inflight": [Running], "requests": [Request]}`, newest first: what the Mac app's Activity window shows |
 | `GET /providers` | – | `{"providers": [Provider]}` |
 | `POST /providers` | `{"name", "baseURL", "key", "insecure"}` | `{"provider": Provider, "keyStore": string, "models": [Model]}` |
-| `PATCH /providers/{name}` | any of `{"name", "enabled", "baseURL", "insecure", "aliases"}` | `{"provider": Provider}`; a new name moves the key; the key stays for a new URL |
+| `PATCH /providers/{name}` | any of `{"name", "enabled", "baseURL", "insecure", "aliases"}`, or `{"tools": none\|read\|edit\|"", "model": "<name>"}` (the highest tool level of the provider's models, or of one model with `model`; `""` = back to the default, read) | `{"provider": Provider}`; a new name moves the key; the key stays for a new URL |
 | `DELETE /providers/{name}` | – | `{"name"}`; also deletes the key |
 | `GET /providers/{name}/models?filter=text` | – | `{"models": [Model]}`; filter: part of `model`, any case |
 | `POST /providers/{name}/models` | `{"all"?: bool, "enable"?: [id or model], "disable"?: [id or model]}` | `{"models": [Model], "changed": [Model]}` |

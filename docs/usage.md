@@ -407,7 +407,7 @@ Grep and Glob; `none` gives it no tools; `edit` adds Edit and Write, still no Ba
 inside the current folder (`Edit(./**)`, `--permission-mode=dontAsk`: anything else is refused without a prompt), never through a symlink that leads out of it
 (measured with Claude Code 2.1.322), and never in `.git`, `.claude/settings*.json`, `.claude/{hooks,commands,agents,skills}`, `.husky`, `.githooks`,
 `.vscode/tasks.json` or `.envrc`, in any subfolder and in any letter case (the same paths that direct mode protects); Claude Code itself also refuses
-other files inside `.claude` and `.vscode`. `edit` with `--minigw-ro` is an error. minigw passes `--tools=<list>`, `--strict-mcp-config` (no MCP tools, not even the claude.ai connectors),
+other files inside `.claude` and `.vscode`. `edit` with `--minigw-ro` is an error, and so is `edit` above what the gateway's owner allows for the model (`minigw gw provider tools <provider> edit [--model m]`, default `read`); the error names that command. minigw passes `--tools=<list>`, `--strict-mcp-config` (no MCP tools, not even the claude.ai connectors),
 `--disable-slash-commands` and `--setting-sources=` to claude: with the default setting sources a hook in your user, project or local settings
 still runs (measured with a real run), so for this run **your own settings and hooks are not loaded**. It is accepted inside Claude Code because the set
 is fixed by minigw (read-only, or edit limited to the folder), not chosen by the caller. While a restriction applies, minigw refuses options that could widen it, also outside Claude Code and with

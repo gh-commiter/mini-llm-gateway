@@ -99,6 +99,7 @@ only on the gateway computer.
 | `minigw gw provider add <name> <baseURL> [--insecure]` | Add a provider; the API key is read from stdin or asked for |
 | `minigw gw provider list` \| `remove <name>` | List or remove providers |
 | `minigw gw provider models <name> [text] [--all] [--enable m1,m2\|all] [--disable m1,m2\|all]` | Show, enable or disable a provider's models |
+| `minigw gw provider tools <name> [none\|read\|edit\|default] [--model m]` | Show or set the highest tool level its models (or one model) may get in a client's Claude Code; default `read`. A client asking for `--minigw-tools=edit` above it is refused |
 | `minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true\|false] [--ask-others=true\|false]` | Claude CLI settings |
 | `minigw gw claude --allow-unsandboxed-bash=true\|false` | Commands without a sandbox (`minigw serve` only) |
 | `minigw gw claude --accept-agents-read-notes=true\|false` | Accept that agents without a sandbox can read all project notes; without it the core stays closed on such a Windows or Linux gateway; restart to apply (`minigw serve` only: Mac agents are sandboxed) |
