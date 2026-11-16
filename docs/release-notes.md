@@ -1,12 +1,19 @@
 # Release notes
 
-## Unreleased
+## 0.7.3
 
 ### Fixed
 - `minigw gw member remove` for a user whose access comes only from a team now says so and names the `gw team access remove` command, instead of "not found".
 - Restoring a database backup now refuses a backup whose project memberships do not match their sources.
 - Team, user and project names with control or invisible formatting characters (such as a line break) are refused.
 - `minigw team list` and `team show` on the Mac report an unreadable gateway answer as an error instead of showing an empty list or a team with ID 0.
+- Reading the database: a schema number outside the valid range is refused instead of being cut to a smaller number.
+- Tests: the automated tests on GitHub (Windows and macOS runners) failed or hung since 0.6.0 because of assumptions about the test machine; they are bounded and corrected. No change in the programs.
+
+### Known problems
+- Windows gateway: a link whose target names its UNC share by an 8.3 short alias is refused (it fails closed).
+- Direct mode on a Mac gateway with a remote client: files that an agent creates and commits are recorded as executable (mode 100755), and a tracked symbolic link can be committed as a regular file. Check `git diff --summary` before pushing such commits.
+- Grok is not supported on the Mac gateway. Agents started by the gateway inherit the gateway's environment variables.
 
 ## 0.7.2
 
