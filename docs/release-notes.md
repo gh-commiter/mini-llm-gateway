@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+### New
+
+- xAI works as a provider (base URL `https://api.x.ai`): mid-conversation `system` messages and tool schemas without `required` are rewritten for it on both gateways.
+
 ## 0.7.3
 
 ### Fixed
