@@ -483,6 +483,7 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 		return writeError(w, r.rid, 400, "Body must be a JSON object")
 	}
 	body["model"], _ = json.Marshal(m.id)
+	normalizeForProvider(g.BaseURL, body)
 	data, _ := json.Marshal(body)
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()

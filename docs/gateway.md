@@ -171,7 +171,7 @@ Windows tray, **Choose…** and **Browse…** open the Windows file dialog; else
 
 ## Providers
 
-Any Anthropic-compatible upstream works: OpenRouter, LiteLLM, or another. Add as many as you like, each with its own
+Any Anthropic-compatible upstream works: OpenRouter, LiteLLM, xAI, or another. Add as many as you like, each with its own
 key. LiteLLM (`http://localhost:4000`) and OpenRouter (`https://openrouter.ai/api`) are always listed and stay off
 until you set a key.
 
@@ -182,7 +182,10 @@ minigw gw provider models openrouter haiku                    # enabled models m
 minigw gw provider list
 ```
 
-- The gateway passes requests through unchanged, streaming and tools included.
+- The gateway passes requests through unchanged, streaming and tools included. Only for `https://api.x.ai` (xAI) it
+  first rewrites two things xAI rejects: a `system` message inside `messages` becomes a `<system-reminder>` text block in
+  the neighbouring user message, and a tool schema without `required` gets `"required": []`.
+- **xAI**: base URL `https://api.x.ai`, billed per token by xAI. Turn the image and video models off in the model list.
 - A provider with more than 20 models starts with none enabled.
 - The URL must be `https`. `http` works only to localhost, a private IP or a `.local` name, with `--insecure`
   (**Allow http**).

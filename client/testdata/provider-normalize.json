@@ -1,0 +1,101 @@
+{
+  "hosts": [
+    {"url": "https://api.x.ai", "applies": true},
+    {"url": "https://api.x.ai/", "applies": true},
+    {"url": "https://API.X.AI/v1", "applies": true},
+    {"url": "https://openrouter.ai/api", "applies": false},
+    {"url": "http://localhost:4000", "applies": false},
+    {"url": "https://evil.example/api.x.ai", "applies": false},
+    {"url": "https://api.x.ai.evil.example", "applies": false}
+  ],
+  "cases": [
+    {
+      "name": "untouched: cache_control, thinking, tool blocks, unknown fields",
+      "input": {
+        "model": "grok-4", "max_tokens": 100, "metadata": {"user_id": "u"}, "x_unknown": [1, 2.5, null],
+        "system": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}],
+        "thinking": {"type": "enabled", "budget_tokens": 1024},
+        "tools": [{"name": "t", "description": "d", "cache_control": {"type": "ephemeral"},
+                   "input_schema": {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"], "additionalProperties": false}}],
+        "messages": [
+          {"role": "user", "content": "hi"},
+          {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_1", "name": "t", "input": {"a": "x"}, "extra": 1}]},
+          {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok", "cache_control": {"type": "ephemeral"}}]}
+        ]
+      },
+      "expected": {
+        "model": "grok-4", "max_tokens": 100, "metadata": {"user_id": "u"}, "x_unknown": [1, 2.5, null],
+        "system": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}],
+        "thinking": {"type": "enabled", "budget_tokens": 1024},
+        "tools": [{"name": "t", "description": "d", "cache_control": {"type": "ephemeral"},
+                   "input_schema": {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"], "additionalProperties": false}}],
+        "messages": [
+          {"role": "user", "content": "hi"},
+          {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_1", "name": "t", "input": {"a": "x"}, "extra": 1}]},
+          {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok", "cache_control": {"type": "ephemeral"}}]}
+        ]
+      }
+    },
+    {
+      "name": "tool schema without required gets an empty list; null too; non-object and existing stay",
+      "input": {"messages": [], "tools": [
+        {"name": "a", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "b", "input_schema": {"type": "object", "required": null}},
+        {"name": "c", "input_schema": {"type": "object", "required": ["x"]}},
+        {"name": "d", "input_schema": {"type": "string"}},
+        {"name": "e"}
+      ]},
+      "expected": {"messages": [], "tools": [
+        {"name": "a", "input_schema": {"type": "object", "properties": {}, "required": []}},
+        {"name": "b", "input_schema": {"type": "object", "required": []}},
+        {"name": "c", "input_schema": {"type": "object", "required": ["x"]}},
+        {"name": "d", "input_schema": {"type": "string"}},
+        {"name": "e"}
+      ]}
+    },
+    {
+      "name": "system message between user and assistant merges into the previous user message",
+      "input": {"messages": [
+        {"role": "user", "content": "hi"},
+        {"role": "system", "content": "be brief"},
+        {"role": "assistant", "content": "ok"}
+      ]},
+      "expected": {"messages": [
+        {"role": "user", "content": [{"type": "text", "text": "hi"}, {"type": "text", "text": "<system-reminder>\nbe brief\n</system-reminder>"}]},
+        {"role": "assistant", "content": "ok"}
+      ]}
+    },
+    {
+      "name": "system message after assistant merges into the next user message, after its tool_result blocks",
+      "input": {"messages": [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "x", "input": {}}]},
+        {"role": "system", "content": [{"type": "text", "text": "one"}, {"type": "text", "text": "two"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "r"}, {"type": "text", "text": "more", "cache_control": {"type": "ephemeral"}}]}
+      ]},
+      "expected": {"messages": [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "x", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "r"},
+                                      {"type": "text", "text": "<system-reminder>\none\ntwo\n</system-reminder>"},
+                                      {"type": "text", "text": "more", "cache_control": {"type": "ephemeral"}}]}
+      ]}
+    },
+    {
+      "name": "system message between assistant messages becomes its own user message; leading and consecutive ones merge",
+      "input": {"messages": [
+        {"role": "system", "content": "a"},
+        {"role": "system", "content": "b"},
+        {"role": "assistant", "content": "x"},
+        {"role": "system", "content": "c"},
+        {"role": "assistant", "content": "y"}
+      ]},
+      "expected": {"messages": [
+        {"role": "user", "content": [{"type": "text", "text": "<system-reminder>\na\n</system-reminder>"}, {"type": "text", "text": "<system-reminder>\nb\n</system-reminder>"}]},
+        {"role": "assistant", "content": "x"},
+        {"role": "user", "content": [{"type": "text", "text": "<system-reminder>\nc\n</system-reminder>"}]},
+        {"role": "assistant", "content": "y"}
+      ]}
+    }
+  ]
+}
