@@ -1,14 +1,23 @@
 # Release notes
 
-## Unreleased
+## 0.7.8
 
 ### New
 - `minigw kb mcp [--project <slug>]`: a read-only MCP server for the knowledge base that an MCP client (Claude Code and others) starts as a command. It has two tools, `kb_search` and `note_read`, with your rights in that project; inside an agent run of the gateway it uses the run's rights and takes no project. Results are marked as untrusted reference content, cleaned of control characters and limited in size. `minigw kb mcp --print-config` prints the entry for the MCP client's configuration (no token in it).
+- Sessions of a project, without any prompt or answer text: `minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]` lists who ran what and when (user, device, model, start, duration, requests, tokens, cost, outcome). A member sees own sessions; a project admin sees all sessions of the project. The owner has the same list on the gateway computer.
 
 ### Fixed
 - Mac gateway: a `minigw run` command listed the temp folder on a thread of the app's shared thread pool; with a very full temp folder and several runs at once the gateway could stop answering for seconds. It now runs on its own thread.
 - `minigw kb search --json`, `note read --json` and `kb submissions --json` write terminal control characters in note text as JSON `\\uXXXX` escapes, so a note cannot steer the terminal of a person who prints the JSON; a program that parses it gets the same text as before.
 - `minigw kb search` shows the time of a note in local time, like `note list`.
+
+### Known problems
+- `minigw kb mcp` and `minigw project sessions` are new and proved with tests and reviews, not yet in daily use. A project whose slug is `sessions` gets a wrong answer from the Go gateway for its own project page.
+- GitHub's Swift tests: the hang is fixed and they finish; that the job is green with Go installed on the runner is not yet confirmed.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.7
 
