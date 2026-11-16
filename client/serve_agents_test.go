@@ -156,8 +156,13 @@ var fakeGrokHi = fake("grok-hi", func(p fakeParams, args []string) {
 	}
 	prompt, _ := os.ReadFile(fakeFlag(args, "--prompt-file"))
 	fakeArgs(p["args"], args, "shellnote="+fmt.Sprint(strings.Contains(string(prompt), grokNoShellNote)))
-	if strings.Contains(string(prompt), "needs-approval") && !slices.Contains(args, "--always-approve") { // #121: a command Grok cannot get approved
-		fmt.Println(`{"type":"end","stopReason":"cancelled","sessionId":"s8"}`)
+	if strings.Contains(string(prompt), "needs-approval") && !slices.Contains(args, "--always-approve") { // #121: a command Grok cannot get approved (shared fixture with Swift)
+		fmt.Fprintln(os.Stderr, "permission required: Execute `find .` was not run, as a headless run cannot ask for approval")
+		fmt.Println(`{"type":"end","stopReason":"cancelled"}`) // no session id: still the same evidence
+		return
+	}
+	if strings.Contains(string(prompt), "cancelled-only") { // cancelled without the refusal text: not an approval problem
+		fmt.Println(`{"type":"end","stopReason":"cancelled","sessionId":"s7"}`)
 		return
 	}
 	fmt.Println(`{"type":"text","data":"grok "}`)
@@ -227,6 +232,10 @@ func TestCodexAndGrokThroughRouter(t *testing.T) {
 	}
 	if st, data := call(c, "POST", "/v1/messages", h, []byte(b121), 30*time.Second); st != 400 || !strings.Contains(string(data), "cannot give") {
 		t.Fatalf("grok read-only approval: %d %s", st, data)
+	}
+	b122 := `{"model":"claude-grok","tools":[{"name":"x"}],"messages":[{"role":"user","content":"cancelled-only"}]}`
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(b122), 30*time.Second); st != 502 || strings.Contains(string(data), "cannot give") {
+		t.Fatalf("a cancelled run without the refusal text stays a 502: %d %s", st, data)
 	}
 	delete(h, "x-claude-mini-ro")
 	if st, b := chat("claude-grok", true, true); st != 200 || !strings.Contains(args(), "shellnote=false") || !strings.Contains(b, `"text":"grok says hi"`) || !strings.Contains(b, "message_stop") ||
@@ -399,6 +408,14 @@ func TestAgentMessageExtraction(t *testing.T) {
 
 // Napaka pred glavo (tudi pri pretoku) je pravi 429 z x-should-retry: false (Claude Code ne ponovi); po glavi dogodek SSE,
 // ponovitev brez pretoka dobi isti 429 brez novega zagona CLI.
+// bodyG, bodyC (#121): the request of these tests; the repeat of a streamed request has the same content but for stream.
+func bodyG(stream bool) map[string]any {
+	return map[string]any{"model": "claude-grok", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": stream}
+}
+func bodyC(stream bool) map[string]any {
+	return map[string]any{"model": "claude-codex", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": stream}
+}
+
 func TestReplyWhenDoneRetryHeaders(t *testing.T) {
 	defer func(d time.Duration) { agentHeadDelay = d }(agentHeadDelay)
 	agentHeadDelay = 50 * time.Millisecond
@@ -413,12 +430,12 @@ func TestReplyWhenDoneRetryHeaders(t *testing.T) {
 	}
 	for _, stream := range []bool{true, false} {
 		w := httptest.NewRecorder()
-		st := s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-grok", "stream": stream}, limit)
+		st := s.replyWhenDone(w, newReq(), bodyG(stream), limit)
 		if st != 429 || w.Code != 429 || w.Header().Get("x-should-retry") != "false" || !strings.Contains(w.Body.String(), `"You have run out of credits."`) {
 			t.Fatalf("stream=%v: %d %d %q %s", stream, st, w.Code, w.Header().Get("x-should-retry"), w.Body.String())
 		}
 	}
-	if _, _, ok := s.recentLimit(newReq(), "claude-grok"); ok {
+	if _, _, ok := s.recentLimit(newReq(), "claude-grok", bodyG(false)); ok {
 		t.Fatal("an HTTP 429 is final: nothing to remember")
 	}
 	// HPX360: agent, ki je padel (502), Claude Code ne zažene znova
@@ -428,15 +445,15 @@ func TestReplyWhenDoneRetryHeaders(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	slow := func() (string, error) { time.Sleep(150 * time.Millisecond); return limit() }
-	s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-grok", "stream": true}, slow)
+	s.replyWhenDone(w, newReq(), bodyG(true), slow)
 	if w.Code != 200 || w.Header().Get("x-should-retry") != "false" || !strings.Contains(w.Body.String(), "event: error") ||
 		!strings.Contains(w.Body.String(), "rate_limit_error") {
 		t.Fatalf("late error: %d %s", w.Code, w.Body.String())
 	}
-	if m, _, ok := s.recentLimit(newReq(), "claude-grok"); !ok || m != "You have run out of credits." {
+	if m, _, ok := s.recentLimit(newReq(), "claude-grok", bodyG(false)); !ok || m != "You have run out of credits." {
 		t.Fatalf("fallback after a stream error: %q %v", m, ok)
 	}
-	if _, _, ok := s.recentLimit(newReq(), "claude-grok"); ok {
+	if _, _, ok := s.recentLimit(newReq(), "claude-grok", bodyG(false)); ok {
 		t.Fatal("remembered once only")
 	}
 	// #82: neprevzeto delo agenta je končno: pred glavo 502 z x-should-retry: false, po glavi dogodek SSE in ponovitev
@@ -445,26 +462,47 @@ func TestReplyWhenDoneRetryHeaders(t *testing.T) {
 		return "", pullError("the agent's changes were not copied back to your folder: the shared folder is busy")
 	}
 	w = httptest.NewRecorder()
-	if st := s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-codex"}, pull); st != 502 || w.Header().Get("x-should-retry") != "false" ||
+	if st := s.replyWhenDone(w, newReq(), bodyC(false), pull); st != 502 || w.Header().Get("x-should-retry") != "false" ||
 		!strings.Contains(w.Body.String(), "busy") {
 		t.Fatalf("pull failure before the head: %d %q %s", st, w.Header().Get("x-should-retry"), w.Body.String())
 	}
 	w = httptest.NewRecorder()
-	s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-codex", "stream": true}, func() (string, error) { time.Sleep(150 * time.Millisecond); return pull() })
+	s.replyWhenDone(w, newReq(), bodyC(true), func() (string, error) { time.Sleep(150 * time.Millisecond); return pull() })
 	if !strings.Contains(w.Body.String(), "event: error") {
 		t.Fatalf("pull failure after the head: %s", w.Body.String())
 	}
-	if m, st, ok := s.recentLimit(newReq(), "claude-codex"); !ok || st != 502 || !strings.Contains(m, "busy") {
+	if m, st, ok := s.recentLimit(newReq(), "claude-codex", bodyC(false)); !ok || st != 502 || !strings.Contains(m, "busy") {
 		t.Fatalf("retry after a stream pull failure must be final: %q %d %v", m, st, ok)
 	}
 	// #121: every agent failure after the head is final (a 25-minute run must not start again), not only limits and pull failures
 	w = httptest.NewRecorder()
-	s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-grok", "stream": true}, func() (string, error) { time.Sleep(150 * time.Millisecond); return "", errors.New(grokNeedsApproval) })
-	if m, st, ok := s.recentLimit(newReq(), "claude-grok"); !ok || st != 400 || m != grokNeedsApproval {
+	s.replyWhenDone(w, newReq(), bodyG(true), func() (string, error) { time.Sleep(150 * time.Millisecond); return "", errors.New(grokNeedsApproval) })
+	if m, st, ok := s.recentLimit(newReq(), "claude-grok", bodyG(false)); !ok || st != 400 || m != grokNeedsApproval {
 		t.Fatalf("retry after a stream failure must be final: %q %d %v", m, st, ok)
 	}
+	// #121 (Astra 4, 5): an unrelated request does not get the failure, a later success clears it, the memory is bounded
 	w = httptest.NewRecorder()
-	if st := s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-grok", "stream": true}, func() (string, error) { return "hi", nil }); st != 200 ||
+	s.replyWhenDone(w, newReq(), bodyG(true), func() (string, error) { time.Sleep(150 * time.Millisecond); return "", errors.New(grokNeedsApproval) })
+	other := bodyG(false)
+	other["messages"] = []any{map[string]any{"role": "user", "content": "something else"}}
+	if _, _, ok := s.recentLimit(newReq(), "claude-grok", other); ok {
+		t.Fatal("another request must not get this failure")
+	}
+	w = httptest.NewRecorder()
+	s.replyWhenDone(w, newReq(), bodyG(false), func() (string, error) { return "fine", nil })
+	if _, _, ok := s.recentLimit(newReq(), "claude-grok", bodyG(false)); ok {
+		t.Fatal("a success clears the memory of the failure")
+	}
+	for i := 0; i < 3*maxLimitHits; i++ {
+		b := bodyG(false)
+		b["n"] = i
+		s.noteFinal(newReq(), "claude-grok", 502, "m", b)
+	}
+	if n := len(s.limits); n > maxLimitHits {
+		t.Fatalf("memory not bounded: %d", n)
+	}
+	w = httptest.NewRecorder()
+	if st := s.replyWhenDone(w, newReq(), bodyG(true), func() (string, error) { return "hi", nil }); st != 200 ||
 		!strings.Contains(w.Body.String(), "message_start") || !strings.Contains(w.Body.String(), "hi") {
 		t.Fatalf("answer: %d %s", st, w.Body.String())
 	}

@@ -787,7 +787,8 @@ final class SeenDevices: @unchecked Sendable {
     #expect(Grok.match("claude-grok")! == nil && Grok.match("claude-grok-grok-4.7")! == "grok-4.7" && Grok.match("claude-codex") == nil)
     #expect(Grok.event(Data(#"{"type":"tool_call","title":"read_file","rawInput":{"target_file":"a.txt"}}"#.utf8)) == .step("read_file a.txt"))
     #expect(Grok.event(Data(#"{"type":"text","data":"hello"}"#.utf8)) == .text("hello"))
-    #expect(Grok.event(Data(#"{"type":"end","stopReason":"end_turn","sessionId":"s1"}"#.utf8)) == .end("s1"))
+    #expect(Grok.event(Data(#"{"type":"end","stopReason":"end_turn","sessionId":"s1"}"#.utf8)) == .end("s1", cancelled: false))
+    #expect(Grok.event(Data(#"{"type":"end","stopReason":"cancelled"}"#.utf8)) == .end(nil, cancelled: true))  // #121: also without a session id
 }
 
 @Test func davGetReadsOnlyTheRangeAndLimitsSize() throws {

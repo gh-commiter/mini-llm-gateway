@@ -352,6 +352,9 @@ func codexTreeProfile(writable, gits, deny []string, network bool, path string) 
 // #121 (kot Grok.noShellNote, needsApproval): brez --always-approve (le branje, worktree, brez pisanja) tek brez uporabnika ukaza ne more odobriti;
 // Grok sicer poseže po find in ls tudi za branje in obstane (»permission required«).
 const grokNoShellNote = "In this run shell commands cannot be approved, so run_terminal_command does not work: do not call it. Look at files with list_dir, read_file and grep."
+// The approval refusal has one evidence contract on both gateways (Swift: Grok.run): exit status 0, not cancelled by the client, no error event, empty answer,
+// an end event with stopReason cancelled (a session id is not required) and the refusal text in the last 4000 bytes of stderr (tailBuffer).
+const grokApprovalMarker = "headless run cannot ask for approval"
 const grokNeedsApproval = "grok needed approval to run a command, which a headless run cannot give: a read-only run runs no commands. Ask for file tools only, or run without --minigw-ro (and allow Grok to change the folder in Mini Gateway → Settings)."
 
 // grokArgs: kot Grok.args na Macu; jedrni sandbox »workspace« piše le v mapo seje (dodatnih map ne dovoli).
@@ -588,7 +591,7 @@ func codexThread(line []byte) string {
 // grokEvent: dogodek »streaming-json«: korak, besedilo, konec (ID seje) ali napaka.
 type grokEvent struct {
 	step, text, session, err string
-	cancelled                bool // »end« s stopReason »cancelled«: tek je obstal (#121: ukaz brez odobritve)
+	end, cancelled           bool // »end« (tudi brez ID seje); s stopReason »cancelled« je tek obstal (#121: ukaz brez odobritve)
 }
 
 func parseGrokEvent(line []byte) (grokEvent, bool) {
@@ -616,7 +619,7 @@ func parseGrokEvent(line []byte) (grokEvent, bool) {
 		return grokEvent{step: strings.TrimSpace(title + " " + arg[:min(len(arg), 120)])}, true
 	case "end":
 		id, _ := o["sessionId"].(string)
-		return grokEvent{session: id, cancelled: o["stopReason"] == "cancelled"}, true
+		return grokEvent{session: id, end: true, cancelled: o["stopReason"] == "cancelled"}, true
 	case "error":
 		m, _ := o["message"].(string)
 		if m == "" {
@@ -1109,7 +1112,10 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			args := grokArgs(dir, pf, s.cfgDir, agent, model, write, resume)
 			var answer, failure string
 			var cancelledEnd bool
-			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, "", func(line []byte) {
+			var stderrTail string
+			gm := withTree(m)
+			gm.stderr = func(t string) { stderrTail = t }
+			err = s.runAgentProcess(ctx, r, exe, args, gm, dir, "", func(line []byte) {
 				e, ok := parseGrokEvent(line)
 				switch {
 				case !ok:
@@ -1120,7 +1126,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				case e.err != "":
 					failure = e.err
 					cancel() // napaka konča tek: ne čakaj, da grok konča sam
-				case e.session != "":
+				case e.end:
 					thread, cancelledEnd = e.session, e.cancelled
 				default:
 					answer += e.text
@@ -1130,7 +1136,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				return "", errors.New(failure)
 			}
 			text = strings.TrimSpace(answer)
-			if err == nil && text == "" && cancelledEnd && ctx.Err() == nil && !write { // #121
+			if err == nil && text == "" && cancelledEnd && ctx.Err() == nil && strings.Contains(stderrTail, grokApprovalMarker) { // #121: the same evidence as Swift: a cancelled end AND the text of the refusal
 				return "", errors.New(grokNeedsApproval)
 			}
 		}
@@ -1517,6 +1523,9 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 		}
 		return fmt.Errorf("%s failed (%v); details are in the gateway log, request %s", filepath.Base(exe), err, r.rid)
 	}
+	if m.stderr != nil {
+		m.stderr(strings.TrimSpace(stderr.String()))
+	}
 	return nil
 }
 
@@ -1579,7 +1588,7 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 		r.fail(agentErrKind(err.Error()))
 		status, msg := classifyAgentError(err.Error())
 		if _, early := w.(*earlyWriter); stream && (headSent || early) { // napaka bo dogodek SSE; #121: vsaka napaka agenta je končna (ponovitev brez pretoka ne zažene agenta znova)
-			s.noteFinal(r, model, status, msg)
+			s.noteFinal(r, model, status, msg, body)
 		}
 		if headSent {
 			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": msg}}))
@@ -1589,6 +1598,7 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 		w.Header().Set("x-should-retry", "false")
 		return writeAgentError(w, r.rid, status, msg)
 	}
+	s.clearLimit(r, model, body) // #121: uspeh zbriše spomin na napako te zahteve
 	t.usage = map[string]any{"output_tokens": float64(len(text) / 4)}
 	r.tokenSource = "estimated" // Codex, Grok and Copilot report no counts: the output is estimated from its length
 	if stream {
@@ -1737,32 +1747,59 @@ func agentLimit(msg string) bool {
 
 // noteLimit: omejitev agenta, sporočena kot dogodek SSE (glava 200 je bila že poslana): Claude Code na tako napako takoj
 // ponovi zahtevo brez pretoka; recentLimit ji 60 s odgovori z istim 429 brez novega zagona CLI.
-func (s *server) noteLimit(r *req, model string, status int, msg string) {
+func (s *server) noteLimit(r *req, model string, status int, msg string, body map[string]any) {
 	if status == 429 {
-		s.noteFinal(r, model, status, msg)
+		s.noteFinal(r, model, status, msg, body)
 	}
 }
 
 // noteFinal (#82): končna napaka po glavi (omejitev, neprevzeto delo agenta): ponovitev brez pretoka dobi isti status z
-// x-should-retry: false namesto novega zagona agenta (sicer bi se njegove spremembe uveljavile dvakrat).
-func (s *server) noteFinal(r *req, model string, status int, msg string) {
+// x-should-retry: false namesto novega zagona agenta (sicer bi se njegove spremembe uveljavile dvakrat). #121: ključ ima prstni odtis zahteve
+// (brez »stream«), uspeh vnos zbriše, vnosov je največ maxLimitHits.
+const maxLimitHits = 128
+
+func (s *server) noteFinal(r *req, model string, status int, msg string, body map[string]any) {
 	now := time.Now()
-	s.limits.Range(func(k, v any) bool { // stari vnosi
-		if now.Sub(v.(limitHit).at) > time.Minute {
-			s.limits.Delete(k)
+	s.limitsMu.Lock()
+	defer s.limitsMu.Unlock()
+	if s.limits == nil {
+		s.limits = map[string]limitHit{}
+	}
+	for k, v := range s.limits { // stari vnosi
+		if now.Sub(v.at) > time.Minute {
+			delete(s.limits, k)
 		}
-		return true
-	})
-	s.limits.Store(limitKey(r, model), limitHit{msg, now, status})
+	}
+	for len(s.limits) >= maxLimitHits {
+		oldest, first := "", true
+		for k, v := range s.limits {
+			if first || v.at.Before(s.limits[oldest].at) {
+				oldest, first = k, false
+			}
+		}
+		delete(s.limits, oldest)
+	}
+	s.limits[limitKey(r, model, body)] = limitHit{msg, now, status}
 }
 
-// recentLimit: nedavna končna napaka za ta model, napravo in sejo (enkrat; le zahteva brez pretoka).
-func (s *server) recentLimit(r *req, model string) (string, int, bool) {
-	v, ok := s.limits.LoadAndDelete(limitKey(r, model))
-	if !ok || time.Since(v.(limitHit).at) > time.Minute {
+// clearLimit: uspeh zbriše spomin na napako iste zahteve.
+func (s *server) clearLimit(r *req, model string, body map[string]any) {
+	s.limitsMu.Lock()
+	delete(s.limits, limitKey(r, model, body))
+	s.limitsMu.Unlock()
+}
+
+// recentLimit: nedavna končna napaka za to zahtevo (enkrat; le zahteva brez pretoka).
+func (s *server) recentLimit(r *req, model string, body map[string]any) (string, int, bool) {
+	k := limitKey(r, model, body)
+	s.limitsMu.Lock()
+	v, ok := s.limits[k]
+	delete(s.limits, k)
+	s.limitsMu.Unlock()
+	if !ok || time.Since(v.at) > time.Minute {
 		return "", 0, false
 	}
-	return v.(limitHit).msg, v.(limitHit).status, true
+	return v.msg, v.status, true
 }
 
 type limitHit struct {
@@ -1776,8 +1813,17 @@ type pullError string
 
 func (e pullError) Error() string { return string(e) }
 
-func limitKey(r *req, model string) string {
-	return model + "|" + r.owner() + "|" + r.h("x-claude-mini-session")
+// limitKey (#121): model, naprava, seja, mapa in prstni odtis zahteve brez prenosne zastavice »stream« (ponovitev pretočne zahteve ima isto vsebino).
+func limitKey(r *req, model string, body map[string]any) string {
+	b := make(map[string]any, len(body))
+	for k, v := range body {
+		if k != "stream" {
+			b[k] = v
+		}
+	}
+	data, _ := json.Marshal(b)
+	sum := sha256.Sum256(data)
+	return model + "|" + r.owner() + "|" + r.h("x-claude-mini-session") + "|" + r.h("x-claude-mini-cwd") + "|" + hex.EncodeToString(sum[:12])
 }
 
 var apiErrorPrefix = regexp.MustCompile(`^API error \(status \d+[^)]*\):\s*`)

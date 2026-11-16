@@ -504,26 +504,21 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         #expect(homes.count <= 20)  // maxHomes of the core's agent-home
     }
 
-    @Test func grokProjectRunHasItsOwnHomeWithItsProfileAndTheLoginStaysWhereItIs() async throws {
+    /// #121: while Grok's home (the shared one, or a project's in `<Scratch>/state`) lies inside a root its own profile denies, grok cannot read its config: the run is refused
+    /// early, with a clear message and without a retry, and no process is started. It lifts by itself when the home is reachable (`homeHidden` is decided from the same lists).
+    @Test func grokIsRefusedEarlyWhileItsHomeLiesInsideAHiddenRoot() async throws {
         let f = try await PFx()
         await f.project("fakture"); await f.user("ana", projects: ["fakture": "developer"])
         f.makeRouter(grok: try f.script("grok", fakeGrok))
-        #expect(await f.ask("claude-grok", project: f.pid["fakture"]).status == 200)
-        let env = try #require(f.read("call-grok-0.env"))
-        let home = try #require(env.split(separator: "\n").first { $0.hasPrefix("GROK_HOME=") }.map { String($0.dropFirst("GROK_HOME=".count)) })
-        #expect(home.contains("/state/") && home.contains("-\(f.pid["fakture"]!)-e") && home.hasSuffix("/grok"))
-        #expect(env.contains("GROK_AUTH_PATH="))
-        let toml = try String(contentsOfFile: home + "/sandbox.toml", encoding: .utf8)
-        #expect(toml.contains("[profiles.minigw-core]"))
-        // the profile denies the folder of the homes (every project's): by its own entry or by the globs of the Scratch root it lies in
-        let entries = (toml.components(separatedBy: "\n").first { $0.hasPrefix("deny = [") } ?? "").components(separatedBy: "\"").enumerated().filter { $0.offset % 2 == 1 }.map(\.element)
-        let probe = f.router.config.scratch("state").path + "/dev/proj/x"
-        #expect(grokDenies(entries, probe), "no entry denies \(probe): \(entries)")
-        #expect(f.read("call-grok-0.args")?.contains("minigw-core") == true)
-        // without a project the shared gateway home as before
-        #expect(await f.ask("claude-grok").status == 200)
-        let plain = try #require(f.read("call-grok-1.env")?.split(separator: "\n").first { $0.hasPrefix("GROK_HOME=") })
-        #expect(plain.hasSuffix("/grok-home") && !plain.contains("/state/"))
+        for project in [f.pid["fakture"], nil] {
+            let w = await f.ask("claude-grok", project: project)
+            #expect(w.status == 503 && w.text.contains("x-should-retry: false") && w.text.contains("Grok is switched off on the Mac gateway"), "\(w.text.prefix(300))")
+        }
+        #expect(f.read("call-grok-0.env") == nil && f.read("call-grok-0.args") == nil)  // nothing was started
+        let scratch = f.router.config.scratchURL
+        let roots = Grok.deniedRoots(scratch: scratch)
+        #expect(Grok.homeHidden(scratch.appendingPathComponent("grok-home"), roots: roots) && Grok.homeHidden(scratch.appendingPathComponent("state/x/proj/p/grok"), roots: roots))
+        #expect(!Grok.homeHidden(f.base.appendingPathComponent("elsewhere/grok-home"), roots: roots))  // a reachable home is not refused
     }
 
     @Test func codexProjectHomeLinksTheLoginAndCarriesAReplacedOneBack() throws {

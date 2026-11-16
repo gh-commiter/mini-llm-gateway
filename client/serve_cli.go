@@ -930,7 +930,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	defer s.activity.start(r, model)()
 	s.admitEvent(r, model)                                                         // 0.6.0: the admission context of this invocation (serve_usage.go); the event begins at dispatch
 	if body["stream"] != true && !strings.HasSuffix(r.URL.Path, "/count_tokens") { // ponovitev po omejitvi v toku (noteLimit)
-		if msg, status, ok := s.recentLimit(r, model); ok {
+		if msg, status, ok := s.recentLimit(r, model, body); ok {
 			w.Header().Set("x-should-retry", "false")
 			return writeAgentError(w, r.rid, status, msg), model
 		}
@@ -1482,9 +1482,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 		if t.text == "" || treeErr != nil || pullErr != "" {
 			if pullErr != "" {
-				s.noteFinal(r, model, status, "claude: "+clean)
+				s.noteFinal(r, model, status, "claude: "+clean, body)
 			} else {
-				s.noteLimit(r, model, status, "claude: "+clean)
+				s.noteLimit(r, model, status, "claude: "+clean, body)
 			}
 			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": "claude: " + clean}}))
 			return status
@@ -1493,6 +1493,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	if !chat {
 		s.sessions.set(transcriptKey(append(all, turn{"assistant", strings.TrimSpace(t.text)}), scope), sessionID)
 	}
+	s.clearLimit(r, model, body) // a success ends the memory of an earlier failure of this request
 	if stream {
 		send(t.finish())
 		return 200

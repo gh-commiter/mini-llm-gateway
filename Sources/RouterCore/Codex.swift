@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Synchronization
 
@@ -441,6 +442,7 @@ extension Router {
         } : nil
         do {
             let (text, extra) = try await work()
+            if let req { AgentError.clear(AgentError.key(req, model: t.model, body: body)) }  // #121 (Astra 4): a later success ends the memory of the failure
             pinger?.cancel()
             await pinger?.value
             let delta = t.emit(text)
@@ -474,7 +476,7 @@ extension Router {
             // #82: neprevzeto delo agenta je končno kot omejitev (ponovitev bi agenta zagnala znova in spremembe uveljavila dvakrat)
             // #121: tudi vsaka druga napaka agenta (ne Siri): ponovitev brez pretoka bi 25-minutni tek zagnala znova
             if let req, !(error is SiriError), stream, sent.head || writer is EarlyStreamWriter {  // napaka bo dogodek SSE
-                AgentError.note(AgentError.key(req, model: t.model), message, status: status)
+                AgentError.note(AgentError.key(req, model: t.model, body: body), message, status: status)
             }
             if sent.head {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": message]]))
@@ -525,17 +527,26 @@ enum AgentError {
     /// brez pretoka; `recent` ji 60 s odgovori z istim 429 brez novega zagona CLI (enkrat).
     /// #82: tudi neprevzeto delo agenta (status 502), z x-should-retry: false.
     static let memo = Mutex<[String: (String, Date, Int)]>([:])
+    static let memoCapacity = 128  // #121 (Astra 5): the oldest go first
 
-    static func key(_ req: HTTPRequest, model: String) -> String {
-        [model, req.device?.id ?? "local", req.header("x-claude-mini-session") ?? ""].joined(separator: "|")
+    /// #121 (Astra 4): device, session, model and a fingerprint of the request without the transport flag `stream` (the repeat of a streamed request has the same content): an
+    /// unrelated request of the same session never gets another's failure.
+    static func key(_ req: HTTPRequest, model: String, body: [String: Any]) -> String {
+        var b = body; b["stream"] = nil
+        let data = (try? JSONSerialization.data(withJSONObject: b, options: [.sortedKeys])) ?? Data()
+        let fp = SHA256.hash(data: data).prefix(12).map { String(format: "%02x", $0) }.joined()
+        return [model, req.device?.id ?? "local", req.header("x-claude-mini-session") ?? "", req.header("x-claude-mini-cwd") ?? "", fp].joined(separator: "|")
     }
 
     static func note(_ key: String, _ msg: String, status: Int = 429) {
         memo.withLock { m in
             m = m.filter { $0.value.1.timeIntervalSinceNow > -60 }
+            while m.count >= memoCapacity, let oldest = m.min(by: { $0.value.1 < $1.value.1 })?.key { m[oldest] = nil }
             m[key] = (msg, Date(), status)
         }
     }
+
+    static func clear(_ key: String) { memo.withLock { $0[key] = nil } }
 
     static func recent(_ key: String) -> (message: String, status: Int)? {
         memo.withLock { m in m.removeValue(forKey: key).flatMap { $0.1.timeIntervalSinceNow > -60 ? ($0.0, $0.2) : nil } }

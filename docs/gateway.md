@@ -96,6 +96,8 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   approval, and approving automatically would let a command use the network and read the whole disk. The run is told to
   use its file tools (`list_dir`, `read_file`, `grep`); if it still needs a command it ends with 400 "grok needed
   approval to run a command …" (not a 502, which Claude Code would retry). Use a run that may write, or ask for file reading only.
+  **On the Mac gateway Grok is switched off in this version:** a request answers 503 "Grok is switched off on the Mac
+  gateway in this version: its sandbox is being reworked …" (the models stay listed); Grok through `minigw serve` works.
 - **Changes in the client's folder** (each agent pane): **In the folder or a copy (any mode)** (default), **Only in a
   copy or on a branch (sync, worktree)** or **Only on a branch (worktree)**. In a mode above it the agent only reads
   the folder, and minigw says so ("Mini Gateway lets Codex change files only in worktree mode, so it only read the

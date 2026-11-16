@@ -1026,7 +1026,7 @@ extension Router {
             let final = code == 429 || pullErr != nil
             if !stream { return await error(code, type, "claude: \(text)", rid: rid, extra: final ? [("x-should-retry", "false")] : [], writer: writer) }
             if t.text.isEmpty || !stopped || pullErr != nil {
-                if final { AgentError.note(AgentError.key(req, model: t.model), "claude: \(text)", status: code) }  // ponovitev brez pretoka
+                if final { AgentError.note(AgentError.key(req, model: t.model, body: body), "claude: \(text)", status: code) }  // ponovitev brez pretoka
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": "claude: \(text)"]]))
                 return code
             }
@@ -1035,6 +1035,7 @@ extension Router {
         if agent, let scope = registryKey, let id = sessionID {
             await Self.sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: t.text.trimmingCharacters(in: .whitespacesAndNewlines))], scope: scope), id)
         }
+        AgentError.clear(AgentError.key(req, model: t.model, body: body))  // a success ends the memory of an earlier failure of this request
         if stream {
             try? await send(t.finish())
             return 200

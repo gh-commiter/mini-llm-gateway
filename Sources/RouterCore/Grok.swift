@@ -72,6 +72,14 @@ public enum Grok {
     /// <GROK_HOME>/sandbox.toml, which Grok's sandbox write-protects; the gateway gives Grok its own home (GROK_HOME,
     /// under Scratch) and keeps the login where it is (GROK_AUTH_PATH), so the user's ~/.grok/sandbox.toml is never touched.
     static let coreProfiles = [("minigw-core", "workspace"), ("minigw-core-ro", "read-only")]
+    /// #121: the home (`<Scratch>/grok-home`, a project's home in `<Scratch>/state`) lies inside the roots the profile denies (the Scratch folder and its `state`): grok then ends with
+    /// "Failed to load config: Operation not permitted" in every request. Decided from the same lists the profile is built from, so it lifts by itself when the home is reachable.
+    static func homeHidden(_ home: URL, roots: [String]) -> Bool {
+        func real(_ p: String) -> String { Sync.realResolving(URL(fileURLWithPath: p))?.path ?? p }
+        let h = real(home.path)
+        return roots.contains { let r = real($0); return h == r || h.hasPrefix(r + "/") }
+    }
+    static let switchedOff = "Grok is switched off on the Mac gateway in this version: its sandbox is being reworked (Grok cannot read its own folder under the current rules). Use another agent, or Grok through minigw serve on Windows or Linux."
     static let coreUnavailable = "Grok cannot run on this gateway while projects are enabled: its sandbox profile that keeps it out of the core data folder could not be set up"
 
     static func coreSandboxToml(deny: [String]) -> String? {
@@ -218,10 +226,11 @@ public enum Grok {
     /// #121: without `--always-approve` (read-only, worktree or no write permission) a headless run cannot approve a command; Grok prefers `find` and `ls` even to
     /// look at files and then stops ("permission required"). Measured (grok 1.0.77): told this, it uses list_dir, read_file and grep. Same text in the Go gateway.
     static let noShellNote = "In this run shell commands cannot be approved, so run_terminal_command does not work: do not call it. Look at files with list_dir, read_file and grep."
+    static let approvalMarker = "headless run cannot ask for approval", approvalTail = 4000
     static let needsApproval = "grok needed approval to run a command, which a headless run cannot give: a read-only run runs no commands. Ask for file tools only, or run without --minigw-ro (and allow Grok to change the folder in Mini Gateway → Settings)."
 
     /// Dogodek `streaming-json`: korak (za Activity), besedilo ali konec.
-    enum Event: Equatable { case step(String), text(String), toolCall, end(String?), error(String) }
+    enum Event: Equatable { case step(String), text(String), toolCall, end(String?, cancelled: Bool), error(String) }
 
     static func event(_ line: Data) -> Event? {
         guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return nil }
@@ -231,7 +240,7 @@ public enum Grok {
             let input = o["rawInput"] as? [String: Any] ?? [:]
             let arg = ["command", "target_file", "path", "target_directory", "query", "url"].lazy.compactMap { input[$0] as? String }.first ?? ""
             return .step("\(o["title"] as? String ?? "tool") \(arg.prefix(120))".trimmingCharacters(in: .whitespaces))
-        case "end": return .end(o["sessionId"] as? String)
+        case "end": return .end(o["sessionId"] as? String, cancelled: o["stopReason"] as? String == "cancelled")
         case "error": return .error(o["message"] as? String ?? "grok error")
         default: return nil
         }
@@ -275,7 +284,7 @@ public enum Grok {
                 errReader.start()
                 input.fileHandleForWriting.write(Data(prompt.utf8))
                 try? input.fileHandleForWriting.close()
-                var buf = Data(), answer = "", failure: String?, session: String?
+                var buf = Data(), answer = "", failure: String?, session: String?, cancelledEnd = false
                 while case let chunk = events.fileHandleForReading.availableData, !chunk.isEmpty {
                     buf.append(chunk)
                     while let nl = buf.firstIndex(of: 10) {
@@ -283,7 +292,7 @@ public enum Grok {
                         case .step(let s)?: onStep(s); answer = ""  // odgovor je besedilo po zadnjem orodju
                         case .text(let t)?: answer += t
                         case .error(let m)?: failure = m; p.terminate()  // napaka konča tek: ne čakaj, da grok konča sam
-                        case .end(let id)?: session = id
+                        case .end(let id, let cancelled)?: session = id; cancelledEnd = cancelled
                         default: break
                         }
                         buf = Data(buf[(nl + 1)...])
@@ -297,7 +306,10 @@ public enum Grok {
                 let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard failure == nil, !text.isEmpty else {
                     let tail = String(decoding: stderr.data.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if failure == nil, tail.contains("headless run cannot ask for approval") { throw Failure(message: needsApproval) }  // #121
+                    // #121: the approval refusal has ONE evidence contract on both gateways (see `needsApproval`): exit 0, not cancelled by the client, no error event, empty answer,
+                    // an `end` event with stopReason "cancelled" (a session id is not required) and the refusal text in the last 4000 bytes of stderr
+                    let evidence = String(decoding: stderr.data.suffix(approvalTail), as: UTF8.self)
+                    if failure == nil, p.terminationStatus == 0, !Task.isCancelled, cancelledEnd, evidence.contains(approvalMarker) { throw Failure(message: needsApproval) }
                     throw Failure(message: failure ?? "grok exited with \(p.terminationStatus)" + (tail.isEmpty ? "" : ": \(tail)"))
                 }
                 return (text, session)
@@ -337,6 +349,10 @@ extension Router {
                 home = h
             }
             coreHome = home
+            // #121: refused early (before any folder is synced or a process started) while the home lies inside a root the profile hides: Grok cannot read its own folder then
+            if Grok.homeHidden(home, roots: Grok.deniedRoots(scratch: config.scratchURL)) {
+                return await error(503, "api_error", Grok.switchedOff, rid: rid, extra: [("x-should-retry", "false")], writer: writer)
+            }
         }
         // Grok nima zaščite .git v peskovniku, njegov program pa poganja git zunaj njega (in ~/.grok je pisljiv): s pisanjem
         // zavrni; brez pisanja v worktree le bere v klonu (veje ne vrne).

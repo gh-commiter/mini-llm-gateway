@@ -552,9 +552,10 @@ type server struct {
 	tmpRoots      []string      // #56: vsi koreni, ki jih je ta proces naredil (denyRead in skriti pod bwrap)
 	gwSlots       chan struct{} // največ hkratnih zahtev k prehodom
 	gateways      gwCatalog
-	limits        sync.Map    // limitKey → limitHit: omejitev agenta za ponovitev brez pretoka (noteLimit)
-	activity      activityLog // tekoče in zadnje zahteve modelom (GET /activity)
-	core          *core.Store // 0.6.0 core (serve_core.go); nil = not opened (offline) or unusable (coreErr)
+	limitsMu      sync.Mutex
+	limits        map[string]limitHit // limitKey → limitHit: napaka agenta za ponovitev brez pretoka (noteFinal), največ maxLimitHits
+	activity      activityLog         // tekoče in zadnje zahteve modelom (GET /activity)
+	core          *core.Store         // 0.6.0 core (serve_core.go); nil = not opened (offline) or unusable (coreErr)
 	coreErr       error
 	coreStale     string                     // the core folder of an earlier period that still holds data while the core is refused (serve_core_sandbox.go)
 	coreHook      func(r *req, point string) // tests: pause a member operation after admission
