@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.4
 
 ### New
 - xAI works as a provider (base URL `https://api.x.ai`): mid-conversation `system` messages and tool schemas without `required` are rewritten for it on both gateways.
@@ -14,7 +14,8 @@
 ### Known problems
 - The Mac permission to commit through a mount is a snapshot taken when the share is registered: a symbolic link staged or checked out later in the run can still be committed as a plain file; the report above names it afterwards.
 - Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0, #127).
-
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
+- A long agent request that is cut is started again by Claude Code without a message; the cause seen so far (a silent stream) is fixed in this version on both gateways, but a real long run against a Windows gateway is not yet confirmed.
 
 ## 0.7.3
 
