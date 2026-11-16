@@ -301,6 +301,17 @@ func validateAs(ctx context.Context, path, shown, gateway string) (state, error)
 	if err := checkSchemaObjects(ctx, db, v); err != nil {
 		return state{}, fmt.Errorf("%s: %w", shown, err)
 	}
+	if v >= 10 {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return state{}, err
+		}
+		err = checkMemberships(tx)
+		tx.Rollback()
+		if err != nil {
+			return state{}, fmt.Errorf("%s: %w", shown, err)
+		}
+	}
 	m, err := readMetaFull(ctx, db)
 	if err != nil {
 		return state{}, err

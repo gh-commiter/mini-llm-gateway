@@ -3,8 +3,10 @@ package core
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Admin operations. The gateway has already authenticated the caller as owner; the core does not check that.
@@ -54,7 +56,17 @@ type Grant struct {
 
 var roleRank = map[Role]int{Reader: 1, Developer: 2, Admin: 3}
 
-func validName(n string) bool { return strings.TrimSpace(n) != "" && len(n) <= 128 }
+func validName(n string) bool {
+	if strings.TrimSpace(n) == "" || len(n) > 128 {
+		return false
+	}
+	for _, r := range n {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
+			return false
+		}
+	}
+	return true
+}
 
 func (s *Store) adminWrite(ctx context.Context, action, subject string, detail any, fn func(tx *sql.Tx) (bump string, err error)) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
@@ -315,6 +327,12 @@ func (s *Store) SetMember(ctx context.Context, projectID, userID int64, role Rol
 func (s *Store) RemoveMember(ctx context.Context, projectID, userID int64) error {
 	return s.adminWrite(ctx, "member.remove", strconv.FormatInt(projectID, 10), map[string]any{"user": userID}, func(tx *sql.Tx) (string, error) {
 		if err := countOne(tx.Exec(`DELETE FROM direct_memberships WHERE project_id=? AND user_id=?`, projectID, userID)); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				var team, project, user string
+				if tx.QueryRow(`SELECT t.name,p.slug,u.name FROM team_assignments a JOIN teams t ON t.id=a.team_id JOIN projects p ON p.id=a.project_id JOIN users u ON u.id=a.user_id WHERE a.project_id=? AND a.user_id=? ORDER BY a.team_id LIMIT 1`, projectID, userID).Scan(&team, &project, &user) == nil {
+					return "", ErrInvalid{"no direct role; team access: minigw gw team access remove " + team + " " + project + " " + user}
+				}
+			}
 			return "", err
 		}
 		return rebuildMemberships(tx)
