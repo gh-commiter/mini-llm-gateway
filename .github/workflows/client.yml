@@ -13,6 +13,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: client
@@ -42,6 +43,7 @@ jobs:
   # TestMain (runIsolated) loči tek od profila izvajalca in konča z 2, če ga ne more.
   windows:
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: client
