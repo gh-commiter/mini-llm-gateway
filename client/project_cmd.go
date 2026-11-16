@@ -118,6 +118,9 @@ func realDo(c connection, method, path string, headers map[string]string, body [
 
 func (e *projectEnv) say(s string) { fmt.Fprintln(e.out, s) }
 
+// noteTime: a note's time as note list and note read show it: local time, to the minute.
+func noteTime(t time.Time) string { return t.Local().Format("2006-01-02 15:04") }
+
 // gatewayError: section 6's answers as short sentences. 403 forbidden is printed plainly.
 func gatewayError(st int, data []byte, h http.Header) error {
 	var b struct {
@@ -522,7 +525,7 @@ func (e *projectEnv) note(args []string) error {
 	}
 	print := func(data []byte, f func(noteView)) {
 		if *asJSON {
-			e.say(strings.TrimSpace(string(data)))
+			e.say(jsonText(strings.TrimSpace(string(data))))
 			return
 		}
 		var n noteView
@@ -562,7 +565,7 @@ func (e *projectEnv) note(args []string) error {
 			return e.gwError(st, data, h)
 		}
 		if *asJSON {
-			e.say(strings.TrimSpace(string(data)))
+			e.say(jsonText(strings.TrimSpace(string(data))))
 			return nil
 		}
 		var pg struct {
@@ -571,7 +574,7 @@ func (e *projectEnv) note(args []string) error {
 		}
 		json.Unmarshal(data, &pg)
 		for _, n := range pg.Notes {
-			e.say(clean(fmt.Sprintf("%-6d %-9s r%-3d %s  %-12s %s", n.ID, n.Class, n.Revision, n.Updated.Local().Format("2006-01-02 15:04"), n.Author, n.Title)))
+			e.say(clean(fmt.Sprintf("%-6d %-9s r%-3d %s  %-12s %s", n.ID, n.Class, n.Revision, noteTime(n.Updated), n.Author, n.Title)))
 		}
 		if len(pg.Notes) == 0 {
 			e.say("no notes")
@@ -589,7 +592,7 @@ func (e *projectEnv) note(args []string) error {
 			if n.Body != nil {
 				body = *n.Body
 			}
-			e.say(clean(fmt.Sprintf("note %d  %s  revision %d  by %s  %s\n%s\n", n.ID, n.Class, n.Revision, n.Author, n.Updated.Local().Format("2006-01-02 15:04"), n.Title)))
+			e.say(clean(fmt.Sprintf("note %d  %s  revision %d  by %s  %s\n%s\n", n.ID, n.Class, n.Revision, n.Author, noteTime(n.Updated), n.Title)))
 			fmt.Fprint(e.out, clean(strings.ReplaceAll(body, "\t", "    ")))
 			if !strings.HasSuffix(body, "\n") {
 				e.say("")

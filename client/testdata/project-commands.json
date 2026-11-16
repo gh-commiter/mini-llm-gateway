@@ -946,7 +946,7 @@
     {
      "match": "GET /minigw/v1/projects/7/notes",
      "status": 200,
-     "body": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3},{\"id\":14,\"project\":7,\"class\":\"data\",\"title\":\"A title with ​zero width\",\"author\":\"bor\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":12}],\"next\":\"c9\"}"
+     "body": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3},{\"id\":14,\"project\":7,\"class\":\"data\",\"title\":\"A title with \\u200bzero width\",\"author\":\"bor\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":12}],\"next\":\"c9\"}"
     }
    ],
    "want": {
@@ -982,11 +982,11 @@
     {
      "match": "GET /minigw/v1/projects/7/notes",
      "status": 200,
-     "body": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3},{\"id\":14,\"project\":7,\"class\":\"data\",\"title\":\"A title with ​zero width\",\"author\":\"bor\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":12}],\"next\":\"c9\"}"
+     "body": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3},{\"id\":14,\"project\":7,\"class\":\"data\",\"title\":\"A title with \\u200bzero width\",\"author\":\"bor\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":12}],\"next\":\"c9\"}"
     }
    ],
    "want": {
-    "out": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3},{\"id\":14,\"project\":7,\"class\":\"data\",\"title\":\"A title with ​zero width\",\"author\":\"bor\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":12}],\"next\":\"c9\"}\n",
+    "out": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3},{\"id\":14,\"project\":7,\"class\":\"data\",\"title\":\"A title with \\u200bzero width\",\"author\":\"bor\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":12}],\"next\":\"c9\"}\n",
     "err": "",
     "error": "",
     "requests": [

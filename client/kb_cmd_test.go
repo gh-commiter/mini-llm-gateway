@@ -7,9 +7,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestKBCommandParity(t *testing.T) {
+	saved := time.Local
+	time.Local = time.UTC // note and search times are printed in local time; the fixture is in UTC
+	defer func() { time.Local = saved }()
 	var f struct {
 		Admin  []*admCase
 		Member []struct {
@@ -18,7 +22,7 @@ func TestKBCommandParity(t *testing.T) {
 			Responses  []cmdResp
 			Requests   [][]string
 		}
-		NoteJSON string
+		NoteJSON, NoteJSONOut string
 	}
 	if e := json.Unmarshal(srcFile(t, "testdata/teams-kb-submissions.json"), &f); e != nil {
 		t.Fatal(e)
@@ -62,7 +66,7 @@ func TestKBCommandParity(t *testing.T) {
 	if err := e.note([]string{"read", "7", "--json"}); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != f.NoteJSON+"\n" {
+	if out.String() != f.NoteJSONOut+"\n" {
 		t.Fatal(out.String())
 	}
 	if err := e.kb([]string{"submissions"}); err == nil || err.Error() != agentRefusal {
@@ -128,6 +132,9 @@ func TestKBClientGatewayFlow(t *testing.T) {
 }
 
 func TestKBRunSearchParity(t *testing.T) {
+	saved := time.Local
+	time.Local = time.UTC // search times are printed in local time; the fixture is in UTC
+	defer func() { time.Local = saved }()
 	var f struct {
 		RunSearch []struct {
 			Args                   []string

@@ -60,14 +60,58 @@ func shortLine(s string, n int) string {
 
 func say(s string) { fmt.Println(s) }
 
+// isTerminalControl: the characters clean removes (C0 except \n, C1, the line separators and every format character).
+func isTerminalControl(r rune) bool {
+	return r != '\n' && (r < 0x20 || r >= 0x7f && r <= 0x9f || r == 0x2028 || r == 0x2029 || unicode.Is(unicode.Cf, r))
+}
+
 // clean: besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r != '\n' && (r < 0x20 || r >= 0x7f && r <= 0x9f || r == 0x2028 || r == 0x2029 || unicode.Is(unicode.Cf, r)) { // tudi bidi, ničelna širina, ločilo vrstic
+		if isTerminalControl(r) { // tudi bidi, ničelna širina, ločilo vrstic
 			return -1
 		}
 		return r
 	}, s)
+}
+
+// jsonText: the gateway's JSON with those characters escaped (\uXXXX) inside every string: the JSON stays valid and a
+// program that parses it gets the text as sent, while a person's terminal sees only ASCII.
+func jsonText(s string) string {
+	var b strings.Builder
+	inString, escaped := false, false
+	for _, r := range s {
+		if !inString {
+			if r == '"' {
+				inString = true
+			}
+			b.WriteRune(r)
+			continue
+		}
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		switch r {
+		case '\\':
+			b.WriteRune(r)
+			escaped = true
+		case '"':
+			b.WriteRune(r)
+			inString = false
+		default:
+			if !isTerminalControl(r) {
+				b.WriteRune(r)
+			} else if r > 0xffff {
+				r -= 0x10000
+				fmt.Fprintf(&b, `\u%04x\u%04x`, 0xd800+(r>>10), 0xdc00+(r&0x3ff))
+			} else {
+				fmt.Fprintf(&b, `\u%04x`, r)
+			}
+		}
+	}
+	return b.String()
 }
 
 // exitFn: os.Exit; the parity tests replace it to run a command in-process.

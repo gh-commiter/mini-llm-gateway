@@ -100,7 +100,7 @@ func (e *projectEnv) kb(args []string) error {
 			return gatewayError(st, b, h)
 		}
 		if *asJSON {
-			e.say(strings.TrimSpace(string(b)))
+			e.say(jsonText(strings.TrimSpace(string(b))))
 			return nil
 		}
 		var v core.Submission
@@ -159,7 +159,7 @@ func (e *projectEnv) kb(args []string) error {
 	}
 	if *asJSON {
 		b, _ := json.Marshal(map[string]any{"submissions": raw})
-		e.say(string(b))
+		e.say(jsonText(string(b)))
 		return nil
 	}
 	for _, v := range all {
@@ -172,7 +172,7 @@ func (e *projectEnv) kb(args []string) error {
 }
 
 func searchLine(v core.SearchHit) string {
-	return clean(fmt.Sprintf("%d  %s  project %d  %s  %s\n%s", v.ID, v.Title, v.Project, v.Class, v.Updated.Format(time.RFC3339Nano), v.Snippet))
+	return clean(fmt.Sprintf("%d  %s  project %d  %s  %s\n%s", v.ID, v.Title, v.Project, v.Class, noteTime(v.Updated), v.Snippet))
 }
 func (e *projectEnv) kbSearch(args []string) error {
 	fs := flag.NewFlagSet("kb search", flag.ContinueOnError)
@@ -217,7 +217,7 @@ func (e *projectEnv) kbSearch(args []string) error {
 		return gatewayError(st, b, h)
 	}
 	if *asJSON {
-		e.say(strings.TrimSpace(string(b)))
+		e.say(jsonText(strings.TrimSpace(string(b))))
 		return nil
 	}
 	var pg core.SearchPage

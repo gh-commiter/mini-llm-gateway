@@ -62,7 +62,7 @@ extension ProjectEnv {
             }
             if r.status == 0 { throw ProjectError("no answer from the gateway; repeat with --key \(key) (safe: no duplicate), or check with minigw kb submissions") }
             guard r.status == 201 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
-            if fl.bool("json") { say(ProjectText.trim(String(decoding: r.data, as: UTF8.self))) }
+            if fl.bool("json") { say(ProjectText.jsonText(ProjectText.trim(String(decoding: r.data, as: UTF8.self)))) }
             else { say(Self.submissionResult(JSONValue.parse(r.data)?.dict ?? JDict())) }
             return
         }
@@ -85,13 +85,13 @@ extension ProjectEnv {
                 after = pg["next"]?.int ?? 0
             } while after != 0
         }
-        if fl.bool("json") { say(Self.kbJSON(["submissions": raw])); return }
+        if fl.bool("json") { say(ProjectText.jsonText(Self.kbJSON(["submissions": raw]))); return }
         for v in all { say(Self.submissionLine(v.dict)) }
         if all.isEmpty { say("no submissions") }
     }
 
-    static func searchLine(_ d: JDict) -> String {
-        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  project \(d["project"]?.int ?? 0)  \(d["class"]?.string ?? "")  \(d["updated"]?.string ?? "")\n\(d["snippet"]?.string ?? "")")
+    func searchLine(_ d: JDict) -> String {
+        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  project \(d["project"]?.int ?? 0)  \(d["class"]?.string ?? "")  \(stamp(d["updated"]?.string.flatMap(ProjectText.parseTime)))\n\(d["snippet"]?.string ?? "")")
     }
     func kbSearch(_ args: [String]) throws {
         let usage = ProjectError("usage: minigw kb search [<project>] <query> [--json]")
@@ -117,9 +117,9 @@ extension ProjectEnv {
         }
         let r = request(c, "GET", base + "?q=" + ProjectText.queryEscape(pos.last!), [:], nil)
         guard r.status == 200 else { throw gwError(r) }
-        if fl.bool("json") { say(ProjectText.trim(String(decoding: r.data, as: UTF8.self))); return }
+        if fl.bool("json") { say(ProjectText.jsonText(ProjectText.trim(String(decoding: r.data, as: UTF8.self)))); return }
         guard let hits = JSONValue.parse(r.data)?.dict["hits"]?.array else { throw Self.malformed }
-        for h in hits { say(Self.searchLine(h.dict)) }
+        for h in hits { say(searchLine(h.dict)) }
         if hits.isEmpty { say("no hits") }
     }
 }

@@ -141,7 +141,7 @@ public final class ProjectEnv {
 
     func loadState() throws -> ProjectState { try Projects.load(state) }
 
-    private func stamp(_ d: Date?) -> String {
+    func stamp(_ d: Date?) -> String {
         guard let d else { return "0001-01-01 00:00" }
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = zone; f.dateFormat = "yyyy-MM-dd HH:mm"
@@ -348,7 +348,7 @@ public final class ProjectEnv {
             return r.data
         }
         func emit(_ data: Data, _ f: (NoteView) -> Void) {
-            if asJSON { say(ProjectText.trim(String(decoding: data, as: UTF8.self))); return }
+            if asJSON { say(ProjectText.jsonText(ProjectText.trim(String(decoding: data, as: UTF8.self)))); return }
             f(NoteView(JSONValue.parse(data)?.dict ?? JDict()))
         }
         func privacy(_ cl: String) {
@@ -364,7 +364,7 @@ public final class ProjectEnv {
             if !fl.string("after").isEmpty { q["after"] = fl.string("after") }
             let r = request(c, "GET", base + ProjectText.query(q))
             guard r.status == 200 else { throw gwError(r) }
-            if asJSON { say(ProjectText.trim(String(decoding: r.data, as: UTF8.self))); return }
+            if asJSON { say(ProjectText.jsonText(ProjectText.trim(String(decoding: r.data, as: UTF8.self)))); return }
             let pg = JSONValue.parse(r.data)?.dict ?? JDict()
             let notes = (pg["notes"]?.array ?? []).map { NoteView($0.dict) }
             for n in notes {
@@ -511,12 +511,41 @@ public final class ProjectEnv {
 // MARK: small helpers shared with the Go behaviour
 
 enum ProjectText {
+    /// A character clean removes: C0 except \n, C1, the line separators and every format character.
+    static func isTerminalControl(_ u: Unicode.Scalar) -> Bool {
+        u != "\n" && (u.value < 0x20 || (0x7f...0x9f).contains(u.value) || u.value == 0x2028 || u.value == 0x2029
+                         || u.properties.generalCategory == .format)
+    }
+
     /// A gateway's text without control characters (except \n), so that it cannot steer the terminal; the same set as the client's clean().
     static func clean(_ s: String) -> String {
-        String(String.UnicodeScalarView(s.unicodeScalars.filter {
-            $0 == "\n" || !($0.value < 0x20 || (0x7f...0x9f).contains($0.value) || $0.value == 0x2028 || $0.value == 0x2029
-                             || $0.properties.generalCategory == .format)
-        }))
+        String(String.UnicodeScalarView(s.unicodeScalars.filter { !isTerminalControl($0) }))
+    }
+
+    /// The gateway's JSON with those characters escaped (\uXXXX) inside every string: the JSON stays valid and a program
+    /// that parses it gets the text as sent, while a person's terminal sees only ASCII.
+    static func jsonText(_ s: String) -> String {
+        var o = String.UnicodeScalarView()
+        var inString = false, escaped = false
+        for u in s.unicodeScalars {
+            if !inString {
+                if u == "\"" { inString = true }
+                o.append(u)
+                continue
+            }
+            if escaped { o.append(u); escaped = false; continue }
+            switch u {
+            case "\\": o.append(u); escaped = true
+            case "\"": o.append(u); inString = false
+            default:
+                if !isTerminalControl(u) { o.append(u) }
+                else if u.value > 0xffff {
+                    let v = u.value - 0x10000
+                    o.append(contentsOf: String(format: "\\u%04x\\u%04x", 0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff)).unicodeScalars)
+                } else { o.append(contentsOf: String(format: "\\u%04x", u.value).unicodeScalars) }
+            }
+        }
+        return String(o)
     }
 
     static func oneLine(_ s: String) -> String { clean(s).replacingOccurrences(of: "\n", with: " ") }
