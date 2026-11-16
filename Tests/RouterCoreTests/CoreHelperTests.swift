@@ -81,6 +81,45 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
 }
 
 @Suite(.serialized) struct CoreHelperTests {
+    @Test func teamsKBNoteRetrievalParity() async throws {
+        let h = try await helper(); h.start(); defer { h.stop() }
+        #expect(await h.waitReady())
+        var cfg = RouterConfig()
+        for (index, user) in ["ana", "bor", "eva", "fani"].enumerated() {
+            let created = await adm(h, "POST", "/users", "{\"name\":\"\(user)\"}")
+            let id = (json(created)["user"] as! [String: Any])["id"] as! Int
+            #expect((await adm(h, "PUT", "/bindings/dev-\(user)", "{\"user\":\(id)}")).status == 200)
+            cfg.devices.append(DeviceConfig(id: "dev-\(user)", name: user))
+            if index == 0 { #expect((await adm(h, "POST", "/projects", #"{"slug":"fakture","name":"Fakture"}"#)).status == 200) }
+            let role = user == "fani" ? "admin" : user == "eva" ? "reader" : "developer"
+            #expect((await adm(h, "PUT", "/projects/1/members/\(id)", "{\"role\":\"\(role)\"}")).status == 200)
+        }
+        let saved = Router.agentPeer; Router.agentPeer = { _, _ in false }; defer { Router.agentPeer = saved }
+        let router = Router(config: cfg, token: "tok", secrets: FakeSecrets(values: [:]), core: h)
+        let data = try Data(contentsOf: clientDir.appendingPathComponent("testdata/teams-kb-retrieval.json"))
+        let cases = try JSONSerialization.jsonObject(with: data) as! [[String: Any]]
+        var note = 0
+        var invisible: Data?
+        for c in cases {
+            let user = c["user"] as! String
+            let path = "/minigw/v1/projects/1/notes" + (c["path"] as! String).replacingOccurrences(of: "{note}", with: String(note))
+            var headers = ["Authorization": "Bearer tok"]
+            if let key = c["key"] as? String { headers["Idempotency-Key"] = key }
+            var q = request(c["method"] as! String, path, headers: headers, body: c["body"] as? String ?? "")
+            q.device = Noise.Device(id: "dev-\(user)", name: user)
+            let w = FakeWriter(); await router.handle(q, writer: w)
+            #expect(w.status == c["want"] as? Int, "\(c)")
+            // FakeWriter includes the HTTP head; parse only its JSON body.
+            let body = w.text.components(separatedBy: "\r\n\r\n").last ?? ""
+            if w.status == 201 { note = (try JSONSerialization.jsonObject(with: Data(body.utf8)) as! [String: Any])["id"] as! Int }
+            if w.status == 404 {
+                let bytes = Data(body.utf8)
+                if invisible == nil { invisible = bytes }
+                #expect(bytes == invisible)
+            }
+        }
+    }
+
     @Test func pathTestsMirrorGoThroughTheSharedFixture() throws {
         let rows = try JSONSerialization.jsonObject(with: fixture("paths.json")) as! [[String: Any]]
         #expect(rows.count > 20)

@@ -198,8 +198,9 @@ Projects, members and notes live in the gateway's core database (`minigw serve`:
 same and answer the same on both: the Mac app authenticates the owner and forwards them to the helper. They need the
 running gateway; while the core cannot be opened they answer `503` (on the Mac also while the helper is not running: the
 message then says `The project database is not available: the project helper (minigw-core) is not running`). Ids are numbers. The caller is the owner (admin authentication above); the `owner` mark on a user gives no
-extra power. Every call writes an audit event; a call that can take access away raises the epoch (all runs and
-conversations of a project end), in the same transaction.
+extra power, and a project `admin` role does not authorize this API. Every call writes an audit event; a call that can
+take access away raises the epoch (subsequent note reads and conversation reuse are refused; running processes
+continue), in the same transaction.
 
 | Method and path | Body | Response |
 |---|---|---|
@@ -291,12 +292,16 @@ body), 403 `forbidden`, 403 `archived`, 409 `revision_mismatch` (with `revision`
 | `POST /projects/{id-or-slug}/link-check` | the project, only if the user has a direct role (a grant alone: 403 `forbidden`); for `minigw project link` |
 | `GET /projects/{id}/notes?class=&after=&limit=` | `{notes: [{id, project, class, title, author, created, updated, revision}], next?}`, updated descending then id, default 50, max 100 |
 | `GET /projects/{id}/notes/{note}` | the note with `body` |
-| `POST /projects/{id}/notes` | 201; header `Idempotency-Key` (1-64 bytes); body `{"class", "title", "body"}`; a repeat of the same key and payload within 24 h answers the first result (header `Idempotent-Replay: true`) |
+| `POST /projects/{id}/notes` | 201; header `Idempotency-Key` (1-64 bytes); body `{"class", "title", "body"}`; a repeat of the same key and payload within 24 h reauthorizes the current note before answering the first result; deleted or reclassified notes return 404, including after a class is changed back (header `Idempotent-Replay: true`) |
 | `PUT /projects/{id}/notes/{note}` | 200; body `{"revision", "class", "title", "body"}` |
 | `DELETE /projects/{id}/notes/{note}?revision=N` | 204 |
 
 Request bodies are limited to 512 KiB before they are parsed (413 `too_large`); title 256 bytes and body 64 KiB,
 10 000 notes and 100 MiB per project; 60 writes and 600 reads a minute per user.
+
+Note authorization uses metadata before loading a body, including run reads and edit/delete checks.
+For an owner/member setup with two developers, one reader and an explicit structure grant, see
+[Three people, two projects](usage.md#three-people-two-projects).
 
 Notes:
 

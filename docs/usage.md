@@ -490,7 +490,7 @@ network or virtual drive that minigw cannot check safely: share a folder on a lo
 
 A **project** is a named place on the gateway where a team keeps short notes (design decisions, structure, data
 facts) that people and agents can read. The gateway owner creates projects, adds you as a member and binds your
-computer's device key to you; you see only the projects you belong to. Works on every gateway: `minigw serve` and the Mac app (project runs of agents on the Mac app included).
+computer's device key to you; you see projects you belong to or can read through explicit grants. Works on every gateway: `minigw serve` and the Mac app (project runs of agents on the Mac app included).
 
 ### Projects in 10 minutes
 
@@ -606,9 +606,91 @@ project and per minute apply.
 | `data` | developers and admins, and members of projects with a `data` grant | developers (own notes), admins |
 | `private` | the author and the project admins | the author (developers), admins |
 
-`private` = visible to you and the project admins; no grant ever includes it. Administrators manage members and
-grants with `minigw gw member` and `minigw gw grant` (see [gateway.md](gateway.md)). These commands are not
+`private` = visible to you and the project admins; no grant ever includes it. Only the gateway owner, using owner authentication, manages members and
+grants with `minigw gw member` and `minigw gw grant` (see [gateway.md](gateway.md)). A project admin role or a user’s owner flag does not authorize these owner API commands. They are not
 available inside an agent run, except `note list` and `note read`: when you start `minigw` in a linked folder, the agent run can read that project's notes (never `private` ones) and nothing of your other projects. If the gateway changes who may see what, the next read of a running agent fails; see [how-it-works.md](how-it-works.md#projects-notes-and-agents-minigw-serve-and-the-mac-app-060).
+
+### Three people, two projects
+
+Use this recipe on either gateway. The gateway must already approve the three devices; get their exact IDs
+from `minigw gw devices`. Replace `ANA_DEVICE`, `BOR_DEVICE`, and `EVA_DEVICE` below with those IDs.
+Owner commands run on the gateway computer with its owner authentication, not with a project admin role.
+
+A: two developers and one reader share FAKTURE. B: the same people also work in modules, which receives only
+FAKTURE's `structure` notes. The owner runs:
+
+```sh
+minigw gw user add ana
+minigw gw user add bor
+minigw gw user add eva
+minigw gw bind ANA_DEVICE ana
+minigw gw bind BOR_DEVICE bor
+minigw gw bind EVA_DEVICE eva
+minigw gw project add fakture FAKTURE
+minigw gw project add modules Modules
+minigw gw member fakture set ana developer
+minigw gw member fakture set bor developer
+minigw gw member fakture set eva reader
+minigw gw member modules set ana developer
+minigw gw member modules set bor developer
+minigw gw member modules set eva reader
+minigw gw grant fakture add modules structure
+```
+
+Each member uses their own approved, bound client. On Ana's client:
+
+```sh
+cd ~/src/fakture
+minigw project link fakture
+printf '# Schema\nSanitized table and relationship descriptions.\n' > schema.md
+minigw note push --class structure schema.md
+printf '# Findings\nSanitized developer findings, without customer records.\n' > findings.md
+minigw note push --class data findings.md
+printf '# Plans\nRestricted author plans.\n' > plans.md
+minigw note push --class private plans.md
+minigw note list
+```
+
+On Bor's client:
+
+```sh
+cd ~/src/fakture
+minigw project link fakture
+minigw note list
+minigw note read STRUCTURE_ID
+minigw note read DATA_ID
+```
+
+On Eva's client:
+
+```sh
+cd ~/src/fakture
+minigw project link fakture
+minigw note list
+minigw note read STRUCTURE_ID
+```
+
+Replace `STRUCTURE_ID` and `DATA_ID` with IDs printed by push/list. Bor can read shared structure and data;
+Eva sees structure only. Neither sees Ana's private note. Project admins can read private notes.
+
+For B, each member links their modules folder on their own client:
+
+```sh
+cd ~/src/modules
+minigw project link modules
+minigw note list
+minigw note read STRUCTURE_ID
+```
+
+Member note commands list/read the linked project's notes, so this last list shows modules notes, not the
+granted FAKTURE notes; that read of a FAKTURE ID returns the same 404 as a missing note. To read FAKTURE as
+a member, use the linked FAKTURE folder above. A called agent started in the linked modules folder can use
+`minigw note list` and `minigw note read STRUCTURE_ID` to read both modules notes and the explicitly granted
+FAKTURE structure notes. Its scope never includes private notes or unrelated memberships.
+
+A grant alone does not allow linking a folder. Grants are one hop, never transitive. A `data` grant would let
+**every** modules member, including Eva, read FAKTURE data through that scope; this recipe grants only structure.
+The `data` label never permits storing customer records, secrets or personal data.
 
 ### Your model usage
 

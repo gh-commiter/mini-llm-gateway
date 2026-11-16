@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Security
+- Notes: the gateway now checks the permission before it loads a note's text (for member reads, reads by an agent run, edit, delete and class change), and checks it again before it repeats a saved answer to a retried request. A note that is missing and a note you may not see give the same answer.
+
 ## 0.7.0
 
 Mini Gateway 0.7.0 is a stable release. It collects the eleven beta versions 0.6.0 to 0.6.10, which stable users never saw, and is the first stable release since 0.5.29. It is the same code as beta 0.6.10. The sections below give the detail per beta. Read **Changed**, **Known limits** and **Known problems** before you update a gateway that other people use.
