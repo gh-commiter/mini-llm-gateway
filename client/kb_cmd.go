@@ -15,7 +15,8 @@ import (
 	"time"
 )
 
-const kbHelp = `minigw kb search [<project>] <query> [--json]
+const kbHelp = `minigw kb mcp [--project slug] [--print-config]
+minigw kb search [<project>] <query> [--json]
 minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
 minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)`
 const kbAdminHelp = `minigw gw kb rebuild-search
@@ -31,6 +32,9 @@ func submissionResult(v core.Submission) string {
 }
 
 func (e *projectEnv) kb(args []string) error {
+	if len(args) > 0 && args[0] == "mcp" {
+		return e.kbMCP(args[1:])
+	}
 	if len(args) > 0 && args[0] == "search" {
 		return e.kbSearch(args[1:])
 	}

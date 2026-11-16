@@ -7,6 +7,7 @@ var proxyProject = ""
 
 func projectCommand(_ kind: String, _ args: [String]) -> Never {
     let agent = agentConn()  // inside an agent run: the run port and its token; KB reads use the run's scope
+    let runMode = ProcessInfo.processInfo.environment["MINIGW_AGENT_URL"] != nil || ProcessInfo.processInfo.environment["MINIGW_AGENT_AUTH_FILE"] != nil
     let env = ProjectEnv(
         connect: {
             if let a = agent { return (ProjectConn(url: a.url, token: a.token), "") }
@@ -17,7 +18,7 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
         state: Projects.statePath(), cwd: FileManager.default.currentDirectoryPath,
         stdin: { (try? FileHandle.standardInput.read(upToCount: ProjectEnv.maxNoteBody + 1)) ?? Data() },
         out: { try? out.write(contentsOf: Data($0.utf8)) }, err: { try? err.write(contentsOf: Data($0.utf8)) },
-        agent: agent != nil, runConn: agent.map { ProjectConn(url: $0.url, token: $0.token) },
+        agent: runMode, runConn: agent.map { ProjectConn(url: $0.url, token: $0.token) },
         send: { c, method, path, headers, body in
             if let a = agent {  // the run port, if need be through the sandbox's proxy
                 var status = 0, data = Data()
@@ -28,7 +29,13 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
         })
     do {
         switch kind {
-        case "kb": try env.kb(args)
+        case "kb":
+            if args.first == "mcp" {
+                let executable = Bundle.main.executableURL?.path ?? URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
+                try env.kbMCP(Array(args.dropFirst()), executable: executable,
+                              read: { let d = try FileHandle.standardInput.read(upToCount: 4096); return d?.isEmpty == true ? nil : d },
+                              write: { try FileHandle.standardOutput.write(contentsOf: $0) })
+            } else { try env.kb(args) }
         case "team": try env.team(args)
         case "note": try env.note(args)
         case "usage": try env.usage(args)

@@ -3,6 +3,7 @@ import CoreFoundation
 
 extension ProjectEnv {
     public static let kbHelp = """
+        minigw kb mcp [--project slug] [--print-config]
         minigw kb search [<project>] <query> [--json]
         minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
         minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)

@@ -64,7 +64,7 @@ func runningMain(args []string) { runProjectCmd("running", args) }
 
 func runProjectCmd(kind string, args []string) {
 	cwd, _ := os.Getwd()
-	e := &projectEnv{state: projectStatePath(), cwd: cwd, in: os.Stdin, out: os.Stdout, err: os.Stderr, agent: agentConn() != nil, do: realDo, sleep: time.Sleep}
+	e := &projectEnv{state: projectStatePath(), cwd: cwd, in: os.Stdin, out: os.Stdout, err: os.Stderr, agent: runEnvironment(), do: realDo, sleep: time.Sleep}
 	e.connect = func() (connection, string) {
 		p := requireProfile()
 		return route(p), gatewayID(p.conn)
