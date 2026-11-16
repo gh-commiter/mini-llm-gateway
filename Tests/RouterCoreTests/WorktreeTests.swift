@@ -779,6 +779,9 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let tree = ShareHub.Tree(repo: mirror.repo, worktrees: mirror.worktrees, sub: sub, local: top)
     let hub = ShareHub(), session = UUID().uuidString
     _ = try #require(await hub.register(session: session, cwd: "/Volumes/share/client/sub", key: nil, device: "dev", tree: tree))
+    // No minigw polls this share: the hub drops a share unseen for 60 s, and on a loaded runner this test (real git) takes longer. Registering again is what a live client does.
+    let alive = Task { while !Task.isCancelled { try? await Task.sleep(for: .seconds(5)); _ = await hub.register(session: session, cwd: "/Volumes/share/client/sub", key: nil, device: "dev", tree: tree) } }
+    defer { alive.cancel() }
     func mount(_ id: String) async -> URL? {
         await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue("claude") {
             await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [root.path], writes: true) } }
