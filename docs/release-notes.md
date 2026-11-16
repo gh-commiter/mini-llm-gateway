@@ -1,13 +1,15 @@
 # Release notes
 
-## 0.7.4
-
-### New
-- xAI works as a provider (base URL `https://api.x.ai`): mid-conversation `system` messages and tool schemas without `required` are rewritten for it on both gateways.
+## Unreleased
 
 ### New
 - A Codex, Grok or Copilot run (Mac gateway: Codex and Copilot) shows its steps in `minigw -p` as they happen, paths relative to your folder; the answer on stdout never contains them. The Mac client understands the step lines of a Windows or Linux gateway.
 - `minigw running` lists your device's requests that run on the gateway now: model, folder, time, steps and last step. Both gateways.
+
+## 0.7.4
+
+### New
+- xAI works as a provider (base URL `https://api.x.ai`): mid-conversation `system` messages and tool schemas without `required` are rewritten for it on both gateways.
 
 ### Fixed
 - Mac, Claude CLI in a direct-mode mount: a file the agent creates and commits is recorded as 100644, not 100755 (git ignores the executable bit on the mount, whose files all show as -rwx------); a file that is executable in the repository keeps 100755.
