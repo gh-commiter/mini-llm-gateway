@@ -33,13 +33,12 @@ struct SettingsView: View {
     @State private var codexModels: [Codex.Model] = []
     @State private var copilotSignIn: Copilot.LoginProblem?  // #81: ob odprtju in vklopu (L2: ne ob vsakem izrisu)
     @State private var copilotChecked = false
-    @State private var grokModels: [String] = []
     @State private var foundryModels: [Foundry.Model] = []
     @State private var foundryStatus = ""
     @State private var foundryFound: String?  // samodejno najdena pot (iskanje v .task, ne ob vsakem izrisu)
 
     enum Pane: Hashable {
-        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok, devices, sessions, usage
+        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, devices, sessions, usage
     }
 
     private struct Item: Identifiable {
@@ -72,8 +71,6 @@ struct SettingsView: View {
                     about: String(localized: "OpenAI Codex CLI as an agent model in the session's folder.")),
                Item(pane: .copilot, title: "Copilot CLI", symbol: "person.2.wave.2", color: .gray,
                     about: String(localized: "GitHub Copilot CLI as an agent model in the session's folder.")),
-               Item(pane: .grok, title: "Grok CLI", symbol: "sparkle", color: .indigo,
-                    about: String(localized: "xAI Grok CLI as an agent model in the session's folder.")),
                Item(pane: .devices, title: String(localized: "Devices"), symbol: "laptopcomputer.and.iphone", color: .blue,
                     about: String(localized: "Computers that may use this gateway. Compare a waiting device's ID with the one on the client before you allow it.")),
                Item(pane: .sessions, title: String(localized: "Sessions"), symbol: "clock.arrow.circlepath", color: .green,
@@ -302,7 +299,6 @@ struct SettingsView: View {
         case .claudeCLI: claudeCLI
         case .codex: codex
         case .copilot: copilot
-        case .grok: grok
         case .foundry: foundry
         case .devices: devices
         case .sessions: sessions
@@ -341,7 +337,7 @@ struct SettingsView: View {
             } header: {
                 Text("Worktree mode")
             } footer: {
-                Text("Agents in worktree mode (minigw --minigw-work=worktree) work in a git clone on this Mac: Claude CLI with Bash in Claude Code's sandbox, Codex in its own sandbox (Grok is not supported yet). They write only to the clone and, under the Scratch folder, to its dependencies folder (repositories they create, CMake, SwiftPM), the project's Maven repository and build caches. These switches let their builds download (Maven, SwiftPM, git clone); Codex can read all your files, so its network is off by default.").font(.caption).foregroundStyle(.secondary)
+                Text("Agents in worktree mode (minigw --minigw-work=worktree) work in a git clone on this Mac: Claude CLI with Bash in Claude Code's sandbox, Codex in its own sandbox. They write only to the clone and, under the Scratch folder, to its dependencies folder (repositories they create, CMake, SwiftPM), the project's Maven repository and build caches. These switches let their builds download (Maven, SwiftPM, git clone); Codex can read all your files, so its network is off by default.").font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 TextField("Allowed commands", text: $draft.runCommands)
@@ -803,53 +799,6 @@ struct SettingsView: View {
         case .unreadable: "Not available: ~/.copilot/config.json cannot be read; run copilot login again"
         case .badForm: "Not available: ~/.copilot/config.json is not in the expected form; run copilot login again"
         case .plainText: "Not available: the sign-in is stored as plain text, not in your Keychain; run copilot login again"
-        }
-    }
-
-    private var grok: some View {
-        Form {
-            header
-            Section {
-                Toggle("Enabled", isOn: $draft.grok.enabled)
-                LabeledContent("Executable (empty = auto-detect)") {
-                    TextField("", text: $draft.grok.executable, prompt: Text(verbatim: Grok.detected ?? "grok"))
-                        .labelsHidden()
-                }
-            }
-            Section {
-                ForEach(grokModels, id: \.self) { m in
-                    Toggle(isOn: Binding(get: { draft.grok.isModelEnabled(m) }, set: { draft.grok.setModel(m, $0, all: grokModels) })) {
-                        Text(verbatim: m)
-                    }
-                }
-            } header: {
-                HStack {
-                    Text("Models")
-                    Spacer()
-                    EqualWidthHStack {
-                        WideButton("Enable All") { draft.grok.enabledModels = nil }
-                        WideButton("Disable All") { draft.grok.enabledModels = [] }
-                    }
-                    .disabled(grokModels.isEmpty)
-                }
-                .controlSize(.small)
-            }
-            .task(id: draft.grok.executable) {
-                let exe = draft.grok.executable
-                let path = await Grok.executable(exe)
-                grokModels = await Task.detached { path.map(Grok.catalog) ?? [] }.value
-            }
-            Section {
-                Toggle("Allow writing in the session's folder", isOn: $draft.grok.write)
-                workPicker($draft.grok.work)
-                Toggle("May ask other models", isOn: $draft.grok.askOthers)
-                    .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs “Allow network access for commands” for it."))
-            } header: {
-                Text("Sandbox")
-            } footer: {
-                Text("The claude-grok models run “grok -p” as an agent in the session's folder, also in folders shared from other Macs. Grok's kernel sandbox (workspace) lets it write only to that folder. Devices that use Grok can read every file this user can read, and they share this Mac's Grok sessions (~/.grok). Without writing it runs read-only. Sign in once with “grok login”.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
         }
     }
 

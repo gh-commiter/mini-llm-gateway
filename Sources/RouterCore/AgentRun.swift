@@ -221,7 +221,6 @@ extension Router {
         switch kind {
         case "claude": config.claudeCLI.askOthers && config.claudeCLI.allowLocalTools
         case "codex": config.codex.askOthers
-        case "grok": config.grok.askOthers
         case "copilot": config.copilot.askOthers
         default: false
         }

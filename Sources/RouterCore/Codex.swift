@@ -461,7 +461,6 @@ extension Router {
             await pinger?.value
             let (status, type, message) = (error as? SiriError)?.status
                 ?? (error as? Codex.Failure).map { AgentError.classify($0.message) }
-                ?? (error as? Grok.Failure).map { AgentError.classify($0.message) }
                 ?? (error as? Copilot.Failure).map { f -> (Int, String, String) in  // omejitev: stderr le v dnevnik, kot minigw serve
                     let c = AgentError.classify(f.message)
                     guard c.0 == 429 else { return c }
@@ -501,7 +500,6 @@ enum AgentError {
     }
 
     static func classify(_ raw: String) -> (Int, String, String) {
-        if raw == Grok.needsApproval { return (400, Router.errorType(400), raw) }  // #121: a refusal that repeats, not a temporary 502 (and no "try again" from Claude Code)
         let low = raw.lowercased(), status = limits.contains { low.contains($0) } ? 429 : 502  // tudi ovoj (»Payment Required«)
         return (status, Router.errorType(status), clean(message(raw)))
     }

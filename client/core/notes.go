@@ -202,6 +202,26 @@ func getNote(tx *sql.Tx, id int64) (Note, error) {
 	return n, notFound(err)
 }
 
+// noteMetadata never selects the body.
+func noteMetadata(tx *sql.Tx, id int64) (Note, error) {
+	n, err := scanNote(tx.QueryRow(`SELECT `+listCols+` FROM notes n JOIN users u ON u.id=n.author_id WHERE n.id=?`, id), false)
+	return n, notFound(err)
+}
+
+// visibleNote checks scope before any body query.
+func visibleNote(tx *sql.Tx, user, id int64, rs []readable) (Note, error) {
+	n, err := noteMetadata(tx, id)
+	if err != nil {
+		return Note{}, err
+	}
+	for _, r := range rs {
+		if r.project == n.ProjectID && r.allows(n.Class, n.AuthorID == user) {
+			return n, nil
+		}
+	}
+	return Note{}, ErrNotFound
+}
+
 // memberAccess is steps 3 and 4 of section 1 for a project: principal still valid, project visible (else 404).
 func memberAccess(tx *sql.Tx, p Principal, project int64) (access, error) {
 	if err := checkPrincipal(tx, p); err != nil {
@@ -241,13 +261,14 @@ func (s *Store) GetNote(ctx context.Context, p Principal, project, id int64) (n 
 		if err != nil {
 			return err
 		}
-		if n, err = getNote(tx, id); err != nil {
+		if _, err = visibleNote(tx, p.UserID, id, []readable{a.readable(project, false)}); err != nil {
 			return err
 		}
-		if n.ProjectID != project || !a.can(pRead, n.Class, n.AuthorID == p.UserID) {
-			return ErrNotFound
+		if lim != nil {
+			return lim
 		}
-		return lim
+		n, err = getNote(tx, id)
+		return err
 	})
 	if err != nil {
 		return Note{}, err
@@ -294,7 +315,7 @@ func writeAccess(tx *sql.Tx, p Principal, project, id int64) (a access, n Note, 
 	if a, err = memberAccess(tx, p, project); err != nil {
 		return
 	}
-	if n, err = getNote(tx, id); err != nil {
+	if n, err = noteMetadata(tx, id); err != nil {
 		return
 	}
 	own := n.AuthorID == p.UserID
@@ -319,7 +340,8 @@ func archivedErr(tx *sql.Tx, project int64) error {
 }
 
 // CreateNote creates a note; key is the Idempotency-Key. A repeat of the same key and payload within 24 h returns
-// the first result (replayed = true) but still needs current access; another payload is ErrIdempotency.
+// the first result (replayed = true) but still needs current access. Deleted or reclassified notes are not replayed;
+// another payload is ErrIdempotency.
 func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key string, in NoteInput) (n Note, replayed bool, err error) {
 	lim := s.rate(p.UserID, true)
 	if key == "" || len(key) > 64 {
@@ -344,14 +366,29 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 		}
 		now := ms(s.now())
 		tx.Exec(`DELETE FROM idempotency WHERE time<?`, now-idempotencyTTL.Milliseconds())
-		var oldHash, result string
-		switch err := tx.QueryRow(`SELECT hash,result FROM idempotency WHERE user_id=? AND project_id=? AND key=?`, p.UserID, project, key).Scan(&oldHash, &result); err {
+		var oldHash string
+		var noteID int64
+		switch err := tx.QueryRow(`SELECT hash,note_id FROM idempotency WHERE user_id=? AND project_id=? AND key=?`, p.UserID, project, key).Scan(&oldHash, &noteID); err {
 		case nil:
 			if oldHash != hash {
 				return ErrIdempotency
 			}
 			if lim != nil {
 				return lim
+			}
+			current, err := visibleNote(tx, p.UserID, noteID, []readable{a.readable(project, false)})
+			if err != nil {
+				return err
+			}
+			if current.Class != in.Class {
+				return ErrNotFound
+			}
+			var result string
+			if err := tx.QueryRow(`SELECT result FROM idempotency WHERE user_id=? AND project_id=? AND key=?`, p.UserID, project, key).Scan(&result); err != nil {
+				return err
+			}
+			if result == "" {
+				return ErrNotFound
 			}
 			replayed = true
 			return json.Unmarshal([]byte(result), &n)
@@ -416,7 +453,11 @@ func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revisi
 			return err
 		}
 		size := int64(len(in.Title) + len(in.Body))
-		if err := checkProjectLimits(tx, project, false, size-int64(len(old.Title)+len(old.Body))); err != nil {
+		var oldSize int64
+		if err := tx.QueryRow(`SELECT bytes FROM notes WHERE id=?`, id).Scan(&oldSize); err != nil {
+			return err
+		}
+		if err := checkProjectLimits(tx, project, false, size-oldSize); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1 WHERE id=?`, in.Class, in.Title, in.Body, size, ms(s.now()), id); err != nil {
@@ -426,6 +467,10 @@ func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revisi
 			return err
 		}
 		if in.Class != old.Class {
+			// Keep the key reserved, but discard content even if the class is later changed back.
+			if _, err := tx.Exec(`UPDATE idempotency SET result='' WHERE note_id=?`, id); err != nil {
+				return err
+			}
 			if _, err := s.BumpEpochTx(tx, "note class narrowed"); err != nil {
 				return err
 			}
@@ -454,6 +499,9 @@ func (s *Store) DeleteNote(ctx context.Context, p Principal, project, id, revisi
 			return lim
 		}
 		if _, err := tx.Exec(`DELETE FROM notes WHERE id=?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE idempotency SET result='' WHERE note_id=?`, id); err != nil {
 			return err
 		}
 		return Audit(tx, actor(p), "note.delete", strconv.FormatInt(id, 10), map[string]any{"project": project, "class": n.Class, "author": n.AuthorID})
@@ -638,15 +686,14 @@ func (s *Store) RunGetNote(ctx context.Context, c RunCap, approved bool, id int6
 		if err != nil {
 			return err
 		}
-		if n, err = getNote(tx, id); err != nil {
+		if _, err := visibleNote(tx, c.UserID, id, rs); err != nil {
 			return err
 		}
-		for _, r := range rs {
-			if r.project == n.ProjectID && r.allows(n.Class, n.AuthorID == c.UserID) {
-				return lim
-			}
+		if lim != nil {
+			return lim
 		}
-		return ErrNotFound
+		n, err = getNote(tx, id)
+		return err
 	})
 	if err != nil {
 		return Note{}, err

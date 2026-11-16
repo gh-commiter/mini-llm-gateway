@@ -2,12 +2,27 @@
 
 ## Unreleased
 
+## 0.7.1
+
 ### New
 - Teams (first step): the owner can group users and projects into teams with `minigw gw team add|list|rename|archive`, `minigw gw team member add|remove <team> <user>` and `minigw gw team project add|remove <team> <project>`; a member sees their own teams with `minigw team list|show <team>`. A project belongs to at most one team; a user can be in several. Being in a team alone gives no project role and no access to notes; the owner gives access with a team assignment (next line).
 - Teams (access): `minigw gw team access set <team> <project> <user> <role>` gives a team member a role in one of the team's projects, `... access remove` takes it back, `... access list <team>` shows them. A team assignment creates the same project membership as a direct one (`minigw gw member`); when a user has several, the strongest role wins, and removing a team assignment does not remove a direct one. Removing the user from the team, the project from the team, or archiving the team takes that access away at once. `minigw project list` shows the role and where it comes from.
 
+### Changed
+- Grok is not supported on the Mac gateway (the Mini Gateway app). It worked in 0.5.29 and could not start since 0.6.0. Every Grok request answers 400 "Grok is not supported on the Mac gateway. Use another agent, or Grok through minigw serve on Windows or Linux." with `x-should-retry: false`; the Mac Settings no longer have a Grok CLI pane, the Mac admin API answers the same 400 for `/agents/grok`, and `minigw gw grok` says so. Grok through `minigw serve` on Windows and Linux is not affected, and a Mac client can use its models.
+
+### Security
+- Notes: the gateway now checks the permission before it loads a note's text (for member reads, reads by an agent run, edit, delete and class change), and checks it again before it repeats a saved answer to a retried request. A note that is missing and a note you may not see give the same answer.
+
 ### Known limits
 - Database downgrade: this version's database schema is 10. An older program refuses it; the way back is restoring the snapshot written before the first migration (`core-8-<time>.db` when you come from 0.7.0) from the core folder by path with `minigw gw core restore`.
+
+### Known problems
+- Direct mode on a Mac gateway with a remote client: files that an agent creates and commits are recorded as executable (mode 100755), and a tracked symbolic link can be committed as a regular file (the mounted folder cannot represent links). Do not let an agent commit in a repository that tracks symbolic links; use worktree mode there. Fixes follow.
+- Grok is not supported on the Mac gateway (see Changed).
+- Agents started by the gateway inherit the gateway's environment variables.
+- A commit by an agent in a repository without `user.name` and `user.email` gets git's automatic identity of the gateway computer.
+- LiteLLM models show a cost only when the proxy's model info has prices. Usage days are UTC days.
 
 ## 0.7.0
 

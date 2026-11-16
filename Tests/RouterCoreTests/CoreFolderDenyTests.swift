@@ -237,9 +237,6 @@ private func profileConfig(_ a: [String]) -> [String] {
     // the gateway user's own *_HOME variables are the homes
     let env = RouterConfig.credentialHomes(except: "", home: home, env: ["GROK_HOME": f.tmp.path, "CODEX_HOME": f.work.path])
     #expect(env.contains(f.tmp.path) && env.contains(f.work.path) && !env.contains(home + "/.grok") && env.contains(home + "/.copilot"))
-    // Grok's profile lists the others' homes, not its own login home
-    let toml = try #require(Grok.coreSandboxToml(deny: RouterConfig.agentDenied(kind: "grok", scratch: scratch, home: home, env: [:])))
-    #expect(toml.contains("\"" + home + "/.codex\"") && toml.contains("\"" + home + "/.copilot\"") && !toml.contains("\"" + home + "/.grok\""))
 }
 
 @Test func credentialHomesAreDeniedForRealProcesses() throws {
@@ -272,61 +269,10 @@ private func profileConfig(_ a: [String]) -> [String] {
     }
 }
 
-// MARK: Grok does not run while the core is on
+// MARK: revocation marks stub
 
 actor NoMarks: CoreRevocationMarks {
     func list() -> [String] { [] }
     func add(_ device: String) {}
     func clear(_ devices: [String]) {}
-}
-
-@Test func grokProfilesDenyTheCoreAndLeaveTheUsersGrokAlone() throws {
-    let f = try Fixture(); defer { f.cleanup() }
-    let deny = f.denied
-    let toml = try #require(Grok.coreSandboxToml(deny: deny))
-    for (name, base) in [("minigw-core", "workspace"), ("minigw-core-ro", "read-only")] {
-        #expect(toml.contains("[profiles.\(name)]\nextends = \"\(base)\"\ndeny = ["))
-    }
-    for d in deny { #expect(toml.components(separatedBy: "\"\(d)\"").count == 3, "\(d) in both profiles") }
-    #expect(Grok.coreSandboxToml(deny: []) == nil && Grok.coreSandboxToml(deny: ["/a\nb"]) == nil)  // nothing to deny / unquotable: refuse
-    #expect(Grok.coreSandboxToml(deny: ["/a\"b\\c"])!.contains(#"deny = ["/a\"b\\c"]"#))
-    // the arguments: the profile instead of workspace/read-only, in every mode; unchanged without the core
-    let w = Grok.args(cwd: f.work, extraDirs: [], agent: true, model: nil, write: true, core: true)
-    let r = Grok.args(cwd: f.work, extraDirs: [], agent: true, model: nil, write: false, core: true)
-    let c = Grok.args(cwd: f.work, extraDirs: [], agent: false, model: nil, write: true, core: true)
-    #expect(w.contains("minigw-core") && w.contains("--always-approve") && r.contains("minigw-core-ro") && c.contains("minigw-core-ro"))
-    #expect(!w.contains("workspace") && !r.contains("read-only") && !c.contains("read-only"))
-    #expect(Grok.args(cwd: f.work, extraDirs: [], agent: true, model: nil, write: true).contains("workspace"))
-    // the gateway's own home: sandbox.toml written there, the login stays where it is, a changed file is put right
-    let home = f.base.appendingPathComponent("grok-home"), login = f.base.appendingPathComponent("login")
-    let env = try #require(Grok.prepareCoreHome(home, deny: deny, login: login))
-    #expect(env["GROK_HOME"] == home.path && env["GROK_AUTH_PATH"] == login.path + "/auth.json")
-    let file = home.appendingPathComponent("sandbox.toml")
-    #expect(try String(contentsOf: file, encoding: .utf8) == toml)
-    try Data("[profiles.minigw-core]\n".utf8).write(to: file)  // tampered
-    #expect(Grok.prepareCoreHome(home, deny: deny, login: login) != nil)
-    #expect(try String(contentsOf: file, encoding: .utf8) == toml)
-    // refused: the home is a link; the home is a file; nothing to deny
-    let lnk = f.base.appendingPathComponent("home-link")
-    try FileManager.default.createSymbolicLink(at: lnk, withDestinationURL: home)
-    #expect(Grok.prepareCoreHome(lnk, deny: deny, login: login) == nil)
-    let blocked = f.base.appendingPathComponent("blocked"); try Data().write(to: blocked)
-    #expect(Grok.prepareCoreHome(blocked, deny: deny, login: login) == nil)
-    #expect(Grok.prepareCoreHome(f.base.appendingPathComponent("h2"), deny: [], login: login) == nil)
-    // the user's own ~/.grok is never in the way: the real default login home is not the gateway home
-    #expect(Grok.loginHome().path.hasSuffix("/.grok") || ProcessInfo.processInfo.environment["GROK_HOME"] != nil)
-}
-
-@Test func grokRunsWithTheCoreOnlyThroughItsProfile() async throws {
-    let f = try Fixture(); defer { f.cleanup() }
-    var cfg = RouterConfig()
-    cfg.grok.enabled = true
-    cfg.scratchName = ""
-    // 0.7.0: runGrok refuses first (Grok.runsDisabled), so the profile is written by prepareCoreHome itself, which the rework brings back into the run
-    let home = cfg.scratch("grok-home")
-    let login = f.core.appendingPathComponent("login")
-    try FileManager.default.createDirectory(at: login, withIntermediateDirectories: true)
-    _ = try #require(Grok.prepareCoreHome(home, deny: RouterConfig.coreDenied(), login: login))
-    let written = try String(contentsOf: home.appendingPathComponent("sandbox.toml"), encoding: .utf8)
-    for d in RouterConfig.coreDenied() { #expect(written.contains("\"\(d)\"")) }
 }

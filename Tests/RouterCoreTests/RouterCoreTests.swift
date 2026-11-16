@@ -436,8 +436,7 @@ func discoveryReady(_ r: Router) async {
     chmod(fake.path, 0o755)
     let n = 2 * ProcessInfo.processInfo.activeProcessorCount + 2
     let runs = (0..<n).map { i in
-        Task { _ = try? await (i.isMultiple(of: 2) ? Grok.run(fake.path, args: [], cwd: dir, prompt: "x", onStep: { _ in })
-                                                   : Codex.run(fake.path, args: [], cwd: dir, prompt: "x", output: dir.appendingPathComponent("o\(i)"))) }
+        Task { _ = try? await Codex.run(fake.path, args: [], cwd: dir, prompt: "x", output: dir.appendingPathComponent("o\(i)")) }
     }
     // The property, not a time: /health is answered while every agent run is still in flight, i.e. before anything released the agents.
     // The thread releases them only after 60 s as a guard (a starved pool, before the fix, answers only after that; a thread, not a task,
@@ -787,19 +786,6 @@ final class SeenDevices: @unchecked Sendable {
     // napačna šifra na strežniku → rokovanje ne uspe (ime protokola je v hashu)
     var i = Noise.Initiator(routerKey: key.publicKey.rawRepresentation, suite: .aesGCM)
     #expect(throws: (any Error).self) { try Noise.respond(try i.first(), key: key, suite: .chachaPoly) }
-}
-
-@Test func grokArgsAndEvents() {
-    let cwd = URL(fileURLWithPath: "/tmp/s")
-    let w = Grok.args(cwd: cwd, extraDirs: ["/tmp/x"], agent: true, model: "grok-4.7", write: true)
-    #expect(w.contains("workspace") && w.contains("--always-approve") && !w.contains("--add-dir") && w.contains("grok-4.7"))
-    let r = Grok.args(cwd: cwd, extraDirs: ["/tmp/x"], agent: true, model: nil, write: false)
-    #expect(r.contains("read-only") && !r.contains("--always-approve") && !r.contains("/tmp/x"))
-    #expect(Grok.match("claude-grok")! == nil && Grok.match("claude-grok-grok-4.7")! == "grok-4.7" && Grok.match("claude-codex") == nil)
-    #expect(Grok.event(Data(#"{"type":"tool_call","title":"read_file","rawInput":{"target_file":"a.txt"}}"#.utf8)) == .step("read_file a.txt"))
-    #expect(Grok.event(Data(#"{"type":"text","data":"hello"}"#.utf8)) == .text("hello"))
-    #expect(Grok.event(Data(#"{"type":"end","stopReason":"end_turn","sessionId":"s1"}"#.utf8)) == .end("s1", cancelled: false))
-    #expect(Grok.event(Data(#"{"type":"end","stopReason":"cancelled"}"#.utf8)) == .end(nil, cancelled: true))  // #121: also without a session id
 }
 
 @Test func davGetReadsOnlyTheRangeAndLimitsSize() throws {

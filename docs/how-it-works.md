@@ -119,7 +119,7 @@ Details:
   that run (`-c projects={"<folder>"={trust_level="untrusted"},…}`), so a project or parent folder trusted in
   `~/.codex/config.toml` does not load them. Every gateway Codex run, every mode, both gateways.
 - Sync copies of all devices are in the gateway's Scratch folder. Agents that can read every file of the gateway's
-  user (Codex and Grok on the Mac, Codex on Windows without its own sandbox, any agent on a Windows gateway without
+  user (Codex on the Mac, Codex on Windows without its own sandbox, any agent on a Windows gateway without
   the Windows sandbox) can read them too. Keep Scratch on APFS, NTFS or ext4:
   exFAT ignores the folder's private permissions.
   The core data folder (the notes of all projects) is the exception since 0.6.0: it is denied to every agent with a sandbox,
@@ -375,7 +375,7 @@ staged paths), warns loudly about protected paths in new commits (review them be
 The client runs git for this without hooks, fsmonitor or external diff. If the client is killed before the end, the start state it stored (ids of HEAD and refs, a hash of the index and the index entries of protected paths, no file contents; in `~/Library/Application Support/minigw/gitwatch` or the settings folder's `minigw/gitwatch`, mode 0600, never in the repository) is compared at the next start in that folder, and the same report is printed with "from the previous run that did not finish". The agent is told that its git changes are reported. Worktree mode has no such warning today: it returns a branch that you review before you apply it (see
 [Worktree mode](usage.md#worktree-mode-results-as-branches)).
 
-Grok's sandbox does not fence `.git` (issue #115): in direct mode on a client's shared folder the client guard alone holds, and on a folder of the gateway Mac
+Grok's sandbox (Windows and Linux gateways) does not fence `.git` (issue #115): in direct mode on a client's shared folder the client guard alone holds, and on a folder of the gateway computer
 itself Grok has no `.git` protection at all.
 
 Known properties, not protected on purpose: `.gitattributes` and `.gitmodules` in the work tree are ordinary tracked files that an agent

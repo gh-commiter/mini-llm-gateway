@@ -306,11 +306,11 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(g(client, "rev-parse", branch) == mine)  // ni prepisana
 }
 
-/// H2: Grok s pisanjem v načinu worktree ni podprt (400 z navodilom za sync, preden se karkoli priklopi);
+/// Grok is refused on the Mac gateway in every mode (400, before anything is mounted);
 /// F2: Codex brez pisanja ni zavrnjen (v klonu le bere).
 @Test func worktreeRefusesGrokAndReadOnlyCodex() async throws {
     var c = RouterConfig()
-    c.grok.enabled = true; c.grok.write = true; c.codex.enabled = true; c.codex.write = false
+    c.codex.enabled = true; c.codex.write = false
     let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
     let session = UUID().uuidString
     _ = await Router.shares.register(session: session, cwd: "/p", key: nil, device: nil,
@@ -322,7 +322,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
         let w = FakeWriter()
         await r.handle(q, writer: w)
         if model == "claude-grok" {
-            #expect(w.status == 400 && w.text.contains("Grok is switched off on the Mac gateway"), "\(model): \(w.text)")  // 0.7.0: refused before the worktree check (Grok.runsDisabled)
+            #expect(w.status == 400 && w.text.contains("Grok is not supported on the Mac gateway") && w.text.contains("x-should-retry: false"), "\(model): \(w.text)")
         } else {
             #expect(!w.text.contains("may not write"), "\(model): \(w.text)")
         }

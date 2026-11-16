@@ -198,8 +198,9 @@ Projects, members and notes live in the gateway's core database (`minigw serve`:
 same and answer the same on both: the Mac app authenticates the owner and forwards them to the helper. They need the
 running gateway; while the core cannot be opened they answer `503` (on the Mac also while the helper is not running: the
 message then says `The project database is not available: the project helper (minigw-core) is not running`). Ids are numbers. The caller is the owner (admin authentication above); the `owner` mark on a user gives no
-extra power. Every call writes an audit event; a call that can take access away raises the epoch (all runs and
-conversations of a project end), in the same transaction.
+extra power, and a project `admin` role does not authorize this API. Every call writes an audit event; a call that can
+take access away raises the epoch (subsequent note reads and conversation reuse are refused; running processes
+continue), in the same transaction.
 
 | Method and path | Body | Response |
 |---|---|---|
@@ -321,12 +322,16 @@ body), 403 `forbidden`, 403 `archived`, 409 `revision_mismatch` (with `revision`
 | `POST /projects/{id-or-slug}/link-check` | the project, only if the user has a direct role (a grant alone: 403 `forbidden`); for `minigw project link` |
 | `GET /projects/{id}/notes?class=&after=&limit=` | `{notes: [{id, project, class, title, author, created, updated, revision}], next?}`, updated descending then id, default 50, max 100 |
 | `GET /projects/{id}/notes/{note}` | the note with `body` |
-| `POST /projects/{id}/notes` | 201; header `Idempotency-Key` (1-64 bytes); body `{"class", "title", "body"}`; a repeat of the same key and payload within 24 h answers the first result (header `Idempotent-Replay: true`) |
+| `POST /projects/{id}/notes` | 201; header `Idempotency-Key` (1-64 bytes); body `{"class", "title", "body"}`; a repeat of the same key and payload within 24 h reauthorizes the current note before answering the first result; deleted or reclassified notes return 404, including after a class is changed back (header `Idempotent-Replay: true`) |
 | `PUT /projects/{id}/notes/{note}` | 200; body `{"revision", "class", "title", "body"}` |
 | `DELETE /projects/{id}/notes/{note}?revision=N` | 204 |
 
 Request bodies are limited to 512 KiB before they are parsed (413 `too_large`); title 256 bytes and body 64 KiB,
 10 000 notes and 100 MiB per project; 60 writes and 600 reads a minute per user.
+
+Note authorization uses metadata before loading a body, including run reads and edit/delete checks.
+For an owner/member setup with two developers, one reader and an explicit structure grant, see
+[Three people, two projects](usage.md#three-people-two-projects).
 
 Notes:
 
@@ -410,15 +415,15 @@ Notes:
   requests at a time per run and 6 nested runs on the gateway (`429` otherwise); a nested agent works only in a folder the
   client shared. Log lines of nested requests carry `via=<chain>`.
 - Agents other than Claude get their own `agents/{name}` resource when a gateway has them (the Mac: `codex`,
-  `grok`); a gateway answers `404` for agents it does not have, and for `siri`.
+  `grok`); a gateway answers `404` for agents it does not have, and for `siri`. The Mac gateway answers `400` "Grok is not supported on the Mac gateway. Use another agent, or Grok through minigw serve on Windows or Linux." for every `/agents/grok` request (GET, PATCH, models).
 
 | Method and path | Body | Response |
 |---|---|---|
 | `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models", "askOthers", "work", "apiKey"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null, "askOthers", "work", "login"?: Login}` |
-| `GET /agents/codex/models`, `GET /agents/grok/models` | – | `{"models": [{"slug", "name", "description"?, "window"?, "enabled"}]}`: the account's models |
+| `GET /agents/codex/models`, `GET /agents/grok/models` (Go gateway; the Mac answers 400 for grok) | – | `{"models": [{"slug", "name", "description"?, "window"?, "enabled"}]}`: the account's models |
 | `GET /foundry`, `PATCH` | any of `{"enabled", "path", "instructions", "models"}` | `{"enabled", "path", "found", "exe", "running", "error", "instructions", "models": [string] \| null}`: Foundry Local on this computer |
 | `GET /foundry/models` | – | `{"models": [{"name", "vision", "enabled"}]}`: models downloaded in Foundry Local; `503` when it is not installed or does not answer (Go gateway and the Mac app) |
-| `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models", "askOthers", "work", "apiKey"}` | `{"enabled", "path", "found", "write", "models", "askOthers", "work", "login"?: Login}` |
+| `GET /agents/grok`, `PATCH` (Go gateway; the Mac answers 400) | any of `{"enabled", "path", "write", "models", "askOthers", "work", "apiKey"}` | `{"enabled", "path", "found", "write", "models", "askOthers", "work", "login"?: Login}` |
 | `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "askOthers", "work"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "askOthers", "work", "login": Login, "loginProblem"?, "commandsUnavailable"?}` |
 | `GET /appleFM`, `PATCH` (Mac) | any of `{"enabled", "instructions"}` | `{"enabled", "instructions"}`: Apple Foundation Models (Settings → Apple Foundation Models); instructions up to 8000 characters |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |

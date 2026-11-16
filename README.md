@@ -1,7 +1,7 @@
 # Mini Gateway <img src="Resources/AppIcon-preview.png" width="48" align="top" alt="Mini Gateway icon">
 
 An LLM gateway compatible with the [Claude Code](https://claude.com/claude-code) CLI. One endpoint for several
-models: the **Claude Code CLI**, **Codex**, **Grok** and **Copilot** as agents, the **Siri AI** app and **Apple
+models: the **Claude Code CLI**, **Codex**, **Grok** (Windows and Linux gateways) and **Copilot** as agents, the **Siri AI** app and **Apple
 Foundation Models** on a Mac, **Foundry Local** on-device models, and any Anthropic-compatible upstream such as
 **LiteLLM** or **OpenRouter**.
 
@@ -34,14 +34,14 @@ work comes back as a branch for you to review. Details: [docs/how-it-works.md](d
 |---|---|
 | `claude-cli-opus`, `-sonnet`, `-haiku`, `-fable` | Claude Code on the gateway, as an agent with tools |
 | `claude-codex`, `claude-codex-<model>` | OpenAI Codex CLI, as an agent |
-| `claude-grok`, `claude-grok-<model>` | xAI Grok Build CLI, as an agent |
+| `claude-grok`, `claude-grok-<model>` | xAI Grok Build CLI, as an agent (Windows and Linux gateways; not supported on the Mac gateway) |
 | `claude-copilot`, `claude-copilot-<model>` | GitHub Copilot CLI, as an agent |
 | `claude-siri-ai` | Siri AI app on the gateway Mac (personal context, no tools) |
 | `claude-apple-fm` | Apple Foundation Models, on-device |
 | `claude-foundry-<model>` | Microsoft Foundry Local, on-device |
 | `claude-<id>` | LiteLLM, OpenRouter or any Anthropic-compatible provider |
 
-Codex, Grok, Copilot (Copilot: not on a Windows gateway or a headless Linux gateway in this version) and Foundry Local are off until the gateway owner turns them on. More: [docs/usage.md → Models](docs/usage.md#models).
+Codex, Grok (not supported on the Mac gateway), Copilot (Copilot: not on a Windows gateway or a headless Linux gateway in this version) and Foundry Local are off until the gateway owner turns them on. More: [docs/usage.md → Models](docs/usage.md#models).
 
 ## Requirements
 

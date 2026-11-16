@@ -65,7 +65,7 @@ private final class PFx: @unchecked Sendable {
     }
 
     /// The Router with the fake agents; `ask`: "May ask other models" for Claude and Codex.
-    func makeRouter(ask: Bool = false, devices: [String] = ["ana"], claude: String? = nil, codex: String? = nil, grok: String? = nil, noCore: Bool = false) {
+    func makeRouter(ask: Bool = false, devices: [String] = ["ana"], claude: String? = nil, codex: String? = nil, noCore: Bool = false) {
         var c = RouterConfig()
         c.scratchFolder = scratch.path
         c.devices = devices.map { DeviceConfig(id: "dev-\($0)", name: $0) }
@@ -73,7 +73,6 @@ private final class PFx: @unchecked Sendable {
         c.claudeCLI.enabled = claude != nil; c.claudeCLI.executable = claude ?? ""
         c.claudeCLI.askOthers = ask; c.claudeCLI.allowLocalTools = true
         c.codex.enabled = codex != nil; c.codex.executable = codex ?? ""; c.codex.askOthers = ask
-        c.grok.enabled = grok != nil; c.grok.executable = grok ?? ""
         router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), core: noCore ? nil : h, history: GatewayHistory())
     }
 
@@ -170,16 +169,6 @@ printf '%s\\n' "$@" > call-$n.args
 env > call-$n.env
 echo '{"type":"thread.started","thread_id":"T-'$$'"}'
 echo "codex answer" > "$out"
-
-"""
-
-private let fakeGrok = """
-n=$(ls call-grok-*.env 2>/dev/null | wc -l | tr -d ' ')
-cat > /dev/null
-env > call-grok-$n.env
-printf '%s\\n' "$@" > call-grok-$n.args
-echo '{"type":"text","data":"grok answer"}'
-echo '{"type":"end","sessionId":"S-'$$'"}'
 
 """
 
@@ -504,21 +493,19 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         #expect(homes.count <= 20)  // maxHomes of the core's agent-home
     }
 
-    /// Stabilization 0.7.0 (security review, LOW): every Grok run is refused on the Mac gateway until the sandbox rework (#126), with or without a project core and wherever
-    /// Scratch lies: 400 invalid_request_error (the client adds "try again" to a 502/503), no retry, nothing started. Not listed among the models, like a disabled agent.
-    /// (Replaces the #121 test that refused only while Grok's home lay inside a hidden root.)
+    /// Grok is not supported on the Mac gateway: every Grok request is refused (400 invalid_request_error, the client adds "try again" to a 502/503), no retry, with or
+    /// without a project core, and Grok is not listed among the models.
     @Test func grokIsRefusedForEveryRun() async throws {
         let f = try await PFx()
         await f.project("fakture"); await f.user("ana", projects: ["fakture": "developer"])
-        f.makeRouter(grok: try f.script("grok", fakeGrok))
+        f.makeRouter()
         for project in [f.pid["fakture"], nil] {
             let w = await f.ask("claude-grok", project: project)
-            #expect(w.status == 400 && w.text.contains("invalid_request_error") && w.text.contains("x-should-retry: false") && w.text.contains("Grok is switched off on the Mac gateway"), "\(w.text.prefix(300))")
+            #expect(w.status == 400 && w.text.contains("invalid_request_error") && w.text.contains("x-should-retry: false") && w.text.contains("Grok is not supported on the Mac gateway"), "\(w.text.prefix(300))")
         }
-        #expect(f.read("call-grok-0.env") == nil && f.read("call-grok-0.args") == nil)  // nothing was started
-        f.makeRouter(grok: try f.script("grok", fakeGrok), noCore: true)  // no core: the same
-        let w = await f.ask("claude-grok", project: nil)
-        #expect(w.status == 400 && w.text.contains("Grok is switched off on the Mac gateway") && f.read("call-grok-0.args") == nil, "\(w.text.prefix(300))")
+        f.makeRouter(noCore: true)  // no core: the same
+        let w = await f.ask("claude-grok-grok-4.7", project: nil)
+        #expect(w.status == 400 && w.text.contains("Use another agent, or Grok through minigw serve on Windows or Linux"), "\(w.text.prefix(300))")
         let list = await f.router.modelList(siri: false)
         #expect(!((list["data"] as? [[String: Any]]) ?? []).contains { ($0["id"] as? String)?.hasPrefix("claude-grok") == true })
     }

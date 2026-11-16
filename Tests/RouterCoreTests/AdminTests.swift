@@ -149,8 +149,11 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(await claude(#"{"allowLocalTools":false,"tools":"Read,Grep"}"#).status == 200 && !app.config.claudeCLI.allowLocalTools)
         #expect(await admin(app.router(), "PATCH", "/agents/codex", body: #"{"write":false,"models":["gpt-5"]}"#).status == 200)
         #expect(!app.config.codex.write && app.config.codex.enabledModels == ["gpt-5"])
-        #expect(await admin(app.router(), "PATCH", "/agents/grok", body: #"{"models":null}"#).status == 200 && app.config.grok.enabledModels == nil)
-        #expect(await admin(app.router(), "PATCH", "/agents/grok", body: #"{"network":true}"#).status == 400)  // le Codex ima omrežje
+        let grok = await admin(app.router(), "PATCH", "/agents/grok", body: #"{"models":null}"#)
+        #expect(grok.status == 400 && grok.text.contains("Grok is not supported on the Mac gateway"))
+        let grokGet = await admin(app.router(), "GET", "/agents/grok"), grokModels = await admin(app.router(), "GET", "/agents/grok/models")
+        #expect(grokGet.status == 400 && grokModels.status == 400)
+        #expect(await admin(app.router(), "PATCH", "/agents/codex", body: #"{"network":true}"#).status == 200)
 
         #expect(await admin(app.router(), "PATCH", "/general", body: #"{"port":9999,"allowedClients":"192.168.1.7"}"#).status == 200)
         #expect(app.config.port == 9999 && app.config.allowedClients == "192.168.1.7")
@@ -399,9 +402,9 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     // Okno, odprto s starim osnutkom, mora po spremembi drugje (skrbniški API) kazati in uveljaviti novo vrednost.
     let old = RouterConfig()
     var new = old
-    new.codex.write = false; new.grok.write = false; new.copilot.write = true
+    new.codex.write = false; new.copilot.write = true
     let m = RouterConfig.merge(draft: old, old: old, new: new)
-    #expect(!m.codex.write && !m.grok.write && m.copilot.write)
+    #expect(!m.codex.write && m.copilot.write)
 }
 
 /// Revizija pariteta, vrstica 6, in varnostni pregled parity-cli (M1, L1-L4): končne točke minigw serve tudi v aplikaciji.
@@ -422,7 +425,6 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
                    ProviderConfig(id: "gw-2", name: "lite", enabled: true, baseURL: "https://lite.example", aliases: "")]
     c.claudeCLI.executable = "/nonexistent/claude"
     c.codex.executable = "/nonexistent/codex"
-    c.grok.executable = "/nonexistent/grok"
     let app = FakeApp(c)
 
     // PATCH /providers/{name}: ime, vklop, aliasi; ključ ostane pod id; L4: imena kot na Go, zasedeno v update
@@ -448,13 +450,11 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     #expect(w.status == 200 && w.text.contains(#""permissionMode":"acceptEdits""#))
     #expect(app.config.claudeCLI.permissionMode == "acceptEdits" && app.config.claudeCLI.settingSources == "user,project")
 
-    // GET agents/claude/tools, agents/{codex,grok}/models (brez programa prazno), drugi agenti 404
+    // GET agents/claude/tools, agents/codex/models (brez programa prazno), drugi agenti 404
     let t = await admin(app.router(), "GET", "/agents/claude/tools")
     #expect(t.status == 200 && t.text.contains(#""tools":[]"#))
-    for k in ["codex", "grok"] {
-        let m = await admin(app.router(), "GET", "/agents/\(k)/models")
-        #expect(m.status == 200 && m.text.contains(#""models":[]"#), "\(k)")
-    }
+    let m = await admin(app.router(), "GET", "/agents/codex/models")
+    #expect(m.status == 200 && m.text.contains(#""models":[]"#))
     #expect(await admin(app.router(), "GET", "/agents/copilot/models").status == 404)
     #expect(await admin(app.router(), "GET", "/agents/codex/tools").status == 404)
 
