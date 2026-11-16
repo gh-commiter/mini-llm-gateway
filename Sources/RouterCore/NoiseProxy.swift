@@ -8,7 +8,7 @@ public final class NoiseProxy: @unchecked Sendable {
     private let host: NWEndpoint.Host, port: NWEndpoint.Port, routerKey: Data
     private let device: (key: Curve25519.Signing.PrivateKey, name: String)?  // dokaz naprave v vsaki povezavi
     private let suite: Noise.Suite
-    private let queue = DispatchQueue(label: "dev.trojar.minigateway.proxy")
+    private let queue = DispatchQueue(label: "dev.trojar.minigateway.proxy", qos: .userInitiated)  // not default QoS: see ProfileMux.queue
     private var listener: NWListener?
     /// The project id minigw resolved for this run ("" = none), set before start. Every request's X-Minigw-Project header is
     /// replaced by it (or dropped without one), so a header from the wrapped program never chooses the project (Projects.rewriteHead).
