@@ -248,8 +248,11 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
             got.add(plain)
         }.start()
         let secret = adminSecret
-        _ = AdminClient(port: fakePort, routerKey: fakeKey.publicKey.rawRepresentation)
-            .request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30)
+        // The client is a blocking socket call (minigw gw is its own process). In a test it runs on its own thread, never on a thread of the
+        // Swift concurrency pool: with the whole suite in parallel the pool is full of such blocked calls and the router's handler Task (which
+        // needs a pool thread to answer) starves until the 30 s receive timeout ("no reply head: 0 bytes (errno 35)").
+        let fakeClient = AdminClient(port: fakePort, routerKey: fakeKey.publicKey.rawRepresentation)
+        _ = await offPool { fakeClient.request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30) }
         for _ in 0..<300 where got.data.isEmpty { try await Task.sleep(for: .milliseconds(50)) }  // namesto fiksnih 100 ms
         let text = String(decoding: got.data, as: UTF8.self)
         let captured = try #require(text.split(separator: "\r\n").first { $0.lowercased().hasPrefix("authorization: ") }).dropFirst("authorization: ".count)
@@ -258,12 +261,13 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         let real = AdminClient(port: port, routerKey: realKey.publicKey.rawRepresentation)
         let replay = String(captured)
         // #109: a 0 says where it failed (stage, errno); the earlier failures only showed "→ 0"
-        let replayed = real.attempt("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 30)
+        let replayed = await offPool { real.attempt("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 30) }
         #expect(replayed.0 == 401, "replay: \(replayed.0) \(replayed.2)")
-        let proven = real.attempt("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30)
+        let proven = await offPool { real.attempt("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30) }
         #expect(proven.0 == 200, "proof: \(proven.0) \(proven.2)")
         // Brez ključa routerja (program na vratih ne konča rokovanja): 0, nič poslano.
-        #expect(AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation).request("GET", "/health/live", nil, timeout: 30).0 == 0)
+        let wrong = AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation)
+        #expect(await offPool { wrong.request("GET", "/health/live", nil, timeout: 30) }.0 == 0)
     }
 }
 
