@@ -7,6 +7,12 @@
 - Changed (both gateways): usage reports show the provider in lowercase and the `provider` filter ignores case, so `OpenRouter` and `openrouter` are one provider on both gateways.
 - Fixed (both gateways): a response whose token counts the new usage parser cannot read (deeply nested, a usage object over 64 KB, or usage in an unusual place) keeps the counts the older extraction finds instead of "unknown"; an aborted Claude CLI stream is "unknown" instead of "0 tokens".
 
+### Known problems
+- The two Usage views (Mac Settings and the browser Settings) have passed automated tests of their numbers but have not been checked on screen.
+- LiteLLM models show a cost only when the proxy's model info has prices; the subscription agents (Claude, Codex, Grok, Copilot) show no money.
+- Usage days are UTC days.
+- Grok agent runs that last longer than a few minutes can fail with 502.
+
 ## 0.6.5
 
 ### New
