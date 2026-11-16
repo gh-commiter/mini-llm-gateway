@@ -671,8 +671,9 @@ public final class Router: Sendable {
                          "description": "Siri AI app · no tools · uses this Mac's personal data", "created_at": created])
         }
         if config.appleFM.enabled, case .available = SystemLanguageModel.default.availability {
+            let context = await AppleFM.contextSize()
             data.append(["type": "model", "id": "claude-apple-fm", "display_name": "Apple Foundation Models",
-                         "description": "On-device · \(SystemLanguageModel.default.contextSize / 1000)K context · no tools", "created_at": created])
+                         "description": "On-device · \(context / 1000)K context · no tools", "created_at": created])
         }
         if config.claudeCLI.enabled, await probes.ok("claude-cli") {  // vgrajeni opus/sonnet/haiku so že v izbirniku Claude Code
             data += ClaudeCLI.families.map { m in
