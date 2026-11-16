@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.7
+
 ### New
 - New (both gateways): failed agent time. Every request that reached its model now records how long it ran (from dispatch, not from admission or the queue) and, for an error, why (a closed list: `http`, `limit`, `timeout`, `unreachable`, `stream`, `exit`, `other`; never an error text) and the status the upstream answered. `minigw gw usage` adds a "failed min" column when any model has failed agent minutes and a total line such as "7 errors, 58.0 failed agent minutes"; `--sort failed` lists the models with the most failed time first; the CSV gains `errors`, `duration_ms`, `failed_duration_ms` and `unknown_duration_events` at the end. `/usage/events` rows gain `errorEvents`, `cancelledEvents`, `interruptedEvents`, `durationMs`, `failedDurationMs` and `unknownDurationEvents`; nothing existing changes.
 - New (Mac app and browser Settings): the Usage view has a fourth measure, "Failed time" (minutes of requests that ended in an error per day and model).
