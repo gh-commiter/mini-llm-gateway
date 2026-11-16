@@ -337,8 +337,14 @@ public actor ShareHub {
     }
 
     /// minigw ni več spraševal (zaprt prenosnik, prekinjen VPN) → odklopi.
+    private var lastReap = Date()
     private func reap() {
-        for s in bySession.values where Date().timeIntervalSince(s.lastSeen) > 60 {  // minigw sprašuje vsaj vsakih 25 s
+        // The reaper wakes every 15 s. Woken much later, this gateway itself was stalled (the Mac slept, or every pool thread was busy): minigw could not reach it either, so
+        // the silence says nothing about the client. Give every share a fresh minute instead of dropping them all.
+        let now = Date()
+        defer { lastReap = now }
+        if now.timeIntervalSince(lastReap) > 30 { for s in bySession.values { s.lastSeen = now }; return }
+        for s in bySession.values where now.timeIntervalSince(s.lastSeen) > 60 {  // minigw sprašuje vsaj vsakih 25 s
             bySession[s.session] = nil
             close(s)
         }
