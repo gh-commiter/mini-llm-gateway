@@ -15,11 +15,11 @@ public struct AdminCLIError: Error, Equatable {
 /// The flags of the owner commands (Go's coreOpts).
 public struct AdminOpts {
     public var days = "7", user = "", project = "", model = "", claudeProbe = "", provider = "", device = "", folder = "", sort = ""
-    public var json = false, csv = false, history = false
+    public var json = false, csv = false, history = false, explain = false
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
-                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false) {
+                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false) {
         self.days = days; self.user = user; self.project = project; self.model = model; self.claudeProbe = claudeProbe
-        self.provider = provider; self.device = device; self.folder = folder; self.sort = sort; self.json = json; self.csv = csv; self.history = history
+        self.provider = provider; self.device = device; self.folder = folder; self.sort = sort; self.json = json; self.csv = csv; self.history = history; self.explain = explain
     }
 }
 
@@ -31,7 +31,8 @@ public final class AdminCommands {
           minigw gw team add <name> | list | rename <team> <name> | archive <team>
           minigw gw team member add|remove <team> <user>
           minigw gw team project add|remove <team> <project>
-          minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin
+          minigw gw team access set <team> <project> <user> <role> | remove <team> <project> <user> | list <team>
+          minigw gw member <project> list [--explain] | set <user> <role> | remove <user>   role: reader, developer, admin
           minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data
           minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)
           minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups
@@ -155,11 +156,12 @@ public final class AdminCommands {
                 for m in try request("GET", "/projects/" + p + "/members")["members"]?.array ?? [] {
                     let d = m.dict
                     say(clean("\(d["user"]?.int ?? 0)  \(d["name"]?.string ?? "")  \(d["role"]?.string ?? "")"))
+                    if o.explain { say(clean("  origins: " + ProjectEnv.originText(d["origins"]?.array ?? [], roles: true))) }
                 }
             case ("set", 5):
-                try request("PUT", "/projects/" + p + "/members/" + s(try userID(pos[3])), ["role": pos[4]])
+                memberFeedback(try request("PUT", "/projects/" + p + "/members/" + s(try userID(pos[3])), ["role": pos[4]]), direct: pos[4])
             case ("remove", 4):
-                try request("DELETE", "/projects/" + p + "/members/" + s(try userID(pos[3])))
+                memberFeedback(try request("DELETE", "/projects/" + p + "/members/" + s(try userID(pos[3]))), direct: "")
             default: throw usage
             }
         case "grant":

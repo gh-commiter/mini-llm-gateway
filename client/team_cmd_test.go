@@ -9,8 +9,9 @@ import (
 
 func TestTeamCommands(t *testing.T) {
 	var f struct {
-		Admin  []*admCase
-		Member []struct {
+		Projects []struct{ Body, Out string }
+		Admin    []*admCase
+		Member   []struct {
 			Name                           string
 			Args                           []string
 			Body, Out, Error, Path, Lookup string
@@ -27,6 +28,21 @@ func TestTeamCommands(t *testing.T) {
 				t.Fatalf("got %s want %s", g, w)
 			}
 		})
+	}
+	for _, c := range f.Projects {
+		var out bytes.Buffer
+		e := &projectEnv{out: &out, connect: func() (connection, string) { return connection{}, "" }, do: func(_ connection, method, path string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+			if method != "GET" || path != "/minigw/v1/projects" {
+				t.Fatalf("%s %s", method, path)
+			}
+			return 200, []byte(c.Body), nil
+		}}
+		if err := e.project([]string{"list"}); err != nil {
+			t.Fatal(err)
+		}
+		if out.String() != c.Out {
+			t.Fatalf("project origins: got %q want %q", out.String(), c.Out)
+		}
 	}
 	for _, c := range f.Member {
 		t.Run(c.Name, func(t *testing.T) {

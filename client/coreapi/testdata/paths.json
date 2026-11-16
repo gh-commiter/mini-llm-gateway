@@ -37,5 +37,9 @@
   {"kind": "admin",  "method": "GET",    "path": "/status",                                     "want": false},
   {"kind": "admin",  "method": "GET",    "path": "/%75sers",                                    "want": true},
   {"kind": "admin",  "method": "GET",    "path": "/%zz",                                        "want": false},
-  {"kind": "admin",  "method": "GET",    "path": "",                                            "want": false}
+  {"kind": "admin",  "method": "GET",    "path": "",                                            "want": false},
+  {"kind": "admin", "method": "GET", "path": "/teams/1/assignments", "want": true},
+  {"kind": "admin", "method": "PUT", "path": "/teams/1/assignments", "want": true},
+  {"kind": "admin", "method": "DELETE", "path": "/teams/1/assignments", "want": true},
+  {"kind": "member", "method": "GET", "path": "/minigw/v1/teams/1/assignments", "want": true}
 ]

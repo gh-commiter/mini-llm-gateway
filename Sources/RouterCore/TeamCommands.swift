@@ -14,6 +14,19 @@ extension AdminCommands {
         let usage = fail(Self.help.trimmingCharacters(in: .whitespacesAndNewlines))
         guard pos.count >= 2 else { throw usage }
         switch (pos[1], pos.count) {
+        case ("access", _):
+            guard pos.count >= 4 else { throw usage }
+            let path = "/teams/\(try teamID(pos[3]))/assignments"
+            if pos[2] == "list" && pos.count == 4 {
+                for a in try request("GET", path)["assignments"]?.array ?? [] {
+                    let d = a.dict
+                    say("project \(d["project"]?.int ?? 0)  user \(d["user"]?.int ?? 0)  \(d["role"]?.string ?? "")")
+                }
+            } else if pos[2] == "set" && pos.count == 7 || pos[2] == "remove" && pos.count == 6 {
+                var b: [String: Any] = ["project": try projectID(pos[4]), "user": try userID(pos[5])]
+                if pos[2] == "set" { b["role"] = pos[6] }
+                try request(pos[2] == "set" ? "PUT" : "DELETE", path, b)
+            } else { throw usage }
         case ("list", 2):
             for t in try request("GET", "/teams")["teams"]?.array ?? [] { say(ProjectEnv.teamLine(t.dict)) }
         case ("add", 3):
@@ -80,6 +93,26 @@ extension ProjectEnv {
                 let v = p.dict
                 say(ProjectText.clean("project \(v["id"]?.int ?? 0)  \(v["slug"]?.string ?? "")  \(v["name"]?.string ?? "")\(v["archived"]?.bool == true ? "  (archived)" : "")"))
             }
+        }
+    }
+}
+
+extension ProjectEnv {
+    static func originText(_ origins: [JSONValue], roles: Bool) -> String {
+        origins.map { o in
+            let d = o.dict
+            var label = d["kind"]?.string ?? ""
+            if label == "team" { label = "team " + (d["name"]?.string ?? "") }
+            if roles { label += " " + (d["role"]?.string ?? "") }
+            return label
+        }.joined(separator: ", ")
+    }
+}
+extension AdminCommands {
+    func memberFeedback(_ d: JDict, direct: String) {
+        let role = d["role"]?.string ?? ""
+        if !role.isEmpty && role != direct {
+            say(clean("effective role remains " + role + " (from " + ProjectEnv.originText(d["origins"]?.array ?? [], roles: true) + ")"))
         }
     }
 }

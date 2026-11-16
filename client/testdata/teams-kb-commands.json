@@ -369,6 +369,302 @@
           ]
         ]
       }
+    },
+    {
+      "name": "team access list",
+      "args": [
+        "team",
+        "access",
+        "list",
+        "Engineering"
+      ],
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"}]}"
+        },
+        {
+          "match": "GET /teams/1/assignments",
+          "status": 200,
+          "body": "{\"assignments\":[{\"project\":2,\"user\":3,\"role\":\"admin\"}]}"
+        }
+      ],
+      "want": {
+        "out": "project 2  user 3  admin\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "GET",
+            "/teams/1/assignments",
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "team access set",
+      "args": [
+        "team",
+        "access",
+        "set",
+        "Engineering",
+        "app",
+        "ana",
+        "admin"
+      ],
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"}]}"
+        },
+        {
+          "match": "GET /projects",
+          "status": 200,
+          "body": "{\"projects\":[{\"id\":2,\"slug\":\"app\"}]}"
+        },
+        {
+          "match": "GET /users",
+          "status": 200,
+          "body": "{\"users\":[{\"id\":3,\"name\":\"ana\"}]}"
+        },
+        {
+          "match": "PUT /teams/1/assignments",
+          "status": 200,
+          "body": "{\"ok\":true}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "GET",
+            "/projects",
+            ""
+          ],
+          [
+            "GET",
+            "/users",
+            ""
+          ],
+          [
+            "PUT",
+            "/teams/1/assignments",
+            "{\"project\":2,\"role\":\"admin\",\"user\":3}"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "team access remove",
+      "args": [
+        "team",
+        "access",
+        "remove",
+        "Engineering",
+        "app",
+        "ana"
+      ],
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"}]}"
+        },
+        {
+          "match": "GET /projects",
+          "status": 200,
+          "body": "{\"projects\":[{\"id\":2,\"slug\":\"app\"}]}"
+        },
+        {
+          "match": "GET /users",
+          "status": 200,
+          "body": "{\"users\":[{\"id\":3,\"name\":\"ana\"}]}"
+        },
+        {
+          "match": "DELETE /teams/1/assignments",
+          "status": 200,
+          "body": "{\"ok\":true}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "GET",
+            "/projects",
+            ""
+          ],
+          [
+            "GET",
+            "/users",
+            ""
+          ],
+          [
+            "DELETE",
+            "/teams/1/assignments",
+            "{\"project\":2,\"user\":3}"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "direct set survives team",
+      "args": [
+        "member",
+        "app",
+        "set",
+        "ana",
+        "reader"
+      ],
+      "responses": [
+        {
+          "match": "GET /projects",
+          "status": 200,
+          "body": "{\"projects\":[{\"id\":2,\"slug\":\"app\"}]}"
+        },
+        {
+          "match": "GET /users",
+          "status": 200,
+          "body": "{\"users\":[{\"id\":3,\"name\":\"ana\"}]}"
+        },
+        {
+          "match": "PUT /projects/2/members/3",
+          "status": 200,
+          "body": "{\"ok\": true, \"role\": \"admin\", \"origins\": [{\"kind\": \"direct\", \"role\": \"reader\"}, {\"kind\": \"team\", \"team\": 1, \"name\": \"Engineering\", \"role\": \"admin\"}]}"
+        }
+      ],
+      "want": {
+        "out": "effective role remains admin (from direct reader, team Engineering admin)\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/projects",
+            ""
+          ],
+          [
+            "GET",
+            "/users",
+            ""
+          ],
+          [
+            "PUT",
+            "/projects/2/members/3",
+            "{\"role\":\"reader\"}"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "direct remove survives team",
+      "args": [
+        "member",
+        "app",
+        "remove",
+        "ana"
+      ],
+      "responses": [
+        {
+          "match": "GET /projects",
+          "status": 200,
+          "body": "{\"projects\":[{\"id\":2,\"slug\":\"app\"}]}"
+        },
+        {
+          "match": "GET /users",
+          "status": 200,
+          "body": "{\"users\":[{\"id\":3,\"name\":\"ana\"}]}"
+        },
+        {
+          "match": "DELETE /projects/2/members/3",
+          "status": 200,
+          "body": "{\"ok\": true, \"role\": \"admin\", \"origins\": [{\"kind\": \"direct\", \"role\": \"reader\"}, {\"kind\": \"team\", \"team\": 1, \"name\": \"Engineering\", \"role\": \"admin\"}]}"
+        }
+      ],
+      "want": {
+        "out": "effective role remains admin (from direct reader, team Engineering admin)\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/projects",
+            ""
+          ],
+          [
+            "GET",
+            "/users",
+            ""
+          ],
+          [
+            "DELETE",
+            "/projects/2/members/3",
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "member origins explanation",
+      "args": [
+        "member",
+        "app",
+        "list"
+      ],
+      "responses": [
+        {
+          "match": "GET /projects",
+          "status": 200,
+          "body": "{\"projects\":[{\"id\":2,\"slug\":\"app\"}]}"
+        },
+        {
+          "match": "GET /projects/2/members",
+          "status": 200,
+          "body": "{\"members\": [{\"user\": 3, \"name\": \"ana\", \"role\": \"admin\", \"origins\": [{\"kind\": \"direct\", \"role\": \"reader\"}, {\"kind\": \"team\", \"team\": 1, \"name\": \"Engineering\", \"role\": \"admin\"}]}]}"
+        }
+      ],
+      "want": {
+        "out": "3  ana  admin\n  origins: direct reader, team Engineering admin\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/projects",
+            ""
+          ],
+          [
+            "GET",
+            "/projects/2/members",
+            ""
+          ]
+        ]
+      },
+      "opts": {
+        "explain": true
+      }
     }
   ],
   "member": [
@@ -469,6 +765,12 @@
       "out": "1  A/B\n",
       "status": 200,
       "path": "/minigw/v1/teams/1"
+    }
+  ],
+  "projects": [
+    {
+      "body": "[{\"id\": 2, \"slug\": \"app\", \"name\": \"Application\", \"role\": \"admin\", \"origins\": [{\"kind\": \"direct\", \"role\": \"reader\"}, {\"kind\": \"team\", \"team\": 1, \"name\": \"Engineering\", \"role\": \"admin\"}]}]",
+      "out": "app                      admin (from direct, team Engineering) Application\n"
     }
   ]
 }

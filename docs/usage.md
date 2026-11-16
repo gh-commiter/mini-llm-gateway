@@ -495,7 +495,7 @@ computer's device key to you; you see only the projects you belong to. Works on 
 ### Team directory
 
 The owner groups users and projects into teams. Users can join several teams; a project belongs to at most
-one team. **Team membership grants no project role or access to notes.** Existing users, projects,
+one team. **Team membership alone grants no project role or access to notes.** Existing users, projects,
 memberships and grants stay unchanged. Keep assigning project roles with `gw member` and sharing classes
 with `gw grant`.
 
@@ -503,6 +503,10 @@ with `gw grant`.
 minigw gw team add Engineering
 minigw gw team member add Engineering ana
 minigw gw team project add Engineering fakture
+minigw gw team access set Engineering fakture ana developer
+minigw gw team access list Engineering
+minigw gw member fakture list --explain
+minigw project list
 minigw team list
 minigw team show Engineering
 ```
@@ -512,10 +516,24 @@ project membership or explicit grants. Missing and hidden teams give the same an
 and bound to active users. `team list --archived` includes archived teams; member list and show accept `--json`.
 Names or numeric IDs identify teams; use the ID for an all-digit name.
 
-`gw team rename <team> <name>` renames a team. `gw team archive <team>` preserves reads and attachments,
-hides the team from the default member list and blocks new attachments. `gw team member remove <team> <user>`
-and `gw team project remove <team> <project>` change only the directory: existing roles and grants survive.
-Archiving a team does not archive projects. Team-generated project access is future work.
+`gw team rename <team> <name>` renames a team. Archiving a team hides it from the default member list,
+blocks new attachments and deletes its assignments; unarchiving does not recreate them. Removing a team
+member or project deletes the matching assignments in the same transaction. Archiving a team does not
+archive its projects. Explicit grants remain unchanged.
+
+A team assignment creates the same project membership as a direct one; the strongest wins
+(admin > developer > reader); removing a team assignment does not remove a direct one.
+`gw member` changes only the direct origin. Its output reports a stronger surviving team role.
+`gw member <project> list --explain` shows every origin and role; `project list` shows the effective role
+and origin names. Removing or lowering an origin invalidates existing runs when effective access narrows.
+Team assignments require both the user and the project to belong to that active team.
+
+For three people in two projects, attach both projects to Engineering, add ana, bor and eva as team
+members, then assign ana and bor developer and eva reader in each project with `gw team access set`.
+Team membership alone grants nothing. To remove only eva's team role in fakture, run
+`minigw gw team access remove Engineering fakture eva`, then inspect `gw member fakture list --explain`
+for any surviving direct access. Note classes and explicit one-hop grants behave exactly as for direct roles.
+
 
 ### Projects in 10 minutes
 

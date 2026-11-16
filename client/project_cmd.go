@@ -230,6 +230,7 @@ func (e *projectEnv) project(args []string) error {
 			Name     string
 			Archived bool
 			Role     string
+			Origins  []cliOrigin
 			Granted  []string
 		}
 		json.Unmarshal(data, &list)
@@ -237,6 +238,9 @@ func (e *projectEnv) project(args []string) error {
 		here, _ := projectFor(ps, gw, e.cwd)
 		for _, p := range list {
 			access := p.Role
+			if len(p.Origins) > 0 {
+				access += " (from " + originText(p.Origins, false) + ")"
+			}
 			if len(p.Granted) > 0 {
 				if access != "" {
 					access += ", "

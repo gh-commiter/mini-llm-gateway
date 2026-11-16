@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Teams are a directory. These tables never confer project or note access.
+// Team directory tables. Explicit assignments create project memberships.
 func migrate9(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS teams(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
 CREATE UNIQUE INDEX IF NOT EXISTS teams_name ON teams(name COLLATE NOCASE);
@@ -64,7 +64,15 @@ func (s *Store) RenameTeam(ctx context.Context, id int64, name string) error {
 }
 func (s *Store) SetTeamArchived(ctx context.Context, id int64, archived bool) error {
 	return s.adminWrite(ctx, "team.archive", strconv.FormatInt(id, 10), map[string]any{"archived": archived}, func(tx *sql.Tx) (string, error) {
-		return "", countOne(tx.Exec(`UPDATE teams SET archived=? WHERE id=?`, archived, id))
+		if e := countOne(tx.Exec(`UPDATE teams SET archived=? WHERE id=?`, archived, id)); e != nil {
+			return "", e
+		}
+		if archived {
+			if e := deleteTeamOrigins(tx, id, "", 0); e != nil {
+				return "", e
+			}
+		}
+		return rebuildMemberships(tx)
 	})
 }
 func (s *Store) AdminListTeams(ctx context.Context) (out []Team, err error) {
@@ -136,6 +144,10 @@ func teamProjects(tx *sql.Tx, id, user int64) (out []Project, err error) {
 				return nil, e
 			}
 			out[i].Role = a.Role
+			out[i].Origins, e = membershipOrigins(tx, out[i].ID, user)
+			if e != nil {
+				return nil, e
+			}
 			for _, c := range []Class{Structure, Data} {
 				if a.Grants[c] {
 					out[i].Granted = append(out[i].Granted, c)
@@ -206,7 +218,13 @@ func (s *Store) changeTeamEntry(ctx context.Context, id, target int64, project, 
 			_, e := tx.Exec(`INSERT INTO `+table+`(team_id,`+column+`) VALUES(?,?) ON CONFLICT(team_id,`+column+`) DO NOTHING`, id, target)
 			return "", teamUnique(e)
 		}
-		return "", countOne(tx.Exec(`DELETE FROM `+table+` WHERE team_id=? AND `+column+`=?`, id, target))
+		if e := deleteTeamOrigins(tx, id, column, target); e != nil {
+			return "", e
+		}
+		if e := countOne(tx.Exec(`DELETE FROM `+table+` WHERE team_id=? AND `+column+`=?`, id, target)); e != nil {
+			return "", e
+		}
+		return rebuildMemberships(tx)
 	})
 }
 func (s *Store) AddTeamMember(ctx context.Context, id, user int64) error {

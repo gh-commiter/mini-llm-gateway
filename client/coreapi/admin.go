@@ -231,7 +231,7 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		}
 		list := []map[string]any{}
 		for _, m := range ms {
-			list = append(list, map[string]any{"user": m.UserID, "name": m.Name, "role": m.Role})
+			list = append(list, map[string]any{"user": m.UserID, "name": m.Name, "role": m.Role, "origins": m.Origins})
 		}
 		return 200, map[string]any{"members": list}, true
 	case "PUT projects/{}/members/{}", "DELETE projects/{}/members/{}":
@@ -252,6 +252,15 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		}
 		if err != nil {
 			return failErr(err)
+		}
+		ms, e := st.ListMembers(ctx, pid)
+		if e != nil {
+			return failErr(e)
+		}
+		for _, m := range ms {
+			if m.UserID == uid {
+				return 200, map[string]any{"ok": true, "role": m.Role, "origins": m.Origins}, true
+			}
 		}
 		return 200, map[string]any{"ok": true}, true
 	case "GET grants":

@@ -146,6 +146,35 @@ func (a *API) adminTeams(ctx context.Context, st *core.Store, method string, seg
 			return 200, map[string]any{"ok": true}, true
 		}
 	}
+	if len(seg) == 3 && seg[2] == "assignments" {
+		if method == "GET" {
+			assignments, err := st.ListTeamAssignments(ctx, id)
+			if err != nil {
+				return failErr(err)
+			}
+			return 200, map[string]any{"assignments": assignments}, true
+		}
+		if method == "PUT" || method == "DELETE" {
+			var b struct {
+				Project int64
+				User    int64
+				Role    core.Role
+			}
+			if decodeStrict(body, &b) != nil || b.Project <= 0 || b.User <= 0 {
+				return fail(400, "bad assignment body")
+			}
+			var err error
+			if method == "PUT" {
+				err = st.SetTeamAssignment(ctx, id, b.Project, b.User, b.Role)
+			} else {
+				err = st.RemoveTeamAssignment(ctx, id, b.Project, b.User)
+			}
+			if err != nil {
+				return failErr(err)
+			}
+			return 200, map[string]any{"ok": true}, true
+		}
+	}
 	if len(seg) == 3 && method == "GET" {
 		switch seg[2] {
 		case "members":

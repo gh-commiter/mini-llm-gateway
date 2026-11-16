@@ -293,8 +293,8 @@ uniqueness as for users. Project display names are not unique; projects have sep
 | `PUT /teams/{id}/projects/{project}` | – | `{ok: true}`; at most one team per project |
 | `DELETE /teams/{id}/projects/{project}` | – | `{ok: true}` |
 
-Every successful mutation writes an audit event. Teams are a directory only: these routes never change project
-memberships, grants or note access. Archiving preserves attachments and readable details but blocks new
+Every successful mutation writes an audit event. Team membership alone does not change project
+memberships, grants or note access. Archiving preserves attachments and readable details but deletes team assignments and blocks new
 attachments; removals remain available. Move a project by removing its old attachment first.
 
 Member routes use `/minigw/v1`: `GET /teams[?archived=1]` returns an array of the caller's teams;
@@ -512,3 +512,24 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
 Use a device ID from `minigw gw devices` (including a revoked device's ID), or `local` for local Mac copies.
 Removal refuses with 409 while sessions or agents are active. Stop them first; copy changes not pulled to the client are discarded.
 For temporary-folder tests, record the copy IDs before and after the run and remove newly created copies after stopping its client.
+
+### Team assignments (owner only)
+
+| Route | Body | Result |
+|---|---|---|
+| `GET /teams/{id}/assignments` | – | `{assignments: [{project, user, role}]}`, sorted by project/user |
+| `PUT /teams/{id}/assignments` | `{project, user, role}` | `{ok: true}` |
+| `DELETE /teams/{id}/assignments` | `{project, user}` | `{ok: true}`; absent assignment is 404 |
+
+Roles are reader, developer and admin. Set requires an unarchived team, its project and its member;
+invalid assignments return 400. Member authentication never permits owner writes.
+A team assignment creates the same project membership as a direct one; the strongest wins;
+removing a team assignment does not remove a direct one. Team member/project removal and archive
+remove matching assignments atomically. Unarchive does not recreate them. Every mutation is audited;
+effective narrowing invalidates existing run capabilities through the global epoch.
+
+Existing project-member PUT/DELETE modify only direct origins. Their responses additionally include
+surviving `role` and `origins` when membership survives. Member lists include all origins:
+`{kind: "direct", role}` or `{kind: "team", team: id, name, role}`.
+The member project list includes the caller's origins alongside the effective role. Runtime permission
+checks still read only `memberships`, including grant and note-class checks. No new member write API is added.

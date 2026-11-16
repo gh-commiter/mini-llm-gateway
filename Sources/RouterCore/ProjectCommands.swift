@@ -170,6 +170,7 @@ public final class ProjectEnv {
             let here = try? Projects.resolve(ps, gateway: gw, cwd: cwd)
             for p in list.map(\.dict) {
                 var access = p["role"]?.string ?? ""
+                if let origins = p["origins"]?.array, !origins.isEmpty { access += " (from " + Self.originText(origins, roles: false) + ")" }
                 let granted = (p["granted"]?.array ?? []).compactMap(\.string)
                 if !granted.isEmpty {
                     if !access.isEmpty { access += ", " }

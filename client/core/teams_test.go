@@ -1,6 +1,7 @@
 package core
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -160,7 +161,10 @@ func TestTeamsMigration8AndRestore(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = s.SetMember(ctx, p.ID, u.ID, Developer); e != nil {
+	if e = s.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`INSERT INTO memberships(project_id,user_id,role) VALUES(?,?,?)`, p.ID, u.ID, Developer)
+		return e
+	}); e != nil {
 		t.Fatal(e)
 	}
 	if e = s.SetBinding(ctx, "legacy-device", u.ID); e != nil {
@@ -184,11 +188,11 @@ func TestTeamsMigration8AndRestore(t *testing.T) {
 	grants, _ := s.ListGrants(ctx)
 	users, _ := s.ListUsers(ctx)
 	projects, _ := s.AdminListProjects(ctx)
-	members, _ := s.ListMembers(ctx, p.ID)
+	members := []Member{{UserID: u.ID, Name: u.Name, Role: Developer, Origins: []MembershipOrigin{{Kind: "direct", Role: Developer}}}}
 	s.Close()
 	migrations = base
 	s = openT(t, dir)
-	if v, _ := schemaVersion(ctx, s.DB()); v != 9 {
+	if v, _ := schemaVersion(ctx, s.DB()); v != len(migrations) {
 		t.Fatal("version", v)
 	}
 	if e = s.write(ctx, migrate9); e != nil {

@@ -393,9 +393,9 @@ holds a lock on it, so only one process uses it at a time.
 - **Team directory (schema 9):** adds `teams`, `team_members` and `team_projects` to schema 8 with the same
   snapshot-before-migration lifecycle. Existing projects remain unassigned; existing permissions stay unchanged.
   Users can join several teams; a project belongs to at most one team. Directory membership grants no project
-  role or note access. Owner mutations write transactional audit events without changing the authorization epoch.
+  role or note access. Owner mutations write transactional audit events. Removing assignment origins can change the authorization epoch.
   Archiving preserves directory reads and attachments, blocks new attachments and does not archive projects.
-  Removal affects only the directory. Backup and offline restore include teams; the restore allowlist is derived
+  Removing a team user or project also removes its assignment origins. Backup and offline restore include teams; the restore allowlist is derived
   from migrations. Restoring can bring back earlier directory names and membership as well as permissions.
 - **Backup:** `minigw gw core backup [name]` writes a consistent copy while the gateway runs into the core folder's
   `backups` folder (a name, no path: a copy in an allowed folder would be a copy of all notes that agents can read; the
@@ -573,3 +573,17 @@ An OpenRouter 403 with a recognized spending-limit code (`spending_limit_reached
 returns `OpenRouter: spending limit reached` with `x-should-retry: false`. The client-facing status stays 502
 for compatibility. A 401 retains the API-key hint. Other 403s return 502 with `access denied` and the sanitized
 upstream message, including guardrail refusals. Raw upstream error bodies are not stored as accounting data.
+
+### Team assignment authority (schema 10)
+
+A team assignment creates the same project membership as a direct one; the strongest wins
+(admin > developer > reader); removing a team assignment does not remove a direct one.
+The core backfills schema 9 memberships as direct origins. `memberships` remains the sole permission
+authority: origin changes rebuild and check it transactionally. Team/project or team/user removal and
+team archive delete affected origins in that transaction. Effective narrowing bumps the global epoch,
+invalidating old runs just like direct membership narrowing. Additions and unchanged effective roles do
+not invalidate runs. Inactive users remain blocked regardless of origins. Grants and note classes are unchanged.
+
+Migration 10 uses the existing snapshot-before-upgrade lifecycle, including upgrades from schema 8 via 9.
+Backups include both origins and effective memberships; restore can restore previously revoked access.
+No delegated administration, team model policy, agents or quotas are introduced.

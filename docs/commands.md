@@ -192,3 +192,19 @@ Notes:
   apply it with `git apply` or `git cherry-pick -n`, never by merging the branch.
 - `/minigw:gw` never prints the token unless you ask for the connect line, never puts an API key in a command line,
   and never updates on its own (an update stops running agent requests).
+
+### Team project access
+
+```text
+minigw gw team access set <team> <project> <user> <role>
+minigw gw team access remove <team> <project> <user>
+minigw gw team access list <team>
+minigw gw member <project> list --explain
+minigw project list
+```
+
+A team assignment creates the same project membership as a direct one; the strongest wins;
+removing a team assignment does not remove a direct one. `gw member` edits only direct origins.
+The explanation lists each origin and role; the member project list displays role and origin names.
+The user and project must belong to the active team. Removal from the team or team archive deletes
+matching assignments; direct access survives. Narrowing effective access invalidates existing runs.

@@ -57,6 +57,36 @@ func teamAdmin(a *adminClient, pos []string) {
 		return
 	}
 	switch {
+	case pos[1] == "access":
+		if len(pos) < 4 {
+			usage()
+			return
+		}
+		op := pos[2]
+		tid := teamID(a, pos[3])
+		path := fmt.Sprintf("/teams/%d/assignments", tid)
+		if op == "list" && len(pos) == 4 {
+			var r struct {
+				Assignments []struct {
+					Project, User int64
+					Role          string
+				}
+			}
+			a.do("GET", path, nil, &r)
+			for _, v := range r.Assignments {
+				say(fmt.Sprintf("project %d  user %d  %s", v.Project, v.User, v.Role))
+			}
+		} else if (op == "set" && len(pos) == 7) || (op == "remove" && len(pos) == 6) {
+			b := map[string]any{"project": projectID(a, pos[4]), "user": userID(a, pos[5])}
+			method := "DELETE"
+			if op == "set" {
+				method = "PUT"
+				b["role"] = pos[6]
+			}
+			a.do(method, path, b, nil)
+		} else {
+			usage()
+		}
 	case pos[1] == "list" && len(pos) == 2:
 		var r struct{ Teams []cliTeam }
 		a.do("GET", "/teams", nil, &r)
@@ -167,4 +197,33 @@ func (e *projectEnv) team(args []string) error {
 		}
 	}
 	return nil
+}
+
+// Origin text is shared by owner explanations and member project lists.
+type cliOrigin struct{ Kind, Name, Role string }
+
+func originText(origins []cliOrigin, roles bool) string {
+	parts := []string{}
+	for _, o := range origins {
+		label := o.Kind
+		if o.Kind == "team" {
+			label = "team " + o.Name
+		}
+		if roles {
+			label += " " + o.Role
+		}
+		parts = append(parts, label)
+	}
+	return strings.Join(parts, ", ")
+}
+
+type memberReply struct {
+	Role    string
+	Origins []cliOrigin
+}
+
+func memberFeedback(r memberReply, direct string) {
+	if r.Role != "" && r.Role != direct {
+		say(clean("effective role remains " + r.Role + " (from " + originText(r.Origins, true) + ")"))
+	}
 }

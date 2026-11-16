@@ -3,10 +3,11 @@
 ## Unreleased
 
 ### New
-- Teams (first step): the owner can group users and projects into teams with `minigw gw team add|list|rename|archive`, `minigw gw team member add|remove <team> <user>` and `minigw gw team project add|remove <team> <project>`; a member sees their own teams with `minigw team list|show <team>`. A project belongs to at most one team; a user can be in several. In this version a team is a directory only: being in a team gives no project role and no access to notes yet.
+- Teams (first step): the owner can group users and projects into teams with `minigw gw team add|list|rename|archive`, `minigw gw team member add|remove <team> <user>` and `minigw gw team project add|remove <team> <project>`; a member sees their own teams with `minigw team list|show <team>`. A project belongs to at most one team; a user can be in several. Being in a team alone gives no project role and no access to notes; the owner gives access with a team assignment (next line).
+- Teams (access): `minigw gw team access set <team> <project> <user> <role>` gives a team member a role in one of the team's projects, `... access remove` takes it back, `... access list <team>` shows them. A team assignment creates the same project membership as a direct one (`minigw gw member`); when a user has several, the strongest role wins, and removing a team assignment does not remove a direct one. Removing the user from the team, the project from the team, or archiving the team takes that access away at once. `minigw project list` shows the role and where it comes from.
 
 ### Known limits
-- Database downgrade: this version's database schema is 9. An older program refuses it; the way back is restoring the snapshot `core-8-<time>.db` from the core folder by path with `minigw gw core restore`.
+- Database downgrade: this version's database schema is 10. An older program refuses it; the way back is restoring the snapshot written before the first migration (`core-8-<time>.db` when you come from 0.7.0) from the core folder by path with `minigw gw core restore`.
 
 ## 0.7.0
 

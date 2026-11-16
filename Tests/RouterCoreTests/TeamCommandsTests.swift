@@ -14,13 +14,23 @@ import Testing
                 guard let r = responses.first(where: { $0["match"] as? String == method + " " + path }) else { return (599, Data()) }
                 return (r["status"] as! Int, Data((r["body"] as! String).utf8))
             }, out: { out += $0 })
-            do { try cmd.run(c["args"] as! [String], AdminOpts()) }
+            do { try cmd.run(c["args"] as! [String], AdminOpts(explain: (c["opts"] as? [String: Any])?["explain"] as? Bool ?? false)) }
             catch let e as AdminCLIError { err = "minigw: " + e.message + "\n"; exit = e.code }
             let w = c["want"] as! [String: Any]
             #expect(out == w["out"] as! String)
             #expect(err == w["err"] as! String)
             #expect(Int(exit) == w["exit"] as! Int)
             #expect(requests == w["requests"] as! [[String]])
+        }
+        for c in f["projects"] as! [[String: Any]] {
+            var out = ""
+            let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { out += $0 }, err: { _ in }, agent: false, send: { _, method, path, _, _ in
+                #expect(method == "GET")
+                #expect(path == "/minigw/v1/projects")
+                return ProjectReply(status: 200, data: Data((c["body"] as! String).utf8))
+            })
+            try env.project(["list"])
+            #expect(out == c["out"] as! String)
         }
         for c in f["member"] as! [[String: Any]] {
             var out = "", err = "", calls = 0

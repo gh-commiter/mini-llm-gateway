@@ -493,6 +493,10 @@ func (s *Store) ListProjects(ctx context.Context, p Principal, includeArchived b
 				return err
 			}
 			out[i].Role = a.Role
+			out[i].Origins, err = membershipOrigins(tx, out[i].ID, p.UserID)
+			if err != nil {
+				return err
+			}
 			for _, c := range []Class{Structure, Data} {
 				if a.Grants[c] {
 					out[i].Granted = append(out[i].Granted, c)
@@ -529,6 +533,10 @@ func (s *Store) GetProject(ctx context.Context, p Principal, idOrSlug string) (p
 			return lim
 		}
 		pr.Role = a.Role
+		pr.Origins, err = membershipOrigins(tx, pr.ID, p.UserID)
+		if err != nil {
+			return err
+		}
 		for _, c := range []Class{Structure, Data} {
 			if a.Grants[c] {
 				pr.Granted = append(pr.Granted, c)

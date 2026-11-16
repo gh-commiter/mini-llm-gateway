@@ -27,19 +27,20 @@ func IsMemberPath(p string) bool {
 // --- JSON shapes (identical on both gateways) ---
 
 type ProjectJSON struct {
-	ID       int64        `json:"id"`
-	Slug     string       `json:"slug"`
-	Name     string       `json:"name"`
-	Archived bool         `json:"archived"`
-	Role     core.Role    `json:"role,omitempty"`
-	Granted  []core.Class `json:"granted"`
+	ID       int64                   `json:"id"`
+	Slug     string                  `json:"slug"`
+	Name     string                  `json:"name"`
+	Archived bool                    `json:"archived"`
+	Role     core.Role               `json:"role,omitempty"`
+	Granted  []core.Class            `json:"granted"`
+	Origins  []core.MembershipOrigin `json:"origins,omitempty"`
 }
 
 func toProject(p core.Project) ProjectJSON {
 	if p.Granted == nil {
 		p.Granted = []core.Class{}
 	}
-	return ProjectJSON{p.ID, p.Slug, p.Name, p.Archived, p.Role, p.Granted}
+	return ProjectJSON{p.ID, p.Slug, p.Name, p.Archived, p.Role, p.Granted, p.Origins}
 }
 
 type NoteJSON struct {

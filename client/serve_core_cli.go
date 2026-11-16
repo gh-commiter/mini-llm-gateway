@@ -24,7 +24,8 @@ const coreHelp = `
   minigw gw team add <name> | list | rename <team> <name> | archive <team>
   minigw gw team member add|remove <team> <user>
   minigw gw team project add|remove <team> <project>
-  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin
+  minigw gw team access set <team> <project> <user> <role> | remove <team> <project> <user> | list <team>
+  minigw gw member <project> list [--explain] | set <user> <role> | remove <user>   role: reader, developer, admin
   minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data
   minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)
   minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups
@@ -79,7 +80,7 @@ func projectID(a *adminClient, ref string) int64 {
 // coreOpts: the flags of usage-events and usage.
 type coreOpts struct {
 	days, user, project, model, claudeProbe, provider, device, folder, sort string
-	json, csv, history                                                      bool
+	json, csv, history, explain                                             bool
 }
 
 func coreCommand(a *adminClient, pos []string, o coreOpts) {
@@ -171,16 +172,24 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 				Members []struct {
 					User       int64
 					Name, Role string
+					Origins    []cliOrigin
 				}
 			}
 			a.do("GET", "/projects/"+p+"/members", nil, &r)
 			for _, m := range r.Members {
 				say(clean(fmt.Sprintf("%d  %s  %s", m.User, m.Name, m.Role)))
+				if o.explain {
+					say(clean("  origins: " + originText(m.Origins, true)))
+				}
 			}
 		case pos[2] == "set" && len(pos) == 5:
-			a.do("PUT", "/projects/"+p+"/members/"+id(userID(a, pos[3]), 10), map[string]any{"role": pos[4]}, nil)
+			var r memberReply
+			a.do("PUT", "/projects/"+p+"/members/"+id(userID(a, pos[3]), 10), map[string]any{"role": pos[4]}, &r)
+			memberFeedback(r, pos[4])
 		case pos[2] == "remove" && len(pos) == 4:
-			a.do("DELETE", "/projects/"+p+"/members/"+id(userID(a, pos[3]), 10), nil, nil)
+			var r memberReply
+			a.do("DELETE", "/projects/"+p+"/members/"+id(userID(a, pos[3]), 10), nil, &r)
+			memberFeedback(r, "")
 		default:
 			fail(strings.TrimSpace(coreHelp))
 		}

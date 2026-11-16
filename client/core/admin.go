@@ -34,14 +34,16 @@ type Project struct {
 	Slug     string
 	Name     string
 	Archived bool
-	Role     Role    // "" = no direct membership
+	Role     Role // "" = no effective membership
+	Origins  []MembershipOrigin
 	Granted  []Class // classes reached through grants
 }
 
 type Member struct {
-	UserID int64
-	Name   string
-	Role   Role
+	UserID  int64
+	Name    string
+	Role    Role
+	Origins []MembershipOrigin
 }
 
 type Grant struct {
@@ -291,7 +293,7 @@ func (s *Store) AdminListProjects(ctx context.Context) (out []Project, err error
 	return
 }
 
-// SetMember sets the one role of a user in a project. Lowering the role bumps the epoch.
+// SetMember changes only the direct origin. Surviving origins determine the effective role.
 func (s *Store) SetMember(ctx context.Context, projectID, userID int64, role Role) error {
 	if roleRank[role] == 0 {
 		return ErrInvalid{"role"}
@@ -303,26 +305,19 @@ func (s *Store) SetMember(ctx context.Context, projectID, userID int64, role Rol
 		if err := exists(tx, "users", userID); err != nil {
 			return "", err
 		}
-		var old Role
-		if err := tx.QueryRow(`SELECT role FROM memberships WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&old); err != nil && err != sql.ErrNoRows {
+		if _, err := tx.Exec(`INSERT INTO direct_memberships(project_id,user_id,role) VALUES(?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role`, projectID, userID, role); err != nil {
 			return "", err
 		}
-		if _, err := tx.Exec(`INSERT INTO memberships(project_id,user_id,role) VALUES(?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role`, projectID, userID, role); err != nil {
-			return "", err
-		}
-		if roleRank[old] > roleRank[role] {
-			return "role lowered", nil
-		}
-		return "", nil
+		return rebuildMemberships(tx)
 	})
 }
 
 func (s *Store) RemoveMember(ctx context.Context, projectID, userID int64) error {
 	return s.adminWrite(ctx, "member.remove", strconv.FormatInt(projectID, 10), map[string]any{"user": userID}, func(tx *sql.Tx) (string, error) {
-		if err := countOne(tx.Exec(`DELETE FROM memberships WHERE project_id=? AND user_id=?`, projectID, userID)); err != nil {
+		if err := countOne(tx.Exec(`DELETE FROM direct_memberships WHERE project_id=? AND user_id=?`, projectID, userID)); err != nil {
 			return "", err
 		}
-		return "member removed", nil
+		return rebuildMemberships(tx)
 	})
 }
 
@@ -340,7 +335,17 @@ func (s *Store) ListMembers(ctx context.Context, projectID int64) (out []Member,
 			}
 			out = append(out, m)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows.Close()
+		for i := range out {
+			out[i].Origins, err = membershipOrigins(tx, projectID, out[i].UserID)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return
 }
