@@ -5,10 +5,12 @@
 ### New
 - Knowledge base, provenance: every note records who wrote it and from where (user, device, project, kind of source, content hash, times, reviewer). `minigw note read <id> --json` shows it. Notes written before this version show `UNKNOWN` for the device and the source.
 - Knowledge base, submissions: `minigw kb submit <project> <file|->` proposes a note (or a new revision with `--replaces <id> --revision <n>`) instead of publishing it; `minigw kb submissions` lists your own. The owner reviews with `minigw gw kb review`, `gw kb accept <id>` and `gw kb reject <id> [--reason text]`. A pending submission is visible only to its author and the owner and never appears in note lists, reads, agent runs or counts. `minigw note push` still publishes directly.
+- Knowledge base, search: `minigw kb search [<project>] <query> [--json]` searches the published notes you may read (title and text; at most 20 hits with short snippets). An agent started by the gateway can search the notes of its run's project the same way and is told so; note texts are still not put into its context. Pending submissions and notes you may not read never show up, also not in counts. The owner can rebuild the index.
 
 ### Known limits
-- Database downgrade: this version's database schema is 11. An older program refuses it; the way back is restoring the snapshot written before the first migration.
+- Database downgrade: this version's database schema is 12. An older program refuses it; the way back is restoring the snapshot written before the first migration.
 - Only the owner reviews submissions; project admins cannot yet. Agents started by the gateway cannot hand in submissions yet.
+- Search is by words, in one project at a time; search across related projects and by meaning comes later.
 
 ## 0.7.3
 
