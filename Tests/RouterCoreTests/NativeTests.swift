@@ -809,15 +809,21 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     // The bound is scaled by what one uncached xcrun costs on this Mac right now (~1.5 s idle, more under load): Swift Build calls it ~23 times,
     // so a build without the run cache costs ~25 of these; with the cache the whole second build must stay under 15 of them. A fixed number of
     // seconds would measure the load of the machine instead.
-    let probe = Process(), probeStart = Date()
-    probe.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun"); probe.arguments = ["--show-sdk-path"]
-    probe.environment = ProcessInfo.processInfo.environment.merging(["xcrun_nocache": "1"]) { $1 }
-    probe.standardOutput = FileHandle.nullDevice; probe.standardError = FileHandle.nullDevice
-    try probe.run(); probe.waitUntilExit()
-    let oneXcrun = max(1.5, Date().timeIntervalSince(probeStart))
+    // The load changes during the test (other tests, other builds on the Mac), so the probe is taken before and after the measured build
+    // and the slower one counts: one probe at an idle moment made the bound too tight for a build that ran under load.
+    func uncachedXcrun() throws -> TimeInterval {
+        let probe = Process(), probeStart = Date()
+        probe.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun"); probe.arguments = ["--show-sdk-path"]
+        probe.environment = ProcessInfo.processInfo.environment.merging(["xcrun_nocache": "1"]) { $1 }
+        probe.standardOutput = FileHandle.nullDevice; probe.standardError = FileHandle.nullDevice
+        try probe.run(); probe.waitUntilExit()
+        return Date().timeIntervalSince(probeStart)
+    }
     let (first, _) = await build()
     #expect(first.text.hasSuffix("x 0\n"), "\(first.text)")
+    let before = try uncachedXcrun()
     let (second, t2) = await build()  // nič za prevesti: le odkrivanje orodij (xcrun) in ~5,5 s pospravljanja run
+    let oneXcrun = max(1.5, before, try uncachedXcrun())
     #expect(second.text.hasSuffix("x 0\n") && t2 < 15 * oneXcrun, "second build took \(t2) s, one uncached xcrun \(oneXcrun) s")
 }
 
