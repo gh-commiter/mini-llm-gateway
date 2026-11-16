@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- `minigw gw member remove` for a user whose access comes only from a team now says so and names the `gw team access remove` command, instead of "not found".
+- Restoring a database backup now refuses a backup whose project memberships do not match their sources.
+- Team, user and project names with control or invisible formatting characters (such as a line break) are refused.
+- `minigw team list` and `team show` on the Mac report an unreadable gateway answer as an error instead of showing an empty list or a team with ID 0.
+
 ## 0.7.2
 
 ### New
