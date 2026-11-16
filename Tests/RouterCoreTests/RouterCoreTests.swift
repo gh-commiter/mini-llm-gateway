@@ -673,6 +673,7 @@ func portInUse(_ port: UInt16) -> Bool {
 }
 
 @Test func availableToolsFromInstalledClaude() async throws {
+    if ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true", ClaudeCLI.detected == nil { try Test.cancel("claude is not installed on GitHub's runner") }
     try #require(ClaudeCLI.detected != nil)  // brez nameščenega Claude Code ni česa preveriti
     let tools = await ClaudeCLI.availableTools("")
     #expect(tools.contains("Bash") && tools.contains("Edit") && tools.contains("Read"))

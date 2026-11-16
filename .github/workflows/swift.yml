@@ -3,9 +3,9 @@ name: Mini Gateway app (Swift)
 on:
   push:
     branches: [main]
-    paths: ["Sources/**", "Tests/**", "Package.swift", ".github/workflows/swift.yml"]
+    paths: ["Sources/**", "Tests/**", "Package.swift", "client/**", ".github/workflows/swift.yml"]
   pull_request:
-    paths: ["Sources/**", "Tests/**", "Package.swift", ".github/workflows/swift.yml"]
+    paths: ["Sources/**", "Tests/**", "Package.swift", "client/**", ".github/workflows/swift.yml"]
 
 permissions:
   contents: read
@@ -18,6 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: sudo xcode-select -s /Applications/Xcode_27.2.app
+      # 41 tests build the shared core helper (go build ./cmd/minigw-core) and failed on the runner with "go: No such file or directory".
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: client/go.mod
+          cache-dependency-path: client/go.sum
       - run: swift build
       # A hang must name itself: after 20 minutes the test process is sampled (stacks of every thread) and the tests that started but never finished are listed.
       - name: swift test
