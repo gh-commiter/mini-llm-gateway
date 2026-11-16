@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.8
+
 ### Fixed
 - Fixed (both gateways, #121): no second agent run after a failed stream. A failure that happens after the stream has started (the 200 head goes out after 30 seconds) is remembered for 60 seconds, so the non-streaming repeat that Claude Code sends after a stream error gets the same error with `x-should-retry: false` at once instead of starting the agent again (before, only usage limits and changes that could not be copied back were remembered, so a failed 25 minute run ran twice). The memory is keyed by model, device, session, folder and a fingerprint of the request without `stream`, so another request of the same session never gets that failure; any success (also of the Claude CLI) removes it; it is consumed once and holds at most 128 entries.
 - Fixed (both gateways, #121): a Grok run that stops because a command needs approval, which a headless run cannot give, ends with a clear 400 ("grok needed approval to run a command, which a headless run cannot give …") instead of a 502 that Claude Code shows as "try again". The evidence is the same on both gateways: exit status 0, not cancelled by the client, no error event, an empty answer, a cancelled `end` event and the refusal text in the last 4000 bytes of stderr. A Grok run that may not write is also told that shell commands cannot be approved and to use its file tools.
