@@ -31,7 +31,7 @@ private final class FailTimeUpstream: URLProtocol, @unchecked Sendable {
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [FailTimeUpstream.self]
     let session = URLSession(configuration: config)
-    defer { session.invalidateAndCancel() }
+    // not invalidated: the router's catalog may still start a discovery request after the test body (an invalidated session raises an uncatchable NSGenericException and ends the whole run)
     var rc = RouterConfig(); rc.providers = []
     let router = Router(config: rc, token: "test", secrets: FakeSecrets(values: [:]), session: session, core: helper)
     func route(_ path: String) -> Route {
