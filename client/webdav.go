@@ -143,7 +143,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 	}
 	switch method {
 	case "PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH":
-		if protected(p, rel) {
+		if !(junk && (method == "PUT" || method == "DELETE")) && protected(p, rel) { // an AppleDouble file (._x) is never written (answered below): not a refusal to print
 			return davRefuse(rel)
 		}
 	case "LOCK":

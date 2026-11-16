@@ -278,6 +278,13 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             + (denied.isEmpty ? [] : ["--disallowedTools", denied.joined(separator: ",")])
     }
 
+    /// Environment of a sandboxed run's git (direct mode too): the sandbox hides the home folder, and git treats an unreadable `~/.gitconfig` as fatal, so the run
+    /// gets no user and system configuration (the owner's hooksPath, excludes, attributes and fsmonitor cannot act with the agent's hands either); `.git/config` of the
+    /// folder (identity, remotes) stays. The same as the worktree's, minus its clone-only pairs.
+    static let sandboxGitEnv = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_COUNT": "4",
+                                "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "/dev/null", "GIT_CONFIG_KEY_1": "core.excludesFile", "GIT_CONFIG_VALUE_1": "/dev/null",
+                                "GIT_CONFIG_KEY_2": "core.attributesFile", "GIT_CONFIG_VALUE_2": "/dev/null", "GIT_CONFIG_KEY_3": "core.fsmonitor", "GIT_CONFIG_VALUE_3": "false"]
+
     /// M4: .git, ki ga bere git lastnika: nastavitve, hooki, atributi in preusmeritve na drug gitdir (commondir,
     /// povezani worktree-ji z gitdir, commondir in config.worktree).
     static let gitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees"]
@@ -346,7 +353,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         if readOnly { return out + dirs }
         for d in dirs {
             for g in Self.directGitDenies { out += [d + "/.git/" + g, d + "/**/.git/" + g] }
-            out.append(d + "/**/.git")  // the entry itself (a glob names the entry only: nested contents are the client guard's, see directGitDenies)
+            out.append(d + "/*/**/.git")  // a nested `.git` entry itself (nested contents are the client guard's, see directGitDenies); not `d/**/.git`: Claude Code's sandbox then also closed the folder's own `.git` whole, no commit (real run, 0.7.0)
             for g in Self.directModuleDenies { out += [d + "/.git/modules/**/" + g, d + "/**/.git/modules/**/" + g] }
             // #113: the globs name the entries only, so `mv .git/modules m`, a write in m/sub/config and a move back got past them (a real run); a literal path also
             // makes the sandbox refuse a rename of the folders above it. The submodules' closed paths that exist now, literally.
@@ -936,6 +943,8 @@ extension Router {
             }
             env["CLAUDE_CODE_TMPDIR"] = link
             env["MINIGW_NETWORK_OFF"] = Worktree.networkOff("claude", config)  // #67: ovoj git
+        } else if agent, cfg.allowLocalTools {  // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
+            env = env.filter { !$0.key.hasPrefix("GIT_") }.merging(ClaudeCLIConfig.sandboxGitEnv) { $1 }
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"

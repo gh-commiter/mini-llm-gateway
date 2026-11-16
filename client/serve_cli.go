@@ -243,6 +243,12 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 	return args
 }
 
+// sandboxGitEnv: git of a sandboxed run (direct and sync) gets no user and system configuration: the sandbox hides the home folder and git treats an unreadable
+// ~/.gitconfig as fatal (as ClaudeCLIConfig.sandboxGitEnv on the Mac); the owner's hooksPath, excludes, attributes and fsmonitor cannot act with the agent's hands either.
+var sandboxGitEnv = []string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_COUNT=4",
+	"GIT_CONFIG_KEY_0=core.hooksPath", "GIT_CONFIG_VALUE_0=" + os.DevNull, "GIT_CONFIG_KEY_1=core.excludesFile", "GIT_CONFIG_VALUE_1=" + os.DevNull,
+	"GIT_CONFIG_KEY_2=core.attributesFile", "GIT_CONFIG_VALUE_2=" + os.DevNull, "GIT_CONFIG_KEY_3=core.fsmonitor", "GIT_CONFIG_VALUE_3=false"}
+
 // withCaseVariants (M1): NTFS and the default APFS compare names without case, so `sub/.GIT/config` is the repository's config; a rule glob names `.git`, `.claude` and git's own
 // closed names in one case. Every rule that names one of them is also given in a form that matches any case (`[gG][iI][tT]`, gitignore-style classes), added to the
 // rule, never instead of it: where the matcher already ignores case, or does not take classes, the original keeps working as before.
@@ -1236,6 +1242,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	unpinned := false // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
 	// brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmdEnv := append(append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1")
+	if worktreeEnv == nil && runtime.GOOS != "windows" && s.conf().AllowLocalTools { // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
+		cmdEnv = append(slices.DeleteFunc(cmdEnv, func(e string) bool { return strings.HasPrefix(strings.ToUpper(e), "GIT_") }), sandboxGitEnv...)
+	}
 	if p := envGet(worktreeEnv, "PATH"); p != "" && envGet(runEnv, "PATH") != "" { // askOnPath in ovoj git (#68): oba na PATH
 		cmdEnv = envSet(cmdEnv, "PATH", filepath.Dir(minigwExe())+string(os.PathListSeparator)+p)
 	}

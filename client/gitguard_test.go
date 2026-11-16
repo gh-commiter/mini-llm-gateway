@@ -104,3 +104,26 @@ func TestGitGuardSyncStaysClosed(t *testing.T) {
 		t.Error("sync wrote under .git")
 	}
 }
+
+// An AppleDouble file (._x) is never written, also inside .git: answered like anywhere else and not printed as a refused agent write (the mount of macOS sends them).
+func TestDavAppleDoubleInGitIsQuiet(t *testing.T) {
+	root := t.TempDir()
+	buildGitGuardTree(t, root, []string{"d:.git", "d:.git/objects", "d:.git/objects/info"})
+	for _, m := range []string{"PUT", "DELETE"} {
+		if r := davHandle(m, "/s/.git/objects/info/._commit-graphs", nil, []byte("x"), root, "/s"); r.Status != 201 && r.Status != 204 {
+			t.Errorf("%s: status %d", m, r.Status)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git", "objects", "info", "._commit-graphs")); err == nil {
+		t.Error("an AppleDouble file was written")
+	}
+	davRefusedMu.Lock()
+	shown := davRefused.paths[".git/objects/info/._commit-graphs"]
+	davRefusedMu.Unlock()
+	if shown {
+		t.Error("the AppleDouble file was reported as a refused agent write")
+	}
+	if r := davHandle("PUT", "/s/.git/objects/info/alternates", nil, []byte("x"), root, "/s"); r.Status != 403 {
+		t.Errorf("a real protected path: status %d", r.Status)
+	}
+}

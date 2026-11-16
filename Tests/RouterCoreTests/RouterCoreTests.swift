@@ -508,6 +508,11 @@ func discoveryReady(_ r: Router) async {
     #expect(list.contains("<D:href>/dav/s/dir/c.txt</D:href>") && list.contains("<D:getcontentlength>5<"))
     #expect(dav("PUT", "/._c.txt", [:], "xattr").status == 201)  // AppleDouble se ne zapiše
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("._c.txt").path))
+    // 0.7.0: also inside .git (the mount sends them there too): never written, and not printed as a refused agent write
+    try FileManager.default.createDirectory(at: root.appendingPathComponent(".git/objects/info"), withIntermediateDirectories: true)
+    #expect(dav("PUT", "/.git/objects/info/._commit-graphs", [:], "x").status == 201 && dav("DELETE", "/.git/objects/info/._commit-graphs").status == 204)
+    #expect(!WebDAV.refused.withLock { $0.paths.contains(".git/objects/info/._commit-graphs") })
+    #expect(dav("PUT", "/.git/objects/info/alternates", [:], "x").status == 403)
     #expect(dav("DELETE", "/dir").status == 204)
     #expect(dav("DELETE", "/").status == 403)
 }

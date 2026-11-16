@@ -78,7 +78,8 @@ public enum WebDAV {
         func protected(_ r: String, _ c: [String]) -> Bool {
             Sync.isProtected(c.joined(separator: "/"), git: true) || Sync.protectedCanonical(URL(fileURLWithPath: root.path).appendingPathComponent(r), root: root, git: true)
         }
-        if ["PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH"].contains(method) || (method == "LOCK" && !exists), protected(p, rel) {
+        // an AppleDouble file (._x) is never written (PUT and DELETE answer below): not a refusal to print
+        if ["PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH"].contains(method) || (method == "LOCK" && !exists), !(junk && (method == "PUT" || method == "DELETE")), protected(p, rel) {
             return refuse(rel)
         }
         func parentExists(_ r: String) -> Bool { rt.isDir(ShareRoot.join(Array(ShareRoot.comps(r).dropLast()))) }
