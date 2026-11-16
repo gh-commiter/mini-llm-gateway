@@ -328,12 +328,12 @@ func (s *Store) usageRows(tx *sql.Tx, days int, f UsageFilter, withFolded, withG
 		where, args = append(where, "e.model=?"), append(args, f.Model)
 	}
 	if f.Provider != "" {
-		where, args = append(where, "e.provider=?"), append(args, f.Provider)
+		where, args = append(where, "lower(e.provider)=lower(?)"), append(args, f.Provider)
 	}
-	q := `SELECT strftime('%Y-%m-%d', e.start/1000, 'unixepoch') d, e.provider, e.model, COALESCE(e.user_id,0), COALESCE(u.name,''), COALESCE(e.project_id,0), count(*),
+	q := `SELECT strftime('%Y-%m-%d', e.start/1000, 'unixepoch') d, lower(e.provider), e.model, COALESCE(e.user_id,0), COALESCE(u.name,''), COALESCE(e.project_id,0), count(*),
   COALESCE(sum(e.tokens_in),0), COALESCE(sum(e.tokens_out),0), sum(e.tokens_in IS NULL AND e.tokens_out IS NULL), sum(e.parent_id IS NOT NULL),
   sum(e.outcome IN('error','cancelled','interrupted')), sum(CASE WHEN e.cost_source='reported' THEN e.cost_usd_nanos END), sum(CASE WHEN e.cost_source='estimated' THEN e.cost_usd_nanos END), sum(e.cost_usd_nanos IS NULL), sum(e.cost_source='estimated'), sum(e.billing_mode='subscription'), sum(e.billing_mode='unknown')
-FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(where, " AND ") + ` GROUP BY d, e.provider, e.model, e.user_id, e.project_id ORDER BY d DESC, e.model, e.user_id`
+FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(where, " AND ") + ` GROUP BY d, lower(e.provider), e.model, e.user_id, e.project_id ORDER BY d DESC, e.model, e.user_id`
 	rows, err := tx.Query(q, args...)
 	if err != nil {
 		return UsageReport{}, err
@@ -364,9 +364,9 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 			fw, fa = append(fw, "d.model=?"), append(fa, f.Model)
 		}
 		if f.Provider != "" {
-			fw, fa = append(fw, "d.provider=?"), append(fa, f.Provider)
+			fw, fa = append(fw, "lower(d.provider)=lower(?)"), append(fa, f.Provider)
 		}
-		fr, err := tx.Query(`SELECT d.day, d.provider, d.model, d.user_id, COALESCE(u.name,''), d.project_id, d.events, d.tokens_in, d.tokens_out, d.unknown_tokens, d.nested, d.failed, d.reported_cost, d.estimated_cost, d.unknown_cost, d.estimated_events, d.subscription_events, d.unknown_billing_events FROM usage_daily d LEFT JOIN users u ON u.id=d.user_id WHERE `+strings.Join(fw, " AND ")+` ORDER BY d.day DESC`, fa...)
+		fr, err := tx.Query(`SELECT d.day, lower(d.provider), d.model, d.user_id, COALESCE(u.name,''), d.project_id, d.events, d.tokens_in, d.tokens_out, d.unknown_tokens, d.nested, d.failed, d.reported_cost, d.estimated_cost, d.unknown_cost, d.estimated_events, d.subscription_events, d.unknown_billing_events FROM usage_daily d LEFT JOIN users u ON u.id=d.user_id WHERE `+strings.Join(fw, " AND ")+` ORDER BY d.day DESC`, fa...)
 		if err != nil {
 			return rep, err
 		}

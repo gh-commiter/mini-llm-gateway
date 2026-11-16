@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+- Fixed (both gateways): a spending-limit error from OpenRouter is recognised by the provider's address (openrouter.ai), not by its name, so a renamed OpenRouter provider no longer makes the client retry.
+- Changed (both gateways): usage reports show the provider in lowercase and the `provider` filter ignores case, so `OpenRouter` and `openrouter` are one provider on both gateways.
+
 ## 0.6.5
 
 ### New

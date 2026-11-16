@@ -475,3 +475,27 @@ func TestUsageCostOverflowRetainsDetailAndAllowsReopen(t *testing.T) {
 		})
 	}
 }
+
+// Go gateways stored provider names ("OpenRouter"), Swift ids ("openrouter"): reports use one lowercase key and the filter ignores case.
+func TestUsageProviderKeyIsCaseInsensitive(t *testing.T) {
+	f := newFx(t)
+	now := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	f.Store.now = func() time.Time { return now }
+	cut := now.AddDate(0, 0, -usageRetentionDays)
+	ev := func(id, provider string, at time.Time) UsageEvent {
+		return UsageEvent{ID: id, Start: at, End: at, Provider: provider, Model: "m", Outcome: OutcomeOK, TokensIn: 1, TokensOut: 1, TokenSource: "reported"}
+	}
+	f.ok(f.ReplayUsage(ctx, []UsageEvent{ev("a", "OpenRouter", cut.Add(-time.Millisecond)), ev("b", "OpenRouter", cut), ev("c", "openrouter", cut)}, nil))
+	n, err := f.FoldOldUsage(ctx)
+	f.ok(err)
+	if n != 1 {
+		t.Fatalf("folded %d", n)
+	}
+	for _, p := range []string{"", "openrouter", "OPENROUTER", "OpenRouter"} {
+		rep, err := f.AdminUsage(ctx, 401, UsageFilter{Provider: p})
+		f.ok(err)
+		if len(rep.Rows) != 1 || rep.Rows[0].Provider != "openrouter" || rep.Rows[0].Events != 3 {
+			t.Fatalf("filter %q: %+v", p, rep.Rows)
+		}
+	}
+}

@@ -244,9 +244,11 @@ Subscription CLI rows have null money. Old events are never repriced. Estimates 
 presence is not assumed or requested from the upstream. The shared parser fixtures describe supported shapes,
 not captured OpenRouter responses.
 
-Provider and model filters are exact matches in both detail and folded totals; provider remains part of the grouping
-when no filter is set. Swift provider keys are configuration IDs (for example `openrouter`); Go provider keys are
-configuration names (for example `OpenRouter`). Identical model names across providers remain separate. Requested
+The model filter is an exact match in both detail and folded totals; the provider filter ignores case. Reports show
+the provider in lowercase, so rows stored as `OpenRouter` (Go gateway, configuration name) and `openrouter` (Swift
+gateway, configuration ID) are one provider; stored rows are not rewritten. Provider remains part of the grouping
+when no filter is set. The two gateways still store different keys when a provider's name and ID differ by more than
+case. Identical model names across providers remain separate. Requested
 model names remain unchanged; the routed upstream model is frozen separately at dispatch.
 
 Detail older than 400 days is folded into daily totals. Folded totals currently survive indefinitely and reports
