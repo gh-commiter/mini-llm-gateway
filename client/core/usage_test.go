@@ -347,7 +347,7 @@ func TestUsageCostMigration(t *testing.T) {
 	}
 	db.Close()
 	s := openT(t, dir)
-	defer s.Close()
+	defer func() { s.Close() }() // s is reopened below: the last store must be closed (Windows cannot delete an open core.db)
 	rep, err := s.AdminUsage(ctx, 7, UsageFilter{})
 	if err != nil || len(rep.Rows) != 1 {
 		t.Fatalf("%+v %v", rep, err)
