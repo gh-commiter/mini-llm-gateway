@@ -41,5 +41,8 @@
   {"kind": "admin", "method": "GET", "path": "/teams/1/assignments", "want": true},
   {"kind": "admin", "method": "PUT", "path": "/teams/1/assignments", "want": true},
   {"kind": "admin", "method": "DELETE", "path": "/teams/1/assignments", "want": true},
-  {"kind": "member", "method": "GET", "path": "/minigw/v1/teams/1/assignments", "want": true}
+  {"kind": "member", "method": "GET", "path": "/minigw/v1/teams/1/assignments", "want": true},
+  {"kind": "admin", "method": "POST", "path": "/kb/submissions/1/accept", "want": true},
+  {"kind": "admin", "method": "GET", "path": "/kb/submissions", "want": true},
+  {"kind": "member", "method": "POST", "path": "/minigw/v1/projects/1/kb/submissions", "want": true}
 ]

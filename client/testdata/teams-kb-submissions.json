@@ -1,0 +1,240 @@
+{
+  "admin": [
+    {
+      "name": "review bodies",
+      "args": [
+        "kb",
+        "review"
+      ],
+      "responses": [
+        {
+          "match": "GET /kb/submissions?project=0&after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\"}],\"next\":0}"
+        },
+        {
+          "match": "GET /kb/submissions/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\"}"
+        }
+      ],
+      "want": {
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter 2  device   replaces 0  revision 0\nReview this\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/kb/submissions?project=0&after=0",
+            ""
+          ],
+          [
+            "GET",
+            "/kb/submissions/7",
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "accept",
+      "args": [
+        "kb",
+        "accept",
+        "7"
+      ],
+      "responses": [
+        {
+          "match": "POST /kb/submissions/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
+        }
+      ],
+      "want": {
+        "out": "submission 7 accepted\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "POST",
+            "/kb/submissions/7/accept",
+            "{\"reason\":\"\"}"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "reject",
+      "args": [
+        "kb",
+        "reject",
+        "7"
+      ],
+      "opts": {
+        "reason": "Needs evidence"
+      },
+      "responses": [
+        {
+          "match": "POST /kb/submissions/7/reject",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"rejected\"}"
+        }
+      ],
+      "want": {
+        "out": "submission 7 rejected\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "POST",
+            "/kb/submissions/7/reject",
+            "{\"reason\":\"Needs evidence\"}"
+          ]
+        ]
+      }
+    }
+  ],
+  "member": [
+    {
+      "args": [
+        "submit",
+        "demo",
+        "--key",
+        "fixed",
+        "--title",
+        "Proposal ž",
+        "-"
+      ],
+      "input": "Review this",
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/1/kb/submissions",
+          "status": 201,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\"}"
+        }
+      ],
+      "out": "submission 7 pending\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/1/kb/submissions",
+          "{\"body\":\"Review this\",\"class\":\"data\",\"replaces\":0,\"revision\":0,\"title\":\"Proposal ž\"}"
+        ]
+      ]
+    },
+    {
+      "args": [
+        "submissions",
+        "demo"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\"}],\"next\":7}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=7",
+          "status": 200,
+          "body": "{\"submissions\":[],\"next\":0}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  Proposal ž\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=0",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=7",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "submissions"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects?archived=1",
+          "status": 200,
+          "body": "[]"
+        }
+      ],
+      "out": "no submissions\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects?archived=1",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "submissions",
+        "demo",
+        "--json"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\"}],\"next\":7}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=7",
+          "status": 200,
+          "body": "{\"submissions\":[],\"next\":0}"
+        }
+      ],
+      "out": "{\"submissions\":[{\"class\":\"data\",\"id\":7,\"project\":1,\"state\":\"pending\",\"title\":\"Proposal ž\",\"user\":2}]}\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=0",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=7",
+          ""
+        ]
+      ]
+    }
+  ],
+  "noteJSON": "{\"id\":7,\"body\":\"published\",\"provenance\":{\"actorKind\":\"member\",\"user\":2,\"device\":\"device\",\"project\":1,\"sourceKind\":\"pushed note\",\"sourceReference\":\"\",\"contentHash\":\"abc\",\"authored\":\"2026-11-16T10:00:00Z\",\"received\":\"2026-11-16T10:00:00Z\",\"reviewer\":\"owner\",\"reviewed\":\"2026-11-16T11:00:00Z\"}}"
+}

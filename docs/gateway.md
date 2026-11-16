@@ -584,3 +584,18 @@ not invalidate runs. Inactive users remain blocked regardless of origins. Grants
 Migration 10 uses the existing snapshot-before-upgrade lifecycle, including upgrades from schema 8 via 9.
 Backups include both origins and effective memberships; restore can restore previously revoked access.
 No delegated administration, team model policy, agents or quotas are introduced.
+# Reviewed KB submissions
+
+Schema 11 adds revision provenance and a separate submission store. Upgrades use
+the existing snapshot-first migration and backup/restore lifecycle. Legacy notes
+stay published with known author/project/times and `UNKNOWN` device/source.
+Authenticated device bindings determine writers; request payloads cannot choose
+identity. Swift forwards routes to the Go core, which owns all policy.
+
+Members propose notes with `minigw kb submit <project> <file|->`; owners review with
+`minigw gw kb review [<project>]`, `gw kb accept <id>` and `gw kb reject <id>
+[--reason text]`. Pending content is excluded from published notes and agent runs.
+Acceptance rechecks writer access and replacement revision. Ordinary note push
+continues publishing directly. See usage.md for input limits and the rule excluding
+customer names, policy numbers, amounts and raw records from every KB class.
+No imports, synthesis, search or automatic expiry are enabled in this beta.

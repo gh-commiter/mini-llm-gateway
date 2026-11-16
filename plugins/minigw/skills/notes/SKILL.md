@@ -15,3 +15,13 @@ Notes belong to the project of the current folder. A note is text up to 64 KiB w
 - `edit <id>` (`--class`, `--title`, `--revision n`, a file) and `rm <id>` change or delete a note: only the author (a developer) or a project admin may. Ask the user first, show which note (read it), then run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" note edit <id> …` or `note rm <id>`. A revision conflict means someone else changed the note: read it again and ask the user.
 
 These commands are not available inside an agent run (a Codex or Claude CLI agent started through the gateway can only `minigw note list` and `note read` on its own project); if the user wants an agent to know something, push a note. Report the result in a few lines.
+
+For owner-reviewed proposals use `minigw kb submit <project> [--class c] [--title t]
+[--key k] <file|->`, then `minigw kb submissions [<project>]`. Preview the project,
+class, title and content and obtain confirmation as for push. Replacements require
+`--replaces <id> --revision <n>`. Owners use `minigw gw kb review [<project>]`,
+`gw kb accept <id>` or `gw kb reject <id> [--reason text]`. Pending content is only
+visible to its author and owner; called agents cannot submit. These commands need
+Beta 4 support; never fall back to publishing if submission is unavailable.
+`note read --json` includes authenticated provenance. Never put customer names,
+policy numbers, amounts or raw records into any KB class, including private.

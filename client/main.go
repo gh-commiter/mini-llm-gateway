@@ -409,6 +409,9 @@ func main() {
 	case "share":
 		shareCommand(args[1:])
 		return
+	case "kb":
+		runProjectCmd("kb", args[1:])
+		return
 	case "team":
 		runProjectCmd("team", args[1:])
 		return
@@ -605,7 +608,7 @@ func main() {
 			"minigw --minigw-profile P …                 use only profile P for this command\n" +
 			"minigw share add|remove [folder] | list    share a system or hidden folder itself (contents are always shared)\n" +
 			"minigw share add --work=native|native-direct|worktree|sync|direct|auto [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
-			projectHelp + "\n" + teamHelp + "\n" + noteHelp + "\n" + usageHelp + "\n" +
+			projectHelp + "\n" + teamHelp + "\n" + kbHelp + "\n" + noteHelp + "\n" + usageHelp + "\n" +
 			"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 			"minigw --minigw-tools none|read [claude args]  tools of a provider model (LiteLLM, OpenRouter): none, or read = Read, Grep, Glob (--minigw-ro = read); allowed inside Claude Code\n" +
 			"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +

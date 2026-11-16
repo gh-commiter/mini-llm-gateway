@@ -538,3 +538,38 @@ surviving `role` and `origins` when membership survives. Member lists include al
 `{kind: "direct", role}` or `{kind: "team", team: id, name, role}`.
 The member project list includes the caller's origins alongside the effective role. Runtime permission
 checks still read only `memberships`, including grant and note-class checks. No new member write API is added.
+# KB submissions API
+
+Member routes require an approved authenticated device bound to an active user:
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/minigw/v1/projects/{id}/kb/submissions` | Submit `{class,title,body,replaces,revision}`; required `Idempotency-Key`; 201 |
+| GET | `/minigw/v1/projects/{id}/kb/submissions?after=0` | Own metadata, `{submissions,next}` |
+| GET | `/minigw/v1/projects/{id}/kb/submissions/{id}` | Own submission with body |
+
+Owner routes use the existing owner admin authentication and base URL:
+
+| Method | Path | Result |
+|---|---|---|
+| GET | `/kb/submissions?project=0&after=0` | Pending metadata; project 0 means all |
+| GET | `/kb/submissions/{id}` | Submission with body |
+| POST | `/kb/submissions/{id}/accept` | Publish; JSON `{}` |
+| POST | `/kb/submissions/{id}/reject` | Reject; JSON `{"reason":"text"}` |
+
+Pages contain at most 100 rows; follow nonzero `next` as `after`. Same-outcome
+review retries do not publish twice; reversing a review is refused. Submission
+keys retain the existing 24-hour scope. Identity/provenance claims in payloads are
+rejected. Authorization precedes body retrieval, with invisible/missing 404s.
+Project admins cannot review. Called agents cannot submit or review.
+
+Acceptance rechecks the authenticated writer binding, current project permissions,
+archive status, note limits and replacement revision. Pending entries are separate
+from notes and excluded from note counts and run reads. Pending limits: 100 / 5 MiB
+per user, 500 / 20 MiB per project. Reasons are at most 1024 bytes; reasons and
+submission titles reject control characters. Existing request/note/rate limits apply.
+Note read JSON gains `provenance` with actorKind, user, device, project, sourceKind,
+sourceReference, contentHash, authored, received, reviewer and reviewed.
+Legacy device/source are explicitly `UNKNOWN`. Schema 11 uses snapshot-first
+migration; backups retain submissions and revision provenance. No automatic expiry
+or customer-data detection is implemented.

@@ -208,3 +208,19 @@ removing a team assignment does not remove a direct one. `gw member` edits only 
 The explanation lists each origin and role; the member project list displays role and origin names.
 The user and project must belong to the active team. Removal from the team or team archive deletes
 matching assignments; direct access survives. Narrowing effective access invalidates existing runs.
+# KB review commands
+
+Both clients support identical commands:
+
+```text
+minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
+minigw kb submissions [<project>] [--json]
+minigw gw kb review [<project>]
+minigw gw kb accept <id>
+minigw gw kb reject <id> [--reason text]
+```
+
+Submission input matches note push; it requires existing project write access.
+Review is owner-only. Pending entries are visible only to their author and the
+owner. Acceptance publishes a new note or replacement revision. Note push still
+publishes immediately. `minigw note read <id> --json` includes provenance.

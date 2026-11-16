@@ -14,16 +14,17 @@ import (
 
 // Note is a note; Body is empty in lists.
 type Note struct {
-	ID        int64
-	ProjectID int64
-	Class     Class
-	Title     string
-	Body      string `json:",omitempty"`
-	AuthorID  int64
-	Author    string
-	Created   time.Time
-	Updated   time.Time
-	Revision  int64
+	Provenance Provenance
+	ID         int64
+	ProjectID  int64
+	Class      Class
+	Title      string
+	Body       string `json:",omitempty"`
+	AuthorID   int64
+	Author     string
+	Created    time.Time
+	Updated    time.Time
+	Revision   int64
 }
 
 // NoteInput is the payload of create and update.
@@ -199,6 +200,9 @@ func checkListArgs(class Class, limit int) (int, error) {
 
 func getNote(tx *sql.Tx, id int64) (Note, error) {
 	n, err := scanNote(tx.QueryRow(`SELECT `+noteCols+` FROM notes n JOIN users u ON u.id=n.author_id WHERE n.id=?`, id), true)
+	if err == nil {
+		err = noteProvenance(tx, &n)
+	}
 	return n, notFound(err)
 }
 
@@ -412,6 +416,9 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 			return err
 		}
 		id, _ := r.LastInsertId()
+		if err = saveProvenance(tx, id, 1, writerProvenance(p, project, in, fromMs(now))); err != nil {
+			return err
+		}
 		if n, err = getNote(tx, id); err != nil {
 			return err
 		}
@@ -474,6 +481,9 @@ func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revisi
 			if _, err := s.BumpEpochTx(tx, "note class narrowed"); err != nil {
 				return err
 			}
+		}
+		if err = saveProvenance(tx, id, old.Revision+1, writerProvenance(p, project, in, fromMs(ms(s.now())))); err != nil {
+			return err
 		}
 		n, err = getNote(tx, id)
 		return err

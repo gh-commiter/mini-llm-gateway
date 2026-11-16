@@ -93,7 +93,9 @@ public final class ProjectEnv {
                 return ProjectError("the note has changed: its current revision is \(e["revision"]?.int ?? 0) (read it again, then retry)")
             }
             return ProjectError("this idempotency key was already used for another note")
-        case 413: return ProjectError("too large (title up to \(maxNoteTitle) bytes, body up to \(maxNoteBody >> 10) KiB, project limits apply)")
+        case 413:
+            if type == "pending_limit" { return ProjectError(ProjectText.oneLine(message)) }
+            return ProjectError("too large (title up to \(maxNoteTitle) bytes, body up to \(maxNoteBody >> 10) KiB, project limits apply)")
         case 429:
             let wait = retryAfter.flatMap { GoFlags.parseInt($0) }.map { "\($0) seconds" } ?? "a minute"
             return ProjectError("too many requests: try again in " + wait)

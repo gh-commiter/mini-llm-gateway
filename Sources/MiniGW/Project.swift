@@ -28,6 +28,7 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
         })
     do {
         switch kind {
+        case "kb": try env.kb(args)
         case "team": try env.team(args)
         case "note": try env.note(args)
         case "usage": try env.usage(args)

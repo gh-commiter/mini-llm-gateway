@@ -74,6 +74,8 @@ func runProjectCmd(kind string, args []string) {
 	}
 	var err error
 	switch kind {
+	case "kb":
+		err = e.kb(args)
 	case "team":
 		err = e.team(args)
 	case "note":
@@ -143,6 +145,9 @@ func gatewayError(st int, data []byte, h http.Header) error {
 		}
 		return errors.New("this idempotency key was already used for another note")
 	case 413:
+		if b.Error.Type == "pending_limit" {
+			return errors.New(oneLine(b.Error.Message))
+		}
 		return fmt.Errorf("too large (title up to %d bytes, body up to %d KiB, project limits apply)", maxNoteTitle, maxNoteBody>>10)
 	case 429:
 		wait := "a minute"

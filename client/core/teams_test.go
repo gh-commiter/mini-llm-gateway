@@ -181,10 +181,19 @@ func TestTeamsMigration8AndRestore(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	note, _, e := s.CreateNote(ctx, principal, p.ID, "legacy-note", NoteInput{Class: Data, Title: "Legacy", Body: "Preserve me"})
-	if e != nil {
+	// Seed schema 8 directly: current note writes require schema 11 provenance.
+	note := Note{ProjectID: p.ID, Class: Data, Title: "Legacy", Body: "Preserve me", AuthorID: principal.UserID, Author: "Legacy", Created: fromMs(1), Updated: fromMs(1), Revision: 1, Provenance: Provenance{ActorKind: "member", User: principal.UserID, Device: "UNKNOWN", Project: p.ID, SourceKind: "UNKNOWN", ContentHash: contentHash("Legacy", "Preserve me"), Authored: fromMs(1), Received: fromMs(1)}}
+	if e = s.write(ctx, func(tx *sql.Tx) error {
+		r, e := tx.Exec(`INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated) VALUES(?,?,?,?,?,?,?,?)`, p.ID, Data, "Legacy", "Preserve me", 17, principal.UserID, 1, 1)
+		if e != nil {
+			return e
+		}
+		note.ID, _ = r.LastInsertId()
+		return nil
+	}); e != nil {
 		t.Fatal(e)
 	}
+	note.Provenance.SourceReference = "UNKNOWN"
 	grants, _ := s.ListGrants(ctx)
 	users, _ := s.ListUsers(ctx)
 	projects, _ := s.AdminListProjects(ctx)

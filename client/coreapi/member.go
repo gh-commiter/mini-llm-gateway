@@ -44,21 +44,23 @@ func toProject(p core.Project) ProjectJSON {
 }
 
 type NoteJSON struct {
-	ID       int64      `json:"id"`
-	Project  int64      `json:"project"`
-	Class    core.Class `json:"class"`
-	Title    string     `json:"title"`
-	Body     *string    `json:"body,omitempty"`
-	Author   string     `json:"author"`
-	Created  time.Time  `json:"created"`
-	Updated  time.Time  `json:"updated"`
-	Revision int64      `json:"revision"`
+	Provenance *core.Provenance `json:"provenance,omitempty"`
+	ID         int64            `json:"id"`
+	Project    int64            `json:"project"`
+	Class      core.Class       `json:"class"`
+	Title      string           `json:"title"`
+	Body       *string          `json:"body,omitempty"`
+	Author     string           `json:"author"`
+	Created    time.Time        `json:"created"`
+	Updated    time.Time        `json:"updated"`
+	Revision   int64            `json:"revision"`
 }
 
 func toNote(n core.Note, withBody bool) NoteJSON {
-	j := NoteJSON{n.ID, n.ProjectID, n.Class, n.Title, nil, n.Author, n.Created, n.Updated, n.Revision}
+	j := NoteJSON{nil, n.ID, n.ProjectID, n.Class, n.Title, nil, n.Author, n.Created, n.Updated, n.Revision}
 	if withBody {
 		j.Body = &n.Body
+		j.Provenance = &n.Provenance
 	}
 	return j
 }
@@ -214,6 +216,12 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			return a.errResponse(err)
 		}
 		return resp(200, toProject(pr))
+	case len(seg) >= 3 && seg[1] == "kb" && seg[2] == "submissions" && len(seg) <= 4:
+		pid, ok := posID(seg[0])
+		if !ok {
+			return a.errResponse(core.ErrInvalid{What: "project id"})
+		}
+		return a.submissionRoute(ctx, st, p, pid, seg[3:], q, r)
 	case len(seg) >= 2 && seg[1] == "notes" && len(seg) <= 3:
 		pid, ok := posID(seg[0])
 		if !ok {

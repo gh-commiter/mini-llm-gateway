@@ -1,0 +1,468 @@
+package core
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"time"
+	"unicode"
+)
+
+// Reserved source kinds; ingestion and service writes are later steps.
+const (
+	ActorMember            = "member"
+	ActorGatewayService    = "gateway service"
+	SourcePushedNote       = "pushed note"
+	SourceImport           = "import"
+	SourceSessionSummary   = "session summary"
+	SourceGatewaySynthesis = "gateway synthesis"
+)
+
+// Provenance records the authenticated writer of a revision. UNKNOWN means not recorded.
+type Provenance struct {
+	ActorKind       string     `json:"actorKind"`
+	User            int64      `json:"user"`
+	Device          string     `json:"device"`
+	Project         int64      `json:"project"`
+	SourceKind      string     `json:"sourceKind"`
+	SourceReference string     `json:"sourceReference"`
+	ContentHash     string     `json:"contentHash"`
+	Authored        time.Time  `json:"authored"`
+	Received        time.Time  `json:"received"`
+	Reviewer        string     `json:"reviewer"`
+	Reviewed        *time.Time `json:"reviewed"`
+}
+
+func migrate11(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS note_revisions(note_id INTEGER NOT NULL, revision INTEGER NOT NULL, provenance TEXT NOT NULL, PRIMARY KEY(note_id,revision));
+ CREATE TABLE IF NOT EXISTS kb_submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), user_id INTEGER NOT NULL REFERENCES users(id), device_id TEXT NOT NULL, class TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, bytes INTEGER NOT NULL, replaces INTEGER NOT NULL, revision INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending', provenance TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', note_id INTEGER NOT NULL DEFAULT 0, key TEXT NOT NULL, hash TEXT NOT NULL, received INTEGER NOT NULL);
+ CREATE INDEX IF NOT EXISTS kb_submissions_author ON kb_submissions(user_id,project_id,id);
+ CREATE INDEX IF NOT EXISTS kb_submissions_pending ON kb_submissions(state,project_id,id);`); err != nil {
+		return err
+	}
+	rows, err := tx.Query(`SELECT id,revision,author_id,project_id,title,body,created,updated FROM notes`)
+	if err != nil {
+		return err
+	}
+	type legacy struct {
+		id, rev int64
+		p       Provenance
+	}
+	var entries []legacy
+	for rows.Next() {
+		var v legacy
+		var title, body string
+		var created, updated int64
+		if err = rows.Scan(&v.id, &v.rev, &v.p.User, &v.p.Project, &title, &body, &created, &updated); err != nil {
+			rows.Close()
+			return err
+		}
+		v.p.ActorKind, v.p.Device, v.p.SourceKind = "member", "UNKNOWN", "UNKNOWN"
+		v.p.SourceReference = "UNKNOWN"
+		v.p.Authored, v.p.Received = fromMs(created), fromMs(updated)
+		v.p.ContentHash = contentHash(title, body)
+		entries = append(entries, v)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, v := range entries {
+		if err = saveProvenance(tx, v.id, v.rev, v.p); err != nil {
+			return err
+		}
+	}
+	// Old write receipts can contain an earlier revision. Preserve their known metadata too.
+	rows, err = tx.Query(`SELECT user_id,project_id,key,result FROM idempotency WHERE result<>''`)
+	if err != nil {
+		return err
+	}
+	type receipt struct {
+		user, project int64
+		key, result   string
+		note          Note
+	}
+	var receipts []receipt
+	for rows.Next() {
+		var r receipt
+		if err = rows.Scan(&r.user, &r.project, &r.key, &r.result); err != nil {
+			break
+		}
+		if err = json.Unmarshal([]byte(r.result), &r.note); err != nil {
+			break
+		}
+		if r.note.Provenance.ActorKind == "" {
+			r.note.Provenance = Provenance{ActorKind: ActorMember, User: r.note.AuthorID, Device: "UNKNOWN", Project: r.note.ProjectID, SourceKind: "UNKNOWN", SourceReference: "UNKNOWN", ContentHash: contentHash(r.note.Title, r.note.Body), Authored: r.note.Created, Received: r.note.Updated}
+			receipts = append(receipts, r)
+		}
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, r := range receipts {
+		if err = saveProvenance(tx, r.note.ID, r.note.Revision, r.note.Provenance); err != nil {
+			return err
+		}
+		b, e := json.Marshal(r.note)
+		if e != nil {
+			return e
+		}
+		if _, err = tx.Exec(`UPDATE idempotency SET result=? WHERE user_id=? AND project_id=? AND key=?`, string(b), r.user, r.project, r.key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func contentHash(title, body string) string {
+	b, _ := json.Marshal([]string{title, body})
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+func writerProvenance(p Principal, project int64, in NoteInput, now time.Time) Provenance {
+	return Provenance{ActorKind: "member", User: p.UserID, Device: p.DeviceID, Project: project, SourceKind: "pushed note", ContentHash: contentHash(in.Title, in.Body), Authored: now, Received: now}
+}
+func saveProvenance(tx *sql.Tx, id, revision int64, p Provenance) error {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT OR IGNORE INTO note_revisions(note_id,revision,provenance) VALUES(?,?,?)`, id, revision, string(b))
+	return err
+}
+func noteProvenance(tx *sql.Tx, n *Note) error {
+	var b string
+	if err := tx.QueryRow(`SELECT provenance FROM note_revisions WHERE note_id=? AND revision=?`, n.ID, n.Revision).Scan(&b); err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(b), &n.Provenance)
+}
+
+const maxReason = 1024
+
+var maxPendingUser = 100
+var maxPendingProject = 500
+var maxPendingUserBytes int64 = 5 << 20
+var maxPendingProjectBytes int64 = 20 << 20
+var ErrPendingLimit = errors.New("pending submission limit reached (user: 100 / 5 MiB; project: 500 / 20 MiB); ask the owner to review pending submissions")
+
+type SubmissionInput struct {
+	NoteInput
+	Replaces int64 `json:"replaces"`
+	Revision int64 `json:"revision"`
+}
+type Submission struct {
+	ID         int64      `json:"id"`
+	Project    int64      `json:"project"`
+	User       int64      `json:"user"`
+	Class      Class      `json:"class"`
+	Title      string     `json:"title"`
+	Body       *string    `json:"body,omitempty"`
+	Replaces   int64      `json:"replaces"`
+	Revision   int64      `json:"revision"`
+	State      string     `json:"state"`
+	Provenance Provenance `json:"provenance"`
+	Reason     string     `json:"reason"`
+	NoteID     int64      `json:"note"`
+}
+
+const submissionCols = `id,project_id,user_id,class,title,replaces,revision,state,provenance,reason,note_id`
+
+func scanSubmission(row interface{ Scan(...any) error }) (v Submission, err error) {
+	var b string
+	err = row.Scan(&v.ID, &v.Project, &v.User, &v.Class, &v.Title, &v.Replaces, &v.Revision, &v.State, &b, &v.Reason, &v.NoteID)
+	if err == nil {
+		err = json.Unmarshal([]byte(b), &v.Provenance)
+	}
+	return v, notFound(err)
+}
+func submissionAccess(tx *sql.Tx, p Principal, project int64, in SubmissionInput, checkRevision bool) error {
+	a, err := memberAccess(tx, p, project)
+	if err != nil {
+		return err
+	}
+	if !a.can(pCreate, in.Class, true) {
+		return ErrForbidden
+	}
+	if in.Replaces != 0 {
+		_, n, e := writeAccess(tx, p, project, in.Replaces)
+		if e != nil {
+			return e
+		}
+		if !a.canMove(n.Class, in.Class, n.AuthorID == p.UserID) {
+			return ErrForbidden
+		}
+		if checkRevision && n.Revision != in.Revision {
+			return ErrRevision{Current: n.Revision}
+		}
+	} else if in.Revision != 0 {
+		return ErrInvalid{"revision requires replaces"}
+	}
+	return archivedErr(tx, project)
+}
+
+func (s *Store) Submit(ctx context.Context, p Principal, project int64, key string, in SubmissionInput) (v Submission, replay bool, err error) {
+	lim := s.rate(p.UserID, true)
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		if err := submissionAccess(tx, p, project, SubmissionInput{NoteInput: in.NoteInput}, false); err != nil {
+			return err
+		}
+		if err := checkInput(in.NoteInput); err != nil {
+			return err
+		}
+		if err := checkSize(in.NoteInput); err != nil {
+			return err
+		}
+		if key == "" || len(key) > 64 {
+			return ErrInvalid{"idempotency key"}
+		}
+		if in.Replaces < 0 || in.Revision < 0 {
+			return ErrInvalid{"replacement"}
+		}
+		if lim != nil {
+			return lim
+		}
+		b, _ := json.Marshal(in)
+		h := sha256.Sum256(b)
+		hash := hex.EncodeToString(h[:])
+		var oldHash string
+		var id int64
+		e := tx.QueryRow(`SELECT id,hash FROM kb_submissions WHERE user_id=? AND project_id=? AND key=? AND received>=? ORDER BY id DESC LIMIT 1`, p.UserID, project, key, ms(s.now().Add(-idempotencyTTL))).Scan(&id, &oldHash)
+		if e == nil {
+			if hash != oldHash {
+				return ErrIdempotency
+			}
+			if e := submissionAccess(tx, p, project, in, false); e != nil {
+				return e
+			}
+			var e error
+			v, e = getSubmission(tx, p, project, id, false, true)
+			replay = e == nil
+			return e
+		}
+		if e != sql.ErrNoRows {
+			return e
+		}
+		if e := submissionAccess(tx, p, project, in, true); e != nil {
+			return e
+		}
+		for _, r := range in.Title {
+			if unicode.IsControl(r) {
+				return ErrInvalid{"title: control characters"}
+			}
+		}
+		size := int64(len(in.Title) + len(in.Body))
+		var un, pn, ub, pb int64
+		if e = tx.QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM kb_submissions WHERE state='pending' AND user_id=?`, p.UserID).Scan(&un, &ub); e != nil {
+			return e
+		}
+		if e = tx.QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM kb_submissions WHERE state='pending' AND project_id=?`, project).Scan(&pn, &pb); e != nil {
+			return e
+		}
+		if un >= int64(maxPendingUser) || pn >= int64(maxPendingProject) || ub+size > maxPendingUserBytes || pb+size > maxPendingProjectBytes {
+			return ErrPendingLimit
+		}
+		pr := writerProvenance(p, project, in.NoteInput, fromMs(ms(s.now())))
+		enc, _ := json.Marshal(pr)
+		r, e := tx.Exec(`INSERT INTO kb_submissions(project_id,user_id,device_id,class,title,body,bytes,replaces,revision,provenance,key,hash,received) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, project, p.UserID, p.DeviceID, in.Class, in.Title, in.Body, size, in.Replaces, in.Revision, string(enc), key, hash, ms(s.now()))
+		if e != nil {
+			return e
+		}
+		id, _ = r.LastInsertId()
+		v, e = getSubmission(tx, p, project, id, false, true)
+		if e != nil {
+			return e
+		}
+		return Audit(tx, actor(p), "kb.submit", i64(id), map[string]any{"project": project, "replaces": in.Replaces})
+	})
+	if err != nil {
+		return Submission{}, false, err
+	}
+	return
+}
+
+// Metadata authorization precedes selecting the body, including replay.
+func getSubmission(tx *sql.Tx, p Principal, project, id int64, owner, body bool) (v Submission, err error) {
+	if !owner {
+		if err = checkPrincipal(tx, p); err != nil {
+			return
+		}
+	}
+	v, err = scanSubmission(tx.QueryRow(`SELECT `+submissionCols+` FROM kb_submissions WHERE id=?`, id))
+	if err != nil {
+		return Submission{}, err
+	}
+	if !owner && (v.User != p.UserID || v.Project != project) {
+		return Submission{}, ErrNotFound
+	}
+	if !owner {
+		if _, err = memberAccess(tx, p, project); err != nil {
+			return Submission{}, err
+		}
+	}
+	if body {
+		var b string
+		err = tx.QueryRow(`SELECT body FROM kb_submissions WHERE id=?`, id).Scan(&b)
+		v.Body = &b
+	}
+	return
+}
+func (s *Store) GetSubmission(ctx context.Context, p Principal, project, id int64, owner bool) (v Submission, err error) {
+	lim := s.rate(p.UserID, false)
+	err = s.read(ctx, func(tx *sql.Tx) error {
+		var e error
+		v, e = getSubmission(tx, p, project, id, owner, false)
+		if e != nil {
+			return e
+		}
+		if !owner && lim != nil {
+			return lim
+		}
+		v, e = getSubmission(tx, p, project, id, owner, true)
+		return e
+	})
+	if err != nil {
+		return Submission{}, err
+	}
+	return
+}
+func (s *Store) ListSubmissions(ctx context.Context, p Principal, project, after int64, owner bool) (out []Submission, err error) {
+	out = []Submission{}
+	lim := s.rate(p.UserID, false)
+	err = s.read(ctx, func(tx *sql.Tx) error {
+		q := `SELECT ` + submissionCols + ` FROM kb_submissions WHERE id>?`
+		args := []any{after}
+		if !owner {
+			if e := checkPrincipal(tx, p); e != nil {
+				return e
+			}
+			if _, e := memberAccess(tx, p, project); e != nil {
+				return e
+			}
+			if lim != nil {
+				return lim
+			}
+			q += ` AND user_id=?`
+			args = append(args, p.UserID)
+		} else {
+			q += ` AND state='pending'`
+		}
+		if project != 0 {
+			q += ` AND project_id=?`
+			args = append(args, project)
+		}
+		rows, e := tx.Query(q+` ORDER BY id LIMIT 100`, args...)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+		for rows.Next() {
+			v, e := scanSubmission(rows)
+			if e != nil {
+				return e
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
+	return
+}
+
+func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, reason string) (v Submission, err error) {
+	if len(reason) > maxReason {
+		return v, ErrInvalid{"reason: at most 1024 bytes"}
+	}
+	for _, r := range reason {
+		if unicode.IsControl(r) {
+			return v, ErrInvalid{"reason: control characters"}
+		}
+	}
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		var e error
+		v, e = getSubmission(tx, Principal{}, 0, id, true, false)
+		if e != nil {
+			return e
+		}
+		state := "rejected"
+		if accept {
+			state = "accepted"
+		}
+		if v.State == state {
+			return nil
+		}
+		if v.State != "pending" {
+			return ErrInvalid{"submission already reviewed"}
+		}
+		now := fromMs(ms(s.now()))
+		v.Provenance.Reviewer = adminActor
+		v.Provenance.Reviewed = &now
+		if accept {
+			p := Principal{UserID: v.User, DeviceID: v.Provenance.Device}
+			in := SubmissionInput{NoteInput: NoteInput{Class: v.Class, Title: v.Title}, Replaces: v.Replaces, Revision: v.Revision}
+			if e = submissionAccess(tx, p, v.Project, in, true); e != nil {
+				return e
+			}
+			var body string
+			if e = tx.QueryRow(`SELECT body FROM kb_submissions WHERE id=?`, id).Scan(&body); e != nil {
+				return e
+			}
+			size := int64(len(v.Title) + len(body))
+			var oldSize int64
+			if v.Replaces != 0 {
+				if e = tx.QueryRow(`SELECT bytes FROM notes WHERE id=?`, v.Replaces).Scan(&oldSize); e != nil {
+					return e
+				}
+			}
+			if e = checkProjectLimits(tx, v.Project, v.Replaces == 0, size-oldSize); e != nil {
+				return e
+			}
+			rev := int64(1)
+			if v.Replaces == 0 {
+				r, e := tx.Exec(`INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated) VALUES(?,?,?,?,?,?,?,?)`, v.Project, v.Class, v.Title, body, size, v.User, ms(now), ms(now))
+				if e != nil {
+					return e
+				}
+				v.NoteID, _ = r.LastInsertId()
+			} else {
+				old, e := noteMetadata(tx, v.Replaces)
+				if e != nil {
+					return e
+				}
+				if _, e = tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1 WHERE id=?`, v.Class, v.Title, body, size, ms(now), v.Replaces); e != nil {
+					return e
+				}
+				if old.Class != v.Class {
+					if _, e = tx.Exec(`UPDATE idempotency SET result='' WHERE note_id=?`, v.Replaces); e != nil {
+						return e
+					}
+					if _, e = s.BumpEpochTx(tx, "reviewed note class changed"); e != nil {
+						return e
+					}
+				}
+				v.NoteID = v.Replaces
+				rev = old.Revision + 1
+			}
+			if e = saveProvenance(tx, v.NoteID, rev, v.Provenance); e != nil {
+				return e
+			}
+		}
+		v.State, v.Reason = state, reason
+		b, _ := json.Marshal(v.Provenance)
+		if _, e = tx.Exec(`UPDATE kb_submissions SET state=?,reason=?,provenance=?,note_id=? WHERE id=?`, state, reason, string(b), v.NoteID, id); e != nil {
+			return e
+		}
+		return Audit(tx, adminActor, "kb."+state, i64(id), map[string]any{"project": v.Project, "note": v.NoteID})
+	})
+	if err != nil {
+		return Submission{}, err
+	}
+	return
+}

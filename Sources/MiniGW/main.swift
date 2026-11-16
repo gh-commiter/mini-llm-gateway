@@ -892,7 +892,7 @@ if let c = agentConn(), args.first?.hasPrefix("-") == true, args.contains("-p") 
 switch args.first {
 case "share":
     shareCommand(Array(args.dropFirst()))
-case "project", "team", "note", "usage":
+case "project", "team", "kb", "note", "usage":
     projectCommand(args[0], Array(args.dropFirst()))
 case "plugin":
     pluginCommand(Array(args.dropFirst()))
@@ -1020,6 +1020,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw share add --work=native|native-direct|worktree|sync|direct|auto [--ro] [folder]   default mode for that folder (flag/env wins)
         \(ProjectEnv.projectHelp)
         \(ProjectEnv.teamHelp)
+        \(ProjectEnv.kbHelp)
         \(ProjectEnv.noteHelp)
         \(ProjectEnv.usageHelp)
         minigw gw status|devices|provider|claude|token …    change the Mini Gateway app on this Mac (minigw gw help)
