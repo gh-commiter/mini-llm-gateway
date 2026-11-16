@@ -17,6 +17,12 @@ public struct AppleFMConfig: Codable, Sendable, Equatable {
 }
 
 enum AppleFM {
+    /// `SystemLanguageModel.contextSize` blocks its thread on a semaphore until FoundationModels has run async work on the cooperative pool: called on a pool thread
+    /// while the other pool threads are busy (a 3-core CI runner), it never returns. offPool: the caller only suspends.
+    static func contextSize() async -> Int {
+        await offPool { SystemLanguageModel.default.contextSize }
+    }
+
     static let ids: Set<String> = ["claude-apple-fm", "apple-fm"]
     static let responseReserve = 1024  // tokeni, ki ostanejo za odgovor
 
@@ -88,7 +94,7 @@ extension Router {
             return await error(400, "invalid_request_error", "Last message must be from the user", rid: rid, writer: writer)
         }
         let instructions = config.appleFM.instructions
-        let fit = await AppleFM.fit(turns, instructions: instructions, budget: model.contextSize - AppleFM.responseReserve) { s in
+        let fit = await AppleFM.fit(turns, instructions: instructions, budget: await AppleFM.contextSize() - AppleFM.responseReserve) { s in
             (try? await model.tokenCount(for: s)) ?? s.utf8.count / 3
         }
 
