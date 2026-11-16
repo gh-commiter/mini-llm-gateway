@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+### New
+- `minigw kb mcp [--project <slug>]`: a read-only MCP server for the knowledge base that an MCP client (Claude Code and others) starts as a command. It has two tools, `kb_search` and `note_read`, with your rights in that project; inside an agent run of the gateway it uses the run's rights and takes no project. Results are marked as untrusted reference content, cleaned of control characters and limited in size. `minigw kb mcp --print-config` prints the entry for the MCP client's configuration (no token in it).
+
 ### Fixed
+- Mac gateway: a `minigw run` command listed the temp folder on a thread of the app's shared thread pool; with a very full temp folder and several runs at once the gateway could stop answering for seconds. It now runs on its own thread.
 - `minigw kb search --json`, `note read --json` and `kb submissions --json` write terminal control characters in note text as JSON `\\uXXXX` escapes, so a note cannot steer the terminal of a person who prints the JSON; a program that parses it gets the same text as before.
 - `minigw kb search` shows the time of a note in local time, like `note list`.
 
