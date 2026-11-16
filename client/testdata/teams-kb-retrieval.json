@@ -1,0 +1,105 @@
+[
+  {
+    "user": "ana",
+    "method": "POST",
+    "path": "",
+    "body": "{\"class\":\"structure\",\"title\":\"shared\",\"body\":\"original\"}",
+    "key": "beta1",
+    "want": 201
+  },
+  {
+    "user": "eva",
+    "method": "GET",
+    "path": "/{note}",
+    "want": 200
+  },
+  {
+    "user": "eva",
+    "method": "PUT",
+    "path": "/{note}",
+    "body": "{\"revision\":1,\"class\":\"data\",\"title\":\"no\",\"body\":\"no\"}",
+    "want": 403
+  },
+  {
+    "user": "bor",
+    "method": "PUT",
+    "path": "/{note}",
+    "body": "{\"revision\":1,\"class\":\"structure\",\"title\":\"no\",\"body\":\"no\"}",
+    "want": 403
+  },
+  {
+    "user": "fani",
+    "method": "PUT",
+    "path": "/{note}",
+    "body": "{\"revision\":1,\"class\":\"private\",\"title\":\"restricted\",\"body\":\"restricted\"}",
+    "want": 200
+  },
+  {
+    "user": "ana",
+    "method": "GET",
+    "path": "/{note}",
+    "want": 200
+  },
+  {
+    "user": "bor",
+    "method": "GET",
+    "path": "/{note}",
+    "want": 404
+  },
+  {
+    "user": "bor",
+    "method": "GET",
+    "path": "/999999",
+    "want": 404
+  },
+  {
+    "user": "bor",
+    "method": "PUT",
+    "path": "/{note}",
+    "body": "{",
+    "want": 404
+  },
+  {
+    "user": "bor",
+    "method": "DELETE",
+    "path": "/{note}?revision=2",
+    "want": 404
+  },
+  {
+    "user": "ana",
+    "method": "POST",
+    "path": "",
+    "body": "{\"class\":\"structure\",\"title\":\"shared\",\"body\":\"original\"}",
+    "key": "beta1",
+    "want": 404
+  },
+  {
+    "user": "fani",
+    "method": "PUT",
+    "path": "/{note}",
+    "body": "{\"revision\":2,\"class\":\"structure\",\"title\":\"returned\",\"body\":\"current\"}",
+    "want": 200
+  },
+  {
+    "user": "ana",
+    "method": "POST",
+    "path": "",
+    "body": "{\"class\":\"structure\",\"title\":\"shared\",\"body\":\"original\"}",
+    "key": "beta1",
+    "want": 404
+  },
+  {
+    "user": "ana",
+    "method": "DELETE",
+    "path": "/{note}?revision=3",
+    "want": 204
+  },
+  {
+    "user": "ana",
+    "method": "POST",
+    "path": "",
+    "body": "{\"class\":\"structure\",\"title\":\"shared\",\"body\":\"original\"}",
+    "key": "beta1",
+    "want": 404
+  }
+]

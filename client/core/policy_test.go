@@ -76,6 +76,95 @@ func (f *fx) p(user string) Principal {
 
 var keySeq int
 
+// A view whose body expression fails proves denied paths never evaluate bodies.
+func TestNoteChecksDoNotLoadBodies(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Private)
+	data := f.mk("ana", "fakture", Data)
+	shared := f.mk("ana", "fakture", Structure)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`ALTER TABLE notes RENAME TO stored_notes`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`CREATE VIEW notes AS SELECT id,project_id,class,title,json_extract('invalid', '$') AS body,bytes,author_id,created,updated,revision FROM stored_notes`)
+		return err
+	}))
+	p := f.p("bor")
+	project := f.pid["fakture"]
+	cap := RunCap{UserID: p.UserID, DeviceID: p.DeviceID, ProjectID: project, Epoch: f.epoch.Load()}
+	for _, id := range []int64{n.ID, 99999} {
+		_, err := f.GetNote(ctx, p, project, id)
+		is(t, err, ErrNotFound)
+		_, err = f.RunGetNote(ctx, cap, true, id)
+		is(t, err, ErrNotFound)
+		is(t, f.CanChangeNote(ctx, p, project, id), ErrNotFound)
+		_, err = f.UpdateNote(ctx, p, project, id, 1, NoteInput{Class: Structure, Title: "x"})
+		is(t, err, ErrNotFound)
+		is(t, f.DeleteNote(ctx, p, project, id, 1), ErrNotFound)
+	}
+	// Even a successful write precheck needs no body; an authorized read does.
+	f.ok(f.CanChangeNote(ctx, f.p("ana"), project, n.ID))
+	is(t, f.CanChangeNote(ctx, f.p("bor"), project, shared.ID), ErrForbidden)
+	is(t, f.CanChangeNote(ctx, f.p("eva"), project, shared.ID), ErrForbidden)
+	_, err := f.GetNote(ctx, f.p("eva"), project, data.ID)
+	is(t, err, ErrNotFound)
+	_, err = f.GetNote(ctx, p, f.pid["eureko"], shared.ID)
+	is(t, err, ErrNotFound)
+	f.ok(f.SetMember(ctx, f.pid["eureko"], f.uid["eva"], Reader))
+	f.ok(f.AddGrant(ctx, project, f.pid["eureko"], Data))
+	// Data grants include receiving readers; an allowed body reaches the trap.
+	if _, err := f.GetNote(ctx, f.p("eva"), project, data.ID); err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("data grant: %v", err)
+	}
+	f.ok(f.RemoveGrant(ctx, project, f.pid["eureko"], Data))
+	_, err = f.RunGetNote(ctx, cap, true, shared.ID)
+	is(t, err, ErrNoProjectAccess)
+	if _, err := f.GetNote(ctx, f.p("ana"), project, n.ID); err == nil {
+		t.Fatal("body trap did not fire")
+	}
+}
+
+func TestReplayRechecksCurrentNote(t *testing.T) {
+	for _, change := range []string{"delete", "private", "data"} {
+		t.Run(change, func(t *testing.T) {
+			f := newFx(t)
+			p, project := f.p("ana"), f.pid["fakture"]
+			in := NoteInput{Class: Structure, Title: "original", Body: "cached body"}
+			n, _, err := f.CreateNote(ctx, p, project, "replay", in)
+			f.ok(err)
+			if change == "delete" {
+				f.ok(f.DeleteNote(ctx, p, project, n.ID, n.Revision))
+			} else {
+				_, err = f.UpdateNote(ctx, f.p("fani"), project, n.ID, n.Revision, NoteInput{Class: Class(change), Title: "changed", Body: "new body"})
+				f.ok(err)
+			}
+			got, replay, err := f.CreateNote(ctx, p, project, "replay", in)
+			is(t, err, ErrNotFound)
+			if replay || got.Body != "" {
+				t.Fatalf("stale replay: %+v", got)
+			}
+		})
+	}
+}
+
+func TestReplayKeepsAuthorizedSameClassResult(t *testing.T) {
+	f := newFx(t)
+	p, project := f.p("ana"), f.pid["fakture"]
+	in := NoteInput{Class: Data, Title: "first", Body: "original body"}
+	n, _, err := f.CreateNote(ctx, p, project, "same-class", in)
+	f.ok(err)
+	_, err = f.UpdateNote(ctx, p, project, n.ID, n.Revision, NoteInput{Class: Data, Title: "edited", Body: "new body"})
+	f.ok(err)
+	got, replay, err := f.CreateNote(ctx, p, project, "same-class", in)
+	f.ok(err)
+	if !replay || got != n {
+		t.Fatalf("changed authorized replay: %+v", got)
+	}
+	f.ok(f.RemoveMember(ctx, project, p.UserID))
+	_, _, err = f.CreateNote(ctx, p, project, "same-class", in)
+	is(t, err, ErrNotFound)
+}
+
 // mk creates a note as user and returns it (fails the test on error).
 func (f *fx) mk(user, project string, c Class) Note {
 	f.t.Helper()
