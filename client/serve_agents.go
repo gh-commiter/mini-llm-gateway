@@ -352,6 +352,7 @@ func codexTreeProfile(writable, gits, deny []string, network bool, path string) 
 // #121 (kot Grok.noShellNote, needsApproval): brez --always-approve (le branje, worktree, brez pisanja) tek brez uporabnika ukaza ne more odobriti;
 // Grok sicer poseže po find in ls tudi za branje in obstane (»permission required«).
 const grokNoShellNote = "In this run shell commands cannot be approved, so run_terminal_command does not work: do not call it. Look at files with list_dir, read_file and grep."
+
 // The approval refusal has one evidence contract on both gateways (Swift: Grok.run): exit status 0, not cancelled by the client, no error event, empty answer,
 // an end event with stopReason cancelled (a session id is not required) and the refusal text in the last 4000 bytes of stderr (tailBuffer).
 const grokApprovalMarker = "headless run cannot ask for approval"
