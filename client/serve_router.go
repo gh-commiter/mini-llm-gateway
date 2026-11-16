@@ -208,7 +208,7 @@ func openAdmin(cfgPath string) *adminClient {
 }
 
 // do: zahteva k API; napaka API konča ukaz z njenim sporočilom.
-func (a *adminClient) do(method, path string, body, out any) {
+func (a *adminClient) do(method, path string, body, out any) int {
 	var data []byte
 	if body != nil {
 		data, _ = json.Marshal(body)
@@ -242,6 +242,7 @@ func (a *adminClient) do(method, path string, body, out any) {
 	if out != nil {
 		json.Unmarshal(resp, out)
 	}
+	return status
 }
 
 func must(b []byte, _ error) []byte { return b }
@@ -285,6 +286,7 @@ func routerCommand(args []string, in io.Reader) {
 	asJSON := fs.Bool("json", false, "usage: the API answer unchanged")
 	asCSV := fs.Bool("csv", false, "usage: one CSV row per day, provider and model")
 	legacy := fs.Bool("legacy", false, "usage: the counters per folder and device")
+	history := fs.Bool("history", false, "quota: recorded probes, without fetching")
 	claudeProbe := fs.String("claude-probe", "", "quota: on or off (the Claude quota probe)")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, routerHelp) }
 	var pos []string // ukazi in zastavice v poljubnem vrstnem redu
@@ -789,7 +791,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "member", "grant", "core", "usage-events", "quota":
-		coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe})
+		coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, history: *history, provider: *evProvider, json: *asJSON})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

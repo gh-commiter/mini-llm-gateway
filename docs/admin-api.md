@@ -230,6 +230,7 @@ Errors of these routes use the envelope above (`400` invalid, `404` not found, `
 | `GET /usage/events?days=&user=&project=&provider=&model=` | – | `{"days": [{"day", "provider", "model", "user"?, "userName"?, "project"?, "events", "tokensIn", "tokensOut", "eventsWithoutTokens", "nestedEvents", "failedEvents", "reportedCostUsd", "estimatedCostUsd", "costUsd", "estimatedCostEvents", "subscriptionEvents", "unknownBillingEvents", "eventsWithoutCost", "errorEvents", "cancelledEvents", "interruptedEvents", "durationMs", "failedDurationMs", "unknownDurationEvents"}], "gaps": [{"count", "from", "to"}], "timezone":"UTC"}`: every model invocation, per day (UTC), provider, model, user and project, newest first; days 1-3650 (default 7), detail rows older than 400 days are daily totals; also events without a user or project. **Not** `GET /usage` (0.5.x folder counters, unchanged) |
 | `GET /quota` | – | `{"quota": [{"name", "unit", "value"?, "source", "observedAt"?, "resetsAt"?, "resetsText"?, "stale", "note"?, "reason"?}], "claudeProbe": bool}`: Codex windows (`codex-session-log`), the Claude subscription (`claude-usage`, only when the probe is on), OpenRouter credit (`openrouter-api`), LiteLLM spend (`litellm-api`); `source: "unavailable"` with a `reason` (for example `probe off`) when a value cannot be had; works without the core |
 | `PATCH /quota` | `{"claudeProbe": bool}` | as `GET`; turns the Claude quota probe on or off (default off, see gateway.md) |
+| `GET /quota/history?days=N&provider=P` | – | Owner only, same authorization as `/usage/events`. Default 7 days, range 1–400; optional exact provider filter. `{"probes":[{"id","provider","probedAt","status","errorKind"?,"values":[{"name","unit","value","resetsAt"?}]}],"gaps":[{"from","to"}]}`. Newest 1000 probes and at most 1000 gaps; HTTP 206 when either list is truncated, otherwise 200. No probe is run. Requires the core. |
 
 Execution time (0.6.7): `durationMs` is the sum of the time from dispatch (the upstream request or the agent process
 starts) to the end, in milliseconds, of the events whose duration is known; admission and queue time are not in it.
@@ -266,7 +267,7 @@ can request up to 3650 days. Clear History still clears legacy sessions/counters
 accounting. There is no separate accounting deletion endpoint yet. No prompts, answers or raw upstream errors are
 stored in usage accounting.
 
-`GET /usage/events` is a core route (it answers `503` like the others); `GET` and `PATCH /quota` are the gateway's own and
+`GET /quota/history` and `GET /usage/events` are core routes (they answer `503` like the others); `GET` and `PATCH /quota` are the gateway's own and
 work without the core. On the Mac app the quota routes are in the app (Codex session log, provider credit, the opt-in
 Claude probe); the Claude probe is also the Settings → Claude CLI switch "Show the subscription quota".
 
@@ -461,7 +462,7 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
   they move; `""` = the default folder); `GET` returns the folder in use. A path
   that contains a quotation mark (`"`), also after resolving links, is refused (400).
 - **status:** `installed` is Open at Login.
-- **Core routes (0.6.0):** `users`, `bindings`, `projects`, `grants`, `audit`, `core/backup` and `usage/events` are not
+- **Core routes (0.6.0):** `users`, `bindings`, `projects`, `grants`, `audit`, `core/backup`, `usage/events` and `quota/history` are not
   implemented in Swift: the app authenticates the owner as for every admin call and passes the request to the helper
   `minigw-core`, whose answer (status, headers, body) goes back unchanged. While the helper is not running the app
   answers `503` with `The project database is not available: the project helper (minigw-core) is not running`; the model

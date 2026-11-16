@@ -59,7 +59,7 @@ func TestSchema6DurationMigration(t *testing.T) {
 	if snaps, _ := filepath.Glob(filepath.Join(dir, "core-6-*.db")); len(snaps) != 1 {
 		t.Fatal("no core-6 snapshot", snaps)
 	}
-	if err = checkSchemaObjects(ctx, s.DB(), 7); err != nil {
+	if err = checkSchemaObjects(ctx, s.DB(), len(migrations)); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

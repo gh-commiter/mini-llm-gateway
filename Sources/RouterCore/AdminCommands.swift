@@ -15,11 +15,11 @@ public struct AdminCLIError: Error, Equatable {
 /// The flags of the owner commands (Go's coreOpts).
 public struct AdminOpts {
     public var days = "7", user = "", project = "", model = "", claudeProbe = "", provider = "", device = "", folder = "", sort = ""
-    public var json = false, csv = false
+    public var json = false, csv = false, history = false
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
-                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false) {
+                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false) {
         self.days = days; self.user = user; self.project = project; self.model = model; self.claudeProbe = claudeProbe
-        self.provider = provider; self.device = device; self.folder = folder; self.sort = sort; self.json = json; self.csv = csv
+        self.provider = provider; self.device = device; self.folder = folder; self.sort = sort; self.json = json; self.csv = csv; self.history = history
     }
 }
 
@@ -35,6 +35,7 @@ public final class AdminCommands {
           minigw gw core audit                                  the audit trail of the core
           minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)
           minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
+          minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
         (<user> and <project>: the name or slug, or the number.)
         """
 
@@ -194,6 +195,20 @@ public final class AdminCommands {
             printUsage(try request("GET", "/usage/events" + ProjectText.query(q)))
         case "quota":
             try need(1, 1)
+            if o.history {
+                guard o.claudeProbe.isEmpty else { throw fail("--history cannot be combined with --claude-probe") }
+                var q = ["days": o.days]
+                if !o.provider.isEmpty { q["provider"] = o.provider }
+                let r = call("GET", "/quota/history" + ProjectText.query(q), nil)
+                guard r.status != 0 else { throw fail("lost the connection to Mini Gateway") }
+                if r.status >= 300 { throw fail(clean(JSONValue.parse(r.data)?.dict["error"]?.dict["message"]?.string ?? "")) }
+                if r.status == 206 {
+                    try? FileHandle.standardError.write(contentsOf: Data("quota history capped: newest 1000 probes; gaps capped at 1000\n".utf8))
+                }
+                if o.json { say(String(decoding: r.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) }
+                else { out(QuotaHistory.text(r.data)) }
+                break
+            }
             if !o.claudeProbe.isEmpty {
                 guard o.claudeProbe == "on" || o.claudeProbe == "off" else { throw fail("--claude-probe: on or off") }
                 try request("PATCH", "/quota", ["claudeProbe": o.claudeProbe == "on"])

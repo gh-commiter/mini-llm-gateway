@@ -1,5 +1,24 @@
 # Using Mini Gateway
 
+## Quota history
+
+`minigw gw quota --history [--days N] [--provider P] [--json]` shows existing probes without running one, on both
+clients. Text prints one line per attempt with every window, value, unit and reset, or a bounded error kind. The
+default is seven days; the range is 1–400 days. Provider matching is exact: Go uses the configured provider name,
+Swift its provider ID; CLI providers use `claude` and `codex`. Results contain the newest 1000 probes and at most
+1000 loss gaps; truncated responses use HTTP 206 and clients warn on stderr, including with `--json`.
+
+The shared core retains quota detail for 400 days, pruned at startup and in the usage recorder's daily retention
+pass. Clear History clears legacy sessions, not quota history. Backup and restore include it. Cached reads,
+disabled probing and retry backoff create no samples. Claude probing stays opt-in. No background sampling is added.
+Account quota includes work outside Mini Gateway; missing samples are not zero usage.
+
+Account scopes are random opaque IDs, private in storage; neither credentials nor their hashes are stored.
+Remote scopes last for a cache identity during a gateway run; replacing a key or address creates a new scope.
+Restarts create new scopes. CLI logins have no safe account identifier, so each CLI observation uses a separate
+scope. History exposes no scopes, source metadata or raw errors. Loss gaps describe recorder losses across all
+providers, including when the probe list is filtered. See [the admin API](admin-api.md) for the response contract.
+
 Scenarios from first use to parallel agents. Every command here runs on the client, the computer where you work.
 For the full option list see [commands.md](commands.md); for what happens on the wire see
 [how-it-works.md](how-it-works.md).

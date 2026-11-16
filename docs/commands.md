@@ -120,6 +120,7 @@ only on the gateway computer.
 | `minigw gw core audit` | The audit trail of the core |
 | `minigw gw usage-events [--days n] [--user u] [--project p] [--model m]` | Model invocations per day, model and user, with the gaps (events that were lost) |
 | `minigw gw quota [--claude-probe=on\|off]` | Subscription quota and provider credit with source, time and staleness; the Claude probe (`claude -p /usage`, at most every 10 minutes) is off until you turn it on (Mac: also Settings → Claude CLI) |
+| `minigw gw quota --history [--days N] [--provider P] [--json]` | Existing probes only, default 7 days, range 1–400; exact provider filter. One line per probe with windows, values, units and resets, or failure kind. JSON preserves the API response. Capped results warn on stderr. Cannot combine with `--claude-probe`. |
 
 On Windows and Linux every `minigw gw` command also takes `--config FILE`. `minigw serve allow`, `deny`, `devices`,
 `provider` and `status` are older names for the same commands.

@@ -42,7 +42,7 @@ func TestSchema5PricingMigration(t *testing.T) {
 	if len(snaps) != 1 {
 		t.Fatal("no pre-migration snapshot", snaps)
 	}
-	if err = checkSchemaObjects(ctx, s.DB(), 6); err != nil {
+	if err = checkSchemaObjects(ctx, s.DB(), len(migrations)); err != nil {
 		t.Fatal(err)
 	}
 	bak := filepath.Join(t.TempDir(), "pricing.db")

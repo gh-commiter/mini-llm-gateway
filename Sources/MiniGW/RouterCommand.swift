@@ -472,7 +472,7 @@ func routerCommand(_ argv: [String]) {
             try cmd.run(pos, AdminOpts(days: flags["days"] ?? "7", user: flags["user"] ?? "", project: flags["project"] ?? "",
                                        model: flags["model"] ?? "", claudeProbe: flags["claude-probe"] ?? "",
                                        provider: flags["provider"] ?? "", device: flags["device"] ?? "", folder: flags["folder"] ?? "", sort: flags["sort"] ?? "",
-                                       json: flags["json"] == "true", csv: flags["csv"] == "true"))
+                                       json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true"))
         } catch let e as AdminCLIError { fail(e.message, code: e.code) } catch { fail("\(error)") }
 
     default:

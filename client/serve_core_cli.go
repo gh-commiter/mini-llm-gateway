@@ -28,6 +28,7 @@ const coreHelp = `
   minigw gw core audit                                  the audit trail of the core
   minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)
   minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
+  minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
 (<user> and <project>: the name or slug, or the number.)`
 
 type coreUser struct {
@@ -75,7 +76,7 @@ func projectID(a *adminClient, ref string) int64 {
 // coreOpts: the flags of usage-events and usage.
 type coreOpts struct {
 	days, user, project, model, claudeProbe, provider, device, folder, sort string
-	json, csv                                                               bool
+	json, csv, history                                                      bool
 }
 
 func coreCommand(a *adminClient, pos []string, o coreOpts) {
@@ -255,6 +256,26 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		printUsage(os.Stdout, r, true)
 	case "quota":
 		need(1, 1)
+		if o.history {
+			if o.claudeProbe != "" {
+				fail("--history cannot be combined with --claude-probe")
+			}
+			q := url.Values{"days": {o.days}}
+			if o.provider != "" {
+				q.Set("provider", o.provider)
+			}
+			var raw json.RawMessage
+			status := a.do("GET", "/quota/history?"+q.Encode(), nil, &raw)
+			if status == 206 {
+				fmt.Fprintln(os.Stderr, "quota history capped: newest 1000 probes; gaps capped at 1000")
+			}
+			if o.json {
+				os.Stdout.Write(append(raw, '\n'))
+			} else {
+				fmt.Fprint(os.Stdout, quotaHistoryText(raw))
+			}
+			break
+		}
 		if o.claudeProbe != "" {
 			if o.claudeProbe != "on" && o.claudeProbe != "off" {
 				fail("--claude-probe: on or off")

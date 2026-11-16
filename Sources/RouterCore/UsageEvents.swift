@@ -123,6 +123,7 @@ final class UsageGapJournal: @unchecked Sendable {
 
     /// The app's journal (nil in tests and tools: then every sender has a memory-only one).
     nonisolated(unsafe) static var attached: UsageGapJournal?
+    nonisolated(unsafe) static var quotaAttached: UsageGapJournal?
 
     private let lock = NSLock()
     private let file: URL?
@@ -188,7 +189,7 @@ final class UsageGapJournal: @unchecked Sendable {
 /// The app's side of the journal: attached once at start (the file is in the app's own state folder), asked to record what is still queued
 /// when the app quits.
 public enum UsageLoss {
-    public static func attach(file: URL) { UsageGapJournal.attached = UsageGapJournal(file: file) }
+    public static func attach(file: URL) { UsageGapJournal.attached = UsageGapJournal(file: file); UsageGapJournal.quotaAttached = UsageGapJournal(file: file.appendingPathExtension("quota")) }
     public static func persistPendingAtQuit() { UsageSender.persistPendingAtQuit() }
 }
 
@@ -200,6 +201,7 @@ final class UsageSender: @unchecked Sendable {
     private var seq = 0
     private struct Item { let seq: Int, finish: Bool, start: Date, body: [String: Any], name: String }
     private let journal: UsageGapJournal
+    private let quota: Bool
     private var busy = false
     private let limit: Int
     private let retry: Duration
@@ -211,8 +213,9 @@ final class UsageSender: @unchecked Sendable {
     nonisolated(unsafe) private static var live: [Weak] = []
     private struct Weak { weak var sender: UsageSender? }
 
-    init(core: CoreHelper?, limit: Int = 4096, retry: Duration = .milliseconds(500), journal: UsageGapJournal = UsageGapJournal.attached ?? UsageGapJournal()) {
-        self.core = core; self.limit = limit; self.retry = retry; self.journal = journal
+    init(core: CoreHelper?, limit: Int = 4096, retry: Duration = .milliseconds(500), journal: UsageGapJournal? = nil, quota: Bool = false) {
+        let journal = journal ?? (quota ? UsageGapJournal.quotaAttached : UsageGapJournal.attached) ?? UsageGapJournal()
+        self.core = core; self.limit = limit; self.retry = retry; self.journal = journal; self.quota = quota
         guard core != nil else { return }
         Self.liveLock.withLock { Self.live = Self.live.filter { $0.sender != nil } + [Weak(sender: self)] }
         if journal.hasPending {  // a gap from the last run: sent at the first ready, with no event needed to start it
@@ -231,7 +234,7 @@ final class UsageSender: @unchecked Sendable {
     func lostWithTheQueue() {
         let (ids, from) = lock.withLock { () -> (Set<String>, Date) in
             var ids = Set<String>(), from = Date.distantFuture
-            for i in queue { ids.insert((i.body["event"] as? [String: Any])?["id"] as? String ?? "seq\(i.seq)"); from = min(from, i.start) }
+            for i in queue { ids.insert(((i.body["event"] ?? i.body["probe"]) as? [String: Any])?["id"] as? String ?? "seq\(i.seq)"); from = min(from, i.start) }
             return (ids, from)
         }
         journal.add(count: ids.count, from: from, to: Date())
@@ -241,6 +244,12 @@ final class UsageSender: @unchecked Sendable {
     func finish(_ e: UsageEvent) { enqueue("event-finish", e, finish: true) }
 
     private func enqueue(_ name: String, _ e: UsageEvent, finish: Bool) {
+        enqueueBody(name, start: e.start, body: ["event": e.json], finish: finish)
+    }
+
+    func probe(_ p: [String: Any], at: Date) { enqueueBody("quota-probe", start: at, body: ["probe": p], finish: true) }
+
+    private func enqueueBody(_ name: String, start: Date, body: [String: Any], finish: Bool) {
         guard core != nil else { return }
         lock.withLock {
             if queue.count >= limit {  // a lost begin whose finish is stored loses nothing (the finish carries the whole event): drop those first
@@ -249,7 +258,7 @@ final class UsageSender: @unchecked Sendable {
                 if d.finish { journal.add(count: 1, from: d.start, to: Date()) }
             }
             seq += 1
-            queue.append(Item(seq: seq, finish: finish, start: e.start, body: ["event": e.json], name: name))
+            queue.append(Item(seq: seq, finish: finish, start: start, body: body, name: name))
             if busy { return }
             busy = true
             Task.detached { [self] in await drain() }
@@ -267,13 +276,14 @@ final class UsageSender: @unchecked Sendable {
             guard item != nil || gapWaits else { return }
             guard core.isReady else { try? await Task.sleep(for: retry); continue }  // the helper is down: wait, nothing is blocked
             if let gap = journal.beginSend() {  // a gap first (before anything that comes after it)
-                let r = await core.internalCall("event-lost", ["id": gap.id, "count": gap.count, "from": UsageEvent.iso(gap.from), "to": UsageEvent.iso(gap.to)])
+                let r = await core.internalCall(quota ? "quota-lost" : "event-lost", ["id": gap.id, "count": gap.count, "from": UsageEvent.iso(gap.from), "to": UsageEvent.iso(gap.to)])
                 if r.status == 503 { journal.settle(sent: false); try? await Task.sleep(for: retry); continue }
                 journal.settle(sent: true)  // accepted, or refused for good
             }
             guard let item else { continue }
             let r = await core.internalCall(item.name, item.body)
             if r.status == 503 { try? await Task.sleep(for: retry); continue }  // down or not ready: keep it
+            if quota && r.status >= 400 { journal.add(count: 1, from: item.start, to: Date()) }
             lock.withLock { queue.removeAll { $0.seq == item.seq } }  // sent, or refused for good (a bad body would never go through)
         }
     }

@@ -398,7 +398,7 @@ extension Router {
                 onActivity(.step(id: rid, text: s))
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
-            if let thread { Router.quota.queueCodex(home: codexEnv["CODEX_HOME"] ?? Self.realCodexHome, thread: thread) }  // rate_limits of this run's log, read off the answer path
+            if let thread { Router.quota.queueCodex(home: codexEnv["CODEX_HOME"] ?? Self.realCodexHome, thread: thread, record: { [quotaSender] in quotaSender.probe($0, at: $1) }) }  // rate_limits of this run's log, read off the answer path
             // sync: spremembe agenta k odjemalcu pred odgovorom; #82: neprevzete niso uspeh
             if agent, let why = await Self.shares.syncBack(session: session) { throw ShareHub.PullFailed(message: why) }
             if agent, let thread {

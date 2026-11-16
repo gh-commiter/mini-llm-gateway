@@ -67,10 +67,13 @@ const (
 	evBegin usageKind = iota
 	evFinish
 	evFlush
+	evQuota
+	evQuotaGap
 	evGap // a gap record of the adapter: stored durably before the sender is answered
 )
 
 type recMsg struct {
+	probe core.QuotaProbe
 	kind  usageKind
 	ev    core.UsageEvent
 	flush chan struct{}
@@ -79,24 +82,27 @@ type recMsg struct {
 }
 
 type Recorder struct {
-	api     *API
-	ch      chan recMsg
-	quit    chan struct{}
-	stopped chan struct{}
-	spool   *spool
-	lostMu  sync.Mutex
-	lost    int64
-	lostA   time.Time
-	lostB   time.Time
-	dropped atomic.Int64
-	once    sync.Once
-	bound   sync.Map // device id -> last user seen
+	api        *API
+	ch         chan recMsg
+	quit       chan struct{}
+	stopped    chan struct{}
+	spool      *spool
+	quotaSpool *spool
+	quotaLost  core.UsageGapRecord
+	lostMu     sync.Mutex
+	lost       int64
+	lostA      time.Time
+	lostB      time.Time
+	dropped    atomic.Int64
+	once       sync.Once
+	bound      sync.Map // device id -> last user seen
 }
 
 // StartRecorder starts the usage recorder (always, also when the core is not usable: events then go to the spool).
 func (a *API) StartRecorder() {
 	u := &Recorder{api: a, ch: make(chan recMsg, usageQueue), quit: make(chan struct{}), stopped: make(chan struct{}),
 		spool: newSpool(filepath.Join(a.o.Dir, SpoolName))}
+	u.quotaSpool = newSpool(filepath.Join(a.o.Dir, "quota.spool"))
 	a.rec = u
 	go u.run()
 }
@@ -121,6 +127,9 @@ func (u *Recorder) enqueue(m recMsg) {
 	select {
 	case u.ch <- m:
 	default:
+		if m.kind == evQuota {
+			u.noteQuotaLoss(1, m.probe.ProbedAt, time.Now())
+		}
 		if m.kind == evFinish {
 			u.noteLoss(1, m.ev.Start, time.Now())
 		}
@@ -142,11 +151,16 @@ func (u *Recorder) noteLoss(n int64, from, to time.Time) {
 
 // storeGap hands a gap record to the writer and waits until it is durable (in the core, or in the spool when the core is
 // not usable); an error means it is not, and the sender must keep it and send it again with the same id.
-func (u *Recorder) storeGap(g core.UsageGapRecord) error {
+func (u *Recorder) storeGap(g core.UsageGapRecord) error { return u.storeGapKind(false, g) }
+func (u *Recorder) storeGapKind(quota bool, g core.UsageGapRecord) error {
 	if u == nil {
 		return errors.New("no usage recorder")
 	}
-	m := recMsg{kind: evGap, gap: g, done: make(chan error, 1)}
+	kind := evGap
+	if quota {
+		kind = evQuotaGap
+	}
+	m := recMsg{kind: kind, gap: g, done: make(chan error, 1)}
 	select {
 	case u.ch <- m:
 	case <-u.stopped:
@@ -218,6 +232,20 @@ func (u *Recorder) handle(m recMsg) {
 	switch m.kind {
 	case evFlush:
 		close(m.flush)
+	case evQuota:
+		if st != nil && u.quotaSpool.empty() && st.ReplayQuota(ctx, []core.QuotaProbe{m.probe}, nil) == nil {
+			return
+		}
+		if err := u.quotaSpool.addProbe(m.probe); err != nil {
+			u.noteQuotaLoss(1, m.probe.ProbedAt, time.Now())
+		}
+		u.replay()
+	case evQuotaGap:
+		if st != nil && st.ReplayQuota(ctx, nil, []core.UsageGapRecord{m.gap}) == nil {
+			m.done <- nil
+			return
+		}
+		m.done <- u.quotaSpool.addGap(m.gap)
 	case evGap:
 		if st != nil && st.ReplayUsage(ctx, nil, []core.UsageGapRecord{m.gap}) == nil { // INSERT OR IGNORE by id: a repeat is harmless
 			m.done <- nil
@@ -243,6 +271,20 @@ func (u *Recorder) handle(m recMsg) {
 // loss stays pending in memory and is tried again with the next message or tick.
 func (u *Recorder) takeLost() {
 	u.lostMu.Lock()
+	qg := u.quotaLost
+	u.quotaLost = core.UsageGapRecord{}
+	u.lostMu.Unlock()
+	if qg.Count > 0 {
+		qg.ID = "qgap_" + randToken()[:12]
+		st := u.api.store()
+		if st == nil || st.ReplayQuota(context.Background(), nil, []core.UsageGapRecord{qg}) != nil {
+			if u.quotaSpool.addGap(qg) != nil {
+				u.noteQuotaLoss(qg.Count, qg.From, qg.To)
+			}
+		}
+	}
+
+	u.lostMu.Lock()
 	n, a, b := u.lost, u.lostA, u.lostB
 	u.lost = 0
 	u.lostMu.Unlock()
@@ -262,6 +304,14 @@ func (u *Recorder) takeLost() {
 // that is interrupted in between simply runs again (the core ignores what it already has).
 func (u *Recorder) replay() {
 	st := u.api.store()
+	if st != nil && u.quotaSpool != nil && !u.quotaSpool.empty() && u.quotaSpool.repairProbes() == nil {
+		probes, gaps := u.quotaSpool.loadProbes()
+		if st.ReplayQuota(context.Background(), probes, gaps) == nil {
+			if SpoolAfterReplay == nil || !SpoolAfterReplay() {
+				u.quotaSpool.clear()
+			}
+		}
+	}
 	if st == nil || u.spool.empty() {
 		return
 	}
@@ -281,6 +331,7 @@ var SpoolAfterReplay func() bool
 // --- the spool file: JSON lines, append only, private like the rest of the config folder ---
 
 type spoolLine struct {
+	Probe *core.QuotaProbe     `json:"p,omitempty"`
 	T     string               `json:"t"` // event or gap
 	Event *core.UsageEvent     `json:"e,omitempty"`
 	Gap   *core.UsageGapRecord `json:"g,omitempty"`
@@ -296,7 +347,8 @@ type spool struct {
 func newSpool(path string) *spool {
 	sp := &spool{path: path}
 	evs, _ := sp.load()
-	sp.events = len(evs)
+	probes, _ := sp.loadProbes()
+	sp.events = len(evs) + len(probes)
 	if fi, err := os.Stat(path); err == nil {
 		sp.size = fi.Size()
 	}
@@ -412,7 +464,7 @@ func (sp *spool) compact() {
 	for i, l := range lines {
 		enc[i], _ = json.Marshal(l)
 		total += int64(len(enc[i]) + 1)
-		if l.T == "event" {
+		if l.T == "event" || l.T == "probe" {
 			evIdx = append(evIdx, i)
 		}
 	}
@@ -436,7 +488,12 @@ func (sp *spool) compact() {
 	cut := map[int]bool{}
 	for _, i := range evIdx[:drop] {
 		cut[i] = true
-		st := lines[i].Event.Start
+		st := time.Time{}
+		if lines[i].Event != nil {
+			st = lines[i].Event.Start
+		} else if lines[i].Probe != nil {
+			st = lines[i].Probe.ProbedAt
+		}
 		if merged.From.IsZero() || st.Before(merged.From) {
 			merged.From = st
 		}
@@ -474,4 +531,76 @@ func (sp *spool) clear() {
 	if writeFileAtomic(sp.path, nil) == nil {
 		sp.events, sp.size = 0, 0
 	}
+}
+
+// Quota uses the same bounded spool mechanics, in a separate file and gap table.
+// Replace a parseable but invalid probe with a durable gap before replaying it.
+func (sp *spool) repairProbes() error {
+	lines := sp.readLines()
+	changed := false
+	for i, l := range lines {
+		if l.T != "probe" || l.Probe != nil && l.Probe.Valid() {
+			continue
+		}
+		at := time.Now().UTC()
+		if l.Probe != nil && !l.Probe.ProbedAt.IsZero() {
+			at = l.Probe.ProbedAt
+		}
+		lines[i] = spoolLine{T: "gap", Gap: &core.UsageGapRecord{ID: "qgap_" + randToken()[:12], Count: 1, From: at, To: at}}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	var b bytes.Buffer
+	for _, l := range lines {
+		data, err := json.Marshal(l)
+		if err != nil {
+			return err
+		}
+		b.Write(append(data, '\n'))
+	}
+	if err := writeFileAtomic(sp.path, b.Bytes()); err != nil {
+		return err
+	}
+	sp.events = 0
+	for _, l := range lines {
+		if l.T == "probe" {
+			sp.events++
+		}
+	}
+	sp.size, sp.torn = int64(b.Len()), false
+	return nil
+}
+
+func (sp *spool) loadProbes() (probes []core.QuotaProbe, gaps []core.UsageGapRecord) {
+	for _, l := range sp.readLines() {
+		if l.T == "probe" && l.Probe != nil {
+			probes = append(probes, *l.Probe)
+		}
+		if l.T == "gap" && l.Gap != nil {
+			gaps = append(gaps, *l.Gap)
+		}
+	}
+	return
+}
+func (sp *spool) addProbe(p core.QuotaProbe) error {
+	if err := sp.appendLine(spoolLine{T: "probe", Probe: &p}); err != nil {
+		return err
+	}
+	sp.events++
+	sp.bound()
+	return nil
+}
+func (u *Recorder) noteQuotaLoss(n int64, from, to time.Time) {
+	u.lostMu.Lock()
+	defer u.lostMu.Unlock()
+	g := &u.quotaLost
+	if g.Count == 0 || from.Before(g.From) {
+		g.From = from
+	}
+	if to.After(g.To) {
+		g.To = to
+	}
+	g.Count += n
 }

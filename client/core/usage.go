@@ -237,6 +237,16 @@ func markInterrupted(tx *sql.Tx) error {
 func (s *Store) FoldOldUsage(ctx context.Context) (n int64, err error) {
 	cut := ms(s.now().UTC().AddDate(0, 0, -usageRetentionDays))
 	err = s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM quota_probes WHERE probed_at<?`, cut); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`DELETE FROM quota_gaps WHERE to_ms<?`, cut)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	err = s.write(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.Exec(`INSERT INTO usage_daily(day,user_id,project_id,provider,model,events,tokens_in,tokens_out,failed,nested,unknown_tokens,reported_cost,estimated_cost,unknown_cost,estimated_events,subscription_events,unknown_billing_events,duration_ms,failed_duration_ms,unknown_duration,error_events,cancelled_events,interrupted_events)
 SELECT strftime('%Y-%m-%d', start/1000, 'unixepoch'), COALESCE(user_id,0), COALESCE(project_id,0), provider, model, count(*), COALESCE(sum(tokens_in),0), COALESCE(sum(tokens_out),0),
   sum(outcome IN('error','cancelled','interrupted')), sum(parent_id IS NOT NULL), sum(tokens_in IS NULL AND tokens_out IS NULL), sum(CASE WHEN cost_source='reported' THEN cost_usd_nanos END), sum(CASE WHEN cost_source='estimated' THEN cost_usd_nanos END), sum(cost_usd_nanos IS NULL), sum(cost_source='estimated'), sum(billing_mode='subscription'), sum(billing_mode='unknown'), COALESCE(sum(duration_ms),0), COALESCE(sum(CASE WHEN outcome='error' THEN duration_ms END),0), sum(duration_ms IS NULL), sum(outcome='error'), sum(outcome='cancelled'), sum(outcome='interrupted')

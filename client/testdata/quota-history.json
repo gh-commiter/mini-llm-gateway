@@ -1,0 +1,72 @@
+{
+  "now": "2026-11-15T12:00:00Z",
+  "history": {
+    "probes": [
+      {
+        "id": "qp_fixture1",
+        "provider": "codex",
+        "probedAt": "2026-11-15T12:00:00Z",
+        "status": "ok",
+        "values": [
+          {
+            "name": "codex.5h",
+            "unit": "percent",
+            "value": 0
+          },
+          {
+            "name": "codex.weekly",
+            "unit": "percent",
+            "value": 82,
+            "resetsAt": "2026-11-19T00:00:00Z"
+          }
+        ]
+      },
+      {
+        "id": "qp_fixture2",
+        "provider": "openrouter",
+        "probedAt": "2026-11-15T12:00:00Z",
+        "status": "error",
+        "errorKind": "http",
+        "values": []
+      },
+      {
+        "id": "qp_fixture3",
+        "provider": "litellm",
+        "probedAt": "2026-11-15T12:00:00Z",
+        "status": "ok",
+        "values": [
+          {
+            "name": "litellm.spend",
+            "unit": "usd",
+            "value": 3.5,
+            "resetsAt": "2026-12-01T00:00:00Z"
+          }
+        ]
+      }
+    ],
+    "gaps": [
+      {
+        "from": "2026-11-15T10:00:00Z",
+        "to": "2026-11-15T11:00:00Z"
+      }
+    ]
+  },
+  "text": "2026-11-15T12:00:00Z  codex  codex.5h 0 percent resets -  codex.weekly 82 percent resets 2026-11-19T00:00:00Z\n2026-11-15T12:00:00Z  openrouter  http\n2026-11-15T12:00:00Z  litellm  litellm.spend 3.5 usd resets 2026-12-01T00:00:00Z\ngap  2026-11-15T10:00:00Z  2026-11-15T11:00:00Z\n",
+  "wire": {
+    "id": "qp_fixture1",
+    "provider": "codex",
+    "accountScope": "qs_random_fixture",
+    "probedAt": "2026-11-15T12:00:00Z",
+    "status": "ok",
+    "values": [
+      {
+        "name": "codex.weekly",
+        "unit": "percent",
+        "value": 82,
+        "observedAt": "2026-11-01T00:00:00Z",
+        "resetsAt": "2026-11-19T00:00:00Z",
+        "source": "codex-session-log"
+      }
+    ]
+  }
+}

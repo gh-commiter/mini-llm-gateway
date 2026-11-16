@@ -37,6 +37,28 @@ actor QuotaEngine {
     private var remoteBad: [String: FailState] = [:]
     private var remoteFlight: [String: Task<[QuotaValue], Never>] = [:]
     private var jobs = 0
+    private var scopes: [String: String] = [:]
+    typealias Record = @Sendable ([String: Any], Date) -> Void
+    private func persist(_ provider: String, _ identity: String, _ now: Date, _ vals: [QuotaValue], _ kind: String, _ record: Record) {
+        var scope = "qs_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        if !identity.isEmpty {
+            scope = scopes[identity] ?? scope
+            scopes[identity] = scope
+        }
+        record(Self.probeJSON(provider: provider, scope: scope, now: now, vals: vals, kind: kind), now)
+    }
+    static func probeJSON(provider: String, scope: String, now: Date, vals: [QuotaValue], kind: String) -> [String: Any] {
+        let values: [[String: Any]] = kind.isEmpty ? vals.compactMap { v in
+            guard let value = v.value, let observed = v.observedAt else { return nil }
+            var o: [String: Any] = ["name": v.name, "unit": v.unit, "value": value, "observedAt": QuotaTime.format(observed), "source": v.source]
+            if let reset = v.resetsAt { o["resetsAt"] = QuotaTime.format(reset) }
+            return o
+        } : []
+        var o: [String: Any] = ["id": "qp_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(), "provider": provider, "accountScope": scope,
+                                "probedAt": QuotaTime.format(now), "status": kind.isEmpty ? "ok" : "error", "values": values]
+        if !kind.isEmpty { o["errorKind"] = kind }
+        return o
+    }
 
     init(runUsage: @escaping UsageRunner = ClaudeUsageProbe.run, http: @escaping HTTP = QuotaHTTP.get, zone: TimeZone = .current) {
         self.runUsage = runUsage; self.http = http; self.zone = zone
@@ -55,18 +77,19 @@ actor QuotaEngine {
     /// All values, Codex first. Claude and the providers are fetched on demand, at most once per 10 minutes. fetch false reports what is known and
     /// starts no probe and no request (the answer of the settings change that turns the probe on). Entries of providers that are gone, or whose address or
     /// key changed, are dropped.
-    func report(_ i: QuotaInputs, now: Date = Date(), fetch: Bool = true) async -> [QuotaValue] {
+    func report(_ i: QuotaInputs, now: Date = Date(), fetch: Bool = true, record: @escaping Record = { _, _ in }) async -> [QuotaValue] {
         var out = quotaMarkStale(codex, now: now)
         if out.isEmpty { out = [QuotaValue(name: "codex", source: "unavailable", stale: true, note: "no Codex run since this gateway started")] }
-        out += await claudeQuota(i, now: now, fetch: fetch)
+        out += await claudeQuota(i, now: now, fetch: fetch, record: record)
         var live = Set<String>()
         for p in i.providers {
-            let (vals, key) = await remoteQuota(i, p, now: now, fetch: fetch)
+            let (vals, key) = await remoteQuota(i, p, now: now, fetch: fetch, record: record)
             out += vals
             if let key { live.insert(key) }
         }
         remote = remote.filter { live.contains($0.key) }
         remoteBad = remoteBad.filter { live.contains($0.key) }
+        scopes = scopes.filter { live.contains($0.key) }
         return out
     }
 
@@ -74,23 +97,25 @@ actor QuotaEngine {
 
     /// The reading of a finished Codex run's session log goes to a task: it never waits and never blocks the model answer. A full queue
     /// drops the job (the next run records newer numbers anyway).
-    nonisolated func queueCodex(home: String, thread: String) {
-        Task.detached { [self] in await recordCodex(home: home, thread: thread) }
+    nonisolated func queueCodex(home: String, thread: String, record: @escaping Record = { _, _ in }) {
+        Task.detached { [self] in await recordCodex(home: home, thread: thread, record: record) }
     }
 
-    func recordCodex(home: String, thread: String) async {
+    func recordCodex(home: String, thread: String, record: @escaping Record = { _, _ in }) async {
         guard jobs < 8 else { return }
         jobs += 1
         defer { jobs -= 1 }
+        let now = Date()
         let vals = await Task.detached { () -> [QuotaValue] in
-            QuotaParse.lastRateLimits(home: home, thread: thread, observed: Date())
+            QuotaParse.lastRateLimits(home: home, thread: thread, observed: now)
         }.value
+        persist("codex", "", now, vals, vals.isEmpty ? "unavailable" : "", record)
         if !vals.isEmpty { codex = vals }
     }
 
     // MARK: Claude
 
-    private func claudeQuota(_ i: QuotaInputs, now: Date, fetch: Bool) async -> [QuotaValue] {
+    private func claudeQuota(_ i: QuotaInputs, now: Date, fetch: Bool, record: @escaping Record) async -> [QuotaValue] {
         guard i.claudeProbe else { return [.unavailable("claude", "probe off")] }  // opt-in
         guard let exe = i.claudeExe, i.claudeEnabled else { return [.unavailable("claude", "Claude CLI is off or not installed on this gateway")] }
         if !claudeOff.isEmpty { return [.unavailable("claude", claudeOff)] }
@@ -98,7 +123,7 @@ actor QuotaEngine {
         if claudeBad.waiting(now) { return claudeFailed(now) }  // a failed probe is not repeated at once
         if let f = claudeFlight { return await f.value }  // single-flight: one probe at a time; waiters take the result
         guard fetch else { return [.unavailable("claude", "not probed yet")] }
-        let task = Task { await self.probeClaude(exe, i.tmpParent, now) }
+        let task = Task { await self.probeClaude(exe, i.tmpParent, now, record) }
         claudeFlight = task
         let r = await task.value
         claudeFlight = nil
@@ -113,9 +138,10 @@ actor QuotaEngine {
         return [.unavailable("claude", claudeBad.msg)]
     }
 
-    private func probeClaude(_ exe: String, _ parent: URL, _ now: Date) async -> [QuotaValue] {
+    private func probeClaude(_ exe: String, _ parent: URL, _ now: Date, _ record: Record) async -> [QuotaValue] {
         var vals: [QuotaValue] = [], failure: Error?
         do { vals = try QuotaParse.claudeUsage(try await runUsage(exe, parent), now: now, zone: zone) } catch { failure = error }
+        persist("claude", "", now, vals, failure == nil ? "" : (failure as? QuotaError)?.description == QuotaParse.errInference ? "unsafe" : "probe", record)
         if let failure {
             let msg = (failure as? QuotaError)?.description ?? "\(failure)"
             if msg == QuotaParse.errInference {
@@ -144,7 +170,7 @@ actor QuotaEngine {
     }
 
     /// The values and the cache key used (nil = this provider has no quota).
-    private func remoteQuota(_ i: QuotaInputs, _ p: QuotaInputs.Provider, now: Date, fetch: Bool) async -> ([QuotaValue], String?) {
+    private func remoteQuota(_ i: QuotaInputs, _ p: QuotaInputs.Provider, now: Date, fetch: Bool, record: @escaping Record) async -> ([QuotaValue], String?) {
         guard let kind = Self.providerKind(p), p.enabled else { return ([], nil) }
         let key = i.key(p.id) ?? ""
         let ck = Self.remoteKey(p, key: key)
@@ -157,15 +183,17 @@ actor QuotaEngine {
         if key.isEmpty { return (failed("no key for " + p.name), ck) }
         if let f = remoteFlight[ck] { return (await f.value, ck) }  // single-flight per provider
         guard fetch else { return ([.unavailable(kind, "not fetched yet")], ck) }
-        let task = Task { await self.fetchRemote(p, kind, key, ck, now) }
+        let task = Task { await self.fetchRemote(p, kind, key, ck, now, record) }
         remoteFlight[ck] = task
         let r = await task.value
         remoteFlight[ck] = nil
         return (r, ck)
     }
 
-    private func fetchRemote(_ p: QuotaInputs.Provider, _ kind: String, _ key: String, _ ck: String, _ now: Date) async -> [QuotaValue] {
+    private func fetchRemote(_ p: QuotaInputs.Provider, _ kind: String, _ key: String, _ ck: String, _ now: Date, _ record: Record) async -> [QuotaValue] {
+        var errorKind = "unreachable"
         func fail(_ note: String) -> [QuotaValue] {
+            persist(p.id, ck, now, [], errorKind, record)
             var b = remoteBad[ck] ?? FailState()
             b.fail(now, note)
             remoteBad[ck] = b
@@ -174,16 +202,17 @@ actor QuotaEngine {
         }
         var base = p.baseURL
         while base.hasSuffix("/") { base.removeLast() }
-        guard let url = URL(string: base + (kind == "openrouter" ? "/v1/credits" : "/key/info")) else { return fail("bad provider address") }
+        guard let url = URL(string: base + (kind == "openrouter" ? "/v1/credits" : "/key/info")) else { errorKind = "invalid"; return fail("bad provider address") }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         guard let r = await http(req) else { return fail("the provider did not answer") }
-        guard r.status == 200 else { return fail("the provider answered HTTP \(r.status)") }
+        guard r.status == 200 else { errorKind = "http"; return fail("the provider answered HTTP \(r.status)") }
         do {
             let vals = kind == "openrouter" ? try QuotaParse.openRouterCredits(r.data, now: now) : try QuotaParse.liteLLMKeyInfo(r.data, now: now)
+            persist(p.id, ck, now, vals, "", record)
             remote[ck] = (now, vals); remoteBad[ck] = nil
             return vals
-        } catch { return fail((error as? QuotaError)?.description ?? "\(error)") }
+        } catch { errorKind = "invalid"; return fail((error as? QuotaError)?.description ?? "\(error)") }
     }
 }
 

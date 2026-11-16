@@ -337,7 +337,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		seg = append(seg, v)
 	}
-	if seg[0] == "quota" { // the quota settings and report are the gateway's (probes run CLIs and provider HTTP here)
+	if seg[0] == "quota" && !coreapi.IsAdminPath(method, u.EscapedPath()) { // the quota settings and report are the gateway's (probes run CLIs and provider HTTP here)
 		return s.quotaAdmin(method, seg, body)
 	}
 	if coreapi.IsAdminPath(method, u.EscapedPath()) { // 0.6.0 core: the routes of coreapi

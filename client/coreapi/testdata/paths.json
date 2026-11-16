@@ -1,4 +1,7 @@
 [
+  {"kind":"admin","method":"GET","path":"/quota/history","want":true},
+  {"kind":"admin","method":"GET","path":"/quota","want":false},
+  {"kind":"admin","method":"GET","path":"/quota/history/x","want":false},
   {"kind": "member", "method": "GET",    "path": "/minigw/v1/projects",                         "want": true},
   {"kind": "member", "method": "GET",    "path": "/minigw/v1/projects/",                        "want": true},
   {"kind": "member", "method": "GET",    "path": "/minigw/v1/projects/fakture",                 "want": true},

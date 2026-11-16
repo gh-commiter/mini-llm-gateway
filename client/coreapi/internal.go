@@ -244,6 +244,15 @@ func (a *API) internal(ctx context.Context, r Request) Response {
 			return bad
 		}
 		return resp(200, BoundReply{a.UserOf(ctx, in.Device)})
+	case "quota-probe":
+		var in struct {
+			Probe core.QuotaProbe `json:"probe"`
+		}
+		if decodeStrict(r.Body, &in) != nil || !in.Probe.Valid() {
+			return bad
+		}
+		a.QuotaProbe(in.Probe)
+		return resp(202, map[string]any{"queued": true})
 	case "event-begin", "event-finish":
 		var in EventRequest
 		if decodeStrict(r.Body, &in) != nil {
@@ -255,7 +264,7 @@ func (a *API) internal(ctx context.Context, r Request) Response {
 			a.EventFinish(in.Event)
 		}
 		return Response{Status: 202, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"queued":true}`)}
-	case "event-lost":
+	case "event-lost", "quota-lost":
 		var in LostRequest
 		if decodeStrict(r.Body, &in) != nil || in.Count < 1 {
 			return bad
@@ -264,14 +273,18 @@ func (a *API) internal(ctx context.Context, r Request) Response {
 			if !validGapID(in.ID) {
 				return bad
 			}
-			if err := a.rec.storeGap(core.UsageGapRecord{ID: in.ID, Count: in.Count, From: in.From, To: in.To}); err != nil {
+			if err := a.rec.storeGapKind(name == "quota-lost", core.UsageGapRecord{ID: in.ID, Count: in.Count, From: in.From, To: in.To}); err != nil {
 				a.o.Log("event-lost: %v", err)
 				return unavailable()
 			}
 			return resp(200, map[string]any{"stored": true})
 		}
 		if a.rec != nil {
-			a.rec.noteLoss(in.Count, in.From, in.To)
+			if name == "quota-lost" {
+				a.rec.noteQuotaLoss(in.Count, in.From, in.To)
+			} else {
+				a.rec.noteLoss(in.Count, in.From, in.To)
+			}
 			a.rec.kick() // a gap that arrives alone (the app quit with events queued) is stored now
 		}
 		return Response{Status: 202, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"queued":true}`)}
@@ -351,4 +364,17 @@ func validGapID(id string) bool {
 		}
 	}
 	return true
+}
+
+func (a *API) QuotaProbe(p core.QuotaProbe) {
+	if p.Valid() {
+		a.rec.enqueue(recMsg{kind: evQuota, probe: p})
+	} else if a.rec != nil {
+		at := p.ProbedAt
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		a.rec.noteQuotaLoss(1, at, time.Now().UTC())
+		a.rec.kick()
+	}
 }

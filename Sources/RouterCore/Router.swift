@@ -52,6 +52,7 @@ public final class Router: Sendable {
     let onActivity: @Sendable (Activity) -> Void
     let admin: AdminHooks?  // skrbniški API (aplikacija); nil = ni ga
     let core: CoreHelper?  // 0.6.0: the helper that hosts the project core (CoreForward.swift); nil = every project route answers 503
+    let quotaSender: UsageSender
     let usageSender: UsageSender  // 0.6.0: usage events to the helper, off the request path (UsageEvents.swift)
     let catalog: Catalog
     let probes = Probes()
@@ -69,6 +70,7 @@ public final class Router: Sendable {
                 admin: AdminHooks? = nil, core: CoreHelper? = nil, history: GatewayHistory = Router.history, copilotConfig: URL = Copilot.userConfig, allowedFolders: AllowedFolders = AllowedFolders()) {
         self.core = core
         usageSender = UsageSender(core: core)
+        quotaSender = UsageSender(core: core, quota: true)
         self.allowedFolders = allowedFolders
         allowedFolders.record(config.claudeCLI.allowedRoots, records: config.claudeCLI.allowedRecords)
         self.config = config

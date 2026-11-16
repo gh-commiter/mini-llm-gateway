@@ -45,6 +45,8 @@ func IsAdminPath(method, escapedPath string) bool {
 	switch seg[0] {
 	case "users", "bindings", "projects", "grants", "audit", "core":
 		return true
+	case "quota":
+		return len(seg) == 2 && seg[1] == "history"
 	case "usage": // only usage/events; GET /usage is the 0.5.x folder counters of the gateway
 		return len(seg) == 2 && seg[1] == "events"
 	}
@@ -299,6 +301,31 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 			res["next"] = evs[len(evs)-1].ID // pass as ?after= for the next page
 		}
 		return 200, res, true
+	case "GET quota/{}":
+		days := 7
+		if v := q.Get("days"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fail(400, "days: 1 to 400")
+			}
+			days = n
+		}
+		for k := range q {
+			if k != "days" && k != "provider" {
+				return fail(400, "unknown quota history filter")
+			}
+		}
+		if days < 1 || days > 400 {
+			return fail(400, "days: 1 to 400")
+		}
+		rep, capped, err := st.QuotaHistory(ctx, days, q.Get("provider"))
+		if err != nil {
+			return failErr(err)
+		}
+		if capped {
+			return 206, rep, true
+		}
+		return 200, rep, true
 	case "GET usage/{}": // /usage/events
 		days := 7
 		if v := q.Get("days"); v != "" {

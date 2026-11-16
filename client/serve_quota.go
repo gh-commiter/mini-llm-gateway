@@ -10,12 +10,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"math"
+	"minigw/core"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -58,6 +60,7 @@ type quotaState struct {
 	claudeAt  time.Time
 	claudeOff string    // set when `claude /usage` turned out to do more than it should: not run again
 	claudeBad failState // failed probes: not run again before the back-off is over
+	scopes    sync.Map  // in-memory cache identity -> random opaque scope
 	remote    map[string]cachedQuota
 	remoteBad map[string]failState
 }
@@ -285,9 +288,17 @@ func (s *server) recordCodexQuota(state, thread string) {
 	}
 	p := codexSessionFile(home, thread)
 	if p == "" {
+		s.persistQuota("codex", "", time.Now().UTC(), nil, "unavailable")
 		return
 	}
-	if vals := lastRateLimits(p, time.Now().UTC()); len(vals) > 0 {
+	now := time.Now().UTC()
+	vals := lastRateLimits(p, now)
+	kind := ""
+	if len(vals) == 0 {
+		kind = "unavailable"
+	}
+	s.persistQuota("codex", "", now, vals, kind)
+	if len(vals) > 0 {
 		s.quota.mu.Lock()
 		s.quota.codex = vals
 		s.quota.mu.Unlock()
@@ -489,6 +500,13 @@ func (s *server) claudeQuotaF(ctx context.Context, now time.Time, fetch bool) []
 	if err == nil {
 		vals, err = parseClaudeUsage(data, now)
 	}
+	kind := ""
+	if errors.Is(err, errInference) {
+		kind = "unsafe"
+	} else if err != nil {
+		kind = "probe"
+	}
+	s.persistQuota("claude", "", now, vals, kind)
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	switch {
@@ -635,7 +653,9 @@ func (s *server) remoteQuota(ctx context.Context, g serveGateway, now time.Time,
 	if v, ok := cachedRemote(); ok {
 		return v, ck
 	}
+	errorKind := "unreachable"
 	fail := func(note string) ([]quotaValue, string) {
+		s.persistQuota(g.Name, ck, now, nil, errorKind)
 		q.mu.Lock()
 		if q.remoteBad == nil {
 			q.remoteBad = map[string]failState{}
@@ -656,6 +676,7 @@ func (s *server) remoteQuota(ctx context.Context, g serveGateway, now time.Time,
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
+		errorKind = "invalid"
 		return fail("bad provider address")
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
@@ -666,12 +687,15 @@ func (s *server) remoteQuota(ctx context.Context, g serveGateway, now time.Time,
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // the client's 10 s timeout covers the whole body
 	if resp.StatusCode != 200 {
+		errorKind = "http"
 		return fail("the provider answered HTTP " + strconv.Itoa(resp.StatusCode))
 	}
 	vals, err := parse(data, now)
 	if err != nil {
+		errorKind = "invalid"
 		return fail(err.Error())
 	}
+	s.persistQuota(g.Name, ck, now, vals, "")
 	q.mu.Lock()
 	if q.remote == nil {
 		q.remote = map[string]cachedQuota{}
@@ -716,5 +740,39 @@ func (s *server) quotaReportF(ctx context.Context, fetch bool) []quotaValue {
 		}
 	}
 	s.quota.mu.Unlock()
+	s.quota.scopes.Range(func(k, v any) bool {
+		if !live[k.(string)] {
+			s.quota.scopes.Delete(k)
+		}
+		return true
+	})
 	return out
 }
+
+// Only the fresh acquisition paths call this. Cached reads never record history.
+func (s *server) persistQuota(provider, identity string, now time.Time, vals []quotaValue, kind string) {
+	if s.api == nil {
+		return
+	}
+	scope := "qs_" + quotaRandomID()
+	// Remote identity already lives in memory for caching. Persist only a random id.
+	// CLI logins cannot be identified safely: each observation has its own scope.
+	if identity != "" {
+		v, _ := s.quota.scopes.LoadOrStore(identity, scope)
+		scope = v.(string)
+	}
+	p := core.QuotaProbe{ID: "qp_" + quotaRandomID(), Provider: provider, AccountScope: scope, ProbedAt: now, Status: "ok", Values: []core.QuotaValue{}}
+	if kind != "" {
+		p.Status = "error"
+		p.ErrorKind = kind
+	} else {
+		for _, v := range vals {
+			if v.Value != nil && v.ObservedAt != nil {
+				p.Values = append(p.Values, core.QuotaValue{Name: v.Name, Unit: v.Unit, Value: *v.Value, ObservedAt: *v.ObservedAt, ResetsAt: v.ResetsAt, Source: v.Source})
+			}
+		}
+	}
+	s.api.QuotaProbe(p)
+}
+
+func quotaRandomID() string { var b [16]byte; rand.Read(b[:]); return hex.EncodeToString(b[:]) }
