@@ -268,9 +268,12 @@ func TestPullRefusedBusyFailsRequest(t *testing.T) {
 			}
 			ask := func(n string, hold bool) (int, string) {
 				go func() { // agent teče: druga seja vzame mapo, nato agent konča
-					for {
+					for i := 0; ; i++ {
 						if _, err := os.Stat(filepath.Join(marks, "started"+n)); err == nil {
 							break
+						}
+						if i > 3000 { // 30 s: the agent never started
+							return
 						}
 						time.Sleep(10 * time.Millisecond)
 					}
@@ -295,11 +298,15 @@ func TestPullRefusedBusyFailsRequest(t *testing.T) {
 			defer free()
 			go func() { // agent teče: druga seja vzame mapo, nato agent konča
 				defer close(released)
-				for {
+				for { // the agent may never start (the request fails first): the release of the test ends the wait, free() must not hang
 					if _, err := os.Stat(filepath.Join(marks, "started0")); err == nil {
 						break
 					}
-					time.Sleep(10 * time.Millisecond)
+					select {
+					case <-release:
+						return
+					case <-time.After(10 * time.Millisecond):
+					}
 				}
 				u := (&shareClient{root: client}).lockFolder(true, time.Second)
 				if u == nil {

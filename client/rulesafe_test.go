@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -91,11 +92,10 @@ func TestRestrictedGoGitDenyAndModeRefusal(t *testing.T) {
 	}
 	deny := strings.Split(a[i+1], ",")
 	for _, d := range []string{"//copy", "//other"} {
-		for _, g := range gitDenies {
-			for _, want := range []string{"Edit(" + d + "/.git/" + g + ")", "Edit(" + d + "/.git/" + g + "/**)", "Edit(" + d + "/**/.git/" + g + ")", "Edit(" + d + "/**/.git/" + g + "/**)"} {
-				if !slices.Contains(deny, want) {
-					t.Errorf("missing %s", want)
-				}
+		// 0.7.0: one rule set for all of .git (the entries config, hooks, info, commondir, worktrees ... and the nested ones are inside it): the command line of claude stays short
+		for _, want := range []string{"Edit(" + d + "/.git/**)", "Edit(" + d + "/**/.git/**)"} {
+			if !slices.Contains(deny, want) {
+				t.Errorf("missing %s", want)
 			}
 		}
 		if !slices.Contains(deny, "Edit("+d+"/.git)") || !slices.Contains(deny, "Edit("+d+"/**/.git)") {
@@ -125,7 +125,7 @@ func TestRestrictedGoModulesAndClaudeSettingsDenied(t *testing.T) {
 	deny := func(a []string) []string { return strings.Split(a[slices.Index(a, "--disallowedTools")+1], ",") }
 	got := deny(s.agentArgs("/copy", false, []string{"/other"}))
 	for _, d := range []string{"//copy", "//other"} {
-		for _, want := range []string{"Edit(" + d + "/.git/modules/**/hooks)", "Edit(" + d + "/.git/modules/**/config)", "Edit(" + d + "/**/.git/modules/**/info/**)", "Edit(" + d + "/.claude/**)", "Edit(" + d + "/**/.claude/**)"} {
+		for _, want := range []string{"Edit(" + d + "/.git/**)", "Edit(" + d + "/**/.git/**)", "Edit(" + d + "/.claude/**)", "Edit(" + d + "/**/.claude/**)"} {
 			if !slices.Contains(got, want) {
 				t.Errorf("missing %s", want)
 			}
@@ -241,7 +241,28 @@ func TestSandboxDenyWriteHoldsTheGitListAndAGitdirFile(t *testing.T) {
 			t.Errorf("%s: the .git entry is denied", d)
 		}
 	}
-	if tools := a[slices.Index(a, "--disallowedTools")+1]; !strings.Contains(tools, "Edit(//"+strings.TrimPrefix(filepath.ToSlash(dir), "/")+"/.git/shallow)") {
+	if tools := a[slices.Index(a, "--disallowedTools")+1]; !strings.Contains(tools, "Edit(//"+strings.TrimPrefix(filepath.ToSlash(dir), "/")+"/.git/**)") {
 		t.Error("the file tools may edit .git/shallow")
+	}
+}
+
+// 0.7.0: the rules of the folders ride on the command line of claude, and Windows takes 32,767 characters (0a8e83b put one rule per git entry, tool and case on it and broke every
+// Claude CLI start there). A pure function of its inputs, so it runs on every platform: the session folder and three allowed folders with long Windows paths stay under the ceiling the
+// launch enforces (maxArgvWindows: more or longer folders are refused with a message), and the size does not depend on how many git entries are closed.
+func TestAgentArgsStayUnderTheWindowsCommandLineLimit(t *testing.T) {
+	long := func(i int) string {
+		return fmt.Sprintf(`C:\Users\someone\Development\projects\client-%02d\a-long-folder-name-%s`, i, strings.Repeat("x", 60))
+	}
+	for _, allow := range []bool{true, false} {
+		s, _ := testServer(t, func(c *serveConfig) { c.AllowLocalTools = allow; c.Tools = "Read,Edit,Write,Bash,Grep,Glob" })
+		session := `C:\Users\someone\Development\projects\session-` + strings.Repeat("s", 60)
+		n := argvLen("claude.exe", s.agentArgs(session, false, []string{long(1), long(2), long(3)}))
+		t.Logf("allowLocalTools=%v: %d characters (ceiling %d, Windows %d)", allow, n, maxArgvWindows, 32767)
+		if n > maxArgvWindows {
+			t.Errorf("allowLocalTools=%v: %d characters, over the ceiling %d", allow, n, maxArgvWindows)
+		}
+		if one := argvLen("claude.exe", s.agentArgs(session, false, []string{})); one > 8000 {
+			t.Errorf("the session folder alone takes %d characters", one)
+		}
 	}
 }

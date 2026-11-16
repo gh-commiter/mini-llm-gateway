@@ -153,13 +153,11 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 				if !gitEntry && linuxBindable(d, g) { // nothing can be under a file: the entry itself is denied below
 					gitDeny = append(gitDeny, filepath.Join(d, ".git", filepath.FromSlash(g)))
 				}
-				for _, t := range []string{"Edit", "Write"} { // tudi na Windows, kjer sandboxa ni
-					deny = append(deny, t+"("+ruleAbs(d)+"/.git/"+g+")", t+"("+ruleAbs(d)+"/.git/"+g+"/**)")
-				}
-				// #111 S3: nested .git (a clone or submodule inside the folder) as on the Mac (N3); only Edit(...) path rules are matched, they stop Write too
-				deny = append(deny, "Edit("+ruleAbs(d)+"/**/.git/"+g+")", "Edit("+ruleAbs(d)+"/**/.git/"+g+"/**)")
 			}
-			deny = append(deny, "Edit("+ruleAbs(d)+"/.git)", "Edit("+ruleAbs(d)+"/**/.git)") // a gitdir: file (submodule) or .git itself
+			// The file tools stay out of `.git` altogether, the folder's own and every nested one (a clone, a submodule): four rules per folder instead of one per git entry, tool and case
+			// (0.7.0: one rule per entry put the command line of claude over the 32,767 characters of Windows). Only Edit(...) path rules are matched, they stop Write too; every rule
+			// of 0.6.10 for config, hooks, info, commondir, worktrees and the submodules' entries is inside these.
+			deny = append(deny, "Edit("+ruleAbs(d)+"/.git/**)", "Edit("+ruleAbs(d)+"/**/.git/**)", "Edit("+ruleAbs(d)+"/.git)", "Edit("+ruleAbs(d)+"/**/.git)")
 			// P1 (0.7.0): the shell's own rule for the entry: a `.git` that is a gitdir: file or a link (a linked worktree, a submodule) cannot be rewritten to point git at a directory of the
 			// agent's; only where it exists (on Linux a rule for a missing path binds /dev/null there, which breaks git), a real directory is written by git itself and keeps its entries above
 			if gitEntry {
@@ -167,7 +165,6 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 			}
 			for _, g := range submoduleDenies { // V1: the submodules' config, hooks and info (top-level and nested), not the whole .git/modules tree
 				for _, r := range []string{"/.git/modules/**/", "/**/.git/modules/**/"} {
-					deny = append(deny, "Edit("+ruleAbs(d)+r+g+")", "Edit("+ruleAbs(d)+r+g+"/**)")
 					gitDeny = append(gitDeny, filepath.ToSlash(d)+r+g)
 				}
 			}
@@ -250,6 +247,18 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 		args = append(args, "--settings", string(settings))
 	}
 	return args
+}
+
+// maxArgvWindows: CreateProcess fails above 32,767 characters of command line; the rules for the folders ride on it. The ceiling leaves room for the quoting Windows adds.
+const maxArgvWindows = 24000
+
+// argvLen: the command line as Windows builds it, at least: every argument and a separator (quotes and escapes are not counted: the ceiling has the room).
+func argvLen(name string, args []string) int {
+	n := len(name)
+	for _, a := range args {
+		n += len(a) + 1
+	}
+	return n
 }
 
 // sandboxGitEnv: git of a sandboxed run (direct and sync) gets no user and system configuration: the sandbox hides the home folder and git treats an unreadable
@@ -1271,6 +1280,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	defer func() { <-s.procs }()
 	name, cargs := exe[0], append(exe[1:], args...)
+	if n := argvLen(name, cargs); runtime.GOOS == "windows" && n > maxArgvWindows { // CreateProcess takes 32,767 characters: refuse with a reason instead of "filename or extension is too long"
+		return writeError(w, r.rid, 400, fmt.Sprintf("Claude CLI: the command line for this run is %d characters (the limit here is %d): remove allowed folders or use shorter folder paths", n, maxArgvWindows))
+	}
 	unpinned := false // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
 	// brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmdEnv := append(append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1")

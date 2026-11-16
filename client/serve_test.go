@@ -362,7 +362,7 @@ func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
 	}
 	// M4: .git metapodatki niso pisljivi (Edit/Write tudi na Windows; sandbox drugje), kot ClaudeCLI.gitDenies.
 	for _, g := range gitDenies {
-		want := []string{"Edit(//copy/.git/" + g + ")", "Write(//copy/.git/" + g + "/**)"}
+		want := []string{"Edit(//copy/.git/**)", "Edit(//copy/**/.git/**)"} // 0.7.0: all of .git in four rules (the command line of claude on Windows)
 		if runtime.GOOS != "windows" {
 			want = append(want, `"/copy/.git/`+g+`"`)
 		}

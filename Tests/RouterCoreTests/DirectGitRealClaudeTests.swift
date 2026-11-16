@@ -120,3 +120,17 @@ func aClaudeAgentCannotRewriteTheGitFileOfALinkedWorktree() async throws {
         #expect((try? String(contentsOf: wt.appendingPathComponent(".git"), encoding: .utf8)) == before, "the .git file was rewritten (direct=\(direct))")
     }
 }
+
+/// 0.7.0: the length of the arguments of claude for a run with ten allowed folders (Mac: ARG_MAX is 1 MiB for arguments and environment together; the rules ride on argv). Pure function:
+/// the ceiling is half of it (measured at this commit: about 314,000 characters for ten folders of 120 characters, ~31,000 per folder, mostly the sandbox denyWrite list that exists since 0.6.0), so a growth of the rules (one rule per git entry, tool and case broke the command line on Windows at 0a8e83b) is seen here too.
+@Test func theArgumentsOfAClaudeRunWithTenAllowedFoldersStayShort() {
+    var cfg = ClaudeCLIConfig(); cfg.allowLocalTools = true
+    let long = (0..<10).map { "/Users/someone/Development/projects/client-\($0)/a-long-folder-name-" + String(repeating: "x", count: 60) }
+    for allow in [true, false] {
+        cfg.allowLocalTools = allow
+        let a = cfg.agentArgs(cwd: URL(fileURLWithPath: "/Users/someone/Development/projects/session-" + String(repeating: "s", count: 60)), allTools: ["Bash", "Read", "Edit", "Write"], folders: AllowedFolders(), checkedPaths: long)
+        let n = a.reduce(0) { $0 + $1.utf8.count + 1 }
+        print("[argv-length] allowLocalTools=\(allow), ten allowed folders of 120 characters: \(n) characters")
+        #expect(n < 524_288, "\(n)")
+    }
+}
