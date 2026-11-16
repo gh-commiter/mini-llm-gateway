@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"math/big"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -275,8 +276,13 @@ func redactSecrets(s, key string) string {
 	return secretRe.ReplaceAllString(s, "[redacted]")
 }
 
-func spendingLimit(name string, body []byte) bool {
-	if !strings.EqualFold(name, "OpenRouter") {
+// spendingLimit recognises OpenRouter by the host of the provider base URL (openrouter.ai and subdomains), not by its configured name.
+func spendingLimit(baseURL string, body []byte) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	if h := strings.ToLower(u.Hostname()); h != "openrouter.ai" && !strings.HasSuffix(h, ".openrouter.ai") {
 		return false
 	}
 	var e struct {

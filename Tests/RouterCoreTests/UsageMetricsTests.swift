@@ -24,13 +24,13 @@ private func usageFixture(_ name: String) throws -> Data {
 }
 
 @Test func sharedUpstreamErrorsFixtures() throws {
-    struct Case: Decodable { let name: String, provider: String, body: String, message: String; let status: Int; let noRetry: Bool; let key: String? }
+    struct Case: Decodable { let name: String, provider: String, baseURL: String, body: String, message: String; let status: Int; let noRetry: Bool; let key: String? }
     let cases = try JSONDecoder().decode([Case].self, from: usageFixture("upstream-errors.json"))
     for c in cases {
         let body = Data(c.body.utf8)
-        let (status, message) = Router.upstreamError(status: c.status, name: c.provider, body: body, key: c.key ?? "")
+        let (status, message) = Router.upstreamError(status: c.status, name: c.provider, baseURL: c.baseURL, body: body, key: c.key ?? "")
         #expect(status == 502 && message == c.message, "\(c.name)")
-        #expect(spendingLimit(name: c.provider, body: body) == c.noRetry, "\(c.name)")
+        #expect(spendingLimit(baseURL: c.baseURL, body: body) == c.noRetry, "\(c.name)")
     }
 }
 

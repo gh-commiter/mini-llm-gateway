@@ -188,8 +188,10 @@ struct UsageMetrics {
 }
 
 
-func spendingLimit(name: String, body: Data) -> Bool {
-    guard name.lowercased() == "openrouter",
+/// OpenRouter is recognised by the host of the provider base URL (openrouter.ai and subdomains), not by its configured name.
+func spendingLimit(baseURL: String, body: Data) -> Bool {
+    let host = URL(string: baseURL)?.host?.lowercased() ?? ""
+    guard host == "openrouter.ai" || host.hasSuffix(".openrouter.ai"),
           let o = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
           let e = o["error"] as? [String: Any] else { return false }
     let code = e["code"] as? String ?? ""
