@@ -854,7 +854,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let hub = ShareHub(), session = UUID().uuidString
     _ = try #require(await hub.register(session: session, cwd: "/Volumes/share/x", key: nil, device: "dev", native: dir))
     let old = ShareHub.writerWait
-    ShareHub.writerWait = .seconds(120)  // a wait that is taken would last 120 s; the bound below is half of it
+    ShareHub.writerWait = .seconds(1)
     defer { ShareHub.writerWait = old }
     func mount(_ id: String, writes: Bool) async -> URL? {
         await ShareHub.$run.withValue(id) { await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [dir.deletingLastPathComponent().path], writes: writes) }
@@ -938,7 +938,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let run = try #require(await ShareHub.$run.withValue(parent) { await router.startAgentRun(caller, kind: "claude", dir: dir) })
     defer { run.stop() }
     let old = ShareHub.writerWait
-    ShareHub.writerWait = .seconds(1)
+    ShareHub.writerWait = .seconds(120)  // a wait that is taken would last 120 s; the bound below is half of it
     defer { ShareHub.writerWait = old }
     let start = ContinuousClock.now
     let nested = await AgentRun.$current.withValue(run) {

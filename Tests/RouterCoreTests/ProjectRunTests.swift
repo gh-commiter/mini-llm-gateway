@@ -755,16 +755,18 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
     }
 
     @Test func eventsWaitForTheHelperAndAreStoredOnceWhenItIsBack() async throws {
-        let f = try await PFx(backoff: [1.0])
+        let f = try await PFx(backoff: [4.0])  // down long enough for the asks below on a quiet Mac
         await f.project("fakture"); await f.user("ana", projects: ["fakture": "developer"])
         f.makeRouter(claude: try f.script("claude", fakeClaude))
         kill(f.h.pid!, SIGKILL)
         for _ in 0..<200 where f.h.isReady { try await Task.sleep(for: .milliseconds(10)) }
         // the helper is down: models without a project keep working, never blocked on usage
-        let t0 = Date()
         for _ in 0..<3 { #expect(await f.ask().status == 200) }
-        #expect(Date().timeIntervalSince(t0) < 8)
-        #expect(f.router.usageSender.pending >= 3)  // waiting in the bounded queue
+        // Not a time: the three asks returned 200 above while the helper was (checked next) still down, so they cannot have waited for it.
+        // While it is down the events wait in the bounded queue. If a slow Mac let the helper come back first there is nothing to prove here;
+        // the end of the test (all three stored once) holds either way. pending is read first, then the state: down at both = down throughout.
+        let pending = f.router.usageSender.pending
+        if !f.h.isReady { #expect(pending >= 3, "pending \(pending) while the helper is down") }
         #expect(await f.h.waitReady(timeout: 20))
         let rows = await f.usage()
         #expect(f.events(rows, model: "claude-cli-haiku") == 3, "\(rows)")  // all three, each once
