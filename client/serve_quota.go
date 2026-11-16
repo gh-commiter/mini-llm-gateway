@@ -60,7 +60,7 @@ type quotaState struct {
 	claudeAt  time.Time
 	claudeOff string    // set when `claude /usage` turned out to do more than it should: not run again
 	claudeBad failState // failed probes: not run again before the back-off is over
-	scopes    sync.Map  // in-memory cache identity -> random opaque scope
+	identity  sync.Map  // provider -> cache identity last recorded (in memory only; a change makes the core start a new scope)
 	remote    map[string]cachedQuota
 	remoteBad map[string]failState
 }
@@ -740,12 +740,6 @@ func (s *server) quotaReportF(ctx context.Context, fetch bool) []quotaValue {
 		}
 	}
 	s.quota.mu.Unlock()
-	s.quota.scopes.Range(func(k, v any) bool {
-		if !live[k.(string)] {
-			s.quota.scopes.Delete(k)
-		}
-		return true
-	})
 	return out
 }
 
@@ -754,14 +748,14 @@ func (s *server) persistQuota(provider, identity string, now time.Time, vals []q
 	if s.api == nil {
 		return
 	}
-	scope := "qs_" + quotaRandomID()
-	// Remote identity already lives in memory for caching. Persist only a random id.
-	// CLI logins cannot be identified safely: each observation has its own scope.
+	// The core assigns a stable random scope per provider; the identity (it derives from the key and address) stays in
+	// memory and only tells the core that the credential or address changed during this run.
+	rescope := false
 	if identity != "" {
-		v, _ := s.quota.scopes.LoadOrStore(identity, scope)
-		scope = v.(string)
+		prev, loaded := s.quota.identity.Swap(provider, identity)
+		rescope = loaded && prev != identity
 	}
-	p := core.QuotaProbe{ID: "qp_" + quotaRandomID(), Provider: provider, AccountScope: scope, ProbedAt: now, Status: "ok", Values: []core.QuotaValue{}}
+	p := core.QuotaProbe{ID: "qp_" + quotaRandomID(), Provider: provider, Rescope: rescope, ProbedAt: now, Status: "ok", Values: []core.QuotaValue{}}
 	if kind != "" {
 		p.Status = "error"
 		p.ErrorKind = kind

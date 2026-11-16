@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"time"
@@ -12,7 +14,8 @@ import (
 type QuotaProbe struct {
 	ID           string       `json:"id"`
 	Provider     string       `json:"provider"`
-	AccountScope string       `json:"accountScope,omitempty"`
+	AccountScope string       `json:"accountScope,omitempty"` // empty: the store assigns the provider's stable random scope
+	Rescope      bool         `json:"rescope,omitempty"`      // the sender saw the credential or address change: start a new random scope
 	ProbedAt     time.Time    `json:"probedAt"`
 	Status       string       `json:"status"`
 	ErrorKind    string       `json:"errorKind,omitempty"`
@@ -37,7 +40,7 @@ CREATE TABLE IF NOT EXISTS quota_gaps(id TEXT PRIMARY KEY, count INTEGER NOT NUL
 	return err
 }
 func (p QuotaProbe) Valid() bool {
-	if len(p.ID) < 8 || len(p.ID) > 64 || len(p.Provider) == 0 || len(p.Provider) > 256 || len(p.AccountScope) < 8 || len(p.AccountScope) > 64 || p.ProbedAt.IsZero() || len(p.Values) > 32 {
+	if len(p.ID) < 8 || len(p.ID) > 64 || len(p.Provider) == 0 || len(p.Provider) > 256 || (p.AccountScope != "" && (len(p.AccountScope) < 8 || len(p.AccountScope) > 64)) || p.ProbedAt.IsZero() || len(p.Values) > 32 {
 		return false
 	}
 	if p.Status == "error" {
@@ -71,20 +74,29 @@ func (s *Store) ReplayQuota(ctx context.Context, probes []QuotaProbe, gaps []Usa
 			if p.ProbedAt.Before(s.now().UTC().AddDate(0, 0, -usageRetentionDays)) {
 				continue
 			}
-			r, err := tx.Exec(`INSERT OR IGNORE INTO quota_probes VALUES(?,?,?,?,?,?)`, p.ID, p.Provider, p.AccountScope, ms(p.ProbedAt), p.Status, p.ErrorKind)
-			if err != nil {
+			var have int
+			if err := tx.QueryRow(`SELECT count(*) FROM quota_probes WHERE id=?`, p.ID).Scan(&have); err != nil {
 				return err
 			}
-			n, _ := r.RowsAffected()
-			if n == 0 {
+			if have != 0 { // a replay changes nothing, also not the scope
 				continue
+			}
+			scope := p.AccountScope
+			if scope == "" {
+				var err error
+				if scope, err = providerScope(tx, p.Provider, p.Rescope); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.Exec(`INSERT INTO quota_probes VALUES(?,?,?,?,?,?)`, p.ID, p.Provider, scope, ms(p.ProbedAt), p.Status, p.ErrorKind); err != nil {
+				return err
 			}
 			for _, v := range p.Values {
 				var reset any
 				if v.ResetsAt != nil {
 					reset = ms(*v.ResetsAt)
 				}
-				if _, err = tx.Exec(`INSERT INTO quota_values VALUES(?,?,?,?,?,?,?)`, p.ID, v.Name, v.Unit, v.Value, ms(v.ObservedAt), reset, v.Source); err != nil {
+				if _, err := tx.Exec(`INSERT INTO quota_values VALUES(?,?,?,?,?,?,?)`, p.ID, v.Name, v.Unit, v.Value, ms(v.ObservedAt), reset, v.Source); err != nil {
 					return err
 				}
 			}
@@ -96,6 +108,27 @@ func (s *Store) ReplayQuota(ctx context.Context, probes []QuotaProbe, gaps []Usa
 		}
 		return nil
 	})
+}
+
+// providerScope: one random opaque id per provider configuration, kept in meta so it survives restarts (history of one
+// account stays one series). Never derived from a credential or address; rescope starts a new one (the sender saw the
+// credential or address change while it ran).
+func providerScope(tx *sql.Tx, provider string, rescope bool) (string, error) {
+	key := "quota_scope:" + provider
+	var scope string
+	err := tx.QueryRow(`SELECT value FROM meta WHERE key=?`, key).Scan(&scope)
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+	if err == nil && !rescope {
+		return scope, nil
+	}
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	scope = "qs_" + hex.EncodeToString(b[:])
+	return scope, setMeta(tx, key, scope)
 }
 
 // Newest first; the API signals a capped result with HTTP 206.

@@ -37,26 +37,28 @@ actor QuotaEngine {
     private var remoteBad: [String: FailState] = [:]
     private var remoteFlight: [String: Task<[QuotaValue], Never>] = [:]
     private var jobs = 0
-    private var scopes: [String: String] = [:]
+    private var identities: [String: String] = [:]  // provider -> cache identity last recorded (memory only)
     typealias Record = @Sendable ([String: Any], Date) -> Void
     private func persist(_ provider: String, _ identity: String, _ now: Date, _ vals: [QuotaValue], _ kind: String, _ record: Record) {
-        var scope = "qs_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        // The core assigns a stable random scope per provider; the identity only tells it that the credential or address changed during this run.
+        var rescope = false
         if !identity.isEmpty {
-            scope = scopes[identity] ?? scope
-            scopes[identity] = scope
+            rescope = identities[provider].map { $0 != identity } ?? false
+            identities[provider] = identity
         }
-        record(Self.probeJSON(provider: provider, scope: scope, now: now, vals: vals, kind: kind), now)
+        record(Self.probeJSON(provider: provider, rescope: rescope, now: now, vals: vals, kind: kind), now)
     }
-    static func probeJSON(provider: String, scope: String, now: Date, vals: [QuotaValue], kind: String) -> [String: Any] {
+    static func probeJSON(provider: String, rescope: Bool = false, now: Date, vals: [QuotaValue], kind: String) -> [String: Any] {
         let values: [[String: Any]] = kind.isEmpty ? vals.compactMap { v in
             guard let value = v.value, let observed = v.observedAt else { return nil }
             var o: [String: Any] = ["name": v.name, "unit": v.unit, "value": value, "observedAt": QuotaTime.format(observed), "source": v.source]
             if let reset = v.resetsAt { o["resetsAt"] = QuotaTime.format(reset) }
             return o
         } : []
-        var o: [String: Any] = ["id": "qp_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(), "provider": provider, "accountScope": scope,
+        var o: [String: Any] = ["id": "qp_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(), "provider": provider,
                                 "probedAt": QuotaTime.format(now), "status": kind.isEmpty ? "ok" : "error", "values": values]
         if !kind.isEmpty { o["errorKind"] = kind }
+        if rescope { o["rescope"] = true }
         return o
     }
 
@@ -89,7 +91,6 @@ actor QuotaEngine {
         }
         remote = remote.filter { live.contains($0.key) }
         remoteBad = remoteBad.filter { live.contains($0.key) }
-        scopes = scopes.filter { live.contains($0.key) }
         return out
     }
 

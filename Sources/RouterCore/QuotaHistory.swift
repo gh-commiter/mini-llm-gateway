@@ -17,10 +17,10 @@ public enum QuotaHistory {
                     parts.append((w["name"]?.string ?? "") + " " + value + " " + (w["unit"]?.string ?? "") + " resets " + (w["resetsat"]?.string ?? "-"))
                 }
             }
-            out += clean(parts.joined(separator: "  ")) + "\n"
+            out += ProjectText.clean(parts.joined(separator: "  ")) + "\n"
         }
         for g in r["gaps"]?.array ?? [] {
-            out += "gap  " + clean(g.dict["from"]?.string ?? "") + "  " + clean(g.dict["to"]?.string ?? "") + "\n"
+            out += "gap  " + ProjectText.clean(g.dict["from"]?.string ?? "") + "  " + ProjectText.clean(g.dict["to"]?.string ?? "") + "\n"
         }
         return out
     }

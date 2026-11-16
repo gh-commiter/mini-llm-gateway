@@ -55,7 +55,7 @@ private final class ProbeRecords: @unchecked Sendable {
         let v = QuotaValue(name: value["name"] as! String, unit: value["unit"] as! String, value: value["value"] as? Double,
                            source: value["source"] as! String, observedAt: QuotaTime.parse(value["observedAt"] as! String),
                            resetsAt: QuotaTime.parse(value["resetsAt"] as! String), stale: true)
-        var got = QuotaEngine.probeJSON(provider: "codex", scope: wire["accountScope"] as! String,
+        var got = QuotaEngine.probeJSON(provider: "codex",
                                         now: QuotaTime.parse(fx["now"] as! String)!, vals: [v], kind: "")
         got["id"] = wire["id"]
         #expect((got as NSDictionary).isEqual(to: wire))
@@ -82,13 +82,13 @@ private final class ProbeRecords: @unchecked Sendable {
         #expect(records.all.count == 1)
         _ = await engine.report(inputs(), now: now.addingTimeInterval(700), record: records.add)
         #expect(records.all.count == 2)
-        #expect(records.all[0]["accountScope"] as? String == records.all[1]["accountScope"] as? String)
+        #expect(records.all[0]["rescope"] == nil && records.all[1]["rescope"] == nil)
         key = "SECRET2"
         _ = await engine.report(inputs(true), now: now.addingTimeInterval(710), record: records.add)
         _ = await engine.report(inputs(true), now: now.addingTimeInterval(715), record: records.add)
         #expect(records.all.count == 4)
         let remote = records.all.filter { $0["provider"] as? String == "remote-id" }
-        #expect(remote.count == 3 && remote[0]["accountScope"] as? String != remote[2]["accountScope"] as? String)
+        #expect(remote.count == 3 && remote[0]["rescope"] == nil && remote[1]["rescope"] == nil && remote[2]["rescope"] as? Bool == true)
         let failed = records.all.filter { $0["status"] as? String == "error" }
         #expect(failed.count == 1 && failed[0]["errorKind"] as? String == "probe")
         let encoded = String(decoding: try JSONSerialization.data(withJSONObject: records.all), as: UTF8.self)
@@ -107,7 +107,7 @@ private final class ProbeRecords: @unchecked Sendable {
         let now = Date(), journalFile = base.appendingPathComponent("quota-lost.json")
         let down = CoreHelper(binary: nil, store: store, marks: MemoryMarks())
         let sender = UsageSender(core: down, limit: 2, journal: UsageGapJournal(file: journalFile), quota: true)
-        var probe = QuotaEngine.probeJSON(provider: "codex", scope: "qs_random_fixture", now: now,
+        var probe = QuotaEngine.probeJSON(provider: "codex", now: now,
                                           vals: [QuotaValue(name: "weekly", unit: "percent", value: 82, source: "codex-session-log", observedAt: now)], kind: "")
         for i in 0..<3 { probe["id"] = "qp_overflow\(i)"; sender.probe(probe, at: now) }
         sender.lostWithTheQueue()
@@ -122,7 +122,7 @@ private final class ProbeRecords: @unchecked Sendable {
             if (answer["probes"] as? [Any])?.count == 1 { break }
             try await Task.sleep(for: .milliseconds(20))
         }
-        #expect((answer["probes"] as? [Any])?.count == 1 && (answer["gaps"] as? [Any])?.count == 2)
+        #expect((answer["probes"] as? [Any])?.count == 1 && (answer["gaps"] as? [Any])?.count == 1)  // the overflow drop and the queue loss merge into one unsent gap, as for usage events
         #expect(!String(describing: answer).contains("accountScope"))
         let usage = await helper.call(context: .admin, request: CoreRequest(method: "GET", path: "/usage/events"))
         let u = try JSONSerialization.jsonObject(with: usage.body) as! [String: Any]
@@ -136,7 +136,7 @@ private final class ProbeRecords: @unchecked Sendable {
         #expect(await restored.flush())
         let refused = await helper.call(context: .admin, request: CoreRequest(method: "GET", path: "/quota/history"))
         let q = try JSONSerialization.jsonObject(with: refused.body) as! [String: Any]
-        #expect((q["gaps"] as? [Any])?.count == 3)
+        #expect((q["gaps"] as? [Any])?.count == 2)
     }
 }
 

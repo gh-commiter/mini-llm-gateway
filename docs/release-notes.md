@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### New
+- New (both gateways): quota history. Every real quota probe (Claude when its probe is on, Codex after a run, OpenRouter credit, LiteLLM budget), also a failed one, is stored in the core for 400 days; `minigw gw quota --history [--days N] [--provider P] [--json]` (and `GET /quota/history`, owner only) lists them without running a probe. `/quota` is unchanged.
+
+### Known problems
+- Grok on the Mac gateway is off until its sandbox is reworked (0.6.8). Grok through `minigw serve` (Windows, Linux) is not affected.
+- Quota history holds only probes made with this version or newer, and only when a probe actually ran (a cached read or a disabled probe records nothing), so it has gaps by design.
+- The Usage views (settings pages, charts) have not been checked on screen yet.
+- LiteLLM models show a cost only when the proxy's model info (`/model/info`) has prices; otherwise their cost stays unknown.
+- Usage days are UTC days, not local days.
+
+### Known limits
+- Downgrade to 0.6.8 or older: the first start of this version migrates the core database to schema 8 and first writes a snapshot `core-7-<time>.db` into the core folder (`<config>/core`; on the Mac `~/Library/Application Support/Mini Gateway/core`). An older program refuses schema 8 (projects answer 503 `core_unavailable`; models keep working). The way back: stop the gateway (on the Mac quit the app), run `minigw gw core restore <path to that core-7-<time>.db>`, start the older version; what was written to the core after the migration is lost.
+
 ## 0.6.8
 
 ### Fixed

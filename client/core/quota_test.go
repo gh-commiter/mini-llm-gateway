@@ -221,3 +221,42 @@ func TestQuotaRetentionSurvivesUsageOverflow(t *testing.T) {
 		t.Fatal("orphan values", left)
 	}
 }
+
+// One account stays one series: the scope is stable per provider (also across a reopen), changes only on rescope, and is random.
+func TestQuotaScopeIsStablePerProviderAndRandom(t *testing.T) {
+	dir := t.TempDir()
+	s := openT(t, dir)
+	at := time.Now().UTC().Add(-time.Hour)
+	probe := func(id, provider string, rescope bool) QuotaProbe {
+		p := quotaSample(at)
+		p.ID, p.Provider, p.AccountScope, p.Rescope = id, provider, "", rescope
+		return p
+	}
+	scopes := func(s *Store) []string {
+		rows, err := s.DB().Query(`SELECT account_scope FROM quota_probes ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var v string
+			rows.Scan(&v)
+			out = append(out, v)
+		}
+		return out
+	}
+	if err := s.ReplayQuota(ctx, []QuotaProbe{probe("qp_a0001", "LiteLLM", false), probe("qp_a0002", "LiteLLM", false), probe("qp_b0001", "codex", false)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s = openT(t, dir) // a restart keeps the scope
+	defer s.Close()
+	if err := s.ReplayQuota(ctx, []QuotaProbe{probe("qp_a0003", "LiteLLM", false), probe("qp_a0004", "LiteLLM", true), probe("qp_a0004", "LiteLLM", true)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := scopes(s) // a0001 a0002 a0003 a0004 b0001
+	if len(got) != 5 || got[0] != got[1] || got[1] != got[2] || got[3] == got[2] || got[4] == got[0] || len(got[0]) != 35 || got[0][:3] != "qs_" {
+		t.Fatal(got)
+	}
+}

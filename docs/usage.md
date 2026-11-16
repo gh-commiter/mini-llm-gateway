@@ -13,10 +13,11 @@ pass. Clear History clears legacy sessions, not quota history. Backup and restor
 disabled probing and retry backoff create no samples. Claude probing stays opt-in. No background sampling is added.
 Account quota includes work outside Mini Gateway; missing samples are not zero usage.
 
-Account scopes are random opaque IDs, private in storage; neither credentials nor their hashes are stored.
-Remote scopes last for a cache identity during a gateway run; replacing a key or address creates a new scope.
-Restarts create new scopes. CLI logins have no safe account identifier, so each CLI observation uses a separate
-scope. History exposes no scopes, source metadata or raw errors. Loss gaps describe recorder losses across all
+Account scopes are random opaque IDs, private in storage and never shown; neither credentials nor their hashes are stored.
+The core keeps one random scope per provider (in its meta table), so the history of one account stays one series across
+restarts. When the gateway sees the key or address of a provider change while it runs, the next sample starts a new
+random scope (a change made while it was stopped cannot be seen). CLI logins (Claude, Codex) have no safe account
+identifier: they keep one scope per provider. History exposes no scopes, source metadata or raw errors. Loss gaps describe recorder losses across all
 providers, including when the probe list is filtered. See [the admin API](admin-api.md) for the response contract.
 
 Scenarios from first use to parallel agents. Every command here runs on the client, the computer where you work.
