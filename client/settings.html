@@ -95,6 +95,18 @@ a.btn { text-decoration: none; text-align: center; display: inline-block; }
 .filter input { width: 180px; text-align: left; }
 #msg { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--panel); color: var(--err);
   padding: 6px 12px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.2); display: none; }
+.usage-grid { display:grid; grid-template-columns:minmax(0,3fr) minmax(190px,2fr); gap:12px; }
+.usage-panel { background:var(--panel); padding:12px; border-radius:10px; min-width:0; }
+.usage-total { font-size:30px; margin:12px 0; }
+.usage-chart { width:100%; color:var(--muted); }
+.usage-chart rect:focus { outline:2px solid var(--text); stroke:var(--text); stroke-width:1; }
+.usage-table { width:100%; text-align:left; overflow-wrap:anywhere; }
+.usage-table td, .usage-table th { padding:5px; text-align:left; }
+.usage-key { display:inline-block; width:8px; height:8px; margin-right:5px; }
+.usage-bar { height:4px; background:var(--accent); }
+:root { --chart0:#176ac6; --chart1:#a33cac; --chart2:#16806a; --chart3:#ad6100; --chart4:#d14659; --chart5:#6654c0; --chart6:#777780; }
+@media(prefers-color-scheme:dark) { :root { --chart0:#68adff; --chart1:#dd8ee6; --chart2:#54cbb0; --chart3:#efb459; --chart4:#ff8898; --chart5:#b0a2ff; --chart6:#ababba; } }
+@media(max-width:900px) { .usage-grid { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
@@ -124,6 +136,16 @@ async function signIn() {
 const SL = (navigator.language || "").toLowerCase().startsWith("sl");
 document.documentElement.lang = SL ? "sl" : "en";
 const S = {
+  usage:["Usage","Poraba"], tokens:["Tokens","Žetoni"], spend:["Spend","Stroški"], requests:["Requests","Zahteve"],
+  period:["Period","Obdobje"], usageDays:["%s days","%s dni"], dailyModels:["Daily by model · UTC","Dnevno po modelih · UTC"],
+  topModels:["Top models","Največ uporabljeni modeli"], usageModel:["Model","Model"], usageProvider:["Provider","Ponudnik"],
+  usageOther:["Other","Drugi"], usageEmpty:["No events in this period.","V tem obdobju ni dogodkov."],
+  usageError:["Could not load usage: %s","Porabe ni mogoče naložiti: %s"],
+  unknownCost:["%s requests without a known cost","%s zahtev brez znanega stroška"],
+  costHint:["USD · reported cost + ~estimated cost","USD · sporočeni strošek + ~ocenjeni strošek"],
+  usageGap:["Recording gap: %s requests · %s – %s","Vrzel v beleženju: %s zahtev · %s – %s"],
+  usageClock:["Returned days extend beyond this computer’s UTC window; all returned usage is shown.","Vrnjeni dnevi segajo izven obdobja UTC tega računalnika; prikazana je vsa vrnjena poraba."],
+  usageAlt:["Daily usage. Use arrow keys to inspect segments. Model totals are in the Top models table.","Dnevna poraba. S puščicami preglejte dele stolpcev. Vsote modelov so v tabeli."],
   general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Providers", "Ponudniki"], claude: ["Claude CLI", "Claude CLI"],
   about: ["About", "O aplikaciji"], license: ["License", "Licenca"], copyToken: ["Copy Token", "Kopiraj žeton"],
   allowedClients: ["Allowed clients (IP; empty = all)", "Dovoljeni odjemalci (IP; prazno = vsi)"],
@@ -549,9 +571,172 @@ async function copilotPane() {
   ];
 }
 
+function usageNumber(n) {
+  for (const [scale, suffix] of [[1e9, "B"], [1e6, "M"], [1e3, "K"]]) {
+    if (n >= scale * .99995) return Number((n / scale).toFixed(1)) + suffix;
+  }
+  return String(Number(n.toFixed(2)));
+}
+function usageSum(rows) {
+  const sum = {tokens:0, requests:0, reported:0, estimated:0, unknown:0, known:false, hasReported:false, hasEstimate:false};
+  for (const r of rows) {
+    sum.tokens += Number(r.tokensIn || 0) + Number(r.tokensOut || 0);
+    sum.requests += Number(r.events || 0);
+    sum.reported += Number(r.reportedCostUsd || 0);
+    sum.estimated += Number(r.estimatedCostUsd || 0);
+    sum.unknown += Number(r.eventsWithoutCost || 0);
+    sum.known ||= r.reportedCostUsd != null || r.estimatedCostUsd != null;
+    sum.hasReported ||= r.reportedCostUsd != null;
+    sum.hasEstimate ||= r.estimatedCostUsd != null;
+  }
+  sum.spend = sum.reported + sum.estimated;
+  return sum;
+}
+// User/project rows share a stack only when both provider and model match.
+function usageGroups(rows, measure, days, today, limit = 6) {
+  const models = new Map(), daily = new Map();
+  const key = r => JSON.stringify([r.provider, r.model]);
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - i);
+    daily.set(d.toISOString().slice(0, 10), []);
+  }
+  for (const r of rows) {
+    if (!models.has(key(r))) models.set(key(r), {key:key(r), model:r.model, provider:r.provider, rows:[]});
+    models.get(key(r)).rows.push(r);
+    if (!daily.has(r.day)) daily.set(r.day, []);
+    daily.get(r.day).push(r);
+  }
+  const ranked = [...models.values()].map(m => ({...m, ...usageSum(m.rows)}))
+    .sort((a, b) => b[measure] - a[measure] || a.key.localeCompare(b.key));
+  const rest = ranked.slice(limit), series = [...ranked.slice(0, limit)];
+  if (rest.length) series.push({key:null, model:null, provider:"", ...usageSum(rest.flatMap(m => m.rows))});
+  const bars = [...daily].sort(([a], [b]) => a.localeCompare(b)).map(([day, rs]) => ({day, segments:series.map(m => ({...m,
+    ...usageSum(rs.filter(r => m.key === null ? rest.some(x => x.key === key(r)) : key(r) === m.key))}))}));
+  return {total:usageSum(rows), ranked, series, bars};
+}
+function usageValue(sum, measure) {
+  if (measure !== "spend") return usageNumber(sum[measure]);
+  if (!sum.known) return "—";
+  const money = n => "$" + n.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:9});
+  return (sum.hasReported ? money(sum.reported) : "")
+    + (sum.hasEstimate ? (sum.hasReported ? " + " : "") + "~" + money(sum.estimated) : "");
+}
+function usageNotes(report, total, measure) {
+  return [measure === "spend" ? t("costHint") : "",
+    measure === "spend" && total.unknown ? t("unknownCost", total.unknown) : "",
+    ...(report.gaps || []).map(g => t("usageGap", g.count, g.from, g.to))].filter(Boolean);
+}
+function usageSVG(tag, attrs, text) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+function usageChart(data, measure, tooltip) {
+  const svg = usageSVG("svg", {viewBox:"0 0 560 280", class:"usage-chart", role:"group", "aria-label":t("usageAlt")});
+  const segments = [];
+  const max = Math.max(0, ...data.bars.map(b => b.segments.reduce((n, s) => n + s[measure], 0)));
+  const ceiling = measure === "spend" ? max || 1 : Math.max(3, Math.ceil(max / 3) * 3);
+  for (let i = 0; i <= 3; i++) {
+    const y = 230 - i * 70;
+    svg.append(usageSVG("line", {x1:64, x2:550, y1:y, y2:y, stroke:"var(--line)"}),
+      usageSVG("text", {x:58, y:y + 4, "text-anchor":"end", fill:"currentColor", "font-size":11},
+        measure === "spend" && ceiling < 1 ? "$" + Number((ceiling * i / 3).toPrecision(3)) : (measure === "spend" ? "$" : "") + usageNumber(ceiling * i / 3)));
+  }
+  const width = 486 / data.bars.length;
+  data.bars.forEach((bar, index) => {
+    let y = 230;
+    bar.segments.forEach((segment, color) => {
+      const height = segment[measure] / ceiling * 210;
+      if (!height) return;
+      y -= height;
+      const description = bar.day + " · " + (segment.key === null ? t("usageOther") : segment.model)
+        + (segment.provider ? " · " + segment.provider : "") + " · " + usageValue(segment, measure);
+      const rect = usageSVG("rect", {x:64 + index * width, y, width:Math.max(1, width - 2), height,
+        fill:"var(--chart" + color + ")", tabindex:segments.length ? -1 : 0, role:"img", "aria-label":description});
+      const position = segments.length; segments.push(rect);
+      rect.addEventListener("keydown", e => {
+        const offset = ["ArrowRight", "ArrowDown"].includes(e.key) ? 1 : ["ArrowLeft", "ArrowUp"].includes(e.key) ? -1 : 0;
+        if (!offset && e.key !== "Home" && e.key !== "End") return;
+        e.preventDefault();
+        const next = e.key === "Home" ? 0 : e.key === "End" ? segments.length - 1 : (position + offset + segments.length) % segments.length;
+        segments[next].focus();
+      });
+      rect.addEventListener("focus", () => { segments.forEach(n => n.setAttribute("tabindex", n === rect ? 0 : -1)); tooltip.textContent = description; });
+      rect.append(usageSVG("title", {}, description));
+      rect.addEventListener("mouseenter", () => { tooltip.textContent = description; });
+      rect.addEventListener("mouseleave", () => { if (document.activeElement !== rect) tooltip.textContent = ""; });
+      rect.addEventListener("blur", () => { tooltip.textContent = ""; });
+      svg.append(rect);
+    });
+    if (index % Math.ceil(data.bars.length / 6) === 0 || index === data.bars.length - 1) {
+      svg.append(usageSVG("text", {x:64 + (index + .5) * width, y:255, fill:"currentColor", "font-size":11, "text-anchor":"middle"}, bar.day.slice(5)));
+    }
+  });
+  return svg;
+}
+function usageTable(data, measure) {
+  return el("table", {class:"usage-table"}, el("caption", {textContent:t("topModels")}),
+    el("thead", {}, el("tr", {}, ...["usageModel", "usageProvider", measure].map(k => el("th", {scope:"col", textContent:t(k)})))),
+    el("tbody", {}, ...data.ranked.map(m => el("tr", {}, el("th", {scope:"row"},
+      el("span", {class:"usage-key", style:"background:var(--chart" + (data.series.findIndex(s => s.key === m.key) < 0 ? 6 : data.series.findIndex(s => s.key === m.key)) + ")"}),
+      el("span", {textContent:m.model})),
+      el("td", {textContent:m.provider}), el("td", {}, el("span", {textContent:usageValue(m, measure)}),
+        el("div", {class:"usage-bar", style:"width:" + (data.ranked[0][measure] ? m[measure] / data.ranked[0][measure] * 100 : 0) + "%"}))))));
+}
+function usagePane() {
+  let days = 7, measure = "tokens", report = null, request = 0;
+  const body = el("div", {});
+  const period = el("select", {}, ...[7, 30, 90].map(n => el("option", {value:n, textContent:t("usageDays", n)})));
+  const tabs = el("div", {class:"hbar"});
+  const measures = ["tokens", "spend", "requests"];
+  const tabButtons = measures.map((k, index) => {
+    const b = button(t(k), () => { measure = k; render(); });
+    b.id = "usage-tab-" + k;
+    b.setAttribute("role", "tab"); b.setAttribute("aria-controls", "usage-panel");
+    b.addEventListener("keydown", e => {
+      const offset = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!offset && e.key !== "Home" && e.key !== "End") return;
+      e.preventDefault();
+      const next = e.key === "Home" ? 0 : e.key === "End" ? 2 : (index + offset + 3) % 3;
+      measure = measures[next]; render(); tabButtons[next].focus();
+    });
+    return b;
+  });
+  tabs.append(...tabButtons);
+  body.id = "usage-panel"; body.setAttribute("role", "tabpanel");
+  const render = () => {
+    tabButtons.forEach((b, i) => {
+      const selected = measure === measures[i];
+      b.className = "btn" + (selected ? " primary" : ""); b.tabIndex = selected ? 0 : -1;
+      b.setAttribute("aria-selected", String(selected));
+    });
+    body.setAttribute("aria-labelledby", "usage-tab-" + measure);
+    if (!report) return;
+    const data = usageGroups(report.days || [], measure, days, new Date().toISOString().slice(0, 10)), tooltip = note();
+    tooltip.setAttribute("aria-hidden", "true");
+    body.replaceChildren(el("div", {class:"usage-total", textContent:usageValue(data.total, measure)}),
+      ...usageNotes(report, data.total, measure).map(text => note(text)),
+      ...(data.bars.length > days ? [note(t("usageClock"))] : []),
+      data.total.requests ? el("div", {class:"usage-grid"},
+        el("div", {class:"usage-panel"}, section(t("dailyModels")), usageChart(data, measure, tooltip), tooltip),
+        el("div", {class:"usage-panel"}, usageTable(data, measure))) : note(t("usageEmpty")));
+  };
+  const load = async () => {
+    const id = ++request; report = null; body.replaceChildren(note(t("loading")));
+    try { const result = await api("GET", "/usage/events?days=" + days); if (id !== request) return; report = result; render(); }
+    catch (e) { if (id === request) body.replaceChildren(el("p", {class:"note err", textContent:t("usageError", e.message)})); }
+  };
+  tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", t("usage"));
+  period.addEventListener("change", () => { days = Number(period.value); load(); });
+  render(); load();
+  return [card(...ICON.usage, t("usage"), t("dailyModels")), el("label", {}, t("period"), " ", period), tabs, body];
+}
+
 // --- panoji ---
 
 const pages = {
+  usage: () => usagePane(),
   codex: () => agentPane("codex"),
   grok: () => agentPane("grok"),
   copilot: () => copilotPane(),
@@ -930,7 +1115,7 @@ let current = "general", currentArg = "", gateways = [], shownClaude = "";
 const openHistory = new Set(); // naprave z odprto zgodovino (ostane ob osvežitvi vsakih 5 s)
 let openSession = "";
 // Ikone stranske vrstice (kot na Macu: barvna ploščica z znakom).
-const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", devicesGlyph], sessions: ["#34c759", "◷"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
+const ICON = {usage: ["#176ac6", "▥"], general: ["#8e8e93", "⚙"], devices: ["#007aff", devicesGlyph], sessions: ["#34c759", "◷"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
 const gwIcon = g => /openrouter\.ai/.test(g.baseURL) ? ["#af52de", "◈"] : ["#007aff", "▤"];
 let search = "";
 const PRESETS = {litellm: ["LiteLLM", "http://localhost:4000", true], openrouter: ["OpenRouter", "https://openrouter.ai/api", false], other: [null, "https://", false]};
@@ -950,6 +1135,7 @@ async function nav() {
     ...(pages.grok ? [["grok", "Grok CLI", ICON.grok]] : []),
     ["devices", t("devices"), ICON.devices],
     ["sessions", t("sessions"), ICON.sessions],
+    ["usage", t("usage"), ICON.usage],
   ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
   const find = el("input", {type: "text", class: "left search", placeholder: t("search"), value: search});
   find.addEventListener("input", () => { search = find.value; nav().then(() => { const f = document.querySelector("nav .search"); f.focus(); f.setSelectionRange(search.length, search.length); }); });
