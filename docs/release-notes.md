@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Changed
+- When a device has no project access, the answer now says which condition is missing and what the owner runs: the device is not on the gateway's device list (`minigw gw devices allow DEVICE-ID`), or it is not bound to a user (`minigw gw bind DEVICE-ID USER`), with the caller's own device id. `minigw status` on the gateway computer no longer says "(approved)" for a client that is accepted only as a local client: it says that it is not on the device list and has no project access. `minigw gw bind` warns when the device is not on the device list yet.
+
 ## 0.7.9
 
 ### Changed
