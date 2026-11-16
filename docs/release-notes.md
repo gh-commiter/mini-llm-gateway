@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.9
+
 ### New
 - New (both gateways): quota history. Every real quota probe (Claude when its probe is on, Codex after a run, OpenRouter credit, LiteLLM budget), also a failed one, is stored in the core for 400 days; `minigw gw quota --history [--days N] [--provider P] [--json]` (and `GET /quota/history`, owner only) lists them without running a probe. `/quota` is unchanged.
 
