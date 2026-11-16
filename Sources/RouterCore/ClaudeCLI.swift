@@ -1110,7 +1110,7 @@ public enum Detected {
     private static let started: Void = {
         group.enter()
         Thread {
-            let names = ["claude", "codex", "copilot", "grok"], lock = NSLock()
+            let names = ["claude", "codex", "copilot"], lock = NSLock()
             var found: [String: String] = [:]
             DispatchQueue.concurrentPerform(iterations: names.count) { i in
                 let extra = names[i] == "claude" ? ["\(NSHomeDirectory())/.claude/local/claude"] : []
