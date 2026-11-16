@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.7
 
 ### New
 - `minigw gw usage` shows the input tokens read from a provider's prompt cache in a column "cached in" (it appears when any model used a cache); `--csv` and `--json` carry cache read and cache write tokens. With automatic prompt caching most of the input is cache reads, which the report did not show.
@@ -9,6 +9,12 @@
 - Mac gateway: every running Claude CLI agent held one thread of the app's shared thread pool while it read the agent's error output, and listeners and connections were started on queues that cannot start while that pool is full. With as many agent runs or blocked calls as the Mac has cores, the gateway could stop answering until one of them ended. The read now runs on its own thread and the queues have their own priority.
 - Restoring a database backup now rebuilds the knowledge base search index from the notes, so a damaged index in a backup is not installed; if the rebuild fails, the restore fails and the old database stays.
 
+### Known problems
+- That the Swift tests now finish on GitHub's 3-core runner is not yet confirmed (they finish here with a pool of one thread).
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot; the connect line shows the container's own address.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.6
 
