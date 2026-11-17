@@ -159,7 +159,14 @@ func singleLabel(h string) bool {
 	return h != "" && !strings.ContainsAny(h, ".:") && net.ParseIP(h) == nil && h != "localhost"
 }
 
-func privateIP(ip net.IP) bool { return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() }
+// privateIP: a single-label service name may resolve only to a private address. Link-local (169.254.0.0/16, fe80::/10,
+// such as a cloud metadata service), loopback, unspecified and multicast are refused; IPv4-mapped forms are judged as IPv4.
+func privateIP(ip net.IP) bool {
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	return ip.IsPrivate()
+}
 
 // resolveHost: the resolver of provider names; tests replace it.
 var resolveHost = func(ctx context.Context, h string) ([]net.IP, error) {
@@ -268,8 +275,17 @@ func (s *server) gatewayRoutes(g serveGateway) []gwModel {
 	return out
 }
 
+// noProxyServiceName: a single-label service name (container mode) is dialled directly, never through the environment
+// proxy: for http the key would go unencrypted to the proxy, and the proxy would resolve the name without gwDial's check.
+func noProxyServiceName(r *http.Request) (*url.URL, error) {
+	if containerMode() && singleLabel(strings.ToLower(r.URL.Hostname())) {
+		return nil, nil
+	}
+	return http.ProxyFromEnvironment(r)
+}
+
 // gwClients: brez preusmeritev (ključ ne gre drugam), roki za povezavo in glavo odgovora. Za http (--insecure) brez
-// HTTP_PROXY: ključ bi šel nešifriran prek posrednika.
+// HTTP_PROXY: ključ bi šel nešifriran prek posrednika; ime storitve gre vedno neposredno (noProxyServiceName).
 var gwClients = func() [2]*http.Client {
 	var out [2]*http.Client
 	for i := range out {
@@ -278,6 +294,8 @@ var gwClients = func() [2]*http.Client {
 		t.ResponseHeaderTimeout = 10 * time.Minute // odgovor brez toka pride šele na koncu
 		if i == 1 {
 			t.Proxy = nil
+		} else {
+			t.Proxy = noProxyServiceName
 		}
 		out[i] = &http.Client{Transport: t, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}

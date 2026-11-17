@@ -53,7 +53,10 @@ The key is kept in `gateway-keys.json` (mode 0600) in the config volume: protect
 Inside the container `localhost` is the container itself. Put both services on one Docker network and use the service
 name: the gateway in container mode accepts a name without a dot (a Compose service name) for a provider, with
 `--insecure`, as long as it resolves to a private address. It checks this when you add the provider and again at every
-connection, so a name that later points to a public address is not followed. Outside a container such a name is refused.
+connection, so a name that later points to a public address is not followed. Link-local addresses (such as the cloud
+metadata address `169.254.169.254`), loopback, unspecified and multicast addresses are refused too. The name is dialled
+directly, not through `HTTP(S)_PROXY`, so the key is not sent to a proxy. Any container on that network can claim the
+service name and receive the key: put only trusted services on it. Outside a container such a name is refused.
 
 ```yaml
 # compose.override.yaml next to the gateway's compose.yaml: join the network your LiteLLM service is on
