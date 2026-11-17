@@ -194,7 +194,7 @@ func TestKBHookPrune(t *testing.T) {
 	for i := 0; i < 230; i++ {
 		w.write(t, fmt.Sprintf("kb-hook/m%03d.json", i), hookMarker{Gateway: "gw1", Project: 7, Started: 4000000 + int64(i)})
 	}
-	w.e.in = strings.NewReader(`{"session_id":"new","cwd":"` + w.work + `"}`)
+	w.e.in = strings.NewReader(hookStdin("new", w.work))
 	w.e.kb([]string{"hook", "start"})
 	entries, _ := os.ReadDir(filepath.Join(w.cfg, "kb-hook"))
 	names := map[string]bool{}
@@ -427,7 +427,7 @@ func TestKBHookReadsNothingWhenNotEnabled(t *testing.T) {
 		}
 		asked := 0
 		w.e.gateway = func() string { asked++; return "gw1" }
-		w.e.in = strings.NewReader(`{"session_id":"s1","cwd":"` + w.work + `"}`)
+		w.e.in = strings.NewReader(hookStdin("s1", w.work))
 		if err := w.e.kb([]string{"hook", "start"}); err != nil || asked != 0 || w.out.Len() != 0 {
 			t.Fatalf("settings %v: asked %d, out %q, err %v", settings, asked, w.out.String(), err)
 		}
@@ -469,4 +469,11 @@ func TestHookRequestCommandsWork(t *testing.T) {
 			t.Fatalf("%v: %v %q", args, sent, w.out.String())
 		}
 	}
+}
+
+// hookStdin: the hook's JSON with the folder encoded properly (a Windows path has backslashes; pasted into a JSON
+// string unescaped it is invalid JSON and the hook rightly ignores it).
+func hookStdin(session, cwd string) string {
+	b, _ := json.Marshal(map[string]string{"session_id": session, "cwd": cwd})
+	return string(b)
 }
