@@ -57,10 +57,11 @@ type NoteJSON struct {
 	Updated          time.Time        `json:"updated"`
 	Revision         int64            `json:"revision"`
 	EntryKind        string           `json:"entryKind"`
+	Team             string           `json:"team,omitempty"` // the team of a note in a team's own notes (Project is then a hidden id)
 }
 
 func toNote(n core.Note, withBody bool) NoteJSON {
-	j := NoteJSON{ID: n.ID, Project: n.ProjectID, Class: n.Class, Title: n.Title, Author: n.Author, Created: n.Created, Updated: n.Updated, Revision: n.Revision, EntryKind: n.EntryKind}
+	j := NoteJSON{ID: n.ID, Project: n.ProjectID, Class: n.Class, Title: n.Title, Author: n.Author, Created: n.Created, Updated: n.Updated, Revision: n.Revision, EntryKind: n.EntryKind, Team: n.Team}
 	if j.EntryKind == "" { // an old idempotency receipt
 		j.EntryKind = core.KindFinding
 	}

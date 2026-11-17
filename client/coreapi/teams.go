@@ -29,6 +29,8 @@ type TeamDetailJSON struct {
 	TeamJSON
 	Members  []TeamMemberJSON `json:"members"`
 	Projects []ProjectJSON    `json:"projects"`
+	// Notes: how many notes the team's own notes hold (only for a roster member of an active team).
+	Notes *int `json:"notes,omitempty"`
 }
 
 func toTeam(t core.Team) TeamJSON {
@@ -49,7 +51,7 @@ func teamProjects(ps []core.Project) []ProjectJSON {
 	return out
 }
 func teamDetail(t core.TeamDetail) TeamDetailJSON {
-	return TeamDetailJSON{toTeam(t.Team), teamMembers(t.Members), teamProjects(t.Projects)}
+	return TeamDetailJSON{toTeam(t.Team), teamMembers(t.Members), teamProjects(t.Projects), t.Notes}
 }
 
 func (a *API) teamRoute(ctx context.Context, st *core.Store, p core.Principal, r Request) Response {

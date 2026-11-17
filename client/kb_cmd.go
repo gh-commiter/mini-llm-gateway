@@ -24,7 +24,7 @@ minigw kb mcp [--project slug] [--print-config]
 minigw kb search [<project>|--team <team>] <query> [--json]   a project search also covers its team's notes (as far as you may read them); a hit from there ends with "from team:<name>"
 minigw kb submit <project>|--team <team> [--class structure|data] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB); private is for projects only
 minigw kb faq [<project>|--team <team>] [--json]   the project's (or the team's) questions and answers
-minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)
+minigw kb submissions [<project>|--team <team>] [--json]   your submissions (all projects and your teams' own notes if omitted)
 minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)`
 const kbAdminHelp = `minigw gw kb rebuild-search
 minigw gw kb review [<project>|--team <team>]   pending submissions, including bodies
@@ -47,34 +47,49 @@ const (
 // teamSegment resolves --team to the id of the team's own notes, which the notes, search and submission routes
 // take in place of a project id. A team the caller is not on is the usual 404.
 func (e *projectEnv) teamSegment(c connection, team string) (int64, error) {
-	st, b, h := e.do(c, "GET", "/minigw/v1/teams/"+url.PathEscape(team), nil, nil)
-	if st != 200 {
-		return 0, gatewayError(st, b, h)
-	}
-	var t struct{ Segment int64 }
-	if err := json.Unmarshal(b, &t); err != nil {
-		return 0, err
-	}
-	if t.Segment == 0 {
-		return 0, errors.New("this gateway has no team notes: update it")
-	}
-	return t.Segment, nil
+	id, _, err := e.teamInfo(c, team)
+	return id, err
 }
 
-// subjectOf names where a submission belongs: "project <id>", or "team <name>" for a team's notes (names maps
-// team ids to names; an unknown one prints the id).
-func subjectOf(project int64, names map[int64]string) string {
-	if team, ok := core.SegmentTeam(project); ok {
-		if names[team] != "" {
-			return "team " + names[team]
+// teamInfo is teamSegment with the team's name as the gateway spells it.
+func (e *projectEnv) teamInfo(c connection, team string) (int64, string, error) {
+	st, b, h := e.do(c, "GET", "/minigw/v1/teams/"+url.PathEscape(team), nil, nil)
+	if st != 200 {
+		return 0, "", gatewayError(st, b, h)
+	}
+	var t struct {
+		Name    string
+		Segment int64
+	}
+	if err := json.Unmarshal(b, &t); err != nil {
+		return 0, "", err
+	}
+	if t.Segment == 0 {
+		return 0, "", errors.New("this gateway has no team notes: update it")
+	}
+	return t.Segment, t.Name, nil
+}
+
+// subjectOf names where a note, hit or submission belongs: "project <id>", or "team <name>" for a team's own notes
+// (never the hidden id: an unknown name prints "team"). It is the only place that prints a project column.
+func subjectOf(project int64, name string) string {
+	if _, ok := core.SegmentTeam(project); ok {
+		if name == "" {
+			return "team"
 		}
-		return "team " + strconv.FormatInt(team, 10)
+		return "team " + name
 	}
 	return fmt.Sprintf("project %d", project)
 }
 
+// teamSubject is subjectOf for a submission, whose team name comes from a map of team ids to names.
+func teamSubject(project int64, names map[int64]string) string {
+	team, _ := core.SegmentTeam(project)
+	return subjectOf(project, names[team])
+}
+
 func submissionLine(v core.Submission, names map[int64]string) string {
-	return clean(fmt.Sprintf("submission %d  %s  %s  %s  %s%s", v.ID, subjectOf(v.Project, names), v.State, v.Class, v.Title, kindSuffix(v.EntryKind)))
+	return clean(fmt.Sprintf("submission %d  %s  %s  %s  %s%s", v.ID, teamSubject(v.Project, names), v.State, v.Class, v.Title, kindSuffix(v.EntryKind)))
 }
 func submissionResult(v core.Submission) string {
 	return fmt.Sprintf("submission %d %s", v.ID, v.State)
@@ -120,13 +135,12 @@ func (e *projectEnv) kb(args []string) error {
 		return usage
 	}
 	if *team != "" {
-		if pos[0] != "submit" {
-			return usage
-		}
-		if len(pos) != 2 {
+		if pos[0] == "submit" && len(pos) != 2 || pos[0] == "submissions" && len(pos) != 1 {
 			return errors.New(teamProjectUsage)
 		}
-		pos = []string{"submit", "", pos[1]}
+		if pos[0] == "submit" {
+			pos = []string{"submit", "", pos[1]}
+		}
 	} else if pos[0] == "submit" && len(pos) != 3 || pos[0] == "submissions" && len(pos) > 2 {
 		return usage
 	}
@@ -146,8 +160,13 @@ func (e *projectEnv) kb(args []string) error {
 		}
 		return p.ID, nil
 	}
+	names := map[int64]string{} // team id -> name, for the lines of submissions to a team's own notes
 	if *team != "" {
-		project, err = e.teamSegment(c, *team)
+		var name string
+		if project, name, err = e.teamInfo(c, *team); err == nil {
+			t, _ := core.SegmentTeam(project)
+			names[t] = name
+		}
 	} else if len(pos) > 1 {
 		project, err = resolve(pos[1])
 	}
@@ -210,6 +229,21 @@ func (e *projectEnv) kb(args []string) error {
 		for _, p := range ps {
 			projects = append(projects, p.ID)
 		}
+		// The teams you are on: your submissions to their own notes too (a gateway without teams just has none).
+		if st, b, _ := e.do(c, "GET", "/minigw/v1/teams", nil, nil); st == 200 {
+			var ts []struct {
+				Name    string
+				Segment int64
+			}
+			if json.Unmarshal(b, &ts) == nil {
+				for _, t := range ts {
+					if team, ok := core.SegmentTeam(t.Segment); ok {
+						projects = append(projects, t.Segment)
+						names[team] = t.Name
+					}
+				}
+			}
+		}
 	}
 	raw := []any{}
 	all := []core.Submission{}
@@ -248,7 +282,7 @@ func (e *projectEnv) kb(args []string) error {
 		return nil
 	}
 	for _, v := range all {
-		e.say(submissionLine(v, nil))
+		e.say(submissionLine(v, names))
 	}
 	if len(all) == 0 {
 		e.say("no submissions")
@@ -261,7 +295,7 @@ func searchLine(v core.SearchHit) string {
 	if v.From != "" {
 		from = "  from " + v.From
 	}
-	return clean(fmt.Sprintf("%d  %s  project %d  %s  %s%s%s\n%s", v.ID, v.Title, v.Project, v.Class, noteTime(v.Updated), kindSuffix(v.EntryKind), from, v.Snippet))
+	return clean(fmt.Sprintf("%d  %s  %s  %s  %s%s%s\n%s", v.ID, v.Title, subjectOf(v.Project, v.Team), v.Class, noteTime(v.Updated), kindSuffix(v.EntryKind), from, v.Snippet))
 }
 
 // kbFAQ: minigw kb faq [<project>] [--json]. The pages are followed (at most faqPages).

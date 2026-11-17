@@ -9,7 +9,7 @@ extension ProjectEnv {
         minigw kb search [<project>|--team <team>] <query> [--json]   a project search also covers its team's notes (as far as you may read them); a hit from there ends with "from team:<name>"
         minigw kb submit <project>|--team <team> [--class structure|data] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB); private is for projects only
         minigw kb faq [<project>|--team <team>] [--json]   the project's (or the team's) questions and answers
-        minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)
+        minigw kb submissions [<project>|--team <team>] [--json]   your submissions (all projects and your teams' own notes if omitted)
         minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)
         """
     public static let kbAdminHelp = """
@@ -22,14 +22,16 @@ extension ProjectEnv {
     static let teamAgentRefusal = "inside an agent run the project is the run's own: --team is not accepted"
     /// Where a team's own notes live: ids above this are a team's notes (the team id is the difference).
     static let segmentBase: Int64 = 1 << 40
-    /// "project <id>", or "team <name>" for a team's notes (names maps team ids to names; an unknown one prints the id).
-    static func subjectOf(_ project: Int64, _ names: [Int64: String]) -> String {
+    /// Where a note, hit or submission belongs: "project <id>", or "team <name>" for a team's own notes (never the hidden id:
+    /// an unknown name prints "team"). The only place that prints a project column.
+    static func subjectOf(_ project: Int64, _ name: String) -> String {
         guard project > segmentBase else { return "project \(project)" }
-        let team = project - segmentBase
-        return "team " + (names[team].flatMap { $0.isEmpty ? nil : $0 } ?? String(team))
+        return name.isEmpty ? "team" : "team " + name
     }
+    /// subjectOf for a submission, whose team name comes from a map of team ids to names.
+    static func teamSubject(_ project: Int64, _ names: [Int64: String]) -> String { subjectOf(project, names[project - segmentBase] ?? "") }
     static func submissionLine(_ d: JDict, _ names: [Int64: String] = [:]) -> String {
-        ProjectText.clean("submission \(d["id"]?.int ?? 0)  \(subjectOf(d["project"]?.int ?? 0, names))  \(d["state"]?.string ?? "")  \(d["class"]?.string ?? "")  \(d["title"]?.string ?? "")\(kindSuffix(d))")
+        ProjectText.clean("submission \(d["id"]?.int ?? 0)  \(teamSubject(d["project"]?.int ?? 0, names))  \(d["state"]?.string ?? "")  \(d["class"]?.string ?? "")  \(d["title"]?.string ?? "")\(kindSuffix(d))")
     }
     /// A faq is marked at the end of the first line; a finding prints as before.
     static func kindSuffix(_ d: JDict) -> String { d["entrykind"]?.string == "faq" ? "  (faq)" : "" }
@@ -45,12 +47,15 @@ extension ProjectEnv {
     }
 
     /// --team: the id of the team's own notes, which the notes, search and submission routes take in place of a project id.
-    func teamSegment(_ c: ProjectConn, _ team: String) throws -> Int64 {
+    func teamSegment(_ c: ProjectConn, _ team: String) throws -> Int64 { try teamInfo(c, team).0 }
+    /// teamSegment with the team's name as the gateway spells it.
+    func teamInfo(_ c: ProjectConn, _ team: String) throws -> (Int64, String) {
         let r = request(c, "GET", "/minigw/v1/teams/" + ProjectText.pathEscape(team), [:], nil)
         guard r.status == 200 else { throw gwError(r) }
-        guard let segment = JSONValue.parse(r.data)?.dict["segment"]?.int else { throw Self.malformed }
+        let d = JSONValue.parse(r.data)?.dict
+        guard let segment = d?["segment"]?.int else { throw Self.malformed }
         if segment == 0 { throw ProjectError("this gateway has no team notes: update it") }
-        return segment
+        return (segment, d?["name"]?.string ?? "")
     }
 
     public func kb(_ args: [String]) throws {
@@ -65,9 +70,9 @@ extension ProjectEnv {
         var pos = fl.positional
         let team = fl.string("team")
         if !team.isEmpty {
-            guard pos.first == "submit" else { throw usage }
-            guard pos.count == 2 else { throw ProjectError(Self.teamProjectUsage) }
-            pos = ["submit", "", pos[1]]
+            guard pos.first == "submit" || pos.first == "submissions" else { throw usage }
+            guard pos[0] == "submit" ? pos.count == 2 : pos.count == 1 else { throw ProjectError(Self.teamProjectUsage) }
+            if pos[0] == "submit" { pos = ["submit", "", pos[1]] }
         } else {
             guard pos.count == 3 && pos[0] == "submit" || (1...2).contains(pos.count) && pos[0] == "submissions" else { throw usage }
         }
@@ -80,8 +85,10 @@ extension ProjectEnv {
             return r.data
         }
         var project: Int64 = 0
+        var names: [Int64: String] = [:]  // team id -> name, for the lines of submissions to a team's own notes
         if !team.isEmpty {
-            project = try teamSegment(c, team)
+            let (id, name) = try teamInfo(c, team)
+            project = id; names[id - Self.segmentBase] = name
         } else if pos.count > 1 {
             let b = try request("GET", Self.apiProjects + "/" + ProjectText.pathEscape(pos[1]))
             project = JSONValue.parse(b)?.dict["id"]?.int ?? 0
@@ -116,6 +123,14 @@ extension ProjectEnv {
             let b = try request("GET", Self.apiProjects + "?archived=1")
             guard case .arr(let ps)? = JSONValue.parse(b) else { throw Self.malformed }
             projects = ps.map { $0.dict["id"]?.int ?? 0 }
+            // The teams you are on: your submissions to their own notes too (a gateway without teams just has none).
+            let tr = send(c, "GET", "/minigw/v1/teams", [:], nil)
+            if tr.status == 200, case .arr(let ts)? = JSONValue.parse(tr.data) {
+                for t in ts {
+                    let id = t.dict["segment"]?.int ?? 0
+                    if id > Self.segmentBase { projects.append(id); names[id - Self.segmentBase] = t.dict["name"]?.string ?? "" }
+                }
+            }
         }
         var raw: [[String: Any]] = []
         var all: [JSONValue] = []
@@ -131,12 +146,12 @@ extension ProjectEnv {
             } while after != 0
         }
         if fl.bool("json") { say(ProjectText.jsonText(Self.kbJSON(["submissions": raw]))); return }
-        for v in all { say(Self.submissionLine(v.dict)) }
+        for v in all { say(Self.submissionLine(v.dict, names)) }
         if all.isEmpty { say("no submissions") }
     }
 
     func searchLine(_ d: JDict) -> String {
-        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  project \(d["project"]?.int ?? 0)  \(d["class"]?.string ?? "")  \(stamp(d["updated"]?.string.flatMap(ProjectText.parseTime)))\(Self.kindSuffix(d))\(d["from"]?.string.flatMap { $0.isEmpty ? nil : "  from " + $0 } ?? "")\n\(d["snippet"]?.string ?? "")")
+        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  \(Self.subjectOf(d["project"]?.int ?? 0, d["team"]?.string ?? ""))  \(d["class"]?.string ?? "")  \(stamp(d["updated"]?.string.flatMap(ProjectText.parseTime)))\(Self.kindSuffix(d))\(d["from"]?.string.flatMap { $0.isEmpty ? nil : "  from " + $0 } ?? "")\n\(d["snippet"]?.string ?? "")")
     }
     func kbSearch(_ args: [String]) throws {
         let usage = ProjectError("usage: minigw kb search [<project>|--team <team>] <query> [--json]")

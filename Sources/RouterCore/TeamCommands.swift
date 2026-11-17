@@ -99,6 +99,7 @@ extension ProjectEnv {
                 let v = p.dict
                 say(ProjectText.clean("project \(v["id"]?.int ?? 0)  \(v["slug"]?.string ?? "")  \(v["name"]?.string ?? "")\(v["archived"]?.bool == true ? "  (archived)" : "")"))
             }
+            if let n = d["notes"]?.int { say(ProjectText.clean("team notes: \(n)  (read them: minigw note list --team \(d["name"]?.string ?? ""))")) }
         }
     }
 }

@@ -27,6 +27,8 @@ type Note struct {
 	Updated          time.Time
 	Revision         int64
 	EntryKind        string // finding or faq; "" (an old receipt) reads as finding
+	// Team names the team of a note that lives in a team's own notes; ProjectID is then a hidden id no output should show.
+	Team string `json:",omitempty"`
 }
 
 // NoteInput is the payload of create and update.
@@ -182,6 +184,13 @@ func listNotes(tx *sql.Tx, user, project int64, rs []readable, class Class, afte
 	if err := rows.Err(); err != nil {
 		return pg, err
 	}
+	rows.Close()
+	names := map[int64]string{}
+	for i := range pg.Notes {
+		if err := fillTeam(tx, &pg.Notes[i], names); err != nil {
+			return pg, err
+		}
+	}
 	if len(pg.Notes) > limit {
 		pg.Notes = pg.Notes[:limit]
 		last := pg.Notes[limit-1]
@@ -211,7 +220,28 @@ func getNote(tx *sql.Tx, id int64) (Note, error) {
 	if err == nil {
 		err = tx.QueryRow(`SELECT source_meta FROM notes WHERE id=?`, id).Scan(&n.UnverifiedSource)
 	}
+	if err == nil {
+		err = fillTeam(tx, &n, nil)
+	}
 	return n, notFound(err)
+}
+
+// fillTeam sets Note.Team for a note of a team's own notes (names caches the lookups of one listing; nil = none).
+func fillTeam(tx *sql.Tx, n *Note, names map[int64]string) error {
+	if !isSegment(n.ProjectID) {
+		return nil
+	}
+	if name, ok := names[n.ProjectID]; ok {
+		n.Team = name
+		return nil
+	}
+	if err := tx.QueryRow(`SELECT name FROM teams WHERE id=?`, n.ProjectID-segmentBase).Scan(&n.Team); err != nil {
+		return err
+	}
+	if names != nil {
+		names[n.ProjectID] = n.Team
+	}
+	return nil
 }
 
 // noteMetadata never selects the body.

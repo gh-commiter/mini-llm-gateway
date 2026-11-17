@@ -79,6 +79,12 @@ enum KBMCP {
                     "annotations": ["readOnlyHint": true, "destructiveHint": false]]
         }
     }
+    /// A team's own notes carry a hidden id in "project": a model sees the team name (the "team" field), never that id.
+    static func teamNotID(_ d: [String: Any]) -> [String: Any] {
+        var d = d
+        if let n = d["project"] as? MCPNumber, let id = Int64(n.raw), id > ProjectEnv.segmentBase { d["project"] = nil }
+        return d
+    }
     static func sanitize(_ value: Any) -> Any {
         if let s = value as? String { return ProjectText.clean(s) }
         if let d = value as? [String: Any] { return d.mapValues(sanitize) }
@@ -199,8 +205,9 @@ extension ProjectEnv {
             if name == "note_read" && !["structure", "data"].contains(v["class"] as? String ?? "") { throw ProjectError("not found or not visible") }
             if name == "kb_search" {
                 guard let hits = v["hits"] as? [[String: Any]] else { throw ProjectError("invalid gateway response") }
-                v["hits"] = hits.filter { ["structure", "data"].contains($0["class"] as? String ?? "") }
+                v["hits"] = hits.filter { ["structure", "data"].contains($0["class"] as? String ?? "") }.map(KBMCP.teamNotID)
             }
+            if name == "note_read" { v = KBMCP.teamNotID(v) }
             v = KBMCP.sanitize(v) as! [String: Any]
             if let body = v["body"] as? String, body.utf8.count > 16 << 10 {
                 v["body"] = KBMCP.text(body, limit: 16 << 10); v["truncated"] = true

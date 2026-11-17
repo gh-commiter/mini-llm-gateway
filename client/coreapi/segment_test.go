@@ -54,8 +54,8 @@ func TestSegmentRoutes(t *testing.T) {
 	call(member("dev-fani"), "POST", base+"/notes", `{"class":"private","title":"x","body":"y"}`, 403)
 	read := fmt.Sprintf("%s/notes/%d", base, made.ID)
 	call(member("dev-ana"), "GET", read, "", 200)
-	if !strings.Contains(string(call(member("dev-ana"), "GET", base+"/kb/search?q=migrate", "", 200).Body), `"from":"team:acme"`) {
-		t.Fatal("segment search has no from")
+	if !strings.Contains(string(call(member("dev-ana"), "GET", base+"/kb/search?q=migrate", "", 200).Body), `"team":"acme"`) {
+		t.Fatal("segment search has no team name")
 	}
 	// A search of the project covers the segment; the hit opens through the project route.
 	proj := fmt.Sprintf("/minigw/v1/projects/%d", f.pid["fakture"])

@@ -1180,8 +1180,8 @@ source names; ingestion and service writes are deferred.
 Use `minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t]
 [--key k] <file|->` to propose a note. Input and title defaults match note push.
 For a replacement add `--replaces <note-id> --revision <n>`. Existing project write
-permissions apply; readers cannot submit. `minigw kb submissions [<project>]
-[--json]` lists your submissions, across readable projects when omitted.
+permissions apply; readers cannot submit. `minigw kb submissions [<project>|--team <team>]
+[--json]` lists your submissions, across readable projects and the teams you are on (labelled `team <name>`) when omitted.
 
 **Entry kinds.** An entry is a `finding` (the default) or a `faq`: the title is the question (at most 256 bytes)
 and the text a short answer (at most 2 KiB). The kind is chosen with `kb submit --kind`, travels with the
@@ -1201,7 +1201,8 @@ are hidden until it is unarchived. Give `--team <team>` in place of a project: `
 `minigw kb faq --team acme`, `minigw kb search --team acme <query>` (only the team's notes),
 `minigw kb export --team acme <dir>` and `kb import --team acme <dir>`. `--team` is not accepted together with a project,
 nor inside an agent run (the run's project is its own). A search of a project also covers the notes of its team, as far as you
-may read them, and a hit from there ends with `from team:<name>`; `minigw note read <id>` opens it. Inside an agent
+may read them. A line from a team's own notes names the team (`team <name>` where a project would show `project <id>`), and a hit
+from there in a project search also ends with `from team:<name>`; `minigw team show <team>` tells you how many team notes exist; `minigw note read <id>` opens it. Inside an agent
 run the same holds when the person who started the run is on the team's roster.
 
 **Dependencies.** The owner can record that a project depends on another one, for example a topic project linked to a

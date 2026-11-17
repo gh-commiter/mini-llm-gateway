@@ -73,4 +73,34 @@ import Testing
             }
         }
     }
+
+    /// No line-producing function prints the hidden id of a team's own notes as a project: the team name stands there.
+    @Test func hiddenIDIsNeverPrinted() throws {
+        let seg: Int64 = (1 << 40) + 7
+        func clean(_ what: String, _ out: String) {
+            #expect(out.range(of: #"\d{13,}"#, options: .regularExpression) == nil && !out.contains("@team-"), "\(what) prints a hidden id: \(out)")
+        }
+        var out = ""
+        let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { out += $0 }, err: { _ in }, agent: false, send: { _, m, p, _, _ in
+            let body: String
+            if p.hasPrefix("/minigw/v1/teams/") { body = #"{"id":7,"name":"acme","segment":\#(seg)}"# }
+            else if p.hasSuffix("/notes") { body = #"{"notes":[{"id":5,"project":\#(seg),"team":"acme","class":"data","title":"T","author":"a","updated":"2026-11-17T10:00:00Z","revision":1}]}"# }
+            else if p.contains("/notes/") { body = #"{"id":5,"project":\#(seg),"team":"acme","class":"data","title":"T","body":"b","author":"a","updated":"2026-11-17T10:00:00Z","revision":1}"# }
+            else if p.hasSuffix("/kb/faq") { body = #"{"entries":[]}"# }
+            else if p.contains("/kb/submissions") { body = #"{"submissions":[{"id":8,"project":\#(seg),"class":"data","title":"P","state":"pending"}]}"# }
+            else if p.contains("/kb/search") { body = #"{"hits":[{"id":5,"title":"T","project":\#(seg),"class":"data","snippet":"s","updated":"2026-11-17T10:00:00Z","team":"acme"}]}"# }
+            else { Issue.record("unexpected \(m) \(p)"); return ProjectReply(status: 599) }
+            return ProjectReply(status: 200, data: Data(body.utf8))
+        })
+        env.zone = TimeZone(identifier: "UTC")!
+        for args in [["note", "list", "--team", "acme"], ["note", "read", "5", "--team", "acme"], ["kb", "faq", "--team", "acme"], ["kb", "submissions", "--team", "acme"], ["kb", "search", "--team", "acme", "x"]] {
+            out = ""
+            if args[0] == "note" { try env.note(Array(args.dropFirst())) } else { try env.kb(Array(args.dropFirst())) }
+            clean(args.joined(separator: " "), out)
+        }
+        #expect(out.contains("team acme"))
+        #expect(KBMCP.teamNotID(["project": MCPNumber(raw: String(seg)), "team": "acme"])["project"] == nil)
+        #expect(KBMCP.teamNotID(["project": MCPNumber(raw: "3")])["project"] != nil)
+    }
 }
+

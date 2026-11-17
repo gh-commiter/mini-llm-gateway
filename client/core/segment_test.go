@@ -252,7 +252,7 @@ func TestSegmentSearchReadAndRun(t *testing.T) {
 	f.put("fani", Structure, "elsewhere")
 	pg, e := f.SearchNotes(ctx, f.p("ana"), f.pid["fakture"], "data")
 	f.ok(e)
-	if len(pg.Hits) != 2 || pg.Hits[0].ID != own.ID || pg.Hits[0].From != "" || pg.Hits[1].ID != team.ID || pg.Hits[1].From != "team:acme" {
+	if len(pg.Hits) != 2 || pg.Hits[0].ID != own.ID || pg.Hits[0].From != "" || pg.Hits[1].ID != team.ID || pg.Hits[1].From != "team:acme" || pg.Hits[1].Team != "acme" {
 		t.Fatalf("home first, then the team: %+v", pg.Hits)
 	}
 	// Home hits come first even when the team note is newer than the home one (it is: created after).
@@ -260,7 +260,7 @@ func TestSegmentSearchReadAndRun(t *testing.T) {
 		t.Fatal("test needs the team note to be newer", pg.Hits)
 	}
 	// Searching the segment itself yields only the segment.
-	if h := f.hits("ana", f.seg, "data"); len(h) != 1 || h[0].ID != team.ID || h[0].From != "team:acme" {
+	if h := f.hits("ana", f.seg, "data"); len(h) != 1 || h[0].ID != team.ID || h[0].From != "" || h[0].Team != "acme" { // the asked source needs no from, but names its team
 		t.Fatal(h)
 	}
 	// A project outside the team does not see the segment.
@@ -752,5 +752,33 @@ func TestSegmentDryRunNewTeam(t *testing.T) {
 	source.ok(e)
 	if !strings.Contains(strings.Join(rep.Lines, "\n"), "create src:testsrc:@team:") || countTable(t, target, "notes") != 0 {
 		t.Fatal(rep)
+	}
+}
+
+// The hidden id never has to be shown: notes and hits of a team's own notes carry the team name; a roster member's
+// team view says how many notes there are.
+func TestSegmentTeamNameAndCount(t *testing.T) {
+	f := newSeg(t)
+	n := f.put("fani", Data, "named")
+	pg, e := f.ListNotes(ctx, f.p("ana"), f.seg, "", "", 50)
+	f.ok(e)
+	g, e := f.GetNote(ctx, f.p("ana"), f.seg, n.ID)
+	f.ok(e)
+	if len(pg.Notes) != 1 || pg.Notes[0].Team != "acme" || g.Team != "acme" {
+		t.Fatal(pg.Notes, g.Team)
+	}
+	if r := f.mk("ana", "fakture", Data); r.Team != "" {
+		t.Fatal("a project note names a team", r.Team)
+	}
+	d, e := f.GetTeam(ctx, f.p("ana"), "acme")
+	f.ok(e)
+	if d.Notes == nil || *d.Notes != 1 {
+		t.Fatal(d.Notes)
+	}
+	_, e = f.GetTeam(ctx, f.p("cene"), "acme") // off the roster: nothing, not even a count
+	is(t, e, ErrNotFound)
+	f.ok(f.SetTeamArchived(ctx, f.acme, true))
+	if d, e = f.GetTeam(ctx, f.p("ana"), "acme"); e != nil || d.Notes != nil {
+		t.Fatal("count of an archived team", d.Notes, e)
 	}
 }

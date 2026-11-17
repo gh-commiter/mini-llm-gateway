@@ -31,6 +31,7 @@ type TeamDetail struct {
 	Team
 	Members  []TeamMember
 	Projects []Project
+	Notes    *int // notes in the team's own notes; set for a roster member's view of an active team
 }
 
 func (s *Store) CreateTeam(ctx context.Context, name string) (t Team, err error) {
@@ -285,7 +286,13 @@ func (s *Store) GetTeam(ctx context.Context, p Principal, ref string) (out TeamD
 		if e != nil {
 			return e
 		}
-		out.Projects, e = teamProjects(tx, out.ID, p.UserID)
+		if out.Projects, e = teamProjects(tx, out.ID, p.UserID); e != nil || out.Archived {
+			return e
+		}
+		n := 0
+		if e = tx.QueryRow(`SELECT count(*) FROM notes WHERE project_id=?`, segmentID(out.ID)).Scan(&n); e == nil {
+			out.Notes = &n
+		}
 		return e
 	})
 	if err != nil {
