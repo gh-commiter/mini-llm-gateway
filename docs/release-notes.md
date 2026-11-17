@@ -15,7 +15,7 @@
 
 ### Known problems
 - Archived projects and teams cannot be chosen in the Knowledge base pickers any more; read their notes with `minigw`.
-- The panels on the settings page have only been tried through tests, not in a real browser. A detail page opens in place of the panel with a Back button. The Mac app does not use this page.
+- The panels on the settings page were tried on one Windows gateway in a Chromium browser (they work; no Content Security Policy error); not yet in Edge or Firefox, and not on Linux. A detail page opens in place of the panel with a Back button. The Mac app does not use this page.
 - In the Teams and projects pane the "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI: the format has no cell that lists pairs of a team and a role. The structured list is in the answer (`teams`).
 - The Teams and projects pane has only been tried through tests, not in a real window. Team notes (the team's own notes segment) are not shown there, only in the Knowledge base pane.
 - The Knowledge base pane has only been tried through tests, not in a real window. Notes and questions are read, not edited; a replacement shows both texts, not a line difference.
