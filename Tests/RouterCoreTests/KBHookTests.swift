@@ -203,15 +203,15 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
 
     @Test func gitStateOfARepositoryAndOfAPlainFolder() throws {
         let (w, dir) = try repo()
-        let (head, status) = ProjectEnv.hookGitState(dir)
+        let (head, status) = ProjectEnv.hookGitState(dir, timeout: 60)
         #expect(head == ProjectText.trim(try git(dir, "rev-parse", "HEAD")) && status.count == 64)
-        #expect(ProjectEnv.hookGitState(dir) == (head, status))
+        #expect(ProjectEnv.hookGitState(dir, timeout: 60) == (head, status))
         try Data("b".utf8).write(to: URL(fileURLWithPath: dir + "/b.txt"))
-        let (h2, s2) = ProjectEnv.hookGitState(dir)
+        let (h2, s2) = ProjectEnv.hookGitState(dir, timeout: 60)
         #expect(h2 == head && s2 != status)  // an untracked file changes the status, not HEAD
         _ = try git(dir, "add", "b.txt")
         _ = try git(dir, "commit", "-qm", "two")
-        #expect(ProjectEnv.hookGitState(dir).head != head)
+        #expect(ProjectEnv.hookGitState(dir, timeout: 60).head != head)
         let plain = ProjectEnv.hookGitState(w.work)
         #expect(plain.head == "" && plain.status == "")
     }
@@ -226,7 +226,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         _ = try git(dir, "status")
         #expect(FileManager.default.fileExists(atPath: proof), "the control did not run the fsmonitor script: the test proves nothing")
         unlink(proof)
-        _ = ProjectEnv.hookGitState(dir)
+        _ = ProjectEnv.hookGitState(dir, timeout: 60)
         #expect(!FileManager.default.fileExists(atPath: proof), "the checkout's core.fsmonitor program ran")
     }
 
@@ -237,8 +237,21 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         let fake = bin + "/git"
         try Data("#!/bin/sh\necho ran >> '\(w.root)/fake-ran'\nexit 1\n".utf8).write(to: URL(fileURLWithPath: fake))
         chmod(fake, 0o755)
-        FileManager.default.changeCurrentDirectoryPath("/")  // a relative entry would be looked up against the cwd, not trusted
-        _ = ProjectEnv.hookGitState(w.work, path: "bin:.:" + "/usr/bin")
+        // a relative entry (bin, .) is never used: the process folder is global state, so it is the lookup that is asserted
+        #expect(Profiles.executable("git", path: "bin:.:/usr/bin") == "/usr/bin/git")
+        _ = ProjectEnv.hookGitState(w.work, path: "bin:.:/usr/bin", timeout: 60)
         #expect(!FileManager.default.fileExists(atPath: w.root + "/fake-ran"))
+    }
+
+    @Test func aSlowGitIsGivenUpOn() throws {
+        let w = try HookWorld()
+        let bin = w.root + "/bin"
+        try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nsleep 20\n".utf8).write(to: URL(fileURLWithPath: bin + "/git"))
+        chmod(bin + "/git", 0o755)
+        let started = Date()
+        let r = ProjectEnv.hookGitState(w.work, path: bin, timeout: 0.3)
+        #expect(r.head == "" && r.status == "")
+        #expect(Date().timeIntervalSince(started) < 5)
     }
 }

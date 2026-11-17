@@ -103,8 +103,8 @@ extension ProjectEnv {
     /// HEAD and a hash of `git status --porcelain=v1 -z` of an untrusted checkout. Only the guarded environment (Worktree.gitGuardEnv:
     /// fsmonitor, hooks, attributes and global config off) and core.fsmonitor=false let it run without executing the checkout's code;
     /// git comes only from an absolute PATH entry; at most 2 s for both calls. Not a repository or git missing: "", "".
-    static func hookGitState(_ dir: String, path: String = ProcessInfo.processInfo.environment["PATH"] ?? "") -> (head: String, status: String) {
-        let deadline = DispatchTime.now() + 2
+    static func hookGitState(_ dir: String, path: String = ProcessInfo.processInfo.environment["PATH"] ?? "", timeout: TimeInterval = 2) -> (head: String, status: String) {
+        let deadline = DispatchTime.now() + timeout
         let exe = Profiles.executable("git", path: path) ?? "/usr/bin/git"
         var env = ProcessInfo.processInfo.environment.merging(Worktree.gitGuardEnv(agent: "minigw")) { $1 }
         env["GIT_TERMINAL_PROMPT"] = "0"
@@ -138,7 +138,7 @@ extension ProjectEnv {
 
     final class HookBox: @unchecked Sendable { var data = Data() }
 
-    func hookGit(_ dir: String) -> (head: String, status: String) { gitState?(dir) ?? Self.hookGitState(dir) }
+    func hookGit(_ dir: String) -> (head: String, status: String) { gitState?(dir) ?? Self.hookGitState(dir, timeout: gitTimeout ?? 2) }
 
     // MARK: markers and the hand-in record
 

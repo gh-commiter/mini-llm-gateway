@@ -70,6 +70,7 @@ public final class ProjectEnv {
     public var gateway: (() -> String)?  // the default profile's gateway id, "" = not connected
     public var gitState: ((String) -> (head: String, status: String))?  // HEAD and the status hash of the linked folder
     public var now: (() -> Date)?
+    public var gitTimeout: TimeInterval?  // seconds for both git calls of a hook, nil = 2
 
     public init(connect: @escaping () -> (ProjectConn, String), state: String, cwd: String, stdin: @escaping () -> Data,
                 out: @escaping (String) -> Void, err: @escaping (String) -> Void, agent: Bool, runConn: ProjectConn? = nil,
