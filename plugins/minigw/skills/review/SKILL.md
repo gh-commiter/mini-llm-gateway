@@ -2,7 +2,7 @@
 name: review
 description: Get an independent review of the current changes, a plan or a bug analysis from OpenAI Codex (GPT-6-Astra) through Mini Gateway. Use when the user asks for a second opinion or a review by another model.
 argument-hint: "[--rw] [--profile <p>] [what to review]"
-allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --minigw-ro -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version), Bash(git diff), Bash(git diff --staged), Bash(git diff HEAD), Bash(git status), Bash(git status --short)
+allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --minigw-ro -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version), Bash(git diff), Bash(git diff --staged), Bash(git diff HEAD), Bash(git status), Bash(git status --short), Bash(MINIGW_PHASE=* ${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(MINIGW_ACTIVITY=* ${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(MINIGW_PHASE=* ${CLAUDE_PLUGIN_DATA}/bin/minigw --minigw-ro -p --model *), Bash(MINIGW_ACTIVITY=* ${CLAUDE_PLUGIN_DATA}/bin/minigw --minigw-ro -p --model *)
 ---
 
 Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
@@ -24,7 +24,7 @@ PROMPT
 
 minigw refuses a prompt argument that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Text on stdin may contain `@` (the `@@` headers of a diff), but must not start with `/`. This needs minigw 0.5.21 or newer and Claude Code 2.1.299 or newer. If `minigw --version` is older, if `git diff HEAD` is empty or fails (for example no commit yet), if minigw refuses the stdin with "@ before a file name on stdin", or if it prints "stdin had no data within 3 s and was not sent", run without the pipe and do not paste the diff: give the git range or "the uncommitted changes", and a description per file (file name, line ranges, what each hunk changes); quote changed lines only when they have no `@` at the start of a word and do not start with `/`.
 
-Labels for the usage reports (optional, minigw 0.7.16 or newer: an older client does not know the flags, so leave them out there; the task never fails without them): put `--minigw-phase check` right after `--model <model>` (a review is a check) and, when you know it, `--minigw-activity <feature|bugfix|security|refactor|docs|test|release|research|ops>` (and `--minigw-task <ref>`, e.g. an issue number). Other safe words are accepted; leave them out when unknown.
+Labels for the usage reports (optional; the task never fails without them): put `MINIGW_PHASE=check` in front of the minigw command (a review is a check) and, when you know it, `MINIGW_ACTIVITY=<feature|bugfix|security|refactor|docs|test|release|research|ops>` (and `MINIGW_TASK=<ref>`), for example `git diff HEAD | MINIGW_PHASE=check "${CLAUDE_PLUGIN_DATA}/bin/minigw" --minigw-ro -p --model ...`. Environment variables are used on purpose: every minigw version ignores the ones it does not know. Leave out what you do not know.
 
 `--profile <p>`: use `--model claude-codex-gpt-6-astra@<p>` (that gateway; `minigw profiles` lists them).
 
