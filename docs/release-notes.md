@@ -11,6 +11,9 @@
 - Only one level is followed: a dependency of a dependency is not searched. A cycle is allowed and harmless.
 - An agent run gets nothing from a dependency by itself: it reads another project only through an owner grant, exactly as before; a dependency only labels and orders the hits such a grant already allows.
 
+### Fixed
+- Search in a large knowledge base was slow in 0.7.14: the new order (own project first) made the database sort every match before taking the first 20. The query now takes two bounded selections; the order of hits is the same.
+
 ### Known problems
 - The Users and devices pane is new and has only been tried through tests, not in a real window. Windows and Linux have no panel renderer yet (the settings page and `minigw gw` still cover the same routes); the terminal UI neither. A detail page of a panel opens as a sheet, and no built-in panel uses one yet.
 - A project linked to a subfolder of another project's folder gets no automatic dependency; the owner sets it with `gw project depends add`.
