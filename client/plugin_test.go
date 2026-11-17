@@ -512,6 +512,10 @@ func TestPluginHooksFile(t *testing.T) {
 			}
 		}
 	}
+	// The Linux Docker gate and the Windows suite get only client/: the plugin folder is checked where the whole repository is.
+	if _, err := os.Stat("../plugins"); os.IsNotExist(err) {
+		t.Skip("needs the repository tree (../plugins)")
+	}
 	if err := json.Unmarshal(srcFile(t, "../plugins/minigw/hooks/hooks.json"), &f); err != nil {
 		t.Fatal(err)
 	}
