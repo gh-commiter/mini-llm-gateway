@@ -67,7 +67,7 @@ type state struct {
 }
 
 // migrations is ordered and forward only; migration i brings the schema to version i+1. Tests replace it.
-var migrations = []func(*sql.Tx) error{migrate1, migrate2, migrate3, migrate4, migrate5, migrate6, migrate7, migrate8, migrate9, migrate10, migrate11, migrate12}
+var migrations = []func(*sql.Tx) error{migrate1, migrate2, migrate3, migrate4, migrate5, migrate6, migrate7, migrate8, migrate9, migrate10, migrate11, migrate12, migrate13}
 
 func migrate1(tx *sql.Tx) error {
 	_, err := tx.Exec(`
@@ -232,7 +232,23 @@ func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
 		tx.Rollback()
 		return err
 	}
-	return tx.Commit()
+	epoch, high := dbInt(tx, "epoch"), dbInt(tx, "project_high")
+	next := s.st
+	next.Epoch, next.ProjectHigh = max(next.Epoch, epoch), max(next.ProjectHigh, high)
+	// Keep SQL-allocated marks safe across a lost database and a restore too.
+	if next != s.st {
+		if err := writeState(s.dir, next); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Imports allocate metadata in SQL; publish it only after the transaction commits.
+	s.st.Epoch, s.st.ProjectHigh = max(s.st.Epoch, epoch), max(s.st.ProjectHigh, high)
+	s.epoch.Store(s.st.Epoch)
+	return nil
 }
 
 // persist writes the state to the database (in tx) and to the sidecar. Callers hold s.mu. The sidecar is written

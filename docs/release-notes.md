@@ -1,9 +1,26 @@
 # Release notes
 
-## Unreleased
+## 0.7.10
+
+### New
+- Knowledge base as Markdown: `minigw kb export <project> <dir>` writes one Markdown file per published note you may read, with an index; `minigw kb import <project> <dir|file.md> [--class c] [--submit]` creates notes from Markdown files (with `--submit`: proposals for review). A second import of the same files updates or skips, it does not duplicate, and a note edited here since the last import is kept and reported.
+- Copying a team and its knowledge base to another gateway (owner, on the gateway computer): `minigw gw export --team <team> [--project p ...] [--with-private] <file.zip>` writes one file with the team, its projects, members and roles, and the notes; `minigw gw import --source <name> <file.zip> [--dry-run] [--map old=new ...]` on the other gateway (`--source` is your own name for the gateway the file came from; later imports from it must use the same name) shows what would be created and then imports in one step. The file carries no devices, tokens, keys, usage or gateway identity; private notes only with `--with-private`; users who do not exist on the target are created inactive and without devices. It is a one-way copy, not a sync, and it is not a database backup.
 
 ### Changed
 - When a device has no project access, the answer now says which condition is missing and what the owner runs: the device is not on the gateway's device list (`minigw gw devices allow DEVICE-ID`), or it is not bound to a user (`minigw gw bind DEVICE-ID USER`), with the caller's own device id. `minigw status` on the gateway computer no longer says "(approved)" for a client that is accepted only as a local client: it says that it is not on the device list and has no project access. `minigw gw bind` warns when the device is not on the device list yet.
+
+### Known limits
+- Database downgrade: this version's database schema is 13. An older program refuses it; the way back is restoring the snapshot written before the first migration.
+
+### Known problems
+- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
+- `minigw gw import`: an oversized note or a file not listed in the bundle is unpacked into memory (at most 100 MiB in total) before it is refused. Import only bundles you made yourself.
+- `minigw kb export`: export into a folder whose parent only you can write. With a parent that another user can write, the folder can be swapped during the export and notes written elsewhere.
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.9
 

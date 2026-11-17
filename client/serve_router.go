@@ -261,6 +261,10 @@ func autostartLine(autostart string) string {
 }
 
 func routerCommand(args []string, in io.Reader) {
+	if len(args) > 0 && (args[0] == "export" || args[0] == "import") {
+		bundleCommand(args)
+		return
+	}
 	fs := flag.NewFlagSet("minigw gw", flag.ExitOnError)
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
 	insecure := fs.Bool("insecure", false, "provider add: allow http to localhost or a private IP")

@@ -600,3 +600,51 @@ separates literal words, joined with AND. No raw FTS5 operators are accepted as
 syntax. Empty/non-word or over-limit input returns 400; a query has a 250 ms
 deadline and shares the existing per-user read limit. Treat snippets as untrusted
 plain text and escape them in any renderer.
+
+## Knowledge bundle path routes
+
+Owner admin authentication, gateway running, loopback only, on both gateways. Paths below the existing
+admin prefix:
+
+| Method | Path | Body |
+|---|---|---|
+| POST | `/export` | `{"team":"Engineering","projects":["fakture"],"with_private":false,"path":"/absolute/local/team.zip"}` |
+| POST | `/import` | `{"path":"/absolute/local/team.zip","source":"engineering","dry_run":true,"map":{"ana":"Ana"}}` |
+
+The body names a local path on the gateway computer; it never contains zip bytes. The normal 512 KiB
+request cap remains. Export refuses an existing destination. Responses contain `{"lines":[...]}`;
+a refusal also includes `error.message` with a non-2xx status. Import requires `source`: the owner-chosen
+name of the bundle's origin on this gateway (1–64 characters, using team-name validation). The first import
+under a source records the bundle's `origin_gateway`; a later import under that source from another gateway
+is refused, as is a bundle whose `origin_gateway` is this gateway. Receipts are keyed by source name,
+project slug and source note id, never by the bundle's own strings.
+
+Import validates the complete archive before decompressing note bodies: it bounds the archive size, the
+central directory, the entry count, each declared entry size and the total, the manifest size and nesting,
+and the sizes of the manifest's collections. It strictly decodes the version 1 manifest, rejects unsafe
+paths, non-regular entries and names that collide after Unicode normalization and case folding, then
+applies one transaction. Dry-run does no writes. A repeat with no changes writes no audit; an applied
+bundle writes one `kb.import` event.
+
+Each imported note records a trusted local provenance: actor kind `import`, no user id, the target project,
+source kind `import`, source reference `<source>/<project slug>/<source note id>`, the receive time and no
+reviewer. The mapped author name is for display; it grants no own-note access. A trusted local import flag
+enforces that separately from source metadata. What the bundle claims about the note's history is stored
+separately (at most 64 KiB) and returned by note routes as `unverifiedSource`; it is not used by permission,
+provenance or review logic. The receipt
+keeps the note revision and class written by the last import; a local revision change, including a class
+change, makes later imports skip the entry instead of overwriting it, and an incoming class change applies
+only to a note not changed locally. Names match after Unicode NFC normalization and case folding; two target
+accounts that normalize to one name, or two bundle users that map to one target account, refuse the import.
+No route calls Backup or Restore.
+
+The member route `POST /minigw/v1/projects/{id}/kb/import` accepts one
+`{"markdown":"...","path":"relative/file.md","class":"","submit":false}` and returns
+`{"action":"create|merge|skip","key":"...","note":123,"submission":456,"reason":"..."}`
+(IDs and reason omitted when absent). It derives identity and permissions from the authenticated member,
+never front matter. Create permissions, update ownership, class transitions, archive checks, pending
+limits, body limits and the normal write rate apply. Imports persist receipts beyond the push TTL.
+Member exports page the existing list route and fetch each note with the existing GET route.
+The client opens each file once without following links, checks the open descriptor is a regular file and
+reads fewer than 96 KiB; a folder import allows at most 10,000 total entries and 32 path components.
+Folder reads use a held root directory so replacing a parent with an external link cannot redirect reads.

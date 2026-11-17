@@ -15,7 +15,9 @@ import (
 	"time"
 )
 
-const kbHelp = `minigw kb mcp [--project slug] [--print-config]
+const kbHelp = `minigw kb export <project> <dir>
+minigw kb import <project> <dir|file.md> [--class c] [--submit]
+minigw kb mcp [--project slug] [--print-config]
 minigw kb search [<project>] <query> [--json]
 minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
 minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)`
@@ -32,6 +34,9 @@ func submissionResult(v core.Submission) string {
 }
 
 func (e *projectEnv) kb(args []string) error {
+	if len(args) > 0 && (args[0] == "export" || args[0] == "import") {
+		return e.kbFiles(args)
+	}
 	if len(args) > 0 && args[0] == "mcp" {
 		return e.kbMCP(args[1:])
 	}

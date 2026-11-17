@@ -11,10 +11,11 @@ import (
 	"unicode"
 )
 
-// Reserved source kinds; ingestion and service writes are later steps.
+// Source kinds recorded in revision provenance.
 const (
 	ActorMember            = "member"
 	ActorGatewayService    = "gateway service"
+	ActorImport            = "import"
 	SourcePushedNote       = "pushed note"
 	SourceImport           = "import"
 	SourceSessionSummary   = "session summary"
@@ -23,6 +24,8 @@ const (
 
 // Provenance records the authenticated writer of a revision. UNKNOWN means not recorded.
 type Provenance struct {
+	OriginGateway   string     `json:"originGateway,omitempty"`
+	Exported        string     `json:"exported,omitempty"`
 	ActorKind       string     `json:"actorKind"`
 	User            int64      `json:"user"`
 	Device          string     `json:"device"`
@@ -260,15 +263,8 @@ func (s *Store) Submit(ctx context.Context, p Principal, project int64, key stri
 			}
 		}
 		size := int64(len(in.Title) + len(in.Body))
-		var un, pn, ub, pb int64
-		if e = tx.QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM kb_submissions WHERE state='pending' AND user_id=?`, p.UserID).Scan(&un, &ub); e != nil {
+		if e = pendingLimit(tx, p.UserID, project, size, 0); e != nil {
 			return e
-		}
-		if e = tx.QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM kb_submissions WHERE state='pending' AND project_id=?`, project).Scan(&pn, &pb); e != nil {
-			return e
-		}
-		if un >= int64(maxPendingUser) || pn >= int64(maxPendingProject) || ub+size > maxPendingUserBytes || pb+size > maxPendingProjectBytes {
-			return ErrPendingLimit
 		}
 		pr := writerProvenance(p, project, in.NoteInput, fromMs(ms(s.now())))
 		enc, _ := json.Marshal(pr)
@@ -449,6 +445,9 @@ func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, rea
 				}
 				v.NoteID = v.Replaces
 				rev = old.Revision + 1
+			}
+			if _, e = tx.Exec(`UPDATE note_imports SET note_id=?,submission_id=0,revision=?,class=? WHERE submission_id=?`, v.NoteID, rev, string(v.Class), id); e != nil {
+				return e
 			}
 			if e = syncSearch(tx, v.NoteID); e != nil {
 				return e

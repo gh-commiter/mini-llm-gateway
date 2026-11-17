@@ -2,6 +2,7 @@ package coreapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -44,23 +45,27 @@ func toProject(p core.Project) ProjectJSON {
 }
 
 type NoteJSON struct {
-	Provenance *core.Provenance `json:"provenance,omitempty"`
-	ID         int64            `json:"id"`
-	Project    int64            `json:"project"`
-	Class      core.Class       `json:"class"`
-	Title      string           `json:"title"`
-	Body       *string          `json:"body,omitempty"`
-	Author     string           `json:"author"`
-	Created    time.Time        `json:"created"`
-	Updated    time.Time        `json:"updated"`
-	Revision   int64            `json:"revision"`
+	Provenance       *core.Provenance `json:"provenance,omitempty"`
+	UnverifiedSource json.RawMessage  `json:"unverifiedSource,omitempty"`
+	ID               int64            `json:"id"`
+	Project          int64            `json:"project"`
+	Class            core.Class       `json:"class"`
+	Title            string           `json:"title"`
+	Body             *string          `json:"body,omitempty"`
+	Author           string           `json:"author"`
+	Created          time.Time        `json:"created"`
+	Updated          time.Time        `json:"updated"`
+	Revision         int64            `json:"revision"`
 }
 
 func toNote(n core.Note, withBody bool) NoteJSON {
-	j := NoteJSON{nil, n.ID, n.ProjectID, n.Class, n.Title, nil, n.Author, n.Created, n.Updated, n.Revision}
+	j := NoteJSON{ID: n.ID, Project: n.ProjectID, Class: n.Class, Title: n.Title, Author: n.Author, Created: n.Created, Updated: n.Updated, Revision: n.Revision}
 	if withBody {
 		j.Body = &n.Body
 		j.Provenance = &n.Provenance
+		if n.UnverifiedSource != "" && json.Valid([]byte(n.UnverifiedSource)) {
+			j.UnverifiedSource = json.RawMessage(n.UnverifiedSource)
+		}
 	}
 	return j
 }
@@ -244,6 +249,20 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			return a.errResponse(e)
 		}
 		return resp(200, v)
+	case len(seg) == 3 && seg[1] == "kb" && seg[2] == "import" && r.Method == "POST":
+		pid, ok := posID(seg[0])
+		if !ok {
+			return a.errResponse(core.ErrInvalid{What: "project id"})
+		}
+		var in core.MarkdownInput
+		if err := payload(r, &in); err != nil {
+			return a.errResponse(err)
+		}
+		result, err := st.ImportMarkdown(ctx, p, pid, in)
+		if err != nil {
+			return a.errResponse(err)
+		}
+		return resp(200, result)
 	case len(seg) >= 3 && seg[1] == "kb" && seg[2] == "submissions" && len(seg) <= 4:
 		pid, ok := posID(seg[0])
 		if !ok {

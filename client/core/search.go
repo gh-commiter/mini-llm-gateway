@@ -13,10 +13,10 @@ import (
 
 // Scope tokens let MATCH intersect permitted projects/classes/authors in the index.
 const searchInsert = `INSERT INTO note_search(rowid,title,body,scope)
- SELECT id,title,body,'p'||project_id||'c'||class||' p'||project_id||'c'||class||'u'||author_id FROM notes`
+ SELECT id,title,body,'p'||project_id||'c'||class||' p'||project_id||'c'||class||'u'||CASE WHEN imported=0 THEN author_id ELSE 0 END FROM notes`
 
 func migrate12(tx *sql.Tx) error {
-	_, err := tx.Exec(`CREATE VIRTUAL TABLE note_search USING fts5(title,body,scope, tokenize='unicode61'); ` + searchInsert)
+	_, err := tx.Exec(`CREATE VIRTUAL TABLE note_search USING fts5(title,body,scope, tokenize='unicode61'); ` + strings.Replace(searchInsert, "CASE WHEN imported=0 THEN author_id ELSE 0 END", "author_id", 1))
 	return err
 }
 

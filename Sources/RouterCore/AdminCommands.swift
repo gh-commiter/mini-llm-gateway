@@ -27,7 +27,9 @@ public struct AdminOpts {
 
 public final class AdminCommands {
     public static let help = """
-        minigw gw kb review [<project>] | accept <id> | reject <id> [--reason text]
+        minigw gw export --team <name> [--project slug ...] [--with-private] <file.zip>
+          minigw gw import --source <name> <file.zip> [--dry-run] [--map old=new]
+          minigw gw kb review [<project>] | accept <id> | reject <id> [--reason text]
           minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>
           minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to
           minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
@@ -64,7 +66,7 @@ public final class AdminCommands {
     /// One admin request; an error status ends the command with the API's message (Go's adminClient.do).
     @discardableResult
     func request(_ method: String, _ path: String, _ body: [String: Any]? = nil) throws -> JDict {
-        let r = call(method, path, body.map { Data(GoJSON.object($0).utf8) })
+        let r = call(method, path, body.map { Data(ProjectEnv.kbJSON($0).utf8) })
         guard r.status != 0 else { throw fail("lost the connection to Mini Gateway") }
         if r.status >= 300 { throw fail(clean(JSONValue.parse(r.data)?.dict["error"]?.dict["message"]?.string ?? "")) }
         return JSONValue.parse(r.data)?.dict ?? JDict()

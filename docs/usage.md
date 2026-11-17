@@ -528,6 +528,39 @@ models without being on the gateway's device list, but projects need both: the o
 `minigw gw devices allow DEVICE-ID` and binds it to a user with `minigw gw bind DEVICE-ID USER`. A refusal says
 which of the two is missing, and `minigw status` shows it on the `Device:` line.
 
+### Markdown copies
+
+With the gateway running, members can copy published notes to their own computer:
+
+```sh
+minigw kb export fakture ./knowledge
+minigw kb import fakture ./knowledge
+minigw kb import fakture ./proposal.md --class structure --submit
+```
+
+Export waits and retries if reads hit the gateway rate limit. It writes one Markdown file per readable note
+and an `INDEX.md`. It includes readable private notes,
+and excludes pending submissions and notes hidden from the caller. Use a new or empty destination directory: existing files
+are never overwritten. Each file has `---` front matter with JSON string values for `id`, `title`, `class`,
+`kind` (the provenance source kind), `revision`, `author`, `created`, `updated`, and `hash`, followed by
+the exact body. No YAML features are interpreted.
+
+Import accepts a directory tree or one `.md` file; front matter is optional and directory imports ignore
+`INDEX.md`. Without a title, the file name supplies it. `--class` overrides front matter; the default is
+`data` when neither supplies a class. The caller needs the same create permission as `note push`;
+readers cannot import structure or data. `--submit` uses submission permissions and pending limits.
+Imported revisions use source kind `import` and the file name as source reference. Neither command is
+available inside an agent run.
+
+The stable key is the front matter ID, or the relative path when no ID exists. Keep that ID or path when
+repeating an import. The hash covers title and body, and is recomputed on import. An unchanged key and hash
+skips; changed content updates the existing note or pending submission, even after 24 hours.
+Acceptance moves the receipt to the published note. Re-import never creates a second note for that key.
+A target edited locally is skipped and reported; resolve it yourself before trying again.
+Large member imports still use the normal 60 writes per minute limit: the client waits for the retry interval
+and continues when limited. Durable receipts also make repeating after an interrupted command safe. These are
+one-way copies, with no continuous sync.
+
 ### Team directory
 
 The owner groups users and projects into teams. Users can join several teams; a project belongs to at most
@@ -546,6 +579,57 @@ minigw project list
 minigw team list
 minigw team show Engineering
 ```
+
+To copy one team and its knowledge to another gateway, the owner runs these commands on the gateway
+computer, with the gateway running (the same commands work on Windows, Linux, and the Mac app):
+
+```sh
+minigw gw export --team Engineering --project fakture --with-private ./engineering.zip
+minigw gw import --source engineering ./engineering.zip --dry-run --map ana=Ana
+minigw gw import --source engineering ./engineering.zip --map ana=Ana
+```
+
+Omit `--project` to include every project in that team; repeat it for a subset. Private notes require
+`--with-private`. The zip contains a versioned manifest, Markdown files and `INDEX.md`. It copies member
+names, direct memberships, team assignments and grants between included projects, together with published
+notes and provenance. It excludes devices, bindings, tokens, keys, usage, audit history, sessions and pending
+submissions. Note bodies cannot define access or accounts.
+
+`--source <name>` is required on import: it names where this bundle comes from, on this gateway, and the
+owner chooses it (1–64 characters, using team-name validation). The first import under a source records the
+bundle's origin gateway; a later import under the same source from a different gateway is refused, as is a
+bundle that was exported by this gateway itself. Receipts are kept per source name, project slug and source
+note id; the `origin_gateway` string inside the bundle never establishes a namespace. A dry run reports the
+source name and the origin it records.
+The owner must choose a source only for an archive they trust: the recorded origin is a consistency check,
+not cryptographic authentication of the exporting gateway.
+
+Import validates the entire zip before writing, within fixed limits on its size, entry count, central
+directory, manifest size and nesting, and collection sizes. Dry-run reports create, merge, skip and refuse
+decisions and writes nothing. Real import is one transaction, including one `kb.import` audit event when
+anything changes. Names match case-insensitively after `--map old=new` and after Unicode normalization, so a
+name written with a combining accent finds the same account as its composed form. If two target accounts
+normalize to one name, or two bundle users would land on one target account, the import is refused and both
+are named. Slugs match projects and names match teams. Unknown users are inactive non-owners with no device
+binding. The owner must activate and bind them explicitly. Existing roles, memberships and grants are only
+retained or raised. A project already on another team refuses the whole import. Target project and note IDs
+are allocated locally.
+
+Re-importing the same bundle is a no-op. The receipt stores the note revision and class written by the last
+import: any local change, including a class change, bumps the revision, so a locally changed note is skipped
+and reported and is never overwritten, even when the incoming content differs. An incoming class change is
+applied only to a note that was not changed locally. The imported revision records the owner's import as its
+writer — actor kind `import`, no user id, this project, source kind `import`, source reference
+`<source>/<project slug>/<source note id>`, the receive time, and no reviewer. Everything the bundle says
+about the note's history (author, source kind, times, reviewer, its own provenance) is stored separately as
+unverified source metadata and is shown by `note read --json` under `unverifiedSource`; it never drives
+access, permissions or review. A pending local submission for the same source entry is skipped and
+reported, never superseded by the import.
+The mapped author name is retained for display, without own-note permissions. Imported private notes are
+therefore visible to project administrators, and list and search apply the same restriction. Member folder
+imports open files beneath a held directory, reject links, and stop at 10,000 total entries or 32 path
+components, including empty directories and non-Markdown entries. Each file must be smaller than 96 KiB.
+This copies knowledge to a different gateway; it does not restore a database or delete omitted target rows.
 
 Members see only their own teams, their teammates' names, and attached projects they can already read through
 project membership or explicit grants. Missing and hidden teams give the same answer. Devices must be approved
@@ -641,6 +725,11 @@ minigw gw core backup before-upgrade                # gateway running; writes <c
 # gateway stopped (Mac: the app quit):
 minigw gw core restore before-upgrade
 ```
+
+A database backup is the wrong tool for copying a team to another gateway. It belongs to its original
+gateway and includes bindings, credentials-related state, usage, audit and submissions.
+Use `gw export` / `gw import` for a portable knowledge bundle while the gateway is running.
+A zip bundle is not a database and must not be passed to `core restore`. Backup and restore behavior is unchanged.
 
 What differs on the Mac app:
 

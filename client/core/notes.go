@@ -14,17 +14,18 @@ import (
 
 // Note is a note; Body is empty in lists.
 type Note struct {
-	Provenance Provenance
-	ID         int64
-	ProjectID  int64
-	Class      Class
-	Title      string
-	Body       string `json:",omitempty"`
-	AuthorID   int64
-	Author     string
-	Created    time.Time
-	Updated    time.Time
-	Revision   int64
+	Provenance       Provenance
+	UnverifiedSource string `json:"-"` // opaque history the bundle supplied; never trusted
+	ID               int64
+	ProjectID        int64
+	Class            Class
+	Title            string
+	Body             string `json:",omitempty"`
+	AuthorID         int64
+	Author           string
+	Created          time.Time
+	Updated          time.Time
+	Revision         int64
 }
 
 // NoteInput is the payload of create and update.
@@ -91,7 +92,7 @@ func where(user int64, rs []readable) (string, []any) {
 			}
 		}
 		if len(r.own) > 0 {
-			parts = append(parts, "(n.project_id=? AND n.author_id=? AND n.class IN ("+marks(len(r.own))+"))")
+			parts = append(parts, "(n.project_id=? AND n.imported=0 AND n.author_id=? AND n.class IN ("+marks(len(r.own))+"))")
 			args = append(args, r.project, user)
 			for _, c := range r.own {
 				args = append(args, c)
@@ -104,10 +105,11 @@ func where(user int64, rs []readable) (string, []any) {
 	return "(" + strings.Join(parts, " OR ") + ")", args
 }
 
-const noteCols = `n.id,n.project_id,n.class,n.title,n.body,n.author_id,u.name,n.created,n.updated,n.revision`
+// Bundle authors are display-only; zero grants no ownership permissions.
+const noteCols = `n.id,n.project_id,n.class,n.title,n.body,CASE WHEN n.imported=0 THEN n.author_id ELSE 0 END,u.name,n.created,n.updated,n.revision`
 
 // listCols is noteCols without the body (lists never load it).
-const listCols = `n.id,n.project_id,n.class,n.title,'',n.author_id,u.name,n.created,n.updated,n.revision`
+const listCols = `n.id,n.project_id,n.class,n.title,'',CASE WHEN n.imported=0 THEN n.author_id ELSE 0 END,u.name,n.created,n.updated,n.revision`
 
 func scanNote(sc interface{ Scan(...any) error }, withBody bool) (n Note, err error) {
 	var c, u int64
@@ -202,6 +204,9 @@ func getNote(tx *sql.Tx, id int64) (Note, error) {
 	n, err := scanNote(tx.QueryRow(`SELECT `+noteCols+` FROM notes n JOIN users u ON u.id=n.author_id WHERE n.id=?`, id), true)
 	if err == nil {
 		err = noteProvenance(tx, &n)
+	}
+	if err == nil {
+		err = tx.QueryRow(`SELECT source_meta FROM notes WHERE id=?`, id).Scan(&n.UnverifiedSource)
 	}
 	return n, notFound(err)
 }
@@ -513,6 +518,9 @@ func (s *Store) DeleteNote(ctx context.Context, p Principal, project, id, revisi
 		}
 		if lim != nil {
 			return lim
+		}
+		if _, err := tx.Exec(`DELETE FROM note_imports WHERE note_id=?`, id); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(`DELETE FROM notes WHERE id=?`, id); err != nil {
 			return err

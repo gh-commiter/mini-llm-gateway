@@ -29,6 +29,8 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw project list [--archived] [--json]` | The gateway projects you can see, with your role and grants (see [usage.md](usage.md#projects-and-notes)) |
 | `minigw project link <slug>` / `unlink` / `show` | Link this folder tree to a project you are a direct member of, remove the link, or show which link applies here |
 | `minigw note list [--class c] [--limit n] [--after cursor] [--json]` / `read <id> [--json]` | Notes of the linked project (also inside an agent run, on the run's own project) |
+| `minigw kb export <project> <dir>` | Copy published readable notes, including readable private notes, to Markdown plus INDEX.md on this computer; gateway running, no agent runs |
+| `minigw kb import <project> <dir\|file.md> [--class c] [--submit]` | Create or update by stable ID/path; unchanged content skips, local edits are preserved; normal member permissions and write limits |
 | `minigw note push [--class structure\|data\|private] [--title t] [--key k] <file\|->` | Create a note (default class `data`); `--key` repeats a push whose answer was lost |
 | `minigw note edit <id> [--class c] [--title t] [--revision n] [<file\|->]` / `rm <id> [--revision n]` | Change or delete a note (not inside an agent run) |
 | `minigw usage [--project slug] [--days n] [--json]` | Your model usage per day and model: the linked project's, or your own events in all projects (see [usage.md](usage.md#projects-and-notes)) |
@@ -79,6 +81,21 @@ Claude Code's settings.
 | – | `MINIGW_ALLOW_UNSAFE_FLAGS=1` | Turn off the option and prompt checks inside Claude Code ([how-it-works.md](how-it-works.md#what-minigw-passes-to-claude-code)) |
 
 ## Gateway: minigw gw
+
+Owner-only, on the gateway computer while it is running:
+
+```sh
+minigw gw export --team <name> [--project slug ...] [--with-private] <file.zip>
+minigw gw import --source <name> <file.zip> [--dry-run] [--map old=new]
+```
+
+These copy one team's directory, access entries and published knowledge between gateways in one zip.
+Private notes are opt-in. `--source` names the bundle's origin on this gateway; the first import under a
+source records the gateway it came from, and a later bundle under that source from another gateway (or from
+this one) is refused. Dry-run writes nothing; real import is atomic, keeps local edits — including class
+changes — and prevents an import from undoing them, never lowers access, and creates unknown users inactive
+with no binding. Repeat `--project` or `--map` as needed.
+See [Markdown copies and team bundles](usage.md#markdown-copies). Database backup/restore is unchanged.
 
 `minigw gw …` shows or changes the gateway **on this computer**: the Mini Gateway app on a Mac, `minigw serve` on
 Windows and Linux. Changes apply at once. On a Mac the app must be running (except `minigw gw core restore`, which needs the
