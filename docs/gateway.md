@@ -525,7 +525,8 @@ the upstream's key pinned) over a connection it opens itself, in process: there 
 gateway's device key. The request line is written by hand, never built from the helper's text: the app accepts only GET or POST of
 `/minigw/v1/...` with a plain path, the idempotency key as the only header and a body of at most 1 MiB, to the address configured at `add`
 (checked again with the core's rules, `client/testdata/upstream-addresses.json`); a redirect is just an answer and an answer is read to at
-most 1 MiB. The answer is read by one small incremental reader (`UpstreamHTTP.swift`): one buffer, strict numbers (digits only, at most 8),
+most 1 MiB. Answers must carry their length (`Content-Length`, or chunked): one "until the end of the connection" is refused, because
+a connection cut at a frame boundary would pass as complete (both gateways always send a length; a 204 has no body). The answer is read by one small incremental reader (`UpstreamHTTP.swift`): one buffer, strict numbers (digits only, at most 8),
 every cap checked before bytes are kept, `Transfer-Encoding` with `Content-Length` refused, any violation "no answer", no force unwrap or
 literal subscript (a source test enforces it) and a seeded test of thousands of mutated answers. The Go gateway reads the answer with
 `net/http` (redirects off, 60 s in total, at most 1 MiB and one byte kept). The app refuses an upstream that is this gateway by key and by address. The Keychain access rules are

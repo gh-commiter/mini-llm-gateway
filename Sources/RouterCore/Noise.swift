@@ -265,12 +265,14 @@ public enum Noise {
     /// Izlušči cele okvirje iz `buf` (ostanek ostane v buf); vrne dešifrirano besedilo.
     public static func unframe(_ buf: inout Data, _ c: Cipher) throws -> Data {
         var out = Data()
-        while buf.count >= 2 {
-            let n = Int(buf[buf.startIndex]) << 8 | Int(buf[buf.startIndex + 1])
-            guard buf.count >= 2 + n else { break }
-            out.append(try c.open(buf.subdata(in: buf.startIndex + 2..<buf.startIndex + 2 + n)))
-            buf = Data(buf.dropFirst(2 + n))
+        var at = buf.startIndex  // an offset: the consumed bytes are dropped once per call, not once per frame (a peer can send thousands of tiny frames)
+        while buf.endIndex - at >= 2 {
+            let n = Int(buf[at]) << 8 | Int(buf[at + 1])
+            guard buf.endIndex - at >= 2 + n else { break }
+            out.append(try c.open(buf.subdata(in: at + 2..<at + 2 + n)))
+            at += 2 + n
         }
+        if at > buf.startIndex { buf = Data(buf[at...]) }
         return out
     }
 

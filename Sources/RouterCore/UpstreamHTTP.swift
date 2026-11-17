@@ -26,7 +26,7 @@ struct UpstreamHTTPReader {
     static let maxInterim = 3            // "100 Continue" and the like, then it is refused
     static let maxChunks = 4096          // chunks of one body: a body of tiny chunks is a way to burn time, not to send data
 
-    private enum State { case head, bodyLength(Int), bodyUntilClose, chunkSize, chunkData(Int), chunkEnd, trailers, finished }
+    private enum State { case head, bodyLength(Int), chunkSize, chunkData(Int), chunkEnd, trailers, finished }
 
     private let cap: Int
     private let method: String
@@ -86,9 +86,7 @@ struct UpstreamHTTPReader {
         if failedFlag { return .failed }
         if done { return finished() }
         let o = step()
-        if o != .needMore { return o }
-        if case .bodyUntilClose = state { done = true; state = .finished; return finished() }
-        return fail()
+        return o == .needMore ? fail() : o  // every answer has its length (below): one that is cut off is never complete
     }
 
     private mutating func fail() -> UpstreamReadOutcome { failedFlag = true; buf = []; body = []; return .failed }
@@ -136,8 +134,7 @@ struct UpstreamHTTPReader {
                 case .length(let n):
                     if n == 0 { state = .finished; done = true } else { state = .bodyLength(n) }
                 case .chunked: state = .chunkSize
-                case .close: state = .bodyUntilClose
-                case .bad: return fail()
+                case .none: return fail()  // a body without a length ends "at the end of the connection": a cut-off one would pass as complete
                 }
             case .bodyLength(let n):
                 guard available >= n else { return .needMore }
@@ -145,13 +142,6 @@ struct UpstreamHTTPReader {
                 operations += n
                 pos += n
                 state = .finished; done = true
-            case .bodyUntilClose:
-                guard available + body.count <= cap else { return fail() }
-                body.append(contentsOf: buf[pos...])
-                operations += available
-                pos = buf.count; scan = pos
-                buf.removeAll(keepingCapacity: true); pos = 0; scan = 0
-                return .needMore
             case .chunkSize:
                 let end: Int
                 switch lineEnd(limit: Self.maxLine) {
@@ -208,12 +198,13 @@ struct UpstreamHTTPReader {
         return nil
     }
 
-    private enum BodyKind { case length(Int), chunked, close, bad }
-    private var bodyKind = BodyKind.close
+    private enum BodyKind { case length(Int), chunked, none }
+    private var bodyKind = BodyKind.none
 
     /// The status line and the headers. Strict: HTTP/1.x, a three-digit status, header names of token characters, no folded line, no
     /// control or non-ASCII byte, at most `maxHeaders` headers, one Content-Length and one Transfer-Encoding at most, never both.
     private mutating func parseHead(_ head: ArraySlice<UInt8>) -> Bool {
+        retryAfter = 0; bodyKind = .none  // nothing of an interim answer's head carries over to the next
         var lines: [ArraySlice<UInt8>] = []
         var from = head.startIndex
         var i = head.startIndex
@@ -253,7 +244,7 @@ struct UpstreamHTTPReader {
             }
         }
         if sawLength && sawEncoding { return false }
-        bodyKind = chunked ? .chunked : (length.map { .length($0) } ?? .close)
+        bodyKind = chunked ? .chunked : (length.map { .length($0) } ?? .none)
         return true
     }
 

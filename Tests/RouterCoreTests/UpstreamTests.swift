@@ -85,9 +85,10 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
 final class MemorySecrets: UpstreamSecretStore, @unchecked Sendable {
     private let lock = NSLock()
     private var m: [String: String] = [:]
-    func get(_ a: String) -> String? { lock.lock(); defer { lock.unlock() }; return m[a] }
-    func set(_ a: String, _ v: String) { lock.lock(); m[a] = v; lock.unlock() }
-    func delete(_ a: String) { lock.lock(); m[a] = nil; lock.unlock() }
+    var locked = false  // a locked login keychain: nothing can be read or written without asking the user
+    func read(_ a: String) -> UpstreamSecretRead { lock.lock(); defer { lock.unlock() }; if locked { return .unreadable }; return m[a].map { .found($0) } ?? .missing }
+    func write(_ a: String, _ v: String) -> Bool { lock.lock(); defer { lock.unlock() }; if locked { return false }; m[a] = v; return true }
+    func remove(_ a: String) -> Bool { lock.lock(); defer { lock.unlock() }; if locked { return false }; m[a] = nil; return true }
     var all: [String: String] { lock.lock(); defer { lock.unlock() }; return m }
 }
 
@@ -227,9 +228,9 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
 
     @Test func aKeychainItemThatCannotBeRemovedIsReported() {
         final class Stuck: UpstreamSecretStore, @unchecked Sendable {
-            func get(_ a: String) -> String? { #"{"token":"t","key":"k","device":"d","address":"a:1"}"# }
-            func set(_ a: String, _ v: String) {}
-            func delete(_ a: String) {}  // a locked keychain: the item stays
+            func read(_ a: String) -> UpstreamSecretRead { .found(#"{"token":"t","key":"k","device":"d","address":"a:1"}"#) }
+            func write(_ a: String, _ v: String) -> Bool { true }
+            func remove(_ a: String) -> Bool { true }  // says it worked, and the item is still there
         }
         let own = Noise.newKey().publicKey.rawRepresentation
         let h = UpstreamHost(secrets: Stuck(), ownKey: { own }, ownPort: { 8765 }, transport: FakeTransport(), computerName: "mac")
@@ -271,6 +272,21 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
         #expect(h.callout(["op": "connect", "upstream": "x", "deviceName": "gw", "address": "hub.example:8765", "token": "tok-123_ABC#" + key])["error"] == nil)
     }
 
+    @Test func aLockedKeychainFailsAtOnceWithAClearText() {
+        let s = MemorySecrets(), t = FakeTransport()
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let h = UpstreamHost(secrets: s, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac")
+        let line = "tok#" + Noise.base64url(Noise.newKey().publicKey.rawRepresentation)
+        #expect(h.callout(["op": "connect", "upstream": "hub", "deviceName": "gw", "address": "hub.example:8765", "token": line])["error"] == nil)
+        s.locked = true
+        for q in [["op": "info", "upstream": "hub"], ["op": "do", "upstream": "hub", "method": "GET", "path": "/minigw/v1/projects"], ["op": "forget", "upstream": "hub"]] {
+            let r = h.callout(q)
+            #expect((r["error"] as? String)?.contains("unlock the login keychain") == true || (r["error"] as? String)?.contains("could not be removed") == true, Comment(rawValue: "\(q)"))
+        }
+        #expect(t.calls.isEmpty)
+        #expect((h.callout(["op": "connect", "upstream": "x", "deviceName": "gw", "address": "hub.example:8765", "token": line])["error"] as? String)?.contains("unlock the login keychain") == true)
+    }
+
     @Test func anUnknownCalloutKindIsRefused() {
         let h = host(FakeTransport())
         for op in ["frobnicate", "exec", "fetch", "", "DO"] { #expect(h.callout(["op": op, "upstream": "hub", "method": "GET", "path": "/minigw/v1/x"])["error"] != nil, Comment(rawValue: op)) }
@@ -293,6 +309,48 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
     }
 }
 
+/// R1: Noise.unframe walks the frames with an offset; the consumed bytes are dropped once per call. A peer can send thousands of tiny frames.
+@Suite struct NoiseUnframeIsLinear {
+    func session() throws -> (send: Noise.Cipher, receive: Noise.Cipher) {
+        let key = Noise.newKey()
+        var i = Noise.Initiator(routerKey: key.publicKey.rawRepresentation, suite: .aesGCM)
+        let first = try i.first()
+        let (reply, server) = try Noise.respond(first, key: key, suite: .aesGCM)
+        let client = try i.finish(reply)
+        return (client.send, server.receive)
+    }
+
+    @Test func manyTinyFramesAreOneWalk() throws {
+        func run(_ n: Int) throws -> (Double, Int) {
+            let (send, receive) = try session()
+            var wire = Data()
+            for k in 0..<n { wire += Noise.frames(Data([UInt8(k & 0xff)]), send) }
+            var buf = wire
+            let t = Date()
+            let plain = try Noise.unframe(&buf, receive)
+            #expect(plain.count == n && buf.isEmpty)
+            return (Date().timeIntervalSince(t), plain.count)
+        }
+        let (small, _) = try run(20_000), (big, _) = try run(80_000)
+        #expect(big < 3, "80000 frames took \(big) s")
+        #expect(big < max(small, 0.005) * 12, "4x the frames took \(big / max(small, 0.005))x the time")  // linear is 4x, one copy per frame is 16x
+    }
+
+    @Test func behaviourIsUnchanged() throws {
+        let (send, receive) = try session()
+        let a = Noise.frames(Data("one".utf8), send), b = Noise.frames(Data("two".utf8), send), c = Noise.frames(Data("three".utf8), send)
+        var buf = a + b + c.prefix(c.count - 3)  // the third frame is not complete
+        #expect(String(decoding: try Noise.unframe(&buf, receive), as: UTF8.self) == "onetwo")
+        #expect(buf == c.prefix(c.count - 3))
+        buf += c.suffix(3)
+        #expect(String(decoding: try Noise.unframe(&buf, receive), as: UTF8.self) == "three" && buf.isEmpty)
+        var tail = Data([0x00])
+        #expect(try Noise.unframe(&tail, receive).isEmpty && tail == Data([0x00]))  // not even a length
+        var garbage = Data([0x00, 0x20] + [UInt8](repeating: 0x41, count: 32))
+        #expect(throws: (any Error).self) { try Noise.unframe(&garbage, receive) }
+    }
+}
+
 @Suite struct UpstreamHTTPAnswerParsing {
     func parse(_ s: String, closed: Bool = false, cap: Int = 100) -> UpstreamAnswer? { UpstreamHTTPAnswer.parse(Data(s.utf8), closed: closed, cap: cap) }
 
@@ -303,8 +361,12 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
         #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n") == UpstreamAnswer(status: 200, body: Data("abcde".utf8)))
         #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3;ext=1\r\nabc\r\n0\r\nX-Trailer: y\r\n\r\n") == UpstreamAnswer(status: 200, body: Data("abc".utf8)))
         #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nab") == nil)
-        #expect(parse("HTTP/1.1 200 OK\r\n\r\nrest", closed: true) == UpstreamAnswer(status: 200, body: Data("rest".utf8)))
-        #expect(parse("HTTP/1.1 200 OK\r\n\r\nrest") == nil)  // no length, still open
+        // an answer without a length (body "until the end of the connection") is refused: a cut-off one would pass as complete
+        #expect(parse("HTTP/1.1 200 OK\r\n\r\nrest", closed: true)?.status == 0)
+        #expect(parse("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nrest")?.status == 0)
+        // nothing of an interim answer's head carries over (a Retry-After on a 100)
+        #expect(parse("HTTP/1.1 100 Continue\r\nRetry-After: 9\r\n\r\nHTTP/1.1 201 Created\r\nContent-Length: 1\r\n\r\nx") == UpstreamAnswer(status: 201, body: Data("x".utf8), retryAfter: 0))
+        #expect(parse("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n") == UpstreamAnswer(status: 204))
         #expect(parse("HTTP/1.1 204 No Content\r\n\r\n") == UpstreamAnswer(status: 204))
         #expect(parse("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 201 Created\r\nContent-Length: 1\r\n\r\nx") == UpstreamAnswer(status: 201, body: Data("x".utf8)))
         #expect(parse("HTTP/1.0 200 OK\r\nContent-Length: 1\r\n\r\nx")?.status == 200)
@@ -715,6 +777,42 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         release.signal()
         let r = await push.value
         #expect(r.status == 200)
+    }
+
+    /// D1: a failure of the upstream lane takes down only the lane. Requests on the first connection go on, the helper is not restarted, and
+    /// the upstream routes answer a clean 503 with the reason until the next helper start.
+    @Test func aLaneFailureNeverRestartsTheHelperOrHoldsUpTheFirstConnection() async throws {
+        let secrets = MemorySecrets(), t = fakeUpstream()
+        let entered = DispatchSemaphore(value: 0)
+        let ok = t.handler
+        t.handler = { c in if c.method == "POST" { entered.signal(); Thread.sleep(forTimeInterval: 2) }; return ok(c) }
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let (h, _) = try await start(callouts: UpstreamHost(secrets: secrets, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac"))
+        defer { h.stop() }
+        _ = await adm(h, "PUT", "/upstreams/hub", #"{"address":"hub.example","token":"tok#\#(Noise.base64url(Noise.newKey().publicKey.rawRepresentation))"}"#)
+        _ = await adm(h, "PUT", "/bindings/dev-A", #"{"user":1}"#)
+        _ = await adm(h, "POST", "/projects", #"{"slug":"shop","name":"Shop"}"#)
+        _ = await adm(h, "PUT", "/projects/1/members/1", #"{"role":"developer"}"#)
+        let member = CoreContext(kind: .member, device: "dev-A", approved: true)
+        _ = await h.call(context: member, request: CoreRequest(method: "POST", path: "/minigw/v1/projects/1/notes", header: ["Idempotency-Key": ["k"]], body: Data(#"{"class":"data","title":"N","body":"t"}"#.utf8)))
+        _ = await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop"}"#)
+        let pid = h.pid, restarts = h.restarts
+        let push = Task { await self.adm(h, "POST", "/upstream-push", #"{"project":1}"#) }
+        var inCallout = false
+        for _ in 0..<300 where !inCallout { inCallout = entered.wait(timeout: .now()) == .success; if !inCallout { try await Task.sleep(for: .milliseconds(50)) } }
+        #expect(inCallout)
+        h.breakLaneForTest()  // the lane fails while the push is inside a callout
+        // requests on the first connection, in flight around the failure, all complete
+        var statuses: [Int] = []
+        for _ in 0..<20 { statuses.append((await h.call(context: member, request: CoreRequest(method: "GET", path: "/minigw/v1/projects/1/notes"))).status) }
+        #expect(statuses.allSatisfy { $0 == 200 })
+        let pushed = await push.value
+        #expect(pushed.status == 503 && String(decoding: pushed.body, as: UTF8.self).contains("upstream routes are unavailable"))
+        // a second upstream request: a clean error, at once
+        let again = await adm(h, "GET", "/upstreams")
+        #expect(again.status == 503 && String(decoding: again.body, as: UTF8.self).contains("upstream_unavailable"))
+        #expect(h.pid == pid && h.restarts == restarts && h.isReady, "the helper was restarted for a lane failure")
+        #expect((await adm(h, "GET", "/users")).status == 200)
     }
 
     @Test func withoutAnAppThatAnswersCalloutsTheRoutesSay501() async throws {

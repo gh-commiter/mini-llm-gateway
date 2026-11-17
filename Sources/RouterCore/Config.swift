@@ -553,6 +553,37 @@ public struct Keychain: SecretStore {
         return q
     }
 
+    /// Non-interactive access for the upstream credentials (they are read, written and removed for a helper that waits only seconds): the item
+    /// is never asked for with a prompt. A locked login keychain, or an access rule that would ask the user, ends in an error status at once.
+    public func readNoUI(_ account: String) -> (value: String?, status: OSStatus) {
+        guard var q = query(account) else { return (nil, errSecNoSuchKeychain) }
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        q[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
+        var out: CFTypeRef?
+        let st = SecItemCopyMatching(q as CFDictionary, &out)
+        return (st == errSecSuccess ? (out as? Data).flatMap { String(data: $0, encoding: .utf8) } : nil, st)
+    }
+
+    public func writeNoUI(_ account: String, _ value: String) -> Bool {
+        let data = Data(value.utf8)
+        guard var q = query(account) else { return false }
+        q[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
+        let st = SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if st == errSecSuccess { return true }
+        guard st == errSecItemNotFound, var add = query(account, adding: true) else { return false }
+        add[kSecValueData as String] = data
+        add[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+
+    public func removeNoUI(_ account: String) -> Bool {
+        guard var q = query(account) else { return false }
+        q[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
+        let st = SecItemDelete(q as CFDictionary)
+        return st == errSecSuccess || st == errSecItemNotFound
+    }
+
     public func get(_ account: String) -> String? {
         guard var q = query(account) else { return nil }
         q[kSecReturnData as String] = true

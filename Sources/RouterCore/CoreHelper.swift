@@ -160,6 +160,10 @@ public final class CoreHelper: @unchecked Sendable {
     private var ready = false                 // set after ensure-owner and reconcile: project routes are served only now
     private var stopping = false, finished = false, fatal: CoreError?
     private var nextID: UInt64 = 0
+    /// Why the upstream lane is down (nil = it works). A lane that failed is closed and NOT replaced while the helper runs, and the helper is
+    /// NOT restarted for it: the first connection is healthy and the core keeps serving. The upstream routes answer 503 with this reason
+    /// until the next helper start, which makes a new lane.
+    private var laneBroken: String?
     private var thread: Thread?
     private let io = DispatchQueue(label: "dev.trojar.minigateway.core.io")  // one request at a time
     /// The upstream routes have a connection and a queue of their own (the helper's lane): they wait for the network and the Keychain, and a
@@ -234,7 +238,7 @@ public final class CoreHelper: @unchecked Sendable {
     }
 
     private func send(_ context: CoreContext, _ request: CoreRequest, needReady: Bool) async -> CoreResponse {
-        let lane = Self.isUpstreamRoute(context, request)
+        let lane = Self.isUpstreamRoute(context, request) && callouts != nil  // no callouts, no lane: the first connection says 501
         return await withCheckedContinuation { cont in
             (lane ? laneIO : io).async { cont.resume(returning: self.exchange(context, request, needReady: needReady, lane: lane)) }
         }
@@ -260,10 +264,11 @@ public final class CoreHelper: @unchecked Sendable {
     private func exchange(_ cx: CoreContext, _ rq: CoreRequest, needReady: Bool, lane: Bool = false) -> CoreResponse {
         cond.lock()
         guard fatal == nil, let c = conn, ready || !needReady else { cond.unlock(); return .unavailable }
+        if lane, let why = laneBroken { cond.unlock(); return Self.laneDown(why) }
         nextID += 1
         let id = nextID
         cond.unlock()
-        let fd = lane ? (c.laneFd ?? c.fd) : c.fd  // without a lane (no callouts) the first connection answers: the helper says 501
+        guard let fd = lane ? c.laneFd : c.fd else { return Self.laneDown("no connection for upstream calls") }
         do {
             setTimeout(fd, requestTimeout)
             try sendFrame(fd, ["v": Self.protocolVersion, "id": id, "context": cx.json, "request": rq.json])
@@ -284,12 +289,27 @@ public final class CoreHelper: @unchecked Sendable {
             }
             return r
         } catch {
+            if lane {  // only the lane is lost: close it, say so, and leave the helper and its first connection alone
+                cond.lock(); laneBroken = "\(error)"; shutdown(fd, SHUT_RDWR); cond.unlock()
+                Self.log.error("upstream lane failed, upstream routes are down until the helper restarts: \(error.localizedDescription, privacy: .public)")
+                return Self.laneDown("\(error)")
+            }
             // the stream state is unknown: end this helper, the supervisor starts a new one
             cond.lock(); lastFailure = "\(error)"; ready = false; kill(c.pid, SIGKILL); cond.unlock()
             Self.log.error("helper request failed, restarting it: \(error.localizedDescription, privacy: .public)")
             return .unavailable
         }
     }
+
+    /// The answer of an upstream route while the lane is down: a clean 503 with the reason; nothing else is affected.
+    static func laneDown(_ why: String) -> CoreResponse {
+        let msg = "upstream routes are unavailable (\(why)): quit and open Mini Gateway to try again; everything else works"
+        let body = (try? JSONSerialization.data(withJSONObject: ["error": ["message": msg, "type": "upstream_unavailable"]])) ?? Data()
+        return CoreResponse(status: 503, header: ["Content-Type": ["application/json"]], body: body)
+    }
+
+    /// Test hook: close the upstream lane as a failure would.
+    func breakLaneForTest() { cond.lock(); if let l = conn?.laneFd { shutdown(l, SHUT_RDWR) }; cond.unlock() }
 
     // MARK: device revocation (docs/core-adapter.md, duty 2)
 
@@ -341,6 +361,7 @@ public final class CoreHelper: @unchecked Sendable {
             do {
                 guard let binary, FileManager.default.isExecutableFile(atPath: binary.path) else { throw CoreError.unavailable("minigw-core not found") }
                 let p = try CoreProcess.spawn(binary: binary, store: store, lane: callouts != nil)
+                cond.lock(); laneBroken = nil; cond.unlock()  // a new helper has a new lane
                 do {
                     _ = try handshake(fd: p.fd, secret: p.secret, versions: versions)  // the first connection never gets callouts
                     if let l = p.laneFd { _ = try handshake(fd: l, secret: p.secret, versions: versions, callouts: true) }

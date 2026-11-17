@@ -108,7 +108,11 @@ admits only the requests a push makes (method and path patterns, `client/testdat
 `CoreHelper.laneIO`). A slow upstream can then never hold up a member read, a KB read or a device revocation on the first connection. The
 host of a connection is passed to the API with the request (`coreapi.WithUpstream`), so an upstream route that arrives on the first
 connection answers 501 and never uses the lane's host. Chosen over letting the helper serve several requests on one connection because
-the one-at-a-time invariant of the first connection stays whole.
+the one-at-a-time invariant of the first connection stays whole. **A lane failure takes down only the lane**: the app closes it, the
+upstream routes answer 503 (`upstream_unavailable`, with the reason) and the helper is NOT restarted while its first connection is
+healthy; a new helper start makes a new lane (a running helper cannot be given a second connection afterwards). The Keychain reads behind
+the callouts are non-interactive (`kSecUseAuthenticationUISkip`): a locked login keychain gives "the upstream's credentials cannot be read:
+unlock the login keychain" at once instead of a prompt that outlasts the helper's wait.
 
 ## Stays in the adapter (the Mac app's list)
 

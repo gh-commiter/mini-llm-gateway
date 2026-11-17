@@ -40,7 +40,7 @@ public enum UpstreamRequest {
     public static let patterns: [(method: String, pattern: String)] = [
         ("GET", "^/minigw/v1/projects$"),
         ("GET", "^/minigw/v1/teams$"),
-        ("GET", "^/minigw/v1/projects/[a-z0-9][a-z0-9-]{1,62}$"),
+        ("GET", "^/minigw/v1/projects/(?:[a-z][a-z0-9-]{1,62}|[0-9]{1,61}[a-z-][a-z0-9-]{0,61})$"),
         ("GET", "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions/[0-9]{1,18}$"),
         ("POST", "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions$"),
         ("GET", "^/minigw/v1/projects/[0-9]{1,18}/notes/[0-9]{1,18}$"),
@@ -72,14 +72,26 @@ public enum UpstreamRequest {
     }
 }
 
-/// Where the secrets are kept: the Keychain in the app, memory in tests.
+/// What a read of a secret found. `unreadable`: the store could not be read without asking the user (a locked login keychain, an access rule
+/// that wants a prompt): reported at once, never waited for.
+public enum UpstreamSecretRead: Equatable, Sendable { case found(String), missing, unreadable }
+
+/// Where the secrets are kept: the Keychain in the app (never interactively), memory in tests. Writes and removals say whether they worked.
 public protocol UpstreamSecretStore: Sendable {
-    func get(_ account: String) -> String?
-    func set(_ account: String, _ value: String)
-    func delete(_ account: String)
+    func read(_ account: String) -> UpstreamSecretRead
+    func write(_ account: String, _ value: String) -> Bool
+    func remove(_ account: String) -> Bool
 }
 
-extension Keychain: UpstreamSecretStore {}
+extension Keychain: UpstreamSecretStore {
+    public func read(_ account: String) -> UpstreamSecretRead {
+        let r = readNoUI(account)
+        if let v = r.value, !v.isEmpty { return .found(v) }
+        return r.status == errSecItemNotFound || r.status == errSecSuccess ? .missing : .unreadable
+    }
+    public func write(_ account: String, _ value: String) -> Bool { writeNoUI(account, value) }
+    public func remove(_ account: String) -> Bool { removeNoUI(account) }
+}
 
 public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
     /// The most of an answer that is passed to the core (coreapi.MaxCalloutBody).
@@ -107,11 +119,17 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
 
     static func account(_ upstream: String) -> String { "upstream:" + upstream }
 
+    static let unreadable = "the upstream's credentials cannot be read: unlock the login keychain (Mini Gateway never asks for it from here)"
+
     private func load(_ upstream: String) -> Secret? {
-        guard let v = secrets.get(Self.account(upstream)), let s = try? JSONDecoder().decode(Secret.self, from: Data(v.utf8)),
+        guard case .found(let v) = secrets.read(Self.account(upstream)), let s = try? JSONDecoder().decode(Secret.self, from: Data(v.utf8)),
               !s.token.isEmpty, !s.key.isEmpty, !s.device.isEmpty else { return nil }
         return s
     }
+
+    private func isFound(_ upstream: String) -> Bool { if case .found = secrets.read(Self.account(upstream)) { return true }; return false }
+
+    private func isUnreadable(_ upstream: String) -> Bool { secrets.read(Self.account(upstream)) == .unreadable }
 
     private func deviceKey(_ s: Secret) -> Curve25519.Signing.PrivateKey? {
         Noise.fromBase64url(s.device).flatMap { try? Curve25519.Signing.PrivateKey(rawRepresentation: $0) }
@@ -139,19 +157,20 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
         let dev = Curve25519.Signing.PrivateKey()
         let s = Secret(token: tokenPart, key: keyPart, device: Noise.base64url(dev.rawRepresentation), address: address, name: deviceName)
         guard let data = try? JSONEncoder().encode(s) else { return ["error": "cannot store the credentials"] }
-        secrets.set(Self.account(upstream), String(decoding: data, as: UTF8.self))
-        guard load(upstream) != nil else { return ["error": "cannot store the credentials in the Keychain: unlock the login keychain and try again"] }
+        guard secrets.write(Self.account(upstream), String(decoding: data, as: UTF8.self)), load(upstream) != nil else {
+            return ["error": "cannot store the credentials in the Keychain: unlock the login keychain and try again"]
+        }
         return ["device": Noise.base64url(dev.publicKey.rawRepresentation), "where": "the Keychain"]
     }
 
     func info(_ upstream: String) -> [String: Any] {
-        guard let s = load(upstream), let k = deviceKey(s) else { return ["error": "no credentials"] }
+        guard let s = load(upstream), let k = deviceKey(s) else { return ["error": isUnreadable(upstream) ? Self.unreadable : "no credentials"] }
         return ["device": Noise.base64url(k.publicKey.rawRepresentation)]
     }
 
     func `do`(_ upstream: String, _ q: [String: Any]) -> [String: Any] {
         guard let s = load(upstream), let k = deviceKey(s), let key = Noise.fromBase64url(s.key), key.count == 32 else {
-            return ["error": "no credentials for upstream \(upstream): remove it and add it again"]
+            return ["error": isUnreadable(upstream) ? Self.unreadable : "no credentials for upstream \(upstream): remove it and add it again"]
         }
         let body = (q["body"] as? String).flatMap { Data(base64Encoded: $0) }
         let method = q["method"] as? String ?? "", path = q["path"] as? String ?? ""
@@ -176,8 +195,8 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
         case "connect": return connect(up, address: q["address"] as? String ?? "", line: q["token"] as? String ?? "", deviceName: q["deviceName"] as? String ?? "")
         case "info": return info(up)
         case "forget":
-            secrets.delete(Self.account(up))
-            return secrets.get(Self.account(up)) == nil ? [:] : ["error": "the Keychain item could not be removed (is the login keychain locked?)"]
+            let removed = secrets.remove(Self.account(up))
+            return removed && !isFound(up) ? [:] : ["error": "the Keychain item could not be removed (is the login keychain locked?)"]
         case "do": return `do`(up, q)
         default: return ["error": "unknown callout"]
         }
