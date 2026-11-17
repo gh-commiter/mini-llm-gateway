@@ -52,7 +52,8 @@ type SearchHit struct {
 	Updated time.Time `json:"updated"`
 	// EntryKind is finding or faq.
 	EntryKind string `json:"entryKind"`
-	// From names where a hit comes from when it is not the project asked: "team:<name>" for the team's notes.
+	// From names where a hit comes from when it is not the project asked: "team:<name>" for the team's notes,
+	// "project:<slug>" for a project the asked one depends on.
 	From string `json:"from,omitempty"`
 }
 type SearchPage struct {
@@ -135,7 +136,22 @@ func searchNotes(ctx context.Context, tx *sql.Tx, user, home int64, rs []readabl
 	labels := map[int64]string{} // at most one lookup per source
 	for i := range found {
 		p := found[i].Project
+		if p == home && !isSegment(p) {
+			continue
+		}
+		if _, ok := labels[p]; !ok && !isSegment(p) { // a project that the home project depends on: its slug, else no label
+			var slug string
+			switch err = tx.QueryRow(`SELECT p.slug FROM project_depends d JOIN projects p ON p.id=d.depends_on WHERE d.project_id=? AND d.depends_on=?`, home, p).Scan(&slug); err {
+			case nil:
+				labels[p] = "project:" + slug
+			case sql.ErrNoRows:
+				labels[p] = ""
+			default:
+				return SearchPage{}, err
+			}
+		}
 		if !isSegment(p) {
+			found[i].From = labels[p]
 			continue
 		}
 		if _, ok := labels[p]; !ok {
