@@ -126,7 +126,7 @@ func (f *upFx) remoteSubmissions() (n int, titles string) {
 func TestUpstreamEndToEnd(t *testing.T) {
 	f := newUpFx(t, core.Developer)
 	out := f.add("hub")
-	for _, want := range []string{"upstream hub: " + f.addr, "device " + f.localDev, "credentials stored in test", "the upstream says: no project access: this device is not on the gateway's device list"} {
+	for _, want := range []string{"upstream hub: " + f.addr, "device " + f.localDev, "credentials stored in test", "waiting for approval on the upstream as gateway "} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("add: %q lacks %q", out, want)
 		}
@@ -546,5 +546,49 @@ func TestUpstreamHostSurvivesHostileAnswers(t *testing.T) {
 				t.Fatal("took", time.Since(start))
 			}
 		})
+	}
+}
+
+// `upstream add` is a client's first contact: the upstream lists the device as WAITING, with the name the owner chose and the client
+// description of a gateway; once allowed, a gateway that only sends notes shows its last contact and the same description.
+func TestUpstreamAddMakesTheDeviceWaitingAndItIsDescribed(t *testing.T) {
+	f := newUpFx(t, core.Developer)
+	out, err := f.cmd(coreOpts{in: strings.NewReader(f.token), deviceName: "Uros mini"}, "add", "hub", f.addr)
+	f.must(err)
+	f.localDev = upstreamHost{f.local}.Info("hub").Device
+	if !strings.Contains(out, "waiting for approval on the upstream as Uros mini ("+f.localDev+"): its owner runs: minigw gw devices allow "+f.localDev) {
+		t.Fatalf("%q", out)
+	}
+	_, obj := f.remote.adminDo("GET", "/devices", nil)
+	b, _ := json.Marshal(obj)
+	var l struct{ Devices, Pending []apiDevice }
+	json.Unmarshal(b, &l)
+	if len(l.Pending) != 1 || l.Pending[0].ID != f.localDev || l.Pending[0].Name != "Uros mini" || l.Pending[0].Client != "gateway, minigw "+version {
+		t.Fatalf("pending list: %s", b)
+	}
+	// allowed but not bound: the probe says what is missing; then bound: connected
+	f.must(f.remote.update(func(c *serveConfig) error {
+		c.Devices = append(c.Devices, serveDevice{ID: f.localDev, Name: "Uros mini"})
+		return nil
+	}))
+	ph := coreapi.ProbeUpstream(t0, upstreamHost{f.local}, "hub", "Uros mini", f.localDev)
+	if !strings.Contains(ph, "not bound to a user") || !strings.Contains(ph, "minigw gw bind "+f.localDev) {
+		t.Fatalf("%q", ph)
+	}
+	f.must(f.remote.core.SetBinding(t0, f.localDev, f.ruser))
+	if ph = coreapi.ProbeUpstream(t0, upstreamHost{f.local}, "hub", "Uros mini", f.localDev); !strings.Contains(ph, "connected") {
+		t.Fatalf("%q", ph)
+	}
+	// after a push (member routes only) the allowed device shows its client description and last contact
+	f.seed()
+	f.must(f.local.core.LinkUpstream(t0, f.projectID("shop"), 0, "hub", "shop", "", false))
+	if _, err := f.cmd(coreOpts{}, "push", "shop"); err != nil {
+		t.Fatal(err)
+	}
+	_, obj = f.remote.adminDo("GET", "/devices", nil)
+	b, _ = json.Marshal(obj)
+	json.Unmarshal(b, &l)
+	if len(l.Devices) != 1 || l.Devices[0].Client != "gateway, minigw "+version || l.Devices[0].LastSeen == "" {
+		t.Fatalf("device list after a push: %s", b)
 	}
 }

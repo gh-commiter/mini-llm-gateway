@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- `minigw gw upstream add` now makes the new device appear in the upstream's list of waiting devices (it makes the first contact an ordinary client makes), and prints `waiting for approval on the upstream as <name> (<id>)`, so the upstream's owner can approve it without being told the ID separately. A gateway that sends notes also shows its client description (`gateway, minigw <version>`) and last contact on the upstream's device list, and an unknown device that only uses the project routes now waits for approval there too.
+- `minigw gw kb review` shows the writer's name (not a number) when the gateway sends it.
+- Right after an update, `minigw gw status` and the admin commands say that the gateway is starting (its project database is being opened or migrated) instead of "not running", on `minigw serve` (it sees that the database is held by the starting process) and on the Mac app (the helper is up but not ready).
+
 ## 0.7.21
 
 ### New

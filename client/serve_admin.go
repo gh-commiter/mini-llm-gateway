@@ -15,6 +15,7 @@ import (
 	"io"
 	"log"
 	"maps"
+	"minigw/core"
 	"minigw/coreapi"
 	"net"
 	"net/http"
@@ -110,6 +111,7 @@ type apiGeneral struct {
 
 type apiStatus struct {
 	Running    bool         `json:"running"`
+	Starting   bool         `json:"starting,omitempty"` // no gateway answers yet, but the project database is held by one: it is starting (opening, migrating)
 	Version    string       `json:"version"`
 	Build      string       `json:"build,omitempty"` // commit gradnje (vcs.revision)
 	Port       int          `json:"port"`
@@ -244,6 +246,10 @@ func localOnly(w http.ResponseWriter, r *req) int {
 }
 
 // offlineServer: router ne teče; isti API spreminja le serve.json in shrambo ključev.
+// coreStarting: a gateway process holds the project database although none answers: it is starting (the core migrates before the
+// gateway listens).
+func (s *server) coreStarting() bool { return core.InUse(filepath.Join(s.cfgDir, coreDirName)) }
+
 func offlineServer(cfgPath string) (*server, error) {
 	c, err := loadServeConfig(cfgPath)
 	if err != nil {
@@ -372,7 +378,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 	switch route {
 	case "GET status":
 		c := s.conf()
-		st := apiStatus{Running: !s.offline, Version: version, Port: c.Port, Address: c.Address, Installed: serviceInstalled(runtime.GOOS),
+		st := apiStatus{Running: !s.offline, Starting: s.offline && s.coreStarting(), Version: version, Port: c.Port, Address: c.Address, Installed: serviceInstalled(runtime.GOOS),
 			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning(), Build: buildCommit(),
 			Agents: int(s.agentsRunning.Load()), Autostart: autostart(runtime.GOOS), AgentsUnsandboxed: !agentSandboxed(s.cfgDir),
 			AgentSandbox: agentSandboxInfo(), Core: s.coreStatus(c)}

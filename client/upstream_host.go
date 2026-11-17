@@ -146,7 +146,7 @@ func (h upstreamHost) Do(ctx context.Context, name, method, path string, header 
 		return 0, nil, 0, err
 	}
 	req.Header.Set("authorization", "Bearer "+sec.Token)
-	req.Header.Set("X-Minigw-Client", clientInfo())
+	req.Header.Set("X-Minigw-Client", "gateway, minigw "+version) // the OS field says what it is: a gateway
 	if body != nil {
 		req.Header.Set("content-type", "application/json")
 	}

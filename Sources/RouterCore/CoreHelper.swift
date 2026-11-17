@@ -164,6 +164,7 @@ public final class CoreHelper: @unchecked Sendable {
     /// NOT restarted for it: the first connection is healthy and the core keeps serving. The upstream routes answer 503 with this reason
     /// until the next helper start, which makes a new lane.
     private var laneBroken: String?
+    private var spawned = false  // a helper process is running (set at spawn, cleared when it ends): before its handshake it is opening the database
     private var thread: Thread?
     private let io = DispatchQueue(label: "dev.trojar.minigateway.core.io")  // one request at a time
     /// The upstream routes have a connection and a queue of their own (the helper's lane): they wait for the network and the Keychain, and a
@@ -185,6 +186,8 @@ public final class CoreHelper: @unchecked Sendable {
     var binaryPath: String { binary?.path ?? "" }  // for test diagnostics
     public var pid: pid_t? { cond.lock(); defer { cond.unlock() }; return conn?.pid }
     public var isReady: Bool { cond.lock(); defer { cond.unlock() }; return ready }
+    /// The helper process is up but not ready yet (it opens and migrates the database, then the owner and the marks): starting, not stopped.
+    public var isStarting: Bool { cond.lock(); defer { cond.unlock() }; return spawned && !ready && fatal == nil }
     public var restarts: Int { cond.lock(); defer { cond.unlock() }; return max(0, spawnTimes.count - 1) }
     /// A refusal that no restart can fix (protocol version, unauthentic helper); nil while all is well.
     public var fatalError: CoreError? { cond.lock(); defer { cond.unlock() }; return fatal }
@@ -361,7 +364,7 @@ public final class CoreHelper: @unchecked Sendable {
             do {
                 guard let binary, FileManager.default.isExecutableFile(atPath: binary.path) else { throw CoreError.unavailable("minigw-core not found") }
                 let p = try CoreProcess.spawn(binary: binary, store: store, lane: callouts != nil)
-                cond.lock(); laneBroken = nil; cond.unlock()  // a new helper has a new lane
+                cond.lock(); laneBroken = nil; spawned = true; cond.unlock()  // a new helper has a new lane
                 do {
                     _ = try handshake(fd: p.fd, secret: p.secret, versions: versions)  // the first connection never gets callouts
                     if let l = p.laneFd { _ = try handshake(fd: l, secret: p.secret, versions: versions, callouts: true) }
@@ -384,7 +387,7 @@ public final class CoreHelper: @unchecked Sendable {
                 } catch { kill(p.pid, SIGKILL) }
                 var status: Int32 = 0
                 waitpid(p.pid, &status, 0)  // blocks until exit: crash, kill or EOF after stop()
-                cond.lock(); conn = nil; ready = false; lastExit = status; close(p.fd); if let l = p.laneFd { close(l) }; cond.broadcast(); cond.unlock()
+                cond.lock(); conn = nil; ready = false; spawned = false; lastExit = status; close(p.fd); if let l = p.laneFd { close(l) }; cond.broadcast(); cond.unlock()
             } catch {
                 cond.lock(); lastFailure = "\(error)"; cond.unlock()
             }

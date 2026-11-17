@@ -213,7 +213,7 @@ extension AdminCommands {
                 for v in pg["submissions"]?.array ?? [] {
                     let full = try request("GET", "/kb/submissions/\(v.dict["id"]?.int ?? 0)")
                     say(ProjectEnv.submissionLine(full, (full["project"]?.int ?? 0) > ProjectEnv.segmentBase ? try teamNames() : [:]))
-                    say(clean("writer \(full["user"]?.int ?? 0)  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)"))
+                    say(clean("writer \(full["authorName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? String(full["user"]?.int ?? 0))  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)"))
                     if let body = full["body"]?.string { say(clean(body)) }; count += 1
                 }
                 after = pg["next"]?.int ?? 0

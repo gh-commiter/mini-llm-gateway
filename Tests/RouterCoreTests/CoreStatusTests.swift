@@ -19,9 +19,13 @@ private func started(_ binary: URL?, _ store: URL) async -> CoreHelper {
 
 @Suite(.serialized) struct CoreStatusLine {
     @Test func theLineForEachState() {
-        func l(up: Bool = true, failure: String = "", fatal: CoreError? = nil, store: String? = nil, link: String? = nil) -> String {
-            CoreStatus.line(helperUp: up, failure: failure, fatal: fatal, storeReason: store, linkProblem: link)
+        func l(up: Bool = true, failure: String = "", fatal: CoreError? = nil, store: String? = nil, link: String? = nil, starting: Bool = false) -> String {
+            CoreStatus.line(helperUp: up, failure: failure, fatal: fatal, storeReason: store, linkProblem: link, starting: starting)
         }
+        // a helper that is still opening (migrating) the database is starting, not stopped; a failure or a refusal still wins
+        #expect(l(up: false, starting: true) == "projects: starting (the project database is being opened or migrated; try again in a few seconds)")
+        #expect(l(up: false, fatal: .peerNotAuthentic, starting: true).hasPrefix("projects: off (the project helper could not prove"))
+        #expect(l(up: true, starting: true) == "projects: on")
         #expect(l() == "projects: on")
         #expect(l(up: false) == "projects: off (the project helper (minigw-core) is not running)")
         #expect(l(up: false, failure: #"unavailable("minigw-core not found")"#) == "projects: off (the project helper (minigw-core) is not running: minigw-core not found)")

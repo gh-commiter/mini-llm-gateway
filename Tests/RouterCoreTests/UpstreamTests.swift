@@ -663,6 +663,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         let next = NSLock(); nonisolated(unsafe) var n = 0
         t.handler = { c in
             switch (c.method, c.path) {
+            case ("GET", "/v1/models"): return UpstreamAnswer(status: 403, body: Data(#"{"error":{"message":"This device is not approved"}}"#.utf8))  // the first contact of a client
             case ("GET", "/minigw/v1/projects"): return UpstreamAnswer(status: 403, body: Data(#"{"error":{"message":"no project access: this device is not on the gateway's device list"}}"#.utf8))
             case ("GET", "/minigw/v1/projects/shop"): return UpstreamAnswer(status: 200, body: Data(#"{"id":7,"slug":"shop"}"#.utf8))
             case ("POST", "/minigw/v1/projects/7/kb/submissions"):
@@ -686,7 +687,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         let a = obj(added)
         #expect(a["device"] as? String == (secrets.all["upstream:hub"].flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }?["device"] as? String).flatMap { seed in
             Noise.fromBase64url(seed).flatMap { try? Curve25519.Signing.PrivateKey(rawRepresentation: $0) }.map { Noise.base64url($0.publicKey.rawRepresentation) } })
-        #expect((a["probe"] as? String)?.contains("device list") == true && a["where"] as? String == "the Keychain")
+        #expect((a["probe"] as? String)?.contains("waiting for approval on the upstream as gateway ") == true && (a["probe"] as? String)?.contains(a["device"] as? String ?? "?") == true && a["where"] as? String == "the Keychain")
         #expect(!String(decoding: added.body, as: UTF8.self).contains("SECRET-TOKEN"))
         // a project with two notes, written as a member
         _ = await adm(h, "PUT", "/bindings/dev-A", #"{"user":1}"#)

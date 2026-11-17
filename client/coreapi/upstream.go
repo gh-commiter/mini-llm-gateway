@@ -2,9 +2,11 @@ package coreapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"minigw/core"
@@ -125,9 +127,9 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 			}
 			return failErr(err)
 		}
-		// The owner's own command is the reason to contact the upstream: one look, to tell what it still needs from its owner.
-		status, data, _, derr := h.Do(ctx, seg[1], "GET", "/minigw/v1/projects", nil, nil)
-		probe := core.UpstreamProbe(status, data, derr)
+		// The owner's own command is the reason to contact the upstream: what a client's first contact is, to tell what it still needs from
+		// its owner. A model route is what registers an unknown device as waiting for approval (the member routes only refuse it).
+		probe := ProbeUpstream(ctx, h, seg[1], b.DeviceName, info.Device)
 		return 200, map[string]any{"name": seg[1], "address": addr, "device": info.Device, "where": info.Where, "probe": probe}, true
 	case method == "DELETE" && len(seg) == 2:
 		a.upMu.Lock()
@@ -222,4 +224,38 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+// ProbeUpstream is the first contact of an ordinary client: GET /v1/models, which an upstream that does not know the device answers with a
+// refusal AND lists the device as waiting for approval (name and ID from the device proof, the client description from the header). Once
+// the device is allowed, the member routes tell whether it is bound to a user.
+func ProbeUpstream(ctx context.Context, h UpstreamHost, upstream, deviceName, deviceID string) string {
+	status, data, _, err := h.Do(ctx, upstream, "GET", "/v1/models", nil, nil)
+	var e struct{ Error struct{ Message string } }
+	json.Unmarshal(data, &e)
+	switch {
+	case err != nil || status == 0:
+		return "the upstream did not answer: check the address, and that its gateway is running and reachable from here"
+	case status == 401:
+		return "the upstream refused the token: copy it again (Settings, General, Copy Token on the upstream)"
+	case status == 403:
+		return "waiting for approval on the upstream as " + deviceName + " (" + deviceID + "): its owner runs: minigw gw devices allow " + deviceID
+	case status != 200:
+		return "the upstream answered HTTP " + strconv.Itoa(status)
+	}
+	status, data, _, err = h.Do(ctx, upstream, "GET", "/minigw/v1/projects", nil, nil)
+	json.Unmarshal(data, &e)
+	switch {
+	case err != nil || status == 0:
+		return "the upstream did not answer the second request"
+	case status == 200:
+		return "connected: the device is allowed and bound to a user there"
+	case status == 403 && strings.Contains(e.Error.Message, "device list"): // an upstream on this computer lets a model request pass without the list
+		return "waiting for approval on the upstream as " + deviceName + " (" + deviceID + "): its owner runs: minigw gw devices allow " + deviceID
+	case status == 403 && (e.Error.Message == "" || strings.Contains(e.Error.Message, "bound")):
+		return "the device is allowed there, but not bound to a user: its owner runs: minigw gw bind " + deviceID + " <user>"
+	case status == 403:
+		return "the device is allowed there; the upstream says: " + core.UpText(e.Error.Message, 200)
+	}
+	return "the upstream answered HTTP " + strconv.Itoa(status)
 }

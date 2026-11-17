@@ -1346,7 +1346,7 @@ owner decides what it may do with the existing means.
    minigw gw upstream add hub mini.example:8765 [--device-name <text>]   # the token line on stdin (or typed, not echoed): never an argument
    ```
 
-   The command prints the **device ID** of this gateway, where the credentials are kept (the credential store, like a provider key;
+   The command makes the first contact of an ordinary client, so the device is listed as **waiting for approval** on the upstream under its name, and prints the **device ID** of this gateway, where the credentials are kept (the credential store, like a provider key;
    never the project database, so never in a backup) and what the upstream says about it. The address is `host` or `host:port` of a
    gateway (the same encrypted protocol as `minigw connect`; no scheme, user or path). The gateway contacts the upstream only for
    the commands on this page, never on its own, and never follows a redirect.

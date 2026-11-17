@@ -511,14 +511,21 @@ func kbAdmin(a *adminClient, pos []string, reason, team string) {
 			}
 			a.do("GET", fmt.Sprintf("/kb/submissions?project=%d&after=%d", project, after), nil, &pg)
 			for _, v := range pg.Submissions {
-				var full core.Submission
+				var full struct {
+					core.Submission
+					AuthorName string // the admin answer names the writer; an older gateway has only the number
+				}
 				a.do("GET", "/kb/submissions/"+strconv.FormatInt(v.ID, 10), nil, &full)
 				var known map[int64]string
 				if _, seg := core.SegmentTeam(full.Project); seg {
 					known = teamNames()
 				}
-				say(submissionLine(full, known))
-				say(clean(fmt.Sprintf("writer %d  device %s  replaces %d  revision %d", full.User, full.Provenance.Device, full.Replaces, full.Revision)))
+				say(submissionLine(full.Submission, known))
+				writer := strconv.FormatInt(full.User, 10)
+				if full.AuthorName != "" {
+					writer = full.AuthorName
+				}
+				say(clean(fmt.Sprintf("writer %s  device %s  replaces %d  revision %d", writer, full.Provenance.Device, full.Replaces, full.Revision)))
 				if full.Body != nil {
 					say(clean(*full.Body))
 				}

@@ -361,6 +361,8 @@ func routerCommand(args []string, in io.Reader) {
 		state := "not running (changes go to " + *cfgPath + ")"
 		if st.Running {
 			state = "running, changes apply at once"
+		} else if st.Starting {
+			state = "starting (the project database is being opened or migrated; try again in a few seconds)"
 		}
 		say("gateway: " + state)
 		addr := st.Address

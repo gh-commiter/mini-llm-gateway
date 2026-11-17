@@ -14,11 +14,14 @@ public enum CoreStatus {
         return why.isEmpty ? nil : why
     }
 
-    public static func line(helperUp: Bool, failure: String, fatal: CoreError?, storeReason: String?, linkProblem: String?) -> String {
+    public static func line(helperUp: Bool, failure: String, fatal: CoreError?, storeReason: String?, linkProblem: String?, starting: Bool = false) -> String {
         switch fatal {
         case .versionMismatch(let why)?: return "projects: off (" + why + ")"
         case .peerNotAuthentic?: return "projects: off (the project helper could not prove that it is the one shipped with the app; it was not used)"
         default: break
+        }
+        if !helperUp && starting {  // the helper process is up and opens (and migrates) the database: not the same as stopped or failed
+            return "projects: starting (the project database is being opened or migrated; try again in a few seconds)"
         }
         if !helperUp {
             let why = failure.hasPrefix("unavailable(\"") && failure.hasSuffix("\")") ? String(failure.dropFirst(13).dropLast(2)) : failure  // CoreError's description
@@ -37,7 +40,7 @@ public enum CoreStatus {
             reason = storeReason(status: r.status, body: r.body)
         }
         return line(helperUp: core.isReady, failure: core.lastFailure, fatal: core.fatalError, storeReason: reason,
-                    linkProblem: RouterConfig.coreLinkProblem(store: core.store))
+                    linkProblem: RouterConfig.coreLinkProblem(store: core.store), starting: core.isStarting)
     }
 }
 

@@ -406,22 +406,5 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 	return res, nil
 }
 
-// UpstreamProbe words the answer of the one look that `upstream add` takes: what the upstream's owner still has to do.
-func UpstreamProbe(status int, data []byte, err error) string {
-	if err != nil || status == 0 {
-		return "the upstream did not answer: check the address, and that its gateway is running and reachable from here"
-	}
-	var e struct{ Error struct{ Message string } }
-	json.Unmarshal(data, &e)
-	switch {
-	case status == 200:
-		return "connected: the device is allowed and bound to a user there"
-	case status == 401:
-		return "the upstream refused the token: copy it again (Settings, General, Copy Token on the upstream)"
-	case status == 403 && e.Error.Message != "":
-		return "the upstream says: " + upText(e.Error.Message, 200)
-	case status == 403:
-		return "the device is not allowed there yet: its owner must allow it and bind it to a user"
-	}
-	return "the upstream answered HTTP " + strconv.Itoa(status)
-}
+// UpText: text that came from an upstream, as one printable line of at most n bytes.
+func UpText(s string, n int) string { return upText(s, n) }

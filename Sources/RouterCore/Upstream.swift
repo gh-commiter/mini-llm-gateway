@@ -38,6 +38,7 @@ public enum UpstreamRequest {
     /// method, anchored path pattern. The ids are numbers of at most 18 digits (a project, a team's notes segment, a submission, a note);
     /// the short name is as the gateways make them.
     public static let patterns: [(method: String, pattern: String)] = [
+        ("GET", "^/v1/models$"),  // the first contact of any client: it registers an unknown device as waiting for approval (the probe at `add`)
         ("GET", "^/minigw/v1/projects$"),
         ("GET", "^/minigw/v1/teams$"),
         ("GET", "^/minigw/v1/projects/(?:[a-z][a-z0-9-]{1,62}|[0-9]{1,61}[a-z-][a-z0-9-]{0,61})$"),
@@ -102,8 +103,8 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
 
     /// ownKey: the public key of THIS gateway's Noise server, ownPort: its port (an upstream must be another gateway).
     public init(secrets: UpstreamSecretStore, ownKey: @escaping @Sendable () -> Data?, ownPort: @escaping @Sendable () -> UInt16,
-                transport: UpstreamTransport = NoiseHTTPTransport(), computerName: String = ProcessInfo.processInfo.hostName) {
-        self.secrets = secrets; self.ownKey = ownKey; self.ownPort = ownPort; self.transport = transport
+                transport: UpstreamTransport? = nil, computerName: String = ProcessInfo.processInfo.hostName, clientInfo: String = "gateway") {
+        self.secrets = secrets; self.ownKey = ownKey; self.ownPort = ownPort; self.transport = transport ?? NoiseHTTPTransport(clientInfo: clientInfo)
         name = "minigw gateway " + String(String.UnicodeScalarView(computerName.unicodeScalars.filter { $0.value > 0x20 && $0.value < 0x7f }))
     }
 
@@ -208,7 +209,9 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
 /// (HTTP/1.1, Connection: close); the answer is read to at most `cap` bytes of body, and a redirect is just an answer (nothing follows it).
 public struct NoiseHTTPTransport: UpstreamTransport {
     public var timeout: TimeInterval  // the most any request may take; the caller's own deadline can only make it shorter
-    public init(timeout: TimeInterval = 10) { self.timeout = timeout }  // a call of the helper has 30 seconds
+    /// What every client says of itself in X-Minigw-Client ("macOS, minigw 0.7.0"): a gateway's OS field says "gateway", then the version.
+    public var clientInfo: String
+    public init(timeout: TimeInterval = 10, clientInfo: String = "gateway") { self.timeout = timeout; self.clientInfo = clientInfo }  // a call of the helper has 30 seconds
 
     public func send(address: String, routerKey: Data, device: (key: Curve25519.Signing.PrivateKey, name: String), token: String,
                      method: String, path: String, idempotencyKey: String?, body: Data?, timeout asked: TimeInterval) -> UpstreamAnswer {
@@ -216,7 +219,7 @@ public struct NoiseHTTPTransport: UpstreamTransport {
         guard let i = address.lastIndex(of: ":"), let port = NWEndpoint.Port(String(address[address.index(after: i)...])), routerKey.count == 32 else { return UpstreamAnswer(status: 0) }
         let host = String(address[..<i]).trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         var lines: [String?] = [UpstreamRequest.headerLine("Host", "upstream"), UpstreamRequest.headerLine("Authorization", "Bearer " + token),
-                                UpstreamRequest.headerLine("X-Minigw-Client", "macOS, minigw gateway"), UpstreamRequest.headerLine("Connection", "close")]
+                                UpstreamRequest.headerLine("X-Minigw-Client", clientInfo), UpstreamRequest.headerLine("Connection", "close")]
         if let idempotencyKey { lines.append(UpstreamRequest.headerLine("Idempotency-Key", idempotencyKey)) }
         if let body { lines += [UpstreamRequest.headerLine("Content-Type", "application/json"), UpstreamRequest.headerLine("Content-Length", String(body.count))] }
         guard UpstreamRequest.admits(method: method, path: path), !lines.contains(where: { $0 == nil }) else { return UpstreamAnswer(status: 0) }

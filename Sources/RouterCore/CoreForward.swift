@@ -64,6 +64,12 @@ extension Router {
         if let d = req.device {  // proven in this Noise tunnel; nil for plain HTTP
             cx.device = d.id
             cx.approved = config.devices.contains { $0.id == d.id }  // the approved list now
+            let client = Noise.cleanName(req.header("x-minigw-client") ?? "")
+            if cx.approved {  // a device that only uses the project routes (a gateway sending notes) shows its last contact and client description too
+                history.seen(d.id, address: req.peer, client: client)
+            } else {  // an unknown device that proved its key waits for the owner's approval, as after its first model request
+                Self.deviceLog.addPending(id: d.id, name: d.name, address: req.peer, client: client)
+            }
         }
         // The path as Go's net/http gives it (decoded). The body as Go reads it: at most MaxBody, more sets bodyTooLarge.
         var q = CoreRequest(method: req.method, path: req.path.removingPercentEncoding ?? req.path, query: req.query ?? "")
@@ -79,7 +85,9 @@ extension Router {
     func coreAdmin(_ req: HTTPRequest, below: String, rid: String, writer: ResponseWriter) async -> Int {
         let r = await core?.call(context: .admin, request: CoreRequest(method: req.method, path: below, query: req.query ?? "", body: req.body)) ?? .unavailable
         if r == .unavailable {  // the helper itself is down: the gateway's own admin error shape (the helper's 503 is passed as is)
-            return await adminError(503, "The project database is not available: the project helper (minigw-core) is not running", rid: rid, writer: writer)
+            let why = (core?.isStarting ?? false) ? "the project helper (minigw-core) is starting: the project database is being opened or migrated, try again in a few seconds"
+                                                  : "the project helper (minigw-core) is not running"
+            return await adminError(503, "The project database is not available: " + why, rid: rid, writer: writer)
         }
         return await coreReply(below.removingPercentEncoding?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "usage/sessions" ? sessionNames(r) : r, rid: rid, writer: writer, admin: true)
     }

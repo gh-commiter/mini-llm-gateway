@@ -85,6 +85,9 @@ func (s *server) newAPI() *coreapi.API {
 			if s.coreErr != nil {
 				return s.coreErr.Error()
 			}
+			if s.offline && s.coreStarting() {
+				return "the gateway is starting: its project database is being opened or migrated, try again in a few seconds"
+			}
 			return ""
 		},
 		Dir:      filepath.Join(s.cfgDir, coreDirName), // the usage spool lives inside the protected core folder
@@ -155,6 +158,11 @@ func (s *server) projectHTTP(w http.ResponseWriter, r *req) int {
 	}
 	if dev := r.conn.device; dev != nil { // proven in this Noise tunnel (readDevice); nil for plain loopback and plain remote
 		c.DeviceID, c.Approved = dev.ID, s.conf().listed(dev.ID)
+		if c.Approved { // a device that only uses the project routes (a gateway sending notes) shows its last contact and client description too
+			s.deviceSeen(*dev, r.conn.peer, cleanDeviceName(r.Header.Get("X-Minigw-Client")))
+		} else { // an unknown device that proved its key waits for the owner's approval, as after its first model request (also on loopback, where a model route lets it pass)
+			s.addPending(*dev, r.conn.peer, cleanDeviceName(r.Header.Get("X-Minigw-Client")))
+		}
 	}
 	ctx := context.WithValue(r.Context(), reqCtxKey{}, r)
 	res := s.api.Handle(ctx, c, apiRequest(w, r, r.URL.Path))

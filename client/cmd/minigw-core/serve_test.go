@@ -271,7 +271,7 @@ func TestUpstreamCalloutsThroughTheHelper(t *testing.T) {
 	if err != nil || r.Status != 200 {
 		t.Fatalf("%v %+v", err, r)
 	}
-	if strings.Contains(string(r.Body), "SECRET-TOKEN") || !strings.Contains(string(r.Body), "DEVICEID") || !strings.Contains(string(r.Body), "No project access") {
+	if strings.Contains(string(r.Body), "SECRET-TOKEN") || !strings.Contains(string(r.Body), "DEVICEID") || !strings.Contains(string(r.Body), "waiting for approval on the upstream as gateway ") {
 		t.Fatalf("answer: %s", r.Body)
 	}
 	if len(seen) != 2 || seen[0].Op != coreapi.CalloutConnect || seen[0].Token != "SECRET-TOKEN#KEY" || seen[0].Address != "hub.example:8765" || seen[1].Op != coreapi.CalloutDo || seen[1].Token != "" {

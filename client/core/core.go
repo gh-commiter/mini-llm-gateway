@@ -124,6 +124,19 @@ func Open(dir string, opts Options) (*Store, error) {
 	return s, nil
 }
 
+// InUse says whether a process holds the store's lock (core.lock in dir) right now: the gateway while it opens, migrates and serves the
+// database. A command that finds no gateway answering but the lock held knows the gateway is starting, not stopped. A folder without a lock
+// file is not in use.
+func InUse(dir string) bool {
+	f, err := os.OpenFile(filepath.Join(dir, lockFile), os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	busy, _ := tryLock(f)
+	return busy
+}
+
 func lockDir(dir string) (*os.File, error) {
 	p := filepath.Join(dir, lockFile)
 	if fi, err := os.Lstat(p); err == nil && !fi.Mode().IsRegular() {

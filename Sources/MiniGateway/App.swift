@@ -144,7 +144,7 @@ final class AppState: ObservableObject {
         // The upstream gateway (docs/gateway.md): the helper has no network and no Keychain, so this app does the work for it. The
         // Keychain items are the provider keys' service; the own key and port are filled in by start() (a thread-safe box).
         let own = ownGateway
-        core.callouts = UpstreamHost(secrets: keychain, ownKey: { own.get().key }, ownPort: { own.get().port })
+        core.callouts = UpstreamHost(secrets: keychain, ownKey: { own.get().key }, ownPort: { own.get().port }, clientInfo: "gateway, minigw " + MenuView.version)
         for (folder, real) in config.claudeCLI.recordFolders() {  // M2: stara nastavitev brez zapisov: enkrat zapiši trenutno stanje
             log.notice("recorded \(folder, privacy: .public) -> \(real, privacy: .public)")
         }
