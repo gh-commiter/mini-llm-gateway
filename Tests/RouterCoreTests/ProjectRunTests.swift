@@ -289,7 +289,8 @@ echo "codex answer" > "$out"
         func code(_ i: Int) -> String? { f.read("res-\(i).code") }
         let want = [1: "200", 2: "200", 3: "200", 4: "404", 5: "404", 6: "404", 7: "404", 8: "200", 9: "200", 10: "404", 11: "404", 12: "404", 13: "404",
                     14: "404", 15: "404", 16: "404", 17: "404", 18: "401", 19: "401"]
-        for (i, c) in want { #expect(code(i) == c, "step \(i): \(code(i) ?? "-") \(f.read("res-\(i).body") ?? "") want \(c)") }
+        let helperState = "helper ready \(f.h.isReady) restarts \(f.h.restarts) last failure \(f.h.lastFailure)"  // a 503 core_unavailable = the helper was down: say so
+        for (i, c) in want { #expect(code(i) == c, "step \(i): \(code(i) ?? "-") \(f.read("res-\(i).body") ?? "") want \(c) | \(helperState)") }
         let list = noteIDs(f.read("res-1.body"))
         #expect(list == [n["own"]!, n["fs"]!])  // own project's data and the grant's structure; never private, never the other project's
         for i in [8, 9] { #expect(noteIDs(f.read("res-\(i).body")) == list, "forged ids change nothing (step \(i))") }
