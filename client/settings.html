@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mini Gateway Settings</title>
-<link rel="icon" href="data:,">  <!-- no icon: without this the browser asks for /favicon.ico, which the gateway answers 401 (a harmless console line) -->
+<link rel="icon" href="data:,">  <!-- an empty icon (allowed by img-src data:): the browser does not ask for /favicon.ico, which the settings server answers 204 anyway -->
 <style nonce="{{NONCE}}">
 :root { color-scheme: light dark; --bg: #ececec; --side: #e2e2e4; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
   --line: #e5e5ea; --accent: #0a66d8; --sel: #d0d0d5; --btn: #e8e8ed; --ok: #28a745; --err: #d70015; --warn: #b25000;

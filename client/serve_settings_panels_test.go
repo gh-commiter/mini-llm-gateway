@@ -177,12 +177,19 @@ func TestSettingsPageDemandsTrustedTypes(t *testing.T) {
 	}
 }
 
-// The one 401 line in the browser console on every load of the settings page: the browser asks for /favicon.ico, which is no
-// settings route and so needs the gateway token. The page now carries an empty icon, so it no longer asks.
-func TestFaviconRequestIsTheConsole401(t *testing.T) {
+// The browser asks for /favicon.ico on its own. Before, that fell through to the model routes and answered 401 (a line in the console of
+// every load); now the settings server answers 204 with no body, without a session, under the same Host and loopback checks as the page.
+func TestFaviconAnswers204(t *testing.T) {
 	_, _, base := liveServer(t, nil)
 	host := strings.TrimPrefix(base, "http://")
-	if st, _, _ := settingsCall(t, base, host, "GET", "/favicon.ico", "", ""); st != 401 {
-		t.Fatalf("GET /favicon.ico: %d", st)
+	st, body, h := settingsCall(t, base, host, "GET", "/favicon.ico", "", "")
+	if st != 204 || body != "" || h.Get("Cache-Control") != "max-age=86400" {
+		t.Fatalf("GET /favicon.ico: %d %q %v", st, body, h)
+	}
+	if st, _, _ := settingsCall(t, base, "evil.example:"+strings.Split(host, ":")[1], "GET", "/favicon.ico", "", ""); st != 403 {
+		t.Fatalf("a foreign Host: %d", st)
+	}
+	if st, _, _ := settingsCall(t, base, host, "POST", "/favicon.ico", "", ""); st != 405 {
+		t.Fatalf("POST /favicon.ico: %d", st)
 	}
 }

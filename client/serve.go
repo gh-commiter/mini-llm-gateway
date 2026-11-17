@@ -1479,7 +1479,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 		return s.adminHTTP(w, r), ""
 	}
 	if r.URL.Path == "/minigw/settings" || r.URL.Path == "/minigw/settings/login" || r.URL.Path == "/minigw/settings/logout" ||
-		r.URL.Path == "/minigw/settings/pick" {
+		r.URL.Path == "/minigw/settings/pick" || r.URL.Path == "/favicon.ico" {
 		return s.settingsHTTP(w, r), ""
 	}
 	if coreapi.IsMemberPath(r.URL.Path) {
