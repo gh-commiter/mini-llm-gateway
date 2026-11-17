@@ -63,3 +63,6 @@ func openRootNote(root *os.Root, name string) (*os.File, error) {
 	}
 	return os.NewFile(uintptr(h), name), nil
 }
+
+// protectExported: Windows has no handle-based DACL call here, so the DACL is set by path (the folder is still held open).
+func protectExported(p string) error { return protectDir(p) }

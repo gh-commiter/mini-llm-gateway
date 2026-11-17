@@ -541,7 +541,7 @@ minigw kb import fakture ./proposal.md --class structure --submit
 Export waits and retries if reads hit the gateway rate limit. It writes one Markdown file per readable note
 and an `INDEX.md`. It includes readable private notes,
 and excludes pending submissions and notes hidden from the caller. Use a new or empty destination directory: existing files
-are never overwritten. Each file has `---` front matter with JSON string values for `id`, `title`, `class`,
+are never overwritten, and the destination must not be a symbolic link. Each file has `---` front matter with JSON string values for `id`, `title`, `class`,
 `kind` (the provenance source kind), `revision`, `author`, `created`, `updated`, and `hash`, followed by
 the exact body. No YAML features are interpreted.
 
@@ -605,8 +605,8 @@ The owner must choose a source only for an archive they trust: the recorded orig
 not cryptographic authentication of the exporting gateway.
 
 Import validates the entire zip before writing, within fixed limits on its size, entry count, central
-directory, manifest size and nesting, note file size, and collection sizes. A note file or any entry the
-manifest does not list is refused from the archive's metadata before its body is decompressed. Dry-run
+directory, manifest size and nesting, note file size, and collection sizes. A note file that is too large, and any entry the
+manifest does not list, is refused from the archive's metadata before its body is decompressed. Dry-run
 reports create, merge, skip and refuse decisions and writes nothing. Real import is one transaction,
 including one `kb.import` audit event when anything changes. Names match case-insensitively after `--map
 old=new` and after Unicode normalization, so a name written with a combining accent finds the same

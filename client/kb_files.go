@@ -51,6 +51,9 @@ func readNoteDescriptor(f *os.File) ([]byte, error) {
 	return data, nil
 }
 
+// exportHook runs in tests after the destination is opened and checked; nil in production.
+var exportHook func()
+
 func (e *projectEnv) kbFiles(args []string) error {
 	if e.agent {
 		return errors.New(agentRefusal)
@@ -126,21 +129,45 @@ func (e *projectEnv) kbFiles(args []string) error {
 		if err = os.MkdirAll(pos[2], 0700); err != nil {
 			return err
 		}
-		entries, err := os.ReadDir(pos[2])
+		// The destination is opened once, never through a link, and held: the check and every file go through this handle.
+		before, err := os.Lstat(pos[2])
 		if err != nil {
 			return err
 		}
-		if len(entries) != 0 {
+		if !before.IsDir() {
+			return errors.New("export destination must be a directory, not a symbolic link")
+		}
+		dest, err := os.OpenRoot(pos[2])
+		if err != nil {
+			return err
+		}
+		defer dest.Close()
+		if opened, serr := dest.Stat("."); serr != nil || !os.SameFile(before, opened) {
+			return errors.New("export destination changed while opening it")
+		}
+		dir, err := dest.Open(".")
+		if err != nil {
+			return err
+		}
+		names, err := dir.Readdirnames(1)
+		dir.Close()
+		if len(names) != 0 {
 			return errors.New("export directory must be empty")
+		}
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if exportHook != nil {
+			exportHook()
 		}
 		var index strings.Builder
 		index.WriteString("# " + pos[1] + "\n\n")
 		write := func(name string, b []byte) error {
-			f, err := os.OpenFile(filepath.Join(pos[2], name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			f, err := dest.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 			if err != nil {
 				return err
 			}
-			if err = protectDir(filepath.Join(pos[2], name)); err == nil {
+			if err = protectExported(filepath.Join(pos[2], name)); err == nil {
 				_, err = f.Write(b)
 			}
 			closeErr := f.Close()

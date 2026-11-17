@@ -1,10 +1,21 @@
 # Release notes
 
-## Unreleased
+## 0.7.11
 
 ### Security
 - Bundle import: a manifest field name that matches a known field only after Unicode case folding (such as `uſers` for `users`) is refused before decoding, so the collection limits cannot be dodged; names must be spelled exactly.
 - Bundle import: a note file declared larger than the note size limit plus front matter, and any archive entry the manifest does not list, are refused from the archive's metadata before any body is decompressed.
+- `minigw kb export` now writes through the opened destination folder, so swapping the folder during the export cannot send notes elsewhere; a destination that is a symbolic link is refused.
+
+### Known problems
+- `minigw gw import`: an `INDEX.md` inside a bundle has no size limit of its own (only the 100 MiB total). Import only bundles you made yourself.
+- `minigw kb export` on Windows: the protection of each exported file is still set by path after the file is created through the opened folder; not tested on Windows yet.
+- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.10
 

@@ -15,3 +15,6 @@ func openMarker(p string) (*os.File, error) {
 func openRootNote(root *os.Root, name string) (*os.File, error) {
 	return root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 }
+
+// protectExported: mode 0600 is set when the file is created through the held folder handle.
+func protectExported(string) error { return nil }
