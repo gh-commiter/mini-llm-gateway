@@ -5,6 +5,9 @@
 ### Security
 - Installing `minigw` from the Mac app now gives the gateway token to `minigw connect` on standard input (`--token -`) instead of on the command line, so other local users cannot see it in the process list while the connection is made.
 
+### Fixed
+- The share long poll and `minigw kb export`/`import` no longer retry without a limit: an answer that is not a usable job (or a 204 that came back at once) now waits with a growing delay up to 30 s, and a gateway that keeps answering 429 is given up on after 30 attempts or 10 minutes with a clear message.
+
 ## 0.7.22
 
 ### Fixed

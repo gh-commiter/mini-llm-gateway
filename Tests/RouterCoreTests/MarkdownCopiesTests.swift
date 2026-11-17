@@ -46,6 +46,23 @@ import Testing
         #expect(calls.count == beforeAgentCalls && slept == 2)
     }
 
+    @Test func rateLimitedKBFilesAreBounded() throws {
+        // A gateway that always answers 429 must end the command, not retry for ever: 30 attempts
+        // at most, and the waits are recorded (the tests inject sleep).
+        var waits: [TimeInterval] = []
+        let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { _ in }, err: { _ in }, agent: false, send: { _, _, _, _, _ in
+            ProjectReply(status: 429, retryAfter: "1")
+        })
+        env.sleep = { waits.append($0) }
+        do {
+            try env.kb(["import", "demo", "/tmp/note.md"])
+            Issue.record("expected a bounded failure")
+        } catch {
+            #expect(String(describing: error) == "the gateway keeps answering 429: try again later")
+        }
+        #expect(waits.count == 29 && waits.allSatisfy { $0 == 1 })
+    }
+
     private func exportEnv(_ cwd: String) -> ProjectEnv {
         ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: cwd, stdin: { Data() }, out: { _ in }, err: { _ in }, agent: false, send: { _, _, path, _, _ in
             if path == "/minigw/v1/projects/demo" { return ProjectReply(status: 200, data: Data(#"{"id":1}"#.utf8)) }

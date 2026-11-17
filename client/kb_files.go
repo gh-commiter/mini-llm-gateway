@@ -21,6 +21,10 @@ import (
 const (
 	maxImportFiles = 10000
 	maxImportDepth = 32
+
+	kbRetryAttempts = 30               // a gateway that keeps answering 429 is given up on
+	kbRetryTotal    = 10 * time.Minute // the bounds of the total wait
+	kbRetryAfterMax = 120 * time.Second
 )
 
 // readNoteFile opens the file once, without following a link, and reads it from that descriptor.
@@ -77,14 +81,30 @@ func (e *projectEnv) kbFiles(args []string) error {
 	}
 	c, _ := e.connect()
 	request := func(method, path string, payload []byte) ([]byte, error) {
+		attempts := 0
+		var waited time.Duration
 		for {
+			attempts++
 			st, b, h := e.do(c, method, path, nil, payload)
 			if st == 429 {
-				seconds, _ := strconv.Atoi(h.Get("Retry-After"))
-				if seconds < 1 || seconds > 60 {
-					seconds = 60
+				if attempts >= kbRetryAttempts || waited >= kbRetryTotal { // no endless spin with a sleep that does not wait
+					return nil, errors.New("the gateway keeps answering 429: try again later")
 				}
-				e.sleep(time.Duration(seconds) * time.Second)
+				secs, perr := strconv.Atoi(h.Get("Retry-After"))
+				if perr != nil { // missing or not a number: wait a minute, as the Swift client does
+					secs = 60
+				} else if secs < 1 { // 0 or negative: never a tight loop
+					secs = 1
+				}
+				wait := time.Duration(secs) * time.Second
+				if wait > kbRetryAfterMax {
+					wait = kbRetryAfterMax
+				}
+				if waited+wait > kbRetryTotal {
+					return nil, errors.New("the gateway keeps answering 429: try again later")
+				}
+				e.sleep(wait)
+				waited += wait
 				continue
 			}
 			if st < 200 || st >= 300 {
