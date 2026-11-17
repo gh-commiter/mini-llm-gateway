@@ -197,19 +197,44 @@ private final class SocketServer: @unchecked Sendable {
     func stop() { close(fd) }
 }
 
+/// What the fake server managed to write, and whether it saw the client close the connection.
+private final class Served: @unchecked Sendable {
+    private let l = NSLock()
+    private var wrote = 0, wasClosed = false
+    let done = DispatchSemaphore(value: 0)
+    func finish(wrote n: Int, closed: Bool) { l.withLock { wrote = n; wasClosed = closed }; done.signal() }
+    var bytes: Int { l.withLock { wrote } }
+    var closed: Bool { l.withLock { wasClosed } }
+}
+
 @Suite(.serialized) struct QuotaHTTPLimits {
+    /// The cut is proven by what was kept and by the server seeing the connection go: at most the limit (one chunk more if
+    /// the reader takes chunks) out of a body of three chunks. `AsyncBytes` takes one async hop per byte, so the cap under
+    /// test is small: the cost is the cap, and a cap whose pass depends on a wall clock measures the machine, not the cut.
     @Test func aBodyLargerThanTheLimitIsCutNotBuffered() async throws {
+        let limit = 16 << 10, chunk = 16 << 10
+        let served = Served()
         let server = SocketServer { c in
-            let chunk = Data(repeating: 0x61, count: 64 << 10)
             _ = SocketServer.raw(c, Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n".utf8))
-            for _ in 0..<160 { if !SocketServer.raw(c, chunk) { return } }  // 10 MB offered
+            let body = Data(repeating: 0x61, count: chunk)
+            var wrote = 0
+            for _ in 0..<3 {
+                if !SocketServer.raw(c, body) { break }
+                wrote += chunk
+            }
+            var one: UInt8 = 0
+            served.finish(wrote: wrote, closed: read(c, &one, 1) <= 0)  // the client's close, not the rest of the body
         }
         defer { server.stop() }
         let t0 = Date()
-        let r = await QuotaHTTP.get(URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/x")!), limit: 1 << 20, deadline: 60)
+        let r = await QuotaHTTP.get(URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/x")!), limit: limit, deadline: 60)
         let got = try #require(r)
-        #expect(got.status == 200 && got.data.count >= 1 << 20 && got.data.count < (1 << 20) + (256 << 10), "\(got.data.count) bytes")
-        #expect(Date().timeIntervalSince(t0) < 30, "took \(Date().timeIntervalSince(t0)) s")  // cut at the limit, not at the 60 s deadline (the byte count above is what proves the cut)
+        #expect(got.status == 200 && got.data.count >= limit && got.data.count <= limit + chunk, "\(got.data.count) bytes of a \(3 * chunk)-byte body")
+        var sawClose = false  // polled from async code: the server's write loop runs on its own thread
+        for _ in 0..<100 where !sawClose { sawClose = served.done.wait(timeout: .now()) == .success; if !sawClose { try await Task.sleep(for: .milliseconds(50)) } }
+        #expect(sawClose && served.closed && served.bytes >= limit, "the server did not see the client close the connection (wrote \(served.bytes))")
+        // A hang guard only: the byte count and the server's close above are the proof, not this number.
+        #expect(Date().timeIntervalSince(t0) < 120, "took \(Date().timeIntervalSince(t0)) s")
     }
 
     @Test func aSlowBodyHitsTheDeadlineForTheWholeTransfer() async throws {
