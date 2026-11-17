@@ -13,7 +13,13 @@ const segmentBase = int64(1) << 40
 
 func isSegment(id int64) bool { return id > segmentBase }
 
-func segmentID(team int64) int64 { return segmentBase + team }
+// segmentID is 0 (no project) for a team id that is not a real one, so a dry run on a new team never reads an id near 2^40.
+func segmentID(team int64) int64 {
+	if team <= 0 {
+		return 0
+	}
+	return segmentBase + team
+}
 
 // TeamSegment is the id under which the notes of a team live (a project-shaped id for the notes routes only).
 func TeamSegment(team int64) int64 { return segmentID(team) }
@@ -69,9 +75,14 @@ func migrate15(tx *sql.Tx) error {
 CREATE TRIGGER segment_no_archive BEFORE UPDATE OF archived ON projects WHEN NEW.id>` + b + ` AND NEW.archived<>0 BEGIN SELECT RAISE(ABORT,'segment cannot be archived'); END;
 CREATE TRIGGER segment_no_grant_source BEFORE INSERT ON grants WHEN NEW.source_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in a grant'); END;
 CREATE TRIGGER segment_no_grant_reader BEFORE INSERT ON grants WHEN NEW.reader_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in a grant'); END;`
+	q += `
+CREATE TRIGGER segment_keep_shape BEFORE UPDATE OF id,slug ON projects WHEN (NEW.id>` + b + `)<>(NEW.slug LIKE '@team-%') OR (OLD.id>` + b + ` AND (NEW.id<>OLD.id OR NEW.slug<>OLD.slug)) BEGIN SELECT RAISE(ABORT,'segment id and slug'); END;
+CREATE TRIGGER segment_no_grant_source_upd BEFORE UPDATE OF source_id ON grants WHEN NEW.source_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in a grant'); END;
+CREATE TRIGGER segment_no_grant_reader_upd BEFORE UPDATE OF reader_id ON grants WHEN NEW.reader_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in a grant'); END;`
 	for _, t := range []string{"memberships", "direct_memberships", "team_assignments", "team_projects", "project_remotes"} {
 		q += `
-CREATE TRIGGER segment_no_` + t + ` BEFORE INSERT ON ` + t + ` WHEN NEW.project_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in ` + t + `'); END;`
+CREATE TRIGGER segment_no_` + t + ` BEFORE INSERT ON ` + t + ` WHEN NEW.project_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in ` + t + `'); END;
+CREATE TRIGGER segment_no_` + t + `_upd BEFORE UPDATE OF project_id ON ` + t + ` WHEN NEW.project_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in ` + t + `'); END;`
 	}
 	_, err = tx.Exec(q)
 	return err
@@ -82,7 +93,10 @@ CREATE TRIGGER segment_no_` + t + ` BEFORE INSERT ON ` + t + ` WHEN NEW.project_
 func checkSegments(tx *sql.Tx) error {
 	var n int
 	err := tx.QueryRow(`SELECT (SELECT count(*) FROM teams t WHERE NOT EXISTS(SELECT 1 FROM projects p WHERE p.id=?1+t.id AND p.slug='@team-'||t.id AND p.archived=0))
- + (SELECT count(*) FROM projects p WHERE p.id>?1 AND NOT EXISTS(SELECT 1 FROM teams t WHERE ?1+t.id=p.id))`, segmentBase).Scan(&n)
+ + (SELECT count(*) FROM projects p WHERE p.id>?1 AND NOT EXISTS(SELECT 1 FROM teams t WHERE ?1+t.id=p.id))
+ + (SELECT count(*) FROM memberships WHERE project_id>?1) + (SELECT count(*) FROM direct_memberships WHERE project_id>?1)
+ + (SELECT count(*) FROM team_assignments WHERE project_id>?1) + (SELECT count(*) FROM team_projects WHERE project_id>?1)
+ + (SELECT count(*) FROM project_remotes WHERE project_id>?1) + (SELECT count(*) FROM grants WHERE source_id>?1 OR reader_id>?1)`, segmentBase).Scan(&n)
 	if err != nil {
 		return err
 	}

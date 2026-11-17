@@ -98,6 +98,19 @@ func TestSegmentRoutes(t *testing.T) {
 	if !strings.Contains(run("ana", "migrate"), "team:acme") || strings.Contains(run("eva", "migrate"), "deploy") {
 		t.Fatal("run scope")
 	}
+	// A roster member who is only a reader here but admin of a project of ANOTHER team must not write this segment.
+	r = call(admin, "POST", "/teams", `{"name":"other"}`, 200)
+	var other struct{ Team TeamJSON }
+	if err := json.Unmarshal(r.Body, &other); err != nil {
+		t.Fatal(err)
+	}
+	call(admin, "PUT", fmt.Sprintf("/teams/%d/projects/%d", other.Team.ID, f.pid["eureko"]), "", 200)
+	if err := f.st.SetMember(bg, f.pid["eureko"], f.uid["eva"], core.Admin); err != nil {
+		t.Fatal(err)
+	}
+	call(admin, "PUT", fmt.Sprintf("/teams/%d/members/%d", team.ID, f.uid["eva"]), "", 200)
+	call(member("dev-eva"), "GET", read, "", 200)
+	call(member("dev-eva"), "POST", base+"/notes", `{"class":"data","title":"x","body":"y"}`, 403)
 	// Removed from the roster: gone on the next call.
 	call(admin, "DELETE", fmt.Sprintf("/teams/%d/members/%d", team.ID, f.uid["ana"]), "", 200)
 	call(member("dev-ana"), "GET", read, "", 404)

@@ -227,4 +227,19 @@ func TestKBTeamFlagEndToEnd(t *testing.T) {
 	if out, err = c.run("eva", dir, "", "note", "list", "--team", "acme"); err == nil || !strings.Contains(err.Error(), "404") && !strings.Contains(err.Error(), "not found") {
 		t.Fatal("off the roster", out, err)
 	}
+	// No listing of the command line shows the team's hidden project row (its id or slug).
+	for _, args := range [][]string{{"project", "list"}, {"project", "list", "--archived"}, {"project", "list", "--json"}, {"project", "list", "--path", "acme"}, {"team", "show", "acme"}} {
+		var listing string
+		var lerr error
+		if args[0] == "team" {
+			e, o, _ := c.env("fani", dir, "")
+			lerr = e.team(args[1:])
+			listing = o.String()
+		} else {
+			listing, lerr = c.run("fani", dir, "", args...)
+		}
+		if strings.Contains(listing, "@team") || strings.Contains(listing, "1099511627") {
+			t.Fatalf("%v shows a segment: %v %s", args, lerr, listing)
+		}
+	}
 }

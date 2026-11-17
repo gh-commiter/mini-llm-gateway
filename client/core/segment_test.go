@@ -168,6 +168,18 @@ func TestSegmentReadersAndWriters(t *testing.T) {
 	_, _, e = f.CreateNote(ctx, f.p("fani"), f.seg, "again", NoteInput{Class: Data, Title: "t", Body: "b"})
 	is(t, e, ErrNotFound)
 	f.ok(f.AddTeamMember(ctx, f.acme, f.uid["fani"]))
+	// The admin upgrade is scoped to THIS team: eva is on acme's roster, only a reader of fakture, and admin of
+	// import, a project of team zeta. She must not write acme's segment.
+	f.ok(f.SetMember(ctx, f.pid["import"], f.uid["eva"], Admin))
+	_, _, e = f.CreateNote(ctx, f.p("eva"), f.seg, "eva1", NoteInput{Class: Data, Title: "t", Body: "b"})
+	is(t, e, ErrForbidden)
+	_, e = f.UpdateNote(ctx, f.p("eva"), f.seg, d.ID, d.Revision, NoteInput{Class: Data, Title: "t", Body: "b"})
+	is(t, e, ErrForbidden)
+	// An admin role that comes only from a team assignment counts (team-derived roles count as elsewhere).
+	f.ok(f.SetTeamAssignment(ctx, f.acme, f.pid["fakture"], f.uid["ana"], Admin))
+	if _, _, e = f.CreateNote(ctx, f.p("ana"), f.seg, "ana-assigned", NoteInput{Class: Data, Title: "t", Body: "b"}); e != nil {
+		t.Fatal("team-assigned admin cannot write", e)
+	}
 	// Removing the admin role of the last team project takes effect on the next call.
 	f.ok(f.SetMember(ctx, f.pid["fakture"], f.uid["fani"], Developer))
 	_, _, e = f.CreateNote(ctx, f.p("fani"), f.seg, "again2", NoteInput{Class: Data, Title: "t", Body: "b"})
@@ -457,6 +469,41 @@ func TestSegmentNeverInAListing(t *testing.T) {
 			check("GetTeam", prIDs(d.Projects)...)
 		}
 	}
+	now := f.now()
+	f.event("u1", "", f.uid["fani"], f.pid["fakture"], "m", OutcomeOK, 1, 1, now)
+	for _, u := range []string{"ana", "fani", "eva", "bor"} {
+		p := f.p(u)
+		for _, project := range []int64{0, f.pid["fakture"]} {
+			if rep, e := f.Usage(ctx, p, project, 7); e == nil {
+				for _, r := range rep.Rows {
+					check("Usage", r.ProjectID)
+				}
+			}
+		}
+		if pg, e := f.Sessions(ctx, p, f.pid["fakture"], SessionFilter{}); e == nil {
+			for _, r := range pg.Sessions {
+				check("Sessions", r.ProjectID)
+			}
+		}
+		_, e := f.Usage(ctx, p, f.seg, 7)
+		is(t, e, ErrNotFound)
+		_, e = f.Sessions(ctx, p, f.seg, SessionFilter{})
+		is(t, e, ErrNotFound)
+	}
+	if rep, e := f.AdminUsage(ctx, 7, UsageFilter{}); e != nil {
+		t.Fatal(e)
+	} else {
+		for _, r := range rep.Rows {
+			check("AdminUsage", r.ProjectID)
+		}
+	}
+	for _, pid := range []int64{0, f.pid["fakture"]} {
+		if pg, e := f.AdminSessions(ctx, pid, SessionFilter{}); e == nil {
+			for _, r := range pg.Sessions {
+				check("AdminSessions", r.ProjectID)
+			}
+		}
+	}
 	ps, e := f.AdminListProjects(ctx)
 	f.ok(e)
 	check("AdminListProjects", prIDs(ps)...)
@@ -594,5 +641,104 @@ func TestSegmentBundleRoundTrip(t *testing.T) {
 	}
 	if _, e = t2.ImportBundle(ctx, BundleImport{Path: rewriteZip(t, b2, nil), Source: "testsrc"}); e == nil || countTable(t, t2, "notes") != 0 {
 		t.Fatal("unknown project accepted", e)
+	}
+}
+
+func TestSegmentUpdateGuards(t *testing.T) {
+	f := newSeg(t)
+	segStr := fmt.Sprint(f.seg)
+	f.ok(f.SetMember(ctx, f.pid["fakture"], f.uid["ana"], Developer))
+	f.ok(f.AddGrant(ctx, f.pid["fakture"], f.pid["eureko"], Data))
+	f.ok(f.AddRemote(t, f.pid["fakture"]))
+	f.ok(f.SetTeamAssignment(ctx, f.acme, f.pid["fakture"], f.uid["ana"], Developer))
+	for _, q := range []string{
+		`UPDATE memberships SET project_id=` + segStr + ` WHERE project_id=` + fmt.Sprint(f.pid["fakture"]),
+		`UPDATE direct_memberships SET project_id=` + segStr + ` WHERE project_id=` + fmt.Sprint(f.pid["fakture"]),
+		`UPDATE team_projects SET project_id=` + segStr,
+		`UPDATE team_assignments SET project_id=` + segStr,
+		`UPDATE project_remotes SET project_id=` + segStr,
+		`UPDATE grants SET source_id=` + segStr,
+		`UPDATE grants SET reader_id=` + segStr,
+		`UPDATE projects SET id=` + fmt.Sprint(segmentBase+777) + ` WHERE slug='eureko'`,
+		`UPDATE projects SET slug='@team-5' WHERE slug='eureko'`,
+		`UPDATE projects SET slug='shop-x' WHERE id=` + segStr,
+		`UPDATE projects SET id=5000 WHERE id=` + segStr,
+	} {
+		if err := f.write(ctx, func(tx *sql.Tx) error { _, e := tx.Exec(q); return e }); err == nil {
+			t.Fatal("accepted:", q)
+		}
+	}
+}
+
+func (f *segTeams) AddRemote(t *testing.T, project int64) error {
+	_, err := f.AdminChangeProjectRemotes(ctx, project, []string{"https://github.com/acme/shop.git"}, nil)
+	return err
+}
+
+// A schema-15 backup that lacks the guard triggers is refused by the restore self-check.
+func TestSegmentRestoreRequiresTriggers(t *testing.T) {
+	dir := t.TempDir()
+	s := openT(t, dir)
+	bak := filepath.Join(t.TempDir(), "b.db")
+	if err := s.Backup(ctx, bak); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	db, err := sql.Open("sqlite", "file:"+bak)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`DROP TRIGGER segment_no_grant_source`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if err = Restore(t.TempDir(), bak); err == nil || !strings.Contains(err.Error(), "missing trigger") {
+		t.Fatal("restore accepted a backup without the triggers:", err)
+	}
+}
+
+// checkSegments also refuses a database in which a segment id has a member, grant, remote or team assignment
+// (made here with the guard trigger absent in the test's own file).
+func TestSegmentCheckRefusesReferences(t *testing.T) {
+	f := newSeg(t)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		if _, e := tx.Exec(`DROP TRIGGER segment_no_grant_source`); e != nil {
+			return e
+		}
+		_, e := tx.Exec(`INSERT INTO grants(source_id,reader_id,class) VALUES(?,?,'data')`, f.seg, f.pid["fakture"])
+		return e
+	}))
+	if err := f.read(ctx, checkSegments); err == nil {
+		t.Fatal("a grant on a segment passed the check")
+	}
+	bak := filepath.Join(t.TempDir(), "g.db")
+	f.ok(f.Backup(ctx, bak))
+	if err := Restore(t.TempDir(), bak); err == nil {
+		t.Fatal("restore accepted a segment in a grant")
+	}
+}
+
+// A dry run for a team that does not exist yet reports create lines and never uses a segment id.
+func TestSegmentDryRunNewTeam(t *testing.T) {
+	if segmentID(-1) != 0 || segmentID(0) != 0 {
+		t.Fatal("segmentID of a non-real team")
+	}
+	source, _ := bundleFixture(t)
+	var team int64
+	source.ok(source.DB().QueryRow(`SELECT id FROM teams WHERE name='Team'`).Scan(&team))
+	source.ok(source.SetTeamAssignment(ctx, team, source.pid["fakture"], source.uid["ana"], Admin))
+	_, _, e := source.CreateNote(ctx, source.p("ana"), segmentID(team), "dr1", NoteInput{Class: Data, Title: "team rule", Body: "b"})
+	source.ok(e)
+	file := filepath.Join(t.TempDir(), "t.zip")
+	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: file}))
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	rep, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc", DryRun: true})
+	source.ok(e)
+	if !strings.Contains(strings.Join(rep.Lines, "\n"), "create src:testsrc:@team:") || countTable(t, target, "notes") != 0 {
+		t.Fatal(rep)
 	}
 }
