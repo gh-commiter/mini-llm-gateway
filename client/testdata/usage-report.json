@@ -340,7 +340,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels); unlabelled usage is its own row\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
     "exit": 1,
     "requests": []
    }
@@ -387,7 +387,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels); unlabelled usage is its own row\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
     "exit": 1,
     "requests": []
    }
@@ -597,7 +597,7 @@
    ],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels); unlabelled usage is its own row\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
     "exit": 1,
     "requests": []
    }
@@ -620,7 +620,7 @@
    ],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels); unlabelled usage is its own row\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
     "exit": 1,
     "requests": []
    }
@@ -674,6 +674,262 @@
      [
       "GET",
       "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "by phase",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "by": "phase"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7&labels=1",
+     "status": 200,
+     "body": "{\"days\":[{\"costUsd\":\"0.600000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.600000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":3,\"events\":6,\"tokensIn\":6000,\"tokensOut\":1000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"plan\",\"phaseSource\":\"given\",\"activity\":\"feature\",\"activitySource\":\"given\",\"task\":\"#1\",\"taskSource\":\"given\"},{\"costUsd\":\"0.100000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.100000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-b\",\"project\":3,\"events\":3,\"tokensIn\":3000,\"tokensOut\":500,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":1,\"errorEvents\":1,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"do\",\"phaseSource\":\"given\",\"activity\":\"bugfix\",\"activitySource\":\"given\",\"task\":\"feature/x\",\"taskSource\":\"branch\"},{\"costUsd\":\"0.010000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":4,\"events\":1,\"tokensIn\":100,\"tokensOut\":10,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "phase         requests  share  failed  tokens in  tokens out  cost USD\nplan                 6    60%       0         6K          1K  0.60\ndo                   3    30%       1         3K         500  0.10\n(unlabelled)         1    10%       0        100          10  0.01\n\ntotal: 10 requests (1 failed), 9.1K tokens in, 1.5K tokens out, cost USD 0.71, 1 errors\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7&labels=1",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "by activity",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "by": "activity"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7&labels=1",
+     "status": 200,
+     "body": "{\"days\":[{\"costUsd\":\"0.600000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.600000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":3,\"events\":6,\"tokensIn\":6000,\"tokensOut\":1000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"plan\",\"phaseSource\":\"given\",\"activity\":\"feature\",\"activitySource\":\"given\",\"task\":\"#1\",\"taskSource\":\"given\"},{\"costUsd\":\"0.100000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.100000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-b\",\"project\":3,\"events\":3,\"tokensIn\":3000,\"tokensOut\":500,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":1,\"errorEvents\":1,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"do\",\"phaseSource\":\"given\",\"activity\":\"bugfix\",\"activitySource\":\"given\",\"task\":\"feature/x\",\"taskSource\":\"branch\"},{\"costUsd\":\"0.010000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":4,\"events\":1,\"tokensIn\":100,\"tokensOut\":10,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "activity      requests  share  failed  tokens in  tokens out  cost USD\nfeature              6    60%       0         6K          1K  0.60\nbugfix               3    30%       1         3K         500  0.10\n(unlabelled)         1    10%       0        100          10  0.01\n\ntotal: 10 requests (1 failed), 9.1K tokens in, 1.5K tokens out, cost USD 0.71, 1 errors\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7&labels=1",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "by task",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "by": "task"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7&labels=1",
+     "status": 200,
+     "body": "{\"days\":[{\"costUsd\":\"0.600000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.600000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":3,\"events\":6,\"tokensIn\":6000,\"tokensOut\":1000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"plan\",\"phaseSource\":\"given\",\"activity\":\"feature\",\"activitySource\":\"given\",\"task\":\"#1\",\"taskSource\":\"given\"},{\"costUsd\":\"0.100000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.100000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-b\",\"project\":3,\"events\":3,\"tokensIn\":3000,\"tokensOut\":500,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":1,\"errorEvents\":1,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"do\",\"phaseSource\":\"given\",\"activity\":\"bugfix\",\"activitySource\":\"given\",\"task\":\"feature/x\",\"taskSource\":\"branch\"},{\"costUsd\":\"0.010000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":4,\"events\":1,\"tokensIn\":100,\"tokensOut\":10,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "task                requests  share  failed  tokens in  tokens out  cost USD\n#1                         6    60%       0         6K          1K  0.60\nfeature/x (branch)         3    30%       1         3K         500  0.10\n(unlabelled)               1    10%       0        100          10  0.01\n\ntotal: 10 requests (1 failed), 9.1K tokens in, 1.5K tokens out, cost USD 0.71, 1 errors\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7&labels=1",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "by project and phase",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "by": "project,phase"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7&labels=1",
+     "status": 200,
+     "body": "{\"days\":[{\"costUsd\":\"0.600000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.600000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":3,\"events\":6,\"tokensIn\":6000,\"tokensOut\":1000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"plan\",\"phaseSource\":\"given\",\"activity\":\"feature\",\"activitySource\":\"given\",\"task\":\"#1\",\"taskSource\":\"given\"},{\"costUsd\":\"0.100000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.100000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-b\",\"project\":3,\"events\":3,\"tokensIn\":3000,\"tokensOut\":500,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":1,\"errorEvents\":1,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"do\",\"phaseSource\":\"given\",\"activity\":\"bugfix\",\"activitySource\":\"given\",\"task\":\"feature/x\",\"taskSource\":\"branch\"},{\"costUsd\":\"0.010000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":4,\"events\":1,\"tokensIn\":100,\"tokensOut\":10,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    },
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"ID\":3,\"Slug\":\"shop\",\"Name\":\"Shop\",\"Archived\":false},{\"ID\":4,\"Slug\":\"web\",\"Name\":\"Web\",\"Archived\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "project  phase         requests  share  failed  tokens in  tokens out  cost USD\nshop     plan                 6    60%       0         6K          1K  0.60\nshop     do                   3    30%       1         3K         500  0.10\nweb      (unlabelled)         1    10%       0        100          10  0.01\n\ntotal: 10 requests (1 failed), 9.1K tokens in, 1.5K tokens out, cost USD 0.71, 1 errors\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7&labels=1",
+      ""
+     ],
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "by model",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "by": "model"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"costUsd\":\"0.600000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.600000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":3,\"events\":6,\"tokensIn\":6000,\"tokensOut\":1000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"plan\",\"phaseSource\":\"given\",\"activity\":\"feature\",\"activitySource\":\"given\",\"task\":\"#1\",\"taskSource\":\"given\"},{\"costUsd\":\"0.100000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.100000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-b\",\"project\":3,\"events\":3,\"tokensIn\":3000,\"tokensOut\":500,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":1,\"errorEvents\":1,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"do\",\"phaseSource\":\"given\",\"activity\":\"bugfix\",\"activitySource\":\"given\",\"task\":\"feature/x\",\"taskSource\":\"branch\"},{\"costUsd\":\"0.010000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":4,\"events\":1,\"tokensIn\":100,\"tokensOut\":10,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "model  requests  share  failed  tokens in  tokens out  cost USD\nm-a           7    70%       0       6.1K          1K  0.61\nm-b           3    30%       1         3K         500  0.10\n\ntotal: 10 requests (1 failed), 9.1K tokens in, 1.5K tokens out, cost USD 0.71, 1 errors\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "by phase json",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "json": true,
+    "by": "phase"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7&labels=1",
+     "status": 200,
+     "body": "{\"days\":[{\"costUsd\":\"0.600000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.600000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":3,\"events\":6,\"tokensIn\":6000,\"tokensOut\":1000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"plan\",\"phaseSource\":\"given\",\"activity\":\"feature\",\"activitySource\":\"given\",\"task\":\"#1\",\"taskSource\":\"given\"},{\"costUsd\":\"0.100000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.100000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-b\",\"project\":3,\"events\":3,\"tokensIn\":3000,\"tokensOut\":500,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":1,\"errorEvents\":1,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"do\",\"phaseSource\":\"given\",\"activity\":\"bugfix\",\"activitySource\":\"given\",\"task\":\"feature/x\",\"taskSource\":\"branch\"},{\"costUsd\":\"0.010000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":4,\"events\":1,\"tokensIn\":100,\"tokensOut\":10,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "{\"days\":[{\"costUsd\":\"0.600000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.600000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":3,\"events\":6,\"tokensIn\":6000,\"tokensOut\":1000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"plan\",\"phaseSource\":\"given\",\"activity\":\"feature\",\"activitySource\":\"given\",\"task\":\"#1\",\"taskSource\":\"given\"},{\"costUsd\":\"0.100000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.100000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-b\",\"project\":3,\"events\":3,\"tokensIn\":3000,\"tokensOut\":500,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":1,\"errorEvents\":1,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"do\",\"phaseSource\":\"given\",\"activity\":\"bugfix\",\"activitySource\":\"given\",\"task\":\"feature/x\",\"taskSource\":\"branch\"},{\"costUsd\":\"0.010000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.010000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":4,\"events\":1,\"tokensIn\":100,\"tokensOut\":10,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0}],\"gaps\":[],\"timezone\":\"UTC\"}\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7&labels=1",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "by bad",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "by": "color"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels); unlabelled usage is its own row\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "by three",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "by": "phase,activity,task"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels); unlabelled usage is its own row\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "by csv",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "csv": true,
+    "by": "phase"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)\n  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels); unlabelled usage is its own row\n  minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "filter phase",
+   "args": [
+    "usage"
+   ],
+   "opts": {
+    "phase": "plan"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7&phase=plan",
+     "status": 200,
+     "body": "{\"days\":[{\"costUsd\":\"0.600000000\",\"estimatedCostEvents\":0,\"subscriptionEvents\":0,\"unknownBillingEvents\":0,\"provider\":\"openrouter\",\"reportedCostUsd\":\"0.600000000\",\"estimatedCostUsd\":null,\"eventsWithoutCost\":0,\"day\":\"2026-11-17\",\"model\":\"m-a\",\"project\":3,\"events\":6,\"tokensIn\":6000,\"tokensOut\":1000,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0,\"errorEvents\":0,\"cancelledEvents\":0,\"interruptedEvents\":0,\"durationMs\":0,\"failedDurationMs\":0,\"unknownDurationEvents\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"phase\":\"plan\",\"phaseSource\":\"given\",\"activity\":\"feature\",\"activitySource\":\"given\",\"task\":\"#1\",\"taskSource\":\"given\"}],\"gaps\":[],\"timezone\":\"UTC\"}"
+    }
+   ],
+   "want": {
+    "out": "provider    model  requests  failed  tokens in  tokens out  cost USD\nopenrouter  m-a           6       0         6K          1K  0.60\n\nday         requests  tokens in+out  cost USD\n2026-11-17         6             7K  0.60\n\ntotal: 6 requests (0 failed), 6K tokens in, 1K tokens out, cost USD 0.60\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7&phase=plan",
       ""
      ]
     ]

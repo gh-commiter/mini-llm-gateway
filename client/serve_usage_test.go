@@ -790,3 +790,48 @@ func TestEventTokensFallbackAndAgentZero(t *testing.T) {
 		}
 	}
 }
+
+// The gateway stores the labels a request carries, drops what is not a safe token (a modified client), never refuses,
+// and a nested call carries the labels of the run that asked.
+func TestEventLabelsFromHeaders(t *testing.T) {
+	f := newCoreFx(t, nil)
+	mk := func(h map[string]string, run *agentRun) *req {
+		hr := httptest.NewRequest("POST", "/v1/messages", nil)
+		for k, v := range h {
+			hr.Header.Set(k, v)
+		}
+		if run != nil {
+			hr = hr.WithContext(context.WithValue(hr.Context(), agentRunKey{}, run))
+		}
+		return &req{Request: hr, conn: &serveConn{device: &serveDevice{ID: devID(f.dev["ana"])}}, provider: "openrouter"}
+	}
+	finish := func(r *req) {
+		f.s.dispatched(r)
+		uw := &usageWriter{in: 1, out: 1}
+		uw.metrics.feed([]byte(`{"usage":{"input_tokens":1,"output_tokens":1}}`))
+		f.s.endEvent(r, 200, uw)
+	}
+	good := mk(map[string]string{"x-claude-mini-phase": "Plan", "x-claude-mini-activity": "bugfix", "x-claude-mini-task": "feature/149", "x-claude-mini-task-source": "branch"}, nil)
+	f.s.admitEvent(good, "m")
+	finish(good)
+	bad := mk(map[string]string{"x-claude-mini-phase": "plan; drop table", "x-claude-mini-activity": strings.Repeat("a", 40), "x-claude-mini-task": "bad task", "x-claude-mini-task-source": "classified"}, nil)
+	f.s.admitEvent(bad, "m")
+	finish(bad)
+	nested := mk(nil, &agentRun{evID: good.event.ID, evUser: good.event.UserID, phase: "plan", activity: "bugfix", task: "feature/149", taskSource: "branch"})
+	f.s.admitEvent(nested, "m")
+	finish(nested)
+	f.s.api.FlushRecorder()
+	get := func(id string) (a [7]string) {
+		f.ok(f.s.core.DB().QueryRow(`SELECT outcome,phase,activity,task,phase_source,activity_source,task_source FROM usage_events WHERE id=?`, id).Scan(&a[0], &a[1], &a[2], &a[3], &a[4], &a[5], &a[6]))
+		return
+	}
+	if g := get(good.event.ID); g != [7]string{"ok", "plan", "bugfix", "feature/149", "given", "given", "branch"} {
+		t.Fatal(g)
+	}
+	if g := get(bad.event.ID); g != [7]string{"ok"} { // the request went on; no label survived (the source "classified" is reserved)
+		t.Fatal(g)
+	}
+	if g := get(nested.event.ID); g != [7]string{"ok", "plan", "bugfix", "feature/149", "given", "given", "branch"} {
+		t.Fatal(g)
+	}
+}

@@ -710,6 +710,8 @@ func main() {
 	if !ok {
 		fail("--minigw-role: 1-32 letters, digits, . _ or -")
 	}
+	// --minigw-phase/-activity/-task (or MINIGW_PHASE/...): labels for the usage reports; never refuse the run for one.
+	labels, args := takeLabels(args, os.Getenv, func(m string) { fmt.Fprintln(os.Stderr, "minigw: "+m) })
 	args, toolsFlag, toolsErr := takeTools(args) // #119
 	if toolsErr != "" {
 		fail(toolsErr)
@@ -865,6 +867,8 @@ sessionArgs:
 	if role != "" {
 		headers += "\nx-claude-mini-role: " + role
 	}
+	labels.withBranch(cwd, folderLinked, gitBranch)
+	headers += labels.headers()
 	if readOnly { // --minigw-ro velja tudi brez deljenja (prehod na tem računalniku)
 		headers += "\nx-claude-mini-ro: 1"
 	}

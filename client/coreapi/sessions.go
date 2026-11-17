@@ -25,7 +25,7 @@ func IsSessionsPath(method, p string) bool {
 }
 
 func sessionFilter(q url.Values) (core.SessionFilter, error) {
-	f := core.SessionFilter{Days: 7, Model: q.Get("model"), Device: q.Get("device"), After: q.Get("after")}
+	f := core.SessionFilter{Days: 7, Model: q.Get("model"), Device: q.Get("device"), After: q.Get("after"), Phase: q.Get("phase"), Activity: q.Get("activity"), Task: q.Get("task")}
 	for _, x := range []struct {
 		k string
 		v *int

@@ -17,9 +17,12 @@ func (e *projectEnv) projectSessions(args []string) error {
 	model := fs.String("model", "", "stored model ID")
 	device := fs.String("device", "", "device ID")
 	asJSON := fs.Bool("json", false, "JSON")
+	phase := fs.String("phase", "", "only this phase")
+	activity := fs.String("activity", "", "only this activity")
+	task := fs.String("task", "", "only this task")
 	pos, err := parseFlags(fs, args)
 	if err != nil || len(pos) > 1 {
-		return errors.New("usage: minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]")
+		return errors.New("usage: minigw project sessions [<project>] [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]")
 	}
 	var c connection
 	var project string
@@ -35,6 +38,11 @@ func (e *projectEnv) projectSessions(args []string) error {
 		project = strconv.FormatInt(link.Project, 10)
 	}
 	q := url.Values{"days": {strconv.Itoa(*days)}, "model": {*model}, "device": {*device}}
+	for k, v := range map[string]string{"phase": *phase, "activity": *activity, "task": *task} {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
 	page := core.SessionPage{Sessions: []core.SessionRow{}}
 	seen := map[string]bool{}
 	for {
@@ -99,7 +107,16 @@ func sessionText(page core.SessionPage) string {
 		if r.Cost != nil && r.UnknownCost > 0 {
 			totalCost += "+?"
 		}
-		fmt.Fprintf(&out, "%s  %s  %s  %s  %s  %s  %d requests  %s in  %s out  %s cache-read  %s cache-write  USD %s (reported %s, estimated %s, %d unknown)  %s  end %s  wall %s\n", clean(r.ID), r.Start.UTC().Format("2006-01-02T15:04:05Z"), clean(r.UserName), clean(r.DeviceName), clean(strings.Join(r.Models, ",")), r.Outcome, r.Requests, metric(r.TokensIn), metric(r.TokensOut), metric(r.CacheRead), metric(r.CacheWrite), totalCost, cost(r.ReportedCost), cost(r.EstimatedCost), r.UnknownCost, strconv.FormatInt(r.ProjectID, 10), end, duration)
+		labels := ""
+		for _, l := range []struct{ name, v, src string }{{"phase", r.Phase, ""}, {"activity", r.Activity, ""}, {"task", r.Task, r.TaskSource}} {
+			if l.v != "" {
+				labels += "  " + l.name + " " + clean(l.v)
+				if l.src == "branch" {
+					labels += " (branch)"
+				}
+			}
+		}
+		fmt.Fprintf(&out, "%s  %s  %s  %s  %s  %s  %d requests  %s in  %s out  %s cache-read  %s cache-write  USD %s (reported %s, estimated %s, %d unknown)  %s  end %s  wall %s%s\n", clean(r.ID), r.Start.UTC().Format("2006-01-02T15:04:05Z"), clean(r.UserName), clean(r.DeviceName), clean(strings.Join(r.Models, ",")), r.Outcome, r.Requests, metric(r.TokensIn), metric(r.TokensOut), metric(r.CacheRead), metric(r.CacheWrite), totalCost, cost(r.ReportedCost), cost(r.EstimatedCost), r.UnknownCost, strconv.FormatInt(r.ProjectID, 10), end, duration, labels)
 	}
 	return out.String()
 }

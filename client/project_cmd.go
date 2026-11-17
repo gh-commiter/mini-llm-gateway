@@ -34,7 +34,7 @@ minigw project remote remove <url> [<slug>]
 minigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them
 minigw project unlink                       remove the link that applies here
 minigw project show                         the link that applies here, and why
-minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]`
+minigw project sessions [<project>] [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]`
 	noteHelp = `minigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project
 minigw note read <id> [--json]
 minigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)

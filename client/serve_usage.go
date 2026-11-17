@@ -26,8 +26,13 @@ func (s *server) admitEvent(r *req, model string) {
 		e.DeviceID = d.ID
 		e.UserID = s.api.UserOf(r.Context(), d.ID)
 	}
+	// Labels of the run (phase, activity, task): data for reports, never a reason to refuse. The gateway applies its own
+	// limits (a modified client): a value that is not a safe token is dropped, the request goes on.
+	e.Phase, e.Activity = core.SafeWordLabel(r.h("x-claude-mini-phase")), core.SafeWordLabel(r.h("x-claude-mini-activity"))
+	e.Task, e.TaskSource = core.SafeTaskLabel(r.h("x-claude-mini-task")), r.h("x-claude-mini-task-source")
 	if run := runOf(r); run != nil { // a nested call: the caller's event is the parent; its user and project are inherited
 		e.ParentID, e.UserID = run.evID, run.evUser
+		e.Phase, e.Activity, e.Task, e.TaskSource = run.phase, run.activity, run.task, run.taskSource
 		if run.proj != nil {
 			e.ProjectID = run.proj.project
 		}

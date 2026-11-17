@@ -105,6 +105,7 @@ func beginEvent(tx *sql.Tx, e UsageEvent) error {
 	if mode != "metered" && mode != "subscription" && mode != "local" {
 		mode = "unknown"
 	}
-	_, err := tx.Exec(`INSERT OR IGNORE INTO usage_events(id,parent_id,start,user_id,device_id,project_id,provider,model,upstream_model,outcome,token_source,price_snapshot_id,billing_mode) VALUES(?,?,?,?,?,?,?,?,?,'open','unknown',?,?)`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), capStr(e.DeviceID, 256), nullID(e.ProjectID), capStr(e.Provider, 64), capStr(e.Model, 256), nullStr(capStr(e.UpstreamModel, 256)), id, mode)
+	normalizeLabels(&e)
+	_, err := tx.Exec(`INSERT OR IGNORE INTO usage_events(id,parent_id,start,user_id,device_id,project_id,provider,model,upstream_model,outcome,token_source,price_snapshot_id,billing_mode,phase,activity,task,phase_source,activity_source,task_source) VALUES(?,?,?,?,?,?,?,?,?,'open','unknown',?,?,?,?,?,?,?,?)`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), capStr(e.DeviceID, 256), nullID(e.ProjectID), capStr(e.Provider, 64), capStr(e.Model, 256), nullStr(capStr(e.UpstreamModel, 256)), id, mode, e.Phase, e.Activity, e.Task, e.PhaseSource, e.ActivitySource, e.TaskSource)
 	return err
 }

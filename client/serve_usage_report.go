@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,11 +15,15 @@ import (
 	"unicode/utf8"
 )
 
-const usageReportHelp = `minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
+const usageReportHelp = `minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
+  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels); unlabelled usage is its own row
   minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)`
 
 type usageEventRow struct {
 	Day, Provider, Model                                         string
+	Project                                                      int64
+	Phase, Activity, Task                                        string // only in a report asked with labels=1
+	PhaseSource, ActivitySource, TaskSource                      string
 	Events, TokensIn, TokensOut, FailedEvents, EventsWithoutCost int64
 	CacheReadTokens, CacheWriteTokens                            int64
 	EstimatedCostUsd                                             *string
@@ -321,6 +326,161 @@ func usageReportCSV(rows []usageEventRow) string {
 			estimated = fmt.Sprintf("%d.%09d", s.estimated/1_000_000_000, s.estimated%1_000_000_000)
 		}
 		out += fmt.Sprintf("%s,%s,%s,%d,%d,%d,%d,%s,%s,%d,%d,%d,%d,%d,%d,%d\n", csvCell(k[0], true), csvCell(k[1], true), csvCell(k[2], true), s.events, s.failed, s.in, s.out, cost, estimated, s.unknown, s.errors, s.durationMs, s.failedMs, s.unknownMs, s.cachedIn, s.cachedOut)
+	}
+	return out
+}
+
+// usageByDims are the dimensions of minigw gw usage --by.
+var usageByDims = []string{"phase", "activity", "task", "project", "model"}
+
+// parseUsageBy checks --by: one or two different dimensions, comma separated.
+func parseUsageBy(v string) ([]string, bool) {
+	parts := strings.Split(v, ",")
+	if len(parts) < 1 || len(parts) > 2 {
+		return nil, false
+	}
+	for i, d := range parts {
+		if !slices.Contains(usageByDims, d) || i == 1 && d == parts[0] {
+			return nil, false
+		}
+	}
+	return parts, true
+}
+
+// byLabels: does --by need the rows split by label (labels=1)?
+func byLabels(by []string) bool {
+	return slices.Contains(by, "phase") || slices.Contains(by, "activity") || slices.Contains(by, "task")
+}
+
+const unlabelled = "(unlabelled)"
+
+// usageByValue is the value of one dimension of a row, as the report names it ("(unlabelled)" for no label).
+func usageByValue(r usageEventRow, dim string, projects map[int64]string) string {
+	v := ""
+	switch dim {
+	case "phase":
+		v = r.Phase
+	case "activity":
+		v = r.Activity
+	case "task":
+		v = r.Task
+		if v != "" && r.TaskSource == "branch" {
+			v += " (branch)"
+		}
+	case "model":
+		return r.Model
+	case "project":
+		if r.Project == 0 {
+			return "(no project)"
+		}
+		if s := projects[r.Project]; s != "" {
+			return s
+		}
+		return strconv.FormatInt(r.Project, 10)
+	}
+	if v == "" {
+		return unlabelled
+	}
+	return v
+}
+
+// usageByText: the usage numbers per one or two dimensions (rows sorted by the first, then by cost), a share column
+// (this row's requests of all requests) and a total line.
+func usageByText(rows []usageEventRow, gaps []usageEventGap, by []string, projects map[int64]string) string {
+	if len(rows) == 0 {
+		return "no events\n"
+	}
+	var total usageSum
+	groups := map[[2]string]*usageSum{}
+	for _, r := range rows {
+		k := [2]string{usageByValue(r, by[0], projects), ""}
+		if len(by) > 1 {
+			k[1] = usageByValue(r, by[1], projects)
+		}
+		if groups[k] == nil {
+			groups[k] = &usageSum{}
+		}
+		groups[k].add(r)
+		total.add(r)
+	}
+	keys := make([][2]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	first := map[string]*usageSum{} // the totals of the first dimension: it orders the groups
+	for k, g := range groups {
+		if first[k[0]] == nil {
+			first[k[0]] = &usageSum{}
+		}
+		first[k[0]].events += g.events
+		first[k[0]].nanos += g.nanos
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a[0] != b[0] {
+			x, y := first[a[0]], first[b[0]]
+			switch {
+			case (a[0] == unlabelled) != (b[0] == unlabelled): // the unlabelled row is last, never hidden
+				return b[0] == unlabelled
+			case x.nanos != y.nanos:
+				return x.nanos > y.nanos
+			case x.events != y.events:
+				return x.events > y.events
+			}
+			return a[0] < b[0]
+		}
+		x, y := groups[a], groups[b]
+		if x.nanos != y.nanos {
+			return x.nanos > y.nanos
+		}
+		if x.events != y.events {
+			return x.events > y.events
+		}
+		return a[1] < b[1]
+	})
+	withFailedTime, withCache := total.failedMs > 0, total.cachedIn > 0
+	head, right := append([]string{}, by...), make([]bool, len(by))
+	head, right = append(head, "requests", "share", "failed"), append(right, true, true, true)
+	if withFailedTime {
+		head, right = append(head, "failed min"), append(right, true)
+	}
+	head, right = append(head, "tokens in"), append(right, true)
+	if withCache {
+		head, right = append(head, "cached in"), append(right, true)
+	}
+	head, right = append(head, "tokens out", "cost USD"), append(right, true, false)
+	var table [][]string
+	for _, k := range keys {
+		s := groups[k]
+		row := []string{oneLine(k[0])}
+		if len(by) > 1 {
+			row = append(row, oneLine(k[1]))
+		}
+		share := "0%"
+		if total.events > 0 {
+			share = fmt.Sprintf("%d%%", (s.events*100+total.events/2)/total.events)
+		}
+		row = append(row, strconv.FormatInt(s.events, 10), share, strconv.FormatInt(s.failed, 10))
+		if withFailedTime {
+			ft := "-"
+			if s.failedMs > 0 {
+				ft = minutes(s.failedMs)
+			}
+			row = append(row, ft)
+		}
+		row = append(row, human(s.in))
+		if withCache {
+			row = append(row, human(s.cachedIn))
+		}
+		table = append(table, append(row, human(s.out), s.cost()))
+	}
+	totalIn := human(total.in) + " tokens in, "
+	if withCache {
+		totalIn += human(total.cachedIn) + " cached in, "
+	}
+	out := usageTable(head, table, right) + fmt.Sprintf("\ntotal: %d requests (%d failed), %s%s tokens out, cost USD %s%s\n", total.events, total.failed, totalIn, human(total.out), total.cost(), total.failedSummary())
+	for _, g := range gaps {
+		out += fmt.Sprintf("%d events lost between %s and %s (UTC)\n", g.Count, g.From.UTC().Format("2006-01-02 15:04"), g.To.UTC().Format("2006-01-02 15:04"))
 	}
 	return out
 }

@@ -37,8 +37,8 @@ const coreHelp = `
   minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)
   minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups
   minigw gw core audit                                  the audit trail of the core
-  minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--json]
-  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)
+  minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]
+  minigw gw usage-events [--days n] [--user u] [--project p] [--model m] [--phase p] [--activity a] [--task t]   model invocations per day, model and user (core; all of them)
   minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
   minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
 (<user> and <project>: the name or slug, or the number.)`
@@ -87,8 +87,8 @@ func projectID(a *adminClient, ref string) int64 {
 
 // coreOpts: the flags of usage-events and usage.
 type coreOpts struct {
-	days, user, project, model, claudeProbe, provider, device, folder, sort, reason, team string
-	json, csv, history, explain                                                           bool
+	days, user, project, model, claudeProbe, provider, device, folder, sort, reason, team, by, phase, activity, task string
+	json, csv, history, explain                                                                                      bool
 }
 
 func coreCommand(a *adminClient, pos []string, o coreOpts) {
@@ -294,12 +294,23 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		if o.sort != "" && o.sort != "failed" || o.sort != "" && (o.json || o.csv) {
 			fail(usageReportHelp)
 		}
+		var by []string
+		if o.by != "" {
+			var ok bool
+			if by, ok = parseUsageBy(o.by); !ok || o.csv || o.sort != "" {
+				fail(usageReportHelp)
+			}
+		}
 		q := url.Values{"days": {o.days}}
 		if o.provider != "" {
 			q.Set("provider", o.provider)
 		}
 		if o.model != "" {
 			q.Set("model", o.model)
+		}
+		addLabelFilters(q, o)
+		if byLabels(by) {
+			q.Set("labels", "1")
 		}
 		var raw json.RawMessage
 		a.do("GET", "/usage/events?"+q.Encode(), nil, &raw)
@@ -311,7 +322,17 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		if err != nil {
 			fail("the usage answer is not understood: " + err.Error())
 		}
-		if o.csv {
+		if by != nil {
+			projects := map[int64]string{}
+			if slices.Contains(by, "project") {
+				var r struct{ Projects []coreProject }
+				a.do("GET", "/projects", nil, &r)
+				for _, p := range r.Projects {
+					projects[p.ID] = p.Slug
+				}
+			}
+			fmt.Print(usageByText(rows, gaps, by, projects))
+		} else if o.csv {
 			fmt.Print(usageReportCSV(rows))
 		} else {
 			fmt.Print(usageReportText(rows, gaps, o.sort == "failed"))
@@ -322,6 +343,7 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 			fail("--project required")
 		}
 		q := url.Values{"days": {o.days}, "project": {id(projectID(a, o.project), 10)}, "model": {o.model}, "device": {o.device}}
+		addLabelFilters(q, o)
 		page := core.SessionPage{Sessions: []core.SessionRow{}}
 		seen := map[string]bool{}
 		for {
@@ -355,6 +377,7 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		if o.model != "" {
 			q.Set("model", o.model)
 		}
+		addLabelFilters(q, o)
 		var r usageReply
 		a.do("GET", "/usage/events?"+q.Encode(), nil, &r)
 		printUsage(os.Stdout, r, true)
@@ -521,4 +544,13 @@ func orDash(s string) string {
 // restoreOutcome: core.RestoreOutcome for minigw serve.
 func restoreOutcome(err error) (msg string, failed bool) {
 	return core.RestoreOutcome(err, "stop minigw serve first")
+}
+
+// addLabelFilters adds the label filters of the owner's usage commands (they select events; they never widen access).
+func addLabelFilters(q url.Values, o coreOpts) {
+	for k, v := range map[string]string{"phase": o.phase, "activity": o.activity, "task": o.task} {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
 }
