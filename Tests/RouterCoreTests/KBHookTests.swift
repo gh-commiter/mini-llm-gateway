@@ -247,6 +247,21 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         #expect(!FileManager.default.fileExists(atPath: w.root + "/fake-ran"))
     }
 
+    /// Another process that was started at the same moment (a parallel test's child) can hold the write end of git's output pipe, so EOF comes late. git is
+    /// done and its output is complete: the state must not wait for that process (three such waits on the 3 pool threads of a small runner stopped a whole run).
+    @Test func aStrangerHoldingTheOutputPipeDoesNotDelayTheState() throws {
+        let w = try HookWorld()
+        let bin = w.root + "/bin"
+        try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        // git prints and exits at once, but a background process keeps its stdout open for 10 s
+        try Data("#!/bin/sh\necho deadbeef\n(sleep 10 &) \nexit 0\n".utf8).write(to: URL(fileURLWithPath: bin + "/git"))
+        chmod(bin + "/git", 0o755)
+        let started = Date()
+        let r = ProjectEnv.hookGitState(w.work, path: bin, timeout: 30)
+        #expect(Date().timeIntervalSince(started) < 5, "waited for the stranger: \(Date().timeIntervalSince(started)) s")
+        #expect(r.head == "deadbeef")
+    }
+
     @Test func aSlowGitIsGivenUpOn() throws {
         let w = try HookWorld()
         let bin = w.root + "/bin"

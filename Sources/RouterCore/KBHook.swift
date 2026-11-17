@@ -136,10 +136,16 @@ extension ProjectEnv {
             let box = HookBox()  // read while it runs: a long listing would fill the pipe and stall git
             let reader = DispatchGroup()
             reader.enter()
-            DispatchQueue.global().async { box.data = pipe.fileHandleForReading.readDataToEndOfFile(); reader.leave() }
+            let out = pipe.fileHandleForReading
+            DispatchQueue.global().async {
+                while case let d = out.availableData, !d.isEmpty { box.append(d) }
+                reader.leave()
+            }
             if done.wait(timeout: deadline) == .timedOut { p.terminate(); _ = reader.wait(timeout: .now() + 1); return nil }
-            reader.wait()
-            return p.terminationStatus == 0 ? box.data : nil
+            // git has exited, so everything it wrote is in the pipe and read within moments. EOF can come much later: a process started at the same moment
+            // (another run's child) may hold the write end. Never wait for it: on a pool thread such waits stop the whole process (3 of them on a 3-core runner).
+            _ = reader.wait(timeout: .now() + 0.5)
+            return p.terminationStatus == 0 ? box.snapshot : nil
         }
         var head = ""
         if let h = run(["rev-parse", "HEAD"]) { head = ProjectText.trim(String(decoding: h, as: UTF8.self)) }
@@ -160,7 +166,12 @@ extension ProjectEnv {
         return (head, sum.finalize().map { String(format: "%02x", $0) }.joined())
     }
 
-    final class HookBox: @unchecked Sendable { var data = Data() }
+    final class HookBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        func append(_ d: Data) { lock.withLock { data.append(d) } }
+        var snapshot: Data { lock.withLock { data } }
+    }
 
     func hookGit(_ dir: String) -> (head: String, status: String) { gitState?(dir) ?? Self.hookGitState(dir, timeout: gitTimeout ?? 2) }
 

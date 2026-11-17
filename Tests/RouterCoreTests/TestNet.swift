@@ -54,9 +54,10 @@ enum TestNet {
         /// The first event with this name, waited for with a deadline.
         func event(_ name: String, timeout: Double = 30) async throws -> [String: Any] {
             let end = Date().addingTimeInterval(timeout)
-            while Date() < end {
+            while true {  // checked once more after the deadline: a starved pool can resume this task late, with the event long there
                 if let e = events.first(where: { $0["event"] as? String == name }) { return e }
                 if let e = events.first(where: { $0["event"] as? String == "error" }) { Issue.record("mg-test-net: \(e)"); throw Missing() }
+                if Date() >= end { break }
                 try await Task.sleep(for: .milliseconds(20))
             }
             Issue.record("mg-test-net: no \(name) event within \(timeout) s: \(events)")

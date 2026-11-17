@@ -51,3 +51,10 @@ jobs:
           sleep 1
           kill "$tail_pid" 2>/dev/null || true
           exit $rc
+      # One cooperative thread instead of three (every core of a small runner): anything that blocks a pool thread (a semaphore or group wait, a blocking
+      # read, a sleep inside an async test) stops these suites at once, instead of hanging a full run only now and then. Processes, pipes and the core helper.
+      - name: swift test with a one-thread cooperative pool
+        timeout-minutes: 10
+        env:
+          LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
+        run: swift test --filter "KBHookTests|CoreHelperTests|ProjectRunTests|UsageLossAtQuit|QuotaEngineGuards|QuotaProbeTree|NativeTests"
