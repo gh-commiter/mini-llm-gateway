@@ -13,6 +13,9 @@
 - The project database schema is now 17 (a snapshot is taken before the migration). An older gateway cannot open it. Old usage rows have no labels. Daily totals older than 400 days (folded) carry none and show as unlabelled.
 - `minigw gw project-sessions` and `minigw project sessions` on the Mac no longer send an empty `after=` on the first page (as on Windows and Linux).
 
+### Fixed
+- The plugin's knowledge base hook could wait without end for git: it read git's output until the pipe closed, and another process that had inherited the pipe kept it open. It now reads without waiting for that (this also hung the project's own tests on small machines since 0.7.14).
+
 ### Known problems
 - In the Teams and projects pane the "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI: the format has no cell that lists pairs of a team and a role. The structured list is in the answer (`teams`).
 - The Teams and projects pane has only been tried through tests, not in a real window. Team notes (the team's own notes segment) are not shown there, only in the Knowledge base pane.
