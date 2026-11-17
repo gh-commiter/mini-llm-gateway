@@ -83,12 +83,24 @@ extension ProjectEnv {
                 after = pg["next"]?.string ?? ""
             } while !after.isEmpty
             try fm.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            guard try fm.contentsOfDirectory(atPath: root.path).isEmpty else { throw ProjectError("export directory must be empty") }
+            // The destination is opened once, never through a link, and held: the check and every file go through this descriptor.
+            let dirFD = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            guard dirFD >= 0 else { throw ProjectError("export destination must be a directory, not a symbolic link") }
+            defer { close(dirFD) }
+            let listFD = dup(dirFD)
+            guard listFD >= 0, let dir = fdopendir(listFD) else { throw ProjectError("cannot read export directory") }
+            var empty = true
+            while let e = readdir(dir) {
+                let name = withUnsafePointer(to: &e.pointee.d_name) { $0.withMemoryRebound(to: CChar.self, capacity: 256) { String(cString: $0) } }
+                if name != "." && name != ".." { empty = false; break }
+            }
+            closedir(dir)
+            guard empty else { throw ProjectError("export directory must be empty") }
+            Self.exportHook?()
             func write(_ name: String, _ data: Data) throws {
-                let url = root.appendingPathComponent(name)
                 // O_EXCL refuses existing files and links. Permissions apply before content is written.
-                let fd = open(url.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
-                guard fd >= 0 else { throw ProjectError("cannot create " + url.path) }
+                let fd = openat(dirFD, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+                guard fd >= 0 else { throw ProjectError("cannot create " + root.appendingPathComponent(name).path) }
                 let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
                 try handle.write(contentsOf: data)
                 try handle.close()

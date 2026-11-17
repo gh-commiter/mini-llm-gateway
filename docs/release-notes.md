@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Security
+- `minigw kb export` now writes through the opened destination folder, so swapping the folder during the export cannot send notes elsewhere; a destination that is a symbolic link is refused.
+
 ## 0.7.10
 
 ### New

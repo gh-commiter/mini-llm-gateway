@@ -20,6 +20,9 @@ public struct ProjectReply: Sendable {
 }
 
 public final class ProjectEnv {
+    /// Test seam: runs after the export destination is opened and checked; nil in production.
+    nonisolated(unsafe) static var exportHook: (() -> Void)?
+
     public static let usageHelp = "minigw usage [--project slug] [--days n] [--json]   your model usage (a developer sees own events in a project, an admin all of it)"
     public static let runningHelp = "minigw running [--json]                    your requests that run on the gateway now: model, folder, time, steps, last step"
     public static let projectHelp = """

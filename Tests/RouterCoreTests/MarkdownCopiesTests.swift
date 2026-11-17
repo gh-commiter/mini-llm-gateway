@@ -43,6 +43,34 @@ import Testing
         #expect(calls.count == beforeAgentCalls && slept == 2)
     }
 
+    private func exportEnv(_ cwd: String) -> ProjectEnv {
+        ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: cwd, stdin: { Data() }, out: { _ in }, err: { _ in }, agent: false, send: { _, _, path, _, _ in
+            if path == "/minigw/v1/projects/demo" { return ProjectReply(status: 200, data: Data(#"{"id":1}"#.utf8)) }
+            if path.contains("/notes?") { return ProjectReply(status: 200, data: Data(#"{"notes":[{"id":5}]}"#.utf8)) }
+            return ProjectReply(status: 200, data: Data(#"{"id":5,"title":"T","body":"secret"}"#.utf8))
+        })
+    }
+
+    @Test func exportSurvivesDirectorySwapAndRefusesLinkDestination() throws {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let out = tmp.appendingPathComponent("out"), moved = tmp.appendingPathComponent("out-moved"), victim = tmp.appendingPathComponent("victim")
+        try fm.createDirectory(at: victim, withIntermediateDirectories: true)
+        defer { ProjectEnv.exportHook = nil; try? fm.removeItem(at: tmp) }
+        ProjectEnv.exportHook = {
+            precondition(rename(out.path, moved.path) == 0)
+            precondition(symlink(victim.path, out.path) == 0)
+        }
+        try exportEnv(tmp.path).kb(["export", "demo", out.path])
+        ProjectEnv.exportHook = nil
+        #expect(try fm.contentsOfDirectory(atPath: victim.path).isEmpty)
+        #expect(fm.fileExists(atPath: moved.appendingPathComponent("5.md").path))
+        #expect(fm.fileExists(atPath: moved.appendingPathComponent("INDEX.md").path))
+        // `out` is now a link: refused, nothing written to the target.
+        #expect(throws: ProjectError.self) { try exportEnv(tmp.path).kb(["export", "demo", out.path]) }
+        #expect(try fm.contentsOfDirectory(atPath: victim.path).isEmpty)
+    }
+
     @Test func ownerBundleArgumentsAndNestedJSON() throws {
         var output = "", bodies: [[String: Any]] = [], routes: [String] = []
         let cmd = AdminCommands(call: { method, path, body in

@@ -139,3 +139,63 @@ func TestMarkdownImportRefusesFolderLinks(t *testing.T) {
 		t.Fatal(posts)
 	}
 }
+
+func exportEnv() *projectEnv {
+	return &projectEnv{out: io.Discard, connect: func() (connection, string) { return connection{}, "" },
+		do: func(_ connection, _, p string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+			switch {
+			case p == apiProjects+"/demo":
+				return 200, []byte(`{"id":1}`), nil
+			case strings.Contains(p, "/notes?"):
+				return 200, []byte(`{"notes":[{"id":5}]}`), nil
+			}
+			return 200, []byte(`{"id":5,"title":"T","body":"secret"}`), nil
+		}}
+}
+
+// Swapping the destination for a link after the check must not send notes elsewhere.
+func TestKBExportSurvivesDirectorySwap(t *testing.T) {
+	tmp := t.TempDir()
+	out, moved, victim := filepath.Join(tmp, "out"), filepath.Join(tmp, "out-moved"), filepath.Join(tmp, "victim")
+	if e := os.Mkdir(victim, 0700); e != nil {
+		t.Fatal(e)
+	}
+	exportHook = func() {
+		if e := os.Rename(out, moved); e != nil {
+			t.Fatal(e)
+		}
+		if e := os.Symlink(victim, out); e != nil {
+			t.Fatal(e)
+		}
+	}
+	defer func() { exportHook = nil }()
+	if e := exportEnv().kb([]string{"export", "demo", out}); e != nil {
+		t.Fatal(e)
+	}
+	if got, _ := os.ReadDir(victim); len(got) != 0 {
+		t.Fatal("notes written through the swapped link")
+	}
+	if _, e := os.Stat(filepath.Join(moved, "INDEX.md")); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := os.Stat(filepath.Join(moved, "5.md")); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func TestKBExportRefusesSymlinkDestination(t *testing.T) {
+	tmp := t.TempDir()
+	victim, out := filepath.Join(tmp, "victim"), filepath.Join(tmp, "out")
+	if e := os.Mkdir(victim, 0700); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.Symlink(victim, out); e != nil {
+		t.Fatal(e)
+	}
+	if e := exportEnv().kb([]string{"export", "demo", out}); e == nil || !strings.Contains(e.Error(), "symbolic link") {
+		t.Fatal(e)
+	}
+	if got, _ := os.ReadDir(victim); len(got) != 0 {
+		t.Fatal("wrote into the link target")
+	}
+}

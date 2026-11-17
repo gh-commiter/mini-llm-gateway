@@ -541,7 +541,7 @@ minigw kb import fakture ./proposal.md --class structure --submit
 Export waits and retries if reads hit the gateway rate limit. It writes one Markdown file per readable note
 and an `INDEX.md`. It includes readable private notes,
 and excludes pending submissions and notes hidden from the caller. Use a new or empty destination directory: existing files
-are never overwritten. Each file has `---` front matter with JSON string values for `id`, `title`, `class`,
+are never overwritten, and the destination must not be a symbolic link. Each file has `---` front matter with JSON string values for `id`, `title`, `class`,
 `kind` (the provenance source kind), `revision`, `author`, `created`, `updated`, and `hash`, followed by
 the exact body. No YAML features are interpreted.
 
