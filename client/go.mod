@@ -8,7 +8,7 @@ require (
 	dev.trojar/minigw-tui-quiet v0.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	golang.org/x/sys v0.49.0
-	golang.org/x/text v0.3.8
+	golang.org/x/text v0.39.0
 	modernc.org/sqlite v1.62.0
 )
 
