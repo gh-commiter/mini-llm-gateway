@@ -90,8 +90,12 @@ import Testing
         func within(_ what: String, _ path: String) {
             nonisolated(unsafe) var got: String?
             let done = DispatchSemaphore(value: 0)
-            DispatchQueue.global().async { got = RunLabels.gitBranch(path, root: path); done.signal() }
-            if done.wait(timeout: .now() + 2) == .timedOut { Issue.record("\(what): blocked"); return }
+            // Its own thread, not the shared dispatch pool: in a full parallel run the pool can take seconds to hand out a thread, and the
+            // test then reported "blocked" for a read that had not even started. The read itself must return at once; the deadline only
+            // has to tell "returns" from "never returns".
+            let t = Thread { got = RunLabels.gitBranch(path, root: path); done.signal() }
+            t.stackSize = 1 << 20; t.start()
+            if done.wait(timeout: .now() + 20) == .timedOut { Issue.record("\(what): blocked"); return }
             #expect(got == "", "\(what)")
         }
         var r = try repo("fifo")
