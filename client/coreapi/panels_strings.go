@@ -91,7 +91,7 @@ func (a *API) mergedStrings(ps []PanelProvider, locale string) map[string]string
 		}
 		for _, l := range layers {
 			t, ok := p.Strings[l]
-			if !ok {
+			if !ok || checkProviderStrings(p) != nil {
 				continue
 			}
 			if err := ValidateStringTable(p.ID, t); err != nil {
@@ -115,7 +115,38 @@ func (a *API) adminPanelStrings(rawQuery string) Response {
 	if !reLocale.MatchString(lang) {
 		return resp(400, errorBody(400, "lang: C or a locale such as sl_SI"))
 	}
-	ps := panelProviders()
+	ps := a.providers()
 	locale := chooseLocale(ps, lang)
 	return resp(200, map[string]any{"format": PanelFormat, "locale": locale, "strings": a.mergedStrings(ps, locale)})
+}
+
+// checkProviderStrings: the provider's tables against the union of its panels' keys. The base table C holds every key; no
+// text is longer than the position of its key allows (a label 120 characters, a message 600); every table is valid.
+func checkProviderStrings(p PanelProvider) error {
+	used := map[string]int{}
+	for _, raw := range p.Panels {
+		keys, err := PanelKeys(raw, p)
+		if err != nil {
+			continue // the panel itself is left out when it is served
+		}
+		for k, m := range keys {
+			used[k] = max(used[k], m)
+		}
+	}
+	for k := range used {
+		if _, ok := p.Strings[baseLocale][k]; !ok {
+			return fmt.Errorf("the base table C has no text for %s", k)
+		}
+	}
+	for loc, t := range p.Strings {
+		if err := ValidateStringTable(p.ID, t); err != nil {
+			return fmt.Errorf("%s: %w", loc, err)
+		}
+		for k, v := range t {
+			if m, ok := used[k]; ok && utf8.RuneCountInString(v) > m {
+				return fmt.Errorf("%s: the text of %s is longer than the %d characters its position allows", loc, k, m)
+			}
+		}
+	}
+	return nil
 }

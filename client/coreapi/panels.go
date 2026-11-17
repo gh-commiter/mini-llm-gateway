@@ -717,14 +717,42 @@ func scalar(raw json.RawMessage) bool {
 
 // --- the registry and GET /panels ---
 
-// panelProviders: the registered providers (only the built-in one in this step).
-func panelProviders() []PanelProvider { return []PanelProvider{builtinProvider()} }
+// builtinProviderID is reserved: only the code of this package registers it; a provider that is added through Options may
+// not use it, so a plugin can never get the built-in routes.
+const builtinProviderID = "builtin"
+
+// providers: the built-in provider, then those added through Options (a reserved or repeated id, or one that is not a
+// valid id, is left out and logged).
+func (a *API) providers() []PanelProvider {
+	ps := []PanelProvider{builtinProvider()}
+	seen := map[string]bool{builtinProviderID: true}
+	for _, p := range a.o.PanelProviders {
+		if !reID.MatchString(p.ID) || seen[p.ID] {
+			a.o.Log("panels: a provider with the id %q is refused (reserved, repeated or not a valid id)", p.ID)
+			continue
+		}
+		seen[p.ID] = true
+		ps = append(ps, p)
+	}
+	return ps
+}
+
+// panelEntry is a description together with the id of the provider that registered it, as the registry knows it. A renderer
+// takes the routes from THIS id, never from the provider field inside the description.
+type panelEntry struct {
+	Provider    string          `json:"provider"`
+	Description json.RawMessage `json:"description"`
+}
 
 // panelsAnswer: the validated descriptions of all providers. A panel that fails validation is left out and logged; a
-// provider has at most maxPanelsPerP panels.
-func (a *API) panelsAnswer(ps []PanelProvider) []json.RawMessage {
-	out := []json.RawMessage{}
+// provider has at most maxPanelsPerP panels; a provider whose string tables do not fit its panels is left out as a whole.
+func (a *API) panelsAnswer(ps []PanelProvider) []panelEntry {
+	out := []panelEntry{}
 	for _, p := range ps {
+		if err := checkProviderStrings(p); err != nil {
+			a.o.Log("panels: provider %s is left out, its texts are broken: %v", p.ID, err)
+			continue
+		}
 		for i, raw := range p.Panels {
 			if i >= maxPanelsPerP {
 				a.o.Log("panels: provider %s has more than %d panels; the rest is left out", p.ID, maxPanelsPerP)
@@ -736,7 +764,7 @@ func (a *API) panelsAnswer(ps []PanelProvider) []json.RawMessage {
 			}
 			var buf bytes.Buffer
 			if json.Compact(&buf, raw) == nil {
-				out = append(out, json.RawMessage(buf.Bytes()))
+				out = append(out, panelEntry{Provider: p.ID, Description: json.RawMessage(buf.Bytes())})
 			}
 		}
 	}
@@ -751,5 +779,5 @@ func (a *API) adminPanels(method string, seg []string, rawQuery string) Response
 	if len(seg) == 2 {
 		return a.adminPanelStrings(rawQuery)
 	}
-	return resp(200, map[string]any{"format": PanelFormat, "panels": a.panelsAnswer(panelProviders())})
+	return resp(200, map[string]any{"format": PanelFormat, "panels": a.panelsAnswer(a.providers())})
 }

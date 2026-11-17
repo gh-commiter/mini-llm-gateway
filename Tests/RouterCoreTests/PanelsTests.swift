@@ -31,9 +31,14 @@ private func strings(_ locale: String) throws -> PanelStrings {
     return t
 }
 
+/// GET /panels names the provider next to each description; the descriptions of the fixture, and the answer for some.
+private func descriptions() throws -> [[String: Any]] { (try object("panels.json")["panels"] as! [[String: Any]]).map { $0["description"] as! [String: Any] } }
+private func answer(_ ds: [[String: Any]], provider: String = "builtin") -> String {
+    String(decoding: data(["format": 1, "panels": ds.map { ["provider": provider, "description": $0] }]), as: UTF8.self)
+}
+
 private func users() throws -> PanelDescription {
-    let panels = try object("panels.json")["panels"] as! [Any]
-    guard case .ready(let d) = PanelValidator.parse(data(panels[0])) else { throw Err.bad }
+    guard case .ready(let d) = PanelValidator.parse(data(try descriptions()[0]), provider: "builtin") else { throw Err.bad }
     return d
 }
 private enum Err: Error { case bad }
@@ -46,7 +51,7 @@ private let userAnswers: [(String, Int, String)] = [
 
 @MainActor private func usersModel(_ fake: Fake, locale: String = "C") async throws -> PanelModel {
     for (k, s, b) in userAnswers { await fake.set(k, s, b) }
-    let m = PanelModel(panel: try users(), strings: try strings(locale), send: { await fake.handle($0) })
+    let m = PanelModel(panel: try users(), strings: try strings(locale), routes: PanelRoutes.builtin, send: { await fake.handle($0) })
     await m.load()
     await fake.clear()
     return m
@@ -69,7 +74,7 @@ private let userAnswers: [(String, Int, String)] = [
 
     @Test(.enabled(if: haveFixtures)) func format1FixtureCoversTheWholeFormat() throws {
         let f = try object("panels-format1.json")
-        guard case .ready(let d) = PanelValidator.parse(data(f["panel"]!), provider: f["provider"] as? String, routes: f["routes"] as? [String]) else { throw Err.bad }
+        guard case .ready(let d) = PanelValidator.parse(data(f["panel"]!), provider: f["provider"] as! String, routes: f["routes"] as? [String]) else { throw Err.bad }
         let orders = d.sections[1]
         #expect(d.sections[0].kind == "text" && orders.kind == "list")
         #expect(orders.columns!.map(\.kind) == ["text", "multiline", "bool", "enum", "ref", "time"])
@@ -127,7 +132,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     @Test(.enabled(if: haveFixtures)) func loadsRefsThenListsAndShowsLabels() async throws {
         let fake = Fake()
         for (k, s, b) in userAnswers { await fake.set(k, s, b) }
-        let m = PanelModel(panel: try users(), strings: try strings("C"), send: { await fake.handle($0) })
+        let m = PanelModel(panel: try users(), strings: try strings("C"), routes: PanelRoutes.builtin, send: { await fake.handle($0) })
         await m.load()
         let log1 = await fake.log
         #expect(log1 == ["GET /devices", "GET /users", "GET /users", "GET /bindings"])
@@ -262,7 +267,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         let rows = nasty.enumerated().map { #"{"id":\#($0.offset + 1),"name":\#(String(decoding: try! JSONEncoder().encode($0.element), as: UTF8.self)),"active":true}"# }
         await fake.set("GET /users", 200, #"{"users":[\#(rows.joined(separator: ","))]}"#)
         await fake.set("GET /devices", 200, #"{"devices":[]}"#); await fake.set("GET /bindings", 200, #"{"bindings":[]}"#)
-        let m = PanelModel(panel: try users(), strings: try strings("C"), send: { await fake.handle($0) })
+        let m = PanelModel(panel: try users(), strings: try strings("C"), routes: PanelRoutes.builtin, send: { await fake.handle($0) })
         await m.load()
         let u = m.panel.sections[0]
         let shown = m.visibleRows(u, path: "users")
@@ -277,7 +282,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         for (k, s, b) in userAnswers { await fake.set(k, s, b) }
         let many = (1...1001).map { #"{"id":\#($0),"name":"u\#($0)"}"# }.joined(separator: ",")
         await fake.set("GET /users", 200, #"{"users":[\#(many)]}"#)
-        let m = PanelModel(panel: try users(), strings: try strings("C"), send: { await fake.handle($0) })
+        let m = PanelModel(panel: try users(), strings: try strings("C"), routes: PanelRoutes.builtin, send: { await fake.handle($0) })
         await m.load()
         #expect(m.refError == .refused("more than 1000 entries in /users") && m.refs["users"] == [])
     }
@@ -290,7 +295,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         await fake.set("GET /plugins/acme/items", 200, #"{"items":[{"sku":"s1","title":"Shirt"}]}"#)
         await fake.set("GET /plugins/acme/orders", 200, #"{"orders":[{"id":5,"name":"first","paid":true,"state":"new","item":"s1","created":"2026-11-17T10:00:00Z","note":"a\nb"}],"next":6}"#)
         await fake.set("GET /plugins/acme/orders/5/lines", 200, #"{"lines":[{"id":9,"title":"one"}]}"#)
-        let m = PanelModel(panel: d, strings: PanelStrings(locale: "C", table: tabs["C"]!), routes: f["routes"] as? [String], send: { await fake.handle($0) })
+        let m = PanelModel(panel: d, strings: PanelStrings(locale: "C", table: tabs["C"]!), routes: f["routes"] as! [String], send: { await fake.handle($0) })
         await m.load()
         let orders = d.sections[1]
         #expect(m.data("orders").next == "6")
@@ -394,9 +399,9 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     }
 
     @Test(.enabled(if: haveFixtures)) func aHigherFormatIsNotGuessed() async throws {
-        let good = try object("panels.json")["panels"] as! [[String: Any]]
+        let good = try descriptions()
         var newer = good[0]; newer["format"] = 2; newer["id"] = "builtin.future"; newer["sections"] = [["kind": "hologram"]]
-        let c = await catalog(200, String(decoding: data(["format": 1, "panels": [newer, good[0]]]), as: UTF8.self))
+        let c = await catalog(200, String(decoding: data(["format": 1, "panels": [["provider": "builtin", "description": newer], ["provider": "builtin", "description": good[0]]]]), as: UTF8.self))
         #expect(c.entries.map(\.id) == ["builtin.future", "builtin.users"])
         #expect(c.entries[0].parse == .needsNewer(2) && c.entries[0].title(c.strings) == "Users and devices")  // still in the sidebar
         let top = await catalog(200, #"{"format":2,"panels":[]}"#)
@@ -404,28 +409,28 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     }
 
     @Test(.enabled(if: haveFixtures)) func anUnknownElementKindIsAVisiblePlaceholder() async throws {
-        var p = (try object("panels.json")["panels"] as! [[String: Any]])[0]
+        var p = try descriptions()[0]
         var s = p["sections"] as! [[String: Any]]
         s.append(["kind": "chart", "id": "later"])
         var cols = s[0]["columns"] as! [[String: Any]]
         cols[0]["kind"] = "markdown"
         s[0]["columns"] = cols
         p["sections"] = s
-        let c = await catalog(200, String(decoding: data(["format": 1, "panels": [p]]), as: UTF8.self))
+        let c = await catalog(200, answer([p]))
         guard case .ready(let d) = c.entries[0].parse else { throw Err.bad }
         #expect(!d.sections[3].supported && d.sections[3].kind == "chart")
-        let m = PanelModel(panel: d, strings: PanelStrings(), send: { _ in .unavailable })
+        let m = PanelModel(panel: d, strings: PanelStrings(), routes: PanelRoutes.builtin, send: { _ in .unavailable })
         #expect(m.unsupportedCount(d.sections[0]) == 1)  // the markdown column: its cell is replaced, nothing is rendered as markdown
     }
 
     @Test(.enabled(if: haveFixtures)) func aPanelThatFailsValidationHereStaysAsCannotBeShown() async throws {
-        var p = (try object("panels.json")["panels"] as! [[String: Any]])[0]
+        var p = try descriptions()[0]
         var s = p["sections"] as! [[String: Any]]
         var rows = s[0]["rowActions"] as! [[String: Any]]
         rows[1]["path"] = "/projects/{row.id}"  // another provider's route
         s[0]["rowActions"] = rows
         p["sections"] = s
-        let c = await catalog(200, String(decoding: data(["format": 1, "panels": [p]]), as: UTF8.self))
+        let c = await catalog(200, answer([p]))
         guard case .refused(let why) = c.entries[0].parse else { throw Err.bad }
         #expect(why.contains("is not registered"))
     }
@@ -450,55 +455,146 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     }
 }
 
+@MainActor @Suite struct PanelTrustTests {
+    @Test(.enabled(if: haveFixtures)) func theRegistrysProviderIdDecidesNotTheDescriptions() async throws {
+        let d = try descriptions()[0]  // says "builtin"
+        // the registry says acme: refused visibly, the built-in routes are not used
+        let c = PanelCatalog(send: { r in r.path == "/panels" ? CoreResponse(status: 200, body: Data(answer([d], provider: "acme").utf8)) : .unavailable }, locale: "C")
+        await c.load()
+        guard case .refused(let why) = c.entries[0].parse else { throw Err.bad }
+        #expect(why.contains("registry says acme") && c.entries[0].provider == "acme")
+        // a provider id this renderer does not know has no routes
+        #expect(PanelRoutes.registered(for: "acme") == nil)
+        if case .ready = PanelValidator.parse(data(d), provider: "acme") { Issue.record("accepted under acme") }
+        // an entry without a provider is skipped, not guessed
+        let none = PanelCatalog(send: { r in r.path == "/panels" ? CoreResponse(status: 200, body: Data(#"{"format":1,"panels":[{"description":{}}]}"#.utf8)) : .unavailable }, locale: "C")
+        await none.load()
+        #expect(none.entries.isEmpty)
+    }
+
+    @Test func theTransportForwardsOnlyTheRegisteredRoutes() async {
+        let fake = Fake()
+        await fake.set("GET /users", 200, #"{"users":[]}"#)
+        await fake.set("GET /panels", 200, "{}")
+        await fake.set("GET /panels/strings", 200, "{}")
+        await fake.set("PATCH /users/7", 200, "{}")
+        await fake.set("DELETE /bindings/dev-1", 200, "{}")
+        let send = PanelTransport.send(admin: { await fake.handle($0) }, devices: { [("d1", "Mac")] })
+        for ok in [("GET", "/users"), ("GET", "/panels"), ("GET", "/panels/strings"), ("PATCH", "/users/7"), ("DELETE", "/bindings/dev-1")] {
+            #expect(await send(CoreRequest(method: ok.0, path: ok.1)).status == 200, "\(ok)")
+        }
+        let devices = await send(CoreRequest(method: "GET", path: "/devices"))
+        #expect(devices.status == 200 && String(decoding: devices.body, as: UTF8.self) == #"{"devices":[{"id":"d1","name":"Mac"}]}"#)
+        let before = await fake.log.count
+        for bad in [("POST", "/core/restore"), ("POST", "/core/backup"), ("POST", "/import"), ("POST", "/export"), ("GET", "/teams"), ("POST", "/teams"), ("GET", "/projects"),
+                    ("DELETE", "/users/7"), ("PATCH", "/users"), ("PATCH", "/users/7/x"), ("GET", "/users/7"), ("PUT", "/users"), ("POST", "/panels"), ("GET", "/panels/x"),
+                    ("PATCH", "/users/.."), ("PATCH", "/users/%2e%2e"), ("PATCH", "/users/a%2Fb"), ("PATCH", "/users/"), ("GET", "/kb/submissions"), ("GET", "/usage/events"),
+                    ("GET", "users"), ("DELETE", "/devices/abc")] {
+            #expect(await send(CoreRequest(method: bad.0, path: bad.1)).status == 404, "\(bad)")
+        }
+        #expect(await fake.log.count == before)  // none of them reached the core
+    }
+
+    @Test func routePatternsMatchSegmentForSegment() {
+        let r = PanelRoutes.builtin
+        #expect(PanelRoutes.allows("PUT", "/bindings/dev%201", in: r) && !PanelRoutes.allows("PUT", "/bindings", in: r) && !PanelRoutes.allows("PUT", "/bindings/a/b", in: r))
+        #expect(!PanelRoutes.allows("PUT", "/bindings/%2E", in: r) && !PanelRoutes.allows("PUT", "/bindings/a%5Cb", in: r) && !PanelRoutes.allows("PUT", "/bindings/a%0Ab", in: r))
+    }
+
+    @Test(.enabled(if: haveFixtures)) func aNameLimitCountsBytesLikeTheCore() async throws {
+        let m = try await usersModel(Fake())
+        let add = m.panel.sections[0].actions![0]
+        #expect(m.problems(add, values: ["name": .string(String(repeating: "č", count: 64))]).isEmpty)  // 128 bytes
+        #expect(m.problems(add, values: ["name": .string(String(repeating: "č", count: 65))]) == ["name": .tooLong(128)])
+        #expect(m.problems(add, values: ["name": .string(String(repeating: "č", count: 100))]) == ["name": .tooLong(128)])
+    }
+}
+
 // MARK: the renderer's source (the app target cannot be unit-tested, so its rules are checked in the text)
 
-private let rendererFiles: [(name: String, text: String)] = {
-    let dir = repo.appendingPathComponent("Sources/MiniGateway")
-    let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasPrefix("Panel") && $0.hasSuffix(".swift") }.sorted()
-    return names.map { n in
-        let text = (try? String(contentsOf: dir.appendingPathComponent(n), encoding: .utf8)) ?? ""
-        // comments are not code (the file's own header names the APIs it does not use)
-        return (n, text.split(separator: "\n", omittingEmptySubsequences: false).map { l in l.range(of: "//").map { String(l[..<$0.lowerBound]) } ?? String(l) }.joined(separator: "\n"))
+/// The code of a source text: comments cut (a `//` inside a string literal stays), then every rule below applied to EVERY
+/// occurrence. Returns what breaks a rule.
+func rendererViolations(_ source: String) -> [String] {
+    func strip(_ line: Substring) -> String {
+        var out = "", inString = false, prev: Character = " "
+        var it = line.makeIterator(), pending: Character?
+        while let c = pending ?? it.next() {
+            pending = nil
+            if c == "\"" && prev != "\\" { inString.toggle() }
+            if !inString && c == "/" {
+                if let n = it.next() { if n == "/" { break }; pending = n }
+            }
+            out.append(c); prev = c
+        }
+        return out
     }
+    let code = source.split(separator: "\n", omittingEmptySubsequences: false).map(strip).joined(separator: "\n")
+    var bad: [String] = []
+    for banned in ["LocalizedStringKey", "AttributedString", "markdown", "Markdown", "Link(", "openURL", "NSWorkspace", "WebView", "LocalizedStringResource", "URL("] where code.contains(banned) {
+        bad.append("uses " + banned)
+    }
+    func args(_ pattern: String) -> [String] {
+        let re = try! NSRegularExpression(pattern: pattern + #"(?=(.{0,100}))"#)
+        return re.matches(in: code, range: NSRange(code.startIndex..., in: code)).map { String(code[Range($0.range(at: 1), in: code)!]) }
+    }
+    func literal(_ rest: String) -> Bool { rest.range(of: #"^"[^"\\]*""#, options: .regularExpression) != nil }
+    for rest in args(#"\bText(?:\.init)?\("#) where !(rest.hasPrefix("verbatim:") || rest.hasPrefix("String(localized: \"") || (literal(rest) && rest.range(of: #"^"[^"\\]*"\)"#, options: .regularExpression) != nil)) {
+        bad.append("Text(" + rest)
+    }
+    let titled = #"(?:\bButton|\bToggle|\bTextField|\bPicker|\bLabeledContent|\bMenu|\bDisclosureGroup|\bSection|\bLabel|\bAlert|\.navigationTitle|\.navigationSubtitle|\.help|\.alert|\.confirmationDialog|\.accessibilityLabel|\.accessibilityHint|\.accessibilityValue|\.badge)(?:\.init)?\("#
+    for rest in args(titled) {
+        let labels = ["role:", "action:", "isOn:", "selection:", "text:", "Text(verbatim:", "String(localized: \""]
+        if !(labels.contains { rest.hasPrefix($0) } || literal(rest)) { bad.append("title " + rest) }
+    }
+    return bad
+}
+
+/// The panel code: every Panel*.swift of the app, and the lines of Settings.swift that mention a panel.
+private let rendererSources: [(name: String, text: String)] = {
+    let dir = repo.appendingPathComponent("Sources/MiniGateway")
+    let read = { (n: String) in (try? String(contentsOf: dir.appendingPathComponent(n), encoding: .utf8)) ?? "" }
+    let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasPrefix("Panel") && $0.hasSuffix(".swift") }.sorted()
+    var out = names.map { ($0, read($0)) }
+    out.append(("Settings.swift (panel lines)", read("Settings.swift").split(separator: "\n").filter { $0.range(of: #"panelEntries|panelError|panelStrings|panelItems|panelSend|PanelPane|PanelsUnavailablePane|PanelCatalog|PanelEntry|PanelStrings|\.panel\("#, options: .regularExpression) != nil }.joined(separator: "\n")))
+    return out
 }()
 
 private func matches(_ pattern: String, in text: String) -> [NSTextCheckingResult] {
-    let re = try! NSRegularExpression(pattern: pattern)
-    return re.matches(in: text, range: NSRange(text.startIndex..., in: text))
+    try! NSRegularExpression(pattern: pattern).matches(in: text, range: NSRange(text.startIndex..., in: text))
 }
 
 @Suite struct PanelRendererSourceTests {
     @Test func theRendererFilesExist() {
-        #expect(rendererFiles.map(\.name) == ["PanelView.swift"])
-        #expect(rendererFiles.allSatisfy { $0.text.count > 1000 })
+        #expect(rendererSources.map(\.name) == ["PanelView.swift", "Settings.swift (panel lines)"])
+        #expect(rendererSources[0].text.count > 1000 && rendererSources[1].text.count > 300)
     }
 
-    @Test func noMarkdownNoLocalizedKeysOnDynamicStringsNoLinks() {
-        for (name, text) in rendererFiles {
-            for banned in ["LocalizedStringKey", "AttributedString", "markdown", "Markdown", "Link(", "openURL", "NSWorkspace", "URL(", "WebView", "WKWebView", "LocalizedStringResource"] {
-                #expect(!text.contains(banned), "\(name) uses \(banned)")
-            }
-            // Text( takes only verbatim:, String(localized: …) or a literal without interpolation
-            for m in matches(#"\bText\((.*)"#, in: text) {
-                let rest = String(text[Range(m.range(at: 1), in: text)!])
-                let ok = rest.hasPrefix("verbatim:") || rest.hasPrefix("String(localized: \"") || rest.range(of: #"^"[^"\\]*"\)"#, options: .regularExpression) != nil
-                #expect(ok, "\(name): Text(\(rest)")
-            }
-            // the other initializers that take a title: a literal without interpolation, or a label keyword, never a variable
-            for m in matches(#"(?:\bButton|\bToggle|\bTextField|\bPicker|\bLabeledContent|\bMenu|\bDisclosureGroup|\bSection|\bLabel|\.navigationTitle|\.help|\.alert|\.confirmationDialog)\((.*)"#, in: text) {
-                let rest = String(text[Range(m.range(at: 1), in: text)!])
-                let ok = ["role:", "action:", "isOn:", "selection:", "text:", "Text(verbatim:", "String(localized: \""].contains { rest.hasPrefix($0) }
-                    || rest.range(of: #"^"[^"\\]*""#, options: .regularExpression) != nil
-                #expect(ok, "\(name): \(rest)")
-            }
-        }
+    @Test func theScannerCatchesEveryBadPattern() {
+        let bad = [
+            "Text(verbatim: a) + Text(b)", "Text.init(b)", "Text(LocalizedStringKey(b))", "Text(\"a \\(b)\")", "Text(b)", "VStack { Text(verbatim: a); Text(b) }",
+            "Button(title) { }", "Label(title, systemImage: \"x\")", "Label(\"a \\(b)\", systemImage: \"x\")", "x.help(title)", "x.navigationTitle(title)", "x.navigationSubtitle(t)",
+            ".alert(title, isPresented: $p) {", "x.confirmationDialog(title, isPresented: $p)", "Alert(title: t)", "x.accessibilityLabel(t)", "Toggle(t, isOn: $b)", "TextField(t, text: $s)",
+            "Section(t) {", "Picker(t, selection: $s) {", "Text(AttributedString(a))", "Link(\"a\", destination: u)", "NSWorkspace.shared.open(u)", "Text(try! AttributedString(markdown: a))",
+            "let u = \"https://x\"; Text(b)", "let a = 1 // ok\nText(b)", "x.openURL(u)", "let u = URL(string: a)", "Menu(t) { }", "LabeledContent(t) { }",
+        ]
+        for line in bad { #expect(!rendererViolations(line).isEmpty, "not caught: \(line)") }
+        let good = [
+            "Text(verbatim: a) + Text(verbatim: b)", "Text(\"Literal\")", "Text(String(localized: \"At most \\(n) characters\"))", "Button(role: .destructive) { }", "Button(\"Load More\") { }",
+            "// Text(b) and LocalizedStringKey in a comment", "let a = 1 // Text(b)", "x.help(String(localized: \"Open\"))", "x.confirmationDialog(Text(verbatim: t), isPresented: $p)",
+            "Toggle(isOn: $b) { Text(verbatim: t) }", "TextField(text: $s) { Text(verbatim: t) }", "Label { Text(\"x\") } icon: { Image(systemName: \"a\") }", "let s = \"a // not a comment\"",
+        ]
+        for line in good { #expect(rendererViolations(line).isEmpty, "wrongly flagged: \(line) \(rendererViolations(line))") }
+    }
+
+    @Test func theRendererFollowsTheRules() {
+        for (name, text) in rendererSources { #expect(rendererViolations(text).isEmpty, "\(name): \(rendererViolations(text))") }
     }
 
     @Test func everyFixedStringHasASlovenianEntry() throws {
         let cat = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("Resources/Localizable.xcstrings"))) as! [String: Any]
         let strings = cat["strings"] as! [String: Any]
         var keys = Set<String>()
-        for (_, text) in rendererFiles {
+        for (_, text) in rendererSources {
             for m in matches(#"(?:\bText|\bButton|\bTextField|String\(localized:)\(?\s*"((?:[^"\\]|\\.)*)""#, in: text) {
                 keys.insert(String(text[Range(m.range(at: 1), in: text)!]).replacingOccurrences(of: #"\\\([^)]*\)"#, with: "%lld", options: .regularExpression))
             }

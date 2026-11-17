@@ -133,7 +133,7 @@ only on the gateway computer.
 | `minigw gw settings` | The settings in this terminal, also over SSH: the pages General, Devices, Providers, Agents, Folders, Sessions, Activity (`minigw-tui`) |
 | `minigw gw settings link` | Print a one-time link (60 s) to the settings page (`minigw serve` only) |
 | `minigw gw api GET\|POST\|PATCH\|DELETE <path>` | One [admin API](admin-api.md) request: JSON body on stdin, JSON answer on stdout (`minigw-tui` uses it) |
-| `minigw gw user list` \| `add <name>` \| `rename <user> <name>` \| `activate <user>` \| `deactivate <user>` | The users of the project database (0.6.0; also on the Mac). `<user>`: name or number. Deactivating ends the user's runs and capabilities |
+| `minigw gw user list` \| `add <name>` \| `rename <user> <name>` \| `activate <user>` \| `deactivate <user>` | The users of the project database (0.6.0; also on the Mac). `<user>`: name or number. Deactivating ends the user's access to projects and notes at once; an agent run that is already going is not stopped, but its notes capability stops working (next read: `no_project_access`) |
 | `minigw gw bind list` \| `<device id> <user>` \| `remove <device id>` | Which user a device belongs to; binding a device that is not on the device list warns (`minigw gw devices allow <device id>` fixes it) |
 | `minigw gw project list` \| `add <slug> <name>` \| `archive <project>` \| `unarchive <project>` | The projects (`<project>`: slug or number) |
 | `minigw gw team add <name>` \| `list` \| `rename <team> <name>` \| `archive <team>` | Owner-managed directory; `<team>` is a name or number |

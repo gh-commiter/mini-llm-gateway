@@ -32,6 +32,7 @@ extension CoreResponse {
 
 public struct PanelEntry: Identifiable, Equatable, Sendable {
     public let id: String
+    public let provider: String   // as the registry names it (the answer of GET /panels), not the description
     public let parse: PanelParse
     let title: String?, about: String?, symbol: String   // keys of the string tables
     public func title(_ t: PanelStrings) -> String { title.map { t.text($0) } ?? id }
@@ -71,20 +72,21 @@ public struct PanelEntry: Identifiable, Equatable, Sendable {
         error = nil
         var seen = Set<String>(), out: [PanelEntry] = []
         for (i, p) in panels.enumerated() {
-            guard let data = try? JSONSerialization.data(withJSONObject: p) else { continue }
-            let entry = Self.entry(data, p as? [String: Any] ?? [:], index: i)
+            guard let o = p as? [String: Any], let provider = o["provider"] as? String, let desc = o["description"] as? [String: Any],
+                  let data = try? JSONSerialization.data(withJSONObject: desc) else { continue }
+            let entry = Self.entry(data, desc, provider: provider, index: i)
             if seen.insert(entry.id).inserted { out.append(entry) }
         }
         entries = out
     }
 
     /// An entry for a description that is valid, and a best-effort one (id and title if they are strings) for one that is not.
-    static func entry(_ data: Data, _ raw: [String: Any], index: Int) -> PanelEntry {
-        let parse = PanelValidator.parse(data)
-        if case .ready(let d) = parse { return PanelEntry(id: d.id, parse: parse, title: d.title, about: d.about, symbol: d.symbol) }
+    static func entry(_ data: Data, _ raw: [String: Any], provider: String, index: Int) -> PanelEntry {
+        let parse = PanelValidator.parse(data, provider: provider)
+        if case .ready(let d) = parse { return PanelEntry(id: d.id, provider: provider, parse: parse, title: d.title, about: d.about, symbol: d.symbol) }
         func s(_ k: String) -> String? { (raw[k] as? String).map { String($0.prefix(PanelLimits.label)) } }
         let id = (raw["id"] as? String).map { String($0.prefix(64)) } ?? "invalid-\(index)"
-        return PanelEntry(id: id, parse: parse, title: s("title"), about: nil, symbol: "")
+        return PanelEntry(id: id, provider: provider, parse: parse, title: s("title"), about: nil, symbol: "")
     }
 }
 
@@ -132,10 +134,10 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     @Published public private(set) var loading = false
     private var opened: [PanelListKey: (PanelSection, PanelRow)] = [:]  // detail pages that are open: reloaded with the panel
 
-    /// `routes`: what the panel's provider registered (nil for an unknown provider: nothing is ever called).
-    public init(panel: PanelDescription, strings: PanelStrings, routes: [String]? = nil, send: @escaping PanelSend) {
+    /// `routes`: what the panel's provider registered, taken from the registry by the id the answer of GET /panels names.
+    public init(panel: PanelDescription, strings: PanelStrings, routes: [String], send: @escaping PanelSend) {
         self.panel = panel; self.strings = strings; self.send = send
-        self.routes = routes ?? PanelRoutes.registered(for: panel.provider) ?? []
+        self.routes = routes
     }
 
     // MARK: loading
@@ -301,7 +303,7 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
                 default: break
                 }
             }
-            if f.type == "text", case .string(let s)? = v, let m = f.maxLength, m > 0, s.count > m { out[f.id] = .tooLong(m) }
+            if f.type == "text", case .string(let s)? = v, let m = f.maxLength, m > 0, s.utf8.count > m { out[f.id] = .tooLong(m) }  // bytes, as the core counts them (core.validName)
         }
         return out
     }
@@ -367,17 +369,26 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
 // MARK: the app's transport
 
 public enum PanelTransport {
-    /// Admin routes of the core go to the project helper in the owner's context; `GET /devices`, the one other route a
-    /// built-in panel uses, is answered from the app's own device list (the same shape as the gateway's answer). Nothing else.
+    /// The app: the core's admin routes go to the project helper in the owner's context.
     public static func send(core: CoreHelper, devices: @escaping @Sendable () async -> [(id: String, name: String)]) -> PanelSend {
+        send(admin: { await core.call(context: .admin, request: $0) }, devices: devices)
+    }
+
+    /// Only `GET /panels`, `GET /panels/strings` and the routes the built-in provider registered pass; anything else is a 404
+    /// before it reaches `admin` (the transport limits itself, whatever the model asks for). `GET /devices` is answered from
+    /// the app's own device list (the same shape as the gateway's answer).
+    public static func send(admin: @escaping PanelSend, devices: @escaping @Sendable () async -> [(id: String, name: String)]) -> PanelSend {
         { req in
+            let notFound = CoreResponse(status: 404, body: Data(#"{"type":"error","error":{"type":"not_found_error","message":"Not found"}}"#.utf8))
+            let own = req.method == "GET" && (req.path == "/panels" || req.path == "/panels/strings")
+            guard own || PanelRoutes.allows(req.method, req.path, in: PanelRoutes.builtin) else { return notFound }
             if req.method == "GET", req.path == "/devices" {
                 let list = await devices().map { ["id": $0.id, "name": $0.name] }
                 let body = (try? JSONSerialization.data(withJSONObject: ["devices": list], options: [.sortedKeys])) ?? Data()
                 return CoreResponse(status: 200, header: ["Content-Type": ["application/json"]], body: body)
             }
-            guard CoreRoutes.isAdminPath(req.method, req.path) else { return CoreResponse(status: 404, body: Data(#"{"type":"error","error":{"type":"not_found_error","message":"Not found"}}"#.utf8)) }
-            return await core.call(context: .admin, request: req)
+            guard CoreRoutes.isAdminPath(req.method, req.path) else { return notFound }
+            return await admin(req)
         }
     }
 }

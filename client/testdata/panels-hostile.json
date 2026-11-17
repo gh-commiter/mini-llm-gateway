@@ -448,6 +448,53 @@
     "/sections/1/columns/0/label": "acme.shop.<b>"
    },
    "swift": "refuse"
+  },
+  {
+   "name": "a capitalised key inside a row action, the right one missing",
+   "remove": [
+    "/sections/1/rowActions/0/method"
+   ],
+   "set": {
+    "/sections/1/rowActions/0/Method": "PATCH"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a capitalised key next to the right one",
+   "set": {
+    "/sections/1/rowActions/0/Method": "PATCH"
+   },
+   "swift": "accept"
+  },
+  {
+   "name": "a Unicode-folded key (long s) instead of source",
+   "remove": [
+    "/sections/1/source"
+   ],
+   "set": {
+    "/sections/1/ſource": {
+     "path": "/plugins/acme/orders",
+     "items": "orders"
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a Unicode-folded key next to the right one",
+   "set": {
+    "/sections/1/ſource": {
+     "path": "/plugins/acme/orders",
+     "items": "orders"
+    }
+   },
+   "swift": "accept"
+  },
+  {
+   "name": "a capitalised key in a column",
+   "set": {
+    "/sections/1/columns/0/Field": "name"
+   },
+   "swift": "accept"
   }
  ]
 }

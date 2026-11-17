@@ -3,6 +3,7 @@ package coreapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
 	"strconv"
@@ -202,7 +203,7 @@ func TestPanelsLeftOutWhenInvalidOrTooMany(t *testing.T) {
 	if n := len(a.panelsAnswer([]PanelProvider{bad})); n != 0 || len(logged) == 0 {
 		t.Fatalf("a panel with unregistered routes was served (%d), log %v", n, logged)
 	}
-	many := PanelProvider{ID: "builtin", Routes: good.Routes}
+	many := PanelProvider{ID: "builtin", Routes: good.Routes, Strings: good.Strings}
 	for i := 0; i < 11; i++ {
 		many.Panels = append(many.Panels, good.Panels[0])
 	}
@@ -385,6 +386,88 @@ func TestFormat1StringsFixture(t *testing.T) {
 			if _, ok := tab[k]; !ok {
 				t.Errorf("%s: no entry for %s", loc, k)
 			}
+		}
+	}
+}
+
+func TestProviderStringsAreCheckedWhenServing(t *testing.T) {
+	good := builtinProvider()
+	if err := checkProviderStrings(good); err != nil {
+		t.Fatal(err)
+	}
+	var logged []string
+	a := New(Options{Log: func(f string, args ...any) { logged = append(logged, fmt.Sprintf(f, args...)) }})
+	copyTables := func() map[string]map[string]string {
+		out := map[string]map[string]string{}
+		for l, tab := range good.Strings {
+			out[l] = map[string]string{}
+			for k, v := range tab {
+				out[l][k] = v
+			}
+		}
+		return out
+	}
+	long := copyTables()
+	long["sl_SI"]["builtin.users.title"] = strings.Repeat("x", 121) // a title is a label: 120
+	missing := copyTables()
+	delete(missing["C"], "builtin.users.about")
+	nobase := copyTables()
+	delete(nobase, "C")
+	for name, tabs := range map[string]map[string]map[string]string{"a text over its position's limit": long, "a key missing in C": missing, "no C table": nobase} {
+		p := PanelProvider{ID: "builtin", Routes: good.Routes, Panels: good.Panels, Strings: tabs}
+		if checkProviderStrings(p) == nil {
+			t.Errorf("%s: accepted", name)
+		}
+		logged = nil
+		if n := len(a.panelsAnswer([]PanelProvider{p})); n != 0 || len(logged) == 0 {
+			t.Errorf("%s: %d panels served, log %v", name, n, logged)
+		}
+		if m := a.mergedStrings([]PanelProvider{p}, "sl_SI"); len(m) != 0 {
+			t.Errorf("%s: texts served", name)
+		}
+	}
+}
+
+func TestProviderIDsAreReserved(t *testing.T) {
+	var logged []string
+	extra := PanelProvider{ID: "builtin", Routes: []string{"GET users"}}
+	a := New(Options{PanelProviders: []PanelProvider{extra, {ID: "Bad Id"}, {ID: "acme"}, {ID: "acme"}}, Log: func(f string, args ...any) { logged = append(logged, f) }})
+	ps := a.providers()
+	if len(ps) != 2 || ps[0].ID != "builtin" || ps[1].ID != "acme" || len(logged) != 3 {
+		t.Fatalf("%d providers %v, log %v", len(ps), ps, logged)
+	}
+	if len(ps[0].Routes) != len(BuiltinRoutes) {
+		t.Fatal("a plugin changed the built-in routes")
+	}
+	// every description is served under the id of the provider that registered it; one that claims another id is refused
+	bad := PanelProvider{ID: "acme", Routes: nil, Panels: builtinProvider().Panels}
+	if n := len(a.panelsAnswer([]PanelProvider{bad})); n != 0 {
+		t.Fatalf("a description that says builtin was served under acme (%d)", n)
+	}
+	r := New(Options{}).Handle(context.Background(), Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/panels"})
+	var o struct{ Panels []struct{ Provider string } }
+	json.Unmarshal(r.Body, &o)
+	if len(o.Panels) != 1 || o.Panels[0].Provider != "builtin" {
+		t.Fatalf("%s", r.Body)
+	}
+}
+
+func TestKeysBelowTheTopLevelAreExactToo(t *testing.T) {
+	var f formatFixture
+	panelFixture(t, "panels-format1.json", &f)
+	p := PanelProvider{ID: f.Provider, Routes: f.Routes}
+	raw, _ := json.Marshal(f.Panel)
+	for name, mut := range map[string]func(string) string{
+		"Method in a row action": func(s string) string { return strings.Replace(s, `"method":"PATCH"`, `"Method":"PATCH"`, 1) },
+		"a long s in source":     func(s string) string { return strings.Replace(s, `"source"`, `"\u017fource"`, 1) },
+		"a Kelvin sign in a key": func(s string) string { return strings.Replace(s, `"key":"id"`, `"\u212aey":"id"`, 1) },
+		"the right key and a cased twin": func(s string) string {
+			return strings.Replace(s, `"method":"PATCH"`, `"method":"PATCH","METHOD":"PATCH"`, 1)
+		},
+		"a cased key in a nested column": func(s string) string { return strings.Replace(s, `"kind":"multiline"`, `"Kind":"multiline"`, 1) },
+	} {
+		if err := ValidatePanel([]byte(mut(string(raw))), p); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 }

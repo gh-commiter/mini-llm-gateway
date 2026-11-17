@@ -166,6 +166,23 @@ public struct PanelOption: Decodable, Equatable, Sendable { public let value: St
 public enum PanelRoutes {
     public static let builtin = ["GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices"]
     public static func registered(for provider: String) -> [String]? { provider == "builtin" ? builtin : nil }
+
+    /// Does a concrete (escaped) path with its method match one of the registered patterns, segment for segment? A segment
+    /// that is empty, ".", ".." or holds a "/" or "\\" once decoded never matches, not even a "{}".
+    public static func allows(_ method: String, _ escapedPath: String, in patterns: [String]) -> Bool {
+        guard escapedPath.hasPrefix("/") else { return false }
+        let raw = escapedPath.dropFirst().split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        var segs: [String] = []
+        for r in raw {
+            guard let d = r.removingPercentEncoding, !d.isEmpty, d != ".", d != "..", !d.contains("/"), !d.contains("\\"), !PanelValidator.hasControl(d) else { return false }
+            segs.append(d)
+        }
+        return patterns.contains { pat in
+            guard pat.hasPrefix(method + " ") else { return false }
+            let pp = pat.dropFirst(method.count + 1).split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+            return pp.count == segs.count && zip(pp, segs).allSatisfy { $0 == "{}" || $0 == $1 }
+        }
+    }
 }
 
 public enum PanelParse: Equatable, Sendable {
@@ -182,8 +199,9 @@ public enum PanelLimits {
 public enum PanelValidator {
     static let symbols = ["person.2", "person.3", "folder", "book", "tray", "gearshape", "doc.text", "key", "list.bullet"]
 
-    /// Decodes and validates one description with the routes of its provider (nil: the provider is not known here).
-    public static func parse(_ data: Data, provider: String? = nil, routes: [String]? = nil) -> PanelParse {
+    /// Decodes and validates one description with the routes of the provider that the REGISTRY (the answer of GET /panels)
+    /// names, never the provider field inside the description: that one must equal it.
+    public static func parse(_ data: Data, provider: String, routes: [String]? = nil) -> PanelParse {
         guard data.count <= PanelLimits.bytes else { return .refused("the description is larger than \(PanelLimits.bytes) bytes") }
         struct Probe: Decodable { let format: Int }
         guard let probe = try? JSONDecoder().decode(Probe.self, from: data) else { return .refused("not a JSON object with a format") }
@@ -191,8 +209,8 @@ public enum PanelValidator {
         guard probe.format == 1 else { return .refused("format \(probe.format) is not supported") }
         let d: PanelDescription
         do { d = try JSONDecoder().decode(PanelDescription.self, from: data) } catch { return .refused("cannot decode: \(error)") }
-        guard d.provider == provider ?? d.provider else { return .refused("provider \(d.provider) is not \(provider ?? "")") }
-        guard let routes = routes ?? PanelRoutes.registered(for: d.provider) else { return .refused("provider \(d.provider) is not known") }
+        guard d.provider == provider else { return .refused("the description says provider \(d.provider), the registry says \(provider)") }
+        guard let routes = routes ?? PanelRoutes.registered(for: provider) else { return .refused("provider \(provider) is not known here") }
         do { try Check(d: d, routes: routes).panel(); return .ready(d) } catch let r as Refusal { return .refused(r.reason) } catch { return .refused("\(error)") }
     }
 

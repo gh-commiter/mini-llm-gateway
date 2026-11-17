@@ -317,7 +317,7 @@ settings is removed), and the member routes refuse requests that come from an ag
 - **Revocation.** Every read is authorized again from the current state, with the device checked against the approved
   list. When the core's epoch changes (a device removed, a binding changed, a user deactivated, a membership removed or
   lowered, a grant removed, a note moved to another class, a restore) the next read of every older run fails with
-  `no_project_access`; the run itself goes on without notes. Re-approving a device or re-creating a binding does not
+  `no_project_access`; the run itself goes on without notes (it is not stopped). Re-approving a device or re-creating a binding does not
   revive earlier runs. Revocation stops new reads: it cannot take back what a model has already read, and a
   conversation that already holds notes is not resumed after the epoch changed.
 - **Conversation isolation.** The key that finds a conversation to resume (the resume registry and the history match, for

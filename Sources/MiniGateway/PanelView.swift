@@ -18,7 +18,7 @@ struct PanelPane: View {
                                 title: entry.title(strings), about: entry.about(strings))
         switch entry.parse {
         case .ready(let d):
-            ReadyPanel(header: header, model: PanelModel(panel: d, strings: strings, send: { [send] in await send($0) })).id(d.id)
+            ReadyPanel(header: header, model: PanelModel(panel: d, strings: strings, routes: PanelRoutes.registered(for: entry.provider) ?? [], send: { [send] in await send($0) })).id(d.id)
         case .needsNewer:
             Form { header; Section { Text("This panel needs a newer Mini Gateway.").foregroundStyle(.secondary) } }
         case .refused(let why):

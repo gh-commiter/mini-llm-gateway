@@ -235,9 +235,12 @@ port does not serve it (`POST` and the other methods answer `405`). It needs no 
 is down.
 
 ```json
-{"format": 1, "panels": [{"format": 1, "id": "builtin.users", "provider": "builtin", "title": "builtin.users.title", "...": "..."}]}
+{"format": 1, "panels": [{"provider": "builtin", "description": {"format": 1, "id": "builtin.users", "provider": "builtin", "title": "builtin.users.title", "...": "..."}}]}
 ```
 
+- Each description comes under `provider`, the id the registry knows (`builtin` is reserved for the gateway's own code).
+  A renderer takes the routes of THAT id and refuses a description whose own `provider` field differs.
+- A text field's `maxLength` is in UTF-8 bytes, as the core counts a user name (128), not in characters.
 - A description is data, never code: no scripts, HTML, Markdown, links or images. Every text position holds a key
   (`[a-z0-9._-]`, at most 120 characters, inside the panel's namespace `<provider>.<panel>.`); the validator refuses
   anything else, so an inline text or another provider's key is refused. A renderer shows every text and every value of
