@@ -1,0 +1,391 @@
+{
+ "cases": [
+  {
+   "name": "a higher format",
+   "set": {
+    "/format": 2
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "an unknown section kind",
+   "set": {
+    "/sections/0/kind": "chart"
+   },
+   "swift": "placeholder"
+  },
+  {
+   "name": "an unknown column kind",
+   "set": {
+    "/sections/1/columns/0/kind": "html"
+   },
+   "swift": "placeholder"
+  },
+  {
+   "name": "an unknown field type",
+   "set": {
+    "/sections/1/actions/0/fields/0/type": "password"
+   },
+   "swift": "placeholder"
+  },
+  {
+   "name": "a route of another provider",
+   "set": {
+    "/sections/1/actions/0/path": "/users"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a route the provider did not register",
+   "set": {
+    "/sections/1/actions/0/path": "/plugins/acme/secret"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "dot dot in the template",
+   "set": {
+    "/sections/1/actions/0/path": "/plugins/acme/orders/../items"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a placeholder inside a longer segment",
+   "set": {
+    "/sections/1/rowActions/0/path": "/plugins/acme/orders/x{row.id}"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "two placeholders in one segment",
+   "set": {
+    "/sections/1/rowActions/0/path": "/plugins/acme/orders/{row.id}{row.id}"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a question mark in the path",
+   "set": {
+    "/sections/1/actions/0/path": "/plugins/acme/orders?x=1"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a hash in the path",
+   "set": {
+    "/sections/1/actions/0/path": "/plugins/acme/orders#x"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a percent escape in the path",
+   "set": {
+    "/sections/1/actions/0/path": "/plugins/acme/orders/%2e%2e"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "an empty segment",
+   "set": {
+    "/sections/1/actions/0/path": "/plugins/acme//orders"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a path without a leading slash",
+   "set": {
+    "/sections/1/actions/0/path": "plugins/acme/orders"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a trailing slash",
+   "set": {
+    "/sections/1/actions/0/path": "/plugins/acme/orders/"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a source of another provider",
+   "set": {
+    "/sections/1/source/path": "/users"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a ref of another provider",
+   "set": {
+    "/refs/items/path": "/users"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a row placeholder without a row",
+   "set": {
+    "/sections/1/actions/0/query": "item={row.id}"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a field placeholder of no field",
+   "set": {
+    "/sections/1/actions/0/query": "item={field.nope}"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a query with a bad value",
+   "set": {
+    "/sections/1/actions/0/query": "item=a/b"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a delete without a confirmation",
+   "remove": [
+    "/sections/1/rowActions/1/confirm"
+   ],
+   "swift": "refuse"
+  },
+  {
+   "name": "a destructive action without a confirmation",
+   "set": {
+    "/sections/1/rowActions/0/destructive": true
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a missing sl string",
+   "remove": [
+    "/title/sl"
+   ],
+   "swift": "refuse"
+  },
+  {
+   "name": "an empty en string",
+   "set": {
+    "/about/en": " "
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "an oversized label",
+   "pad": {
+    "/title/en": 121
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "an oversized message",
+   "pad": {
+    "/sections/1/rowActions/1/confirm/message/sl": 601
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a bidi control character in a string",
+   "set": {
+    "/title/en": "a‮b"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a stray brace in a confirmation",
+   "set": {
+    "/sections/1/rowActions/1/confirm/title/en": "Delete {name"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "too many columns",
+   "grow": {
+    "/sections/1/columns": 11
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "too many actions",
+   "grow": {
+    "/sections/1/actions": 13
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "too many fields",
+   "grow": {
+    "/sections/1/actions/0/fields": 11
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "too many refs",
+   "set": {
+    "/refs": {
+     "a": {
+      "path": "/plugins/acme/items",
+      "items": "items",
+      "key": "sku",
+      "label": "title"
+     },
+     "b": {
+      "path": "/plugins/acme/items",
+      "items": "items",
+      "key": "sku",
+      "label": "title"
+     },
+     "c": {
+      "path": "/plugins/acme/items",
+      "items": "items",
+      "key": "sku",
+      "label": "title"
+     },
+     "d": {
+      "path": "/plugins/acme/items",
+      "items": "items",
+      "key": "sku",
+      "label": "title"
+     },
+     "e": {
+      "path": "/plugins/acme/items",
+      "items": "items",
+      "key": "sku",
+      "label": "title"
+     },
+     "items": {
+      "path": "/plugins/acme/items",
+      "items": "items",
+      "key": "sku",
+      "label": "title"
+     }
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a ref column of an undeclared ref",
+   "set": {
+    "/sections/1/columns/4/ref": "nope"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a body value from a missing field",
+   "set": {
+    "/sections/1/actions/0/body/name": {
+     "field": "zzz"
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a body value with two sources",
+   "set": {
+    "/sections/1/actions/0/body/name": {
+     "field": "name",
+     "const": "x"
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a body of a row on a section action",
+   "set": {
+    "/sections/1/actions/0/body/name": {
+     "row": "name"
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a body object const",
+   "set": {
+    "/sections/1/actions/0/body/name": {
+     "const": {
+      "a": 1
+     }
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a body on a delete",
+   "set": {
+    "/sections/1/rowActions/1/body": {
+     "a": {
+      "const": 1
+     }
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a GET action",
+   "set": {
+    "/sections/1/actions/0/method": "GET"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "an unknown symbol",
+   "set": {
+    "/symbol": "network.badge"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "another provider id",
+   "set": {
+    "/provider": "builtin",
+    "/id": "builtin.shop"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "an id of another provider",
+   "set": {
+    "/id": "other.shop"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a detail inside a detail",
+   "set": {
+    "/sections/1/detail/sections/1/detail": {
+     "title": "title",
+     "sections": [
+      {
+       "kind": "text",
+       "id": "x",
+       "body": {
+        "en": "a",
+        "sl": "b"
+       }
+      }
+     ]
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "an unknown key",
+   "set": {
+    "/sections/0/script": "x"
+   },
+   "swift": "accept"
+  },
+  {
+   "name": "an empty section list",
+   "set": {
+    "/sections": []
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a url as a symbol",
+   "set": {
+    "/symbol": "https://evil.example/i.png"
+   },
+   "swift": "refuse"
+  }
+ ]
+}

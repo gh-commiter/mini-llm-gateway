@@ -1,0 +1,386 @@
+{
+ "provider": "acme",
+ "routes": [
+  "GET plugins/acme/items",
+  "GET plugins/acme/orders",
+  "POST plugins/acme/orders",
+  "PATCH plugins/acme/orders/{}",
+  "DELETE plugins/acme/orders/{}",
+  "GET plugins/acme/orders/{}/lines",
+  "POST plugins/acme/orders/{}/lines",
+  "DELETE plugins/acme/orders/{}/lines/{}"
+ ],
+ "panel": {
+  "format": 1,
+  "id": "acme.shop",
+  "provider": "acme",
+  "title": {
+   "en": "Shop",
+   "sl": "Trgovina"
+  },
+  "about": {
+   "en": "Orders of the shop",
+   "sl": "Naročila trgovine"
+  },
+  "symbol": "tray",
+  "refs": {
+   "items": {
+    "path": "/plugins/acme/items",
+    "items": "items",
+    "key": "sku",
+    "label": "title"
+   }
+  },
+  "sections": [
+   {
+    "kind": "text",
+    "id": "intro",
+    "body": {
+     "en": "Orders are kept by the shop plugin.",
+     "sl": "Naročila hrani vtičnik trgovine."
+    }
+   },
+   {
+    "kind": "list",
+    "id": "orders",
+    "title": {
+     "en": "Orders",
+     "sl": "Naročila"
+    },
+    "source": {
+     "path": "/plugins/acme/orders",
+     "items": "orders"
+    },
+    "key": "id",
+    "columns": [
+     {
+      "field": "name",
+      "kind": "text",
+      "label": {
+       "en": "Name",
+       "sl": "Ime"
+      }
+     },
+     {
+      "field": "note",
+      "kind": "multiline",
+      "label": {
+       "en": "Note",
+       "sl": "Opomba"
+      }
+     },
+     {
+      "field": "paid",
+      "kind": "bool",
+      "label": {
+       "en": "Paid",
+       "sl": "Plačano"
+      },
+      "yes": {
+       "en": "Paid",
+       "sl": "Plačano"
+      },
+      "no": {
+       "en": "Open",
+       "sl": "Odprto"
+      }
+     },
+     {
+      "field": "state",
+      "kind": "enum",
+      "label": {
+       "en": "State",
+       "sl": "Stanje"
+      },
+      "values": {
+       "new": {
+        "en": "New",
+        "sl": "Novo"
+       },
+       "sent": {
+        "en": "Sent",
+        "sl": "Poslano"
+       }
+      }
+     },
+     {
+      "field": "item",
+      "kind": "ref",
+      "ref": "items",
+      "label": {
+       "en": "Item",
+       "sl": "Artikel"
+      }
+     },
+     {
+      "field": "created",
+      "kind": "time",
+      "label": {
+       "en": "Created",
+       "sl": "Ustvarjeno"
+      }
+     }
+    ],
+    "filter": [
+     "name",
+     "note"
+    ],
+    "hide": {
+     "field": "state",
+     "equals": "sent",
+     "toggle": {
+      "en": "Show sent orders",
+      "sl": "Pokaži poslana naročila"
+     }
+    },
+    "paging": {
+     "next": "next",
+     "param": "after"
+    },
+    "empty": {
+     "en": "No orders.",
+     "sl": "Ni naročil."
+    },
+    "actions": [
+     {
+      "id": "add",
+      "label": {
+       "en": "Add Order…",
+       "sl": "Dodaj naročilo …"
+      },
+      "method": "POST",
+      "path": "/plugins/acme/orders",
+      "query": "mode=draft&item={field.item}",
+      "fields": [
+       {
+        "id": "name",
+        "type": "text",
+        "required": true,
+        "maxLength": 64,
+        "default": {
+         "const": "new order"
+        },
+        "label": {
+         "en": "Name",
+         "sl": "Ime"
+        }
+       },
+       {
+        "id": "item",
+        "type": "ref",
+        "ref": "items",
+        "required": true,
+        "label": {
+         "en": "Item",
+         "sl": "Artikel"
+        }
+       },
+       {
+        "id": "kind",
+        "type": "choice",
+        "options": [
+         {
+          "value": "web",
+          "label": {
+           "en": "Web",
+           "sl": "Splet"
+          }
+         },
+         {
+          "value": "shop",
+          "label": {
+           "en": "Shop",
+           "sl": "Trgovina"
+          }
+         }
+        ],
+        "label": {
+         "en": "Kind",
+         "sl": "Vrsta"
+        }
+       },
+       {
+        "id": "paid",
+        "type": "toggle",
+        "default": {
+         "const": false
+        },
+        "label": {
+         "en": "Paid",
+         "sl": "Plačano"
+        }
+       }
+      ],
+      "body": {
+       "name": {
+        "field": "name"
+       },
+       "kind": {
+        "field": "kind"
+       },
+       "paid": {
+        "field": "paid"
+       },
+       "count": {
+        "const": 1
+       }
+      }
+     }
+    ],
+    "rowActions": [
+     {
+      "id": "rename",
+      "label": {
+       "en": "Rename…",
+       "sl": "Preimenuj …"
+      },
+      "method": "PATCH",
+      "path": "/plugins/acme/orders/{row.id}",
+      "when": {
+       "field": "state",
+       "equals": "new"
+      },
+      "fields": [
+       {
+        "id": "name",
+        "type": "text",
+        "required": true,
+        "default": {
+         "row": "name"
+        },
+        "label": {
+         "en": "Name",
+         "sl": "Ime"
+        }
+       }
+      ],
+      "body": {
+       "name": {
+        "field": "name"
+       },
+       "was": {
+        "row": "name"
+       }
+      }
+     },
+     {
+      "id": "delete",
+      "label": {
+       "en": "Delete",
+       "sl": "Izbriši"
+      },
+      "method": "DELETE",
+      "path": "/plugins/acme/orders/{row.id}",
+      "confirm": {
+       "title": {
+        "en": "Delete {name}?",
+        "sl": "Izbrišem {name}?"
+       },
+       "message": {
+        "en": "The order is removed.",
+        "sl": "Naročilo bo odstranjeno."
+       },
+       "button": {
+        "en": "Delete",
+        "sl": "Izbriši"
+       },
+       "destructive": true
+      }
+     }
+    ],
+    "detail": {
+     "title": "name",
+     "sections": [
+      {
+       "kind": "text",
+       "id": "hint",
+       "body": {
+        "en": "Lines of the order.",
+        "sl": "Vrstice naročila."
+       }
+      },
+      {
+       "kind": "list",
+       "id": "lines",
+       "title": {
+        "en": "Lines",
+        "sl": "Vrstice"
+       },
+       "source": {
+        "path": "/plugins/acme/orders/{parent.id}/lines",
+        "items": "lines"
+       },
+       "key": "id",
+       "columns": [
+        {
+         "field": "title",
+         "kind": "text",
+         "label": {
+          "en": "Title",
+          "sl": "Naslov"
+         }
+        }
+       ],
+       "empty": {
+        "en": "No lines.",
+        "sl": "Ni vrstic."
+       },
+       "actions": [
+        {
+         "id": "add-line",
+         "label": {
+          "en": "Add Line…",
+          "sl": "Dodaj vrstico …"
+         },
+         "method": "POST",
+         "path": "/plugins/acme/orders/{parent.id}/lines",
+         "fields": [
+          {
+           "id": "title",
+           "type": "text",
+           "required": true,
+           "label": {
+            "en": "Title",
+            "sl": "Naslov"
+           }
+          }
+         ],
+         "body": {
+          "title": {
+           "field": "title"
+          }
+         }
+        }
+       ],
+       "rowActions": [
+        {
+         "id": "drop",
+         "label": {
+          "en": "Remove",
+          "sl": "Odstrani"
+         },
+         "method": "DELETE",
+         "path": "/plugins/acme/orders/{parent.id}/lines/{row.id}",
+         "confirm": {
+          "title": {
+           "en": "Remove this line?",
+           "sl": "Odstranim to vrstico?"
+          },
+          "message": {
+           "en": "The line is removed.",
+           "sl": "Vrstica bo odstranjena."
+          },
+          "button": {
+           "en": "Remove",
+           "sl": "Odstrani"
+          }
+         }
+        }
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ }
+}
