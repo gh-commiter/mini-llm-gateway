@@ -1,12 +1,39 @@
 # Release notes
 
+## 0.7.19
+
+### Fixed
+- `minigw gw status` shows a provider whose model list is still loading as "models loading (not loaded yet)", no longer as a failure, and one whose load failed as "models failed to load: <reason> (see the gateway log)". The gateway log now has one line for that failure with the provider name and the reason (no key, no address with credentials). The Mac gateway words the status the same way.
+
+### Known problems
+- Archived projects and teams cannot be chosen in the Knowledge base pickers any more; read their notes with `minigw`.
+- The panels on the settings page were tried on one Windows gateway in a Chromium browser (they work; no Content Security Policy error); not yet in Edge or Firefox, and not on Linux. A detail page opens in place of the panel with a Back button. The Mac app does not use this page.
+- In the Teams and projects pane the "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI: the format has no cell that lists pairs of a team and a role. The structured list is in the answer (`teams`).
+- The Teams and projects pane has only been tried through tests, not in a real window. Team notes (the team's own notes segment) are not shown there, only in the Knowledge base pane.
+- The Knowledge base pane has only been tried through tests, not in a real window. Notes and questions are read, not edited; a replacement shows both texts, not a line difference.
+- Labels are data, never permissions: a member sees them only on sessions and usage already visible to them, and a label filter never widens whose events are read. A call made by hand gets labels only when the caller sets them (or the branch fills the task); classifying unlabelled calls is not done yet.
+- A role of the form `<phase>.<activity>` set by older scripts is not read as labels.
+- The three admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base) are new and have only been tried through tests, not yet looked at in a real window. Windows and Linux have no panel renderer yet (the settings page there is unchanged).
+- A project linked to a subfolder of another project's folder gets no automatic dependency; the owner sets it with `gw project depends add`.
+- Team notes have no `private` class, and only a project admin of the team writes them; there is no owner shortcut into them (the owner reviews submissions and exports bundles).
+- The hooks ask after a commit or a compaction, not at the end of a session: Claude Code gives a hook no way to talk to the model then. A failed hand-in is not retried. Checked by tests of both clients and of the plugin script, but not yet tried in a real Claude Code session (neither on a Mac nor on Windows).
+- Project git identity, team path labels and entry kinds are new and not yet in daily use. `minigw project link` without a slug needs `git` on the computer; on Windows it has only been built, not tried.
+- A replacement of a `faq` entry keeps the kind `faq`, and an import never changes the kind of an existing note: to change a kind, remove the entry and hand it in again.
+- `minigw gw import`: an `INDEX.md` inside a bundle has no size limit of its own (only the 100 MiB total). Import only bundles you made yourself.
+- `minigw kb export` on Windows: the protection of each exported file is still set by path after the file is created through the opened folder; not tested on Windows yet.
+- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
+
 ## 0.7.18
 
 ### Fixed
 - `minigw kb export` followed by `minigw kb import` on the same gateway and project no longer makes a second copy of every note: a file now names the gateway and project it was exported from (`origin` in its front matter), and importing it back there is the same note: unchanged content is skipped, an edited file updates that note (a note changed here since the export is kept and reported as a local edit). A file never claims a note by its number alone: a file from another gateway or project, a note you may not write, or one that no longer exists is imported as a new note, as before. Exports made before this version have no origin and import as they did.
 - A refusal or "not found" from a gateway (for example "this device is not bound to a user") now says which profile and address it came from when you have more than one profile, with the hint `--minigw-profile <name>`. `MINIGW_PROFILE=<name>` is the environment form of `--minigw-profile`.
 - Importing a gateway's own bundle now says "this bundle was exported by this gateway: a gateway cannot import its own bundle"; the other bundle refusals that were glued to "invalid" or "refuse" read as sentences too.
-- `minigw gw status` shows a provider whose model list is still loading as "models loading (not loaded yet)", no longer as a failure, and one whose load failed as "models failed to load: <reason> (see the gateway log)". The gateway log now has one line for that failure with the provider name and the reason (no key, no address with credentials). The Mac gateway words the status the same way.
 - The gateway log names the snapshot it takes of the project database before a schema upgrade. The snapshot is `core-<schema>-<time>.db` in the `core` folder next to `core.db` (not in `core\backups`, which holds `minigw gw core backup` files); the newest three are kept.
 - Panels on the settings page: the OK button of a form now enables as soon as the form is valid (it waited until the field lost focus), Enter in a field sends the form and Escape cancels it. The Mac pane already did both.
 - Panels, both apps: an empty value in a detail row shows an en dash instead of a bare label ("Through teams:" with nothing after it).
