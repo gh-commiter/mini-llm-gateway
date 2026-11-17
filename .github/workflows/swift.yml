@@ -57,6 +57,7 @@ jobs:
       # One cooperative thread instead of three (every core of a small runner): anything that blocks a pool thread (a semaphore or group wait, a blocking
       # read, a sleep inside an async test) stops these suites at once, instead of hanging a full run only now and then. Processes, pipes and the core helper.
       - name: swift test with a one-thread cooperative pool
+        if: ${{ !cancelled() }}  # also when the full swift test failed (a failure there skips later steps by default); each failing step fails the job
         timeout-minutes: 10
         env:
           LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
