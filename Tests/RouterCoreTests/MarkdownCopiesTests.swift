@@ -88,4 +88,48 @@ import Testing
         #expect(throws: ProjectError.self) { try env.kb(["import", "demo", link.path]) }
         #expect(posts == 0)
     }
+
+    @Test func memberImportDescriptorReads() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: dir.path, stdin: { Data() }, out: { _ in }, err: { _ in }, agent: false, send: { _, _, _, _, _ in ProjectReply(status: 500) })
+        let child = dir.appendingPathComponent("child")
+        try fm.createDirectory(at: child, withIntermediateDirectories: true)
+        try Data("note".utf8).write(to: child.appendingPathComponent("note.md"))
+        let fd = open(dir.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        #expect(fd >= 0)
+        defer { close(fd) }
+        #expect(try env.readNoteFile("child/note.md", root: fd) == Data("note".utf8))
+        try fm.removeItem(at: child)
+        let outside = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: outside) }
+        try Data("secret".utf8).write(to: outside.appendingPathComponent("note.md"))
+        try fm.createSymbolicLink(at: child, withDestinationURL: outside)
+        #expect(throws: ProjectError.self) { try env.readNoteFile("child/note.md", root: fd) }
+        let fifo = dir.appendingPathComponent("fifo.md")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        #expect(throws: ProjectError.self) { try env.readNoteFile(fifo.path) }
+        let big = dir.appendingPathComponent("big.md")
+        try Data(repeating: 0, count: 96 << 10).write(to: big)
+        #expect(throws: ProjectError.self) { try env.readNoteFile(big.path) }
+    }
+
+    @Test func memberImportBoundsEmptyDirectories() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        var child = dir
+        for _ in 0..<33 { child.appendPathComponent("d") }
+        try fm.createDirectory(at: child, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        var posts = 0
+        let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: dir.path, stdin: { Data() }, out: { _ in }, err: { _ in }, agent: false, send: { _, method, _, _, _ in
+            if method == "POST" { posts += 1 }
+            return ProjectReply(status: 200, data: Data(#"{"id":1}"#.utf8))
+        })
+        #expect(throws: ProjectError.self) { try env.kb(["import", "demo", dir.path]) }
+        #expect(posts == 0)
+    }
 }

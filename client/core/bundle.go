@@ -100,9 +100,9 @@ func foldName(s string) string {
 	return norm.NFC.String(cases.Fold().String(norm.NFC.String(s)))
 }
 
-// validSourceName is the source name validation: like a team name, at most 64 bytes.
+// Source names use team-name validation, with at most 64 characters.
 func validSourceName(s string) bool {
-	return validName(s) && len(s) <= 64
+	return utf8.ValidString(s) && validName(s) && utf8.RuneCountInString(s) <= 64
 }
 
 // importProvenance is the trusted local record of a bundle import. Everything the bundle said
@@ -381,12 +381,39 @@ func checkBundleDirectory(f *os.File, size int64) error {
 		}
 		entries := binary.LittleEndian.Uint16(buf[i+10 : i+12])
 		dirSize := binary.LittleEndian.Uint32(buf[i+12 : i+16])
+		dirOffset := int64(binary.LittleEndian.Uint32(buf[i+16 : i+20]))
 		// These limits never need ZIP64; its markers mean a reader would allocate far more.
 		if entries == 0xffff || dirSize == 0xffffffff {
 			return ErrTooLarge
 		}
 		if int(entries) > maxNotes+2 || int64(dirSize) > int64(maxBundleDirBytes) || int64(dirSize) > size {
 			return ErrTooLarge
+		}
+		end := size - n + int64(i)
+		if binary.LittleEndian.Uint32(buf[i+4:i+8]) != 0 || binary.LittleEndian.Uint16(buf[i+8:i+10]) != entries || dirOffset+int64(dirSize) != end {
+			return ErrInvalid{"bundle directory layout"}
+		}
+		// Count the actual records. ZIP readers need not honor the footer's count or size.
+		var header [46]byte
+		pos, count := dirOffset, 0
+		for pos < end {
+			if end-pos < int64(len(header)) {
+				return ErrInvalid{"bundle directory record"}
+			}
+			if _, err := f.ReadAt(header[:], pos); err != nil {
+				return err
+			}
+			if binary.LittleEndian.Uint32(header[:4]) != 0x02014b50 {
+				return ErrInvalid{"bundle directory record"}
+			}
+			pos += 46 + int64(binary.LittleEndian.Uint16(header[28:30])) + int64(binary.LittleEndian.Uint16(header[30:32])) + int64(binary.LittleEndian.Uint16(header[32:34]))
+			count++
+			if count > maxNotes+2 {
+				return ErrTooLarge
+			}
+		}
+		if pos != end || count != int(entries) {
+			return ErrInvalid{"bundle directory count"}
 		}
 		return nil
 	}
@@ -431,6 +458,52 @@ func checkManifestLimits(m BundleManifest) error {
 		return ErrTooLarge
 	}
 	return nil
+}
+
+// Count collection elements before decoding them into retained Go objects.
+func preflightManifest(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	limits := map[string]int{"projects": maxBundleProjects, "users": maxBundleUsers, "members": maxBundleUsers, "memberships": maxBundleMemberships, "assignments": maxBundleMemberships, "grants": maxBundleGrants, "notes": maxNotes}
+	var value func(int, int) error
+	value = func(depth, limit int) error {
+		t, err := d.Token()
+		if err != nil {
+			return err
+		}
+		switch t {
+		case json.Delim('{'):
+			for d.More() {
+				key, err := d.Token()
+				if err != nil {
+					return err
+				}
+				n := -1
+				if depth == 0 {
+					if v, ok := limits[strings.ToLower(key.(string))]; ok {
+						n = v
+					}
+				}
+				if err := value(depth+1, n); err != nil {
+					return err
+				}
+			}
+			_, err = d.Token()
+		case json.Delim('['):
+			count := 0
+			for d.More() {
+				count++
+				if limit >= 0 && count > limit {
+					return ErrTooLarge
+				}
+				if err := value(depth+1, -1); err != nil {
+					return err
+				}
+			}
+			_, err = d.Token()
+		}
+		return err
+	}
+	return value(0, -1)
 }
 
 func readEntry(f *zip.File, limit int64) ([]byte, error) {
@@ -523,6 +596,9 @@ func readBundle(file string) (bundle, error) {
 	}
 	if jsonDepth(data) > maxBundleDepth {
 		return b, ErrTooLarge
+	}
+	if err = preflightManifest(data); err != nil {
+		return b, err
 	}
 	b.files["manifest.json"] = data
 	d := json.NewDecoder(bytes.NewReader(data))
@@ -693,7 +769,7 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 // ImportBundle validates every byte before entering a transaction.
 func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (report BundleReport, err error) {
 	if !validSourceName(in.Source) {
-		err = ErrInvalid{"source name: 1-64 bytes, no control characters"}
+		err = ErrInvalid{"source name: 1-64 characters, using team-name validation"}
 		return BundleReport{[]string{"refuse " + err.Error()}}, err
 	}
 	b, err := readBundle(in.Path)
@@ -809,7 +885,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		name string
 		id   int64
 	}
-	accounts := map[string]account{}
+	accounts := map[string][]account{}
 	rows, e := tx.Query(`SELECT id,name FROM users`)
 	if e != nil {
 		return e
@@ -821,11 +897,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 			return e
 		}
 		k := foldName(a.name)
-		if old, ok := accounts[k]; ok {
-			rows.Close()
-			return ErrInvalid{"ambiguous target users " + old.name + ", " + a.name}
-		}
-		accounts[k] = a
+		accounts[k] = append(accounts[k], a)
 	}
 	e = rows.Err()
 	rows.Close()
@@ -845,8 +917,12 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 			return ErrInvalid{"two bundle users map to one target user: " + other + ", " + name}
 		}
 		used[k] = name
-		a, ok := accounts[k]
-		if !ok {
+		matches := accounts[k]
+		if len(matches) > 1 {
+			return ErrInvalid{"ambiguous target users " + matches[0].name + ", " + matches[1].name + " for " + name}
+		}
+		var a account
+		if len(matches) == 0 {
 			line("create", "inactive user "+target)
 			if dry {
 				neg--
@@ -858,8 +934,9 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 				}
 				a.id, _ = r.LastInsertId()
 			}
-			accounts[k] = a
+			accounts[k] = []account{a}
 		} else {
+			a = matches[0]
 			line("skip", "user "+a.name)
 		}
 		users[foldName(name)] = a.id
@@ -930,7 +1007,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 				continue
 			}
 			line("merge", "role "+v.Project+" "+v.User+" "+string(v.Role))
-			// Mapped users can collapse several source entries; use SQL rank comparison too.
+			// Keep the higher existing role.
 			q := `INSERT INTO direct_memberships(project_id,user_id,role) VALUES(?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role WHERE CASE direct_memberships.role WHEN 'admin' THEN 3 WHEN 'developer' THEN 2 ELSE 1 END < CASE excluded.role WHEN 'admin' THEN 3 WHEN 'developer' THEN 2 ELSE 1 END`
 			args = []any{pid, uid, v.Role}
 			if i == 1 {

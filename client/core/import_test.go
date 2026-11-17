@@ -298,10 +298,8 @@ func TestBundleRoundTripAndConflicts(t *testing.T) {
 	if n.Body != "upstream" || n.Revision != 2 {
 		t.Fatal(n)
 	}
-	source.ok(target.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`UPDATE notes SET body='local',bytes=length(title)+5,revision=revision+1 WHERE id=?`, id)
-		return e
-	}))
+	_, e = target.UpdateNote(ctx, importAdmin(t, target), n.ProjectID, n.ID, n.Revision, NoteInput{Class: n.Class, Title: n.Title, Body: "local"})
+	source.ok(e)
 	sn, e = source.UpdateNote(ctx, source.p("ana"), sn.ProjectID, sn.ID, sn.Revision, NoteInput{Class: Structure, Title: sn.Title, Body: "upstream two"})
 	source.ok(e)
 	latest := filepath.Join(t.TempDir(), "latest.zip")
@@ -575,10 +573,8 @@ func TestBundleClassChangeRules(t *testing.T) {
 	if imported.Class != Structure {
 		t.Fatal(imported.Class)
 	}
-	source.ok(target.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`UPDATE notes SET class='private',revision=revision+1 WHERE id=1`)
-		return e
-	}))
+	_, e = target.UpdateNote(ctx, importAdmin(t, target), imported.ProjectID, imported.ID, imported.Revision, NoteInput{Class: Private, Title: imported.Title, Body: imported.Body})
+	source.ok(e)
 	var sn Note
 	source.ok(source.read(ctx, func(tx *sql.Tx) error { var e error; sn, e = getNote(tx, 1); return e }))
 	_, e = source.UpdateNote(ctx, source.p("ana"), sn.ProjectID, sn.ID, sn.Revision, NoteInput{Class: Structure, Title: sn.Title, Body: "upstream change"})
@@ -629,7 +625,7 @@ func TestBundleSourceBinding(t *testing.T) {
 	if origin != source.GatewayID() {
 		t.Fatal(origin)
 	}
-	// Another gateway's archive under the same source is refused, even if it claims the same origin.
+	// A different declared gateway under the same source is refused.
 	other, otherFile := bundleFixture(t)
 	if other.GatewayID() == source.GatewayID() {
 		t.Fatal("test gateways have the same id")
@@ -704,7 +700,11 @@ func TestBundleUserMappingUnicode(t *testing.T) {
 	if _, e := target.CreateUser(ctx, "änne"); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "u"}); e == nil || !strings.Contains(e.Error(), "ambiguous target users") {
+	if _, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "u", Map: map[string]string{"ana": "Änne"}}); e == nil || !strings.Contains(e.Error(), "ambiguous target users") {
+		t.Fatal(e)
+	}
+	// An explicit map to a different account resolves the ambiguity.
+	if _, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "u", Map: map[string]string{"ana": "Other"}}); e != nil {
 		t.Fatal(e)
 	}
 	// Two bundle users mapped onto one target account are refused.
@@ -712,7 +712,7 @@ func TestBundleUserMappingUnicode(t *testing.T) {
 	defer clean.Close()
 	b, e := readBundle(file)
 	source.ok(e)
-	b.manifest.Users = append(b.manifest.Users, "bor")
+	// bor is already included by the fixture's direct memberships.
 	twoUsers := rewriteZip(t, b, nil)
 	if _, e := clean.ImportBundle(ctx, BundleImport{Path: twoUsers, Source: "u", Map: map[string]string{"ana": "Ann", "bor": "ann"}}); e == nil || !strings.Contains(e.Error(), "two bundle users map to one target user") {
 		t.Fatal(e)
@@ -813,4 +813,23 @@ func TestBundleSkipsLocalSubmission(t *testing.T) {
 	if countTable(t, target.Store, "notes") != 0 || countTable(t, target.Store, "kb_submissions") != 1 {
 		t.Fatal("duplicated local proposal")
 	}
+}
+
+func importAdmin(t *testing.T, s *Store) Principal {
+	t.Helper()
+	var id int64
+	if e := s.DB().QueryRow(`SELECT id FROM users WHERE name="fani"`).Scan(&id); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.SetUserActive(ctx, id, true); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.SetBinding(ctx, "local-admin", id); e != nil {
+		t.Fatal(e)
+	}
+	p, e := s.Principal(ctx, "local-admin", true)
+	if e != nil {
+		t.Fatal(e)
+	}
+	return p
 }

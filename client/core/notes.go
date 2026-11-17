@@ -92,7 +92,7 @@ func where(user int64, rs []readable) (string, []any) {
 			}
 		}
 		if len(r.own) > 0 {
-			parts = append(parts, "(n.project_id=? AND n.author_id=? AND n.class IN ("+marks(len(r.own))+"))")
+			parts = append(parts, "(n.project_id=? AND n.imported=0 AND n.author_id=? AND n.class IN ("+marks(len(r.own))+"))")
 			args = append(args, r.project, user)
 			for _, c := range r.own {
 				args = append(args, c)
@@ -105,10 +105,11 @@ func where(user int64, rs []readable) (string, []any) {
 	return "(" + strings.Join(parts, " OR ") + ")", args
 }
 
-const noteCols = `n.id,n.project_id,n.class,n.title,n.body,n.author_id,u.name,n.created,n.updated,n.revision`
+// Bundle authors are display-only; zero grants no ownership permissions.
+const noteCols = `n.id,n.project_id,n.class,n.title,n.body,CASE WHEN n.imported=0 THEN n.author_id ELSE 0 END,u.name,n.created,n.updated,n.revision`
 
 // listCols is noteCols without the body (lists never load it).
-const listCols = `n.id,n.project_id,n.class,n.title,'',n.author_id,u.name,n.created,n.updated,n.revision`
+const listCols = `n.id,n.project_id,n.class,n.title,'',CASE WHEN n.imported=0 THEN n.author_id ELSE 0 END,u.name,n.created,n.updated,n.revision`
 
 func scanNote(sc interface{ Scan(...any) error }, withBody bool) (n Note, err error) {
 	var c, u int64

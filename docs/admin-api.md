@@ -612,7 +612,7 @@ admin prefix:
 The body names a local path on the gateway computer; it never contains zip bytes. The normal 512 KiB
 request cap remains. Export refuses an existing destination. Responses contain `{"lines":[...]}`;
 a refusal also includes `error.message` with a non-2xx status. Import requires `source`: the owner-chosen
-name of the bundle's origin on this gateway (1–64 bytes, no control characters). The first import
+name of the bundle's origin on this gateway (1–64 characters, using team-name validation). The first import
 under a source records the bundle's `origin_gateway`; a later import under that source from another gateway
 is refused, as is a bundle whose `origin_gateway` is this gateway. Receipts are keyed by source name,
 project slug and source note id, never by the bundle's own strings.
@@ -626,8 +626,10 @@ bundle writes one `kb.import` event.
 
 Each imported note records a trusted local provenance: actor kind `import`, no user id, the target project,
 source kind `import`, source reference `<source>/<project slug>/<source note id>`, the receive time and no
-reviewer. What the bundle claims about the note's history is stored separately (at most 64 KiB) and returned
-by note routes as `unverifiedSource`; it is not used by permission, provenance or review logic. The receipt
+reviewer. The mapped author name is for display; it grants no own-note access. A trusted local import flag
+enforces that separately from source metadata. What the bundle claims about the note's history is stored
+separately (at most 64 KiB) and returned by note routes as `unverifiedSource`; it is not used by permission,
+provenance or review logic. The receipt
 keeps the note revision and class written by the last import; a local revision change, including a class
 change, makes later imports skip the entry instead of overwriting it, and an incoming class change applies
 only to a note not changed locally. Names match after Unicode NFC normalization and case folding; two target
@@ -642,4 +644,5 @@ never front matter. Create permissions, update ownership, class transitions, arc
 limits, body limits and the normal write rate apply. Imports persist receipts beyond the push TTL.
 Member exports page the existing list route and fetch each note with the existing GET route.
 The client opens each file once without following links, checks the open descriptor is a regular file and
-reads at most 96 KiB; a folder import is bounded in depth and file count.
+reads fewer than 96 KiB; a folder import allows at most 10,000 total entries and 32 path components.
+Folder reads use a held root directory so replacing a parent with an external link cannot redirect reads.

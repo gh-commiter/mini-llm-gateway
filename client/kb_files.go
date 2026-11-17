@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,13 +29,17 @@ func readNoteFile(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return readNoteDescriptor(f)
+}
+
+func readNoteDescriptor(f *os.File) ([]byte, error) {
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("not a regular file: %s", name)
+		return nil, fmt.Errorf("not a regular file: %s", f.Name())
 	}
 	data, err := io.ReadAll(io.LimitReader(f, 96<<10))
 	if err != nil {
@@ -163,36 +168,14 @@ func (e *projectEnv) kbFiles(args []string) error {
 		return err
 	}
 	files := []string{}
+	var folder *os.Root
 	if fi.IsDir() {
-		err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			if strings.Count(rel, string(filepath.Separator)) > maxImportDepth {
-				return fmt.Errorf("import folder is too deep: %s", path)
-			}
-			if d.Type()&os.ModeSymlink != 0 {
-				return fmt.Errorf("not a regular file: %s", path)
-			}
-			if d.IsDir() {
-				return nil
-			}
-			if strings.EqualFold(d.Name(), "INDEX.md") || !strings.EqualFold(filepath.Ext(path), ".md") {
-				return nil
-			}
-			if !d.Type().IsRegular() {
-				return fmt.Errorf("not a regular file: %s", path)
-			}
-			files = append(files, path)
-			if len(files) > maxImportFiles {
-				return core.ErrTooLarge
-			}
-			return nil
-		})
+		folder, err = os.OpenRoot(root)
+		if err != nil {
+			return err
+		}
+		defer folder.Close()
+		files, err = collectNoteFiles(folder)
 		if err != nil {
 			return err
 		}
@@ -203,13 +186,17 @@ func (e *projectEnv) kbFiles(args []string) error {
 	}
 	for _, file := range files {
 		rel := filepath.Base(file)
-		if fi.IsDir() {
-			rel, err = filepath.Rel(root, file)
-			if err != nil {
-				return err
+		var data []byte
+		if folder != nil {
+			rel = file
+			var f *os.File
+			f, err = openRootNote(folder, file)
+			if err == nil {
+				data, err = readNoteDescriptor(f)
 			}
+		} else {
+			data, err = readNoteFile(file)
 		}
-		data, err := readNoteFile(file)
 		if err != nil {
 			return err
 		}
@@ -234,6 +221,59 @@ func (e *projectEnv) kbFiles(args []string) error {
 		e.say(clean(result.String()))
 	}
 	return nil
+}
+
+// Read directories in batches, bounding all entries before retaining file names.
+func collectNoteFiles(root *os.Root) ([]string, error) {
+	var files []string
+	visited := 0
+	var walk func(string, int) error
+	walk = func(dir string, depth int) error {
+		if depth > maxImportDepth {
+			return core.ErrTooLarge
+		}
+		f, err := root.Open(dir)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		for {
+			entries, err := f.ReadDir(128)
+			if err != nil && err != io.EOF {
+				return err
+			}
+			for _, d := range entries {
+				visited++
+				if visited > maxImportFiles {
+					return core.ErrTooLarge
+				}
+				if depth+1 > maxImportDepth {
+					return core.ErrTooLarge
+				}
+				name := filepath.Join(dir, d.Name())
+				if d.Type()&os.ModeSymlink != 0 {
+					return fmt.Errorf("not a regular file: %s", name)
+				}
+				if d.IsDir() {
+					if err := walk(name, depth+1); err != nil {
+						return err
+					}
+				} else if !strings.EqualFold(d.Name(), "INDEX.md") && strings.EqualFold(filepath.Ext(name), ".md") {
+					if !d.Type().IsRegular() {
+						return fmt.Errorf("not a regular file: %s", name)
+					}
+					files = append(files, name)
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+		}
+		return nil
+	}
+	err := walk(".", 0)
+	sort.Strings(files)
+	return files, err
 }
 
 func bundleCommand(args []string) {

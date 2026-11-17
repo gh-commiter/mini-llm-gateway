@@ -107,6 +107,30 @@ func TestBundlePathRoutes(t *testing.T) {
 	if r.Status != 200 || !strings.Contains(string(r.Body), "create src:remotesrc:") {
 		t.Fatal(r.Status, string(r.Body))
 	}
+	body, _ = json.Marshal(core.BundleImport{Path: file, Source: "remotesrc"})
+	r = f.api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "POST", Path: "/import", Body: body})
+	if r.Status != 200 {
+		t.Fatal(r.Status, string(r.Body))
+	}
+	var noteID int64
+	if e = f.st.DB().QueryRow(`SELECT note_id FROM note_imports WHERE key='src:remotesrc:fakture:1'`).Scan(&noteID); e != nil {
+		t.Fatal(e)
+	}
+	r = f.api.Handle(bg, member("dev-fani"), Request{Method: "GET", Path: fmt.Sprintf("/minigw/v1/projects/%d/notes/%d", f.pid["fakture"], noteID)})
+	var note struct {
+		Provenance       core.Provenance `json:"provenance"`
+		UnverifiedSource struct {
+			Markdown   map[string]string `json:"markdown"`
+			Provenance core.Provenance   `json:"provenance"`
+		} `json:"unverifiedSource"`
+	}
+	if r.Status != 200 || json.Unmarshal(r.Body, &note) != nil {
+		t.Fatal(r.Status, string(r.Body))
+	}
+	if note.Provenance.ActorKind != core.ActorImport || note.Provenance.User != 0 || note.Provenance.Reviewer != "" ||
+		note.UnverifiedSource.Markdown["author"] != "ana" || note.UnverifiedSource.Provenance.User != fu.ID {
+		t.Fatal(string(r.Body))
+	}
 	for _, req := range []Request{
 		{Method: "POST", Path: "/import", BodyTooLarge: true},
 		{Method: "POST", Path: "/import", BodyUnreadable: true},

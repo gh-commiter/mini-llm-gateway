@@ -12,7 +12,8 @@ import (
 func migrate13(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE TABLE note_imports(project_id INTEGER NOT NULL REFERENCES projects(id), key TEXT NOT NULL, note_id INTEGER NOT NULL DEFAULT 0, submission_id INTEGER NOT NULL DEFAULT 0, hash TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, class TEXT NOT NULL DEFAULT '', origin_gateway TEXT NOT NULL DEFAULT '', exported TEXT NOT NULL DEFAULT '', PRIMARY KEY(project_id,key));
 CREATE TABLE import_sources(source TEXT PRIMARY KEY, origin_gateway TEXT NOT NULL);
-ALTER TABLE notes ADD COLUMN source_meta TEXT NOT NULL DEFAULT '';`)
+ALTER TABLE notes ADD COLUMN source_meta TEXT NOT NULL DEFAULT '';
+ALTER TABLE notes ADD COLUMN imported INTEGER NOT NULL DEFAULT 0;`)
 	return err
 }
 
@@ -238,6 +239,11 @@ func (s *Store) importNote(tx *sql.Tx, project, author, id int64, in NoteInput, 
 			return 0, err
 		}
 		if _, err := tx.Exec(`UPDATE idempotency SET result='' WHERE note_id=?`, id); err != nil {
+			return 0, err
+		}
+	}
+	if pr.ActorKind == ActorImport {
+		if _, err := tx.Exec(`UPDATE notes SET imported=1 WHERE id=?`, id); err != nil {
 			return 0, err
 		}
 	}

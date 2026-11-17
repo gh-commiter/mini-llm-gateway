@@ -15,8 +15,23 @@ extension ProjectEnv {
     }
 
     /// The note's bytes: the file is opened once without following a link and checked on that descriptor.
-    private func readNoteFile(_ path: String) throws -> Data {
-        let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+    func readNoteFile(_ path: String, root: Int32? = nil) throws -> Data {
+        var parent = root
+        var held: [Int32] = []
+        defer { for fd in held.reversed() { close(fd) } }
+        let parts = path.split(separator: "/").map(String.init)
+        if let root {
+            parent = root
+            for part in parts.dropLast() {
+                guard part != "..", part != "." else { throw ProjectError("invalid import path") }
+                let next = openat(parent!, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+                guard next >= 0 else { throw ProjectError("not a directory: " + path) }
+                held.append(next)
+                parent = next
+            }
+        }
+        let fd = parent.map { openat($0, parts.last ?? "", O_RDONLY | O_NOFOLLOW | O_NONBLOCK) }
+            ?? open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard fd >= 0 else { throw ProjectError("not a regular file: " + path) }
         defer { close(fd) }
         var st = stat()
@@ -93,11 +108,18 @@ extension ProjectEnv {
         // The enumerator returns resolved paths (/private/var/…) also for a root given through a symbolic link (/var/…): compare resolved
         // paths, or the relative path (the stable import key) would start in the middle of a folder name.
         let rootPath = root.resolvingSymlinksInPath().path
+        let rootFD = isDir ? open(rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK) : -1
+        defer { if rootFD >= 0 { close(rootFD) } }
+        if isDir && rootFD < 0 { throw ProjectError("cannot open import folder") }
         var files: [(url: URL, rel: String)] = []
         if isDir {
             var walkError: Error?
             guard let walk = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey], options: [], errorHandler: { _, e in walkError = e; return false }) else { throw usage }
+            var visited = 0
             for case let file as URL in walk {
+                visited += 1
+                if visited > 10000 { throw ProjectError("too many entries") }
+                if walk.level > 32 { throw ProjectError("import folder is too deep") }
                 let v = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey])
                 if v.isSymbolicLink == true { throw ProjectError("not a regular file: " + file.path) }
                 if v.isDirectory == true { continue }
@@ -116,7 +138,7 @@ extension ProjectEnv {
             files = [(root, root.lastPathComponent)]
         }
         for (file, rel) in files.sorted(by: { $0.url.path < $1.url.path }) {
-            let data = try readNoteFile(file.path)
+            let data = try readNoteFile(isDir ? rel : file.path, root: isDir ? rootFD : nil)
             guard let text = String(data: data, encoding: .utf8) else { throw ProjectError("the note must be text (UTF-8)") }
             let payload = try JSONSerialization.data(withJSONObject: ["markdown": text, "path": rel, "class": fl.string("class"), "submit": fl.bool("submit")])
             guard payload.count <= 512 << 10 else { throw ProjectError("too large") }

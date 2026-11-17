@@ -591,11 +591,13 @@ notes and provenance. It excludes devices, bindings, tokens, keys, usage, audit 
 submissions. Note bodies cannot define access or accounts.
 
 `--source <name>` is required on import: it names where this bundle comes from, on this gateway, and the
-owner chooses it (1–64 bytes, no control characters). The first import under a source records the
+owner chooses it (1–64 characters, using team-name validation). The first import under a source records the
 bundle's origin gateway; a later import under the same source from a different gateway is refused, as is a
 bundle that was exported by this gateway itself. Receipts are kept per source name, project slug and source
 note id; the `origin_gateway` string inside the bundle never establishes a namespace. A dry run reports the
 source name and the origin it records.
+The owner must choose a source only for an archive they trust: the recorded origin is a consistency check,
+not cryptographic authentication of the exporting gateway.
 
 Import validates the entire zip before writing, within fixed limits on its size, entry count, central
 directory, manifest size and nesting, and collection sizes. Dry-run reports create, merge, skip and refuse
@@ -618,6 +620,10 @@ about the note's history (author, source kind, times, reviewer, its own provenan
 unverified source metadata and is shown by `note read --json` under `unverifiedSource`; it never drives
 access, permissions or review. A pending local submission for the same source entry is skipped and
 reported, never superseded by the import.
+The mapped author name is retained for display, without own-note permissions. Imported private notes are
+therefore visible to project administrators, and list and search apply the same restriction. Member folder
+imports open files beneath a held directory, reject links, and stop at 10,000 total entries or 32 path
+components, including empty directories and non-Markdown entries. Each file must be smaller than 96 KiB.
 This copies knowledge to a different gateway; it does not restore a database or delete omitted target rows.
 
 Members see only their own teams, their teammates' names, and attached projects they can already read through

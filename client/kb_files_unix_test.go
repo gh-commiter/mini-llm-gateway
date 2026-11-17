@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -52,6 +53,64 @@ func TestReadNoteFileNoFollow(t *testing.T) {
 	}
 	if _, e := readNoteFile(big); e == nil {
 		t.Fatal("read past the limit")
+	}
+}
+
+func TestFolderImportHeldRootAndTraversalLimits(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "child"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "child", "note.md"), []byte("note"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	files, err := collectNoteFiles(root)
+	if err != nil || len(files) != 1 {
+		t.Fatal(files, err)
+	}
+	// Swap a parent after enumeration; the held root cannot read the external secret.
+	outside := t.TempDir()
+	if err = os.WriteFile(filepath.Join(outside, "note.md"), []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.RemoveAll(filepath.Join(dir, "child")); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Symlink(outside, filepath.Join(dir, "child")); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := openRootNote(root, files[0]); err == nil {
+		f.Close()
+		t.Fatal("escaped the held root")
+	}
+	if err = os.Remove(filepath.Join(dir, "child")); err != nil {
+		t.Fatal(err)
+	}
+	deep := dir
+	for i := 0; i <= maxImportDepth; i++ {
+		deep = filepath.Join(deep, "d")
+		if err = os.Mkdir(deep, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = collectNoteFiles(root); err == nil {
+		t.Fatal("accepted deep empty directories")
+	}
+	if err = os.RemoveAll(filepath.Join(dir, "d")); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= maxImportFiles; i++ {
+		if err = os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d.txt", i)), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = collectNoteFiles(root); err == nil {
+		t.Fatal("accepted too many non-Markdown entries")
 	}
 }
 
