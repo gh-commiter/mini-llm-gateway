@@ -222,7 +222,7 @@ private struct Rig {
     var addr = sockaddr_in(); addr.sin_family = sa_family_t(AF_INET); addr.sin_addr.s_addr = INADDR_ANY.bigEndian; addr.sin_port = 0
     addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
     let bound = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-    #expect(bound == 0 && listen(fd, 4) == 0)
+    #expect(bound == 0 && listen(fd, 128) == 0)  // never accepted: every finished control probe stays queued (one per probed address, 5 here), so the backlog must not be the limit
     var got = sockaddr_in(), len = socklen_t(MemoryLayout<sockaddr_in>.size)
     _ = withUnsafeMutablePointer(to: &got) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
     let port = Int(UInt16(bigEndian: got.sin_port))
