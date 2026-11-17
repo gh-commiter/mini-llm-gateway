@@ -41,6 +41,16 @@
   "DELETE projects/{}/depends/teams/{}",
   "GET grants",
   "POST grants",
-  "DELETE grants"
+  "DELETE grants",
+  "GET upstreams",
+  "PUT upstreams/{}",
+  "DELETE upstreams/{}",
+  "GET upstreams/{}/probe",
+  "PUT upstreams/{}/links/{}",
+  "DELETE upstreams/{}/links/{}",
+  "POST upstream-push"
+ ],
+ "builtinSecret": [
+  "PUT upstreams/{}"
  ]
 }

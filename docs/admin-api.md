@@ -246,6 +246,13 @@ is down.
   source as the query parameter `param` (the first entry is chosen at the start; nothing is requested while there is none).
   A `multiline` value is shown wrapped in the page's own scroll, never in an inner scroll area, cut at 20000 characters with
   a visible note. An action with `"body": {}` sends the empty JSON object `{}`.
+- **Secret fields and results:** a field of type `secret` is a password field. Its value goes only in the request body of an action
+  whose route the provider registered as taking a secret (`PanelProvider.SecretRoutes`; the built-in one: `PUT upstreams/{}`); the
+  validator refuses a secret field in any other route, in a path or a query template, with a default, with options or a ref, or one
+  that no body key sends. A renderer never shows it again, clears it as soon as the request has been sent (success and failure), keeps
+  it in no state, and never shows an error text that holds it (or a part of a token line): it shows the status instead. An action may
+  have a `result`: the answer shown after it succeeded, as rows (`items` names the array in the answer) or, without `items`, as one row,
+  with `columns` as in a list, read-only, plain text.
 - A text field's `maxLength` is in UTF-8 bytes, as the core counts a user name (128), not in characters.
 - A description is data, never code: no scripts, HTML, Markdown, links or images. Every text position holds a key
   (`[a-z0-9._-]`, at most 120 characters, inside the panel's namespace `<provider>.<panel>.`); the validator refuses
@@ -337,10 +344,11 @@ uniqueness as for users. Project display names are not unique; projects have sep
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /upstreams[?project=<id>\|team=<id>]` | – | `{upstreams: [{name, address, device}], links: [{project, team, upstream, remote, classes, withPrivate, lastPush, lastError, label, pending, total}]}`; `device` is the public ID of this gateway's device key for it |
+| `GET /upstreams[?project=<id>\|team=<id>]` | – | `{upstreams: [{name, address, device}], links: [{project, team, upstream, remote, classes, withPrivate, lastPush, lastError, label, pending, total, id, place, linkId, projectId, teamId, classesText}]}` (the last six are for a panel: a unique id, `project` or `team`, the id to name the link in a path (a TEAM id for a team, never the hidden segment), the same split as two numbers for a push body, and the classes as text); `device` is the public ID of this gateway's device key for it |
 | `PUT /upstreams/{name}` / `DELETE` | `{address, token}` (token = the upstream's Copy Token line) | PUT: `{name, address, device, where, probe}`; the secret is kept in the credential store, never answered; an address of this same gateway is refused (400); DELETE removes the links and receipts and the credentials. 501 where the host cannot (a helper whose app does not answer callouts) |
-| `PUT /upstreams/{name}/links/{id}` / `DELETE` | `{team?, remote, classes?, withPrivate?}` (`id` is a project, or a team when `team`) | `{ok: true}`; `private` needs `withPrivate`; at most 8 links per project |
-| `POST /upstream-push` | `{project?\|team?, dryRun?}` | `{pushes: [{label, upstream, remote, lines, created, skipped, replaced, refused, stopped?, dryRun, more?, wait?}]}`; may take long (waits out the upstream's rate limit); behind a helper a call is limited to about 10 seconds and answers `more: true` (and `wait`, seconds) when notes are left: call again; `dryRun` writes nothing |
+| `GET /upstreams/{name}/probe` | – | `{name, address, device, state, probe}`: the first contact of an ordinary client, made when you ask (a panel asks when its detail page opens); `state` is `unreachable`, `token`, `waiting`, `notbound`, `connected` or `other`, `probe` the text of the CLI. Writes nothing |
+| `PUT /upstreams/{name}/links/{id}` / `DELETE` | `{team?, remote, classes?, withPrivate?}` (`id` is a project, or a team when `team`; a DELETE may name a team's link as `?team=true` instead of a body; an empty `remote` on PUT means the project's short name, or the team's name, as the CLI does) | `{ok: true}`; `private` needs `withPrivate`; at most 8 links per project |
+| `POST /upstream-push` | `{project?\|team?, dryRun?}` | `{pushes: [{label, upstream, remote, lines, linesText, created, skipped, replaced, refused, stopped?, dryRun, more?, wait?}]}`; may take long (waits out the upstream's rate limit); behind a helper a call is limited to about 10 seconds and answers `more: true` (and `wait`, seconds) when notes are left: call again; `dryRun` writes nothing |
 | `GET /projects/{id}/depends` | – | `{depends: [{id, slug, name}], usedBy: [...], teams: [{id, name, archived}]}` |
 | `PUT /projects/{id}/depends/teams/{team}` / `DELETE` | – | `{ok: true}`; the project depends on the notes of a team (the listing above then has `teams: [{id, name, archived}]`); counts toward the same cap of 16; refused for an archived team and for the project's own team (400 with the reason); the notes are searched only for callers on the team's roster, never in a run |
 | `PUT /projects/{id}/depends/{other}` / `DELETE` | – | `{ok: true}`; at most 16 per project, not itself, not an archived project (remove is always allowed); a team's notes (segment ids) are never a side |

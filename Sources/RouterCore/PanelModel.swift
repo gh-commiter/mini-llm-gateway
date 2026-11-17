@@ -133,6 +133,12 @@ public struct PanelRecordData: Sendable {
     public var loading = false
 }
 
+public struct PanelResultData: Sendable {
+    public let title: String?
+    public let columns: [PanelColumn]
+    public let rows: [PanelRow]
+}
+
 public struct PanelConfirmText: Equatable, Sendable { public let title: String, message: String, button: String, destructive: Bool }
 
 @MainActor public final class PanelModel: ObservableObject {
@@ -147,6 +153,8 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     @Published public private(set) var records: [PanelListKey: PanelRecordData] = [:]
     /// The chosen entry of a list's scope picker (its key as the ref gave it).
     @Published public private(set) var selected: [PanelListKey: PanelJSON] = [:]
+    /// What the answer of an action that has a `result` is shown as (until the view closes it).
+    @Published public private(set) var results: [PanelListKey: PanelResultData] = [:]
     @Published public private(set) var loading = false
     /// Lists with an action in flight: a second trigger meanwhile is ignored (two quick clicks send once).
     @Published public private(set) var sending: Set<PanelListKey> = []
@@ -376,12 +384,13 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
             if f.required == true {
                 switch (f.type, v) {
                 case ("text", .string(let s)?) where !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty: break
-                case ("text", _): out[f.id] = .required
+                case ("secret", .string(let s)?) where !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty: break
+                case ("text", _), ("secret", _): out[f.id] = .required
                 case (_, nil), (_, .null?): out[f.id] = .required
                 default: break
                 }
             }
-            if f.type == "text", case .string(let s)? = v, let m = f.maxLength, m > 0, s.utf8.count > m { out[f.id] = .tooLong(m) }  // bytes, as the core counts them (core.validName)
+            if f.type == "text" || f.type == "secret", case .string(let s)? = v, let m = f.maxLength, m > 0, s.utf8.count > m { out[f.id] = .tooLong(m) }  // bytes, as the core counts them (core.validName)
         }
         return out
     }
@@ -445,8 +454,25 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         return PanelConfirmText(title: fill(c.title), message: fill(c.message), button: fill(c.button), destructive: a.method == "DELETE" || a.destructive == true || c.destructive == true)
     }
 
+    /// The form values without the secrets: a secret lives only until its request has been sent, on success AND on failure. The view
+    /// replaces its copy with this after every send, and when the form closes.
+    public func scrubbed(_ a: PanelAction, _ values: [String: PanelJSON]) -> [String: PanelJSON] {
+        var out = values
+        for f in a.fields ?? [] where f.type == "secret" { out[f.id] = nil }
+        return out
+    }
+
+    /// An error text must never echo a secret back: a server message that contains the value (or a part of a token line, split at "#")
+    /// is replaced by the plain status.
+    static func scrub(_ e: PanelError, status: Int, secrets: [String]) -> PanelError {
+        guard case .server(let m) = e else { return e }
+        let parts = secrets.flatMap { s in [s] + s.split(separator: "#").map(String.init).filter { $0.count >= 4 } }
+        return parts.contains(where: { !$0.isEmpty && m.contains($0) }) ? .http(status) : e
+    }
+
     /// Sends an action and reloads the whole panel after success. An action that needs a confirmation is refused unless
-    /// `confirmed`. A failure is kept in `actionError` for the section and leaves the rows as they were.
+    /// `confirmed`. A failure is kept in `actionError` for the section and leaves the rows as they were. The values of secret fields are
+    /// used for the request only; no state of the model keeps them, and no error text repeats them.
     @discardableResult
     public func perform(_ a: PanelAction, section path: String, row: PanelRow? = nil, parent: PanelRow? = nil, values: [String: PanelJSON] = [:], confirmed: Bool = false) async -> Bool {
         let key = PanelListKey(path: path, parent: parent?.id ?? "")
@@ -454,16 +480,31 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         sending.insert(key)
         defer { sending.remove(key) }
         actionError[key] = nil
+        results[key] = nil
         if a.needsConfirmation && !confirmed { actionError[key] = .refused("the action needs a confirmation"); return false }
+        let secrets = (a.fields ?? []).filter { $0.type == "secret" }.compactMap { values[$0.id]?.scalarText }
         switch request(a, row: row, parent: parent, values: values) {
         case .failure(let e): actionError[key] = e; return false
         case .success(let req):
             let r = await send(req)
-            if let e = r.panelError { actionError[key] = e; return false }
+            if let e = r.panelError { actionError[key] = Self.scrub(e, status: r.status, secrets: secrets); return false }
+            if let res = a.result, let data = Self.resultRows(r.body, res) { results[key] = data }
             await load()
             return true
         }
     }
+
+    static func resultRows(_ body: Data, _ res: PanelResult) -> PanelResultData? {
+        guard let top = try? JSONDecoder().decode(PanelJSON.self, from: body), case .object(let o) = top else { return nil }
+        var rows: [PanelRow] = []
+        if let items = res.items {
+            guard case .array(let a)? = o[items] else { return nil }
+            rows = a.enumerated().compactMap { i, v in if case .object(let r) = v { PanelRow(id: String(i), values: r) } else { nil } }
+        } else { rows = [PanelRow(id: "0", values: o)] }
+        return PanelResultData(title: res.title, columns: res.columns, rows: rows)
+    }
+
+    public func closeResult(section path: String, parent: PanelRow? = nil) { results[PanelListKey(path: path, parent: parent?.id ?? "")] = nil }
 }
 
 // MARK: the app's transport

@@ -135,6 +135,7 @@ private struct PanelList: View {
         Section {
             if let e = data.error { PanelErrorText(error: e) }
             if let e = model.actionError[key] { PanelErrorText(error: e) }
+            if let r = model.results[key] { PanelResultView(result: r, model: model, close: { model.closeResult(section: path, parent: parent) }) }
             if let sc = section.scope {
                 let options = model.pickerOptions(sc.ref)
                 Picker(selection: Binding(get: { model.selected[key]?.scalarText ?? "" },
@@ -233,6 +234,33 @@ private struct PanelRecord: View {
     }
 }
 
+/// The answer of an action that has a result: label and value pairs per row, plain text, closed with Done.
+private struct PanelResultView: View {
+    let result: PanelResultData
+    @ObservedObject var model: PanelModel
+    let close: () -> Void
+
+    var body: some View {
+        if let t = result.title { Text(verbatim: model.text(t)).font(.headline) }
+        ForEach(result.rows) { row in
+            ForEach(Array(result.columns.enumerated()), id: \.offset) { _, c in
+                if !c.supported {
+                    Text("This part of the panel cannot be shown.").foregroundStyle(.secondary)
+                } else if c.kind == "multiline" {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(verbatim: model.text(c.label)).font(.caption).foregroundStyle(.secondary)
+                        Text(verbatim: model.shown(c, row)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        if model.cellIsTruncated(c, row) { Text("The text is shortened here.").font(.caption).foregroundStyle(.orange) }
+                    }
+                } else {
+                    LabeledContent { Text(verbatim: model.shown(c, row)).textSelection(.enabled) } label: { Text(verbatim: model.text(c.label)) }
+                }
+            }
+        }
+        Button("Done") { close() }
+    }
+}
+
 private struct PanelRowView: View {
     @ObservedObject var model: PanelModel
     let section: PanelSection
@@ -312,6 +340,7 @@ private struct PanelFormSheet: View {
             .padding(16)
         }
         .frame(minWidth: 420, minHeight: 240)
+        .onDisappear { values = model.scrubbed(action, values) }
         .onAppear { values = model.defaults(action, row: row) }
         .confirmationDialog(Text(verbatim: confirming?.title ?? ""), isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
                             titleVisibility: .visible, presenting: confirming) { c in
@@ -329,6 +358,7 @@ private struct PanelFormSheet: View {
         sending = true
         Task {
             let ok = await model.perform(action, section: path, row: row, parent: parent, values: values, confirmed: confirmed)
+            values = model.scrubbed(action, values)  // a secret is gone as soon as its request has been sent, on success and on failure
             sending = false
             if ok { dismiss() }
         }
@@ -339,6 +369,8 @@ private struct PanelFormSheet: View {
         switch f.type {
         case "text":
             TextField(text: Binding(get: { if case .string(let s)? = values[f.id] { s } else { "" } }, set: { values[f.id] = .string($0) })) { Text(verbatim: label) }
+        case "secret":  // never shown again, never kept after the request: @State of this sheet only (no storage, no restoration)
+            SecureField(text: Binding(get: { if case .string(let s)? = values[f.id] { s } else { "" } }, set: { values[f.id] = .string($0) })) { Text(verbatim: label) }
         case "toggle":
             Toggle(isOn: Binding(get: { if case .bool(let b)? = values[f.id] { b } else { false } }, set: { values[f.id] = .bool($0) })) { Text(verbatim: label) }
         case "choice":

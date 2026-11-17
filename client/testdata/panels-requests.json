@@ -1223,6 +1223,382 @@
     "path": "/grants"
    },
    "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "upstreams",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "name": "hub",
+    "address": "hub.example:8765",
+    "token": "tok-1234#key-5678",
+    "deviceName": ""
+   },
+   "want": {
+    "query": "",
+    "body": "{\"address\":\"hub.example:8765\",\"deviceName\":\"\",\"token\":\"tok-1234#key-5678\"}",
+    "method": "PUT",
+    "path": "/upstreams/hub"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "upstreams",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "name": "hub",
+    "address": "hub.example:8765",
+    "token": "  ",
+    "deviceName": ""
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "upstreams",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "name": "hub",
+    "address": "hub.example:8765",
+    "deviceName": ""
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "upstreams",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "name": "a/b",
+    "address": "hub.example:8765",
+    "token": "tok-1234#key-5678",
+    "deviceName": ""
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "upstreams",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "name": "..",
+    "address": "hub.example:8765",
+    "token": "tok-1234#key-5678",
+    "deviceName": ""
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "upstreams",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "name": "",
+    "address": "hub.example:8765",
+    "token": "tok-1234#key-5678",
+    "deviceName": ""
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "upstreams",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "name": "hub",
+    "address": "hub.example:8765",
+    "token": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "deviceName": ""
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "upstreams",
+   "kind": "rowActions",
+   "action": "remove",
+   "row": {
+    "name": "hub",
+    "address": "hub.example",
+    "device": "DEV"
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "DELETE",
+    "path": "/upstreams/hub"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "upstreams",
+   "kind": "rowActions",
+   "action": "remove",
+   "row": {
+    "name": "../hub"
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "actions",
+   "action": "link-project",
+   "values": {
+    "upstream": "hub",
+    "target": 1,
+    "remote": "",
+    "classes": "structure,data",
+    "withPrivate": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"classes\":\"structure,data\",\"remote\":\"\",\"team\":false,\"withPrivate\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "actions",
+   "action": "link-project",
+   "values": {
+    "upstream": "hub",
+    "target": 1,
+    "remote": "acme-web",
+    "classes": "structure,data,private",
+    "withPrivate": true
+   },
+   "want": {
+    "query": "",
+    "body": "{\"classes\":\"structure,data,private\",\"remote\":\"acme-web\",\"team\":false,\"withPrivate\":true}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "actions",
+   "action": "link-team",
+   "values": {
+    "upstream": "hub",
+    "target": 4,
+    "remote": "",
+    "classes": "structure",
+    "withPrivate": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"classes\":\"structure\",\"remote\":\"\",\"team\":true,\"withPrivate\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/4"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "actions",
+   "action": "link-project",
+   "values": {
+    "upstream": "a/b",
+    "target": 1,
+    "remote": "",
+    "classes": "structure,data",
+    "withPrivate": false
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "actions",
+   "action": "link-project",
+   "values": {
+    "upstream": "hub",
+    "target": 1,
+    "remote": "",
+    "withPrivate": false
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "dry",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "classesText": "structure, data"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"dryRun\":true,\"project\":1,\"team\":0,\"upstream\":\"hub\"}",
+    "method": "POST",
+    "path": "/upstream-push"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "dry",
+   "row": {
+    "label": "team web",
+    "place": "team",
+    "upstream": "hub",
+    "linkId": 4,
+    "projectId": 0,
+    "teamId": 4,
+    "team": true,
+    "classesText": "structure"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"dryRun\":true,\"project\":0,\"team\":4,\"upstream\":\"hub\"}",
+    "method": "POST",
+    "path": "/upstream-push"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "push",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "classesText": "structure, data"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"dryRun\":false,\"project\":1,\"team\":0,\"upstream\":\"hub\"}",
+    "method": "POST",
+    "path": "/upstream-push"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "push",
+   "row": {
+    "label": "team web",
+    "place": "team",
+    "upstream": "hub",
+    "linkId": 4,
+    "projectId": 0,
+    "teamId": 4,
+    "team": true,
+    "classesText": "structure"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"dryRun\":false,\"project\":0,\"team\":4,\"upstream\":\"hub\"}",
+    "method": "POST",
+    "path": "/upstream-push"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "unlink",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "classesText": "structure, data"
+   },
+   "want": {
+    "query": "team=false",
+    "body": "",
+    "method": "DELETE",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "unlink",
+   "row": {
+    "label": "team web",
+    "place": "team",
+    "upstream": "hub",
+    "linkId": 4,
+    "projectId": 0,
+    "teamId": 4,
+    "team": true,
+    "classesText": "structure"
+   },
+   "want": {
+    "query": "team=true",
+    "body": "",
+    "method": "DELETE",
+    "path": "/upstreams/hub/links/4"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "unlink",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "a/b",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "classesText": "structure, data"
+   },
+   "want": "refused",
+   "confirm": "destructive"
   }
  ],
  "confirmations": [

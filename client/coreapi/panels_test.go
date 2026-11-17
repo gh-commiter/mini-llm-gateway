@@ -55,20 +55,25 @@ func TestPanelsAnswerMatchesFixture(t *testing.T) {
 }
 
 type formatFixture struct {
-	Provider string
-	Routes   []string
-	Panel    any
+	Provider     string
+	Routes       []string
+	SecretRoutes []string
+	Panel        any
+}
+
+func (f formatFixture) provider() PanelProvider {
+	return PanelProvider{ID: f.Provider, Routes: f.Routes, SecretRoutes: f.SecretRoutes}
 }
 
 func TestFormat1FixtureValidates(t *testing.T) {
 	var f formatFixture
 	panelFixture(t, "panels-format1.json", &f)
 	raw, _ := json.Marshal(f.Panel)
-	if err := ValidatePanel(raw, PanelProvider{ID: f.Provider, Routes: f.Routes}); err != nil {
+	if err := ValidatePanel(raw, f.provider()); err != nil {
 		t.Fatal(err)
 	}
 	// every route the fixture registers is used, and a provider without them refuses the panel
-	if err := ValidatePanel(raw, PanelProvider{ID: f.Provider, Routes: f.Routes[1:]}); err == nil {
+	if err := ValidatePanel(raw, PanelProvider{ID: f.Provider, Routes: f.Routes[1:], SecretRoutes: f.SecretRoutes}); err == nil {
 		t.Fatal("a missing registered route must refuse the panel")
 	}
 }
@@ -161,7 +166,7 @@ func TestHostilePanels(t *testing.T) {
 			parent.(map[string]any)[key] = strings.Repeat("x", n)
 		}
 		out, _ := json.Marshal(doc)
-		err := ValidatePanel(out, PanelProvider{ID: base.Provider, Routes: base.Routes})
+		err := ValidatePanel(out, base.provider())
 		if c.GoAccepts && err != nil {
 			t.Errorf("%s: the validator refused it: %v", c.Name, err)
 		} else if !c.GoAccepts && err == nil {
@@ -173,7 +178,7 @@ func TestHostilePanels(t *testing.T) {
 func TestPanelValidatorEdges(t *testing.T) {
 	var f formatFixture
 	panelFixture(t, "panels-format1.json", &f)
-	p := PanelProvider{ID: f.Provider, Routes: f.Routes}
+	p := f.provider()
 	raw, _ := json.Marshal(f.Panel)
 	if err := ValidatePanel(raw, p); err != nil {
 		t.Fatal(err)
@@ -374,7 +379,7 @@ func TestFormat1StringsFixture(t *testing.T) {
 	var tabs map[string]map[string]string
 	panelFixture(t, "panels-format1-strings.json", &tabs)
 	raw, _ := json.Marshal(f.Panel)
-	p := PanelProvider{ID: f.Provider, Routes: f.Routes}
+	p := f.provider()
 	keys, err := PanelKeys(raw, p)
 	if err != nil {
 		t.Fatal(err)
@@ -464,7 +469,7 @@ func TestProviderIDsAreReserved(t *testing.T) {
 func TestKeysBelowTheTopLevelAreExactToo(t *testing.T) {
 	var f formatFixture
 	panelFixture(t, "panels-format1.json", &f)
-	p := PanelProvider{ID: f.Provider, Routes: f.Routes}
+	p := f.provider()
 	raw, _ := json.Marshal(f.Panel)
 	for name, mut := range map[string]func(string) string{
 		"Method in a row action": func(s string) string { return strings.Replace(s, `"method":"PATCH"`, `"Method":"PATCH"`, 1) },
@@ -492,7 +497,7 @@ func TestBuiltinPanelOrderIsExplicit(t *testing.T) {
 		json.Unmarshal(raw, &d)
 		ids = append(ids, d.ID)
 	}
-	if !reflect.DeepEqual(ids, []string{"builtin.users", "builtin.teams", "builtin.kb"}) {
+	if !reflect.DeepEqual(ids, []string{"builtin.users", "builtin.teams", "builtin.kb", "builtin.upstreams"}) {
 		t.Fatalf("order %v", ids)
 	}
 	// the answer keeps it
@@ -501,7 +506,31 @@ func TestBuiltinPanelOrderIsExplicit(t *testing.T) {
 		Panels []struct{ Description struct{ ID string } }
 	}
 	json.Unmarshal(r.Body, &o)
-	if len(o.Panels) != 3 || o.Panels[0].Description.ID != "builtin.users" || o.Panels[1].Description.ID != "builtin.teams" || o.Panels[2].Description.ID != "builtin.kb" {
+	if len(o.Panels) != 4 || o.Panels[0].Description.ID != "builtin.users" || o.Panels[1].Description.ID != "builtin.teams" || o.Panels[2].Description.ID != "builtin.kb" || o.Panels[3].Description.ID != "builtin.upstreams" {
 		t.Fatalf("%s", r.Body)
+	}
+}
+
+// The Upstream gateways panel has a secret field: it is valid only for a provider that registered the route as taking a secret.
+func TestBuiltinSecretRouteIsRequired(t *testing.T) {
+	p := builtinProvider()
+	var raw json.RawMessage
+	for _, r := range p.Panels {
+		if strings.Contains(string(r), `"builtin.upstreams"`) && strings.Contains(string(r), `"secret"`) {
+			raw = r
+		}
+	}
+	if raw == nil {
+		t.Fatal("no built-in panel with a secret field")
+	}
+	if err := ValidatePanel(raw, p); err != nil {
+		t.Fatal(err)
+	}
+	p.SecretRoutes = nil
+	if err := ValidatePanel(raw, p); err == nil || !strings.Contains(err.Error(), "secret") {
+		t.Fatalf("accepted without a registered secret route: %v", err)
+	}
+	if len(BuiltinSecretRoutes) != 1 || BuiltinSecretRoutes[0] != "PUT upstreams/{}" {
+		t.Fatalf("%v", BuiltinSecretRoutes)
 	}
 }

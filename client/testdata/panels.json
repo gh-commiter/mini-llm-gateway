@@ -1968,6 +1968,621 @@
      }
     ]
    }
+  },
+  {
+   "provider": "builtin",
+   "description": {
+    "format": 1,
+    "id": "builtin.upstreams",
+    "provider": "builtin",
+    "title": "builtin.upstreams.title",
+    "about": "builtin.upstreams.about",
+    "symbol": "tray",
+    "refs": {
+     "upstreams": {
+      "path": "/upstreams",
+      "items": "upstreams",
+      "key": "name",
+      "label": "name"
+     },
+     "projects": {
+      "path": "/projects",
+      "items": "projects",
+      "key": "id",
+      "label": "name",
+      "skip": {
+       "field": "archived",
+       "equals": true
+      }
+     },
+     "teams": {
+      "path": "/teams",
+      "items": "teams",
+      "key": "id",
+      "label": "name",
+      "skip": {
+       "field": "archived",
+       "equals": true
+      }
+     }
+    },
+    "sections": [
+     {
+      "kind": "text",
+      "id": "intro",
+      "body": "builtin.upstreams.section.intro.body"
+     },
+     {
+      "kind": "list",
+      "id": "upstreams",
+      "title": "builtin.upstreams.section.upstreams.title",
+      "source": {
+       "path": "/upstreams",
+       "items": "upstreams"
+      },
+      "key": "name",
+      "columns": [
+       {
+        "field": "name",
+        "kind": "text",
+        "label": "builtin.upstreams.section.upstreams.column.name"
+       },
+       {
+        "field": "address",
+        "kind": "text",
+        "label": "builtin.upstreams.section.upstreams.column.address"
+       },
+       {
+        "field": "device",
+        "kind": "text",
+        "label": "builtin.upstreams.section.upstreams.column.device"
+       }
+      ],
+      "empty": "builtin.upstreams.section.upstreams.empty",
+      "actions": [
+       {
+        "id": "add",
+        "label": "builtin.upstreams.section.upstreams.action.add",
+        "method": "PUT",
+        "path": "/upstreams/{field.name}",
+        "fields": [
+         {
+          "id": "name",
+          "type": "text",
+          "label": "builtin.upstreams.section.upstreams.action.add.field.name",
+          "required": true,
+          "maxLength": 32
+         },
+         {
+          "id": "address",
+          "type": "text",
+          "label": "builtin.upstreams.section.upstreams.action.add.field.address",
+          "required": true,
+          "maxLength": 255
+         },
+         {
+          "id": "token",
+          "type": "secret",
+          "required": true,
+          "maxLength": 4096,
+          "label": "builtin.upstreams.section.upstreams.action.add.field.token"
+         },
+         {
+          "id": "deviceName",
+          "type": "text",
+          "label": "builtin.upstreams.section.upstreams.action.add.field.devicename",
+          "maxLength": 64,
+          "default": {
+           "const": ""
+          }
+         }
+        ],
+        "body": {
+         "address": {
+          "field": "address"
+         },
+         "token": {
+          "field": "token"
+         },
+         "deviceName": {
+          "field": "deviceName"
+         }
+        },
+        "result": {
+         "title": "builtin.upstreams.section.upstreams.action.add.result.title",
+         "columns": [
+          {
+           "field": "name",
+           "kind": "text",
+           "label": "builtin.upstreams.section.upstreams.action.add.result.column.name"
+          },
+          {
+           "field": "address",
+           "kind": "text",
+           "label": "builtin.upstreams.section.upstreams.action.add.result.column.address"
+          },
+          {
+           "field": "device",
+           "kind": "text",
+           "label": "builtin.upstreams.section.upstreams.action.add.result.column.device"
+          },
+          {
+           "field": "probe",
+           "kind": "multiline",
+           "label": "builtin.upstreams.section.upstreams.action.add.result.column.probe"
+          }
+         ]
+        }
+       }
+      ],
+      "rowActions": [
+       {
+        "id": "remove",
+        "label": "builtin.upstreams.section.upstreams.action.remove",
+        "method": "DELETE",
+        "path": "/upstreams/{row.name}",
+        "confirm": {
+         "title": "builtin.upstreams.section.upstreams.action.remove.confirm.title",
+         "message": "builtin.upstreams.section.upstreams.action.remove.confirm.message",
+         "button": "builtin.upstreams.section.upstreams.action.remove.confirm.button",
+         "destructive": true
+        }
+       }
+      ],
+      "detail": {
+       "title": "name",
+       "sections": [
+        {
+         "kind": "record",
+         "id": "connection",
+         "title": "builtin.upstreams.section.upstreams.detail.section.connection.title",
+         "source": {
+          "path": "/upstreams/{parent.name}/probe"
+         },
+         "columns": [
+          {
+           "field": "state",
+           "kind": "enum",
+           "label": "builtin.upstreams.section.upstreams.detail.section.connection.column.state",
+           "values": {
+            "waiting": "builtin.upstreams.section.upstreams.detail.section.connection.column.state.value.waiting",
+            "notbound": "builtin.upstreams.section.upstreams.detail.section.connection.column.state.value.notbound",
+            "connected": "builtin.upstreams.section.upstreams.detail.section.connection.column.state.value.connected",
+            "unreachable": "builtin.upstreams.section.upstreams.detail.section.connection.column.state.value.unreachable",
+            "token": "builtin.upstreams.section.upstreams.detail.section.connection.column.state.value.token",
+            "other": "builtin.upstreams.section.upstreams.detail.section.connection.column.state.value.other"
+           }
+          },
+          {
+           "field": "probe",
+           "kind": "multiline",
+           "label": "builtin.upstreams.section.upstreams.detail.section.connection.column.probe"
+          },
+          {
+           "field": "device",
+           "kind": "text",
+           "label": "builtin.upstreams.section.upstreams.detail.section.connection.column.device"
+          },
+          {
+           "field": "address",
+           "kind": "text",
+           "label": "builtin.upstreams.section.upstreams.detail.section.connection.column.address"
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "kind": "list",
+      "id": "links",
+      "title": "builtin.upstreams.section.links.title",
+      "source": {
+       "path": "/upstreams",
+       "items": "links"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "label",
+        "kind": "text",
+        "label": "builtin.upstreams.section.links.column.label"
+       },
+       {
+        "field": "place",
+        "kind": "enum",
+        "label": "builtin.upstreams.section.links.column.place",
+        "values": {
+         "project": "builtin.upstreams.section.links.column.place.value.project",
+         "team": "builtin.upstreams.section.links.column.place.value.team"
+        }
+       },
+       {
+        "field": "upstream",
+        "kind": "text",
+        "label": "builtin.upstreams.section.links.column.upstream"
+       },
+       {
+        "field": "remote",
+        "kind": "text",
+        "label": "builtin.upstreams.section.links.column.remote"
+       },
+       {
+        "field": "classesText",
+        "kind": "text",
+        "label": "builtin.upstreams.section.links.column.classestext"
+       },
+       {
+        "field": "pending",
+        "kind": "text",
+        "label": "builtin.upstreams.section.links.column.pending"
+       },
+       {
+        "field": "total",
+        "kind": "text",
+        "label": "builtin.upstreams.section.links.column.total"
+       },
+       {
+        "field": "lastPush",
+        "kind": "time",
+        "label": "builtin.upstreams.section.links.column.lastpush"
+       },
+       {
+        "field": "lastError",
+        "kind": "text",
+        "label": "builtin.upstreams.section.links.column.lasterror"
+       }
+      ],
+      "filter": [
+       "label",
+       "upstream"
+      ],
+      "empty": "builtin.upstreams.section.links.empty",
+      "actions": [
+       {
+        "id": "link-project",
+        "label": "builtin.upstreams.section.links.action.link-project",
+        "method": "PUT",
+        "path": "/upstreams/{field.upstream}/links/{field.target}",
+        "fields": [
+         {
+          "id": "upstream",
+          "type": "ref",
+          "ref": "upstreams",
+          "required": true,
+          "label": "builtin.upstreams.section.links.action.link-project.field.upstream"
+         },
+         {
+          "id": "target",
+          "type": "ref",
+          "ref": "projects",
+          "required": true,
+          "label": "builtin.upstreams.section.links.action.link-project.field.target"
+         },
+         {
+          "id": "remote",
+          "type": "text",
+          "label": "builtin.upstreams.section.links.action.link-project.field.remote",
+          "maxLength": 128,
+          "default": {
+           "const": ""
+          }
+         },
+         {
+          "id": "classes",
+          "type": "choice",
+          "required": true,
+          "options": [
+           {
+            "value": "structure,data",
+            "label": "builtin.upstreams.section.links.action.link-project.field.classes.option.structure-data"
+           },
+           {
+            "value": "structure",
+            "label": "builtin.upstreams.section.links.action.link-project.field.classes.option.structure"
+           },
+           {
+            "value": "data",
+            "label": "builtin.upstreams.section.links.action.link-project.field.classes.option.data"
+           },
+           {
+            "value": "structure,data,private",
+            "label": "builtin.upstreams.section.links.action.link-project.field.classes.option.structure-data-private"
+           }
+          ],
+          "default": {
+           "const": "structure,data"
+          },
+          "label": "builtin.upstreams.section.links.action.link-project.field.classes"
+         },
+         {
+          "id": "withPrivate",
+          "type": "toggle",
+          "default": {
+           "const": false
+          },
+          "label": "builtin.upstreams.section.links.action.link-project.field.withprivate"
+         }
+        ],
+        "body": {
+         "team": {
+          "const": false
+         },
+         "remote": {
+          "field": "remote"
+         },
+         "classes": {
+          "field": "classes"
+         },
+         "withPrivate": {
+          "field": "withPrivate"
+         }
+        }
+       },
+       {
+        "id": "link-team",
+        "label": "builtin.upstreams.section.links.action.link-team",
+        "method": "PUT",
+        "path": "/upstreams/{field.upstream}/links/{field.target}",
+        "fields": [
+         {
+          "id": "upstream",
+          "type": "ref",
+          "ref": "upstreams",
+          "required": true,
+          "label": "builtin.upstreams.section.links.action.link-team.field.upstream"
+         },
+         {
+          "id": "target",
+          "type": "ref",
+          "ref": "teams",
+          "required": true,
+          "label": "builtin.upstreams.section.links.action.link-team.field.target"
+         },
+         {
+          "id": "remote",
+          "type": "text",
+          "label": "builtin.upstreams.section.links.action.link-team.field.remote",
+          "maxLength": 128,
+          "default": {
+           "const": ""
+          }
+         },
+         {
+          "id": "classes",
+          "type": "choice",
+          "required": true,
+          "options": [
+           {
+            "value": "structure,data",
+            "label": "builtin.upstreams.section.links.action.link-team.field.classes.option.structure-data"
+           },
+           {
+            "value": "structure",
+            "label": "builtin.upstreams.section.links.action.link-team.field.classes.option.structure"
+           },
+           {
+            "value": "data",
+            "label": "builtin.upstreams.section.links.action.link-team.field.classes.option.data"
+           },
+           {
+            "value": "structure,data,private",
+            "label": "builtin.upstreams.section.links.action.link-team.field.classes.option.structure-data-private"
+           }
+          ],
+          "default": {
+           "const": "structure,data"
+          },
+          "label": "builtin.upstreams.section.links.action.link-team.field.classes"
+         },
+         {
+          "id": "withPrivate",
+          "type": "toggle",
+          "default": {
+           "const": false
+          },
+          "label": "builtin.upstreams.section.links.action.link-team.field.withprivate"
+         }
+        ],
+        "body": {
+         "team": {
+          "const": true
+         },
+         "remote": {
+          "field": "remote"
+         },
+         "classes": {
+          "field": "classes"
+         },
+         "withPrivate": {
+          "field": "withPrivate"
+         }
+        }
+       }
+      ],
+      "rowActions": [
+       {
+        "id": "dry",
+        "label": "builtin.upstreams.section.links.action.dry",
+        "method": "POST",
+        "path": "/upstream-push",
+        "body": {
+         "upstream": {
+          "row": "upstream"
+         },
+         "project": {
+          "row": "projectId"
+         },
+         "team": {
+          "row": "teamId"
+         },
+         "dryRun": {
+          "const": true
+         }
+        },
+        "result": {
+         "items": "pushes",
+         "title": "builtin.upstreams.section.links.action.dry.result.title",
+         "columns": [
+          {
+           "field": "label",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.dry.result.column.label"
+          },
+          {
+           "field": "upstream",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.dry.result.column.upstream"
+          },
+          {
+           "field": "created",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.dry.result.column.created"
+          },
+          {
+           "field": "skipped",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.dry.result.column.skipped"
+          },
+          {
+           "field": "replaced",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.dry.result.column.replaced"
+          },
+          {
+           "field": "refused",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.dry.result.column.refused"
+          },
+          {
+           "field": "dryRun",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.links.action.dry.result.column.dryrun",
+           "yes": "builtin.upstreams.section.links.action.dry.result.column.dryrun.yes",
+           "no": "builtin.upstreams.section.links.action.dry.result.column.dryrun.no"
+          },
+          {
+           "field": "stopped",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.dry.result.column.stopped"
+          },
+          {
+           "field": "more",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.links.action.dry.result.column.more",
+           "yes": "builtin.upstreams.section.links.action.dry.result.column.more.yes",
+           "no": "builtin.upstreams.section.links.action.dry.result.column.more.no"
+          },
+          {
+           "field": "linesText",
+           "kind": "multiline",
+           "label": "builtin.upstreams.section.links.action.dry.result.column.linestext"
+          }
+         ]
+        }
+       },
+       {
+        "id": "push",
+        "label": "builtin.upstreams.section.links.action.push",
+        "method": "POST",
+        "path": "/upstream-push",
+        "body": {
+         "upstream": {
+          "row": "upstream"
+         },
+         "project": {
+          "row": "projectId"
+         },
+         "team": {
+          "row": "teamId"
+         },
+         "dryRun": {
+          "const": false
+         }
+        },
+        "result": {
+         "items": "pushes",
+         "title": "builtin.upstreams.section.links.action.push.result.title",
+         "columns": [
+          {
+           "field": "label",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.push.result.column.label"
+          },
+          {
+           "field": "upstream",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.push.result.column.upstream"
+          },
+          {
+           "field": "created",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.push.result.column.created"
+          },
+          {
+           "field": "skipped",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.push.result.column.skipped"
+          },
+          {
+           "field": "replaced",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.push.result.column.replaced"
+          },
+          {
+           "field": "refused",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.push.result.column.refused"
+          },
+          {
+           "field": "dryRun",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.links.action.push.result.column.dryrun",
+           "yes": "builtin.upstreams.section.links.action.push.result.column.dryrun.yes",
+           "no": "builtin.upstreams.section.links.action.push.result.column.dryrun.no"
+          },
+          {
+           "field": "stopped",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.action.push.result.column.stopped"
+          },
+          {
+           "field": "more",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.links.action.push.result.column.more",
+           "yes": "builtin.upstreams.section.links.action.push.result.column.more.yes",
+           "no": "builtin.upstreams.section.links.action.push.result.column.more.no"
+          },
+          {
+           "field": "linesText",
+           "kind": "multiline",
+           "label": "builtin.upstreams.section.links.action.push.result.column.linestext"
+          }
+         ]
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.push.confirm.title",
+         "message": "builtin.upstreams.section.links.action.push.confirm.message",
+         "button": "builtin.upstreams.section.links.action.push.confirm.button"
+        }
+       },
+       {
+        "id": "unlink",
+        "label": "builtin.upstreams.section.links.action.unlink",
+        "method": "DELETE",
+        "path": "/upstreams/{row.upstream}/links/{row.linkId}",
+        "query": "team={row.team}",
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.unlink.confirm.title",
+         "message": "builtin.upstreams.section.links.action.unlink.confirm.message",
+         "button": "builtin.upstreams.section.links.action.unlink.confirm.button",
+         "destructive": true
+        }
+       }
+      ]
+     }
+    ]
+   }
   }
  ]
 }

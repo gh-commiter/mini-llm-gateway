@@ -84,10 +84,21 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		for _, u := range us {
 			out = append(out, upstreamJSON{u.Name, u.Address, h.Info(u.Name).Device})
 		}
-		if ls == nil {
-			ls = []core.UpstreamLinkInfo{}
+		rows := []adminLinkJSON{}
+		for _, l := range ls {
+			rows = append(rows, toAdminLink(l))
 		}
-		return 200, map[string]any{"upstreams": out, "links": ls}, true
+		return 200, map[string]any{"upstreams": out, "links": rows}, true
+	case method == "GET" && len(seg) == 3 && seg[2] == "probe":
+		// An explicit check by the owner (the page asks when its detail view opens): the first contact of an ordinary client, as `add` makes
+		// it. Nothing is written. `state` is a code a panel can name; `probe` is the text of the CLI.
+		u, err := st.GetUpstream(ctx, seg[1])
+		if err != nil {
+			return failErr(err)
+		}
+		info := h.Info(u.Name)
+		text := ProbeUpstream(ctx, h, u.Name, "this gateway", info.Device)
+		return 200, map[string]any{"name": u.Name, "address": u.Address, "device": info.Device, "state": probeState(text), "probe": text}, true
 	case method == "PUT" && len(seg) == 2:
 		var b struct {
 			Address    string `json:"address"`
@@ -162,6 +173,15 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		if b.Team {
 			project, team = 0, id
 		}
+		if method == "DELETE" && len(body) == 0 && q.Get("team") == "true" { // a DELETE has no body in a panel: ?team=true names a team's link
+			b.Team = true
+		}
+		if b.Team {
+			project, team = 0, id
+		}
+		if method == "PUT" && b.Remote == "" { // the same name there, as the CLI does it (a form leaves it empty to mean that)
+			b.Remote = a.localName(ctx, st, id, b.Team)
+		}
 		var err error
 		if method == "PUT" {
 			err = st.LinkUpstream(ctx, project, team, seg[1], b.Remote, b.Classes, b.WithPrivate)
@@ -216,7 +236,11 @@ func (a *API) adminUpstreamPush(ctx context.Context, st *core.Store, method stri
 	if err != nil {
 		return failErr(err)
 	}
-	return 200, map[string]any{"pushes": res}, true
+	rows := []adminPushJSON{}
+	for _, r := range res {
+		rows = append(rows, adminPushJSON{r, strings.Join(r.Lines, "\n")})
+	}
+	return 200, map[string]any{"pushes": rows}, true
 }
 
 func shortID(id string) string {
@@ -258,4 +282,74 @@ func ProbeUpstream(ctx context.Context, h UpstreamHost, upstream, deviceName, de
 		return "the device is allowed there; the upstream says: " + core.UpText(e.Error.Message, 200)
 	}
 	return "the upstream answered HTTP " + strconv.Itoa(status)
+}
+
+// adminLinkJSON is a link as the owner's list shows it, plus what a panel would otherwise have to derive: a unique id, the kind of place
+// (project or team), the id to name the link in a path (a project id, or a TEAM id: not the hidden segment) and the same split as two
+// numbers for a push body, and the classes as text. The stored fields stay as they were (the CLI reads them).
+type adminLinkJSON struct {
+	core.UpstreamLinkInfo
+	ID          string `json:"id"`
+	Place       string `json:"place"`
+	LinkID      int64  `json:"linkId"`
+	ProjectID   int64  `json:"projectId"`
+	TeamID      int64  `json:"teamId"`
+	ClassesText string `json:"classesText"`
+}
+
+func toAdminLink(l core.UpstreamLinkInfo) adminLinkJSON {
+	j := adminLinkJSON{UpstreamLinkInfo: l, Place: "project", LinkID: l.Project, ProjectID: l.Project}
+	if team, ok := core.SegmentTeam(l.Project); ok && l.Team {
+		j.Place, j.LinkID, j.ProjectID, j.TeamID = "team", team, 0, team
+	}
+	j.ID = j.Place + "-" + strconv.FormatInt(j.LinkID, 10) + "-" + l.Upstream
+	var cs []string
+	for _, c := range l.Classes {
+		cs = append(cs, string(c))
+	}
+	j.ClassesText = strings.Join(cs, ", ")
+	return j
+}
+
+// adminPushJSON is a push report with its lines as one text (a panel shows a text block, not a list of strings).
+type adminPushJSON struct {
+	core.UpstreamPush
+	LinesText string `json:"linesText"`
+}
+
+// probeState names what ProbeUpstream said: unreachable, token (refused), waiting (for approval), notbound, connected or other.
+func probeState(text string) string {
+	switch {
+	case strings.HasPrefix(text, "the upstream did not answer"):
+		return "unreachable"
+	case strings.HasPrefix(text, "the upstream refused the token"):
+		return "token"
+	case strings.HasPrefix(text, "waiting for approval"):
+		return "waiting"
+	case strings.HasPrefix(text, "the device is allowed there, but not bound"):
+		return "notbound"
+	case strings.HasPrefix(text, "connected:"):
+		return "connected"
+	}
+	return "other"
+}
+
+// localName is the short name of a project, or the name of a team: what a link names on the upstream when the owner gives no other.
+func (a *API) localName(ctx context.Context, st *core.Store, id int64, team bool) string {
+	if team {
+		ts, _ := st.AdminListTeams(ctx)
+		for _, t := range ts {
+			if t.ID == id {
+				return t.Name
+			}
+		}
+		return ""
+	}
+	ps, _ := st.AdminListProjects(ctx)
+	for _, p := range ps {
+		if p.ID == id {
+			return p.Slug
+		}
+	}
+	return ""
 }

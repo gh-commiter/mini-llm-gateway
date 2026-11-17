@@ -1,5 +1,14 @@
 # Release notes
 
+## Unreleased
+
+### New
+- A panel **Upstream gateways** in the Mac Settings window and on the settings page of `minigw serve`: add an upstream (its token goes in a password field and is never shown again), see the device ID to approve there and what the upstream says, link projects and teams, run a dry run or push by hand (a push asks first and says what leaves), unlink and remove (both ask first). Nothing is sent automatically.
+- Panel format: a field type `secret` (a password field whose value goes only in the body of a route that the provider registered as taking a secret, is cleared after every send and is never repeated in an error) and an action `result` (the answer shown after it succeeded). The admin API answers carry the extra fields a panel needs: `GET /upstreams/{name}/probe` (checks the connection when asked), link ids and class text, `?team=true` on a link's DELETE, `linesText` in a push report, and an empty `remote` on a link means the same name.
+
+### Known problems
+- The Upstream gateways panel has only been tried through tests, not in a real window or browser. Opening an upstream's detail page contacts it (the check runs when the page opens). On the Mac, the routes answer 501 until the app answers the helper's callouts (a generic "the gateway reported an error" in the panel).
+
 ## 0.7.22
 
 ### Fixed
