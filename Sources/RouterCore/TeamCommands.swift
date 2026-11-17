@@ -36,8 +36,8 @@ extension AdminCommands {
             try request("PATCH", "/teams/\(try teamID(pos[2]))", ["name": pos[3]])
         case ("path", 4):  // "-" clears the label
             try request("PATCH", "/teams/\(try teamID(pos[2]))", ["path": pos[3] == "-" ? "" : pos[3]])
-        case ("archive", 3):
-            try request("PATCH", "/teams/\(try teamID(pos[2]))", ["archived": true])
+        case ("archive", 3), ("unarchive", 3):
+            try request("PATCH", "/teams/\(try teamID(pos[2]))", ["archived": pos[1] == "archive"])
         case ("member", 5), ("project", 5):
             guard pos[2] == "add" || pos[2] == "remove" else { throw usage }
             let tid = try teamID(pos[3])

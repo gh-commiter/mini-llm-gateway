@@ -36,7 +36,7 @@ public final class AdminCommands {
           minigw gw project remote list <project> | add <project> <url> | remove <project> <url>   git remotes registered for a project
           minigw gw project depends list <project> | add <project> <other> | remove <project> <other>   <project> depends on <other>: its members' search also covers <other> as far as they may read it
           minigw gw project depends add|remove <project> --team <team>   the same for a team's notes: only for members of that team (list shows teams too)
-          minigw gw team add <name> | list | rename <team> <name> | archive <team>
+          minigw gw team add <name> | list | rename <team> <name> | archive <team> | unarchive <team>
           minigw gw team path <team> <label>                    free-text path label of a team ("-" clears it)
           minigw gw team member add|remove <team> <user>
           minigw gw team project add|remove <team> <project>

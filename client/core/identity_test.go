@@ -274,7 +274,7 @@ func TestProjectRemotesAuthorization(t *testing.T) {
 		many = append(many, "git@host.example:o/r"+string(rune('a'+i)))
 	}
 	_, err = f.ChangeProjectRemotes(ctx, f.p("fani"), project, many, nil)
-	is(t, err, ErrInvalid{"remotes: at most 8 per project"})
+	is(t, err, ErrRefusal{"a project can have at most 8 git remotes"})
 	if got, _ = f.ProjectRemotes(ctx, f.p("fani"), project); len(got) != 1 {
 		t.Fatal("limit failure was not atomic", got)
 	}

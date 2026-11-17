@@ -182,7 +182,7 @@ func applyRemotes(tx *sql.Tx, project int64, add, remove []string) (current []st
 		return nil, nil, err
 	}
 	if len(current) > maxRemotes {
-		return nil, nil, ErrInvalid{"remotes: at most 8 per project"}
+		return nil, nil, ErrRefusal{"a project can have at most 8 git remotes"}
 	}
 	return current, map[string]any{"project": project, "add": adds, "remove": removes}, nil
 }

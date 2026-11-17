@@ -109,8 +109,8 @@ func teamAdmin(a *adminClient, pos []string) {
 			label = ""
 		}
 		a.do("PATCH", fmt.Sprintf("/teams/%d", teamID(a, pos[2])), map[string]any{"path": label}, nil)
-	case pos[1] == "archive" && len(pos) == 3:
-		a.do("PATCH", fmt.Sprintf("/teams/%d", teamID(a, pos[2])), map[string]any{"archived": true}, nil)
+	case (pos[1] == "archive" || pos[1] == "unarchive") && len(pos) == 3:
+		a.do("PATCH", fmt.Sprintf("/teams/%d", teamID(a, pos[2])), map[string]any{"archived": pos[1] == "archive"}, nil)
 	case (pos[1] == "member" || pos[1] == "project") && len(pos) == 5 && (pos[2] == "add" || pos[2] == "remove"):
 		tid := teamID(a, pos[3])
 		var id int64

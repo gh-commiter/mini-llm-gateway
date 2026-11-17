@@ -122,7 +122,7 @@ func (s *Store) SetTeamAssignment(ctx context.Context, team, project, user int64
 			return "", e
 		}
 		if n != 1 {
-			return "", ErrInvalid{"assignment requires active team, team project and team member"}
+			return "", ErrRefusal{"an assignment needs an active team, a project of that team and a member of that team"}
 		}
 		if _, e := tx.Exec(`INSERT INTO team_assignments(team_id,project_id,user_id,role) VALUES(?,?,?,?) ON CONFLICT(team_id,project_id,user_id) DO UPDATE SET role=excluded.role`, team, project, user, role); e != nil {
 			return "", e

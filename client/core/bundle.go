@@ -136,7 +136,7 @@ func (s *Store) ExportBundle(ctx context.Context, in BundleExport) error {
 			return notFound(err)
 		}
 		if archived {
-			return ErrInvalid{"archived team"}
+			return ErrRefusal{"team " + m.Team + " is archived: unarchive it before the export"}
 		}
 		wanted := map[string]bool{}
 		for _, slug := range in.Projects {

@@ -5,6 +5,12 @@
 ### New
 - A project can depend on a team: `minigw gw project depends add <project> --team <team>` (`remove` likewise; `list` shows teams too, and the Teams and projects pane has a "Depends on teams" list). The people of the project who are on the team's roster then also find the team's notes when they search the project (`from team:<name>`) and can open them with `minigw note read`; for everyone else nothing changes. It is a search hint, never a permission, and an agent run gets nothing from it. The cap of 16 counts both kinds; an archived team gives nothing; the project's own team is refused. A team dependency is not carried by a bundle (export/import). Database schema 18.
 
+### Fixed
+- `minigw gw status` shows a provider that is switched off in the settings as "disabled" (it said "models loading" for ever), and `minigw gw provider list` marks it `(disabled)`; the Mac commands do the same.
+- `minigw gw team unarchive <team>` exists on both gateways (the API and the pane could already do it). Every archive pair (projects, teams) and activate pair (users) now has both commands in both command sets.
+- A project of an archived team can be moved: adding it to another team now says which team holds it (and that it is archived) and how to release it (`minigw gw team project remove <team> <project>`, which works on an archived team). Adding to an archived team says which team and how to unarchive it.
+- Refusals that are sentences no longer read "invalid ..." in front: team, project, user, grant, remote and dependency refusals ("a team with this name already exists", "a project cannot depend on itself", ...), also in the API answers.
+
 ## 0.7.19
 
 ### Fixed

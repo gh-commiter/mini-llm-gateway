@@ -35,7 +35,7 @@ CREATE TRIGGER segment_no_team_depends_upd BEFORE UPDATE OF project_id ON projec
 
 func (s *Store) AddDepends(ctx context.Context, project, other int64) error {
 	if project == other {
-		return ErrInvalid{"depends: a project cannot depend on itself"}
+		return ErrRefusal{"a project cannot depend on itself"}
 	}
 	return s.adminWrite(ctx, "project.depends.add", strconv.FormatInt(project, 10), map[string]any{"depends_on": other}, func(tx *sql.Tx) (string, error) {
 		for _, id := range []int64{project, other} {
@@ -51,7 +51,7 @@ func (s *Store) AddDepends(ctx context.Context, project, other int64) error {
 			return "", e
 		}
 		if n >= maxDepends {
-			return "", ErrInvalid{"depends: at most 16"}
+			return "", ErrRefusal{"a project can have at most 16 dependencies (projects and teams together)"}
 		}
 		_, e := tx.Exec(`INSERT OR IGNORE INTO project_depends(project_id,depends_on) VALUES(?,?)`, project, other)
 		return "", e
@@ -159,7 +159,7 @@ func (s *Store) AddTeamDepends(ctx context.Context, project, team int64) error {
 			return "", e
 		}
 		if n >= maxDepends {
-			return "", ErrInvalid{"depends: at most 16"}
+			return "", ErrRefusal{"a project can have at most 16 dependencies (projects and teams together)"}
 		}
 		_, e := tx.Exec(`INSERT OR IGNORE INTO project_team_depends(project_id,team_id) VALUES(?,?)`, project, team)
 		return "", e

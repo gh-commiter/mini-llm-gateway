@@ -256,7 +256,7 @@ func routerCommand(_ argv: [String]) {
         if let why = st["copilot"] as? String { say(clean("Copilot is off: " + why)) }  // #81
         for g in st["gateways"] as? [[String: Any]] ?? [] {
             let n = (g["models"] as? [String]).map { String($0.count) } ?? "all"
-            let ready = g["enabled"] as? Bool == false ? ", off" : AdminCommands.gatewayReadyText(ready: g["ready"] as? Bool == true, state: g["state"] as? String ?? "", reason: g["reason"] as? String ?? "")
+            let ready = g["enabled"] as? Bool == false ? ", disabled" : AdminCommands.gatewayReadyText(ready: g["ready"] as? Bool == true, state: g["state"] as? String ?? "", reason: g["reason"] as? String ?? "")
             say(clean("provider \(g["name"] as? String ?? ""): \(g["baseURL"] as? String ?? ""), models enabled: \(n)\(ready)"))
         }
 
@@ -359,7 +359,8 @@ func routerCommand(_ argv: [String]) {
             let list = a.call("GET", "/gateways")["gateways"] as? [[String: Any]] ?? []
             for g in list {
                 let n = (g["models"] as? [String]).map { String($0.count) } ?? "all"
-                say(clean("\(g["name"] as? String ?? "")  \(g["baseURL"] as? String ?? "")  models enabled: \(n)"))
+                let off = g["enabled"] as? Bool == false ? "  (disabled)" : ""
+                say(clean("\(g["name"] as? String ?? "")  \(g["baseURL"] as? String ?? "")  models enabled: \(n)\(off)"))
             }
             if list.isEmpty { say("no providers (add one with: minigw gw provider add <name> <baseURL>)") }
         case "tools":

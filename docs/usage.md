@@ -595,6 +595,10 @@ minigw team list
 minigw team show Engineering
 ```
 
+`minigw gw team archive <team>` and `unarchive <team>` switch a team off and on. To move a project to another team, remove it from
+its team first (`minigw gw team project remove <team> <project>`, also for an archived team); adding a project that another team
+still holds is refused and names that team.
+
 To copy one team and its knowledge to another gateway, the owner runs these commands on the gateway
 computer, with the gateway running (the same commands work on Windows, Linux, and the Mac app):
 

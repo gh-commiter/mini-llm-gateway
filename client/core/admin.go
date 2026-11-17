@@ -103,7 +103,7 @@ func (s *Store) CreateUser(ctx context.Context, name string) (u User, err error)
 		r, err := tx.Exec(`INSERT INTO users(name) VALUES(?)`, name)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE") {
-				return "", ErrInvalid{"name already used"}
+				return "", ErrRefusal{"a user with this name already exists"}
 			}
 			return "", err
 		}
@@ -121,7 +121,7 @@ func (s *Store) RenameUser(ctx context.Context, id int64, name string) error {
 	return s.adminWrite(ctx, "user.rename", strconv.FormatInt(id, 10), nil, func(tx *sql.Tx) (string, error) {
 		r, err := tx.Exec(`UPDATE users SET name=? WHERE id=?`, name, id)
 		if err != nil && strings.Contains(err.Error(), "UNIQUE") {
-			return "", ErrInvalid{"name already used"}
+			return "", ErrRefusal{"a user with this name already exists"}
 		}
 		return "", countOne(r, err)
 	})
@@ -265,7 +265,7 @@ func (s *Store) CreateProject(ctx context.Context, slug, name string) (p Project
 			return "", err
 		}
 		if n > 0 {
-			return "", ErrInvalid{"slug already used"}
+			return "", ErrRefusal{"a project with this short name already exists"}
 		}
 		id, err := s.NextProjectID(tx)
 		if err != nil {
@@ -333,7 +333,7 @@ func (s *Store) RemoveMember(ctx context.Context, projectID, userID int64) error
 			if errors.Is(err, ErrNotFound) {
 				var team, project, user string
 				if tx.QueryRow(`SELECT t.name,p.slug,u.name FROM team_assignments a JOIN teams t ON t.id=a.team_id JOIN projects p ON p.id=a.project_id JOIN users u ON u.id=a.user_id WHERE a.project_id=? AND a.user_id=? ORDER BY a.team_id LIMIT 1`, projectID, userID).Scan(&team, &project, &user) == nil {
-					return "", ErrInvalid{"no direct role; team access: minigw gw team access remove " + team + " " + project + " " + user}
+					return "", ErrRefusal{"no direct role; team access: minigw gw team access remove " + team + " " + project + " " + user}
 				}
 			}
 			return "", err
@@ -377,7 +377,7 @@ func (s *Store) AddGrant(ctx context.Context, source, reader int64, class Class)
 		return ErrInvalid{"class"}
 	}
 	if source == reader {
-		return ErrInvalid{"grant to the same project"}
+		return ErrRefusal{"a project cannot be granted to itself"}
 	}
 	return s.adminWrite(ctx, "grant.add", strconv.FormatInt(source, 10), map[string]any{"reader": reader, "class": class}, func(tx *sql.Tx) (string, error) {
 		if err := existsProject(tx, source); err != nil {

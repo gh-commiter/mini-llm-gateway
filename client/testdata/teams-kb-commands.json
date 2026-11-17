@@ -133,6 +133,44 @@
       }
     },
     {
+      "name": "owner unarchive",
+      "args": [
+        "team",
+        "unarchive",
+        "old"
+      ],
+      "opts": {},
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"Engineering\"},{\"id\":2,\"name\":\"Old\",\"archived\":true}]}"
+        },
+        {
+          "match": "PATCH /teams/2",
+          "status": 200,
+          "body": "{}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "PATCH",
+            "/teams/2",
+            "{\"archived\":false}"
+          ]
+        ]
+      }
+    },
+    {
       "name": "owner member add",
       "args": [
         "team",

@@ -53,7 +53,7 @@ func (s *Store) CreateTeam(ctx context.Context, name string) (t Team, err error)
 }
 func teamUnique(err error) error {
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
-		return ErrInvalid{"name or project already used"}
+		return ErrRefusal{"a team with this name already exists"}
 	}
 	return err
 }
@@ -209,12 +209,13 @@ func (s *Store) changeTeamEntry(ctx context.Context, id, target int64, project, 
 	}
 	return s.adminWrite(ctx, "team."+kind+"."+op, strconv.FormatInt(id, 10), map[string]any{kind: target}, func(tx *sql.Tx) (string, error) {
 		var archived bool
-		if e := tx.QueryRow(`SELECT archived FROM teams WHERE id=?`, id).Scan(&archived); e != nil {
+		var team string
+		if e := tx.QueryRow(`SELECT archived,name FROM teams WHERE id=?`, id).Scan(&archived, &team); e != nil {
 			return "", notFound(e)
 		}
 		if add {
 			if archived {
-				return "", ErrInvalid{"team archived"}
+				return "", ErrRefusal{"team " + team + " is archived: unarchive it first (minigw gw team unarchive " + team + ")"}
 			}
 			var e error
 			if project {
@@ -224,6 +225,21 @@ func (s *Store) changeTeamEntry(ctx context.Context, id, target int64, project, 
 			}
 			if e != nil {
 				return "", e
+			}
+			if project { // a project is in at most one team: name the team that holds it (also when that team is archived)
+				var holder, slug string
+				var holderArchived bool
+				switch e = tx.QueryRow(`SELECT t.name,t.archived,p.slug FROM team_projects tp JOIN teams t ON t.id=tp.team_id JOIN projects p ON p.id=tp.project_id WHERE tp.project_id=? AND tp.team_id<>?`, target, id).Scan(&holder, &holderArchived, &slug); e {
+				case nil:
+					why := "team " + holder
+					if holderArchived {
+						why += " (archived)"
+					}
+					return "", ErrRefusal{"project " + slug + " is already in " + why + ": remove it there first (minigw gw team project remove " + holder + " " + slug + ")"}
+				case sql.ErrNoRows:
+				default:
+					return "", e
+				}
 			}
 			_, e = tx.Exec(`INSERT INTO `+table+`(team_id,`+column+`) VALUES(?,?) ON CONFLICT(team_id,`+column+`) DO NOTHING`, id, target)
 			return "", teamUnique(e)

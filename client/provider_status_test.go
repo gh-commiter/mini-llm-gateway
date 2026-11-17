@@ -81,3 +81,25 @@ func TestFailedModelLoadIsLoggedAndShown(t *testing.T) {
 		t.Fatalf("%q", line)
 	}
 }
+
+// A provider switched off in the settings says "disabled" in the status (never "loading", never "see the log") and is marked in the
+// list; one that is on keeps its load state. The Mac commands print the same words (RouterCommand.swift).
+func TestDisabledProviderIsShownAsDisabled(t *testing.T) {
+	off := apiGateway{Name: "x", Enabled: false, State: "loading"}
+	if got := providerStatusEnd(off, true); got != ", disabled" {
+		t.Fatal(got)
+	}
+	if got := providerStatusEnd(off, false); got != ", disabled" {
+		t.Fatal(got)
+	}
+	on := apiGateway{Name: "x", Enabled: true, State: "loading"}
+	if got := providerStatusEnd(on, true); got != ", models loading (not loaded yet)" {
+		t.Fatal(got)
+	}
+	if got := providerStatusEnd(on, false); got != "" {
+		t.Fatal(got)
+	}
+	if providerListMark(off) != "  (disabled)" || providerListMark(on) != "" {
+		t.Fatal(providerListMark(off), providerListMark(on))
+	}
+}

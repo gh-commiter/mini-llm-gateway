@@ -949,7 +949,7 @@ func TestSlugGrammar(t *testing.T) {
 		}
 	}
 	_, err := f.CreateProject(ctx, "fakture", "dup")
-	is(t, err, ErrInvalid{"slug already used"})
+	is(t, err, ErrRefusal{"a project with this short name already exists"})
 	// lookup by id and by slug give the same project
 	a, _ := f.GetProject(ctx, f.p("ana"), "fakture")
 	b, err := f.GetProject(ctx, f.p("ana"), fmt.Sprint(a.ID))
@@ -998,14 +998,14 @@ func TestConcurrentCreatesRespectNoteLimit(t *testing.T) {
 func TestAdminValidationAndAudit(t *testing.T) {
 	f := newFx(t)
 	_, err := f.CreateUser(ctx, "ANA") // names are unique, case-insensitive
-	is(t, err, ErrInvalid{"name already used"})
+	is(t, err, ErrRefusal{"a user with this name already exists"})
 	_, err = f.CreateUser(ctx, " ")
 	is(t, err, ErrInvalid{"name"})
 	is(t, f.SetBinding(ctx, "d", 999), ErrNotFound)
 	is(t, f.RemoveBinding(ctx, "nope"), ErrNotFound)
 	is(t, f.SetMember(ctx, f.pid["fakture"], f.uid["ana"], "boss"), ErrInvalid{"role"})
 	is(t, f.AddGrant(ctx, f.pid["fakture"], f.pid["eureko"], Private), ErrInvalid{"class"})
-	is(t, f.AddGrant(ctx, f.pid["fakture"], f.pid["fakture"], Data), ErrInvalid{"grant to the same project"})
+	is(t, f.AddGrant(ctx, f.pid["fakture"], f.pid["fakture"], Data), ErrRefusal{"a project cannot be granted to itself"})
 	is(t, f.SetProjectArchived(ctx, 9999, true), ErrNotFound)
 	ev, _ := f.AuditEvents(ctx, 0, 500)
 	seen := map[string]bool{}

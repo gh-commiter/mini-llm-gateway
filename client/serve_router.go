@@ -395,11 +395,7 @@ func routerCommand(args []string, in io.Reader) {
 			if g.Models != nil {
 				n = strconv.Itoa(len(g.Models))
 			}
-			ready := ""
-			if st.Running {
-				ready = gatewayReadyText(g.Ready, g.State, g.Reason)
-			}
-			say(clean(fmt.Sprintf("provider %s: %s, models enabled: %s%s", g.Name, g.BaseURL, n, ready)))
+			say(clean(fmt.Sprintf("provider %s: %s, models enabled: %s%s", g.Name, g.BaseURL, n, providerStatusEnd(g, st.Running))))
 		}
 
 	case "devices":
@@ -576,7 +572,7 @@ func routerCommand(args []string, in io.Reader) {
 				if g.Models != nil {
 					n = strconv.Itoa(len(g.Models))
 				}
-				say(clean(fmt.Sprintf("%s  %s  models enabled: %s", g.Name, g.BaseURL, n)))
+				say(clean(fmt.Sprintf("%s  %s  models enabled: %s%s", g.Name, g.BaseURL, n, providerListMark(g))))
 			}
 			if len(r.Gateways) == 0 {
 				say("no providers (add one with: minigw gw provider add <name> <baseURL>)")
@@ -983,6 +979,25 @@ func scratchOthersLine(o []scratchSibling) string {
 		return "none"
 	}
 	return strings.Join(l, ", ")
+}
+
+// providerStatusEnd: a provider switched off in the settings is never loaded, so it is "disabled", not "loading".
+func providerStatusEnd(g apiGateway, running bool) string {
+	switch {
+	case !g.Enabled:
+		return ", disabled"
+	case running:
+		return gatewayReadyText(g.Ready, g.State, g.Reason)
+	}
+	return ""
+}
+
+// providerListMark: the marker `gw provider list` puts after a disabled provider (the Mac list does the same).
+func providerListMark(g apiGateway) string {
+	if !g.Enabled {
+		return "  (disabled)"
+	}
+	return ""
 }
 
 // gatewayReadyText: the end of a provider's status line. Still loading is not a failure: the list is fetched in the

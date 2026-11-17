@@ -34,7 +34,7 @@ func (f *fx) needle(user, project string) []SearchHit {
 func TestDependsAdmin(t *testing.T) {
 	f := newFx(t)
 	a, b := f.pid["fakture"], f.pid["eureko"]
-	is(t, f.AddDepends(ctx, a, a), ErrInvalid{"depends: a project cannot depend on itself"})
+	is(t, f.AddDepends(ctx, a, a), ErrRefusal{"a project cannot depend on itself"})
 	f.ok(f.AddDepends(ctx, a, b))
 	f.ok(f.AddDepends(ctx, a, b)) // twice: a no-op
 	f.ok(f.AddDepends(ctx, b, a)) // a cycle is allowed
@@ -53,7 +53,7 @@ func TestDependsAdmin(t *testing.T) {
 		if i < maxDepends-1 {
 			f.ok(f.AddDepends(ctx, a, p.ID))
 		} else {
-			is(t, f.AddDepends(ctx, a, p.ID), ErrInvalid{"depends: at most 16"})
+			is(t, f.AddDepends(ctx, a, p.ID), ErrRefusal{"a project can have at most 16 dependencies (projects and teams together)"})
 		}
 	}
 	// archived: add refused, remove allowed
