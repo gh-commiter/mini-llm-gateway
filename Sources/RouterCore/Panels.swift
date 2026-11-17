@@ -434,6 +434,13 @@ public enum PanelTemplate {
         return v.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"))
     }
 
+    /// A paging cursor is a query VALUE, not a path segment: any text without control characters, percent-encoded (so a "/", "?",
+    /// "&" or ".." in it is data); nil when empty, over 512 characters or with a control character.
+    public static func encodeQuery(_ v: String) -> String? {
+        guard !v.isEmpty, v.unicodeScalars.count <= 512, !PanelValidator.hasControl(v) else { return nil }
+        return v.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"))
+    }
+
     /// The values the placeholders take: `row` (the list's row), `parent` (the row of the opened detail page), `field` (the form).
     public struct Values: Sendable {
         public var row: [String: PanelJSON] = [:], parent: [String: PanelJSON] = [:], field: [String: PanelJSON] = [:]

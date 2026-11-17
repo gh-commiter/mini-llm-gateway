@@ -14,6 +14,8 @@ public enum PanelError: Error, Equatable, Sendable {
     case needsNewer           // the answer's format is above 1
     case server(String)       // the server's error.message, verbatim
     case http(Int)            // an error without a message
+    case serverFault(Int)     // a 5xx answer: its text may hold internals (SQL, I/O), so only the status is shown; the detail is in the gateway log
+    case cannotShow(String)   // the data cannot be shown as it is (rows without a unique key)
     case refused(String)      // this renderer did not send the request (a value that cannot be in a path, a missing confirmation …)
 }
 
@@ -23,6 +25,7 @@ extension CoreResponse {
         if (200..<300).contains(status) { return nil }
         let e = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["error"] as? [String: Any]
         if self == .unavailable || (status == 503 && e?["type"] as? String == "core_unavailable") { return .unavailable }
+        if status >= 500 { return .serverFault(status) }
         if let m = e?["message"] as? String, !m.isEmpty { return .server(m) }
         return .http(status)
     }
@@ -132,6 +135,8 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     @Published public private(set) var lists: [PanelListKey: PanelListData] = [:]
     @Published public private(set) var actionError: [PanelListKey: PanelError] = [:]
     @Published public private(set) var loading = false
+    /// Lists with an action in flight: a second trigger meanwhile is ignored (two quick clicks send once).
+    @Published public private(set) var sending: Set<PanelListKey> = []
     private var opened: [PanelListKey: (PanelSection, PanelRow)] = [:]  // detail pages that are open: reloaded with the panel
 
     /// `routes`: what the panel's provider registered, taken from the registry by the id the answer of GET /panels names.
@@ -184,7 +189,8 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         }
         req.path = p
         if more {
-            guard let paging = s.paging, let n = d.next, let e = PanelTemplate.encode(n) else { return }
+            guard let paging = s.paging, let n = d.next else { return }
+            guard let e = PanelTemplate.encodeQuery(n) else { d.error = .refused("the paging cursor cannot be sent"); lists[key] = d; return }
             req.query = "\(paging.param)=\(e)"
         }
         d.loading = true; lists[key] = d
@@ -194,8 +200,12 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         guard let items = Self.items(a.body, source.items) else { d.error = .refused("the answer has no \(source.items)"); lists[key] = d; return }
         d.error = nil
         let k = s.key ?? ""
-        let base = more ? d.rows.count : 0
-        let rows = items.enumerated().map { PanelRow(id: $1[k]?.scalarText ?? "#\(base + $0)", values: $1) }
+        let ids = items.map { $0[k]?.scalarText }
+        let all = (more ? d.rows.map(\.id) : []) + ids.compactMap { $0 }
+        guard !ids.contains(where: { $0 == nil }), Set(all).count == all.count else {  // a row without a key, or two with the same: never guessed
+            d.error = .cannotShow("the rows of \(s.id) have no unique \(k)"); d.rows = []; d.next = nil; lists[key] = d; return
+        }
+        let rows = zip(ids, items).map { PanelRow(id: $0!, values: $1) }
         d.rows = more ? d.rows + rows : rows
         d.next = nil
         if let paging = s.paging, case .object(let top)? = try? JSONDecoder().decode(PanelJSON.self, from: a.body),
@@ -353,6 +363,9 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     @discardableResult
     public func perform(_ a: PanelAction, section path: String, row: PanelRow? = nil, parent: PanelRow? = nil, values: [String: PanelJSON] = [:], confirmed: Bool = false) async -> Bool {
         let key = PanelListKey(path: path, parent: parent?.id ?? "")
+        guard !sending.contains(key) else { return false }
+        sending.insert(key)
+        defer { sending.remove(key) }
         actionError[key] = nil
         if a.needsConfirmation && !confirmed { actionError[key] = .refused("the action needs a confirmation"); return false }
         switch request(a, row: row, parent: parent, values: values) {

@@ -75,6 +75,12 @@ struct PanelErrorText: View {
             case .needsNewer: Text("This panel needs a newer Mini Gateway.")
             case .server(let m): Text(verbatim: m)
             case .http(let n): Text(verbatim: "HTTP \(n)")
+            case .serverFault(let n): Text("The gateway reported an error; the details are in its log.") + Text(verbatim: " (HTTP \(n))")
+            case .cannotShow(let why):
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("This part of the panel cannot be shown.")
+                    Text(verbatim: why).font(.caption)
+                }
             case .refused(let why):
                 VStack(alignment: .leading, spacing: 2) {
                     Text("The request was not sent.")

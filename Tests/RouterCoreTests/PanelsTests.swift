@@ -17,9 +17,12 @@ private func data(_ o: Any) -> Data { try! JSONSerialization.data(withJSONObject
 private actor Fake {
     var log: [String] = []
     var answers: [String: (Int, String)] = [:]
+    var delay: UInt64 = 0
+    func slow(_ ns: UInt64) { delay = ns }
     func set(_ k: String, _ status: Int, _ body: String) { answers[k] = (status, body) }
-    func handle(_ r: CoreRequest) -> CoreResponse {
+    func handle(_ r: CoreRequest) async -> CoreResponse {
         log.append(r.method + " " + r.path + (r.query.isEmpty ? "" : "?" + r.query) + (r.body.isEmpty ? "" : " " + String(decoding: r.body, as: UTF8.self)))
+        if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
         let (s, b) = answers[r.method + " " + r.path] ?? (404, #"{"error":{"message":"nothing here"}}"#)
         return CoreResponse(status: s, body: Data(b.utf8))
     }
@@ -215,7 +218,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         #expect(m.actionError[PanelListKey(path: "users", parent: "")] == .unavailable)
         await fake.set("POST /users", 500, "garbage")
         _ = await m.perform(u.actions![0], section: "users", values: ["name": .string("acme")])
-        #expect(m.actionError[PanelListKey(path: "users", parent: "")] == .http(500))
+        #expect(m.actionError[PanelListKey(path: "users", parent: "")] == .serverFault(500))  // no body text of a 5xx reaches the pane
     }
 
     @Test(.enabled(if: haveFixtures)) func aValueNeverBecomesMoreThanOnePathSegment() async throws {
@@ -441,7 +444,9 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         let c2 = await catalog(503, String(decoding: CoreResponse.unavailable.body, as: UTF8.self))
         #expect(c2.error == .unavailable)
         let c3 = await catalog(500, #"{"error":{"message":"boom"}}"#)
-        #expect(c3.error == .server("boom"))
+        #expect(c3.error == .serverFault(500))  // "boom" may be SQL text: only the status is kept
+        let c3b = await catalog(400, #"{"error":{"message":"name already used"}}"#)
+        #expect(c3b.error == .server("name already used"))
         let c4 = await catalog(200, "[]")
         #expect(c4.error == .refused("GET /panels: not the expected answer"))
         let down = PanelCatalog(send: { _ in .unavailable })
@@ -493,6 +498,65 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
             #expect(await send(CoreRequest(method: bad.0, path: bad.1)).status == 404, "\(bad)")
         }
         #expect(await fake.log.count == before)  // none of them reached the core
+    }
+
+    @Test(.enabled(if: haveFixtures)) func aSecondTriggerWhileOneIsInFlightIsIgnored() async throws {
+        let fake = Fake()
+        let m = try await usersModel(fake)
+        let u = m.panel.sections[0]
+        let shop = m.visibleRows(u, path: "users")[1]
+        let on = u.rowActions![2]
+        await fake.set("PATCH /users/2", 200, #"{"ok":true}"#)
+        await fake.slow(80_000_000)
+        async let first = m.perform(on, section: "users", row: shop)
+        try await Task.sleep(nanoseconds: 20_000_000)
+        let second = await m.perform(on, section: "users", row: shop)  // the quick second click
+        #expect(!second && m.sending.contains(PanelListKey(path: "users", parent: "")))
+        #expect(await first)
+        let patches = await fake.log.filter { $0.hasPrefix("PATCH") }
+        #expect(patches.count == 1 && m.sending.isEmpty)
+        // once it is over, the next one goes out
+        #expect(await m.perform(on, section: "users", row: shop))
+    }
+
+    @Test(.enabled(if: haveFixtures)) func aPagingCursorIsAQueryValueAndAnErrorWhenItCannotBeSent() async throws {
+        let f = try object("panels-format1.json")
+        guard case .ready(let d) = PanelValidator.parse(data(f["panel"]!), provider: "acme", routes: f["routes"] as? [String]) else { throw Err.bad }
+        let tabs = try JSONSerialization.jsonObject(with: fixture("panels-format1-strings.json")) as! [String: [String: String]]
+        let routes = f["routes"] as! [String]
+        let orders = d.sections[1]
+        for (cursor, want) in [("x/../y?z&w=1 é", "after=x%2F..%2Fy%3Fz%26w%3D1%20%C3%A9"), ("..", "after=..")] {
+            let fake = Fake()
+            await fake.set("GET /plugins/acme/items", 200, #"{"items":[]}"#)
+            await fake.set("GET /plugins/acme/orders", 200, #"{"orders":[{"id":1}],"next":\#(String(decoding: try JSONEncoder().encode(cursor), as: UTF8.self))}"#)
+            let m = PanelModel(panel: d, strings: PanelStrings(locale: "C", table: tabs["C"]!), routes: routes, send: { await fake.handle($0) })
+            await m.load()
+            await m.loadMore(orders, path: "orders")
+            #expect(await fake.log.last == "GET /plugins/acme/orders?" + want)
+        }
+        let fake = Fake()
+        await fake.set("GET /plugins/acme/items", 200, #"{"items":[]}"#)
+        await fake.set("GET /plugins/acme/orders", 200, #"{"orders":[{"id":1}],"next":"a\u0007b"}"#)
+        let m = PanelModel(panel: d, strings: PanelStrings(), routes: routes, send: { await fake.handle($0) })
+        await m.load()
+        await m.loadMore(orders, path: "orders")
+        #expect(m.data("orders").error == .refused("the paging cursor cannot be sent") && m.data("orders").rows.count == 1)  // visible, rows kept
+    }
+
+    @Test(.enabled(if: haveFixtures)) func aListWithoutUniqueRowKeysIsNotShown() async throws {
+        let fake = Fake()
+        for (k, st, b) in userAnswers { await fake.set(k, st, b) }
+        let m = PanelModel(panel: try users(), strings: PanelStrings(), routes: PanelRoutes.builtin, send: { await fake.handle($0) })
+        await fake.set("GET /users", 200, #"{"users":[{"id":1,"name":"a","active":true},{"id":1,"name":"b","active":true}]}"#)
+        await m.load()
+        guard case .cannotShow? = m.data("users").error else { throw Err.bad }
+        #expect(m.data("users").rows.isEmpty)
+        await fake.set("GET /users", 200, ##"{"users":[{"name":"a","active":true},{"id":"#1","name":"b"}]}"##)  // no key, and one that looks like a made-up id
+        await m.load()
+        guard case .cannotShow? = m.data("users").error else { throw Err.bad }
+        await fake.set("GET /users", 200, ##"{"users":[{"id":"#1","name":"a","active":true},{"id":2,"name":"b","active":true}]}"##)
+        await m.load()
+        #expect(m.data("users").error == nil && m.data("users").rows.map(\.id) == ["#1", "2"])
     }
 
     @Test func routePatternsMatchSegmentForSegment() {
