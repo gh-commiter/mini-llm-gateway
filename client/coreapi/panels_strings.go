@@ -38,7 +38,7 @@ func ValidateStringTable(provider string, t map[string]string) error {
 			return fmt.Errorf("%s: the text is empty or longer than %d characters", k, maxMessage)
 		}
 		for _, r := range v {
-			if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == ' ' || r == ' ' {
+			if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
 				return fmt.Errorf("%s: the text has a control character", k)
 			}
 		}
