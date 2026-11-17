@@ -22,9 +22,9 @@ import (
 
 // gitUser: git uporabnika (njegove nastavitve), brez njegovih hookov ob začasnem refu in posnetku.
 func gitUser(dir string, env []string, args ...string) (string, error) {
-	cmd := command("git", append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false"}, args...)...)
+	cmd := command("git", append(append([]string{"-c", "core.hooksPath=" + os.DevNull}, gitNoExecPins...), args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), append([]string{"GIT_TERMINAL_PROMPT=0"}, env...)...)
+	cmd.Env = append(os.Environ(), append(slices.Clone(gitNoExecEnv), env...)...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
@@ -229,9 +229,9 @@ func nestedKey(p string) string { return sha256Hex([]byte(p))[:16] }
 
 // gitZ: git v top (brez hookov) z izhodom -z, razdeljenim na NUL (brez TrimSpace: imena s presledki ostanejo).
 func gitZ(top, stdin string, args ...string) []string {
-	cmd := command("git", append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false"}, args...)...)
+	cmd := command("git", append(append([]string{"-c", "core.hooksPath=" + os.DevNull}, gitNoExecPins...), args...)...)
 	cmd.Dir = top
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), gitNoExecEnv...)
 	cmd.Stdin = strings.NewReader(stdin)
 	out, _ := cmd.Output()
 	var r []string
@@ -424,9 +424,9 @@ func fsckIncoming(top string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), fsckTimeout)
 	defer cancel()
 	git := func(cwd, input string, args ...string) (string, error) {
-		cmd := commandContext(ctx, "git", append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false"}, args...)...)
+		cmd := commandContext(ctx, "git", append(append([]string{"-c", "core.hooksPath=" + os.DevNull}, gitNoExecPins...), args...)...)
 		cmd.Dir = cwd
-		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		cmd.Env = append(os.Environ(), gitNoExecEnv...)
 		cmd.Stdin = strings.NewReader(input)
 		cmd.WaitDelay = 5 * time.Second // zaganjalnik Git for Windows lahko drži cevi odprte po ubitju
 		var out, stderr bytes.Buffer

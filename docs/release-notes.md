@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Security
+- Git on your computer and on the gateway: the git calls minigw makes in a repository it does not control now refuse more of what that repository's own configuration could ask git to do (programs and transports). Two calls were affected on your computer: fetching the agent's branch back in worktree mode, which could follow a configuration that redirected the fetch or listed refs through a program of the repository's choosing. The gateway's own calls were not affected. A test now lists every place minigw starts git and fails when one lacks the shared guard.
+
 ## 0.7.16
 
 ### New

@@ -295,10 +295,19 @@ type gitBox struct {
 
 // gitGuardPins: nastavitve, ki jih git prehoda vedno pripne (poleg core.hooksPath). #71: tudi pager, zunanji diff, ssh
 // in pomočnik za poverilnice iz nastavitev repozitorija (agent v peskovniku sam dela commite in lahko piše .git/config).
-var gitGuardPins = []string{"-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
+var gitGuardPins = append(slices.Clone(gitNoExecPins),
 	"-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
-	"-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false",
+	"-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false")
+
+// gitNoExecPins and gitNoExecEnv (issue 144): what the config of a repository the caller does not control must never be
+// able to choose: a program (fsmonitor, pager, external diff, ssh, credential helper, the command that lists an alternate's
+// refs on a local fetch) or a transport (GIT_ALLOW_PROTOCOL beats a repository's protocol.<name>.allow; url.<x>.insteadOf can
+// otherwise turn a bundle path into an ext:: command). Every git call on such a repository takes them, the gateway's own
+// (gitGuardPins) and the client's (gitUser, gitZ, the fsck call): one list, extended here.
+var gitNoExecPins = []string{"-c", "core.fsmonitor=false", "-c", "submodule.recurse=false", "-c", "core.alternateRefsCommand=",
 	"-c", "core.pager=cat", "-c", "diff.external=", "-c", "core.sshCommand=", "-c", "credential.helper="}
+
+var gitNoExecEnv = []string{"GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=file", "GIT_EXTERNAL_DIFF=", "GIT_PAGER=cat"}
 
 // gitRunBox: gitRunInput, z box v bwrap (boxGit); brez bwrap napaka (nikoli brez peskovnika po poti).
 func gitRunBox(box *gitBox, repo, cwd string, env []string, input string, args ...string) (string, error) {
@@ -331,7 +340,7 @@ func gitRunBox(box *gitBox, repo, cwd string, env []string, input string, args .
 			cmd.Env = append(cmd.Env, e)
 		}
 	}
-	cmd.Env = append(append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+cfg, "GIT_TERMINAL_PROMPT=0"), env...)
+	cmd.Env = append(append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+cfg), append(slices.Clone(gitNoExecEnv), env...)...)
 	var out, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = &out, &stderr, strings.NewReader(input)
 	err = cmd.Run()

@@ -599,3 +599,7 @@ bounded literal words with AND, with a 250 ms deadline. The shared core enforces
 20 hits and an 8 KiB JSON budget. Swift forwards trusted context and results.
 Both gateways advertise `kb search` alongside `note list|read` to project runs,
 without injecting bodies. Search results remain reference data, never orders.
+
+## What is guarded when minigw runs git
+
+minigw runs git in repositories that are not its own: your folders (worktree mode, the git watch, project links) and, on the gateway, mirrors and clones of what your computer sent. Every such call carries one shared guard: no hooks, no fsmonitor, no pager, external diff, ssh command or credential helper, no command to list the refs of an alternate, and only local-file transports (the environment overrides a repository's own protocol settings). Calls on a nested repository also read no attributes, so no clean filter runs there. On the gateway the mirror and the clone have an empty configuration of their own and the tree cannot carry any. The top repository of your folder is the one exception by design: its own filters run when the snapshot is made, so that tools such as Git LFS keep working; use sync mode for a repository you do not trust. A test lists every place that starts git and fails when a new one lacks the guard.
