@@ -1,5 +1,13 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Opt-in session hooks in the Claude Code plugin: `minigw kb hooks on|off|status [<project>]` switches, per project and on this computer only, hooks that tell a session about the project's knowledge base and, once after a commit or a compaction, ask the model to hand in at most three short entries with `minigw kb submit`. Nothing is on after installing or updating the plugin; every submit still goes through your Bash prompt and the members' review. See "Hand findings in from a session" in the usage guide.
+
+### Known problems
+- The hooks ask after a commit or a compaction, not at the end of a session: Claude Code gives a hook no way to talk to the model then. A failed hand-in is not retried. Not tried in a real Claude Code session on Windows.
+
 ## 0.7.12
 
 ### New
