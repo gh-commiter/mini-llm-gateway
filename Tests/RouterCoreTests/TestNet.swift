@@ -80,7 +80,14 @@ enum TestNet {
             Issue.record("mg-test-net: no \(name) event within \(timeout) s: \(events)")
             throw Missing()
         }
-        func stop() { try? stdin.fileHandleForWriting.close(); if process.isRunning { process.waitUntilExit() } }
+        /// Closing stdin ends the utility. Wait for it with a deadline and without waitUntilExit: that call spins a run loop on the calling
+        /// thread and was once found still waiting an hour after the utility had gone (no child left; the whole test run hung in this defer).
+        func stop() {
+            try? stdin.fileHandleForWriting.close()
+            let end = Date().addingTimeInterval(5)
+            while process.isRunning && Date() < end { usleep(20_000) }
+            if process.isRunning { process.terminate() }
+        }
     }
 
     /// Listens on `address` (an ephemeral port by default); returns the run and the port it printed.
