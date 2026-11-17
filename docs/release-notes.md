@@ -1,15 +1,11 @@
 # Release notes
 
-## Unreleased
+## 0.7.15
 
 ### New
 - Admin panels: the owner's admin API has a new read route, `GET /panels`, that describes panels declaratively (one validated format, no code or markup; texts are keys, with per-language tables from `GET /panels/strings`, English and Slovenian), and the Mac app draws them natively. The first panel is **Users and devices** in the Settings window, after Devices: add, rename, deactivate and activate users, bind and unbind devices. Device approval stays in Devices. See "Panels" in the admin API document.
 - Project dependencies: the owner records that a project depends on another (`minigw gw project depends add <project> <other>`, `remove`, `list`), across teams, at most 16 per project. A person's search of a project, and `note read` of a hit, then also cover the projects it depends on, each only as far as that person could read it directly (membership or grant): a dependency is a search hint and gives no permission. Such a hit ends with `from project:<slug>`. `minigw project depends [<project>]` lists the dependencies you can read. Team bundles carry the relation between projects that are both in the bundle (`gw import --dry-run` lists what it would add and skips names the gateway does not have).
-
 - `minigw kb submissions --team <team>` lists your own submissions to a team's notes, and `minigw kb submissions` without an argument now also lists those of the teams you are on (labelled `team <name>`). `minigw team show <team>` says how many team notes exist and how to read them (`minigw note list --team <team>`); nothing for a team you are not on.
-
-### Fixed
-- A hit, note or submission from a team's own notes no longer prints a hidden number as its project: the line says `team <name>` (the `from team:<name>` ending stays only for a hit that comes from another source than the one asked), and the MCP tools show the team name, not the id. `note_read` still takes the note id it was given.
 
 ### Changed
 - The project database schema is now 16 (a snapshot is taken before the migration). An older gateway cannot open it.
@@ -18,10 +14,23 @@
 
 ### Fixed
 - Search in a large knowledge base was slow in 0.7.14: the new order (own project first) made the database sort every match before taking the first 20. The query now takes two bounded selections; the order of hits is the same.
+- A hit, note or submission from a team's own notes no longer prints a hidden number as its project: the line says `team <name>` (the `from team:<name>` ending stays only for a hit that comes from another source than the one asked), and the MCP tools show the team name, not the id. `note_read` still takes the note id it was given.
 
 ### Known problems
 - The Users and devices pane is new and has only been tried through tests, not in a real window. Windows and Linux have no panel renderer yet (the settings page and `minigw gw` still cover the same routes); the terminal UI neither. A detail page of a panel opens as a sheet, and no built-in panel uses one yet.
 - A project linked to a subfolder of another project's folder gets no automatic dependency; the owner sets it with `gw project depends add`.
+- Team notes have no `private` class, and only a project admin of the team writes them; there is no owner shortcut into them (the owner reviews submissions and exports bundles).
+- The hooks ask after a commit or a compaction, not at the end of a session: Claude Code gives a hook no way to talk to the model then. A failed hand-in is not retried. Checked by tests of both clients and of the plugin script, but not yet tried in a real Claude Code session (neither on a Mac nor on Windows).
+- Project git identity, team path labels and entry kinds are new and not yet in daily use. `minigw project link` without a slug needs `git` on the computer; on Windows it has only been built, not tried.
+- A replacement of a `faq` entry keeps the kind `faq`, and an import never changes the kind of an existing note: to change a kind, remove the entry and hand it in again.
+- `minigw gw import`: an `INDEX.md` inside a bundle has no size limit of its own (only the 100 MiB total). Import only bundles you made yourself.
+- `minigw kb export` on Windows: the protection of each exported file is still set by path after the file is created through the opened folder; not tested on Windows yet.
+- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.14
 
