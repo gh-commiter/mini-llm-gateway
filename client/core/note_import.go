@@ -10,24 +10,37 @@ import (
 )
 
 func migrate13(tx *sql.Tx) error {
-	_, err := tx.Exec(`CREATE TABLE note_imports(project_id INTEGER NOT NULL REFERENCES projects(id), key TEXT NOT NULL, note_id INTEGER NOT NULL DEFAULT 0, submission_id INTEGER NOT NULL DEFAULT 0, hash TEXT NOT NULL, origin_gateway TEXT NOT NULL DEFAULT '', exported TEXT NOT NULL DEFAULT '', PRIMARY KEY(project_id,key));`)
+	_, err := tx.Exec(`CREATE TABLE note_imports(project_id INTEGER NOT NULL REFERENCES projects(id), key TEXT NOT NULL, note_id INTEGER NOT NULL DEFAULT 0, submission_id INTEGER NOT NULL DEFAULT 0, hash TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, class TEXT NOT NULL DEFAULT '', origin_gateway TEXT NOT NULL DEFAULT '', exported TEXT NOT NULL DEFAULT '', PRIMARY KEY(project_id,key));
+CREATE TABLE import_sources(source TEXT PRIMARY KEY, origin_gateway TEXT NOT NULL);
+ALTER TABLE notes ADD COLUMN source_meta TEXT NOT NULL DEFAULT '';`)
 	return err
 }
 
+// importReceipt is the last import of one source entry: the note (or submission) it wrote,
+// the content hash, the note revision and class it left behind.
 type importReceipt struct {
-	note, submission int64
-	hash             string
+	note, submission, revision int64
+	hash, class                string
 }
 
 func receipt(tx *sql.Tx, project int64, key string) (r importReceipt, err error) {
-	err = tx.QueryRow(`SELECT note_id,submission_id,hash FROM note_imports WHERE project_id=? AND key=?`, project, key).Scan(&r.note, &r.submission, &r.hash)
+	err = tx.QueryRow(`SELECT note_id,submission_id,hash,revision,class FROM note_imports WHERE project_id=? AND key=?`, project, key).Scan(&r.note, &r.submission, &r.hash, &r.revision, &r.class)
 	if err == sql.ErrNoRows {
 		err = nil
 	}
 	return
 }
-func saveImport(tx *sql.Tx, project int64, key string, r importReceipt, pr Provenance) error {
-	_, err := tx.Exec(`INSERT INTO note_imports(project_id,key,note_id,submission_id,hash,origin_gateway,exported) VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,key) DO UPDATE SET note_id=excluded.note_id,submission_id=excluded.submission_id,hash=excluded.hash,origin_gateway=excluded.origin_gateway,exported=excluded.exported`, project, key, r.note, r.submission, r.hash, pr.OriginGateway, pr.Exported)
+func saveImport(tx *sql.Tx, project int64, key string, r importReceipt, origin, exported string) error {
+	_, err := tx.Exec(`INSERT INTO note_imports(project_id,key,note_id,submission_id,hash,revision,class,origin_gateway,exported) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(project_id,key) DO UPDATE SET note_id=excluded.note_id,submission_id=excluded.submission_id,hash=excluded.hash,revision=excluded.revision,class=excluded.class,origin_gateway=excluded.origin_gateway,exported=excluded.exported`, project, key, r.note, r.submission, r.hash, r.revision, r.class, origin, exported)
+	return err
+}
+
+// setSourceMeta keeps what the bundle said about a note's history as opaque, unverified text.
+func setSourceMeta(tx *sql.Tx, id int64, meta string) error {
+	if meta == "" {
+		return nil
+	}
+	_, err := tx.Exec(`UPDATE notes SET source_meta=? WHERE id=?`, meta, id)
 	return err
 }
 func pendingLimit(tx *sql.Tx, user, project, size, exclude int64) error {
@@ -94,7 +107,7 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 			}
 			pending = SubmissionInput{Replaces: v.Replaces, Revision: v.Revision}
 			if v.State != "pending" {
-				if v.State != "rejected" || r.hash == hash {
+				if v.State != "rejected" || (r.hash == hash && r.class == string(in.Class)) {
 					out.Action, out.Reason = "skip", "submission already reviewed"
 					return nil
 				}
@@ -121,16 +134,19 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 					if e = json.Unmarshal([]byte(encoded), &previous); e != nil {
 						return e
 					}
-					r.hash = previous.ContentHash
+					// The receipt keeps the revision the proposal was based on, so a local edit shows.
+					r.hash, r.class = previous.ContentHash, string(old.Class)
+				} else {
+					r.hash, r.class, r.revision = "", "", 0
 				}
 			}
 		}
-		if r.hash == hash {
-			out.Action = "skip"
+		if r.note != 0 && old.Revision != r.revision {
+			out.Action, out.Reason = "skip", "local edit"
 			return nil
 		}
-		if r.note != 0 && contentHash(old.Title, old.Body) != r.hash {
-			out.Action, out.Reason = "skip", "local edit"
+		if r.hash == hash && r.class == string(in.Class) {
+			out.Action = "skip"
 			return nil
 		}
 		pr := writerProvenance(p, project, in, s.now())
@@ -160,12 +176,14 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 				}
 				r.submission, _ = res.LastInsertId()
 				r.note = 0
+				r.revision = replacement.Revision
 				out.Action = "create"
 			} else {
 				_, e := tx.Exec(`UPDATE kb_submissions SET class=?,title=?,body=?,bytes=?,provenance=?,hash=?,received=? WHERE id=?`, in.Class, in.Title, in.Body, size, string(b), hash, ms(s.now()), r.submission)
 				if e != nil {
 					return e
 				}
+				r.revision = replacement.Revision
 				out.Action = "merge"
 			}
 		} else {
@@ -174,6 +192,9 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 			}
 			r.note, e = s.importNote(tx, project, p.UserID, r.note, in, pr)
 			if e != nil {
+				return e
+			}
+			if e = tx.QueryRow(`SELECT revision FROM notes WHERE id=?`, r.note).Scan(&r.revision); e != nil {
 				return e
 			}
 			out.Action = "create"
@@ -186,9 +207,9 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 				}
 			}
 		}
-		r.hash = hash
+		r.hash, r.class = hash, string(in.Class)
 		out.NoteID, out.SubmissionID = r.note, r.submission
-		if e = saveImport(tx, project, key, r, pr); e != nil {
+		if e = saveImport(tx, project, key, r, pr.OriginGateway, pr.Exported); e != nil {
 			return e
 		}
 		return Audit(tx, actor(p), "kb.import", key, map[string]any{"project": project, "submit": input.Submit})

@@ -14,17 +14,18 @@ import (
 
 // Note is a note; Body is empty in lists.
 type Note struct {
-	Provenance Provenance
-	ID         int64
-	ProjectID  int64
-	Class      Class
-	Title      string
-	Body       string `json:",omitempty"`
-	AuthorID   int64
-	Author     string
-	Created    time.Time
-	Updated    time.Time
-	Revision   int64
+	Provenance       Provenance
+	UnverifiedSource string `json:"-"` // opaque history the bundle supplied; never trusted
+	ID               int64
+	ProjectID        int64
+	Class            Class
+	Title            string
+	Body             string `json:",omitempty"`
+	AuthorID         int64
+	Author           string
+	Created          time.Time
+	Updated          time.Time
+	Revision         int64
 }
 
 // NoteInput is the payload of create and update.
@@ -202,6 +203,9 @@ func getNote(tx *sql.Tx, id int64) (Note, error) {
 	n, err := scanNote(tx.QueryRow(`SELECT `+noteCols+` FROM notes n JOIN users u ON u.id=n.author_id WHERE n.id=?`, id), true)
 	if err == nil {
 		err = noteProvenance(tx, &n)
+	}
+	if err == nil {
+		err = tx.QueryRow(`SELECT source_meta FROM notes WHERE id=?`, id).Scan(&n.UnverifiedSource)
 	}
 	return n, notFound(err)
 }

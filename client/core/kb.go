@@ -15,6 +15,7 @@ import (
 const (
 	ActorMember            = "member"
 	ActorGatewayService    = "gateway service"
+	ActorImport            = "import"
 	SourcePushedNote       = "pushed note"
 	SourceImport           = "import"
 	SourceSessionSummary   = "session summary"
@@ -445,7 +446,7 @@ func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, rea
 				v.NoteID = v.Replaces
 				rev = old.Revision + 1
 			}
-			if _, e = tx.Exec(`UPDATE note_imports SET note_id=?,submission_id=0 WHERE submission_id=?`, v.NoteID, id); e != nil {
+			if _, e = tx.Exec(`UPDATE note_imports SET note_id=?,submission_id=0,revision=?,class=? WHERE submission_id=?`, v.NoteID, rev, string(v.Class), id); e != nil {
 				return e
 			}
 			if e = syncSearch(tx, v.NoteID); e != nil {

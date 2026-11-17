@@ -580,8 +580,8 @@ computer, with the gateway running (the same commands work on Windows, Linux, an
 
 ```sh
 minigw gw export --team Engineering --project fakture --with-private ./engineering.zip
-minigw gw import ./engineering.zip --dry-run --map ana=Ana
-minigw gw import ./engineering.zip --map ana=Ana
+minigw gw import --source engineering ./engineering.zip --dry-run --map ana=Ana
+minigw gw import --source engineering ./engineering.zip --map ana=Ana
 ```
 
 Omit `--project` to include every project in that team; repeat it for a subset. Private notes require
@@ -590,18 +590,34 @@ names, direct memberships, team assignments and grants between included projects
 notes and provenance. It excludes devices, bindings, tokens, keys, usage, audit history, sessions and pending
 submissions. Note bodies cannot define access or accounts.
 
-Import validates the entire zip before writing. Dry-run reports create, merge, skip and refuse decisions and
-writes nothing. Real import is one transaction, including one `kb.import` audit event when anything changes.
-Names match case-insensitively after `--map old=new`; slugs match projects and names match teams. Unknown
-users are inactive non-owners with no device binding. The owner must activate and bind them explicitly.
-Existing roles, memberships and grants are only retained or raised. A project already on another team refuses
-the whole import. Target project and note IDs are allocated locally. Bundle receipts use
-`gw:<origin>:<slug>:<source id>`, also recorded as `import_key` in Markdown, so individual member imports of
-bundle files keep the separate namespace.
+`--source <name>` is required on import: it names where this bundle comes from, on this gateway, and the
+owner chooses it (1–64 bytes, no control characters). The first import under a source records the
+bundle's origin gateway; a later import under the same source from a different gateway is refused, as is a
+bundle that was exported by this gateway itself. Receipts are kept per source name, project slug and source
+note id; the `origin_gateway` string inside the bundle never establishes a namespace. A dry run reports the
+source name and the origin it records.
 
-Re-importing the same bundle is a no-op. Changed source content updates only when the target title and body
-still match the last imported hash; local edits are skipped and reported. Provenance retains the source
-information, records the origin gateway and export time, and stores the imported device as `UNKNOWN`.
+Import validates the entire zip before writing, within fixed limits on its size, entry count, central
+directory, manifest size and nesting, and collection sizes. Dry-run reports create, merge, skip and refuse
+decisions and writes nothing. Real import is one transaction, including one `kb.import` audit event when
+anything changes. Names match case-insensitively after `--map old=new` and after Unicode normalization, so a
+name written with a combining accent finds the same account as its composed form. If two target accounts
+normalize to one name, or two bundle users would land on one target account, the import is refused and both
+are named. Slugs match projects and names match teams. Unknown users are inactive non-owners with no device
+binding. The owner must activate and bind them explicitly. Existing roles, memberships and grants are only
+retained or raised. A project already on another team refuses the whole import. Target project and note IDs
+are allocated locally.
+
+Re-importing the same bundle is a no-op. The receipt stores the note revision and class written by the last
+import: any local change, including a class change, bumps the revision, so a locally changed note is skipped
+and reported and is never overwritten, even when the incoming content differs. An incoming class change is
+applied only to a note that was not changed locally. The imported revision records the owner's import as its
+writer — actor kind `import`, no user id, this project, source kind `import`, source reference
+`<source>/<project slug>/<source note id>`, the receive time, and no reviewer. Everything the bundle says
+about the note's history (author, source kind, times, reviewer, its own provenance) is stored separately as
+unverified source metadata and is shown by `note read --json` under `unverifiedSource`; it never drives
+access, permissions or review. A pending local submission for the same source entry is skipped and
+reported, never superseded by the import.
 This copies knowledge to a different gateway; it does not restore a database or delete omitted target rows.
 
 Members see only their own teams, their teammates' names, and attached projects they can already read through

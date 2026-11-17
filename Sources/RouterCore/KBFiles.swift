@@ -14,6 +14,24 @@ extension ProjectEnv {
         return Data(("---\n" + fields.map { $0.0 + ": " + GoJSON.string($0.1) + "\n" }.joined() + "---\n" + body).utf8)
     }
 
+    /// The note's bytes: the file is opened once without following a link and checked on that descriptor.
+    private func readNoteFile(_ path: String) throws -> Data {
+        let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw ProjectError("not a regular file: " + path) }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { throw ProjectError("not a regular file: " + path) }
+        let limit = 96 << 10
+        var data = Data(), buf = [UInt8](repeating: 0, count: 16 << 10)
+        while true {
+            let n = read(fd, &buf, min(buf.count, limit - data.count + 1))
+            if n < 0 { throw ProjectError("cannot read: " + path) }
+            if n == 0 { return data }
+            data.append(buf, count: n)
+            if data.count >= limit { throw ProjectError("too large") }
+        }
+    }
+
     func kbFiles(_ args: [String]) throws {
         if agent { throw ProjectError(Self.agentRefusal) }
         let usage = ProjectError("usage:\n" + Self.kbHelp)
@@ -72,7 +90,10 @@ extension ProjectEnv {
         }
         let attrs = try fm.attributesOfItem(atPath: root.path)
         let isDir = attrs[.type] as? FileAttributeType == .typeDirectory
-        var files: [URL] = []
+        // The enumerator returns resolved paths (/private/var/…) also for a root given through a symbolic link (/var/…): compare resolved
+        // paths, or the relative path (the stable import key) would start in the middle of a folder name.
+        let rootPath = root.resolvingSymlinksInPath().path
+        var files: [(url: URL, rel: String)] = []
         if isDir {
             var walkError: Error?
             guard let walk = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey], options: [], errorHandler: { _, e in walkError = e; return false }) else { throw usage }
@@ -82,24 +103,21 @@ extension ProjectEnv {
                 if v.isDirectory == true { continue }
                 if file.lastPathComponent.lowercased() == "index.md" || file.pathExtension.lowercased() != "md" { continue }
                 guard v.isRegularFile == true else { throw ProjectError("not a regular file: " + file.path) }
-                files.append(file)
+                let full = file.resolvingSymlinksInPath().path
+                guard full.hasPrefix(rootPath + "/") else { throw ProjectError("not inside the import folder: " + file.path) }
+                let rel = String(full.dropFirst(rootPath.count + 1))
+                if rel.filter({ $0 == "/" }).count > 32 { throw ProjectError("import folder is too deep") }
+                if files.count >= 10000 { throw ProjectError("too many files") }
+                files.append((file, rel))
             }
             if let walkError { throw walkError }
         } else {
-            guard attrs[.type] as? FileAttributeType == .typeRegular, root.pathExtension.lowercased() == "md" else { throw ProjectError("import requires a Markdown file or directory") }
-            files = [root]
+            guard root.pathExtension.lowercased() == "md" else { throw ProjectError("import requires a Markdown file or directory") }
+            files = [(root, root.lastPathComponent)]
         }
-        for file in files.sorted(by: { $0.path < $1.path }) {
-            let handle = try FileHandle(forReadingFrom: file)
-            let data = try handle.read(upToCount: 96 << 10) ?? Data()
-            try handle.close()
-            guard data.count < 96 << 10 else { throw ProjectError("too large") }
+        for (file, rel) in files.sorted(by: { $0.url.path < $1.url.path }) {
+            let data = try readNoteFile(file.path)
             guard let text = String(data: data, encoding: .utf8) else { throw ProjectError("the note must be text (UTF-8)") }
-            // The enumerator returns resolved paths (/private/var/…) also for a root given through a symbolic link (/var/…): compare resolved
-            // paths, or the relative path (the stable import key) would start in the middle of a folder name.
-            let rootPath = root.resolvingSymlinksInPath().path, full = file.resolvingSymlinksInPath().path
-            guard !isDir || full.hasPrefix(rootPath + "/") else { throw ProjectError("not inside the import folder: " + file.path) }
-            let rel = isDir ? String(full.dropFirst(rootPath.count + 1)) : file.lastPathComponent
             let payload = try JSONSerialization.data(withJSONObject: ["markdown": text, "path": rel, "class": fl.string("class"), "submit": fl.bool("submit")])
             guard payload.count <= 512 << 10 else { throw ProjectError("too large") }
             let r = try request("POST", base + "/kb/import", payload)
@@ -114,7 +132,7 @@ extension AdminCommands {
     public func bundle(_ args: [String]) throws {
         let usage = fail(Self.help.trimmingCharacters(in: .whitespacesAndNewlines))
         guard let command = args.first, ["export", "import"].contains(command) else { throw usage }
-        var team = "", projects: [String] = [], mapping: [String: String] = [:], file = ""
+        var team = "", source = "", projects: [String] = [], mapping: [String: String] = [:], file = ""
         var withPrivate = false, dry = false, i = 1
         while i < args.count {
             let arg = args[i]
@@ -123,11 +141,12 @@ extension AdminCommands {
             else if arg.hasPrefix("--") {
                 let kv = String(arg.dropFirst(2)).split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
                 let name = kv[0]
-                guard ["team", "project", "map"].contains(name) else { throw usage }
+                guard ["team", "project", "map", "source"].contains(name) else { throw usage }
                 let value: String
                 if kv.count == 2 { value = kv[1] }
                 else { i += 1; guard i < args.count else { throw usage }; value = args[i] }
                 if name == "team" { team = value }
+                if name == "source" { source = value }
                 if name == "project" { projects.append(value) }
                 if name == "map" {
                     let pair = value.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
@@ -143,11 +162,11 @@ extension AdminCommands {
         let path = URL(fileURLWithPath: file).standardizedFileURL.path
         let body: [String: Any]
         if command == "export" {
-            guard !team.isEmpty, !dry, mapping.isEmpty else { throw usage }
+            guard !team.isEmpty, source.isEmpty, !dry, mapping.isEmpty else { throw usage }
             body = ["team": team, "projects": projects, "with_private": withPrivate, "path": path]
         } else {
-            guard team.isEmpty, projects.isEmpty, !withPrivate else { throw usage }
-            body = ["path": path, "dry_run": dry, "map": mapping]
+            guard team.isEmpty, projects.isEmpty, !withPrivate, !source.isEmpty else { throw usage }
+            body = ["path": path, "source": source, "dry_run": dry, "map": mapping]
         }
         let r = try request("POST", "/" + command, body)
         for line in r["lines"]?.array ?? [] { say(clean(line.string ?? "")) }

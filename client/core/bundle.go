@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,10 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 type BundleProject struct {
@@ -55,6 +60,7 @@ type BundleExport struct {
 }
 type BundleImport struct {
 	Path   string            `json:"path"`
+	Source string            `json:"source"`
 	DryRun bool              `json:"dry_run"`
 	Map    map[string]string `json:"map"`
 }
@@ -66,8 +72,45 @@ type bundle struct {
 	files    map[string][]byte
 }
 
+// Limits of bundle reads; variables so that tests can use small ones.
+var (
+	maxManifestBytes     = 16 << 20
+	maxBundleDirBytes    = 8 << 20
+	maxBundleDepth       = 32
+	maxBundleProjects    = 10000
+	maxBundleUsers       = 100000
+	maxBundleMemberships = 200000
+	maxBundleGrants      = 200000
+)
+
+const maxSourceMeta = 64 << 10
+
 func bundleKey(origin, slug string, id int64) string {
 	return "gw:" + origin + ":" + slug + ":" + i64(id)
+}
+
+// receiptKey is the receipt namespace: the owner-chosen source name, the bundle's project slug
+// and the bundle's note id. The bundle's own origin string cannot establish it.
+func receiptKey(source, slug string, id int64) string {
+	return "src:" + source + ":" + slug + ":" + i64(id)
+}
+
+// foldName is the identity policy for user names and archive names: Unicode NFC and case folding.
+func foldName(s string) string {
+	return norm.NFC.String(cases.Fold().String(norm.NFC.String(s)))
+}
+
+// validSourceName is the source name validation: like a team name, at most 64 bytes.
+func validSourceName(s string) bool {
+	return validName(s) && len(s) <= 64
+}
+
+// importProvenance is the trusted local record of a bundle import. Everything the bundle said
+// about the note's history is unverified and kept in source_meta instead.
+func importProvenance(source, slug string, sourceID, project int64, hash string, now time.Time) Provenance {
+	return Provenance{ActorKind: ActorImport, Device: "UNKNOWN", Project: project,
+		SourceKind: SourceImport, SourceReference: source + "/" + slug + "/" + i64(sourceID),
+		ContentHash: hash, Authored: now, Received: now}
 }
 
 // ExportBundle is owner-only; the admin adapter authenticates the caller.
@@ -313,6 +356,102 @@ func safeBundlePath(name string) bool {
 	}
 	return true
 }
+
+// checkBundleDirectory bounds the ZIP central directory before zip.NewReader parses it.
+func checkBundleDirectory(f *os.File, size int64) error {
+	const eocd = 22
+	if size < eocd {
+		return ErrInvalid{"bundle is not a zip"}
+	}
+	n := int64(eocd + 0xffff)
+	if n > size {
+		n = size
+	}
+	buf := make([]byte, n)
+	if _, err := f.ReadAt(buf, size-n); err != nil {
+		return err
+	}
+	for i := len(buf) - eocd; i >= 0; i-- {
+		if buf[i] != 'P' || buf[i+1] != 'K' || buf[i+2] != 5 || buf[i+3] != 6 {
+			continue
+		}
+		comment := int(binary.LittleEndian.Uint16(buf[i+20 : i+22]))
+		if i+eocd+comment != len(buf) {
+			continue
+		}
+		entries := binary.LittleEndian.Uint16(buf[i+10 : i+12])
+		dirSize := binary.LittleEndian.Uint32(buf[i+12 : i+16])
+		// These limits never need ZIP64; its markers mean a reader would allocate far more.
+		if entries == 0xffff || dirSize == 0xffffffff {
+			return ErrTooLarge
+		}
+		if int(entries) > maxNotes+2 || int64(dirSize) > int64(maxBundleDirBytes) || int64(dirSize) > size {
+			return ErrTooLarge
+		}
+		return nil
+	}
+	return ErrInvalid{"bundle is not a zip"}
+}
+
+// jsonDepth is the maximum nesting of objects and arrays outside strings.
+func jsonDepth(b []byte) int {
+	depth, max := 0, 0
+	inString, escaped := false, false
+	for _, c := range b {
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+			if depth > max {
+				max = depth
+			}
+		case '}', ']':
+			depth--
+		}
+	}
+	return max
+}
+
+func checkManifestLimits(m BundleManifest) error {
+	if len(m.Projects) > maxBundleProjects || len(m.Users) > maxBundleUsers || len(m.Members) > maxBundleUsers ||
+		len(m.Memberships) > maxBundleMemberships || len(m.Assignments) > maxBundleMemberships ||
+		len(m.Grants) > maxBundleGrants || len(m.Notes) > maxNotes {
+		return ErrTooLarge
+	}
+	return nil
+}
+
+func readEntry(f *zip.File, limit int64) ([]byte, error) {
+	r, err := f.Open()
+	if err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	closeErr := r.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if int64(len(data)) > limit {
+		return nil, ErrTooLarge
+	}
+	return data, nil
+}
+
 func readBundle(file string) (bundle, error) {
 	b := bundle{files: map[string][]byte{}}
 	fi, err := os.Lstat(file)
@@ -334,6 +473,12 @@ func readBundle(file string) (bundle, error) {
 	if !opened.Mode().IsRegular() || !os.SameFile(fi, opened) {
 		return b, ErrInvalid{"bundle file changed"}
 	}
+	if opened.Size() > maxBytes+(16<<20) {
+		return b, ErrTooLarge
+	}
+	if err = checkBundleDirectory(input, opened.Size()); err != nil {
+		return b, err
+	}
 	z, err := zip.NewReader(input, opened.Size())
 	if err != nil {
 		return b, err
@@ -341,36 +486,46 @@ func readBundle(file string) (bundle, error) {
 	if len(z.File) > maxNotes+2 {
 		return b, ErrTooLarge
 	}
-	var total int64
-	for _, f := range z.File {
-		if !safeBundlePath(f.Name) || !f.Mode().IsRegular() {
+	// Preflight every entry's metadata before any body is decompressed.
+	names := map[string]bool{}
+	var declared int64
+	manifest := -1
+	for i, f := range z.File {
+		if !utf8.ValidString(f.Name) || !safeBundlePath(f.Name) || !f.Mode().IsRegular() {
 			return b, ErrInvalid{"unsafe zip entry: " + f.Name}
 		}
-		if _, ok := b.files[f.Name]; ok {
-			return b, ErrInvalid{"duplicate zip entry"}
+		k := foldName(f.Name)
+		if names[k] {
+			return b, ErrInvalid{"ambiguous zip entry name: " + f.Name}
 		}
-		if f.UncompressedSize64 > uint64(maxBytes-total) {
+		names[k] = true
+		if f.UncompressedSize64 > uint64(maxBytes) {
 			return b, ErrTooLarge
 		}
-		r, e := f.Open()
-		if e != nil {
-			return b, e
-		}
-		data, e := io.ReadAll(io.LimitReader(r, maxBytes-total+1))
-		closeErr := r.Close()
-		if e != nil {
-			return b, e
-		}
-		if closeErr != nil {
-			return b, closeErr
-		}
-		total += int64(len(data))
-		if total > maxBytes {
+		declared += int64(f.UncompressedSize64)
+		if declared > maxBytes {
 			return b, ErrTooLarge
 		}
-		b.files[f.Name] = data
+		if f.Name == "manifest.json" {
+			manifest = i
+			if f.UncompressedSize64 > uint64(maxManifestBytes) {
+				return b, ErrTooLarge
+			}
+		}
 	}
-	d := json.NewDecoder(bytes.NewReader(b.files["manifest.json"]))
+	if manifest < 0 {
+		return b, ErrInvalid{"missing manifest"}
+	}
+	// The manifest is decoded (bounded) before any other entry body is read.
+	data, err := readEntry(z.File[manifest], maxManifestBytes)
+	if err != nil {
+		return b, err
+	}
+	if jsonDepth(data) > maxBundleDepth {
+		return b, ErrTooLarge
+	}
+	b.files["manifest.json"] = data
+	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err = d.Decode(&b.manifest); err != nil {
 		return b, ErrInvalid{"manifest: " + err.Error()}
@@ -378,14 +533,38 @@ func readBundle(file string) (bundle, error) {
 	if err = d.Decode(new(any)); err != io.EOF {
 		return b, ErrInvalid{"manifest trailing data"}
 	}
+	if err = checkManifestLimits(b.manifest); err != nil {
+		return b, err
+	}
+	total := int64(len(data))
+	for i, f := range z.File {
+		if i == manifest {
+			continue
+		}
+		left := maxBytes - total
+		if left < 0 {
+			return b, ErrTooLarge
+		}
+		data, err := readEntry(f, left)
+		if err != nil {
+			return b, err
+		}
+		total += int64(len(data))
+		b.files[f.Name] = data
+	}
+	if total > maxBytes {
+		return b, ErrTooLarge
+	}
 	return b, nil
 }
 
 type bundleNoteInput struct {
-	meta   BundleNote
-	fields map[string]string
-	in     NoteInput
-	key    string
+	meta       BundleNote
+	fields     map[string]string
+	in         NoteInput
+	key        string
+	id         int64
+	sourceMeta string
 }
 
 func validateBundle(b bundle) ([]bundleNoteInput, error) {
@@ -399,14 +578,20 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 	if _, err := time.Parse(time.RFC3339Nano, m.Exported); err != nil {
 		return nil, ErrInvalid{"export time"}
 	}
-	if len(m.Notes) > maxNotes {
-		return nil, ErrTooLarge
+	if err := checkManifestLimits(m); err != nil {
+		return nil, err
 	}
 	var total int64
+	files := map[string]bool{}
 	for name, data := range b.files {
 		if !safeBundlePath(name) {
 			return nil, ErrInvalid{"bundle path"}
 		}
+		k := foldName(name)
+		if files[k] {
+			return nil, ErrInvalid{"ambiguous bundle file"}
+		}
+		files[k] = true
 		total += int64(len(data))
 	}
 	if total > maxBytes {
@@ -421,7 +606,7 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 	}
 	users := map[string]bool{}
 	for _, u := range m.Users {
-		k := strings.ToLower(u)
+		k := foldName(u)
 		if !validName(u) || users[k] {
 			return nil, ErrInvalid{"user"}
 		}
@@ -429,7 +614,7 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 	}
 	members := map[string]bool{}
 	for _, u := range m.Members {
-		k := strings.ToLower(u)
+		k := foldName(u)
 		if !users[k] || members[k] {
 			return nil, ErrInvalid{"team member"}
 		}
@@ -438,15 +623,15 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 	for _, list := range [][]BundleMembership{m.Memberships, m.Assignments} {
 		seen := map[string]bool{}
 		for _, v := range list {
-			key := v.Project + ":" + strings.ToLower(v.User)
-			if !projects[v.Project] || !users[strings.ToLower(v.User)] || roleRank[v.Role] == 0 || seen[key] {
+			key := v.Project + ":" + foldName(v.User)
+			if !projects[v.Project] || !users[foldName(v.User)] || roleRank[v.Role] == 0 || seen[key] {
 				return nil, ErrInvalid{"membership"}
 			}
 			seen[key] = true
 		}
 	}
 	for _, v := range m.Assignments {
-		if !members[strings.ToLower(v.User)] {
+		if !members[foldName(v.User)] {
 			return nil, ErrInvalid{"assignment requires team member"}
 		}
 	}
@@ -480,11 +665,19 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 			return nil, err
 		}
 		key := bundleKey(m.OriginGateway, v.Project, id)
-		if f["import_key"] != key || keys[key] || !users[strings.ToLower(f["author"])] || f["hash"] != contentHash(in.Title, in.Body) || v.Provenance.ContentHash != f["hash"] || v.Provenance.SourceKind != f["kind"] {
+		if f["import_key"] != key || keys[key] || !users[foldName(f["author"])] || f["hash"] != contentHash(in.Title, in.Body) || v.Provenance.ContentHash != f["hash"] || v.Provenance.SourceKind != f["kind"] {
 			return nil, ErrInvalid{"note metadata or hash"}
 		}
 		keys[key] = true
-		notes = append(notes, bundleNoteInput{v, f, in, key})
+		// Everything the bundle says about the note's history becomes one opaque text.
+		meta, err := json.Marshal(map[string]any{"markdown": f, "provenance": v.Provenance})
+		if err != nil {
+			return nil, err
+		}
+		if len(meta) > maxSourceMeta {
+			return nil, ErrTooLarge
+		}
+		notes = append(notes, bundleNoteInput{v, f, in, key, id, string(meta)})
 	}
 	if len(seen) != len(b.files) {
 		return nil, ErrInvalid{"unexpected bundle file"}
@@ -499,6 +692,10 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 
 // ImportBundle validates every byte before entering a transaction.
 func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (report BundleReport, err error) {
+	if !validSourceName(in.Source) {
+		err = ErrInvalid{"source name: 1-64 bytes, no control characters"}
+		return BundleReport{[]string{"refuse " + err.Error()}}, err
+	}
 	b, err := readBundle(in.Path)
 	if err != nil {
 		return BundleReport{[]string{"refuse " + err.Error()}}, err
@@ -507,16 +704,23 @@ func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (report Bundl
 	if err != nil {
 		return BundleReport{[]string{"refuse " + err.Error()}}, err
 	}
+	// A bundle of this gateway's own export could claim its notes back.
+	if b.manifest.OriginGateway == s.GatewayID() {
+		err = ErrInvalid{"bundle was exported by this gateway"}
+		return BundleReport{[]string{"refuse " + err.Error()}}, err
+	}
 	mapping := map[string]string{}
 	for old, name := range in.Map {
-		k := strings.ToLower(old)
+		k := foldName(old)
 		if !validName(old) || !validName(name) || mapping[k] != "" {
 			err = ErrInvalid{"user map"}
 			return BundleReport{[]string{"refuse " + err.Error()}}, err
 		}
 		mapping[k] = name
 	}
-	apply := func(tx *sql.Tx) error { return s.applyBundle(tx, b.manifest, notes, mapping, in.DryRun, &report) }
+	apply := func(tx *sql.Tx) error {
+		return s.applyBundle(tx, b.manifest, notes, mapping, in.Source, in.DryRun, &report)
+	}
 	if in.DryRun {
 		err = s.read(ctx, apply)
 	} else {
@@ -531,7 +735,7 @@ func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (report Bundl
 	return
 }
 
-func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInput, mapping map[string]string, dry bool, report *BundleReport) error {
+func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInput, mapping map[string]string, source string, dry bool, report *BundleReport) error {
 	changed := false
 	line := func(action, subject string) {
 		report.Lines = append(report.Lines, action+" "+subject)
@@ -545,6 +749,24 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		}
 		_, e := tx.Exec(q, args...)
 		return e
+	}
+	// The source name is the owner's namespace of receipts. The bundle's own origin is only
+	// recorded the first time; a later import under this source must agree with it.
+	var sourceOrigin string
+	e := tx.QueryRow(`SELECT origin_gateway FROM import_sources WHERE source=?`, source).Scan(&sourceOrigin)
+	if e != nil && e != sql.ErrNoRows {
+		return e
+	}
+	if e == nil && sourceOrigin != m.OriginGateway {
+		return ErrInvalid{"this source was first imported from another gateway"}
+	}
+	if e == sql.ErrNoRows {
+		line("create", "source "+source+", origin "+m.OriginGateway)
+		if e = exec(`INSERT INTO import_sources(source,origin_gateway) VALUES(?,?)`, source, m.OriginGateway); e != nil {
+			return e
+		}
+	} else {
+		line("skip", "source "+source+", origin "+sourceOrigin)
 	}
 	var team int64
 	var archived bool
@@ -581,37 +803,66 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	} else {
 		line("skip", "team "+m.Team)
 	}
+	// Target users are matched after Unicode NFC and case folding. Two accounts that fold to one
+	// name, and two bundle users that land on one account, cannot be told apart: refuse.
+	type account struct {
+		name string
+		id   int64
+	}
+	accounts := map[string]account{}
+	rows, e := tx.Query(`SELECT id,name FROM users`)
+	if e != nil {
+		return e
+	}
+	for rows.Next() {
+		var a account
+		if e = rows.Scan(&a.id, &a.name); e != nil {
+			rows.Close()
+			return e
+		}
+		k := foldName(a.name)
+		if old, ok := accounts[k]; ok {
+			rows.Close()
+			return ErrInvalid{"ambiguous target users " + old.name + ", " + a.name}
+		}
+		accounts[k] = a
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil {
+		return e
+	}
 	users := map[string]int64{}
-	targets := map[string]int64{}
+	used := map[string]string{}
+	neg := int64(0)
 	for _, name := range m.Users {
 		target := name
-		if v := mapping[strings.ToLower(name)]; v != "" {
+		if v := mapping[foldName(name)]; v != "" {
 			target = v
 		}
-		k := strings.ToLower(target)
-		id, ok := targets[k]
-		if !ok {
-			e := tx.QueryRow(`SELECT id FROM users WHERE name=? COLLATE NOCASE`, target).Scan(&id)
-			if e != nil && e != sql.ErrNoRows {
-				return e
-			}
-			if e == sql.ErrNoRows {
-				line("create", "inactive user "+target)
-				if dry {
-					id = -int64(len(targets) + 1)
-				} else {
-					r, e := tx.Exec(`INSERT INTO users(name,active,owner) VALUES(?,0,0)`, target)
-					if e != nil {
-						return e
-					}
-					id, _ = r.LastInsertId()
-				}
-			} else {
-				line("skip", "user "+target)
-			}
-			targets[k] = id
+		k := foldName(target)
+		if other, ok := used[k]; ok {
+			return ErrInvalid{"two bundle users map to one target user: " + other + ", " + name}
 		}
-		users[strings.ToLower(name)] = id
+		used[k] = name
+		a, ok := accounts[k]
+		if !ok {
+			line("create", "inactive user "+target)
+			if dry {
+				neg--
+				a = account{target, neg}
+			} else {
+				r, e := tx.Exec(`INSERT INTO users(name,active,owner) VALUES(?,0,0)`, target)
+				if e != nil {
+					return e
+				}
+				a.id, _ = r.LastInsertId()
+			}
+			accounts[k] = a
+		} else {
+			line("skip", "user "+a.name)
+		}
+		users[foldName(name)] = a.id
 	}
 	projects := map[string]int64{}
 	high := max(s.st.ProjectHigh, dbInt(tx, "project_high"))
@@ -647,7 +898,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		}
 	}
 	for _, name := range m.Members {
-		uid := users[strings.ToLower(name)]
+		uid := users[foldName(name)]
 		var n int
 		if e := tx.QueryRow(`SELECT count(*) FROM team_members WHERE team_id=? AND user_id=?`, team, uid).Scan(&n); e != nil {
 			return e
@@ -662,7 +913,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	// Only raise an origin's role. Rebuilding effective memberships cannot narrow it.
 	for i, list := range [][]BundleMembership{m.Memberships, m.Assignments} {
 		for _, v := range list {
-			pid, uid := projects[v.Project], users[strings.ToLower(v.User)]
+			pid, uid := projects[v.Project], users[foldName(v.User)]
 			table, where, args := "direct_memberships", "project_id=? AND user_id=?", []any{pid, uid}
 			if i == 1 {
 				table = "team_assignments"
@@ -711,14 +962,24 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	counts, sizes := map[int64]int64{}, map[int64]int64{}
 	for _, v := range notes {
 		pid := projects[v.meta.Project]
-		r, e := receipt(tx, pid, v.key)
+		key := receiptKey(source, v.meta.Project, v.id)
+		r, e := receipt(tx, pid, key)
 		if e != nil {
 			return e
 		}
 		hash := contentHash(v.in.Title, v.in.Body)
 		var old Note
 		if r.submission != 0 {
-			line("skip", v.key+": local submission")
+			line("skip", key+": local submission")
+			continue
+		}
+		// A pending local proposal for the same source entry is not superseded by an import.
+		var pending int
+		if e = tx.QueryRow(`SELECT count(*) FROM kb_submissions WHERE state='pending' AND project_id=? AND (key=? OR (replaces<>0 AND replaces=?))`, pid, v.key, r.note).Scan(&pending); e != nil {
+			return e
+		}
+		if pending > 0 {
+			line("skip", key+": local submission")
 			continue
 		}
 		if r.note != 0 {
@@ -726,12 +987,13 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 			if e != nil {
 				return e
 			}
-			if r.hash == hash {
-				line("skip", v.key)
+			// Any local change, including a class change, bumps the revision and is never overwritten.
+			if old.Revision != r.revision {
+				line("skip", key+": local edit")
 				continue
 			}
-			if contentHash(old.Title, old.Body) != r.hash {
-				line("skip", v.key+": local edit")
+			if r.hash == hash && r.class == string(v.in.Class) {
+				line("skip", key)
 				continue
 			}
 		}
@@ -762,25 +1024,30 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		if r.note != 0 {
 			action = "merge"
 		}
-		line(action, v.key)
+		line(action, key)
 		if dry {
 			continue
 		}
-		uid := users[strings.ToLower(v.fields["author"])]
-		pr := v.meta.Provenance
-		pr.Device = "UNKNOWN"
-		pr.OriginGateway, pr.Exported = m.OriginGateway, m.Exported
+		uid := users[foldName(v.fields["author"])]
 		if r.note != 0 && old.Class != v.in.Class {
 			if e = setMeta(tx, "epoch", i64(max(s.st.Epoch, dbInt(tx, "epoch"))+1)); e != nil {
 				return e
 			}
 		}
+		// The note's local provenance is the owner's import; the bundle's claims are kept apart.
+		pr := importProvenance(source, v.meta.Project, v.id, pid, hash, s.now())
 		id, e := s.importNote(tx, pid, uid, r.note, v.in, pr)
 		if e != nil {
 			return e
 		}
-		r.note, r.hash = id, hash
-		if e = saveImport(tx, pid, v.key, r, pr); e != nil {
+		if e = tx.QueryRow(`SELECT revision FROM notes WHERE id=?`, id).Scan(&r.revision); e != nil {
+			return e
+		}
+		r.note, r.hash, r.class = id, hash, string(v.in.Class)
+		if e = saveImport(tx, pid, key, r, m.OriginGateway, m.Exported); e != nil {
+			return e
+		}
+		if e = setSourceMeta(tx, id, v.sourceMeta); e != nil {
 			return e
 		}
 	}
@@ -790,5 +1057,5 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	if _, err = rebuildMemberships(tx); err != nil {
 		return err
 	}
-	return Audit(tx, adminActor, "kb.import", m.OriginGateway, map[string]any{"team": m.Team, "exported": m.Exported})
+	return Audit(tx, adminActor, "kb.import", source, map[string]any{"team": m.Team, "origin": m.OriginGateway, "exported": m.Exported})
 }

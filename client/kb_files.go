@@ -17,6 +17,35 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	maxImportFiles = 10000
+	maxImportDepth = 32
+)
+
+// readNoteFile opens the file once, without following a link, and reads it from that descriptor.
+func readNoteFile(name string) ([]byte, error) {
+	f, err := openMarker(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file: %s", name)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 96<<10))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) >= 96<<10 {
+		return nil, core.ErrTooLarge
+	}
+	return data, nil
+}
+
 func (e *projectEnv) kbFiles(args []string) error {
 	if e.agent {
 		return errors.New(agentRefusal)
@@ -139,6 +168,13 @@ func (e *projectEnv) kbFiles(args []string) error {
 			if walkErr != nil {
 				return walkErr
 			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			if strings.Count(rel, string(filepath.Separator)) > maxImportDepth {
+				return fmt.Errorf("import folder is too deep: %s", path)
+			}
 			if d.Type()&os.ModeSymlink != 0 {
 				return fmt.Errorf("not a regular file: %s", path)
 			}
@@ -152,6 +188,9 @@ func (e *projectEnv) kbFiles(args []string) error {
 				return fmt.Errorf("not a regular file: %s", path)
 			}
 			files = append(files, path)
+			if len(files) > maxImportFiles {
+				return core.ErrTooLarge
+			}
 			return nil
 		})
 		if err != nil {
@@ -170,17 +209,9 @@ func (e *projectEnv) kbFiles(args []string) error {
 				return err
 			}
 		}
-		f, err := os.Open(file)
+		data, err := readNoteFile(file)
 		if err != nil {
 			return err
-		}
-		data, err := io.ReadAll(io.LimitReader(f, 96<<10))
-		f.Close()
-		if err != nil {
-			return err
-		}
-		if len(data) >= 96<<10 {
-			return core.ErrTooLarge
 		}
 		if !utf8.Valid(data) {
 			return errors.New("the note must be text (UTF-8)")
@@ -224,6 +255,7 @@ func bundleRequest(args []string) (string, string, any, error) {
 	fs.SetOutput(io.Discard)
 	cfg := fs.String("config", defaultServeConfigPath(), "")
 	team := fs.String("team", "", "")
+	source := fs.String("source", "", "")
 	private := fs.Bool("with-private", false, "")
 	dry := fs.Bool("dry-run", false, "")
 	projects := []string{}
@@ -252,15 +284,15 @@ func bundleRequest(args []string) (string, string, any, error) {
 	var body any
 	switch pos[0] {
 	case "export":
-		if *team == "" || *dry || len(mapping) > 0 {
+		if *team == "" || *source != "" || *dry || len(mapping) > 0 {
 			return "", "", nil, usage
 		}
 		body = core.BundleExport{Team: *team, Projects: projects, WithPrivate: *private, Path: file}
 	case "import":
-		if *team != "" || len(projects) > 0 || *private {
+		if *source == "" || *team != "" || len(projects) > 0 || *private {
 			return "", "", nil, usage
 		}
-		body = core.BundleImport{Path: file, DryRun: *dry, Map: mapping}
+		body = core.BundleImport{Path: file, Source: *source, DryRun: *dry, Map: mapping}
 	default:
 		return "", "", nil, usage
 	}

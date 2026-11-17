@@ -65,9 +65,46 @@ func TestBundlePathRoutes(t *testing.T) {
 	if r = f.api.Handle(bg, Context{Kind: KindAdmin}, bad); r.Status != 400 {
 		t.Fatal(r)
 	}
-	body, _ = json.Marshal(core.BundleImport{Path: file, DryRun: true})
+	// A bundle is imported only from another gateway, under an owner-chosen source name.
+	foreign, e := core.Open(t.TempDir(), core.Options{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer foreign.Close()
+	fu, e := foreign.CreateUser(bg, "ana")
+	if e != nil {
+		t.Fatal(e)
+	}
+	ft, e := foreign.CreateTeam(bg, "Team")
+	if e != nil {
+		t.Fatal(e)
+	}
+	fp, e := foreign.CreateProject(bg, "fakture", "fakture")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = foreign.AddTeamProject(bg, ft.ID, fp.ID); e != nil {
+		t.Fatal(e)
+	}
+	if e = foreign.AddTeamMember(bg, ft.ID, fu.ID); e != nil {
+		t.Fatal(e)
+	}
+	if e = foreign.SetMember(bg, fp.ID, fu.ID, core.Admin); e != nil {
+		t.Fatal(e)
+	}
+	if e = foreign.SetBinding(bg, "dev-ana", fu.ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = foreign.CreateNote(bg, core.Principal{UserID: fu.ID, DeviceID: "dev-ana"}, fp.ID, "k", core.NoteInput{Class: core.Structure, Title: "t", Body: "b"}); e != nil {
+		t.Fatal(e)
+	}
+	file = filepath.Join(t.TempDir(), "foreign.zip")
+	if e = foreign.ExportBundle(bg, core.BundleExport{Team: "Team", Path: file}); e != nil {
+		t.Fatal(e)
+	}
+	body, _ = json.Marshal(core.BundleImport{Path: file, Source: "remotesrc", DryRun: true})
 	r = f.api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "POST", Path: "/import", Body: body})
-	if r.Status != 200 || !strings.Contains(string(r.Body), "create gw:") {
+	if r.Status != 200 || !strings.Contains(string(r.Body), "create src:remotesrc:") {
 		t.Fatal(r.Status, string(r.Body))
 	}
 	for _, req := range []Request{
@@ -85,7 +122,7 @@ func TestBundlePathRoutes(t *testing.T) {
 	if e = os.WriteFile(badFile, []byte("not a zip"), 0600); e != nil {
 		t.Fatal(e)
 	}
-	body, _ = json.Marshal(core.BundleImport{Path: badFile, DryRun: true})
+	body, _ = json.Marshal(core.BundleImport{Path: badFile, Source: "remotesrc", DryRun: true})
 	r = f.api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "POST", Path: "/import", Body: body})
 	if r.Status < 400 || !strings.Contains(string(r.Body), "refuse") {
 		t.Fatal(r)

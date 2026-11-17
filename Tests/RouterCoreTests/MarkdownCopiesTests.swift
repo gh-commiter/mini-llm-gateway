@@ -52,16 +52,40 @@ import Testing
             return (200, Data(#"{"lines":["create team Team","skip note"]}"#.utf8))
         }, out: { output += $0 })
         try cmd.bundle(["export", "--team", "Team", "--project", "one", "--project=two", "--with-private", "/tmp/team.zip"])
-        try cmd.bundle(["import", "/tmp/team.zip", "--dry-run", "--map", "ana=Ana", "--map=bor=Bor"])
+        try cmd.bundle(["import", "/tmp/team.zip", "--source", "remotesrc", "--dry-run", "--map", "ana=Ana", "--map=bor=Bor"])
         #expect(routes == ["/export", "/import"])
         #expect(bodies[0]["projects"] as? [String] == ["one", "two"])
         #expect(bodies[0]["with_private"] as? Bool == true)
+        #expect(bodies[1]["source"] as? String == "remotesrc")
         #expect(bodies[1]["map"] as? [String: String] == ["ana": "Ana", "bor": "Bor"])
         #expect(bodies[1]["dry_run"] as? Bool == true)
         #expect(output.contains("create team Team"))
-        for args in [["export", "x.zip"], ["import", "x.zip", "--with-private"], ["import", "x.zip", "--map", "bad"], ["import", "x.zip", "--map", "a=b", "--map", "a=c"]] {
+        for args in [["export", "x.zip"], ["export", "--team", "T", "x.zip", "--source", "s"], ["import", "x.zip"], ["import", "x.zip", "--with-private"], ["import", "x.zip", "--source", "s", "--map", "bad"], ["import", "x.zip", "--source", "s", "--map", "a=b", "--map", "a=c"]] {
             #expect(throws: AdminCLIError.self) { try cmd.bundle(args) }
         }
         #expect(routes.count == 2)
+    }
+
+    @Test func memberImportRefusesLinks() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let secret = dir.appendingPathComponent("secret.md")
+        try Data("secret".utf8).write(to: secret)
+        let link = dir.appendingPathComponent("link.md")
+        try fm.createSymbolicLink(at: link, withDestinationURL: secret)
+        var posts = 0, output = ""
+        let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: dir.path, stdin: { Data() }, out: { output += $0 }, err: { _ in }, agent: false, send: { _, method, path, _, _ in
+            if method == "GET", path == "/minigw/v1/projects/demo" { return ProjectReply(status: 200, data: Data(#"{"id":1}"#.utf8)) }
+            posts += 1
+            return ProjectReply(status: 200, data: Data(#"{"action":"create","key":"id:1"}"#.utf8))
+        })
+        // A folder import refuses a link before posting anything, and a file given through a link is
+        // refused: files are opened without following them.
+        #expect(throws: ProjectError.self) { try env.kb(["import", "demo", dir.path]) }
+        #expect(posts == 0)
+        #expect(throws: ProjectError.self) { try env.kb(["import", "demo", link.path]) }
+        #expect(posts == 0)
     }
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,41 @@ func TestMarkdownImportDurable(t *testing.T) {
 	f.ok(e)
 	if result.Action != "create" || result.NoteID == first.NoteID {
 		t.Fatal(result)
+	}
+}
+
+// A member import compares the class too: an incoming class-only change applies, a local class
+// change is protected like any other local edit.
+func TestMarkdownImportClassChangeRules(t *testing.T) {
+	f := newFx(t)
+	p := f.p("fani")
+	pid := f.pid["fakture"]
+	in := MarkdownInput{Markdown: "body", Path: "class.md", Class: Structure}
+	first, e := f.ImportMarkdown(ctx, p, pid, in)
+	f.ok(e)
+	in.Class = Data
+	r, e := f.ImportMarkdown(ctx, p, pid, in)
+	f.ok(e)
+	if r.Action != "merge" || r.NoteID != first.NoteID {
+		t.Fatal(r)
+	}
+	n, e := f.GetNote(ctx, p, pid, first.NoteID)
+	f.ok(e)
+	if n.Class != Data || n.Revision != 2 {
+		t.Fatal(n.Class, n.Revision)
+	}
+	_, e = f.UpdateNote(ctx, p, pid, n.ID, n.Revision, NoteInput{Class: Private, Title: n.Title, Body: n.Body})
+	f.ok(e)
+	in.Class = Structure
+	r, e = f.ImportMarkdown(ctx, p, pid, in)
+	f.ok(e)
+	if r.Action != "skip" || r.Reason != "local edit" {
+		t.Fatal(r)
+	}
+	n, e = f.GetNote(ctx, p, pid, n.ID)
+	f.ok(e)
+	if n.Class != Private {
+		t.Fatal(n.Class)
 	}
 }
 
@@ -205,12 +241,12 @@ func TestBundleRoundTripAndConflicts(t *testing.T) {
 	if target.GatewayID() == b.manifest.OriginGateway {
 		t.Fatal("same gateway")
 	}
-	report, e := target.ImportBundle(ctx, BundleImport{Path: file, DryRun: true, Map: map[string]string{"ana": "Ana Target"}})
+	report, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc", DryRun: true, Map: map[string]string{"ana": "Ana Target"}})
 	source.ok(e)
 	if countTable(t, target, "users") != 0 || countTable(t, target, "audit_events") != 0 || !strings.Contains(strings.Join(report.Lines, "\n"), "create") {
 		t.Fatal(report)
 	}
-	report, e = target.ImportBundle(ctx, BundleImport{Path: file, Map: map[string]string{"ana": "Ana Target"}})
+	report, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc", Map: map[string]string{"ana": "Ana Target"}})
 	source.ok(e)
 	if countTable(t, target, "notes") != 1 || countTable(t, target, "kb_submissions") != 0 || countTable(t, target, "device_bindings") != 0 {
 		t.Fatal(report)
@@ -224,14 +260,26 @@ func TestBundleRoundTripAndConflicts(t *testing.T) {
 	source.ok(target.DB().QueryRow(`SELECT id FROM notes`).Scan(&id))
 	var n Note
 	source.ok(target.read(ctx, func(tx *sql.Tx) error { var e error; n, e = getNote(tx, id); return e }))
-	if n.Provenance.Device != "UNKNOWN" || n.Provenance.OriginGateway != source.GatewayID() || n.Provenance.Exported == "" {
+	// Provenance is the owner's local import action, never what the bundle claims.
+	if n.Provenance.ActorKind != ActorImport || n.Provenance.User != 0 || n.Provenance.SourceKind != SourceImport ||
+		n.Provenance.SourceReference != "testsrc/fakture/1" || n.Provenance.Project != n.ProjectID ||
+		n.Provenance.Device != "UNKNOWN" || n.Provenance.OriginGateway != "" || n.Provenance.Reviewer != "" || n.Provenance.Reviewed != nil {
 		t.Fatal(n.Provenance)
+	}
+	// What the bundle says about its history is kept apart and unread by the provenance logic.
+	if n.UnverifiedSource == "" || !strings.Contains(n.UnverifiedSource, source.GatewayID()) {
+		t.Fatal(n.UnverifiedSource)
+	}
+	var key, origin string
+	source.ok(target.DB().QueryRow(`SELECT key,origin_gateway FROM note_imports`).Scan(&key, &origin))
+	if key != "src:testsrc:fakture:1" || origin != source.GatewayID() {
+		t.Fatal(key, origin)
 	}
 	beforeAudit := countTable(t, target, "audit_events")
 	if beforeAudit != 1 {
 		t.Fatal("extra audits", beforeAudit)
 	}
-	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Map: map[string]string{"ana": "ana target"}})
+	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc", Map: map[string]string{"ana": "ana target"}})
 	source.ok(e)
 	if countTable(t, target, "notes") != 1 || countTable(t, target, "audit_events") != beforeAudit {
 		t.Fatal("not a no-op")
@@ -244,21 +292,21 @@ func TestBundleRoundTripAndConflicts(t *testing.T) {
 	source.ok(e)
 	newer := filepath.Join(t.TempDir(), "newer.zip")
 	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: newer}))
-	_, e = target.ImportBundle(ctx, BundleImport{Path: newer, Map: map[string]string{"ana": "Ana Target"}})
+	_, e = target.ImportBundle(ctx, BundleImport{Path: newer, Source: "testsrc", Map: map[string]string{"ana": "Ana Target"}})
 	source.ok(e)
 	source.ok(target.read(ctx, func(tx *sql.Tx) error { var e error; n, e = getNote(tx, id); return e }))
 	if n.Body != "upstream" || n.Revision != 2 {
 		t.Fatal(n)
 	}
 	source.ok(target.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`UPDATE notes SET body='local',bytes=length(title)+5 WHERE id=?`, id)
+		_, e := tx.Exec(`UPDATE notes SET body='local',bytes=length(title)+5,revision=revision+1 WHERE id=?`, id)
 		return e
 	}))
 	sn, e = source.UpdateNote(ctx, source.p("ana"), sn.ProjectID, sn.ID, sn.Revision, NoteInput{Class: Structure, Title: sn.Title, Body: "upstream two"})
 	source.ok(e)
 	latest := filepath.Join(t.TempDir(), "latest.zip")
 	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: latest}))
-	report, e = target.ImportBundle(ctx, BundleImport{Path: latest, Map: map[string]string{"ana": "Ana Target"}})
+	report, e = target.ImportBundle(ctx, BundleImport{Path: latest, Source: "testsrc", Map: map[string]string{"ana": "Ana Target"}})
 	source.ok(e)
 	if !strings.Contains(strings.Join(report.Lines, "\n"), "local edit") {
 		t.Fatal(report)
@@ -274,7 +322,7 @@ func TestBundleRoundTripAndConflicts(t *testing.T) {
 			source.ok(target.SetMember(ctx, n.ProjectID, u.ID, Admin))
 		}
 	}
-	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Map: map[string]string{"ana": "Ana Target"}})
+	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc", Map: map[string]string{"ana": "Ana Target"}})
 	source.ok(e)
 	var role Role
 	source.ok(target.DB().QueryRow(`SELECT role FROM direct_memberships d JOIN users u ON u.id=d.user_id WHERE u.name='Ana Target'`).Scan(&role))
@@ -322,7 +370,7 @@ func TestBundleRefusalsAreAtomic(t *testing.T) {
 			target := openT(t, t.TempDir())
 			defer target.Close()
 			for _, dry := range []bool{true, false} {
-				report, e := target.ImportBundle(ctx, BundleImport{Path: bad, DryRun: dry})
+				report, e := target.ImportBundle(ctx, BundleImport{Path: bad, Source: "testsrc", DryRun: dry})
 				if e == nil || !strings.Contains(strings.Join(report.Lines, "\n"), "refuse") {
 					t.Fatal(report, e)
 				}
@@ -349,7 +397,7 @@ func TestBundleRefusalsAreAtomic(t *testing.T) {
 		f.ok(out.Close())
 		target := openT(t, t.TempDir())
 		defer target.Close()
-		_, e = target.ImportBundle(ctx, BundleImport{Path: bad})
+		_, e = target.ImportBundle(ctx, BundleImport{Path: bad, Source: "testsrc"})
 		if e == nil {
 			t.Fatal("accepted link")
 		}
@@ -363,7 +411,7 @@ func TestBundleRefusalsAreAtomic(t *testing.T) {
 		f.ok(e)
 		f.ok(target.AddTeamProject(ctx, team.ID, p.ID))
 		before := countTable(t, target, "audit_events")
-		_, e = target.ImportBundle(ctx, BundleImport{Path: file})
+		_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
 		if e == nil {
 			t.Fatal("stole project")
 		}
@@ -378,7 +426,7 @@ func TestBundleRefusalsAreAtomic(t *testing.T) {
 			_, e := tx.Exec(`CREATE TRIGGER fail_import BEFORE INSERT ON note_imports BEGIN SELECT RAISE(ABORT,'fail'); END`)
 			return e
 		}))
-		_, e = target.ImportBundle(ctx, BundleImport{Path: file})
+		_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
 		if e == nil {
 			t.Fatal("expected failure")
 		}
@@ -401,13 +449,13 @@ func TestBundleRefusalsAreAtomic(t *testing.T) {
 		oldBytes, oldNotes := maxBytes, maxNotes
 		defer func() { maxBytes, maxNotes = oldBytes, oldNotes }()
 		maxBytes = 10
-		_, e := target.ImportBundle(ctx, BundleImport{Path: file})
+		_, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
 		if e == nil {
 			t.Fatal("byte cap")
 		}
 		maxBytes = oldBytes
 		maxNotes = 0
-		_, e = target.ImportBundle(ctx, BundleImport{Path: file})
+		_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
 		if e == nil {
 			t.Fatal("note cap")
 		}
@@ -477,7 +525,7 @@ func TestBundleClassUpdateInvalidatesCapabilities(t *testing.T) {
 	f, file := bundleFixture(t)
 	target := openT(t, t.TempDir())
 	defer target.Close()
-	_, e := target.ImportBundle(ctx, BundleImport{Path: file})
+	_, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
 	f.ok(e)
 	before, _ := target.Epoch(ctx)
 	var source Note
@@ -486,7 +534,7 @@ func TestBundleClassUpdateInvalidatesCapabilities(t *testing.T) {
 	f.ok(e)
 	file = filepath.Join(t.TempDir(), "private-changed.zip")
 	f.ok(f.ExportBundle(ctx, BundleExport{Team: "Team", Projects: []string{"fakture"}, Path: file, WithPrivate: true}))
-	_, e = target.ImportBundle(ctx, BundleImport{Path: file})
+	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
 	f.ok(e)
 	after, _ := target.Epoch(ctx)
 	if after <= before || countTable(t, target, "audit_events") != 2 {
@@ -499,7 +547,8 @@ func TestBundleClassUpdateInvalidatesCapabilities(t *testing.T) {
 	}
 	var imported Note
 	f.ok(target.read(ctx, func(tx *sql.Tx) error { var e error; imported, e = getNote(tx, 1); return e }))
-	if imported.Provenance.User != f.uid["fani"] || imported.Provenance.Project != source.ProjectID {
+	if imported.Provenance.ActorKind != ActorImport || imported.Provenance.User != 0 || imported.Provenance.Project != imported.ProjectID ||
+		imported.Provenance.SourceKind != SourceImport || imported.Provenance.SourceReference != "testsrc/fakture/1" {
 		t.Fatal("changed source provenance", imported.Provenance)
 	}
 	side, e := readState(target.dir)
@@ -511,6 +560,235 @@ func TestBundleClassUpdateInvalidatesCapabilities(t *testing.T) {
 	f.ok(e)
 	if next.ID <= 2 {
 		t.Fatal("reused project id", next)
+	}
+}
+
+func TestBundleClassChangeRules(t *testing.T) {
+	source, file := bundleFixture(t)
+	// A local class change bumps the revision; a later upstream body change must not undo it.
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	_, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
+	source.ok(e)
+	var imported Note
+	source.ok(target.read(ctx, func(tx *sql.Tx) error { var e error; imported, e = getNote(tx, 1); return e }))
+	if imported.Class != Structure {
+		t.Fatal(imported.Class)
+	}
+	source.ok(target.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`UPDATE notes SET class='private',revision=revision+1 WHERE id=1`)
+		return e
+	}))
+	var sn Note
+	source.ok(source.read(ctx, func(tx *sql.Tx) error { var e error; sn, e = getNote(tx, 1); return e }))
+	_, e = source.UpdateNote(ctx, source.p("ana"), sn.ProjectID, sn.ID, sn.Revision, NoteInput{Class: Structure, Title: sn.Title, Body: "upstream change"})
+	source.ok(e)
+	newer := filepath.Join(t.TempDir(), "newer.zip")
+	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: newer}))
+	report, e := target.ImportBundle(ctx, BundleImport{Path: newer, Source: "testsrc"})
+	source.ok(e)
+	if !strings.Contains(strings.Join(report.Lines, "\n"), "local edit") {
+		t.Fatal(report)
+	}
+	var class Class
+	var body string
+	source.ok(target.DB().QueryRow(`SELECT class,body FROM notes WHERE id=1`).Scan(&class, &body))
+	if class != Private || body != imported.Body {
+		t.Fatal(class, body)
+	}
+
+	// An upstream class-only change is applied to a note that was not changed locally.
+	other := openT(t, t.TempDir())
+	defer other.Close()
+	_, e = other.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
+	source.ok(e)
+	sn, e = source.GetNote(ctx, source.p("fani"), sn.ProjectID, sn.ID)
+	source.ok(e)
+	_, e = source.UpdateNote(ctx, source.p("fani"), sn.ProjectID, sn.ID, sn.Revision, NoteInput{Class: Data, Title: sn.Title, Body: sn.Body})
+	source.ok(e)
+	classOnly := filepath.Join(t.TempDir(), "class.zip")
+	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: classOnly}))
+	_, e = other.ImportBundle(ctx, BundleImport{Path: classOnly, Source: "testsrc"})
+	source.ok(e)
+	var class2 Class
+	var revision int64
+	source.ok(other.DB().QueryRow(`SELECT class,revision FROM notes WHERE id=1`).Scan(&class2, &revision))
+	if class2 != Data || revision != 2 {
+		t.Fatal(class2, revision)
+	}
+}
+
+func TestBundleSourceBinding(t *testing.T) {
+	source, file := bundleFixture(t)
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	_, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "one"})
+	source.ok(e)
+	var origin string
+	source.ok(target.DB().QueryRow(`SELECT origin_gateway FROM import_sources WHERE source='one'`).Scan(&origin))
+	if origin != source.GatewayID() {
+		t.Fatal(origin)
+	}
+	// Another gateway's archive under the same source is refused, even if it claims the same origin.
+	other, otherFile := bundleFixture(t)
+	if other.GatewayID() == source.GatewayID() {
+		t.Fatal("test gateways have the same id")
+	}
+	before := countTable(t, target, "notes")
+	_, e = target.ImportBundle(ctx, BundleImport{Path: otherFile, Source: "one"})
+	if e == nil || !strings.Contains(e.Error(), "first imported from another gateway") {
+		t.Fatal(e)
+	}
+	if countTable(t, target, "notes") != before {
+		t.Fatal("wrote notes")
+	}
+	// A dry run names a new source and the origin it would record, and refuses a bound source.
+	report, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "two", DryRun: true})
+	source.ok(e)
+	if !strings.Contains(strings.Join(report.Lines, "\n"), "source two, origin "+source.GatewayID()) {
+		t.Fatal(report)
+	}
+	if _, e = target.ImportBundle(ctx, BundleImport{Path: otherFile, Source: "one", DryRun: true}); e == nil {
+		t.Fatal("dry run ignored the source binding")
+	}
+	// A bundle of this gateway's own export is refused.
+	team, e := target.CreateTeam(ctx, "Own")
+	source.ok(e)
+	project, e := target.CreateProject(ctx, "own", "Own")
+	source.ok(e)
+	source.ok(target.AddTeamProject(ctx, team.ID, project.ID))
+	self := filepath.Join(t.TempDir(), "self.zip")
+	source.ok(target.ExportBundle(ctx, BundleExport{Team: "Own", Path: self}))
+	_, e = target.ImportBundle(ctx, BundleImport{Path: self, Source: "three"})
+	if e == nil || !strings.Contains(e.Error(), "exported by this gateway") {
+		t.Fatal(e)
+	}
+	if _, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: ""}); e == nil {
+		t.Fatal("accepted an empty source name")
+	}
+}
+
+func TestBundleImportedProvenanceIsTrusted(t *testing.T) {
+	f, file := bundleFixture(t)
+	b, e := readBundle(file)
+	f.ok(e)
+	reviewed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	b.manifest.Notes[0].Provenance.Reviewer = "owner"
+	b.manifest.Notes[0].Provenance.Reviewed = &reviewed
+	b.manifest.Notes[0].Provenance.User = 999
+	bad := rewriteZip(t, b, nil)
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	_, e = target.ImportBundle(ctx, BundleImport{Path: bad, Source: "testsrc"})
+	f.ok(e)
+	var n Note
+	f.ok(target.read(ctx, func(tx *sql.Tx) error { var e error; n, e = getNote(tx, 1); return e }))
+	if n.Provenance.ActorKind != ActorImport || n.Provenance.User != 0 || n.Provenance.Reviewer != "" ||
+		n.Provenance.Reviewed != nil || n.Provenance.SourceKind != SourceImport {
+		t.Fatal("bundle provenance became local", n.Provenance)
+	}
+	// The bundle's claims are kept, unverified and apart.
+	if !strings.Contains(n.UnverifiedSource, `"reviewer":"owner"`) || !strings.Contains(n.UnverifiedSource, `"user":999`) {
+		t.Fatal(n.UnverifiedSource)
+	}
+}
+
+func TestBundleUserMappingUnicode(t *testing.T) {
+	source, file := bundleFixture(t)
+	// Two target accounts that only Unicode-normalize to one name cannot be told apart.
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	if _, e := target.CreateUser(ctx, "Änne"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := target.CreateUser(ctx, "änne"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "u"}); e == nil || !strings.Contains(e.Error(), "ambiguous target users") {
+		t.Fatal(e)
+	}
+	// Two bundle users mapped onto one target account are refused.
+	clean := openT(t, t.TempDir())
+	defer clean.Close()
+	b, e := readBundle(file)
+	source.ok(e)
+	b.manifest.Users = append(b.manifest.Users, "bor")
+	twoUsers := rewriteZip(t, b, nil)
+	if _, e := clean.ImportBundle(ctx, BundleImport{Path: twoUsers, Source: "u", Map: map[string]string{"ana": "Ann", "bor": "ann"}}); e == nil || !strings.Contains(e.Error(), "two bundle users map to one target user") {
+		t.Fatal(e)
+	}
+	// A decomposed spelling resolves to the precomposed target account.
+	pre := openT(t, t.TempDir())
+	defer pre.Close()
+	u, e := pre.CreateUser(ctx, "Änne")
+	source.ok(e)
+	_, e = pre.ImportBundle(ctx, BundleImport{Path: file, Source: "u", Map: map[string]string{"ana": "Änne"}})
+	source.ok(e)
+	var author int64
+	source.ok(pre.DB().QueryRow(`SELECT author_id FROM notes`).Scan(&author))
+	if author != u.ID {
+		t.Fatal(author, u.ID)
+	}
+}
+
+func TestBundleArchiveLimits(t *testing.T) {
+	f, file := bundleFixture(t)
+	cases := []struct {
+		name   string
+		limit  func()
+		change func(map[string][]byte)
+	}{
+		{"manifest size", func() { maxManifestBytes = 8 }, nil},
+		{"central directory", func() { maxBundleDirBytes = 8 }, nil},
+		{"manifest nesting", func() { maxBundleDepth = 8 }, func(files map[string][]byte) {
+			deep := strings.Repeat("[", 12) + strings.Repeat("]", 12)
+			files["manifest.json"] = bytes.Replace(files["manifest.json"], []byte(`"format":1`), []byte(`"format":1,"deep":`+deep), 1)
+		}},
+		{"projects", func() { maxBundleProjects = 0 }, nil},
+		{"users", func() { maxBundleUsers = 0 }, nil},
+		{"memberships", func() { maxBundleMemberships = 0 }, nil},
+		{"grants", func() { maxBundleGrants = 0 }, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oldManifest, oldDir, oldDepth := maxManifestBytes, maxBundleDirBytes, maxBundleDepth
+			oldProjects, oldUsers := maxBundleProjects, maxBundleUsers
+			oldMembers, oldGrants := maxBundleMemberships, maxBundleGrants
+			defer func() {
+				maxManifestBytes, maxBundleDirBytes, maxBundleDepth = oldManifest, oldDir, oldDepth
+				maxBundleProjects, maxBundleUsers = oldProjects, oldUsers
+				maxBundleMemberships, maxBundleGrants = oldMembers, oldGrants
+			}()
+			tc.limit()
+			bad := file
+			if tc.change != nil {
+				b, e := readBundle(file)
+				f.ok(e)
+				bad = rewriteZip(t, b, tc.change)
+			}
+			target := openT(t, t.TempDir())
+			defer target.Close()
+			report, e := target.ImportBundle(ctx, BundleImport{Path: bad, Source: "testsrc", DryRun: true})
+			if !errors.Is(e, ErrTooLarge) {
+				t.Fatal(report, e)
+			}
+			if countTable(t, target, "users") != 0 {
+				t.Fatal("wrote before refusing")
+			}
+		})
+	}
+}
+
+func TestBundleAmbiguousFileNames(t *testing.T) {
+	f, file := bundleFixture(t)
+	b, e := readBundle(file)
+	f.ok(e)
+	b.files["FAKTURE/1.md"] = b.files["fakture/1.md"]
+	bad := rewriteZip(t, b, nil)
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	if _, e = target.ImportBundle(ctx, BundleImport{Path: bad, Source: "testsrc"}); e == nil || !strings.Contains(e.Error(), "ambiguous zip entry name") {
+		t.Fatal(e)
 	}
 }
 
@@ -526,7 +804,7 @@ func TestBundleSkipsLocalSubmission(t *testing.T) {
 		t.Fatal(proposal)
 	}
 	for i := 0; i < 2; i++ {
-		report, e := target.ImportBundle(ctx, BundleImport{Path: file})
+		report, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
 		target.ok(e)
 		if !strings.Contains(strings.Join(report.Lines, "\n"), "local submission") {
 			t.Fatal(report)
