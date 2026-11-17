@@ -606,7 +606,7 @@ surviving `role` and `origins` when membership survives. Member lists include al
 `{kind: "direct", role}` or `{kind: "team", team: id, name, role}`.
 The member project list includes the caller's origins alongside the effective role. Runtime permission
 checks still read only `memberships`, including grant and note-class checks. No new member write API is added.
-# KB submissions API
+## KB submissions API
 
 Member routes require an approved authenticated device bound to an active user:
 
@@ -654,7 +654,7 @@ Legacy device/source are explicitly `UNKNOWN`. Schema 11 uses snapshot-first
 migration; backups retain submissions and revision provenance. No automatic expiry
 or customer-data detection is implemented.
 
-# KB lexical search API
+## KB lexical search API
 
 | Method | Path | Result |
 |---|---|---|

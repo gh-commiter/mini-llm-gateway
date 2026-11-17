@@ -257,7 +257,7 @@ removing a team assignment does not remove a direct one. `gw member` edits only 
 The explanation lists each origin and role; the member project list displays role and origin names.
 The user and project must belong to the active team. Removal from the team or team archive deletes
 matching assignments; direct access survives. Narrowing effective access invalidates existing runs.
-# KB review commands
+## KB review commands
 
 Both clients support identical commands:
 

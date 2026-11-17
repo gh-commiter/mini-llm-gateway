@@ -1188,7 +1188,7 @@ each sandbox request, without secrets (variables with TOKEN, KEY, SECRET, PASSWO
 run with outbound network denied and loopback allowed; it prints `nonce:<line>`, `write:ok`, `deny:ok`, `loopback:ok`
 and `final:<path>` and exits 7 (wrong arguments: a message on stderr and exit 2). A failed `loopback` check alone does
 not make the sandbox unavailable; only "May ask other models" does not work there then.
-# KB submissions and provenance
+## KB submissions and provenance
 
 `minigw note push` still publishes directly. `note read <id> --json` now includes
 authenticated writer user/device, project, actor/source kind, source reference,
@@ -1262,7 +1262,7 @@ customer data. Preview and sanitize before publishing or submitting; this beta
 does not detect customer data. Rejection is not deletion. Backups and snapshots
 retain content and provenance; restore can restore old content and permissions.
 
-# Search the published KB
+## Search the published KB
 
 Use `minigw kb search [<project>|--team <team>] <query> [--json]`, quoting queries with spaces.
 Without a project, it uses this folder's linked project. An explicit project may
