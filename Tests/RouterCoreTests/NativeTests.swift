@@ -779,17 +779,19 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     q.setValue("Bearer tok", forHTTPHeaderField: "authorization")
     q.setValue(ch.id, forHTTPHeaderField: "x-native-id"); q.setValue(proof, forHTTPHeaderField: "x-native-proof")
     let start = Date()
-    var first = -1.0, last = "", lines: [String] = []
+    var first = -1.0, last = "", lines: [String] = [], keepalives = 0
     let (bytes, _) = try await URLSession.shared.bytes(for: q)
     for try await l in bytes.lines {
-        if first < 0 {
+        if first < 0 && l != "p" {
             first = Date().timeIntervalSince(start)
             FileManager.default.createFile(atPath: f.project.appendingPathComponent("go").path, contents: Data())
         }
+        if l == "p" { keepalives += 1; continue }  // the stream's keepalive line (every 15 s while the command is silent): a slow machine sees some, and it is not output
         if l != "x 0" { lines.append(l) }
         last = l
     }
-    #expect(first >= 0 && lines == ["o c3RhcnRlZAo=", "o ZG9uZQo="], "lines \(lines)")  // brez nosniff: »started« šele ob koncu, ukaz pa »timeout«
+    #expect(first >= 0, "no line arrived")
+    #expect(lines == ["o c3RhcnRlZAo=", "o ZG9uZQo="], "lines \(lines), \(keepalives) keepalives, first line after \(first) s")  // brez nosniff: »started« šele ob koncu, ukaz pa »timeout«
     #expect(last == "x 0")
 }
 
