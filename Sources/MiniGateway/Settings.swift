@@ -39,6 +39,7 @@ struct SettingsView: View {
 
     enum Pane: Hashable {
         case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, devices, sessions, usage
+        case panel(String)  // a panel of the panel catalog (GET /panels), by its id
     }
 
     private struct Item: Identifiable {
@@ -50,7 +51,23 @@ struct SettingsView: View {
         var id: Pane { pane }
     }
 
+    @State private var panelEntries: [PanelEntry] = []
+    @State private var panelError: PanelError?
+
+    /// The panes of the panel catalog, after Devices; a catalog that cannot be loaded is one page that says why.
+    private var panelItems: [Item] {
+        let lang = PanelLang.current
+        if let e = panelError, panelEntries.isEmpty { _ = e; return [Item(pane: .panel(""), title: String(localized: "Panels"), symbol: "square.dashed", color: .indigo)] }
+        return panelEntries.map { Item(pane: .panel($0.id), title: $0.title(lang), symbol: $0.sidebarSymbol.isEmpty ? "square.dashed" : $0.sidebarSymbol, color: .indigo, about: $0.about(lang)) }
+    }
+
     private var items: [Item] {
+        var all = fixedItems
+        all.insert(contentsOf: panelItems, at: (all.firstIndex { $0.pane == .devices } ?? all.count - 1) + 1)
+        return all
+    }
+
+    private var fixedItems: [Item] {
         [Item(pane: .general, title: String(localized: "General"), symbol: "gearshape.fill", color: .gray,
               about: String(localized: "Address, port and access token of the gateway, and the app version."))]
             + draft.providers.map { p in
@@ -260,6 +277,12 @@ struct SettingsView: View {
             for (id, k) in changed { state.keychain.set(id, k) }
             state.restart()
         }
+        .task(id: state.running) {  // the panels are fetched when the window opens (and again when the gateway comes up)
+            let catalog = PanelCatalog(send: state.panelSend)
+            await catalog.load()
+            panelEntries = catalog.entries
+            panelError = catalog.error
+        }
         .task {
             while !Task.isCancelled {  // dovoljenje se spreminja v Sistemskih nastavitvah
                 axTrusted = AXIsProcessTrusted()
@@ -302,6 +325,14 @@ struct SettingsView: View {
         case .foundry: foundry
         case .devices: devices
         case .sessions: sessions
+        case .panel(let id):
+            let item = items.first { $0.pane == .panel(id) }
+            let header = PaneHeader(symbol: item?.symbol ?? "square.dashed", color: .indigo, title: item?.title ?? "", about: item?.about ?? "")
+            if let e = panelEntries.first(where: { $0.id == id }) {
+                PanelPane(entry: e, color: .indigo, send: state.panelSend)
+            } else if let panelError {
+                PanelsUnavailablePane(header: header, error: panelError)
+            }
         case .usage:
             let item = items.first { $0.pane == .usage }
             UsagePane(header: PaneHeader(symbol: item?.symbol ?? "chart.bar.xaxis", color: item?.color ?? .mint, title: item?.title ?? "", about: item?.about ?? ""))

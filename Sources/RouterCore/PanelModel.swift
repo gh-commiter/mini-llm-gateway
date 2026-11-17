@@ -94,7 +94,10 @@ public struct PanelOptionValue: Identifiable, Equatable, Sendable {
 public enum FormProblem: Equatable, Sendable { case required, tooLong(Int) }
 
 /// A list section's data; `path` is "orders" or, in a detail page, "orders/lines"; `parent` is the key of the opened row.
-public struct PanelListKey: Hashable, Sendable { public let path: String; public let parent: String }
+public struct PanelListKey: Hashable, Sendable {
+    public let path: String, parent: String
+    public init(path: String, parent: String) { self.path = path; self.parent = parent }
+}
 
 public struct PanelListData: Sendable {
     public var rows: [PanelRow] = []

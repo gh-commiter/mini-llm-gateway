@@ -403,3 +403,64 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         #expect(!CoreRoutes.isAdminPath("GET", "/panels/x") && !CoreRoutes.isMemberPath("/minigw/v1/panels"))
     }
 }
+
+// MARK: the renderer's source (the app target cannot be unit-tested, so its rules are checked in the text)
+
+private let rendererFiles: [(name: String, text: String)] = {
+    let dir = repo.appendingPathComponent("Sources/MiniGateway")
+    let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasPrefix("Panel") && $0.hasSuffix(".swift") }.sorted()
+    return names.map { n in
+        let text = (try? String(contentsOf: dir.appendingPathComponent(n), encoding: .utf8)) ?? ""
+        // comments are not code (the file's own header names the APIs it does not use)
+        return (n, text.split(separator: "\n", omittingEmptySubsequences: false).map { l in l.range(of: "//").map { String(l[..<$0.lowerBound]) } ?? String(l) }.joined(separator: "\n"))
+    }
+}()
+
+private func matches(_ pattern: String, in text: String) -> [NSTextCheckingResult] {
+    let re = try! NSRegularExpression(pattern: pattern)
+    return re.matches(in: text, range: NSRange(text.startIndex..., in: text))
+}
+
+@Suite struct PanelRendererSourceTests {
+    @Test func theRendererFilesExist() {
+        #expect(rendererFiles.map(\.name) == ["PanelView.swift"])
+        #expect(rendererFiles.allSatisfy { $0.text.count > 1000 })
+    }
+
+    @Test func noMarkdownNoLocalizedKeysOnDynamicStringsNoLinks() {
+        for (name, text) in rendererFiles {
+            for banned in ["LocalizedStringKey", "AttributedString", "markdown", "Markdown", "Link(", "openURL", "NSWorkspace", "URL(", "WebView", "WKWebView", "LocalizedStringResource"] {
+                #expect(!text.contains(banned), "\(name) uses \(banned)")
+            }
+            // Text( takes only verbatim:, String(localized: …) or a literal without interpolation
+            for m in matches(#"\bText\((.*)"#, in: text) {
+                let rest = String(text[Range(m.range(at: 1), in: text)!])
+                let ok = rest.hasPrefix("verbatim:") || rest.hasPrefix("String(localized: \"") || rest.range(of: #"^"[^"\\]*"\)"#, options: .regularExpression) != nil
+                #expect(ok, "\(name): Text(\(rest)")
+            }
+            // the other initializers that take a title: a literal without interpolation, or a label keyword, never a variable
+            for m in matches(#"(?:\bButton|\bToggle|\bTextField|\bPicker|\bLabeledContent|\bMenu|\bDisclosureGroup|\bSection|\bLabel|\.navigationTitle|\.help|\.alert|\.confirmationDialog)\((.*)"#, in: text) {
+                let rest = String(text[Range(m.range(at: 1), in: text)!])
+                let ok = ["role:", "action:", "isOn:", "selection:", "text:", "Text(verbatim:", "String(localized: \""].contains { rest.hasPrefix($0) }
+                    || rest.range(of: #"^"[^"\\]*""#, options: .regularExpression) != nil
+                #expect(ok, "\(name): \(rest)")
+            }
+        }
+    }
+
+    @Test func everyFixedStringHasASlovenianEntry() throws {
+        let cat = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("Resources/Localizable.xcstrings"))) as! [String: Any]
+        let strings = cat["strings"] as! [String: Any]
+        var keys = Set<String>()
+        for (_, text) in rendererFiles {
+            for m in matches(#"(?:\bText|\bButton|\bTextField|String\(localized:)\(?\s*"((?:[^"\\]|\\.)*)""#, in: text) {
+                keys.insert(String(text[Range(m.range(at: 1), in: text)!]).replacingOccurrences(of: #"\\\([^)]*\)"#, with: "%lld", options: .regularExpression))
+            }
+        }
+        #expect(keys.count >= 14, "found \(keys.count) strings")
+        for k in keys.sorted() {
+            let sl = (((strings[k] as? [String: Any])?["localizations"] as? [String: Any])?["sl"] as? [String: Any])?["stringUnit"] as? [String: Any]
+            #expect((sl?["value"] as? String)?.isEmpty == false && sl?["state"] as? String == "translated", "no Slovenian entry for \"\(k)\"")
+        }
+    }
+}
