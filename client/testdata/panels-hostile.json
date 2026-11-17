@@ -734,6 +734,55 @@
    },
    "swift": "accept",
    "goAccepts": true
+  },
+  {
+   "name": "a ref skip with a bad field",
+   "set": {
+    "/refs/items/skip": {
+     "field": "a b",
+     "equals": true
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a ref skip with an object value",
+   "set": {
+    "/refs/items/skip": {
+     "field": "hidden",
+     "equals": {
+      "a": 1
+     }
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a ref skip without a value",
+   "set": {
+    "/refs/items/skip": {
+     "field": "hidden"
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a ref skip that is not an object",
+   "set": {
+    "/refs/items/skip": "hidden"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a ref skip with an unknown key",
+   "set": {
+    "/refs/items/skip": {
+     "field": "hidden",
+     "equals": true,
+     "x": 1
+    }
+   },
+   "swift": "accept"
   }
  ]
 }

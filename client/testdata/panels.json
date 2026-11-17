@@ -15,7 +15,11 @@
       "path": "/users",
       "items": "users",
       "key": "id",
-      "label": "name"
+      "label": "name",
+      "skip": {
+       "field": "active",
+       "equals": false
+      }
      },
      "devices": {
       "path": "/devices",
@@ -231,13 +235,21 @@
       "path": "/users",
       "items": "users",
       "key": "id",
-      "label": "name"
+      "label": "name",
+      "skip": {
+       "field": "active",
+       "equals": false
+      }
      },
      "projects": {
       "path": "/projects",
       "items": "projects",
       "key": "id",
-      "label": "name"
+      "label": "name",
+      "skip": {
+       "field": "archived",
+       "equals": true
+      }
      }
     },
     "sections": [
@@ -1327,13 +1339,21 @@
       "path": "/projects",
       "items": "projects",
       "key": "id",
-      "label": "name"
+      "label": "name",
+      "skip": {
+       "field": "archived",
+       "equals": true
+      }
      },
      "teams": {
       "path": "/teams",
       "items": "teams",
       "key": "segment",
-      "label": "name"
+      "label": "name",
+      "skip": {
+       "field": "archived",
+       "equals": true
+      }
      }
     },
     "sections": [

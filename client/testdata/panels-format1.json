@@ -23,7 +23,11 @@
     "path": "/plugins/acme/items",
     "items": "items",
     "key": "sku",
-    "label": "title"
+    "label": "title",
+    "skip": {
+     "field": "hidden",
+     "equals": true
+    }
    }
   },
   "sections": [

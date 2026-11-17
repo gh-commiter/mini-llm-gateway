@@ -7,6 +7,14 @@
 - A refusal or "not found" from a gateway (for example "this device is not bound to a user") now says which profile and address it came from when you have more than one profile, with the hint `--minigw-profile <name>`. `MINIGW_PROFILE=<name>` is the environment form of `--minigw-profile`.
 - Importing a gateway's own bundle now says "this bundle was exported by this gateway: a gateway cannot import its own bundle"; the other bundle refusals that were glued to "invalid" or "refuse" read as sentences too.
 - The gateway log names the snapshot it takes of the project database before a schema upgrade. The snapshot is `core-<schema>-<time>.db` in the `core` folder next to `core.db` (not in `core\backups`, which holds `minigw gw core backup` files); the newest three are kept.
+- Panels on the settings page: the OK button of a form now enables as soon as the form is valid (it waited until the field lost focus), Enter in a field sends the form and Escape cancels it. The Mac pane already did both.
+- Panels, both apps: an empty value in a detail row shows an en dash instead of a bare label ("Through teams:" with nothing after it).
+- Panels: pickers (the project and team choosers of Knowledge base, the person and project choosers of Teams and projects, the person chooser of Users and devices) offer only active entries: no archived project or team, no inactive user. The panel format gets one small optional key for it, `skip` on a `refs` entry. Names of archived or inactive entries still show where a value refers to them.
+- Panels: roles show their technical name beside the friendly one ("Manage (admin)", "Develop (developer)", "Read (reader)"), so the panel matches `minigw gw` and the documentation.
+- Settings page: the browser's automatic `/favicon.ico` request no longer ends in a 401 line in the console: the settings server answers it with 204 (same Host and loopback checks as the page), and the page carries an empty icon so the browser does not ask at all.
+
+### Known problems
+- Archived projects and teams cannot be chosen in the Knowledge base pickers any more; read their notes with `minigw`.
 
 ## 0.7.17
 

@@ -336,6 +336,31 @@ async function main() {
   const body = {kind: "multiline", field: "body", label: "x"}, big = {id: "", values: {body: "x".repeat(PL.multiline + 5)}};
   assert.equal(m7.cell(body, big).length, PL.multiline); assert.ok(m7.cellIsTruncated(body, big)); assert.ok(!m7.cellIsTruncated(body, {id: "", values: {body: "short"}}));
 
+  // 5b. pickers offer active entries only (the ref's skip rule); labels still resolve for the skipped ones; an empty cell is an en dash
+  const fk = fake({"GET /projects": [200, {projects: [{id: 1, name: "Old", archived: true}, {id: 2, name: "Live", archived: false}]}], "GET /teams": [200, {teams: [{id: 4, name: "gone", archived: true, segment: 1099511627780}, {id: 5, name: "web", archived: false, segment: 1099511627781}]}],
+    "GET /kb/submissions": [200, {submissions: []}], "GET /kb/notes?project=2": [200, {notes: [{id: 9, title: "n"}]}], "GET /kb/notes?project=1099511627781": [200, {notes: []}], "GET /kb/faq?project=2": [200, {entries: []}], "GET /kb/faq?project=1099511627781": [200, {entries: []}]});
+  const kbm = modelOf("builtin.kb", fk);
+  await kbm.load();
+  assert.deepEqual(kbm.refs.projects.map(o => [o.id, o.skipped]), [["1", true], ["2", false]]);
+  assert.deepEqual(kbm.pickerOptions("projects").map(o => o.id), ["2"]);
+  assert.deepEqual(kbm.pickerOptions("teams").map(o => o.id), ["1099511627781"]);
+  assert.equal(kbm.selected.get(pListKey("notes-project", "")), 2);  // the first entry that is offered
+  assert.ok(fk.log.includes("GET /kb/notes?project=2") && !fk.log.some(l => l.startsWith("GET /kb/notes?project=1&") || l === "GET /kb/notes?project=1"));
+  const fu = fake({...userAnswers, "GET /users": [200, {users: [{id: 1, name: "acme", active: true}, {id: 3, name: "old", active: false}]}], "GET /bindings": [200, {bindings: [{device: "dev-1", user: 3}]}]});
+  const umod = modelOf("builtin.users", fu);
+  await umod.load();
+  assert.deepEqual(umod.pickerOptions("users").map(o => o.id), ["1"]);  // an inactive user is not offered ...
+  const bnd = umod.visibleRows(umod.panel.sections[1], "bindings")[0];
+  assert.equal(umod.cell(umod.panel.sections[1].columns[1], bnd), "old");  // ... but still names the binding that refers to it
+  assert.equal(umod.shown({kind: "text", field: "none"}, {id: "", values: {}}), "\u2013");
+  assert.equal(umod.shown({kind: "text", field: "a"}, {id: "", values: {a: "x"}}), "x");
+  // role names show the technical name too, in C and sl_SI
+  for (const [loc, want] of [["C", ["Read (reader)", "Develop (developer)", "Manage (admin)"]], ["sl_SI", ["Branje (reader)", "Razvijanje (developer)", "Upravljanje (admin)"]]]) {
+    const st = strings(loc), tm = panelOf("builtin.teams");
+    const opts = tm.sections[1].detail.sections[0].columns[1].values;
+    assert.deepEqual(["reader", "developer", "admin"].map(r => panelText(st, opts[r])), want);
+  }
+
   // 6. the view: hostile texts reach the DOM as text only
   const bad = ["<img src=x onerror=alert(1)>", "<script>alert(1)</script>", "javascript:alert(1)", "\"quoted\" 'single' `tick`", "a‮b", "[x](https://evil.example)", "</div><b>x</b>", "&lt;b&gt;"];
   const desc = {format: 1, id: "acme.shop", provider: "acme", title: "acme.shop.t", about: "acme.shop.a", symbol: "tray", refs: {items: {path: "/plugins/acme/items", items: "items", key: "sku", label: "title"}},
@@ -399,5 +424,40 @@ async function main() {
   const t3 = texts(host);
   assert.ok(t3.some(x => x.includes(bad[1])) && t3.some(x => x.includes(bad[0])));
   const tags2 = new Set(); walk(host, n => tags2.add(n.tag)); assert.ok([...tags2].every(x => ALLOWED_TAGS.has(x)));
+  // 7. forms: the OK button follows every keystroke, Enter sends, Escape cancels
+  {
+    const fa = fake(userAnswers), um2 = modelOf("builtin.users", fa), h2 = makeEl("div");
+    panelView(um2, h2);
+    await um2.load();
+    const find = (pred, root) => { const out = []; walk(root || h2, n => { if (pred(n)) out.push(n); }); return out; };
+    const addB = find(n => n.tag === "button" && n.textContent === "Add User…")[0];
+    await fire(addB, "click");
+    const okBtn = () => find(n => n.tag === "button" && n.textContent === "pOk")[0];
+    const field = () => find(n => n.tag === "input" && n.type === "text" && n.placeholder === undefined)[0];
+    assert.equal(okBtn().disabled, true);  // required and empty
+    const inp = field();
+    inp.value = "ac"; await fire(inp, "input");
+    assert.equal(okBtn().disabled, false);  // enabled at the first keystroke, no blur needed
+    assert.ok(field() === inp, "typing must not rebuild the form (the focus would be lost)");
+    inp.value = "x".repeat(129); await fire(inp, "input");
+    assert.equal(okBtn().disabled, true);
+    assert.ok(texts(h2).includes("pTooLong:128"));
+    inp.value = ""; await fire(inp, "input");
+    assert.equal(okBtn().disabled, true);
+    fa.log.length = 0; await fire(inp, "keydown", {key: "Enter", preventDefault() {}});
+    assert.ok(!fa.log.some(l => l.startsWith("POST")), "Enter sent an invalid form");
+    inp.value = "acme"; await fire(inp, "input");
+    fa.answers["POST /users"] = [200, {user: {}}];
+    await fire(inp, "keydown", {key: "Enter", preventDefault() {}});
+    await sleep(30);
+    assert.ok(fa.log.includes('POST /users {"name":"acme"}'), fa.log.join("|"));
+    assert.equal(find(n => n.tag === "input" && n.type === "text" && n.placeholder === undefined).length, 0, "the form closes after a successful send");
+    await fire(find(n => n.tag === "button" && n.textContent === "Add User…")[0], "click");
+    const g = find(n => n.tag === "div" && n.className === "group" && n.events.keydown && n.events.keydown.length && texts(n).includes("Add User…"))[0];
+    await fire(g, "keydown", {key: "Escape", preventDefault() {}});
+    assert.equal(find(n => n.tag === "input" && n.type === "text" && n.placeholder === undefined).length, 0, "Escape cancels");
+    // an empty value in a row is an en dash, not a bare label
+    assert.ok(!texts(h2).some(x => /: $/.test(x)));
+  }
 }
 main().then(() => console.log("ok"), e => { console.error(e); process.exit(1); });

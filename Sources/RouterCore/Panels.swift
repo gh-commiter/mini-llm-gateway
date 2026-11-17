@@ -87,7 +87,11 @@ public struct PanelDescription: Decodable, Equatable, Sendable {
     public let sections: [PanelSection]
 }
 
-public struct PanelRef: Decodable, Equatable, Sendable { public let path: String; public let items: String; public let key: String; public let label: String }
+public struct PanelRef: Decodable, Equatable, Sendable {
+    public let path: String; public let items: String; public let key: String; public let label: String
+    /// Entries whose field equals the value are not offered in pickers (an archived project, an inactive user); they still give labels.
+    public let skip: PanelWhen?
+}
 
 public struct PanelSection: Decodable, Equatable, Sendable {
     public let kind: String
@@ -294,6 +298,7 @@ public enum PanelValidator {
             guard d.refs.count <= PanelLimits.refs else { throw Refusal("more than \(PanelLimits.refs) refs") }
             for (name, r) in d.refs {
                 guard isID(name), isName(r.items), isName(r.key), isName(r.label) else { throw Refusal("ref \(name): bad name, items, key or label") }
+                if let sk = r.skip { guard isName(sk.field), scalar(sk.equals) else { throw Refusal("ref \(name): skip needs a plain field name and a scalar") } }
                 _ = try path("ref \(name)", "GET", r.path, Scope())
             }
             try sections(d.sections, nested: false)

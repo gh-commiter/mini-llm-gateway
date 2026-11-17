@@ -140,6 +140,10 @@ func (s *server) settingsHTTP(w http.ResponseWriter, r *req) int {
 			"'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'")
 		page := strings.NewReplacer("{{NONCE}}", nonce, "{{PICKER}}", strconv.FormatBool(s.pick.Load() != nil)).Replace(settingsPage)
 		return writeStatus(w, 200, "text/html; charset=utf-8", []byte(page))
+	case "GET /favicon.ico": // the browser asks for it on its own; the page has no icon, so an empty answer (not a 401 in the console)
+		h.Set("Cache-Control", "max-age=86400")
+		w.WriteHeader(http.StatusNoContent)
+		return http.StatusNoContent
 	case "POST /minigw/settings/login":
 		if st := s.refuseAgentPeer(w, r); st != 0 { // R4
 			return st
