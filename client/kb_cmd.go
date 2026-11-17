@@ -15,19 +15,31 @@ import (
 	"time"
 )
 
+// faqPages bounds the pages of kb faq (50 entries each).
+const faqPages = 20
+
 const kbHelp = `minigw kb export <project> <dir>
 minigw kb import <project> <dir|file.md> [--class c] [--submit]
 minigw kb mcp [--project slug] [--print-config]
 minigw kb search [<project>] <query> [--json]
-minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
+minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB)
+minigw kb faq [<project>] [--json]   the project's questions and answers
 minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)`
 const kbAdminHelp = `minigw gw kb rebuild-search
 minigw gw kb review [<project>]   pending submissions, including bodies
 minigw gw kb accept <id>
 minigw gw kb reject <id> [--reason text]`
 
+// kindSuffix marks a faq at the end of the first line; a finding prints as before.
+func kindSuffix(kind string) string {
+	if kind == "faq" {
+		return "  (faq)"
+	}
+	return ""
+}
+
 func submissionLine(v core.Submission) string {
-	return clean(fmt.Sprintf("submission %d  project %d  %s  %s  %s", v.ID, v.Project, v.State, v.Class, v.Title))
+	return clean(fmt.Sprintf("submission %d  project %d  %s  %s  %s%s", v.ID, v.Project, v.State, v.Class, v.Title, kindSuffix(v.EntryKind)))
 }
 func submissionResult(v core.Submission) string {
 	return fmt.Sprintf("submission %d %s", v.ID, v.State)
@@ -46,8 +58,12 @@ func (e *projectEnv) kb(args []string) error {
 	if e.agent {
 		return errors.New(agentRefusal)
 	}
+	if len(args) > 0 && args[0] == "faq" {
+		return e.kbFAQ(args[1:])
+	}
 	fs := flag.NewFlagSet("kb", flag.ContinueOnError)
 	class := fs.String("class", "data", "")
+	kind := fs.String("kind", "", "")
 	title := fs.String("title", "", "")
 	key := fs.String("key", "", "")
 	replaces := fs.Int64("replaces", 0, "")
@@ -62,6 +78,9 @@ func (e *projectEnv) kb(args []string) error {
 		return usage
 	}
 	if pos[0] == "submit" && len(pos) != 3 || pos[0] == "submissions" && len(pos) > 2 {
+		return usage
+	}
+	if *kind != "" && *kind != "finding" && *kind != "faq" {
 		return usage
 	}
 	c, _ := e.connect()
@@ -100,7 +119,11 @@ func (e *projectEnv) kb(args []string) error {
 		if k == "" {
 			k = newNoteKey()
 		}
-		payload, _ := json.Marshal(map[string]any{"class": *class, "title": t, "body": body, "replaces": *replaces, "revision": *revision})
+		fields := map[string]any{"class": *class, "title": t, "body": body, "replaces": *replaces, "revision": *revision}
+		if *kind != "" {
+			fields["entryKind"] = *kind
+		}
+		payload, _ := json.Marshal(fields)
 		st, b, h := e.push(c, base, k, payload)
 		if st == 0 {
 			return fmt.Errorf("no answer from the gateway; repeat with --key %s (safe: no duplicate), or check with minigw kb submissions", k)
@@ -181,7 +204,95 @@ func (e *projectEnv) kb(args []string) error {
 }
 
 func searchLine(v core.SearchHit) string {
-	return clean(fmt.Sprintf("%d  %s  project %d  %s  %s\n%s", v.ID, v.Title, v.Project, v.Class, noteTime(v.Updated), v.Snippet))
+	return clean(fmt.Sprintf("%d  %s  project %d  %s  %s%s\n%s", v.ID, v.Title, v.Project, v.Class, noteTime(v.Updated), kindSuffix(v.EntryKind), v.Snippet))
+}
+
+// kbFAQ: minigw kb faq [<project>] [--json]. The pages are followed (at most faqPages).
+func (e *projectEnv) kbFAQ(args []string) error {
+	fs := flag.NewFlagSet("kb faq", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "")
+	pos, err := parseFlags(fs, args)
+	if err != nil || len(pos) > 1 {
+		return errors.New("usage: minigw kb faq [<project>] [--json]")
+	}
+	var c connection
+	var project int64
+	if len(pos) == 1 {
+		c, _ = e.connect()
+		if project, err = e.projectIDOf(c, pos[0]); err != nil {
+			return err
+		}
+	} else {
+		cc, link, err := e.linkedProject("")
+		if err != nil {
+			return err
+		}
+		c, project = cc, link.Project
+	}
+	type entry struct {
+		ID      int64
+		Title   string
+		Class   string
+		Answer  string
+		Updated time.Time
+	}
+	var entries []entry
+	raw := []any{}
+	after := ""
+	for page := 0; page < faqPages; page++ {
+		path := fmt.Sprintf("%s/%d/kb/faq", apiProjects, project)
+		if after != "" {
+			path += "?after=" + url.QueryEscape(after)
+		}
+		st, b, h := e.do(c, "GET", path, nil, nil)
+		if st != 200 {
+			return gatewayError(st, b, h)
+		}
+		var pg struct {
+			Entries []entry
+			Next    string
+		}
+		if err = json.Unmarshal(b, &pg); err != nil {
+			return err
+		}
+		entries = append(entries, pg.Entries...)
+		var obj struct{ Entries []any } // exact numbers for --json
+		dec := json.NewDecoder(strings.NewReader(string(b)))
+		dec.UseNumber()
+		if err = dec.Decode(&obj); err != nil {
+			return err
+		}
+		raw = append(raw, obj.Entries...)
+		if after = pg.Next; after == "" {
+			break
+		}
+	}
+	if *asJSON {
+		b, _ := json.Marshal(map[string]any{"entries": raw})
+		e.say(jsonText(string(b)))
+		return nil
+	}
+	for _, v := range entries {
+		e.say(clean(fmt.Sprintf("%d  %s  %s  %s", v.ID, v.Title, v.Class, noteTime(v.Updated))))
+		e.say(clean(v.Answer))
+	}
+	if len(entries) == 0 {
+		e.say("no faq entries")
+	}
+	return nil
+}
+
+// projectIDOf resolves a project given by slug (or id) to its id.
+func (e *projectEnv) projectIDOf(c connection, ref string) (int64, error) {
+	st, b, h := e.do(c, "GET", apiProjects+"/"+url.PathEscape(ref), nil, nil)
+	if st != 200 {
+		return 0, gatewayError(st, b, h)
+	}
+	var p struct{ ID int64 }
+	if err := json.Unmarshal(b, &p); err != nil {
+		return 0, err
+	}
+	return p.ID, nil
 }
 func (e *projectEnv) kbSearch(args []string) error {
 	fs := flag.NewFlagSet("kb search", flag.ContinueOnError)

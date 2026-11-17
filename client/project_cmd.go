@@ -5,6 +5,7 @@ package main
 // run them against an in-process gateway with a temporary state file.
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -24,8 +26,11 @@ import (
 
 const (
 	usageHelp   = `minigw usage [--project slug] [--days n] [--json]   your model usage (a developer sees own events in a project, an admin all of it)`
-	projectHelp = `minigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)
-minigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of
+	projectHelp = `minigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix
+minigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote
+minigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)
+minigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin
+minigw project remote remove <url> [<slug>]
 minigw project unlink                       remove the link that applies here
 minigw project show                         the link that applies here, and why
 minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]`
@@ -55,6 +60,7 @@ type projectEnv struct {
 	runConn *connection // inside an agent run: the run port and its token; only note list|read work, on the run's own project
 	do      func(c connection, method, path string, headers map[string]string, body []byte) (int, []byte, http.Header)
 	sleep   func(time.Duration)
+	origin  func(dir string) string // the raw remote.origin.url of the folder's repository, "" = none; nil = ask git
 }
 
 // projectMain, noteMain and usageMain are the entry points of main().
@@ -217,6 +223,8 @@ func (e *projectEnv) project(args []string) error {
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
 	archived := fs.Bool("archived", false, "also archived projects")
 	asJSON := fs.Bool("json", false, "JSON")
+	prefix := fs.String("path", "", "team path prefix")
+	here := fs.Bool("here", false, "this folder's git remote")
 	pos, err := parseFlags(fs, args[1:])
 	if err != nil {
 		return errors.New("usage:\n" + projectHelp)
@@ -225,8 +233,15 @@ func (e *projectEnv) project(args []string) error {
 	case "list":
 		c, gw := e.connect()
 		path := apiProjects
+		q := url.Values{}
 		if *archived {
-			path += "?archived=1"
+			q.Set("archived", "1")
+		}
+		if *prefix != "" {
+			q.Set("path", *prefix)
+		}
+		if len(q) > 0 {
+			path += "?" + q.Encode()
 		}
 		st, data, h := e.do(c, "GET", path, nil, nil)
 		if st != 200 {
@@ -278,10 +293,15 @@ func (e *projectEnv) project(args []string) error {
 			e.say("no projects: ask the gateway owner to add you to one")
 		}
 	case "link":
-		if len(pos) != 1 {
-			return errors.New("usage: minigw project link <slug>")
+		if len(pos) > 1 {
+			return errors.New("usage: minigw project link [<slug>]")
+		}
+		if len(pos) == 0 {
+			return e.link("")
 		}
 		return e.link(pos[0])
+	case "remote":
+		return e.remote(pos, *here)
 	case "unlink":
 		if len(pos) != 0 {
 			return errors.New("usage: minigw project unlink")
@@ -296,7 +316,7 @@ func (e *projectEnv) project(args []string) error {
 }
 
 func (e *projectEnv) link(slug string) error {
-	if !hintRe.MatchString(slug) {
+	if slug != "" && !hintRe.MatchString(slug) {
 		return errors.New("not a project slug (lower case letters, digits and -): " + slug)
 	}
 	c, gw := e.connect()
@@ -311,6 +331,11 @@ func (e *projectEnv) link(slug string) error {
 	for _, l := range st.Links {
 		if l.Gateway == gw && sameProjectPath(real, l.Path) { // a deeper folder may be linked on its own; the same one not twice
 			return fmt.Errorf("this folder is already linked to %s: run minigw project unlink first", l.Slug)
+		}
+	}
+	if slug == "" {
+		if slug, err = e.findByRemote(c, real); err != nil {
+			return err
 		}
 	}
 	code, data, h := e.do(c, "POST", apiProjects+"/"+url.PathEscape(slug)+"/link-check", nil, nil)
@@ -817,5 +842,164 @@ func (e *projectEnv) running(args []string) error {
 		}
 		e.say(line)
 	}
+	return nil
+}
+
+// userinfoRe: the credentials of a URL remote; they never leave this computer.
+var userinfoRe = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@`)
+
+func stripUserinfo(raw string) string {
+	return userinfoRe.ReplaceAllString(strings.TrimSpace(raw), "$1")
+}
+
+// gitOrigin is the folder's raw remote.origin.url from the repository's own config (no insteadOf rewrite, no hooks).
+// Git missing, no origin or an untrusted checkout all give "".
+func gitOrigin(dir string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := commandContext(ctx, "git", "config", "--local", "--get", "remote.origin.url")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// folderRemote is the folder's origin without credentials, or the error "no git remote origin ...".
+func (e *projectEnv) folderRemote(dir string) (string, error) {
+	origin := e.origin
+	if origin == nil {
+		origin = gitOrigin
+	}
+	raw := stripUserinfo(origin(dir))
+	if raw == "" {
+		return "", errors.New("no git remote origin in this folder")
+	}
+	return raw, nil
+}
+
+// findByRemote asks the gateway which of the caller's projects is registered for the folder's origin.
+func (e *projectEnv) findByRemote(c connection, dir string) (string, error) {
+	const hint = "; run minigw project link <slug>"
+	raw, err := e.folderRemote(dir)
+	if err != nil {
+		return "", errors.New(err.Error() + hint)
+	}
+	body, _ := json.Marshal(map[string]string{"remote": raw})
+	st, data, h := e.do(c, "POST", apiProjects+"/by-remote", nil, body)
+	if st == 400 {
+		return "", errors.New("the git remote origin of this folder is not a remote URL minigw can use" + hint)
+	}
+	if st != 200 {
+		return "", gatewayError(st, data, h)
+	}
+	var r struct {
+		Identity string
+		Projects []struct{ Slug string }
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return "", err
+	}
+	switch len(r.Projects) {
+	case 0:
+		return "", fmt.Errorf("no project of yours is registered for this git remote (%s)%s", r.Identity, hint)
+	case 1:
+		e.say(fmt.Sprintf("found project %s by git remote %s", r.Projects[0].Slug, r.Identity))
+		return r.Projects[0].Slug, nil
+	}
+	slugs := make([]string, len(r.Projects))
+	for i, p := range r.Projects {
+		slugs[i] = p.Slug
+	}
+	return "", fmt.Errorf("this git remote matches several of your projects (%s)%s", strings.Join(slugs, ", "), hint)
+}
+
+// remote: minigw project remote list [<slug>] | add <url>|--here [<slug>] | remove <url> [<slug>].
+func (e *projectEnv) remote(pos []string, here bool) error {
+	usage := errors.New("usage:\n" + projectHelp)
+	if len(pos) == 0 || (pos[0] != "list" && pos[0] != "add" && pos[0] != "remove") || here && pos[0] != "add" {
+		return usage
+	}
+	op, rest := pos[0], pos[1:]
+	var raw string
+	switch {
+	case op == "add" && here:
+		if len(rest) > 1 {
+			return usage
+		}
+	case op == "list":
+		if len(rest) > 1 {
+			return usage
+		}
+	default:
+		if len(rest) < 1 || len(rest) > 2 {
+			return usage
+		}
+		raw, rest = stripUserinfo(rest[0]), rest[1:]
+	}
+	var c connection
+	var project int64
+	slug := ""
+	if len(rest) == 1 {
+		c, _ = e.connect()
+		slug = rest[0]
+		var err error
+		if project, err = e.projectIDOf(c, slug); err != nil {
+			return err
+		}
+	} else {
+		cc, link, err := e.linkedProject("")
+		if err != nil {
+			return err
+		}
+		c, project, slug = cc, link.Project, link.Slug
+	}
+	path := fmt.Sprintf("%s/%d/remotes", apiProjects, project)
+	if op == "list" {
+		st, data, h := e.do(c, "GET", path, nil, nil)
+		if st != 200 {
+			return gatewayError(st, data, h)
+		}
+		var r struct{ Remotes []string }
+		if err := json.Unmarshal(data, &r); err != nil {
+			return err
+		}
+		for _, id := range r.Remotes {
+			e.say(clean(id))
+		}
+		if len(r.Remotes) == 0 {
+			e.say("no remotes registered")
+		}
+		return nil
+	}
+	if here {
+		real, err := realFolder(e.cwd)
+		if err != nil {
+			return err
+		}
+		if raw, err = e.folderRemote(real); err != nil {
+			return err
+		}
+	}
+	field := map[string]string{"add": "add", "remove": "remove"}[op]
+	body, _ := json.Marshal(map[string][]string{field: {raw}})
+	st, data, h := e.do(c, "POST", path, nil, body)
+	if st != 200 {
+		return gatewayError(st, data, h)
+	}
+	var r struct{ Added, Removed []string }
+	if err := json.Unmarshal(data, &r); err != nil {
+		return err
+	}
+	ids, verb, prep := r.Added, "registered", "for"
+	if op == "remove" {
+		ids, verb, prep = r.Removed, "removed", "from"
+	}
+	if len(ids) != 1 {
+		return errors.New("the gateway did not name the remote")
+	}
+	e.say(clean(fmt.Sprintf("%s %s %s project %s", verb, ids[0], prep, slug)))
 	return nil
 }

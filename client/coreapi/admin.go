@@ -239,11 +239,11 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 			return fail(400, "bad project id")
 		}
 		var list []string
+		var b remotesBody
 		var err error
 		if method == "GET" {
 			list, err = st.AdminProjectRemotes(ctx, id)
 		} else {
-			var b remotesBody
 			if !dec(&b) {
 				return fail(400, "bad JSON body (add, remove)")
 			}
@@ -252,7 +252,7 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		if err != nil {
 			return failErr(err)
 		}
-		return 200, map[string]any{"remotes": list}, true
+		return 200, remotesReply(list, b), true
 	case "GET projects/{}/members":
 		id, good := num(seg[1])
 		if !good {

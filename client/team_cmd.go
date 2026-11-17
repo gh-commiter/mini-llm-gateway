@@ -17,6 +17,7 @@ type cliTeam struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	Archived bool   `json:"archived"`
+	Path     string `json:"path"`
 	Members  []struct {
 		User int64  `json:"user"`
 		Name string `json:"name"`
@@ -33,6 +34,9 @@ func teamLine(t cliTeam) string {
 	line := fmt.Sprintf("%d  %s", t.ID, t.Name)
 	if t.Archived {
 		line += "  (archived)"
+	}
+	if t.Path != "" {
+		line += "  path " + t.Path
 	}
 	return clean(line)
 }
@@ -98,6 +102,12 @@ func teamAdmin(a *adminClient, pos []string) {
 		say("team " + clean(pos[2]) + " added")
 	case pos[1] == "rename" && len(pos) == 4:
 		a.do("PATCH", fmt.Sprintf("/teams/%d", teamID(a, pos[2])), map[string]any{"name": pos[3]}, nil)
+	case pos[1] == "path" && len(pos) == 4: // "-" clears the label
+		label := pos[3]
+		if label == "-" {
+			label = ""
+		}
+		a.do("PATCH", fmt.Sprintf("/teams/%d", teamID(a, pos[2])), map[string]any{"path": label}, nil)
 	case pos[1] == "archive" && len(pos) == 3:
 		a.do("PATCH", fmt.Sprintf("/teams/%d", teamID(a, pos[2])), map[string]any{"archived": true}, nil)
 	case (pos[1] == "member" || pos[1] == "project") && len(pos) == 5 && (pos[2] == "add" || pos[2] == "remove"):

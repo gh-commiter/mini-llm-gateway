@@ -371,7 +371,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [\u003cproject\u003e] [--days n] [--model m] [--device d] [--json]",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -392,7 +392,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [\u003cproject\u003e] [--days n] [--model m] [--device d] [--json]",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -414,7 +414,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "unknown command minigw project frobnicate\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [\u003cproject\u003e] [--days n] [--model m] [--device d] [--json]",
+    "error": "unknown command minigw project frobnicate\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -533,7 +533,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage: minigw project link <slug>",
+    "error": "no git remote origin in this folder; run minigw project link <slug>",
     "requests": [],
     "links": []
    }
@@ -747,6 +747,953 @@
     "links": [
      "fakture:7@proj",
      "eureko:8@proj/src"
+    ]
+   }
+  },
+  {
+   "name": "project link by git remote",
+   "args": [
+    "project",
+    "link"
+   ],
+   "origin": "https://tok:secret@GitLab.example.com/Eureko/Fakture.git",
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/by-remote",
+     "status": 200,
+     "body": "{\"identity\":\"gitlab.example.com/eureko/fakture\",\"projects\":[{\"id\":7,\"slug\":\"fakture\",\"name\":\"Fakture\",\"archived\":false,\"role\":\"developer\",\"granted\":[]}]}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/fakture/link-check",
+     "status": 200,
+     "body": "{\"id\":7,\"slug\":\"fakture\"}"
+    }
+   ],
+   "want": {
+    "out": "found project fakture by git remote gitlab.example.com/eureko/fakture\nlinked {root}/proj to project fakture (id 7)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/by-remote",
+      "{\"remote\":\"https://GitLab.example.com/Eureko/Fakture.git\"}",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/fakture/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project link by scp remote",
+   "args": [
+    "project",
+    "link"
+   ],
+   "origin": "git@gitlab.example.com:eureko/fakture.git",
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/by-remote",
+     "status": 200,
+     "body": "{\"identity\":\"gitlab.example.com/eureko/fakture\",\"projects\":[{\"id\":7,\"slug\":\"fakture\",\"name\":\"Fakture\",\"archived\":false,\"role\":\"developer\",\"granted\":[]}]}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/fakture/link-check",
+     "status": 200,
+     "body": "{\"id\":7,\"slug\":\"fakture\"}"
+    }
+   ],
+   "want": {
+    "out": "found project fakture by git remote gitlab.example.com/eureko/fakture\nlinked {root}/proj to project fakture (id 7)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/by-remote",
+      "{\"remote\":\"git@gitlab.example.com:eureko/fakture.git\"}",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/fakture/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project link no match",
+   "args": [
+    "project",
+    "link"
+   ],
+   "origin": "git@gitlab.example.com:eureko/other.git",
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/by-remote",
+     "status": 200,
+     "body": "{\"identity\":\"gitlab.example.com/eureko/other\",\"projects\":[]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no project of yours is registered for this git remote (gitlab.example.com/eureko/other); run minigw project link <slug>",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/by-remote",
+      "{\"remote\":\"git@gitlab.example.com:eureko/other.git\"}",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project link several matches",
+   "args": [
+    "project",
+    "link"
+   ],
+   "origin": "git@gitlab.example.com:eureko/mono.git",
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/by-remote",
+     "status": 200,
+     "body": "{\"identity\":\"gitlab.example.com/eureko/mono\",\"projects\":[{\"id\":8,\"slug\":\"eureko\",\"name\":\"Eureko\",\"archived\":false,\"role\":\"admin\",\"granted\":[]},{\"id\":7,\"slug\":\"fakture\",\"name\":\"Fakture\",\"archived\":false,\"role\":\"developer\",\"granted\":[]}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this git remote matches several of your projects (eureko, fakture); run minigw project link <slug>",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/by-remote",
+      "{\"remote\":\"git@gitlab.example.com:eureko/mono.git\"}",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project link no origin",
+   "args": [
+    "project",
+    "link"
+   ],
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no git remote origin in this folder; run minigw project link <slug>",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "project link unusable origin",
+   "args": [
+    "project",
+    "link"
+   ],
+   "origin": "/srv/git/repo",
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/by-remote",
+     "status": 400,
+     "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"invalid git remote\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the git remote origin of this folder is not a remote URL minigw can use; run minigw project link <slug>",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/by-remote",
+      "{\"remote\":\"/srv/git/repo\"}",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project link by remote already linked",
+   "args": [
+    "project",
+    "link"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "origin": "git@gitlab.example.com:eureko/fakture.git",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this folder is already linked to fakture: run minigw project unlink first",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project link by remote 503",
+   "args": [
+    "project",
+    "link"
+   ],
+   "origin": "git@gitlab.example.com:eureko/fakture.git",
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/by-remote",
+     "status": 503,
+     "body": "{\"error\":{\"type\":\"core_unavailable\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the gateway's project store is not available",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/by-remote",
+      "{\"remote\":\"git@gitlab.example.com:eureko/fakture.git\"}",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project link two arguments",
+   "args": [
+    "project",
+    "link",
+    "a",
+    "b"
+   ],
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage: minigw project link [<slug>]",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "project list path",
+   "args": [
+    "project",
+    "list",
+    "--path",
+    "eureko/backend"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects?path=eureko%2Fbackend",
+     "status": 200,
+     "body": "[{\"id\":7,\"slug\":\"fakture\",\"name\":\"Fakture\",\"archived\":false,\"role\":\"developer\",\"granted\":[]}]"
+    }
+   ],
+   "want": {
+    "out": "fakture                  developer                    Fakture\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects?path=eureko%2Fbackend",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project list path archived",
+   "args": [
+    "project",
+    "list",
+    "--archived",
+    "--path",
+    "a b"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects?archived=1&path=a+b",
+     "status": 200,
+     "body": "[]"
+    }
+   ],
+   "want": {
+    "out": "no projects: ask the gateway owner to add you to one\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects?archived=1&path=a+b",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project remote list linked",
+   "args": [
+    "project",
+    "remote",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/remotes",
+     "status": 200,
+     "body": "{\"remotes\":[\"gitlab.example.com/eureko/fakture\",\"host.example/a/b\"]}"
+    }
+   ],
+   "want": {
+    "out": "gitlab.example.com/eureko/fakture\nhost.example/a/b\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/remotes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote list empty",
+   "args": [
+    "project",
+    "remote",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/remotes",
+     "status": 200,
+     "body": "{\"remotes\":[]}"
+    }
+   ],
+   "want": {
+    "out": "no remotes registered\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/remotes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote list by slug",
+   "args": [
+    "project",
+    "remote",
+    "list",
+    "eureko"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/eureko",
+     "status": 200,
+     "body": "{\"id\":8,\"slug\":\"eureko\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/8/remotes",
+     "status": 200,
+     "body": "{\"remotes\":[\"host.example/a/b\"]}"
+    }
+   ],
+   "want": {
+    "out": "host.example/a/b\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/eureko",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/8/remotes",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project remote list not linked",
+   "args": [
+    "project",
+    "remote",
+    "list"
+   ],
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this folder is not linked to a project: run minigw project link <slug>",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "project remote list 404",
+   "args": [
+    "project",
+    "remote",
+    "list",
+    "nope"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/nope",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"Not found\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/nope",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project remote add",
+   "args": [
+    "project",
+    "remote",
+    "add",
+    "https://tok:x@GitLab.example.com/Eureko/Fakture.git"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/remotes",
+     "status": 200,
+     "body": "{\"remotes\":[\"gitlab.example.com/eureko/fakture\"],\"added\":[\"gitlab.example.com/eureko/fakture\"]}"
+    }
+   ],
+   "want": {
+    "out": "registered gitlab.example.com/eureko/fakture for project fakture\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/remotes",
+      "{\"add\":[\"https://GitLab.example.com/Eureko/Fakture.git\"]}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote add by slug",
+   "args": [
+    "project",
+    "remote",
+    "add",
+    "git@host.example:a/b.git",
+    "eureko"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/eureko",
+     "status": 200,
+     "body": "{\"id\":8,\"slug\":\"eureko\"}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/8/remotes",
+     "status": 200,
+     "body": "{\"remotes\":[\"host.example/a/b\"],\"added\":[\"host.example/a/b\"]}"
+    }
+   ],
+   "want": {
+    "out": "registered host.example/a/b for project eureko\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/eureko",
+      "",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/8/remotes",
+      "{\"add\":[\"git@host.example:a/b.git\"]}",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project remote add here",
+   "args": [
+    "project",
+    "remote",
+    "add",
+    "--here"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "origin": "https://tok:x@gitlab.example.com/eureko/fakture",
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/remotes",
+     "status": 200,
+     "body": "{\"remotes\":[\"gitlab.example.com/eureko/fakture\"],\"added\":[\"gitlab.example.com/eureko/fakture\"]}"
+    }
+   ],
+   "want": {
+    "out": "registered gitlab.example.com/eureko/fakture for project fakture\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/remotes",
+      "{\"add\":[\"https://gitlab.example.com/eureko/fakture\"]}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote add here no origin",
+   "args": [
+    "project",
+    "remote",
+    "add",
+    "--here"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no git remote origin in this folder",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote add 403",
+   "args": [
+    "project",
+    "remote",
+    "add",
+    "git@host.example:a/b.git"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/remotes",
+     "status": 403,
+     "body": "{\"error\":{\"type\":\"forbidden\",\"message\":\"Not allowed\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not allowed: your role in this project does not permit it (a grant alone only lets you read; linking needs a direct role)",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/remotes",
+      "{\"add\":[\"git@host.example:a/b.git\"]}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote add bad remote",
+   "args": [
+    "project",
+    "remote",
+    "add",
+    "/srv/repo"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/remotes",
+     "status": 400,
+     "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"invalid git remote\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "rejected: invalid git remote",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/remotes",
+      "{\"add\":[\"/srv/repo\"]}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote add archived",
+   "args": [
+    "project",
+    "remote",
+    "add",
+    "git@host.example:a/b.git"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/remotes",
+     "status": 403,
+     "body": "{\"error\":{\"type\":\"archived\",\"message\":\"The project is archived\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the project is archived: nobody can write to it",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/remotes",
+      "{\"add\":[\"git@host.example:a/b.git\"]}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote remove",
+   "args": [
+    "project",
+    "remote",
+    "remove",
+    "git@host.example:a/b.git"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/remotes",
+     "status": 200,
+     "body": "{\"remotes\":[],\"removed\":[\"host.example/a/b\"]}"
+    }
+   ],
+   "want": {
+    "out": "removed host.example/a/b from project fakture\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/remotes",
+      "{\"remove\":[\"git@host.example:a/b.git\"]}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote remove by slug",
+   "args": [
+    "project",
+    "remote",
+    "remove",
+    "git@host.example:a/b.git",
+    "eureko"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/eureko",
+     "status": 200,
+     "body": "{\"id\":8,\"slug\":\"eureko\"}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/8/remotes",
+     "status": 200,
+     "body": "{\"remotes\":[],\"removed\":[\"host.example/a/b\"]}"
+    }
+   ],
+   "want": {
+    "out": "removed host.example/a/b from project eureko\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/eureko",
+      "",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/8/remotes",
+      "{\"remove\":[\"git@host.example:a/b.git\"]}",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project remote usage",
+   "args": [
+    "project",
+    "remote"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote unknown",
+   "args": [
+    "project",
+    "remote",
+    "frob"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote add without url",
+   "args": [
+    "project",
+    "remote",
+    "add"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project remote list here",
+   "args": [
+    "project",
+    "remote",
+    "list",
+    "--here"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent refuses project remote list",
+   "args": [
+    "project",
+    "remote",
+    "list"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "refuse",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent refuses project link by remote",
+   "args": [
+    "project",
+    "link"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "refuse",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
     ]
    }
   },

@@ -116,6 +116,42 @@
           ]
         ]
       }
+    },
+    {
+      "name": "review shows faq",
+      "args": [
+        "kb",
+        "review"
+      ],
+      "responses": [
+        {
+          "match": "GET /kb/submissions?project=0&after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"How do I reset?\",\"state\":\"pending\",\"entryKind\":\"faq\"}],\"next\":0}"
+        },
+        {
+          "match": "GET /kb/submissions/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"How do I reset?\",\"state\":\"pending\",\"entryKind\":\"faq\",\"body\":\"Press the button.\"}"
+        }
+      ],
+      "want": {
+        "out": "submission 7  project 1  pending  data  How do I reset?  (faq)\nwriter 2  device   replaces 0  revision 0\nPress the button.\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/kb/submissions?project=0&after=0",
+            ""
+          ],
+          [
+            "GET",
+            "/kb/submissions/7",
+            ""
+          ]
+        ]
+      }
     }
   ],
   "member": [
@@ -361,6 +397,292 @@
         ]
       ],
       "out": "{\"hits\":[{\"id\":7,\"title\":\"Proposal\\u009b\\u202e\\u2028 ž\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Reference\\u009b\\u202e\\u2028 <text>\",\"updated\":\"2026-11-16T10:00:00Z\"}]}\n"
+    },
+    {
+      "args": [
+        "submit",
+        "demo",
+        "--kind",
+        "faq",
+        "--key",
+        "fixed",
+        "--title",
+        "How do I reset?",
+        "-"
+      ],
+      "input": "Press the button.",
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/1/kb/submissions",
+          "status": 201,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"How do I reset?\",\"state\":\"pending\",\"entryKind\":\"faq\"}"
+        }
+      ],
+      "out": "submission 7 pending\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/1/kb/submissions",
+          "{\"body\":\"Press the button.\",\"class\":\"data\",\"entryKind\":\"faq\",\"replaces\":0,\"revision\":0,\"title\":\"How do I reset?\"}"
+        ]
+      ]
+    },
+    {
+      "args": [
+        "submit",
+        "demo",
+        "--kind",
+        "finding",
+        "--key",
+        "fixed",
+        "--title",
+        "Found",
+        "-"
+      ],
+      "input": "Text",
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/1/kb/submissions",
+          "status": 201,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Found\",\"state\":\"pending\",\"entryKind\":\"finding\"}"
+        }
+      ],
+      "out": "submission 7 pending\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/1/kb/submissions",
+          "{\"body\":\"Text\",\"class\":\"data\",\"entryKind\":\"finding\",\"replaces\":0,\"revision\":0,\"title\":\"Found\"}"
+        ]
+      ]
+    },
+    {
+      "args": [
+        "submissions",
+        "demo"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"How do I reset?\",\"state\":\"pending\",\"entryKind\":\"faq\"},{\"id\":8,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Found\",\"state\":\"accepted\",\"entryKind\":\"finding\"}],\"next\":8}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=8",
+          "status": 200,
+          "body": "{\"submissions\":[],\"next\":0}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  How do I reset?  (faq)\nsubmission 8  project 1  accepted  data  Found\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=0",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=8",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "search",
+        "fakture",
+        "reset"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/fakture",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/search?q=reset",
+          "status": 200,
+          "body": "{\"hits\":[{\"id\":9,\"title\":\"How do I reset?\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Press the button.\",\"updated\":\"2026-11-16T10:00:00Z\",\"entryKind\":\"faq\"},{\"id\":3,\"title\":\"Reset notes\",\"project\":1,\"class\":\"data\",\"snippet\":\"Old finding\",\"updated\":\"2026-11-15T10:00:00Z\",\"entryKind\":\"finding\"}]}"
+        }
+      ],
+      "out": "9  How do I reset?  project 1  structure  2026-11-16 10:00  (faq)\nPress the button.\n3  Reset notes  project 1  data  2026-11-15 10:00\nOld finding\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/fakture",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/search?q=reset",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "faq",
+        "demo"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/faq",
+          "status": 200,
+          "body": "{\"entries\":[{\"id\":9,\"title\":\"How do I reset?\",\"class\":\"structure\",\"answer\":\"Press the button.\",\"updated\":\"2026-11-16T10:00:00Z\"},{\"id\":8,\"title\":\"Q‮\u009b ž\",\"class\":\"data\",\"answer\":\"A  <b>\",\"updated\":\"2026-11-15T09:30:00Z\"}],\"next\":\"\"}"
+        }
+      ],
+      "out": "9  How do I reset?  structure  2026-11-16 10:00\nPress the button.\n8  Q ž  data  2026-11-15 09:30\nA <b>\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/faq",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "faq",
+        "demo"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/faq",
+          "status": 200,
+          "body": "{\"entries\":[{\"id\":9,\"title\":\"How do I reset?\",\"class\":\"structure\",\"answer\":\"Press the button.\",\"updated\":\"2026-11-16T10:00:00Z\"}],\"next\":\"c2\"}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/faq?after=c2",
+          "status": 200,
+          "body": "{\"entries\":[{\"id\":8,\"title\":\"Second?\",\"class\":\"data\",\"answer\":\"Yes.\",\"updated\":\"2026-11-15T09:30:00Z\"}],\"next\":\"\"}"
+        }
+      ],
+      "out": "9  How do I reset?  structure  2026-11-16 10:00\nPress the button.\n8  Second?  data  2026-11-15 09:30\nYes.\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/faq",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/faq?after=c2",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "faq",
+        "demo"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/faq",
+          "status": 200,
+          "body": "{\"entries\":[],\"next\":\"\"}"
+        }
+      ],
+      "out": "no faq entries\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/faq",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "faq",
+        "demo",
+        "--json"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/faq",
+          "status": 200,
+          "body": "{\"entries\":[{\"id\":9,\"title\":\"How do I reset?\",\"class\":\"structure\",\"answer\":\"Press the button.\",\"updated\":\"2026-11-16T10:00:00Z\"},{\"id\":8,\"title\":\"Q‮\u009b ž\",\"class\":\"data\",\"answer\":\"A  <b>\",\"updated\":\"2026-11-15T09:30:00Z\"}],\"next\":\"\"}"
+        }
+      ],
+      "out": "{\"entries\":[{\"answer\":\"Press the button.\",\"class\":\"structure\",\"id\":9,\"title\":\"How do I reset?\",\"updated\":\"2026-11-16T10:00:00Z\"},{\"answer\":\"A\\u2028 \\u003cb\\u003e\",\"class\":\"data\",\"id\":8,\"title\":\"Q\\u202e\\u009b ž\",\"updated\":\"2026-11-15T09:30:00Z\"}]}\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/faq",
+          ""
+        ]
+      ]
     }
   ],
   "noteJSON": "{\"id\":7,\"title\":\"T\u009b‮ \",\"body\":\"published\u009b‮  body\",\"provenance\":{\"actorKind\":\"member\",\"user\":2,\"device\":\"device\",\"project\":1,\"sourceKind\":\"pushed note\",\"sourceReference\":\"\",\"contentHash\":\"abc\",\"authored\":\"2026-11-16T10:00:00Z\",\"received\":\"2026-11-16T10:00:00Z\",\"reviewer\":\"owner\",\"reviewed\":\"2026-11-16T11:00:00Z\"}}",
@@ -392,6 +714,15 @@
         "comet"
       ],
       "error": "inside an agent run the project is the run's own: a project argument is not accepted"
+    },
+    {
+      "args": [
+        "search",
+        "reset"
+      ],
+      "path": "/minigw/v1/kb/search?q=reset",
+      "body": "{\"hits\":[{\"id\":9,\"title\":\"How do I reset?\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Press the button.\",\"updated\":\"2026-11-16T10:00:00Z\",\"entryKind\":\"faq\"}]}",
+      "out": "9  How do I reset?  project 1  structure  2026-11-16 10:00  (faq)\nPress the button.\n"
     }
   ]
 }

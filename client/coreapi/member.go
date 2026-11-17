@@ -255,11 +255,11 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			return a.errResponse(core.ErrInvalid{What: "project id"})
 		}
 		var list []string
+		var b remotesBody
 		var err error
 		if r.Method == "GET" {
 			list, err = st.ProjectRemotes(ctx, p, pid)
 		} else {
-			var b remotesBody
 			if err = payload(r, &b); err == nil {
 				list, err = st.ChangeProjectRemotes(ctx, p, pid, b.Add, b.Remove)
 			}
@@ -267,7 +267,7 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 		if err != nil {
 			return a.errResponse(err)
 		}
-		return resp(200, map[string]any{"remotes": list})
+		return resp(200, remotesReply(list, b))
 	case len(seg) == 3 && seg[1] == "kb" && seg[2] == "faq" && r.Method == "GET":
 		pid, ok := posID(seg[0])
 		if !ok {
@@ -530,4 +530,21 @@ func faqJSON(pg core.FAQPage) map[string]any {
 		out = append(out, faqEntryJSON{e.ID, e.Title, e.Class, e.Answer, e.Updated})
 	}
 	return map[string]any{"entries": out, "next": pg.Next}
+}
+
+// remotesReply: the list, and for a change the identities it named (the client prints them).
+func remotesReply(list []string, b remotesBody) map[string]any {
+	out := map[string]any{"remotes": list}
+	for key, raw := range map[string][]string{"added": b.Add, "removed": b.Remove} {
+		var ids []string
+		for _, r := range raw {
+			if id, err := core.NormalizeRemote(r); err == nil { // the core accepted them
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) > 0 {
+			out[key] = ids
+		}
+	}
+	return out
 }

@@ -25,7 +25,9 @@ const coreHelp = `
   minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>
   minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to
   minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
+  minigw gw project remote list <project> | add <project> <url> | remove <project> <url>   git remotes registered for a project
   minigw gw team add <name> | list | rename <team> <name> | archive <team>
+  minigw gw team path <team> <label>                    free-text path label of a team ("-" clears it)
   minigw gw team member add|remove <team> <user>
   minigw gw team project add|remove <team> <project>
   minigw gw team access set <team> <project> <user> <role> | remove <team> <project> <user> | list <team>
@@ -156,7 +158,7 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 			fail(strings.TrimSpace(coreHelp))
 		}
 	case "project":
-		need(2, 4)
+		need(2, 5)
 		switch {
 		case pos[1] == "list" && len(pos) == 2:
 			var r struct{ Projects []coreapi.ProjectJSON }
@@ -173,6 +175,29 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 			say("project " + clean(pos[2]) + " added")
 		case (pos[1] == "archive" || pos[1] == "unarchive") && len(pos) == 3:
 			a.do("PATCH", "/projects/"+id(projectID(a, pos[2]), 10), map[string]any{"archived": pos[1] == "archive"}, nil)
+		case pos[1] == "remote" && (pos[2] == "list" && len(pos) == 4 || (pos[2] == "add" || pos[2] == "remove") && len(pos) == 5):
+			path := "/projects/" + id(projectID(a, pos[3]), 10) + "/remotes"
+			if pos[2] == "list" {
+				var r struct{ Remotes []string }
+				a.do("GET", path, nil, &r)
+				for _, v := range r.Remotes {
+					say(clean(v))
+				}
+				if len(r.Remotes) == 0 {
+					say("no remotes registered")
+				}
+				break
+			}
+			var r struct{ Added, Removed []string }
+			a.do("POST", path, map[string][]string{pos[2]: {stripUserinfo(pos[4])}}, &r)
+			ids, verb, prep := r.Added, "registered", "for"
+			if pos[2] == "remove" {
+				ids, verb, prep = r.Removed, "removed", "from"
+			}
+			if len(ids) != 1 {
+				fail("the gateway did not name the remote")
+			}
+			say(clean(fmt.Sprintf("%s %s %s project %s", verb, ids[0], prep, pos[3])))
 		default:
 			fail(strings.TrimSpace(coreHelp))
 		}

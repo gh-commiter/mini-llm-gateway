@@ -218,6 +218,7 @@ type cmdCase struct {
 	Hint      string            `json:"hint,omitempty"`
 	Agent     string            `json:"agent,omitempty"` // "refuse": inside an agent run without a run port; "run": with it
 	Cwd       string            `json:"cwd,omitempty"`
+	Origin    string            `json:"origin,omitempty"` // the folder's raw remote.origin.url ("" = none)
 	Files     map[string]string `json:"files,omitempty"`
 	Responses []cmdResp         `json:"responses"`
 	Want      *cmdWant          `json:"want,omitempty"`
@@ -274,6 +275,7 @@ func TestProjectParityCommands(t *testing.T) {
 				connect: func() (connection, string) { return conn, fx.Gateway },
 				state:   statePath, cwd: filepath.Join(root, cwd), in: strings.NewReader(sub(c.Stdin)), out: &out, err: &errw,
 				agent: c.Agent != "", sleep: func(time.Duration) {},
+				origin: func(string) string { return c.Origin },
 			}
 			if c.Agent == "run" {
 				e.runConn = &conn
