@@ -98,6 +98,7 @@ public struct PanelEntry: Identifiable, Equatable, Sendable {
 public struct PanelRow: Identifiable, Equatable, Sendable {
     public let id: String
     public let values: [String: PanelJSON]
+    public init(id: String, values: [String: PanelJSON]) { self.id = id; self.values = values }
 }
 
 public struct PanelOptionValue: Identifiable, Equatable, Sendable {
@@ -123,6 +124,13 @@ public struct PanelListData: Sendable {
     public var showHidden = false
 }
 
+/// A record's data (one object of an answer): `values` is nil until it is loaded, or when its `when` does not hold.
+public struct PanelRecordData: Sendable {
+    public var values: [String: PanelJSON]?
+    public var error: PanelError?
+    public var loading = false
+}
+
 public struct PanelConfirmText: Equatable, Sendable { public let title: String, message: String, button: String, destructive: Bool }
 
 @MainActor public final class PanelModel: ObservableObject {
@@ -134,6 +142,9 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     @Published public private(set) var refError: PanelError?
     @Published public private(set) var lists: [PanelListKey: PanelListData] = [:]
     @Published public private(set) var actionError: [PanelListKey: PanelError] = [:]
+    @Published public private(set) var records: [PanelListKey: PanelRecordData] = [:]
+    /// The chosen entry of a list's scope picker (its key as the ref gave it).
+    @Published public private(set) var selected: [PanelListKey: PanelJSON] = [:]
     @Published public private(set) var loading = false
     /// Lists with an action in flight: a second trigger meanwhile is ignored (two quick clicks send once).
     @Published public private(set) var sending: Set<PanelListKey> = []
@@ -152,7 +163,10 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         loading = true
         defer { loading = false }
         await loadRefs()
-        for s in panel.sections where s.kind == "list" { await loadList(s, path: s.id, parent: nil) }
+        for s in panel.sections {
+            if s.kind == "list" { await loadList(s, path: s.id, parent: nil) }
+            if s.kind == "record" { await loadRecord(s, path: s.id, parent: nil) }
+        }
         for (_, o) in opened { await loadDetail(o.0, o.1) }
     }
 
@@ -181,6 +195,7 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     func loadList(_ s: PanelSection, path: String, parent: PanelRow?, more: Bool = false) async {
         let key = PanelListKey(path: path, parent: parent?.id ?? "")
         var d = lists[key] ?? PanelListData()
+        if more && d.loading { return }  // two quick "Load more" clicks would send one cursor twice
         guard let source = s.source else { return }
         let template = source.path
         var req = CoreRequest(method: "GET", path: "")
@@ -188,16 +203,26 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
             d.error = .refused("the path of \(s.id) cannot be built"); lists[key] = d; return
         }
         req.path = p
+        var query: [String] = []
+        if let sc = s.scope {  // the picker's value is a query parameter; nothing is requested until one is chosen
+            if selected[key] == nil || !(refs[sc.ref] ?? []).contains(where: { $0.key == selected[key] }) { selected[key] = refs[sc.ref]?.first?.key }
+            guard let v = selected[key]?.scalarText else { d.rows = []; d.next = nil; d.error = nil; lists[key] = d; return }
+            guard let e = PanelTemplate.encodeQuery(v) else { d.error = .refused("the choice cannot be sent"); lists[key] = d; return }
+            query.append("\(sc.param)=\(e)")
+        }
         if more {
             guard let paging = s.paging, let n = d.next else { return }
             guard let e = PanelTemplate.encodeQuery(n) else { d.error = .refused("the paging cursor cannot be sent"); lists[key] = d; return }
-            req.query = "\(paging.param)=\(e)"
+            query.append("\(paging.param)=\(e)")
         }
+        req.query = query.joined(separator: "&")
+        let sent = selected[key]
         d.loading = true; lists[key] = d
         let a = await send(req)
+        if s.scope != nil && selected[key] != sent { return }  // the picker moved meanwhile: this answer is for another choice
         d.loading = false
         if let e = a.panelError { d.error = e; lists[key] = d; return }
-        guard let items = Self.items(a.body, source.items) else { d.error = .refused("the answer has no \(source.items)"); lists[key] = d; return }
+        guard let itemsKey = source.items, let items = Self.items(a.body, itemsKey) else { d.error = .refused("the answer has no list of rows"); lists[key] = d; return }
         d.error = nil
         let k = s.key ?? ""
         let ids = items.map { $0[k]?.scalarText }
@@ -213,6 +238,33 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         lists[key] = d
     }
 
+    /// Chooses an entry of a list's scope picker and loads the list for it.
+    public func select(_ key: PanelJSON, section s: PanelSection, path: String, parent: PanelRow? = nil) async {
+        selected[PanelListKey(path: path, parent: parent?.id ?? "")] = key
+        await loadList(s, path: path, parent: parent)
+    }
+
+    /// Does the record's `when` hold for the opened row? (No `when`: always.)
+    public func recordVisible(_ s: PanelSection, parent: PanelRow?) -> Bool { s.when.map { parent?.values[$0.field] == $0.equals } ?? true }
+
+    func loadRecord(_ s: PanelSection, path: String, parent: PanelRow?) async {
+        let key = PanelListKey(path: path, parent: parent?.id ?? "")
+        guard recordVisible(s, parent: parent) else { records[key] = PanelRecordData(); return }  // not requested at all
+        var d = PanelRecordData()
+        guard let source = s.source, allowed("GET", source.path), let p = PanelTemplate.resolve(path: source.path, .init(parent: parent?.values ?? [:])) else {
+            d.error = .refused("the path of \(s.id) cannot be built"); records[key] = d; return
+        }
+        d.loading = true; records[key] = d
+        let a = await send(CoreRequest(method: "GET", path: p))
+        d.loading = false
+        if let e = a.panelError { d.error = e; records[key] = d; return }
+        guard case .object(let o)? = try? JSONDecoder().decode(PanelJSON.self, from: a.body) else { d.error = .refused("the answer is not one object"); records[key] = d; return }
+        d.values = o
+        records[key] = d
+    }
+
+    public func record(_ path: String, parent: PanelRow? = nil) -> PanelRecordData { records[PanelListKey(path: path, parent: parent?.id ?? "")] ?? PanelRecordData() }
+
     public func loadMore(_ s: PanelSection, path: String, parent: PanelRow? = nil) async { await loadList(s, path: path, parent: parent, more: true) }
 
     /// Opens a detail page of `row`: its sections load now and with every reload.
@@ -224,7 +276,10 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     public func closeDetail(_ s: PanelSection, row: PanelRow) { opened[PanelListKey(path: s.id, parent: row.id)] = nil }
 
     private func loadDetail(_ s: PanelSection, _ row: PanelRow) async {
-        for c in s.detail?.sections ?? [] where c.kind == "list" { await loadList(c, path: s.id + "/" + c.id, parent: row) }
+        for c in s.detail?.sections ?? [] {
+            if c.kind == "list" { await loadList(c, path: s.id + "/" + c.id, parent: row) }
+            if c.kind == "record" { await loadRecord(c, path: s.id + "/" + c.id, parent: row) }
+        }
     }
 
     // MARK: what a view shows
@@ -263,9 +318,13 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         case "enum": return c.values?[raw].map { text($0) } ?? raw
         case "ref": return refs[c.ref ?? ""]?.first { $0.id == raw }?.label ?? raw
         case "time": return Self.time(raw).map { $0.formatted(date: .abbreviated, time: .shortened) } ?? raw
+        case "multiline": return String(raw.prefix(PanelLimits.multiline))
         default: return raw
         }
     }
+
+    /// A long text is cut at PanelLimits.multiline characters; the view says so.
+    public func cellIsTruncated(_ c: PanelColumn, _ row: PanelRow) -> Bool { c.kind == "multiline" && (row.values[c.field]?.scalarText?.count ?? 0) > PanelLimits.multiline }
 
     static func time(_ s: String) -> Date? {
         let f = ISO8601DateFormatter()
@@ -339,6 +398,7 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
                 body[k] = x.any
             } else if let c = b.const { body[k] = c.any }
         }
+        if body.isEmpty, a.body != nil, a.method != "DELETE" { req.body = Data("{}".utf8) }  // `"body": {}`: an empty JSON object
         if !body.isEmpty { req.body = (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data() }
         return .success(req)
     }

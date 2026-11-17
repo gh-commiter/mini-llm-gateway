@@ -6,6 +6,15 @@
   "GET bindings",
   "PUT bindings/{}",
   "DELETE bindings/{}",
-  "GET devices"
+  "GET devices",
+  "GET kb/submissions",
+  "GET kb/submissions/{}",
+  "POST kb/submissions/{}/accept",
+  "POST kb/submissions/{}/reject",
+  "GET kb/notes",
+  "GET kb/notes/{}",
+  "GET kb/faq",
+  "GET projects",
+  "GET teams"
  ]
 }

@@ -411,45 +411,51 @@ func (s *Store) ListFAQ(ctx context.Context, p Principal, project int64, after s
 		if lim != nil {
 			return lim
 		}
-		q, args := where(p.UserID, []readable{a.readable(project, false)})
-		q += " AND n.entry_kind='faq'"
-		if after != "" {
-			c, e := decodeCursor(after, p.UserID, project, "")
-			if e != nil {
-				return e
-			}
-			q += " AND (n.updated<? OR (n.updated=? AND n.id>?))"
-			args = append(args, c.T, c.T, c.I)
-		}
-		rows, e := tx.Query(`SELECT n.id,n.class,n.title,n.body,n.updated FROM notes n WHERE `+q+` ORDER BY n.updated DESC, n.id LIMIT 51`, args...)
-		if e != nil {
-			return e
-		}
-		defer rows.Close()
-		size := 0
-		more := false
-		for rows.Next() {
-			var f FAQEntry
-			var updated int64
-			if e = rows.Scan(&f.ID, &f.Class, &f.Title, &f.Answer, &updated); e != nil {
-				return e
-			}
-			f.Updated = fromMs(updated)
-			if len(pg.Entries) == 50 || (len(pg.Entries) > 0 && size+len(f.Title)+len(f.Answer)+256 > maxFAQPageBytes) {
-				more = true
-				break
-			}
-			size += len(f.Title) + len(f.Answer) + 256
-			pg.Entries = append(pg.Entries, f)
-		}
-		if e = rows.Err(); e != nil {
-			return e
-		}
-		if more {
-			last := pg.Entries[len(pg.Entries)-1]
-			pg.Next = encodeCursor(cursor{U: p.UserID, P: project, T: ms(last.Updated), I: last.ID})
-		}
-		return nil
+		pg, e = faqPage(tx, p.UserID, project, []readable{a.readable(project, false)}, after)
+		return e
 	})
 	return
+}
+
+// faqPage is one page of the faq notes in rs, newest first.
+func faqPage(tx *sql.Tx, user, project int64, rs []readable, after string) (pg FAQPage, err error) {
+	q, args := where(user, rs)
+	q += " AND n.entry_kind='faq'"
+	if after != "" {
+		c, e := decodeCursor(after, user, project, "")
+		if e != nil {
+			return pg, e
+		}
+		q += " AND (n.updated<? OR (n.updated=? AND n.id>?))"
+		args = append(args, c.T, c.T, c.I)
+	}
+	rows, e := tx.Query(`SELECT n.id,n.class,n.title,n.body,n.updated FROM notes n WHERE `+q+` ORDER BY n.updated DESC, n.id LIMIT 51`, args...)
+	if e != nil {
+		return pg, e
+	}
+	defer rows.Close()
+	size := 0
+	more := false
+	for rows.Next() {
+		var f FAQEntry
+		var updated int64
+		if e = rows.Scan(&f.ID, &f.Class, &f.Title, &f.Answer, &updated); e != nil {
+			return pg, e
+		}
+		f.Updated = fromMs(updated)
+		if len(pg.Entries) == 50 || (len(pg.Entries) > 0 && size+len(f.Title)+len(f.Answer)+256 > maxFAQPageBytes) {
+			more = true
+			break
+		}
+		size += len(f.Title) + len(f.Answer) + 256
+		pg.Entries = append(pg.Entries, f)
+	}
+	if e = rows.Err(); e != nil {
+		return pg, e
+	}
+	if more {
+		last := pg.Entries[len(pg.Entries)-1]
+		pg.Next = encodeCursor(cursor{U: user, P: project, T: ms(last.Updated), I: last.ID})
+	}
+	return pg, nil
 }

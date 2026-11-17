@@ -54,13 +54,16 @@ type PanelProvider struct {
 var builtinPanelFiles embed.FS
 
 // BuiltinRoutes: the routes the built-in panels may use. The core's own routes plus the gateway's GET devices.
-var BuiltinRoutes = []string{"GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices"}
+var BuiltinRoutes = []string{"GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices", "GET kb/submissions", "GET kb/submissions/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject", "GET kb/notes", "GET kb/notes/{}", "GET kb/faq", "GET projects", "GET teams"}
 
 // panelSymbols: the names a renderer maps to its icons.
 var panelSymbols = []string{"person.2", "person.3", "folder", "book", "tray", "gearshape", "doc.text", "key", "list.bullet"}
 
 //go:embed panels/strings/*.json
 var builtinStringFiles embed.FS
+
+// builtinPanelOrder: the order of the built-in panels in GET /panels and so in the sidebar.
+var builtinPanelOrder = []string{"builtin.users.json", "builtin.kb.json"}
 
 func builtinProvider() PanelProvider {
 	p := PanelProvider{ID: "builtin", Routes: BuiltinRoutes, Strings: map[string]map[string]string{}}
@@ -71,10 +74,21 @@ func builtinProvider() PanelProvider {
 			p.Strings[strings.TrimSuffix(e.Name(), ".json")] = t
 		}
 	}
-	ents, _ := builtinPanelFiles.ReadDir("panels") // sorted by name
+	ents, _ := builtinPanelFiles.ReadDir("panels")
+	files := map[string][]byte{}
 	for _, e := range ents {
-		b, err := builtinPanelFiles.ReadFile("panels/" + e.Name())
-		if err == nil {
+		if b, err := builtinPanelFiles.ReadFile("panels/" + e.Name()); err == nil {
+			files[e.Name()] = b
+		}
+	}
+	for _, name := range builtinPanelOrder { // the order of the sidebar is given here, never by file names
+		if b, ok := files[name]; ok {
+			p.Panels = append(p.Panels, b)
+			delete(files, name)
+		}
+	}
+	for _, e := range ents { // a file that is not listed comes last (a test fails for it)
+		if b, ok := files[e.Name()]; ok {
 			p.Panels = append(p.Panels, b)
 		}
 	}
@@ -116,6 +130,16 @@ type pSection struct {
 	Actions    []pAction `json:"actions"`
 	RowActions []pAction `json:"rowActions"`
 	Detail     *pDetail  `json:"detail"`
+	Scope      *pScope   `json:"scope"` // list: a selector whose value is sent as a query parameter
+	When       *pWhen    `json:"when"`  // record in a detail page: shown only when the opened row's field equals
+}
+
+// pScope: a picker above a list ("which project", "which team"). Its options are the entries of the ref; the chosen key is
+// sent as `param=<key>` to the list's source, and the list loads once an option is chosen (the first one at the start).
+type pScope struct {
+	Ref   string `json:"ref"`
+	Param string `json:"param"`
+	Label string `json:"label"`
 }
 
 type pSource struct {
@@ -204,13 +228,14 @@ type pOption struct {
 // --- the validator ---
 
 var (
-	reID       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
-	reName     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
-	reLiteral  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-	rePlace    = regexp.MustCompile(`^\{(row|field|parent)\.([A-Za-z][A-Za-z0-9_]{0,63})\}$`)
-	reQueryKV  = regexp.MustCompile(`^([a-z][a-z0-9_]{0,31})=(.*)$`)
-	reQueryLit = regexp.MustCompile(`^[A-Za-z0-9_.-]{0,64}$`)
-	reKey      = regexp.MustCompile(`^[a-z0-9._-]{1,120}$`)
+	reID        = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+	reName      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
+	reLiteral   = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	rePlace     = regexp.MustCompile(`^\{(row|field|parent)\.([A-Za-z][A-Za-z0-9_]{0,63})\}$`)
+	reQueryKV   = regexp.MustCompile(`^([a-z][a-z0-9_]{0,31})=(.*)$`)
+	reQueryLit  = regexp.MustCompile(`^[A-Za-z0-9_.-]{0,64}$`)
+	reQueryName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	reKey       = regexp.MustCompile(`^[a-z0-9._-]{1,120}$`)
 )
 
 // ValidatePanel: one description against the provider's registered routes. Strict: unknown keys (exact spelling),
@@ -350,7 +375,7 @@ func (c *panelCheck) sections(where string, ss []pSection, nested bool) error {
 		switch s.Kind {
 		case "text":
 			if s.Body == nil || s.Title != nil || s.Source != nil || s.Key != "" || s.Columns != nil || s.Filter != nil || s.Hide != nil ||
-				s.Paging != nil || s.Empty != nil || s.Actions != nil || s.RowActions != nil || s.Detail != nil {
+				s.Paging != nil || s.Empty != nil || s.Actions != nil || s.RowActions != nil || s.Detail != nil || s.Scope != nil || s.When != nil {
 				return fmt.Errorf("%sa text section has only id and body", w)
 			}
 			if err := c.key("body", *s.Body, maxMessage); err != nil {
@@ -358,6 +383,10 @@ func (c *panelCheck) sections(where string, ss []pSection, nested bool) error {
 			}
 		case "list":
 			if err := c.list(w, s, nested); err != nil {
+				return err
+			}
+		case "record":
+			if err := c.record(w, s, nested); err != nil {
 				return err
 			}
 		default:
@@ -368,8 +397,19 @@ func (c *panelCheck) sections(where string, ss []pSection, nested bool) error {
 }
 
 func (c *panelCheck) list(w string, s pSection, nested bool) error {
-	if s.Body != nil || s.Source == nil || s.Title == nil {
-		return fmt.Errorf("%sa list needs title and source, and has no body", w)
+	if s.Body != nil || s.Source == nil || s.Title == nil || s.When != nil {
+		return fmt.Errorf("%sa list needs title and source, and has no body or when", w)
+	}
+	if sc := s.Scope; sc != nil {
+		if _, ok := c.d.Refs[sc.Ref]; !ok || !reQueryName.MatchString(sc.Param) {
+			return fmt.Errorf("%sscope: an undeclared ref or a bad parameter name", w)
+		}
+		if s.Paging != nil && s.Paging.Param == sc.Param { // the paging cursor would overwrite the choice (a source path has no query of its own)
+			return fmt.Errorf("%sscope and paging use the same parameter %q", w, sc.Param)
+		}
+		if err := c.key("scope.label", sc.Label, maxLabel); err != nil {
+			return fmt.Errorf("%s%w", w, err)
+		}
 	}
 	if err := firstErr(c.key("title", *s.Title, maxLabel), c.optKey("empty", s.Empty, maxLabel)); err != nil {
 		return fmt.Errorf("%s%w", w, err)
@@ -428,6 +468,33 @@ func (c *panelCheck) list(w string, s pSection, nested bool) error {
 			return fmt.Errorf("%sdetail title: bad row field", w)
 		}
 		return c.sections(w+"detail ", s.Detail.Sections, true)
+	}
+	return nil
+}
+
+// record: one object read from the source's answer, shown as label and value pairs (the list's column kinds). In a detail page
+// it may carry `when`: it is shown only when the opened row's field equals the value (nothing is requested otherwise).
+func (c *panelCheck) record(w string, s pSection, nested bool) error {
+	if s.Body != nil || s.Source == nil || s.Source.Items != "" || s.Key != "" || s.Filter != nil || s.Hide != nil || s.Paging != nil || s.Empty != nil ||
+		s.Actions != nil || s.RowActions != nil || s.Detail != nil || s.Scope != nil {
+		return fmt.Errorf("%sa record has id, title, source (a path), columns and perhaps when", w)
+	}
+	if err := c.optKey("title", s.Title, maxLabel); err != nil {
+		return fmt.Errorf("%s%w", w, err)
+	}
+	if err := c.path(w+"source", "GET", s.Source.Path, tpl{parent: nested}); err != nil {
+		return err
+	}
+	if len(s.Columns) == 0 || len(s.Columns) > maxColumns {
+		return fmt.Errorf("%scolumns: 1 to %d", w, maxColumns)
+	}
+	for _, col := range s.Columns {
+		if err := c.column(col); err != nil {
+			return fmt.Errorf("%scolumn %q: %w", w, col.Field, err)
+		}
+	}
+	if wh := s.When; wh != nil && (!nested || !reName.MatchString(wh.Field) || !scalar(wh.Equals)) {
+		return fmt.Errorf("%swhen: only in a detail page, with a field and a scalar", w)
 	}
 	return nil
 }

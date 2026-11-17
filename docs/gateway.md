@@ -86,6 +86,13 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   device again changes its user) and **Unbind** (asks first). Devices are still approved in **Devices**. The pane shows only
   plain text; a name that looks like a link or markup is shown as typed. If the project database is not available the pane
   says so.
+- **Knowledge base** (Mac, before Users and devices in the list): built from the panel `builtin.kb`. **Waiting for review:**
+  pending submissions of projects and teams (title, project or team, class, kind, author, received); **Accept**, **Reject…**
+  (asks first; an optional reason the author sees) and **Open** to read the text, and for a replacement the text of the note it
+  replaces under it (no line difference). Below: **Notes** and **Questions and answers** of a project or of a team, chosen
+  with a picker, searchable by title, paged. You read every class here, `private` notes included, as the owner; nothing on
+  the page edits a note except accepting a submission. A long text is wrapped in the page (no inner scroll) and cut at
+  20000 characters with a note. Needs the new helper: with an older one the pane says to update the app.
 - **Sessions:** **Projects (7 days)**: requests, agent minutes and tokens per folder and device (kept 31 days, also
   after their sessions are gone); the last 200 client sessions with device, folder, work mode and models; open one for
   requests, errors, refusals, time and tokens per model, and "read-only (cap worktree)" when the agent's cap made it

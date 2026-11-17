@@ -106,6 +106,8 @@ private struct PanelSections: View {
                 Section { Text(verbatim: model.text(s.body)).foregroundStyle(.secondary) }
             case "list":
                 PanelList(model: model, section: s, path: path + s.id, parent: parent)
+            case "record":
+                PanelRecord(model: model, section: s, path: path + s.id, parent: parent)
             default:
                 Section { Label { Text("This part of the panel cannot be shown.") } icon: { Image(systemName: "questionmark.square.dashed") }.foregroundStyle(.secondary) }
             }
@@ -133,6 +135,13 @@ private struct PanelList: View {
         Section {
             if let e = data.error { PanelErrorText(error: e) }
             if let e = model.actionError[key] { PanelErrorText(error: e) }
+            if let sc = section.scope {
+                let options = model.refs[sc.ref] ?? []
+                Picker(selection: Binding(get: { model.selected[key]?.scalarText ?? "" },
+                                          set: { id in if let o = options.first(where: { $0.id == id }) { Task { await model.select(o.key, section: section, path: path, parent: parent) } } })) {
+                    ForEach(options) { o in Text(verbatim: o.label).tag(o.id) }
+                } label: { Text(verbatim: model.text(sc.label)) }
+            }
             if let h = section.hide {
                 Toggle(isOn: Binding(get: { data.showHidden }, set: { model.setShowHidden($0, path: path, parent: parent) })) { Text(verbatim: model.text(h.toggle)) }
             }
@@ -183,6 +192,43 @@ private struct PanelList: View {
             confirming = ConfirmRequest(action: a, row: row, text: c, values: [:])
         } else {
             Task { await model.perform(a, section: path, row: row, parent: parent) }
+        }
+    }
+}
+
+/// One object as label and value pairs. A long text is wrapped in place, in the page's own scroll (never an inner scroll area),
+/// cut at PanelLimits.multiline characters with a visible note.
+private struct PanelRecord: View {
+    @ObservedObject var model: PanelModel
+    let section: PanelSection
+    let path: String
+    let parent: PanelRow?
+
+    var body: some View {
+        let data = model.record(path, parent: parent)
+        if model.recordVisible(section, parent: parent) {
+            Section {
+                if let e = data.error { PanelErrorText(error: e) }
+                if data.loading && data.values == nil { ProgressView().frame(maxWidth: .infinity) }
+                if let values = data.values {
+                    let row = PanelRow(id: "", values: values)
+                    ForEach(Array((section.columns ?? []).enumerated()), id: \.offset) { _, c in
+                        if !c.supported {
+                            Text("This part of the panel cannot be shown.").foregroundStyle(.secondary)
+                        } else if c.kind == "multiline" {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(verbatim: model.text(c.label)).font(.caption).foregroundStyle(.secondary)
+                                Text(verbatim: model.cell(c, row)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                if model.cellIsTruncated(c, row) { Text("The text is shortened here.").font(.caption).foregroundStyle(.orange) }
+                            }
+                        } else {
+                            LabeledContent { Text(verbatim: model.cell(c, row)).textSelection(.enabled) } label: { Text(verbatim: model.text(c.label)) }
+                        }
+                    }
+                }
+            } header: {
+                if let t = section.title { Text(verbatim: model.text(t)) }
+            }
         }
     }
 }

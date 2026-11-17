@@ -18,12 +18,15 @@ private actor Fake {
     var log: [String] = []
     var answers: [String: (Int, String)] = [:]
     var delay: UInt64 = 0
+    var delays: [String: UInt64] = [:]
     func slow(_ ns: UInt64) { delay = ns }
+    func slow(_ key: String, _ ns: UInt64) { delays[key] = ns }  // key: "METHOD path?query"
     func set(_ k: String, _ status: Int, _ body: String) { answers[k] = (status, body) }
     func handle(_ r: CoreRequest) async -> CoreResponse {
         log.append(r.method + " " + r.path + (r.query.isEmpty ? "" : "?" + r.query) + (r.body.isEmpty ? "" : " " + String(decoding: r.body, as: UTF8.self)))
-        if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
-        let (s, b) = answers[r.method + " " + r.path] ?? (404, #"{"error":{"message":"nothing here"}}"#)
+        let full = r.method + " " + r.path + (r.query.isEmpty ? "" : "?" + r.query)
+        if let d = delays[full] ?? (delay > 0 ? delay : nil) { try? await Task.sleep(nanoseconds: d) }
+        let (s, b) = answers[full] ?? answers[r.method + " " + r.path] ?? (404, #"{"error":{"message":"nothing here"}}"#)
         return CoreResponse(status: s, body: Data(b.utf8))
     }
     func clear() { log = [] }
@@ -36,12 +39,13 @@ private func strings(_ locale: String) throws -> PanelStrings {
 
 /// GET /panels names the provider next to each description; the descriptions of the fixture, and the answer for some.
 private func descriptions() throws -> [[String: Any]] { (try object("panels.json")["panels"] as! [[String: Any]]).map { $0["description"] as! [String: Any] } }
+private func description(_ id: String) throws -> [String: Any] { try descriptions().first { $0["id"] as? String == id }! }
 private func answer(_ ds: [[String: Any]], provider: String = "builtin") -> String {
     String(decoding: data(["format": 1, "panels": ds.map { ["provider": provider, "description": $0] }]), as: UTF8.self)
 }
 
 private func users() throws -> PanelDescription {
-    guard case .ready(let d) = PanelValidator.parse(data(try descriptions()[0]), provider: "builtin") else { throw Err.bad }
+    guard case .ready(let d) = PanelValidator.parse(data(try description("builtin.users")), provider: "builtin") else { throw Err.bad }
     return d
 }
 private enum Err: Error { case bad }
@@ -81,7 +85,8 @@ private let userAnswers: [(String, Int, String)] = [
         let orders = d.sections[1]
         #expect(d.sections[0].kind == "text" && orders.kind == "list")
         #expect(orders.columns!.map(\.kind) == ["text", "multiline", "bool", "enum", "ref", "time"])
-        #expect(orders.paging != nil && orders.hide != nil && orders.filter != nil && orders.detail?.sections.count == 2)
+        #expect(orders.paging != nil && orders.hide != nil && orders.filter != nil && orders.detail?.sections.count == 3)
+        #expect(orders.scope?.param == "item" && orders.detail?.sections[2].kind == "record" && orders.detail?.sections[2].when?.field == "paid")
         #expect(orders.actions![0].fields!.map(\.type) == ["text", "ref", "choice", "toggle"])
         // a provider that registered fewer routes cannot show it
         let fewer = Array((f["routes"] as! [String]).dropFirst())
@@ -298,6 +303,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         await fake.set("GET /plugins/acme/items", 200, #"{"items":[{"sku":"s1","title":"Shirt"}]}"#)
         await fake.set("GET /plugins/acme/orders", 200, #"{"orders":[{"id":5,"name":"first","paid":true,"state":"new","item":"s1","created":"2026-11-17T10:00:00Z","note":"a\nb"}],"next":6}"#)
         await fake.set("GET /plugins/acme/orders/5/lines", 200, #"{"lines":[{"id":9,"title":"one"}]}"#)
+        await fake.set("GET /plugins/acme/orders/5/summary", 200, #"{"title":"s","note":"long"}"#)
         let m = PanelModel(panel: d, strings: PanelStrings(locale: "C", table: tabs["C"]!), routes: f["routes"] as! [String], send: { await fake.handle($0) })
         await m.load()
         let orders = d.sections[1]
@@ -305,7 +311,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         await fake.set("GET /plugins/acme/orders", 200, #"{"orders":[{"id":6,"name":"second","state":"sent"}],"next":0}"#)
         await m.loadMore(orders, path: "orders")
         let log6 = await fake.log
-        #expect(log6.last == "GET /plugins/acme/orders?after=6")
+        #expect(log6.last == "GET /plugins/acme/orders?item=s1&after=6")
         #expect(m.data("orders").rows.map(\.id) == ["5", "6"] && m.data("orders").next == nil)
         // cells: ref label, enum label, bool label, time shown in local time (any text that is not the raw one)
         let row = m.data("orders").rows[0]
@@ -315,7 +321,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         await m.openDetail(orders, row: row)
         let lines = orders.detail!.sections[1]
         let log7 = await fake.log
-        #expect(log7.last == "GET /plugins/acme/orders/5/lines")
+        #expect(log7.suffix(2) == ["GET /plugins/acme/orders/5/lines", "GET /plugins/acme/orders/5/summary"])  // the summary: the row is paid
         let line = m.data("orders/lines", parent: row).rows[0]
         #expect(try m.request(lines.actions![0], parent: row, values: ["title": .string("two")]).get() == CoreRequest(method: "POST", path: "/plugins/acme/orders/5/lines", body: Data(#"{"title":"two"}"#.utf8)))
         #expect(try m.request(lines.rowActions![0], row: line, parent: row).get() == CoreRequest(method: "DELETE", path: "/plugins/acme/orders/5/lines/9"))
@@ -358,11 +364,13 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
 
     @Test(.enabled(if: haveFixtures)) func theGoAnswerLoads() async throws {
         let c = await catalog(200, String(decoding: try fixture("panels.json"), as: UTF8.self))
-        #expect(c.error == nil && c.entries.map(\.id) == ["builtin.users"])
-        #expect(c.entries[0].title(c.strings) == "Users and devices" && c.entries[0].sidebarSymbol == "person.2" && c.strings.locale == "C")
-        guard case .ready = c.entries[0].parse else { throw Err.bad }
+        #expect(c.error == nil && c.entries.map(\.id) == ["builtin.users", "builtin.kb"])  // the order of the answer
+        let usersEntry = c.entries[0]
+        #expect(usersEntry.title(c.strings) == "Users and devices" && usersEntry.sidebarSymbol == "person.2" && c.strings.locale == "C")
+        #expect(c.entries[1].title(c.strings) == "Knowledge base" && c.entries[1].sidebarSymbol == "book")
+        for e in c.entries { guard case .ready = e.parse else { throw Err.bad } }
         let sl = await catalog(200, String(decoding: try fixture("panels.json"), as: UTF8.self), locale: "sl_SI")
-        #expect(sl.entries[0].title(sl.strings) == "Uporabniki in naprave" && sl.strings.locale == "sl_SI" && sl.stringsError == nil)
+        #expect(sl.entries[0].title(sl.strings) == "Uporabniki in naprave" && sl.entries[1].title(sl.strings) == "Baza znanja" && sl.strings.locale == "sl_SI" && sl.stringsError == nil)
     }
 
     @Test(.enabled(if: haveFixtures)) func aMissingKeyIsShownAsTheKeyAndTheLanguageCarriesTheRest() throws {
@@ -376,7 +384,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
             var keys = Set<String>()
             func walk(_ s: [PanelSection]) {
                 for x in s {
-                    keys.formUnion([x.title, x.body, x.empty, x.hide?.toggle].compactMap { $0 })
+                    keys.formUnion([x.title, x.body, x.empty, x.hide?.toggle, x.scope?.label].compactMap { $0 })
                     for c in x.columns ?? [] { keys.formUnion([c.label, c.yes, c.no].compactMap { $0 } + (c.values ?? [:]).values) }
                     for a in (x.actions ?? []) + (x.rowActions ?? []) {
                         keys.insert(a.label)
@@ -401,8 +409,16 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         #expect(log.contains("GET /panels/strings?lang=sl_SI") && c.stringsError == .server("nothing here") && c.strings.text("x.y") == "x.y")
     }
 
+    @Test(.enabled(if: haveFixtures)) func theOrderOfTheAnswerIsTheOrderOfTheSidebar() async throws {
+        let ds = [try description("builtin.kb"), try description("builtin.users")]
+        let c = await catalog(200, answer(ds))
+        #expect(c.entries.map(\.id) == ["builtin.kb", "builtin.users"])
+        let d = [try description("builtin.users"), try description("builtin.kb")]
+        #expect(await catalog(200, answer(d)).entries.map(\.id) == ["builtin.users", "builtin.kb"])
+    }
+
     @Test(.enabled(if: haveFixtures)) func aHigherFormatIsNotGuessed() async throws {
-        let good = try descriptions()
+        let good = [try description("builtin.users")]
         var newer = good[0]; newer["format"] = 2; newer["id"] = "builtin.future"; newer["sections"] = [["kind": "hologram"]]
         let c = await catalog(200, String(decoding: data(["format": 1, "panels": [["provider": "builtin", "description": newer], ["provider": "builtin", "description": good[0]]]]), as: UTF8.self))
         #expect(c.entries.map(\.id) == ["builtin.future", "builtin.users"])
@@ -412,7 +428,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     }
 
     @Test(.enabled(if: haveFixtures)) func anUnknownElementKindIsAVisiblePlaceholder() async throws {
-        var p = try descriptions()[0]
+        var p = try description("builtin.users")
         var s = p["sections"] as! [[String: Any]]
         s.append(["kind": "chart", "id": "later"])
         var cols = s[0]["columns"] as! [[String: Any]]
@@ -427,7 +443,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     }
 
     @Test(.enabled(if: haveFixtures)) func aPanelThatFailsValidationHereStaysAsCannotBeShown() async throws {
-        var p = try descriptions()[0]
+        var p = try description("builtin.users")
         var s = p["sections"] as! [[String: Any]]
         var rows = s[0]["rowActions"] as! [[String: Any]]
         rows[1]["path"] = "/projects/{row.id}"  // another provider's route
@@ -462,7 +478,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
 
 @MainActor @Suite struct PanelTrustTests {
     @Test(.enabled(if: haveFixtures)) func theRegistrysProviderIdDecidesNotTheDescriptions() async throws {
-        let d = try descriptions()[0]  // says "builtin"
+        let d = try description("builtin.users")  // says "builtin"
         // the registry says acme: refused visibly, the built-in routes are not used
         let c = PanelCatalog(send: { r in r.path == "/panels" ? CoreResponse(status: 200, body: Data(answer([d], provider: "acme").utf8)) : .unavailable }, locale: "C")
         await c.load()
@@ -491,9 +507,9 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         let devices = await send(CoreRequest(method: "GET", path: "/devices"))
         #expect(devices.status == 200 && String(decoding: devices.body, as: UTF8.self) == #"{"devices":[{"id":"d1","name":"Mac"}]}"#)
         let before = await fake.log.count
-        for bad in [("POST", "/core/restore"), ("POST", "/core/backup"), ("POST", "/import"), ("POST", "/export"), ("GET", "/teams"), ("POST", "/teams"), ("GET", "/projects"),
-                    ("DELETE", "/users/7"), ("PATCH", "/users"), ("PATCH", "/users/7/x"), ("GET", "/users/7"), ("PUT", "/users"), ("POST", "/panels"), ("GET", "/panels/x"),
-                    ("PATCH", "/users/.."), ("PATCH", "/users/%2e%2e"), ("PATCH", "/users/a%2Fb"), ("PATCH", "/users/"), ("GET", "/kb/submissions"), ("GET", "/usage/events"),
+        for bad in [("POST", "/core/restore"), ("POST", "/core/backup"), ("POST", "/import"), ("POST", "/export"), ("POST", "/teams"), ("POST", "/projects"),
+                    ("DELETE", "/users/7"), ("PATCH", "/users"), ("PATCH", "/users/7/x"), ("POST", "/kb/submissions/1/purge"), ("GET", "/users/7"), ("PUT", "/users"), ("POST", "/panels"), ("GET", "/panels/x"),
+                    ("PATCH", "/users/.."), ("PATCH", "/users/%2e%2e"), ("PATCH", "/users/a%2Fb"), ("PATCH", "/users/"), ("GET", "/kb/search/rebuild"), ("GET", "/usage/events"),
                     ("GET", "users"), ("DELETE", "/devices/abc")] {
             #expect(await send(CoreRequest(method: bad.0, path: bad.1)).status == 404, "\(bad)")
         }
@@ -525,9 +541,9 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         let tabs = try JSONSerialization.jsonObject(with: fixture("panels-format1-strings.json")) as! [String: [String: String]]
         let routes = f["routes"] as! [String]
         let orders = d.sections[1]
-        for (cursor, want) in [("x/../y?z&w=1 é", "after=x%2F..%2Fy%3Fz%26w%3D1%20%C3%A9"), ("..", "after=..")] {
+        for (cursor, want) in [("x/../y?z&w=1 é", "item=s1&after=x%2F..%2Fy%3Fz%26w%3D1%20%C3%A9"), ("..", "item=s1&after=..")] {
             let fake = Fake()
-            await fake.set("GET /plugins/acme/items", 200, #"{"items":[]}"#)
+            await fake.set("GET /plugins/acme/items", 200, #"{"items":[{"sku":"s1","title":"x"}]}"#)
             await fake.set("GET /plugins/acme/orders", 200, #"{"orders":[{"id":1}],"next":\#(String(decoding: try JSONEncoder().encode(cursor), as: UTF8.self))}"#)
             let m = PanelModel(panel: d, strings: PanelStrings(locale: "C", table: tabs["C"]!), routes: routes, send: { await fake.handle($0) })
             await m.load()
@@ -535,7 +551,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
             #expect(await fake.log.last == "GET /plugins/acme/orders?" + want)
         }
         let fake = Fake()
-        await fake.set("GET /plugins/acme/items", 200, #"{"items":[]}"#)
+        await fake.set("GET /plugins/acme/items", 200, #"{"items":[{"sku":"s1","title":"x"}]}"#)
         await fake.set("GET /plugins/acme/orders", 200, #"{"orders":[{"id":1}],"next":"a\u0007b"}"#)
         let m = PanelModel(panel: d, strings: PanelStrings(), routes: routes, send: { await fake.handle($0) })
         await m.load()
@@ -571,6 +587,197 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         #expect(m.problems(add, values: ["name": .string(String(repeating: "č", count: 64))]).isEmpty)  // 128 bytes
         #expect(m.problems(add, values: ["name": .string(String(repeating: "č", count: 65))]) == ["name": .tooLong(128)])
         #expect(m.problems(add, values: ["name": .string(String(repeating: "č", count: 100))]) == ["name": .tooLong(128)])
+    }
+}
+
+private func kb() throws -> PanelDescription {
+    guard case .ready(let d) = PanelValidator.parse(data(try description("builtin.kb")), provider: "builtin") else { throw Err.bad }
+    return d
+}
+
+private func panelKeys(_ d: PanelDescription) -> Set<String> {
+    var keys: Set<String> = [d.title, d.about]
+    func walk(_ s: [PanelSection]) {
+        for x in s {
+            keys.formUnion([x.title, x.body, x.empty, x.hide?.toggle, x.scope?.label].compactMap { $0 })
+            for c in x.columns ?? [] { keys.formUnion([c.label, c.yes, c.no].compactMap { $0 } + (c.values ?? [:]).values) }
+            for a in (x.actions ?? []) + (x.rowActions ?? []) {
+                keys.insert(a.label)
+                if let c = a.confirm { keys.formUnion([c.title, c.message, c.button]) }
+                for f in a.fields ?? [] { keys.insert(f.label) }
+            }
+            walk(x.detail?.sections ?? [])
+        }
+    }
+    walk(d.sections)
+    return keys
+}
+
+private let kbAnswers: [(String, Int, String)] = [
+    ("GET /projects", 200, #"{"projects":[{"id":1,"slug":"acme","name":"Acme"},{"id":2,"slug":"shop","name":"Shop"}]}"#),
+    ("GET /teams", 200, #"{"teams":[{"id":4,"name":"web","archived":false,"path":"","segment":1099511627780}]}"#),
+    ("GET /kb/submissions", 200, ##"{"submissions":[{"id":5,"title":"<script>alert(1)</script>","scopeName":"Acme","scopeKind":"project","class":"data","entryKind":"finding","authorName":"ana","received":"2026-11-17T10:00:00Z","isReplacement":false,"replaces":0},{"id":6,"title":"**b** [x](https://evil.example)","scopeName":"web","scopeKind":"team","class":"structure","entryKind":"faq","authorName":"a\u202eb","received":"2026-11-17T11:00:00Z","isReplacement":true,"replaces":77}],"next":0}"##),
+    ("GET /kb/submissions/5", 200, #"{"id":5,"title":"t5","body":"text five","isReplacement":false}"#),
+    ("GET /kb/submissions/6", 200, #"{"id":6,"title":"t6","body":"new text","isReplacement":true,"replaces":77}"#),
+    ("GET /kb/notes/77", 200, #"{"id":77,"title":"old","class":"data","updated":"2026-11-01T10:00:00Z","body":"old text"}"#),
+    ("GET /kb/notes", 200, #"{"notes":[{"id":9,"title":"n9","class":"private","entryKind":"finding","author":"ana","updated":"2026-11-01T10:00:00Z"}],"next":"c2"}"#),
+    ("GET /kb/faq", 200, #"{"entries":[{"id":3,"title":"Q?","answer":"A.","class":"data","updated":"2026-11-01T10:00:00Z"}],"next":""}"#),
+]
+
+@MainActor @Suite struct PanelKBTests {
+    private func model(_ fake: Fake, locale: String = "C") async throws -> PanelModel {
+        for (k, st, b) in kbAnswers { await fake.set(k, st, b) }
+        let m = PanelModel(panel: try kb(), strings: try strings(locale), routes: PanelRoutes.builtin, send: { await fake.handle($0) })
+        await m.load()
+        return m
+    }
+
+    @Test(.enabled(if: haveFixtures)) func everyKeyOfTheKnowledgeBasePanelHasATextInCAndSl() throws {
+        for loc in ["C", "sl_SI"] {
+            let st = try strings(loc)
+            for d in [try kb(), try users()] {
+                let keys = panelKeys(d)
+                #expect(keys.count > 20)
+                for k in keys { #expect(st.table[k] != nil, "\(loc): no text for \(k)") }
+            }
+        }
+    }
+
+    @Test(.enabled(if: haveFixtures)) func loadsTheQueueTheRefsAndTheFirstScopeOfEachList() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let log = await fake.log
+        #expect(log == ["GET /projects", "GET /teams", "GET /kb/submissions", "GET /kb/notes?project=1", "GET /kb/notes?project=1099511627780", "GET /kb/faq?project=1", "GET /kb/faq?project=1099511627780"])
+        let queue = m.panel.sections[1], notesP = m.panel.sections[2], notesT = m.panel.sections[3]
+        #expect(m.data("queue").rows.map(\.id) == ["5", "6"] && m.selected[PanelListKey(path: "notes-project", parent: "")] == .int(1))
+        #expect(m.selected[PanelListKey(path: "notes-team", parent: "")] == .int(1099511627780))
+        // the picker changes the query parameter and reloads only that list
+        await fake.clear()
+        await m.select(.int(2), section: notesP, path: "notes-project")
+        #expect(await fake.log == ["GET /kb/notes?project=2"])
+        // paging keeps the scope and adds the cursor as a query value
+        await fake.clear()
+        await m.loadMore(notesP, path: "notes-project")
+        #expect(await fake.log == ["GET /kb/notes?project=2&after=c2"])
+        _ = (queue, notesT)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func anAnswerForAnEarlierChoiceOfThePickerIsDropped() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let notes = m.panel.sections[2]
+        await fake.set("GET /kb/notes?project=1", 200, #"{"notes":[{"id":1,"title":"of one"}]}"#)
+        await fake.set("GET /kb/notes?project=2", 200, #"{"notes":[{"id":2,"title":"of two"}]}"#)
+        await fake.slow("GET /kb/notes?project=1", 150_000_000)   // the answer for the first choice arrives last
+        await fake.slow("GET /kb/notes?project=2", 10_000_000)
+        async let first: Void = m.select(.int(1), section: notes, path: "notes-project")
+        try await Task.sleep(nanoseconds: 20_000_000)
+        async let second: Void = m.select(.int(2), section: notes, path: "notes-project")
+        _ = await (first, second)
+        #expect(m.data("notes-project").rows.map(\.id) == ["2"] && m.selected[PanelListKey(path: "notes-project", parent: "")] == .int(2))
+        #expect(!m.data("notes-project").loading)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func twoQuickLoadMoreClicksSendTheCursorOnce() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let notes = m.panel.sections[2]
+        await fake.set("GET /kb/notes?project=1&after=c2", 200, #"{"notes":[{"id":10,"title":"more"}]}"#)
+        await fake.slow("GET /kb/notes?project=1&after=c2", 60_000_000)
+        await fake.clear()
+        async let a: Void = m.loadMore(notes, path: "notes-project")
+        try await Task.sleep(nanoseconds: 15_000_000)
+        async let b: Void = m.loadMore(notes, path: "notes-project")
+        _ = await (a, b)
+        #expect(await fake.log == ["GET /kb/notes?project=1&after=c2"])
+        #expect(m.data("notes-project").rows.map(\.id) == ["9", "10"] && m.data("notes-project").error == nil)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func exactRequestsOfAcceptAndReject() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let queue = m.panel.sections[1]
+        let row = m.data("queue").rows[0]
+        let accept = queue.rowActions![0], reject = queue.rowActions![1]
+        #expect(try m.request(accept, row: row).get() == CoreRequest(method: "POST", path: "/kb/submissions/5/accept", body: Data("{}".utf8)))
+        #expect(m.confirmation(accept, row: row) == nil)  // accepting asks nothing
+        #expect(m.defaults(reject, row: row) == ["reason": .string("")])
+        #expect(try m.request(reject, row: row, values: ["reason": .string("a duplicate")]).get() == CoreRequest(method: "POST", path: "/kb/submissions/5/reject", body: Data(#"{"reason":"a duplicate"}"#.utf8)))
+        #expect(try m.request(reject, row: row, values: m.defaults(reject, row: row)).get().body == Data(#"{"reason":""}"#.utf8))
+        let c = m.confirmation(reject, row: row)
+        #expect(c?.destructive == true && c?.title == "Reject <script>alert(1)</script>?")  // the title is plain text, once
+        #expect(m.problems(reject, values: ["reason": .string(String(repeating: "č", count: 513))]) == ["reason": .tooLong(1024)])  // bytes, like the core
+        // reject is refused without the confirmation, accept goes out and the whole panel reloads
+        #expect(await !m.perform(reject, section: "queue", row: row, values: ["reason": .string("x")]))
+        await fake.clear()
+        await fake.set("POST /kb/submissions/5/accept", 200, "{}")
+        #expect(await m.perform(accept, section: "queue", row: row))
+        let log = await fake.log
+        #expect(log.first == "POST /kb/submissions/5/accept {}" && log.contains("GET /kb/submissions"))
+    }
+
+    @Test(.enabled(if: haveFixtures)) func theDetailPageReadsTheSubmissionAndOnlyAReplacementsOldNote() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let queue = m.panel.sections[1]
+        let plain = m.data("queue").rows[0], replacement = m.data("queue").rows[1]
+        await fake.clear()
+        await m.openDetail(queue, row: plain)
+        #expect(await fake.log == ["GET /kb/submissions/5"])  // not a replacement: the old note is not requested
+        #expect(m.record("queue/replaced", parent: plain).values == nil)
+        let sub = queue.detail!.sections[0], old = queue.detail!.sections[1]
+        #expect(!m.recordVisible(old, parent: plain) && m.recordVisible(old, parent: replacement))
+        await fake.clear()
+        await m.openDetail(queue, row: replacement)
+        #expect(await fake.log == ["GET /kb/submissions/6", "GET /kb/notes/77"])
+        let text = PanelRow(id: "", values: m.record("queue/submission", parent: replacement).values!)
+        let oldText = PanelRow(id: "", values: m.record("queue/replaced", parent: replacement).values!)
+        #expect(sub.columns!.last.map { m.cell($0, text) } == "new text" && old.columns!.last.map { m.cell($0, oldText) } == "old text")
+    }
+
+    @Test(.enabled(if: haveFixtures)) func aLongTextIsCutWithAMarkerAndMarkupStaysPlain() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let queue = m.panel.sections[1]
+        let nasty = ["<script>alert(1)</script>", "**b** [x](https://evil.example)", "a\u{202e}b"]
+        #expect(m.data("queue").rows.map { m.cell(queue.columns![0], $0) } == Array(nasty.prefix(2)))
+        #expect(m.cell(queue.columns![5], m.data("queue").rows[1]) == nasty[2])  // the bidi character is kept as it is: plain text, not interpreted
+        let big = String(repeating: "x", count: PanelLimits.multiline + 5)
+        let body = queue.detail!.sections[0].columns!.last!
+        let row = PanelRow(id: "", values: ["body": .string(big)])
+        #expect(m.cell(body, row).count == PanelLimits.multiline && m.cellIsTruncated(body, row))
+        #expect(!m.cellIsTruncated(body, PanelRow(id: "", values: ["body": .string("short")])))
+    }
+
+    @Test(.enabled(if: haveFixtures)) func aFailedSubmissionCallShowsTheServerTextAndAFiveHundredOnlyTheStatus() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let queue = m.panel.sections[1]
+        let row = m.data("queue").rows[0]
+        await fake.set("POST /kb/submissions/5/accept", 400, #"{"error":{"message":"submission already reviewed"}}"#)
+        #expect(await !m.perform(queue.rowActions![0], section: "queue", row: row))
+        #expect(m.actionError[PanelListKey(path: "queue", parent: "")] == .server("submission already reviewed"))
+        await fake.set("POST /kb/submissions/5/accept", 500, #"{"error":{"message":"internal error: sqlite: disk I/O error"}}"#)
+        _ = await m.perform(queue.rowActions![0], section: "queue", row: row)
+        #expect(m.actionError[PanelListKey(path: "queue", parent: "")] == .serverFault(500))
+    }
+
+    @Test func theTransportPassesTheKnowledgeBaseRoutesAndNothingNearThem() async {
+        let fake = Fake()
+        for (k, st, b) in [("GET /kb/notes", 200, "{}"), ("GET /kb/notes/3", 200, "{}"), ("GET /kb/faq", 200, "{}"), ("GET /kb/submissions", 200, "{}"), ("GET /kb/submissions/3", 200, "{}"),
+                           ("POST /kb/submissions/3/accept", 200, "{}"), ("POST /kb/submissions/3/reject", 200, "{}"), ("GET /projects", 200, "{}"), ("GET /teams", 200, "{}")] { await fake.set(k, st, b) }
+        let send = PanelTransport.send(admin: { await fake.handle($0) }, devices: { [] })
+        for ok in [("GET", "/kb/notes"), ("GET", "/kb/notes/3"), ("GET", "/kb/faq"), ("GET", "/kb/submissions"), ("GET", "/kb/submissions/3"), ("POST", "/kb/submissions/3/accept"),
+                   ("POST", "/kb/submissions/3/reject"), ("GET", "/projects"), ("GET", "/teams")] {
+            #expect(await send(CoreRequest(method: ok.0, path: ok.1)).status == 200, "\(ok)")
+        }
+        let before = await fake.log.count
+        for bad in [("POST", "/kb/notes"), ("DELETE", "/kb/notes/3"), ("PUT", "/kb/notes/3"), ("POST", "/kb/search/rebuild"), ("POST", "/projects"), ("PATCH", "/projects/3"), ("POST", "/teams"),
+                    ("PUT", "/teams/1/members/2"), ("GET", "/kb/submissions/3/accept"), ("POST", "/kb/submissions/3/other"), ("GET", "/kb/notes/3/x"), ("GET", "/projects/3/members"),
+                    ("GET", "/kb/notes/%2e%2e"), ("GET", "/grants"), ("GET", "/audit")] {
+            #expect(await send(CoreRequest(method: bad.0, path: bad.1)).status == 404, "\(bad)")
+        }
+        #expect(await fake.log.count == before)
     }
 }
 

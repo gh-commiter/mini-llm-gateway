@@ -38,7 +38,11 @@
   "acme.shop.section.orders.empty": "No orders.",
   "acme.shop.section.orders.hide": "Show sent orders",
   "acme.shop.section.orders.title": "Orders",
-  "acme.shop.title": "Shop"
+  "acme.shop.title": "Shop",
+  "acme.shop.section.orders.scope": "Item",
+  "acme.shop.section.orders.detail.section.summary.title": "Summary",
+  "acme.shop.section.orders.detail.section.summary.column.title": "Title",
+  "acme.shop.section.orders.detail.section.summary.column.note": "Note"
  },
  "sl_SI": {
   "acme.shop.about": "Naročila trgovine",
@@ -79,6 +83,10 @@
   "acme.shop.section.orders.empty": "Ni naročil.",
   "acme.shop.section.orders.hide": "Pokaži poslana naročila",
   "acme.shop.section.orders.title": "Naročila",
-  "acme.shop.title": "Trgovina"
+  "acme.shop.title": "Trgovina",
+  "acme.shop.section.orders.scope": "Artikel",
+  "acme.shop.section.orders.detail.section.summary.title": "Povzetek",
+  "acme.shop.section.orders.detail.section.summary.column.title": "Naslov",
+  "acme.shop.section.orders.detail.section.summary.column.note": "Opomba"
  }
 }

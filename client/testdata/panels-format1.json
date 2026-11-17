@@ -8,7 +8,8 @@
   "DELETE plugins/acme/orders/{}",
   "GET plugins/acme/orders/{}/lines",
   "POST plugins/acme/orders/{}/lines",
-  "DELETE plugins/acme/orders/{}/lines/{}"
+  "DELETE plugins/acme/orders/{}/lines/{}",
+  "GET plugins/acme/orders/{}/summary"
  ],
  "panel": {
   "format": 1,
@@ -260,8 +261,37 @@
          }
         }
        ]
+      },
+      {
+       "kind": "record",
+       "id": "summary",
+       "title": "acme.shop.section.orders.detail.section.summary.title",
+       "when": {
+        "field": "paid",
+        "equals": true
+       },
+       "source": {
+        "path": "/plugins/acme/orders/{parent.id}/summary"
+       },
+       "columns": [
+        {
+         "field": "title",
+         "kind": "text",
+         "label": "acme.shop.section.orders.detail.section.summary.column.title"
+        },
+        {
+         "field": "note",
+         "kind": "multiline",
+         "label": "acme.shop.section.orders.detail.section.summary.column.note"
+        }
+       ]
       }
      ]
+    },
+    "scope": {
+     "ref": "items",
+     "param": "item",
+     "label": "acme.shop.section.orders.scope"
     }
    }
   ]

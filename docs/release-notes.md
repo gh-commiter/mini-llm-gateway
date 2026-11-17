@@ -1,5 +1,13 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Mac Settings: a **Knowledge base** pane (a panel, like Users and devices): review the pending submissions of projects and teams with **Accept** and **Reject…** (with a reason), open one to read its text and, for a replacement, the note it replaces, and read the notes and the questions and answers of a project or a team. The admin API gains three read routes for it, `GET /kb/notes`, `GET /kb/notes/{id}` and `GET /kb/faq` (owner only, admin channel only), and the review answers carry the author's and the project's or team's name. The owner reads every class there, `private` notes included. The panel format gained a `record` element, a list `scope` picker, a `when` for a record in a detail page and an empty JSON body (`"body": {}`).
+
+### Known problems
+- The Knowledge base pane has only been tried through tests, not in a real window. Notes and questions are read, not edited; a replacement shows both texts, not a line difference.
+
 ## 0.7.15
 
 ### New
