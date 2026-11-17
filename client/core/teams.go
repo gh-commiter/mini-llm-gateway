@@ -21,6 +21,7 @@ type Team struct {
 	ID       int64
 	Name     string
 	Archived bool
+	Path     string // free-text label, "" = none
 }
 type TeamMember struct {
 	UserID int64
@@ -78,7 +79,7 @@ func (s *Store) SetTeamArchived(ctx context.Context, id int64, archived bool) er
 func (s *Store) AdminListTeams(ctx context.Context) (out []Team, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		var e error
-		out, e = teamList(tx, `SELECT id,name,archived FROM teams ORDER BY id`)
+		out, e = teamList(tx, `SELECT id,name,archived,path FROM teams ORDER BY id`)
 		return e
 	})
 	return
@@ -91,7 +92,7 @@ func teamList(tx *sql.Tx, q string, args ...any) (out []Team, err error) {
 	defer rows.Close()
 	for rows.Next() {
 		var t Team
-		if err = rows.Scan(&t.ID, &t.Name, &t.Archived); err != nil {
+		if err = rows.Scan(&t.ID, &t.Name, &t.Archived, &t.Path); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -181,7 +182,7 @@ func (s *Store) ListTeamProjects(ctx context.Context, id int64) (out []Project, 
 }
 func (s *Store) AdminGetTeam(ctx context.Context, id int64) (out TeamDetail, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
-		if e := tx.QueryRow(`SELECT id,name,archived FROM teams WHERE id=?`, id).Scan(&out.ID, &out.Name, &out.Archived); e != nil {
+		if e := tx.QueryRow(`SELECT id,name,archived,path FROM teams WHERE id=?`, id).Scan(&out.ID, &out.Name, &out.Archived, &out.Path); e != nil {
 			return notFound(e)
 		}
 		var e error
@@ -250,7 +251,7 @@ func (s *Store) ListTeams(ctx context.Context, p Principal, includeArchived bool
 			return lim
 		}
 		var e error
-		out, e = teamList(tx, `SELECT t.id,t.name,t.archived FROM teams t JOIN team_members m ON m.team_id=t.id WHERE m.user_id=? AND (t.archived=0 OR ?) ORDER BY t.name COLLATE NOCASE`, p.UserID, includeArchived)
+		out, e = teamList(tx, `SELECT t.id,t.name,t.archived,t.path FROM teams t JOIN team_members m ON m.team_id=t.id WHERE m.user_id=? AND (t.archived=0 OR ?) ORDER BY t.name COLLATE NOCASE`, p.UserID, includeArchived)
 		return e
 	})
 	return
@@ -265,7 +266,7 @@ func (s *Store) GetTeam(ctx context.Context, p Principal, ref string) (out TeamD
 		if id, e := strconv.ParseInt(ref, 10, 64); e == nil {
 			q, arg = `t.id=?`, id
 		}
-		if e := tx.QueryRow(`SELECT t.id,t.name,t.archived FROM teams t JOIN team_members m ON m.team_id=t.id WHERE m.user_id=? AND `+q, p.UserID, arg).Scan(&out.ID, &out.Name, &out.Archived); e != nil {
+		if e := tx.QueryRow(`SELECT t.id,t.name,t.archived,t.path FROM teams t JOIN team_members m ON m.team_id=t.id WHERE m.user_id=? AND `+q, p.UserID, arg).Scan(&out.ID, &out.Name, &out.Archived, &out.Path); e != nil {
 			return notFound(e)
 		}
 		if lim != nil {

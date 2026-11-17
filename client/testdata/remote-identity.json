@@ -1,0 +1,122 @@
+[
+ {
+  "raw": "git@GitLab.example.com:Eureko/Modules/Shared.git",
+  "identity": "gitlab.example.com/eureko/modules/shared"
+ },
+ {
+  "raw": "https://tok:x@gitlab.example.com:8443/eureko/modules/shared",
+  "identity": "gitlab.example.com/eureko/modules/shared"
+ },
+ {
+  "raw": "https://gitlab.example.com/eureko/modules/shared.git/",
+  "identity": "gitlab.example.com/eureko/modules/shared"
+ },
+ {
+  "raw": "ssh://git@Host.Example:22/Team/Repo.git",
+  "identity": "host.example/team/repo"
+ },
+ {
+  "raw": "git://host.example/a//b///c.git",
+  "identity": "host.example/a/b/c"
+ },
+ {
+  "raw": "http://host.example/a/b",
+  "identity": "host.example/a/b"
+ },
+ {
+  "raw": "host.example:a/b",
+  "identity": "host.example/a/b"
+ },
+ {
+  "raw": "  git@host.example:/a/b.git \n",
+  "identity": "host.example/a/b"
+ },
+ {
+  "raw": "https://host.example/%C3%9Cn/Repo",
+  "identity": "host.example/ün/repo"
+ },
+ {
+  "raw": "https://github.com/o/r.git.git",
+  "identity": "github.com/o/r.git"
+ },
+ {
+  "raw": "",
+  "error": true
+ },
+ {
+  "raw": "file:///srv/git/a/b",
+  "error": true
+ },
+ {
+  "raw": "/srv/git/a/b",
+  "error": true
+ },
+ {
+  "raw": "./a/b",
+  "error": true
+ },
+ {
+  "raw": "../a/b",
+  "error": true
+ },
+ {
+  "raw": "C:\\work\\a\\b",
+  "error": true
+ },
+ {
+  "raw": "C:/work/a/b",
+  "error": true
+ },
+ {
+  "raw": "a/b:c",
+  "error": true
+ },
+ {
+  "raw": "https:///a/b",
+  "error": true
+ },
+ {
+  "raw": "https://host.example/one",
+  "error": true
+ },
+ {
+  "raw": "host.example:one",
+  "error": true
+ },
+ {
+  "raw": "https://host.example/a/../b",
+  "error": true
+ },
+ {
+  "raw": "https://host.example/a/./b",
+  "error": true
+ },
+ {
+  "raw": "ftp://host.example/a/b",
+  "error": true
+ },
+ {
+  "raw": "https://host.example/a/b%00",
+  "error": true
+ },
+ {
+  "raw": "https://ho st.example/a/b",
+  "error": true
+ },
+ {
+  "raw": "git@:a/b",
+  "error": true
+ },
+ {
+  "raw": "https://host.example/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/y",
+  "error": true
+ },
+ {
+  "raw": "https://host.example/a/.git",
+  "error": true
+ },
+ {
+  "raw": "not a url",
+  "error": true
+ }
+]

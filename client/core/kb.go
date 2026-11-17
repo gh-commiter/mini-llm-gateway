@@ -151,6 +151,10 @@ func noteProvenance(tx *sql.Tx, n *Note) error {
 
 const maxReason = 1024
 
+// newKind is the SQL for a new submission's kind: the given one, else the replaced note's, else a finding.
+// Arguments: the kind, then the replaced note id.
+const newKind = `COALESCE(NULLIF(?,''),(SELECT entry_kind FROM notes WHERE id=?),'finding')`
+
 var maxPendingUser = 100
 var maxPendingProject = 500
 var maxPendingUserBytes int64 = 5 << 20
@@ -175,13 +179,14 @@ type Submission struct {
 	Provenance Provenance `json:"provenance"`
 	Reason     string     `json:"reason"`
 	NoteID     int64      `json:"note"`
+	EntryKind  string     `json:"entryKind"`
 }
 
-const submissionCols = `id,project_id,user_id,class,title,replaces,revision,state,provenance,reason,note_id`
+const submissionCols = `id,project_id,user_id,class,title,replaces,revision,state,provenance,reason,note_id,entry_kind`
 
 func scanSubmission(row interface{ Scan(...any) error }) (v Submission, err error) {
 	var b string
-	err = row.Scan(&v.ID, &v.Project, &v.User, &v.Class, &v.Title, &v.Replaces, &v.Revision, &v.State, &b, &v.Reason, &v.NoteID)
+	err = row.Scan(&v.ID, &v.Project, &v.User, &v.Class, &v.Title, &v.Replaces, &v.Revision, &v.State, &b, &v.Reason, &v.NoteID, &v.EntryKind)
 	if err == nil {
 		err = json.Unmarshal([]byte(b), &v.Provenance)
 	}
@@ -268,7 +273,7 @@ func (s *Store) Submit(ctx context.Context, p Principal, project int64, key stri
 		}
 		pr := writerProvenance(p, project, in.NoteInput, fromMs(ms(s.now())))
 		enc, _ := json.Marshal(pr)
-		r, e := tx.Exec(`INSERT INTO kb_submissions(project_id,user_id,device_id,class,title,body,bytes,replaces,revision,provenance,key,hash,received) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, project, p.UserID, p.DeviceID, in.Class, in.Title, in.Body, size, in.Replaces, in.Revision, string(enc), key, hash, ms(s.now()))
+		r, e := tx.Exec(`INSERT INTO kb_submissions(project_id,user_id,device_id,class,title,body,bytes,replaces,revision,provenance,key,hash,received,entry_kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,`+newKind+`)`, project, p.UserID, p.DeviceID, in.Class, in.Title, in.Body, size, in.Replaces, in.Revision, string(enc), key, hash, ms(s.now()), in.EntryKind, in.Replaces)
 		if e != nil {
 			return e
 		}
@@ -422,7 +427,7 @@ func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, rea
 			}
 			rev := int64(1)
 			if v.Replaces == 0 {
-				r, e := tx.Exec(`INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated) VALUES(?,?,?,?,?,?,?,?)`, v.Project, v.Class, v.Title, body, size, v.User, ms(now), ms(now))
+				r, e := tx.Exec(`INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated,entry_kind) VALUES(?,?,?,?,?,?,?,?,?)`, v.Project, v.Class, v.Title, body, size, v.User, ms(now), ms(now), v.EntryKind)
 				if e != nil {
 					return e
 				}
@@ -432,7 +437,7 @@ func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, rea
 				if e != nil {
 					return e
 				}
-				if _, e = tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1 WHERE id=?`, v.Class, v.Title, body, size, ms(now), v.Replaces); e != nil {
+				if _, e = tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1,entry_kind=? WHERE id=?`, v.Class, v.Title, body, size, ms(now), v.EntryKind, v.Replaces); e != nil {
 					return e
 				}
 				if old.Class != v.Class {

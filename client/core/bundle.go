@@ -23,8 +23,9 @@ import (
 )
 
 type BundleProject struct {
-	Slug string `json:"slug"`
-	Name string `json:"name"`
+	Slug    string   `json:"slug"`
+	Name    string   `json:"name"`
+	Remotes []string `json:"remotes,omitempty"`
 }
 type BundleMembership struct {
 	Project string `json:"project"`
@@ -46,6 +47,7 @@ type BundleManifest struct {
 	Exported      string             `json:"exported"`
 	OriginGateway string             `json:"origin_gateway"`
 	Team          string             `json:"team"`
+	TeamPath      string             `json:"team_path,omitempty"`
 	Projects      []BundleProject    `json:"projects"`
 	Users         []string           `json:"users"`
 	Members       []string           `json:"members"`
@@ -124,7 +126,7 @@ func (s *Store) ExportBundle(ctx context.Context, in BundleExport) error {
 	err := s.read(ctx, func(tx *sql.Tx) error {
 		var team int64
 		var archived bool
-		if err := tx.QueryRow(`SELECT id,name,archived FROM teams WHERE name=? COLLATE NOCASE`, in.Team).Scan(&team, &m.Team, &archived); err != nil {
+		if err := tx.QueryRow(`SELECT id,name,archived,path FROM teams WHERE name=? COLLATE NOCASE`, in.Team).Scan(&team, &m.Team, &archived, &m.TeamPath); err != nil {
 			return notFound(err)
 		}
 		if archived {
@@ -155,6 +157,18 @@ func (s *Store) ExportBundle(ctx context.Context, in BundleExport) error {
 		rows.Close()
 		if err != nil {
 			return err
+		}
+		for i, p := range m.Projects {
+			for id, slug := range projects {
+				if slug == p.Slug {
+					if m.Projects[i].Remotes, err = remoteList(tx, id); err != nil {
+						return err
+					}
+					if len(m.Projects[i].Remotes) == 0 {
+						m.Projects[i].Remotes = nil
+					}
+				}
+			}
 		}
 		for slug := range wanted {
 			found := false
@@ -730,6 +744,19 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 			return nil, ErrInvalid{"project"}
 		}
 		projects[p.Slug] = true
+		if len(p.Remotes) > maxRemotes {
+			return nil, ErrInvalid{"project remotes: at most 8"}
+		}
+		for i, r := range p.Remotes {
+			id, err := NormalizeRemote("https://" + r) // the manifest carries identities (host/path), not URLs
+			if err != nil {
+				return nil, ErrInvalid{"project remote"}
+			}
+			p.Remotes[i] = id // the list is shared with the manifest: import sees the identities
+		}
+	}
+	if _, err := normalizeTeamPath(m.TeamPath); err != nil {
+		return nil, err
 	}
 	users := map[string]bool{}
 	for _, u := range m.Users {
@@ -784,7 +811,7 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 		if err != nil {
 			return nil, err
 		}
-		in := NoteInput{Class: Class(f["class"]), Title: f["title"], Body: body}
+		in := NoteInput{Class: Class(f["class"]), Title: f["title"], Body: body, EntryKind: f["entry_kind"]}
 		if err = checkInput(in); err != nil {
 			return nil, err
 		}
@@ -897,7 +924,8 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	}
 	var team int64
 	var archived bool
-	err := tx.QueryRow(`SELECT id,archived FROM teams WHERE name=? COLLATE NOCASE`, m.Team).Scan(&team, &archived)
+	var teamPath string
+	err := tx.QueryRow(`SELECT id,archived,path FROM teams WHERE name=? COLLATE NOCASE`, m.Team).Scan(&team, &archived, &teamPath)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
@@ -929,6 +957,16 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		}
 	} else {
 		line("skip", "team "+m.Team)
+	}
+	if label, _ := normalizeTeamPath(m.TeamPath); label != "" {
+		if teamPath == "" {
+			line("merge", "team path "+label)
+			if e = exec(`UPDATE teams SET path=? WHERE id=?`, label, team); e != nil {
+				return e
+			}
+		} else {
+			line("skip", "team path "+label)
+		}
 	}
 	// Target users are matched after Unicode NFC and case folding. Two accounts that fold to one
 	// name, and two bundle users that land on one account, cannot be told apart: refuse.
@@ -1014,6 +1052,9 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 			line("skip", "project "+p.Slug)
 		}
 		projects[p.Slug] = id
+		if e = s.bundleRemotes(tx, id, p, line, exec); e != nil {
+			return e
+		}
 		var n int
 		if e = tx.QueryRow(`SELECT count(*) FROM team_projects WHERE team_id=? AND project_id=?`, team, id).Scan(&n); e != nil {
 			return e
@@ -1186,4 +1227,42 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		return err
 	}
 	return Audit(tx, adminActor, "kb.import", source, map[string]any{"team": m.Team, "origin": m.OriginGateway, "exported": m.Exported})
+}
+
+// bundleRemotes adds the bundle's identities to a project by union (they were normalized by validateBundle).
+func (s *Store) bundleRemotes(tx *sql.Tx, id int64, p BundleProject, line func(action, subject string), exec func(q string, args ...any) error) error {
+	have, err := remoteList(tx, id)
+	if err != nil {
+		return err
+	}
+	known := map[string]bool{}
+	for _, r := range have {
+		known[r] = true
+	}
+	added := 0
+	for _, r := range p.Remotes {
+		if known[r] {
+			line("skip", "remote "+p.Slug+" "+r)
+			continue
+		}
+		known[r] = true
+		added++
+		if len(known) > maxRemotes {
+			return ErrInvalid{"project remotes: at most 8: " + p.Slug}
+		}
+		line("create", "remote "+p.Slug+" "+r)
+		if err = exec(`INSERT OR IGNORE INTO project_remotes(project_id,identity) VALUES(?,?)`, id, r); err != nil {
+			return err
+		}
+	}
+	if added > 0 {
+		var archived bool
+		if err = tx.QueryRow(`SELECT archived FROM projects WHERE id=?`, id).Scan(&archived); err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if archived {
+			return ErrArchived
+		}
+	}
+	return nil
 }

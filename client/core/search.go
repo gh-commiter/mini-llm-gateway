@@ -50,6 +50,8 @@ type SearchHit struct {
 	Class   Class     `json:"class"`
 	Snippet string    `json:"snippet"`
 	Updated time.Time `json:"updated"`
+	// EntryKind is finding or faq.
+	EntryKind string `json:"entryKind"`
 }
 type SearchPage struct {
 	Hits []SearchHit `json:"hits"`
@@ -94,7 +96,7 @@ func searchSQL(filter string) string {
  SELECT n.id,n.project_id,n.class,n.title,n.updated FROM notes n WHERE ` + filter + `),
  hits AS MATERIALIZED (SELECT v.* FROM visible v JOIN note_search ON note_search.rowid=v.id
  WHERE note_search MATCH ? ORDER BY v.updated DESC,v.id LIMIT 20)
- SELECT h.id,h.project_id,h.class,h.title,substr(n.body,1,160),h.updated
+ SELECT h.id,h.project_id,h.class,h.title,substr(n.body,1,160),h.updated,n.entry_kind
  FROM hits h JOIN notes n ON n.id=h.id ORDER BY h.updated DESC,h.id`
 }
 func searchNotes(ctx context.Context, tx *sql.Tx, user int64, rs []readable, text string) (SearchPage, error) {
@@ -116,7 +118,7 @@ func searchNotes(ctx context.Context, tx *sql.Tx, user int64, rs []readable, tex
 	for rows.Next() {
 		var h SearchHit
 		var updated int64
-		if err = rows.Scan(&h.ID, &h.Project, &h.Class, &h.Title, &h.Snippet, &updated); err != nil {
+		if err = rows.Scan(&h.ID, &h.Project, &h.Class, &h.Title, &h.Snippet, &updated, &h.EntryKind); err != nil {
 			return SearchPage{}, err
 		}
 		h.Updated = fromMs(updated)

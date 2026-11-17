@@ -26,6 +26,7 @@ type Note struct {
 	Created          time.Time
 	Updated          time.Time
 	Revision         int64
+	EntryKind        string // finding or faq; "" (an old receipt) reads as finding
 }
 
 // NoteInput is the payload of create and update.
@@ -33,6 +34,8 @@ type NoteInput struct {
 	Class Class
 	Title string
 	Body  string
+	// EntryKind "" = unspecified; omitted from JSON so the idempotency hash of a request without it is unchanged.
+	EntryKind string `json:",omitempty"`
 }
 
 type NotePage struct {
@@ -106,14 +109,14 @@ func where(user int64, rs []readable) (string, []any) {
 }
 
 // Bundle authors are display-only; zero grants no ownership permissions.
-const noteCols = `n.id,n.project_id,n.class,n.title,n.body,CASE WHEN n.imported=0 THEN n.author_id ELSE 0 END,u.name,n.created,n.updated,n.revision`
+const noteCols = `n.id,n.project_id,n.class,n.title,n.body,CASE WHEN n.imported=0 THEN n.author_id ELSE 0 END,u.name,n.created,n.updated,n.revision,n.entry_kind`
 
 // listCols is noteCols without the body (lists never load it).
-const listCols = `n.id,n.project_id,n.class,n.title,'',CASE WHEN n.imported=0 THEN n.author_id ELSE 0 END,u.name,n.created,n.updated,n.revision`
+const listCols = `n.id,n.project_id,n.class,n.title,'',CASE WHEN n.imported=0 THEN n.author_id ELSE 0 END,u.name,n.created,n.updated,n.revision,n.entry_kind`
 
 func scanNote(sc interface{ Scan(...any) error }, withBody bool) (n Note, err error) {
 	var c, u int64
-	if err = sc.Scan(&n.ID, &n.ProjectID, &n.Class, &n.Title, &n.Body, &n.AuthorID, &n.Author, &c, &u, &n.Revision); err != nil {
+	if err = sc.Scan(&n.ID, &n.ProjectID, &n.Class, &n.Title, &n.Body, &n.AuthorID, &n.Author, &c, &u, &n.Revision, &n.EntryKind); err != nil {
 		return
 	}
 	n.Created, n.Updated = fromMs(c), fromMs(u)
@@ -291,6 +294,12 @@ func checkInput(in NoteInput) error {
 		return ErrInvalid{"class"}
 	case strings.TrimSpace(in.Title) == "":
 		return ErrInvalid{"title"}
+	case in.EntryKind != "" && !validKind(in.EntryKind):
+		return ErrInvalid{"kind"}
+	case in.EntryKind == KindFAQ && len(in.Title) > maxFAQTitle:
+		return ErrInvalid{"faq question: at most 256 bytes"}
+	case in.EntryKind == KindFAQ && len(in.Body) > maxFAQBody:
+		return ErrInvalid{"faq answer: at most 2048 bytes"}
 	}
 	return nil
 }
@@ -451,6 +460,7 @@ func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revisi
 		if err != nil {
 			return err
 		}
+		in.EntryKind = old.EntryKind // an update never changes the kind, a faq keeps its limits
 		if err := checkInput(in); err != nil {
 			return err
 		}

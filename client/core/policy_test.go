@@ -86,7 +86,7 @@ func TestNoteChecksDoNotLoadBodies(t *testing.T) {
 		if _, err := tx.Exec(`ALTER TABLE notes RENAME TO stored_notes`); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`CREATE VIEW notes AS SELECT id,project_id,class,title,json_extract('invalid', '$') AS body,bytes,author_id,created,updated,revision,imported FROM stored_notes`)
+		_, err := tx.Exec(`CREATE VIEW notes AS SELECT id,project_id,class,title,json_extract('invalid', '$') AS body,bytes,author_id,created,updated,revision,imported,entry_kind FROM stored_notes`)
 		return err
 	}))
 	p := f.p("bor")

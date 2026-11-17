@@ -171,7 +171,7 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 			}
 			b, _ := json.Marshal(pr)
 			if r.submission == 0 {
-				res, e := tx.Exec(`INSERT INTO kb_submissions(project_id,user_id,device_id,class,title,body,bytes,replaces,revision,provenance,key,hash,received) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, project, p.UserID, p.DeviceID, in.Class, in.Title, in.Body, size, replacement.Replaces, replacement.Revision, string(b), key, hash, ms(s.now()))
+				res, e := tx.Exec(`INSERT INTO kb_submissions(project_id,user_id,device_id,class,title,body,bytes,replaces,revision,provenance,key,hash,received,entry_kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,`+newKind+`)`, project, p.UserID, p.DeviceID, in.Class, in.Title, in.Body, size, replacement.Replaces, replacement.Revision, string(b), key, hash, ms(s.now()), in.EntryKind, replacement.Replaces)
 				if e != nil {
 					return e
 				}
@@ -180,7 +180,7 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 				r.revision = replacement.Revision
 				out.Action = "create"
 			} else {
-				_, e := tx.Exec(`UPDATE kb_submissions SET class=?,title=?,body=?,bytes=?,provenance=?,hash=?,received=? WHERE id=?`, in.Class, in.Title, in.Body, size, string(b), hash, ms(s.now()), r.submission)
+				_, e := tx.Exec(`UPDATE kb_submissions SET class=?,title=?,body=?,bytes=?,provenance=?,hash=?,received=?,entry_kind=COALESCE(NULLIF(?,''),entry_kind) WHERE id=?`, in.Class, in.Title, in.Body, size, string(b), hash, ms(s.now()), in.EntryKind, r.submission)
 				if e != nil {
 					return e
 				}
@@ -229,13 +229,13 @@ func (s *Store) importNote(tx *sql.Tx, project, author, id int64, in NoteInput, 
 		return 0, err
 	}
 	if id == 0 {
-		r, err := tx.Exec(`INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated) VALUES(?,?,?,?,?,?,?,?)`, project, in.Class, in.Title, in.Body, size, author, ms(s.now()), ms(s.now()))
+		r, err := tx.Exec(`INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated,entry_kind) VALUES(?,?,?,?,?,?,?,?,COALESCE(NULLIF(?,''),'finding'))`, project, in.Class, in.Title, in.Body, size, author, ms(s.now()), ms(s.now()), in.EntryKind)
 		if err != nil {
 			return 0, err
 		}
 		id, _ = r.LastInsertId()
 	} else {
-		if _, err := tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1 WHERE id=?`, in.Class, in.Title, in.Body, size, ms(s.now()), id); err != nil {
+		if _, err := tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1,entry_kind=COALESCE(NULLIF(?,''),entry_kind) WHERE id=?`, in.Class, in.Title, in.Body, size, ms(s.now()), in.EntryKind, id); err != nil {
 			return 0, err
 		}
 		if _, err := tx.Exec(`UPDATE idempotency SET result='' WHERE note_id=?`, id); err != nil {

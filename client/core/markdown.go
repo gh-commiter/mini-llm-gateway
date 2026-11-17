@@ -12,7 +12,11 @@ import (
 
 // Markdown uses JSON string values, with no YAML interpretation.
 func Markdown(n Note, key string) []byte {
-	fields := [][2]string{{"id", i64(n.ID)}, {"title", n.Title}, {"class", string(n.Class)}, {"kind", n.Provenance.SourceKind}, {"revision", i64(n.Revision)}, {"author", n.Author}, {"created", n.Created.Format(time.RFC3339Nano)}, {"updated", n.Updated.Format(time.RFC3339Nano)}, {"hash", contentHash(n.Title, n.Body)}}
+	kind := n.EntryKind
+	if kind == "" {
+		kind = KindFinding
+	}
+	fields := [][2]string{{"id", i64(n.ID)}, {"title", n.Title}, {"class", string(n.Class)}, {"kind", n.Provenance.SourceKind}, {"entry_kind", kind}, {"revision", i64(n.Revision)}, {"author", n.Author}, {"created", n.Created.Format(time.RFC3339Nano)}, {"updated", n.Updated.Format(time.RFC3339Nano)}, {"hash", contentHash(n.Title, n.Body)}}
 	if key != "" {
 		fields = append(fields, [2]string{"import_key", key})
 	}
@@ -105,7 +109,7 @@ func markdownInput(in MarkdownInput) (NoteInput, string, error) {
 	if k := f["import_key"]; strings.HasPrefix(k, "gw:") {
 		key = k
 	}
-	note := NoteInput{Class: c, Title: title, Body: body}
+	note := NoteInput{Class: c, Title: title, Body: body, EntryKind: f["entry_kind"]}
 	if err = checkInput(note); err == nil {
 		err = checkSize(note)
 	}

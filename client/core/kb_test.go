@@ -180,7 +180,7 @@ func TestSubmissionBodiesAuthorizedFirst(t *testing.T) {
 	f.ok(e)
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
 		_, e := tx.Exec(`ALTER TABLE kb_submissions RENAME TO stored_submissions;
-  CREATE VIEW kb_submissions AS SELECT id,project_id,user_id,device_id,class,title,json_extract('invalid','$') AS body,bytes,replaces,revision,state,provenance,reason,note_id,key,hash,received FROM stored_submissions`)
+  CREATE VIEW kb_submissions AS SELECT id,project_id,user_id,device_id,class,title,json_extract('invalid','$') AS body,bytes,replaces,revision,state,provenance,reason,note_id,entry_kind,key,hash,received FROM stored_submissions`)
 		return e
 	}))
 	_, e = f.GetSubmission(ctx, f.p("bor"), project, v.ID, false)

@@ -177,7 +177,7 @@ func TestSearchBoundsAndBodyBoundary(t *testing.T) {
 	}
 	// Denied candidates must never evaluate a body, even for an exact title hit.
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`ALTER TABLE notes RENAME TO stored_notes; CREATE VIEW notes AS SELECT id,project_id,class,title,json_extract('invalid','$') AS body,bytes,author_id,created,updated,revision,imported FROM stored_notes`)
+		_, e := tx.Exec(`ALTER TABLE notes RENAME TO stored_notes; CREATE VIEW notes AS SELECT id,project_id,class,title,json_extract('invalid','$') AS body,bytes,author_id,created,updated,revision,imported,entry_kind FROM stored_notes`)
 		return e
 	}))
 	pg, e = f.SearchNotes(ctx, f.p("eva"), project, "comet")
@@ -315,7 +315,7 @@ func TestSearchDeadline(t *testing.T) {
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
 		_, e := tx.Exec(`ALTER TABLE notes RENAME TO stored_notes;
  CREATE VIEW notes AS WITH RECURSIVE seq(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x<100000000)
- SELECT n.id+x*1000 AS id,n.project_id,n.class,n.title,n.body,n.updated,n.author_id,n.imported FROM stored_notes n CROSS JOIN seq`)
+ SELECT n.id+x*1000 AS id,n.project_id,n.class,n.title,n.body,n.updated,n.author_id,n.imported,n.entry_kind FROM stored_notes n CROSS JOIN seq`)
 		return e
 	}))
 	start := time.Now()
