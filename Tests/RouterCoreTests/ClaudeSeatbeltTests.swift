@@ -213,19 +213,13 @@ private struct Rig {
 
 /// F11: what is reachable from inside the profile. Only TCP 443 and DNS go out: a listener on loopback and on this Mac's own LAN address (the gateway's port is one) is closed, also when a
 /// port is named explicitly; nothing can listen (bind/inbound denied). The same listener answers without the profile (the rows prove something).
-@Test func networkRowsLoopbackLanAndBind() throws {
+@Test func networkRowsLoopbackLanAndBind() async throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
-    // a listener on every address
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
-    defer { close(fd) }
-    var addr = sockaddr_in(); addr.sin_family = sa_family_t(AF_INET); addr.sin_addr.s_addr = INADDR_ANY.bigEndian; addr.sin_port = 0
-    addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-    let bound = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-    #expect(bound == 0 && listen(fd, 128) == 0)  // never accepted: every finished control probe stays queued (one per probed address, 5 here), so the backlog must not be the limit
-    var got = sockaddr_in(), len = socklen_t(MemoryLayout<sockaddr_in>.size)
-    _ = withUnsafeMutablePointer(to: &got) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
-    let port = Int(UInt16(bigEndian: got.sin_port))
+    // a listener on every address, held by the signed utility (never accepting: every finished control probe stays queued, one per probed address, backlog 128)
+    let (listener, portNumber) = try await TestNet.listen("0.0.0.0")
+    defer { listener.stop() }
+    let port = portNumber
     var hosts = ["127.0.0.1"]
     var ifs: UnsafeMutablePointer<ifaddrs>?
     if getifaddrs(&ifs) == 0 {
