@@ -166,6 +166,7 @@ public final class CoreHelper: @unchecked Sendable {
         self.versions = versions; self.backoff = backoff; self.requestTimeout = requestTimeout
     }
 
+    var binaryPath: String { binary?.path ?? "" }  // for test diagnostics
     public var pid: pid_t? { cond.lock(); defer { cond.unlock() }; return conn?.pid }
     public var isReady: Bool { cond.lock(); defer { cond.unlock() }; return ready }
     public var restarts: Int { cond.lock(); defer { cond.unlock() }; return max(0, spawnTimes.count - 1) }
