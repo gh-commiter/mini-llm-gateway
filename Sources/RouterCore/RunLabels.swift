@@ -59,9 +59,11 @@ public struct RunLabels: Equatable, Sendable {
     }
 
     /// An empty task is filled with the git branch of the folder when it is linked to a project; nothing for a detached HEAD or no repository.
-    public mutating func withBranch(cwd: String, linked: (String) -> Bool, branch: (String) -> String) {
-        guard task.isEmpty, linked(cwd) else { return }
-        let b = Self.safeTask(branch(cwd))
+    public mutating func withBranch(cwd: String, linkRoot: (String) -> String, branch: (String, String) -> String) {
+        guard task.isEmpty else { return }
+        let root = linkRoot(cwd)
+        guard !root.isEmpty else { return }
+        let b = Self.safeTask(branch(cwd, root))
         if !b.isEmpty { task = b; taskSource = "branch" }
     }
 
@@ -72,21 +74,22 @@ public struct RunLabels: Equatable, Sendable {
         return h
     }
 
-    /// The folder or a parent is a linked project folder (on any gateway).
-    public static func folderLinked(_ cwd: String, statePath: String) -> Bool {
-        guard let st = try? Projects.load(statePath), var dir = try? Projects.realFolder(cwd) else { return false }
+    /// The folder the link was made for (the folder or a parent of cwd that is a linked project folder, on any gateway), "" when none.
+    /// The branch is looked for only up to there.
+    public static func linkRoot(_ cwd: String, statePath: String) -> String {
+        guard let st = try? Projects.load(statePath), var dir = try? Projects.realFolder(cwd) else { return "" }
         while true {
-            if st.links.contains(where: { Projects.samePath(dir, $0.path) }) { return true }
+            if st.links.contains(where: { Projects.samePath(dir, $0.path) }) { return dir }
             let up = Projects.parent(dir)
-            if up == dir { return false }
+            if up == dir { return "" }
             dir = up
         }
     }
 
-    /// The current branch from the repository's HEAD file ("" for a detached HEAD, no repository or anything unexpected); a worktree's
+    /// The current branch from the repository's HEAD file, looking up from the folder to root (the linked folder's root) and no further ("" for a detached HEAD, no repository or anything unexpected); a worktree's
     /// .git file is followed one step. Files only: no git process, no code of the checkout runs.
-    public static func gitBranch(_ start: String) -> String {
-        var dir = start
+    public static func gitBranch(_ start: String, root: String) -> String {
+        var dir = (try? Projects.realFolder(start)) ?? start
         while true {
             let g = dir + "/.git"
             var st = stat()
@@ -104,7 +107,7 @@ public struct RunLabels: Equatable, Sendable {
                 return String(head.dropFirst("ref: refs/heads/".count))
             }
             let up = (dir as NSString).deletingLastPathComponent
-            if up.isEmpty || up == dir { return "" }
+            if up.isEmpty || up == dir || Projects.samePath(dir, root) { return "" }  // the link's root is the last folder looked at
             dir = up
         }
     }

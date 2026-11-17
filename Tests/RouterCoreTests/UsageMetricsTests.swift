@@ -176,3 +176,44 @@ private final class SpendingLimitUpstream: URLProtocol, @unchecked Sendable {
         #expect(row?["eventsWithoutTokens"] as? Int == (c.tokens == nil ? 1 : 0), "\(c.name)")
     }
 }
+
+/// The Mac gateway forwards the label headers (cut at 128 characters) and the core applies the real limits: a value that is out of
+/// limit or not a safe token is stored empty, and the request still counts. A change in either place is caught here.
+@Test func labelHeadersAreCheckedByTheCoreNotJustTheRouter() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("mglabels-\(UUID().uuidString)")
+    let store = base.appendingPathComponent("core")
+    try CoreHelper.prepareStoreFolder(store)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let helper = CoreHelper(binary: try await HelperBuild.shared.binary(), store: store, marks: MemoryMarks())
+    helper.start(); defer { helper.stop() }
+    #expect(await helper.waitReady(timeout: 20))
+    var config = RouterConfig(); config.providers = []
+    let router = Router(config: config, token: "test", secrets: FakeSecrets(values: [:]), core: helper)
+    let cases: [(model: String, headers: [String: String])] = [
+        ("good", ["x-claude-mini-phase": "Check", "x-claude-mini-activity": "bugfix", "x-claude-mini-task": "feature/x", "x-claude-mini-task-source": "branch"]),
+        ("bad", ["x-claude-mini-phase": "not a token!", "x-claude-mini-activity": String(repeating: "a", count: 40),
+                 "x-claude-mini-task": String(repeating: "t", count: 130), "x-claude-mini-task-source": "classified"]),
+    ]
+    for c in cases {
+        let state = RequestState()
+        await router.admitEvent(request("POST", "/v1/messages", headers: c.headers, body: "{}"), model: c.model, state: state)
+        let event = try #require(state.dispatch(provider: "p", upstreamModel: "routed"))
+        router.usageSender.begin(event)
+        let writer = UsageWriter(FakeWriter())
+        writer.scan(Data(#"{"usage":{"input_tokens":1,"output_tokens":1}}"#.utf8))
+        router.endEvent(state, status: 200, usage: writer)
+    }
+    #expect(await router.usageSender.flush())
+    var rows: [[String: Any]] = []
+    for _ in 0..<500 {
+        let response = await helper.call(context: .admin, request: CoreRequest(method: "GET", path: "/usage/events", query: "days=1&labels=1"))
+        rows = ((try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any])?["days"] as? [[String: Any]] ?? []
+        if rows.count == 2, rows.allSatisfy({ $0["tokensOut"] as? Int == 1 }) { break }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    let good = try #require(rows.first { $0["model"] as? String == "good" })
+    #expect(good["phase"] as? String == "check" && good["activity"] as? String == "bugfix" && good["task"] as? String == "feature/x" && good["taskSource"] as? String == "branch")
+    let bad = try #require(rows.first { $0["model"] as? String == "bad" })
+    for key in ["phase", "activity", "task", "phaseSource", "activitySource", "taskSource"] { #expect(bad[key] == nil, "\(key) stored for an unsafe value") }
+    #expect(bad["events"] as? Int == 1)
+}

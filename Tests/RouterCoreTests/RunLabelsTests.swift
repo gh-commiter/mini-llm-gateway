@@ -22,15 +22,15 @@ import Testing
 
     @Test func branchFillsOnlyAnEmptyTaskOfALinkedFolder() {
         var l = RunLabels()
-        l.withBranch(cwd: "x", linked: { _ in true }, branch: { _ in "feature/149-usage" })
+        l.withBranch(cwd: "x", linkRoot: { _ in "root" }, branch: { _, _ in "feature/149-usage" })
         #expect(l.task == "feature/149-usage" && l.taskSource == "branch")
         var given = RunLabels(task: "#1", taskSource: "given")
-        given.withBranch(cwd: "x", linked: { _ in true }, branch: { _ in "main" })
+        given.withBranch(cwd: "x", linkRoot: { _ in "root" }, branch: { _, _ in "main" })
         #expect(given.task == "#1" && given.taskSource == "given")
         var none = RunLabels()
-        none.withBranch(cwd: "x", linked: { _ in false }, branch: { _ in "main" })
-        none.withBranch(cwd: "x", linked: { _ in true }, branch: { _ in "" })
-        none.withBranch(cwd: "x", linked: { _ in true }, branch: { _ in "bad branch name" })
+        none.withBranch(cwd: "x", linkRoot: { _ in "" }, branch: { _, _ in "main" })
+        none.withBranch(cwd: "x", linkRoot: { _ in "root" }, branch: { _, _ in "" })
+        none.withBranch(cwd: "x", linkRoot: { _ in "root" }, branch: { _, _ in "bad branch name" })
         #expect(none.task.isEmpty && none.taskSource.isEmpty)
         #expect(RunLabels(phase: "plan", task: "feature/x", taskSource: "branch").headers == "\nx-claude-mini-phase: plan\nx-claude-mini-task: feature/x\nx-claude-mini-task-source: branch")
     }
@@ -41,14 +41,19 @@ import Testing
         try fm.createDirectory(atPath: dir + "/repo/.git", withIntermediateDirectories: true)
         try fm.createDirectory(atPath: dir + "/repo/sub/deep", withIntermediateDirectories: true)
         try "ref: refs/heads/feature/x\n".write(toFile: dir + "/repo/.git/HEAD", atomically: true, encoding: .utf8)
-        #expect(RunLabels.gitBranch(dir + "/repo/sub/deep") == "feature/x")
+        #expect(RunLabels.gitBranch(dir + "/repo/sub/deep", root: dir + "/repo") == "feature/x")
         try "0123456789012345678901234567890123456789\n".write(toFile: dir + "/repo/.git/HEAD", atomically: true, encoding: .utf8)
-        #expect(RunLabels.gitBranch(dir + "/repo") == "")
+        #expect(RunLabels.gitBranch(dir + "/repo", root: dir + "/repo") == "")
         try fm.createDirectory(atPath: dir + "/repo/.git/worktrees/wt", withIntermediateDirectories: true)
         try "ref: refs/heads/topic\n".write(toFile: dir + "/repo/.git/worktrees/wt/HEAD", atomically: true, encoding: .utf8)
         try fm.createDirectory(atPath: dir + "/wt", withIntermediateDirectories: true)
         try ("gitdir: " + dir + "/repo/.git/worktrees/wt\n").write(toFile: dir + "/wt/.git", atomically: true, encoding: .utf8)
-        #expect(RunLabels.gitBranch(dir + "/wt") == "topic")
+        #expect(RunLabels.gitBranch(dir + "/wt", root: dir + "/wt") == "topic")
+        // A repository ABOVE the linked folder gives no branch for a project it is not part of.
+        try "ref: refs/heads/outer\n".write(toFile: dir + "/repo/.git/HEAD", atomically: true, encoding: .utf8)
+        try fm.createDirectory(atPath: dir + "/repo/linked/deeper", withIntermediateDirectories: true)
+        #expect(RunLabels.gitBranch(dir + "/repo/linked/deeper", root: dir + "/repo/linked") == "")
+        #expect(RunLabels.gitBranch(dir + "/repo/linked/deeper", root: dir + "/repo") == "outer")
     }
 
     @Test func aValueIsOneTokenOrNothingNeverReparsed() {
@@ -85,7 +90,7 @@ import Testing
         func within(_ what: String, _ path: String) {
             nonisolated(unsafe) var got: String?
             let done = DispatchSemaphore(value: 0)
-            DispatchQueue.global().async { got = RunLabels.gitBranch(path); done.signal() }
+            DispatchQueue.global().async { got = RunLabels.gitBranch(path, root: path); done.signal() }
             if done.wait(timeout: .now() + 2) == .timedOut { Issue.record("\(what): blocked"); return }
             #expect(got == "", "\(what)")
         }

@@ -70,11 +70,15 @@ func takeLabels(args []string, env func(string) string, warn func(string)) (l ru
 
 // withBranch fills an empty task with the branch of the git repository the folder is in, when the folder is linked to a
 // project (detached HEAD or no repository: nothing). It reads files only; no git process, no code of the checkout runs.
-func (l *runLabels) withBranch(cwd string, linked func(string) bool, branch func(string) string) {
-	if l.task != "" || !linked(cwd) {
+func (l *runLabels) withBranch(cwd string, linkRoot func(string) string, branch func(cwd, root string) string) {
+	if l.task != "" {
 		return
 	}
-	if b := core.SafeTaskLabel(branch(cwd)); b != "" {
+	root := linkRoot(cwd)
+	if root == "" {
+		return
+	}
+	if b := core.SafeTaskLabel(branch(cwd, root)); b != "" {
 		l.task, l.taskSource = b, "branch"
 	}
 }
@@ -90,31 +94,36 @@ func (l runLabels) headers() string {
 	return h
 }
 
-// folderLinked: the folder or a parent is a linked project folder (on any gateway).
-func folderLinked(cwd string) bool {
+// linkRoot: the folder the link was made for (the folder or a parent of cwd that is a linked project folder, on any
+// gateway), "" when none. The branch is looked for only up to there.
+func linkRoot(cwd string) string {
 	st, err := loadProjectState(projectStatePath())
 	if err != nil {
-		return false
+		return ""
 	}
 	real, err := realFolder(cwd)
 	if err != nil {
-		return false
+		return ""
 	}
 	for dir := real; ; dir = filepath.Dir(dir) {
 		for _, l := range st.Links {
 			if sameProjectPath(dir, l.Path) {
-				return true
+				return dir
 			}
 		}
 		if filepath.Dir(dir) == dir {
-			return false
+			return ""
 		}
 	}
 }
 
 // gitBranch reads the current branch from the repository's HEAD file: "" for a detached HEAD, no repository or anything
-// unexpected. A worktree's .git file is followed one step ("gitdir: <path>").
-func gitBranch(dir string) string {
+// unexpected. A worktree's .git file is followed one step ("gitdir: <path>"). The search goes up from dir to root (the
+// linked folder's root) and no further: a repository above the linked folder gives no branch for a project it is not part of.
+func gitBranch(dir, root string) string {
+	if real, err := realFolder(dir); err == nil {
+		dir = real
+	}
 	for d := dir; ; d = filepath.Dir(d) {
 		g := filepath.Join(d, ".git")
 		fi, err := os.Lstat(g)
@@ -139,7 +148,7 @@ func gitBranch(dir string) string {
 			}
 			return ref
 		}
-		if filepath.Dir(d) == d {
+		if filepath.Dir(d) == d || sameProjectPath(d, root) { // the link's root is the last folder looked at
 			return ""
 		}
 	}

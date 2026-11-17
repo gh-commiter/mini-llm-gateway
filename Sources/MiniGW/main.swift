@@ -1196,7 +1196,7 @@ let implicitWork = SharedFolders.implicitWork(asked: askedWork, work: work)
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : "")
        + (role.isEmpty ? "" : "\nx-claude-mini-role: \(role)")
-       + { runLabels.withBranch(cwd: cwd, linked: { RunLabels.folderLinked($0, statePath: Projects.statePath()) }, branch: RunLabels.gitBranch); return runLabels.headers }()
+       + { runLabels.withBranch(cwd: cwd, linkRoot: { RunLabels.linkRoot($0, statePath: Projects.statePath()) }, branch: { RunLabels.gitBranch($0, root: $1) }); return runLabels.headers }()
        + (readOnly ? "\nx-claude-mini-ro: 1" : "")
        + (toolsPlan.tools.map { "\nx-claude-mini-tools: " + $0 } ?? ""), 1)  // the level of this run: the gateway refuses one above its cap for the model  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
 

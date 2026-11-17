@@ -835,3 +835,37 @@ func TestEventLabelsFromHeaders(t *testing.T) {
 		t.Fatal(g)
 	}
 }
+
+// The labels and the other client headers stay in the gateway's records: the upstream request is built from an allow-list
+// (content-type, authorization, anthropic-version, anthropic-beta), so no x-claude-mini-* header reaches a model provider.
+func TestClientHeadersNeverReachTheUpstream(t *testing.T) {
+	keys := fakeKeys(t)
+	keys["gw"] = gwKey
+	var got http.Header
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"type":"message","content":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer up.Close()
+	f := newCoreFx(t, nil)
+	hr := httptest.NewRequest("POST", "/v1/messages", nil)
+	for k, v := range map[string]string{"x-claude-mini-phase": "check", "x-claude-mini-activity": "bugfix", "x-claude-mini-task": "feature/secret-branch",
+		"x-claude-mini-task-source": "branch", "x-claude-mini-role": "security", "x-claude-mini-session": "sid", "x-claude-mini-cwd": "/home/me/project", "anthropic-version": "2023-06-01"} {
+		hr.Header.Set(k, v)
+	}
+	r := &req{Request: hr, conn: &serveConn{device: &serveDevice{ID: devID(f.dev["ana"])}}, rid: "r", body: []byte(`{"model":"m"}`), provider: "gw"}
+	f.s.admitEvent(r, "m")
+	uw := &usageWriter{ResponseWriter: httptest.NewRecorder()}
+	if st := f.s.passthrough(uw, r, serveGateway{Name: "gw", BaseURL: up.URL, Insecure: true}, gwModel{id: "m"}); st != 200 {
+		t.Fatal(st)
+	}
+	if got == nil || got.Get("anthropic-version") != "2023-06-01" {
+		t.Fatalf("the upstream was not reached as expected: %v", got)
+	}
+	for k, v := range got {
+		if strings.HasPrefix(strings.ToLower(k), "x-claude-mini-") || strings.Contains(strings.Join(v, ","), "secret-branch") {
+			t.Errorf("header %s: %v reached the provider", k, v)
+		}
+	}
+}

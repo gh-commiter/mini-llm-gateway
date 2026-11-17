@@ -58,21 +58,21 @@ func TestLabelValuesAreNeverReparsed(t *testing.T) {
 }
 
 func TestLabelsBranchFill(t *testing.T) {
-	linked := func(string) bool { return true }
+	linked := func(string) string { return "root" }
 	l := runLabels{}
-	l.withBranch("x", linked, func(string) string { return "feature/149-usage" })
+	l.withBranch("x", linked, func(string, string) string { return "feature/149-usage" })
 	if l.task != "feature/149-usage" || l.taskSource != "branch" {
 		t.Fatal(l)
 	}
 	l = runLabels{task: "#1", taskSource: "given"}
-	l.withBranch("x", linked, func(string) string { return "main" })
+	l.withBranch("x", linked, func(string, string) string { return "main" })
 	if l.task != "#1" || l.taskSource != "given" {
 		t.Fatal("a given task was replaced", l)
 	}
 	l = runLabels{}
-	l.withBranch("x", func(string) bool { return false }, func(string) string { return "main" }) // not linked
-	l.withBranch("x", linked, func(string) string { return "" })                                 // detached HEAD or no git
-	l.withBranch("x", linked, func(string) string { return "bad branch name" })                  // not a safe token
+	l.withBranch("x", func(string) string { return "" }, func(string, string) string { return "main" }) // not linked
+	l.withBranch("x", linked, func(string, string) string { return "" })                                // detached HEAD or no git
+	l.withBranch("x", linked, func(string, string) string { return "bad branch name" })                 // not a safe token
 	if l.task != "" || l.taskSource != "" {
 		t.Fatal(l)
 	}
@@ -92,11 +92,11 @@ func TestGitBranchReadsFilesOnly(t *testing.T) {
 		}
 	}
 	write(filepath.Join(repo, ".git", "HEAD"), "ref: refs/heads/feature/x\n")
-	if b := gitBranch(filepath.Join(repo, "sub", "deep")); b != "feature/x" {
+	if b := gitBranch(filepath.Join(repo, "sub", "deep"), repo); b != "feature/x" {
 		t.Fatal(b)
 	}
 	write(filepath.Join(repo, ".git", "HEAD"), "0123456789012345678901234567890123456789\n") // detached
-	if b := gitBranch(repo); b != "" {
+	if b := gitBranch(repo, repo); b != "" {
 		t.Fatal(b)
 	}
 	// A worktree: .git is a file that points at the git dir.
@@ -106,10 +106,20 @@ func TestGitBranchReadsFilesOnly(t *testing.T) {
 	os.MkdirAll(gd, 0o755)
 	write(filepath.Join(gd, "HEAD"), "ref: refs/heads/topic\n")
 	write(filepath.Join(wt, ".git"), "gitdir: "+gd+"\n")
-	if b := gitBranch(wt); b != "topic" {
+	if b := gitBranch(wt, wt); b != "topic" {
 		t.Fatal(b)
 	}
-	if b := gitBranch(t.TempDir()); b != "" { // no repository
+	// A repository ABOVE the linked folder gives no branch for a project it is not part of.
+	os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/outer\n"), 0o644)
+	inner := filepath.Join(repo, "linked", "deeper")
+	os.MkdirAll(inner, 0o755)
+	if b := gitBranch(inner, filepath.Join(repo, "linked")); b != "" {
+		t.Fatal("a repository above the link supplied", b)
+	}
+	if b := gitBranch(inner, repo); b != "outer" { // the link is made at the repository root: found
+		t.Fatal(b)
+	}
+	if b := gitBranch(t.TempDir(), t.TempDir()); b != "" { // no repository
 		t.Fatal(b)
 	}
 }

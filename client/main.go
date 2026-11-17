@@ -867,7 +867,7 @@ sessionArgs:
 	if role != "" {
 		headers += "\nx-claude-mini-role: " + role
 	}
-	labels.withBranch(cwd, folderLinked, gitBranch)
+	labels.withBranch(cwd, linkRoot, gitBranch)
 	headers += labels.headers()
 	if readOnly { // --minigw-ro velja tudi brez deljenja (prehod na tem računalniku)
 		headers += "\nx-claude-mini-ro: 1"

@@ -346,7 +346,9 @@ func discoveryReady(_ r: Router) async {
         let w = FakeWriter()
         await r.handle(
             request("POST", "/v1/messages?beta=true",
-                    headers: ["Authorization": "Bearer tok", "anthropic-version": "2023-06-01", "anthropic-beta": "b1", "x-secret": "no"],
+                    headers: ["Authorization": "Bearer tok", "anthropic-version": "2023-06-01", "anthropic-beta": "b1", "x-secret": "no",
+                              "x-claude-mini-phase": "check", "x-claude-mini-activity": "bugfix", "x-claude-mini-task": "feature/secret-branch",
+                              "x-claude-mini-task-source": "branch", "x-claude-mini-role": "security", "x-claude-mini-session": "sid", "x-claude-mini-cwd": "/home/me/project"],
                     body: #"{"model":"or-qwen","stream":true,"tools":[{"name":"t"}],"messages":[]}"#),
             writer: w)
 
@@ -356,6 +358,9 @@ func discoveryReady(_ r: Router) async {
         #expect(up.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
         #expect(up.value(forHTTPHeaderField: "anthropic-beta") == "b1")
         #expect(up.value(forHTTPHeaderField: "x-secret") == nil)
+        // The labels, the role, the session and the folder stay in the gateway's records: no x-claude-mini-* header goes to the provider.
+        #expect((up.allHTTPHeaderFields ?? [:]).keys.allSatisfy { !$0.lowercased().hasPrefix("x-claude-mini-") })
+        #expect(!(up.allHTTPHeaderFields ?? [:]).values.contains { $0.contains("secret-branch") })
         let sent = try #require(JSONSerialization.jsonObject(with: StubUpstream.last(host: "passthrough.example")?.body ?? Data()) as? [String: Any])
         #expect(sent["model"] as? String == "qwen/qwen3-coder")
         #expect((sent["tools"] as? [Any])?.count == 1)
