@@ -97,7 +97,7 @@ extension ProjectEnv {
             }
             closedir(dir)
             guard empty else { throw ProjectError("export directory must be empty") }
-            Self.exportHook?()
+            exportHook?()
             func write(_ name: String, _ data: Data) throws {
                 // O_EXCL refuses existing files and links. Permissions apply before content is written.
                 let fd = openat(dirFD, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)

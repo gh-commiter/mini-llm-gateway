@@ -56,13 +56,14 @@ import Testing
         let tmp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let out = tmp.appendingPathComponent("out"), moved = tmp.appendingPathComponent("out-moved"), victim = tmp.appendingPathComponent("victim")
         try fm.createDirectory(at: victim, withIntermediateDirectories: true)
-        defer { ProjectEnv.exportHook = nil; try? fm.removeItem(at: tmp) }
-        ProjectEnv.exportHook = {
+        defer { try? fm.removeItem(at: tmp) }
+        let swapping = exportEnv(tmp.path)
+        swapping.exportHook = {
             precondition(rename(out.path, moved.path) == 0)
             precondition(symlink(victim.path, out.path) == 0)
         }
-        try exportEnv(tmp.path).kb(["export", "demo", out.path])
-        ProjectEnv.exportHook = nil
+        try swapping.kb(["export", "demo", out.path])
+        swapping.exportHook = nil
         #expect(try fm.contentsOfDirectory(atPath: victim.path).isEmpty)
         #expect(fm.fileExists(atPath: moved.appendingPathComponent("5.md").path))
         #expect(fm.fileExists(atPath: moved.appendingPathComponent("INDEX.md").path))

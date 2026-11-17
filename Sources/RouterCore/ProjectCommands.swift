@@ -20,8 +20,6 @@ public struct ProjectReply: Sendable {
 }
 
 public final class ProjectEnv {
-    /// Test seam: runs after the export destination is opened and checked; nil in production.
-    nonisolated(unsafe) static var exportHook: (() -> Void)?
 
     public static let usageHelp = "minigw usage [--project slug] [--days n] [--json]   your model usage (a developer sees own events in a project, an admin all of it)"
     public static let runningHelp = "minigw running [--json]                    your requests that run on the gateway now: model, folder, time, steps, last step"
@@ -66,6 +64,8 @@ public final class ProjectEnv {
     public var zone = TimeZone.current
     /// The folder's raw remote.origin.url, "" = none; nil = ask git (tests inject it).
     public var origin: ((String) -> String)?
+    /// Test seam, per instance so that parallel tests do not interfere: runs after the export destination is opened and checked; nil in production.
+    public var exportHook: (() -> Void)?
 
     public init(connect: @escaping () -> (ProjectConn, String), state: String, cwd: String, stdin: @escaping () -> Data,
                 out: @escaping (String) -> Void, err: @escaping (String) -> Void, agent: Bool, runConn: ProjectConn? = nil,
