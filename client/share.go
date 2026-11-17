@@ -248,7 +248,7 @@ func (s *shareClient) work() {
 			delay = 0
 			s.pause(time.Second)
 		default:
-			failed() // router nedosegljiv: poskusi znova
+			s.pause(2 * time.Second) // router nedosegljiv: poskusi znova po 2 s kot doslej (po ponovnem zagonu prehoda mora deljena mapa hitro spet delati); rast zamika je le za odgovore, ki niso posel
 		}
 	}
 }

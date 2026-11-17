@@ -403,7 +403,7 @@ final class ShareClient: @unchecked Sendable {
                 pollDelay = 0
                 pause(1)
             default:
-                failed(s)       // router nedosegljiv: poskusi znova
+                pause(2)        // router nedosegljiv: poskusi znova po 2 s kot doslej; rast zamika je le za odgovore, ki niso posel
             }
         }
     }
