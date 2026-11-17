@@ -1306,21 +1306,27 @@ and not meant to be typed):
   hand in" is the normal answer and the model is told to give it when nothing is new.
 
 What they do not do: they do not ask at the end of a session (Claude Code gives a hook no way to talk to the model then), they
-never read or send the transcript, they never block a compaction, and they make no network call. They add no permission: each
-`minigw kb submit` the model runs goes through Claude Code's normal Bash prompt, so you see every entry before it is sent, and
-members review it before it is published. A failed hand-in is reported once and not retried.
+never read or send the transcript, they never block a compaction, and they make no network call themselves. They add no
+permission of their own, but be exact about what you approve: each `minigw kb submit` the model runs goes through Claude Code's
+normal Bash prompt unless you allow-listed `minigw` commands, and then there is no prompt. While the plugin's `notes` skill is
+active, `minigw kb search *` is pre-allowed, so the words of a search (the model's candidate text) reach the gateway without a
+prompt. Members review every submitted entry before it is published. A failed hand-in is reported once and not retried.
 
 Privacy: the hook texts are fixed and contain only the project's slug; no file names, no knowledge entries and no transcript
-text. The only thing that can reach the gateway is the model's own short text, after your Bash approval. `git` is run read-only
-in the linked folder (`git rev-parse HEAD`, `git status --porcelain`) with the guarded environment of the other client git calls
-and the checkout's own configuration switched off; only HEAD and a hash of the status are kept.
+text. What can reach the gateway is the model's own short text, in a search or a hand-in. The hook runs `git` read-only in the
+linked folder: `git rev-parse HEAD`, `git ls-files -s` and `git ls-files -o --exclude-standard`, and `lstat` (size, time) of the
+tracked files; `git status` is not used because it runs a checkout's content filters. The guarded environment of the other client
+git calls (no global or system git config, hooks, attributes file or fsmonitor) and `core.fsmonitor=false` apply; the checkout's
+own `.git/config` and `.git/info/attributes` still apply to those commands, which read no file content. Only HEAD and a hash are
+kept. The plugin calls the client only when it is version 0.7.13 or newer (an older `minigw` would pass the hook's input to a model).
 
-Files, all under the same `minigw` folder as `projects.json` (macOS: `~/Library/Application Support/minigw`; Windows and Linux:
-the user's config folder), mode 0600:
+Files, under the same `minigw` folder as `projects.json` (macOS: `~/Library/Application Support/minigw`; Windows and Linux: the
+user's config folder), mode 0600:
 
 - `kb-hooks.json`: the projects the hooks are on for.
 - `kb-hook/<session id>.json`: one marker per session (where it started and whether it was already asked); removed at the end of
-  the session, markers older than 14 days are removed at the next session start and at most 200 are kept.
-- `kb-hook/submitted.json`: when `minigw kb submit` last succeeded for a project (a manual submit counts as a hand-in too).
+  the session, markers older than 14 days are removed at the next session start and at most 200 are kept. A session id is 1 to 64
+  letters, digits, `-` or `_`; Windows device names (`CON`, `NUL`, `COM1` ...) are refused.
+- `kb-submitted.json`: when `minigw kb submit` last succeeded for a project (a manual submit counts as a hand-in too).
 
 Hooks inside an agent run of the gateway do nothing. Hand-in requires the gateway to be reachable when the model submits.

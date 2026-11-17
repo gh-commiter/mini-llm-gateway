@@ -69,11 +69,12 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
                 return (git["head"]!, git["status"]!)
             }
             w.env.agent = c["agent"] as! Bool
-            if c["linked"] as! Bool { try w.link(gateway, project, slug) }
+            if c["linked"] as! Bool { try w.link(gateway, project, c["linkSlug"] as? String ?? slug) }
+            if let hint = c["hint"] as? String { try Data((hint + "\n").utf8).write(to: URL(fileURLWithPath: w.work + "/.minigw-project")) }
             if c["enabled"] as! Bool { try w.write("kb-hooks.json", ["version": 1, "enabled": [["gateway": gateway, "project": project]]]) }
             let session = want["session"] as? String ?? "s1"
             if let m = c["marker"] as? [String: Any] { try w.write("kb-hook/\(session).json", m) }
-            if let t = c["submitted"] as? Int, t != 0 { try w.write("kb-hook/submitted.json", ["version": 1, "submitted": [["gateway": gateway, "project": project, "time": t]]]) }
+            if let t = c["submitted"] as? Int, t != 0 { try w.write("kb-submitted.json", ["version": 1, "submitted": [["gateway": gateway, "project": project, "time": t]]]) }
             var input: Data
             if let raw = c["stdinRaw"] as? String { input = Data(raw.utf8) } else {
                 var s = c["stdin"] as! [String: Any]
@@ -93,7 +94,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
             #expect(got == wantMarker, "\(name): marker")
             if got != nil { #expect(mode(file) == 0o600, "\(name): marker mode") }
             for rel in w.files() {  // nothing but the state files and markers inside kb-hook/; the project folder stays empty
-                let ok = rel == "cfg/minigw/projects.json" || rel == "cfg/minigw/kb-hooks.json"
+                let ok = rel == "cfg/minigw/projects.json" || rel == "cfg/minigw/kb-hooks.json" || rel == "cfg/minigw/kb-submitted.json" || rel == "work/.minigw-project"
                     || rel.hasPrefix("cfg/minigw/kb-hook/") && !rel.dropFirst("cfg/minigw/kb-hook/".count).contains("/")
                 #expect(ok, "\(name): unexpected file \(rel)")
             }
@@ -110,14 +111,13 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         func marker(_ started: Int) -> [String: Any] { ["gateway": "gw1", "project": 7, "head": "", "status": "", "asked": false, "compact": false, "started": started] }
         try w.write("kb-hook/old.json", marker(now - 15 * day))
         try w.write("kb-hook/fresh.json", marker(now - day))
-        try w.write("kb-hook/submitted.json", ["version": 1, "submitted": []])
         try Data("{".utf8).write(to: URL(fileURLWithPath: w.cfg + "/kb-hook/junk.json"))
         for i in 0..<230 { try w.write(String(format: "kb-hook/m%03d.json", i), marker(4_000_000 + i)) }
         w.env.stdin = { Data(#"{"session_id":"new","cwd":"\#(w.work)"}"#.utf8) }
         try w.env.kb(["hook", "start"])
         let names = Set(try FileManager.default.contentsOfDirectory(atPath: w.cfg + "/kb-hook"))
-        #expect(!names.contains("old.json") && !names.contains("junk.json") && names.contains("fresh.json") && names.contains("submitted.json") && names.contains("new.json"))
-        #expect(names.count == ProjectEnv.hookKeepMax + 1)  // 200 markers (the new one among them) and submitted.json
+        #expect(!names.contains("old.json") && !names.contains("junk.json") && names.contains("fresh.json") && names.contains("new.json"))
+        #expect(names.count == ProjectEnv.hookKeepMax)  // 200 markers, the new one among them
         #expect(!names.contains("m000.json") && !names.contains("m031.json") && names.contains("m032.json") && names.contains("m229.json"))
     }
 
@@ -148,7 +148,8 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
             do { try w.env.kb(["hooks"] + bad); Issue.record("expected usage") } catch { #expect(String(describing: error).hasPrefix("usage:")) }
         }
         w.env.gateway = { "" }
-        do { _ = try run("status"); Issue.record("not connected") } catch { #expect(String(describing: error).hasPrefix("not connected")) }
+        let shared = try JSONSerialization.jsonObject(with: Data(contentsOf: repoRoot.appendingPathComponent("client/testdata/kb-hook.json"))) as! [String: Any]
+        do { _ = try run("status"); Issue.record("not connected") } catch { #expect(String(describing: error) == shared["notConnected"] as? String) }
         w.env.gateway = { "gw1" }
         w.env.agent = true
         do { _ = try run("status"); Issue.record("agent") } catch { #expect(String(describing: error) == ProjectEnv.agentRefusal) }
@@ -162,7 +163,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
                     : ProjectReply(status: status, data: Data(#"{"id":1,"project":7,"state":"pending","class":"data","title":"t"}"#.utf8))
             }
             try? w.env.kb(["submit", "acme-shop", "--title", "t", "-"])
-            let file = w.cfg + "/kb-hook/submitted.json"
+            let file = w.cfg + "/kb-submitted.json"
             #expect(FileManager.default.fileExists(atPath: file) == record, "status \(status)")
             if record {
                 let o = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: file))) as! [String: Any]
@@ -203,15 +204,15 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
 
     @Test func gitStateOfARepositoryAndOfAPlainFolder() throws {
         let (w, dir) = try repo()
-        let (head, status) = ProjectEnv.hookGitState(dir)
+        let (head, status) = ProjectEnv.hookGitState(dir, timeout: 60)
         #expect(head == ProjectText.trim(try git(dir, "rev-parse", "HEAD")) && status.count == 64)
-        #expect(ProjectEnv.hookGitState(dir) == (head, status))
+        #expect(ProjectEnv.hookGitState(dir, timeout: 60) == (head, status))
         try Data("b".utf8).write(to: URL(fileURLWithPath: dir + "/b.txt"))
-        let (h2, s2) = ProjectEnv.hookGitState(dir)
+        let (h2, s2) = ProjectEnv.hookGitState(dir, timeout: 60)
         #expect(h2 == head && s2 != status)  // an untracked file changes the status, not HEAD
         _ = try git(dir, "add", "b.txt")
         _ = try git(dir, "commit", "-qm", "two")
-        #expect(ProjectEnv.hookGitState(dir).head != head)
+        #expect(ProjectEnv.hookGitState(dir, timeout: 60).head != head)
         let plain = ProjectEnv.hookGitState(w.work)
         #expect(plain.head == "" && plain.status == "")
     }
@@ -226,7 +227,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         _ = try git(dir, "status")
         #expect(FileManager.default.fileExists(atPath: proof), "the control did not run the fsmonitor script: the test proves nothing")
         unlink(proof)
-        _ = ProjectEnv.hookGitState(dir)
+        _ = ProjectEnv.hookGitState(dir, timeout: 60)
         #expect(!FileManager.default.fileExists(atPath: proof), "the checkout's core.fsmonitor program ran")
     }
 
@@ -237,8 +238,82 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         let fake = bin + "/git"
         try Data("#!/bin/sh\necho ran >> '\(w.root)/fake-ran'\nexit 1\n".utf8).write(to: URL(fileURLWithPath: fake))
         chmod(fake, 0o755)
-        FileManager.default.changeCurrentDirectoryPath("/")  // a relative entry would be looked up against the cwd, not trusted
-        _ = ProjectEnv.hookGitState(w.work, path: "bin:.:" + "/usr/bin")
+        // a relative entry (bin, .) is never used: the process folder is global state, so it is the lookup that is asserted
+        #expect(Profiles.executable("git", path: "bin:.:/usr/bin") == "/usr/bin/git")
+        // L4: no git on an absolute PATH entry means no state at all (not Apple's /usr/bin/git stub)
+        let none = ProjectEnv.hookGitState(w.work, path: "bin:.", timeout: 60)
+        #expect(none.head == "" && none.status == "")
+        _ = ProjectEnv.hookGitState(w.work, path: "bin:.:/usr/bin", timeout: 60)
         #expect(!FileManager.default.fileExists(atPath: w.root + "/fake-ran"))
+    }
+
+    @Test func aSlowGitIsGivenUpOn() throws {
+        let w = try HookWorld()
+        let bin = w.root + "/bin"
+        try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nsleep 20\n".utf8).write(to: URL(fileURLWithPath: bin + "/git"))
+        chmod(bin + "/git", 0o755)
+        let started = Date()
+        let r = ProjectEnv.hookGitState(w.work, path: bin, timeout: 0.3)
+        #expect(r.head == "" && r.status == "")
+        #expect(Date().timeIntervalSince(started) < 5)
+    }
+
+    @Test func contentFiltersOfTheCheckoutDoNotRun() throws {
+        let (w, dir) = try repo()
+        let proof = w.root + "/ran"
+        try Data("* filter=x\n".utf8).write(to: URL(fileURLWithPath: dir + "/.git/info/attributes"))
+        _ = try git(dir, "config", "filter.x.clean", "touch '\(proof)'; cat")
+        // a tracked file whose stat differs from the index, content the same: git compares content, through the filter
+        var times = [timeval(tv_sec: Int(Date().timeIntervalSince1970) + 3600, tv_usec: 0), timeval(tv_sec: Int(Date().timeIntervalSince1970) + 3600, tv_usec: 0)]
+        utimes(dir + "/a.txt", &times)
+        _ = try git(dir, "status")  // positive control: plain status runs the filter
+        #expect(FileManager.default.fileExists(atPath: proof), "the control did not run the filter: the test proves nothing")
+        rename(proof, proof + ".1")
+        let before = ProjectEnv.hookGitState(dir, timeout: 60)
+        #expect(!FileManager.default.fileExists(atPath: proof), "the checkout's clean filter ran")
+        try Data("changed again, longer".utf8).write(to: URL(fileURLWithPath: dir + "/a.txt"))
+        let after = ProjectEnv.hookGitState(dir, timeout: 60)
+        #expect(after.status != before.status && after.status.count == 64, "an edit of a tracked file is not seen")
+        _ = try git(dir, "add", "a.txt")
+        #expect(ProjectEnv.hookGitState(dir, timeout: 60).status != before.status)
+    }
+
+    @Test func nothingIsReadWhenNotEnabled() throws {
+        for settings in [nil, ["version": 1, "enabled": []] as [String: Any]] {
+            let w = try HookWorld()
+            try w.link("gw1", 7, "acme-shop")
+            if let settings { try w.write("kb-hooks.json", settings) }
+            var asked = 0
+            w.env.gateway = { asked += 1; return "gw1" }
+            w.env.stdin = { Data(#"{"session_id":"s1","cwd":"\#(w.work)"}"#.utf8) }
+            try w.env.kb(["hook", "start"])
+            #expect(asked == 0 && w.out.isEmpty)
+        }
+    }
+
+    /// The command in the hand-in request, parsed and run through the real argument parser with the text on stdin.
+    @Test func theCommandsOfTheRequestWork() throws {
+        let text = ProjectEnv.hookRequestText.replacingOccurrences(of: "<slug>", with: "acme-shop")
+        let re = try NSRegularExpression(pattern: "`(minigw kb submit [^`]*)`")
+        let cmds = re.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { String(text[Range($0.range(at: 1), in: text)!]) }
+        #expect(cmds.count == 2)
+        for (cmd, kind) in zip(cmds, ["finding", "faq"]) {
+            let tok = try NSRegularExpression(pattern: #""([^"]*)"|(\S+)"#)
+            let args = tok.matches(in: cmd, range: NSRange(cmd.startIndex..., in: cmd)).map { m -> String in
+                String(cmd[Range(m.range(at: m.range(at: 1).location != NSNotFound ? 1 : 2), in: cmd)!])
+            }
+            #expect(args[0] == "minigw" && args[1] == "kb")
+            let w = try HookWorld(stdin: Data("the text on stdin\n".utf8))
+            var sent: [String: Any] = [:]
+            w.env.send = { _, method, _, _, body in
+                if method == "GET" { return ProjectReply(status: 200, data: Data(#"{"id":7}"#.utf8)) }
+                sent = (try? JSONSerialization.jsonObject(with: body ?? Data())) as? [String: Any] ?? [:]
+                return ProjectReply(status: 201, data: Data(#"{"id":1,"project":7,"state":"pending","class":"data","title":"t"}"#.utf8))
+            }
+            try w.env.kb(Array(args.dropFirst(2)))
+            #expect(sent["entryKind"] as? String == kind && sent["body"] as? String == "the text on stdin\n" && !(sent["title"] as? String ?? "").isEmpty)
+            #expect(w.out == "submission 1 pending\n")
+        }
     }
 }
