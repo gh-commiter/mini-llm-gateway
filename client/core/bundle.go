@@ -76,13 +76,14 @@ type bundle struct {
 
 // Limits of bundle reads; variables so that tests can use small ones.
 var (
-	maxManifestBytes     = 16 << 20
-	maxBundleDirBytes    = 8 << 20
-	maxBundleDepth       = 32
-	maxBundleProjects    = 10000
-	maxBundleUsers       = 100000
-	maxBundleMemberships = 200000
-	maxBundleGrants      = 200000
+	maxManifestBytes       = 16 << 20
+	maxBundleDirBytes      = 8 << 20
+	maxBundleDepth         = 32
+	maxBundleProjects      = 10000
+	maxBundleUsers         = 100000
+	maxBundleMemberships   = 200000
+	maxBundleGrants        = 200000
+	maxBundleNoteFileBytes = int64(maxBody + (64 << 10)) // body plus front matter
 )
 
 const maxSourceMeta = 64 << 10
@@ -639,6 +640,25 @@ func readBundle(file string) (bundle, error) {
 	if err = checkManifestLimits(b.manifest); err != nil {
 		return b, err
 	}
+	// Refuse unlisted entries and oversized note files from metadata alone, before any body
+	// is decompressed. validateBundle repeats these checks as a second line.
+	allowed := map[string]bool{"manifest.json": true, "INDEX.md": true}
+	notes := map[string]bool{}
+	for _, v := range b.manifest.Notes {
+		allowed[v.File] = true
+		notes[v.File] = true
+	}
+	for _, f := range z.File {
+		if f.Name == "manifest.json" {
+			continue
+		}
+		if !allowed[f.Name] {
+			return b, ErrInvalid{"unexpected bundle file"}
+		}
+		if notes[f.Name] && f.UncompressedSize64 > uint64(maxBundleNoteFileBytes) {
+			return b, ErrTooLarge
+		}
+	}
 	total := int64(len(data))
 	for i, f := range z.File {
 		if i == manifest {
@@ -648,7 +668,11 @@ func readBundle(file string) (bundle, error) {
 		if left < 0 {
 			return b, ErrTooLarge
 		}
-		data, err := readEntry(f, left)
+		limit := left
+		if notes[f.Name] && maxBundleNoteFileBytes < limit {
+			limit = maxBundleNoteFileBytes
+		}
+		data, err := readEntry(f, limit)
 		if err != nil {
 			return b, err
 		}

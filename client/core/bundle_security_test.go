@@ -58,6 +58,110 @@ func TestBundleEntryLimitsBeforeBodies(t *testing.T) {
 	}
 }
 
+// zipEntry returns the central-directory record and the body offset of a named entry.
+func zipEntry(t *testing.T, data []byte, name string) (record, body int) {
+	t.Helper()
+	eocd := bytes.LastIndex(data, []byte{'P', 'K', 5, 6})
+	if eocd < 0 {
+		t.Fatal("zip has no footer")
+	}
+	for dir := int(binary.LittleEndian.Uint32(data[eocd+16:])); dir+46 <= eocd; {
+		nameLen := int(binary.LittleEndian.Uint16(data[dir+28:]))
+		if string(data[dir+46:dir+46+nameLen]) == name {
+			local := int(binary.LittleEndian.Uint32(data[dir+42:]))
+			body := local + 30 + int(binary.LittleEndian.Uint16(data[local+26:])) + int(binary.LittleEndian.Uint16(data[local+28:]))
+			return dir, body
+		}
+		dir += 46 + nameLen + int(binary.LittleEndian.Uint16(data[dir+30:])) + int(binary.LittleEndian.Uint16(data[dir+32:]))
+	}
+	t.Fatalf("zip entry %q not found", name)
+	return 0, 0
+}
+
+// corruptZip writes the bundle's files with one entry replaced or added, then corrupts that
+// entry's body and optionally raises only its declared size in the directory. Opening the
+// entry would fail, so a clean refusal proves that nothing was decompressed.
+func corruptZip(t *testing.T, b bundle, name string, declared uint64) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "corrupt.zip")
+	out, err := os.Create(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	z := zip.NewWriter(out)
+	for n, data := range b.files {
+		if n == name {
+			continue
+		}
+		h := &zip.FileHeader{Name: n, Method: zip.Deflate}
+		h.SetMode(0600)
+		w, err := z.CreateHeader(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = w.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &zip.FileHeader{Name: name, Method: zip.Store}
+	h.SetMode(0600)
+	w, err := z.CreateHeader(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.Write([]byte("corrupt payload")); err != nil {
+		t.Fatal(err)
+	}
+	if err = z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, body := zipEntry(t, data, name)
+	if declared > 0 {
+		binary.LittleEndian.PutUint32(data[record+24:], uint32(declared))
+	}
+	data[body] ^= 0xff
+	bad := filepath.Join(t.TempDir(), "bad.zip")
+	if err = os.WriteFile(bad, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return bad
+}
+
+func TestBundleUnlistedEntryRefusedBeforeRead(t *testing.T) {
+	f, file := bundleFixture(t)
+	b, err := readBundle(file)
+	f.ok(err)
+	// The entry is not in the manifest and its body is corrupt, so the result must be the
+	// unlisted-entry refusal, not a decompression or checksum error.
+	bad := corruptZip(t, b, "extra/unlisted.md", 1<<20)
+	_, err = readBundle(bad)
+	if err == nil || !strings.Contains(err.Error(), "unexpected bundle file") {
+		t.Fatalf("expected unexpected bundle file, got %v", err)
+	}
+}
+
+func TestBundleNoteFileSizeRefusedBeforeRead(t *testing.T) {
+	f, file := bundleFixture(t)
+	b, err := readBundle(file)
+	f.ok(err)
+	if len(b.manifest.Notes) == 0 {
+		t.Fatal("fixture has no notes")
+	}
+	// The entry is listed, declared above the note file limit, and its body is corrupt.
+	bad := corruptZip(t, b, b.manifest.Notes[0].File, uint64(maxBundleNoteFileBytes)+1)
+	_, err = readBundle(bad)
+	if !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("expected too large, got %v", err)
+	}
+}
+
 func TestBundleSourcesHaveIndependentReceipts(t *testing.T) {
 	f, file := bundleFixture(t)
 	s := openT(t, t.TempDir())

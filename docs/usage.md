@@ -605,12 +605,14 @@ The owner must choose a source only for an archive they trust: the recorded orig
 not cryptographic authentication of the exporting gateway.
 
 Import validates the entire zip before writing, within fixed limits on its size, entry count, central
-directory, manifest size and nesting, and collection sizes. Dry-run reports create, merge, skip and refuse
-decisions and writes nothing. Real import is one transaction, including one `kb.import` audit event when
-anything changes. Names match case-insensitively after `--map old=new` and after Unicode normalization, so a
-name written with a combining accent finds the same account as its composed form. If two target accounts
-normalize to one name, or two bundle users would land on one target account, the import is refused and both
-are named. Slugs match projects and names match teams. Unknown users are inactive non-owners with no device
+directory, manifest size and nesting, note file size, and collection sizes. A note file or any entry the
+manifest does not list is refused from the archive's metadata before its body is decompressed. Dry-run
+reports create, merge, skip and refuse decisions and writes nothing. Real import is one transaction,
+including one `kb.import` audit event when anything changes. Names match case-insensitively after `--map
+old=new` and after Unicode normalization, so a name written with a combining accent finds the same
+account as its composed form. If two target accounts normalize to one name, or two bundle users would land
+on one target account, the import is refused and both are named. Slugs match projects and names match
+teams. Unknown users are inactive non-owners with no device
 binding. The owner must activate and bind them explicitly. Existing roles, memberships and grants are only
 retained or raised. A project already on another team refuses the whole import. Target project and note IDs
 are allocated locally.
