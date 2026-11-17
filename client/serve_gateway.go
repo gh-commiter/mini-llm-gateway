@@ -235,6 +235,10 @@ func gwFetch(ctx context.Context, g serveGateway, key, path string) (map[string]
 	}
 	resp, err := g.client().Do(r)
 	if err != nil {
+		var ue *url.Error // the URL of the request (and any credentials in it) is not part of what is shown or logged
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
 		return nil, errors.New("cannot connect: " + err.Error())
 	}
 	defer resp.Body.Close()
@@ -337,6 +341,7 @@ type gwEntry struct {
 	ok      bool
 	at      time.Time
 	failed  time.Time // zadnja napaka: nov poskus šele po 45 s
+	reason  string    // why the last load failed (no key, cannot connect, HTTP status): shown in the status, never a key or a URL
 	loading chan struct{}
 }
 
@@ -391,7 +396,11 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 				if key == "" { // brez ključa ni bilo klica: ključ, dodan kasneje, velja po ≈2 s (ne po 45 s)
 					e.failed = e.failed.Add(-43 * time.Second)
 				}
-				s.log.Printf("provider %s: %v", g.Name, err)
+				e.reason = clean(err.Error())
+				if r := []rune(e.reason); len(r) > 160 {
+					e.reason = string(r[:160]) + "…"
+				}
+				s.log.Printf("provider %s: models not loaded: %s", g.Name, e.reason)
 			}
 			e.loading = nil
 			c.mu.Unlock()

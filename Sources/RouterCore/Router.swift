@@ -923,6 +923,16 @@ actor Catalog {
         return out
     }
 
+    /// ready (the list is loaded), loading (a load is still running) or failed (the last load failed; the log says why): the status shows
+    /// "still loading" and "failed" differently (as the Go gateway).
+    func states() async -> [String: String] {
+        var out: [String: String] = [:]
+        for p in providers {
+            if await entry(p)?.ok == true { out[p.id] = "ready" } else { out[p.id] = loading[p.id] != nil ? "loading" : "failed" }
+        }
+        return out
+    }
+
     /// Čaka največ 2 s (discovery v Claude Code ima 3 s); medtem velja zadnji znani seznam.
     private func entry(_ p: ProviderConfig) async -> Entry? {
         if let e = entries[p.id], e.ok, Date().timeIntervalSince(e.at) < Self.maxAge { return e }

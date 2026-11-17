@@ -397,7 +397,7 @@ func routerCommand(args []string, in io.Reader) {
 			}
 			ready := ""
 			if st.Running {
-				ready = map[bool]string{true: ", ready", false: ", models not loaded (see the gateway log)"}[g.Ready]
+				ready = gatewayReadyText(g.Ready, g.State, g.Reason)
 			}
 			say(clean(fmt.Sprintf("provider %s: %s, models enabled: %s%s", g.Name, g.BaseURL, n, ready)))
 		}
@@ -983,4 +983,21 @@ func scratchOthersLine(o []scratchSibling) string {
 		return "none"
 	}
 	return strings.Join(l, ", ")
+}
+
+// gatewayReadyText: the end of a provider's status line. Still loading is not a failure: the list is fetched in the
+// background after the gateway starts and when it is older than five minutes; a failure says why (never a key or a URL) and
+// points at the log. The Mac status (RouterCommand.swift) words it the same way.
+func gatewayReadyText(ready bool, state, reason string) string {
+	switch {
+	case ready || state == "ready":
+		return ", ready"
+	case state == "":
+		return ", models not loaded (see the gateway log)" // an older gateway that sends no state
+	case state == "loading":
+		return ", models loading (not loaded yet)"
+	case reason != "":
+		return ", models failed to load: " + reason + " (see the gateway log)"
+	}
+	return ", models failed to load (see the gateway log)"
 }

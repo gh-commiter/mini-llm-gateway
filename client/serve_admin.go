@@ -57,6 +57,8 @@ type apiGateway struct {
 	Models   []string `json:"models"` // null = vsi odkriti
 	HasKey   bool     `json:"hasKey"`
 	Ready    bool     `json:"ready"` // seznam modelov naložen (le pri tekočem routerju)
+	State    string   `json:"state"` // ready, loading or failed (see gwCatalog.state)
+	Reason   string   `json:"reason,omitempty"`
 	Enabled  bool     `json:"enabled"`
 	Aliases  string   `json:"aliases"`
 	// Tools: the highest tool level of the provider's models (none, read, edit), ModelTools: the exceptions per model (tools.go)
@@ -1420,7 +1422,8 @@ func claudeVersion(exe []string) string {
 
 func (s *server) apiGateway(g serveGateway) apiGateway {
 	key, _ := keyGet(s.cfgDir, g.Name)
-	return apiGateway{Name: g.Name, BaseURL: g.BaseURL, Insecure: g.Insecure, Models: g.Models, HasKey: key != "", Ready: s.gateways.ready(g.Name),
+	state, reason := s.gateways.state(g.Name)
+	return apiGateway{Name: g.Name, BaseURL: g.BaseURL, Insecure: g.Insecure, Models: g.Models, HasKey: key != "", Ready: state == "ready", State: state, Reason: reason,
 		Enabled: !g.Disabled, Aliases: g.Aliases, Tools: g.toolsCap(""), ModelTools: g.ModelTools}
 }
 
@@ -1455,6 +1458,21 @@ func (c *gwCatalog) ready(name string) bool {
 	defer c.mu.Unlock()
 	e := c.m[name]
 	return e != nil && e.ok
+}
+
+// state: ready (the list is loaded), loading (a load is running or none was asked for yet) or failed (the last load failed; reason
+// says why). The status shows "still loading" and "failed" differently.
+func (c *gwCatalog) state(name string) (state, reason string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.m[name]
+	switch {
+	case e != nil && e.ok:
+		return "ready", ""
+	case e == nil || e.loading != nil || e.failed.IsZero():
+		return "loading", ""
+	}
+	return "failed", e.reason
 }
 
 // foundryAPI: /foundry (Foundry Local): enabled, path, found, running, instructions, models (null = vsi).
