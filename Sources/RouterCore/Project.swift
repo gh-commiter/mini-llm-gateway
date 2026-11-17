@@ -97,7 +97,10 @@ public enum Projects {
         return Data(s.utf8)
     }
 
-    public static func save(_ path: String, _ st: ProjectState) throws {
+    public static func save(_ path: String, _ st: ProjectState) throws { try writeAtomic(path, encode(st)) }
+
+    /// A private file (0600) in a private folder (0700), replaced atomically.
+    static func writeAtomic(_ path: String, _ data: Data) throws {
         let dir = (path as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         var tmp = Array((dir + "/." + (path as NSString).lastPathComponent + "-XXXXXX").utf8CString)
@@ -107,7 +110,7 @@ public enum Projects {
         var ok = false
         defer { if !ok { unlink(name) } }
         let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        do { try h.write(contentsOf: encode(st)); try h.synchronize(); try h.close() } catch { throw ProjectError(error.localizedDescription) }
+        do { try h.write(contentsOf: data); try h.synchronize(); try h.close() } catch { throw ProjectError(error.localizedDescription) }
         guard rename(name, path) == 0 else { throw ProjectError(String(cString: strerror(errno)).lowercasedFirst) }
         ok = true
     }

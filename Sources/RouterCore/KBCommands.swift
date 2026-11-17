@@ -10,6 +10,7 @@ extension ProjectEnv {
         minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB)
         minigw kb faq [<project>] [--json]   the project's questions and answers
         minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)
+        minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)
         """
     public static let kbAdminHelp = """
         minigw gw kb rebuild-search
@@ -36,6 +37,8 @@ extension ProjectEnv {
     public func kb(_ args: [String]) throws {
         if args.first == "export" || args.first == "import" { try kbFiles(args); return }
         if args.first == "search" { try kbSearch(Array(args.dropFirst())); return }
+        if args.first == "hook" { kbHook(Array(args.dropFirst())); return }  // before the agent refusal: a hook inside an agent run is silent
+        if args.first == "hooks" { try kbHooks(Array(args.dropFirst())); return }
         if agent { throw ProjectError(Self.agentRefusal) }
         if args.first == "faq" { try kbFAQ(Array(args.dropFirst())); return }
         let usage = ProjectError("usage:\n" + Self.kbHelp)
@@ -44,7 +47,7 @@ extension ProjectEnv {
         guard pos.count == 3 && pos[0] == "submit" || (1...2).contains(pos.count) && pos[0] == "submissions" else { throw usage }
         let kind = fl.string("kind")
         if !kind.isEmpty && kind != "finding" && kind != "faq" { throw usage }
-        let (c, _) = connect()
+        let (c, gw) = connect()
         func request(_ method: String, _ path: String, _ headers: [String: String] = [:], _ body: Data? = nil) throws -> Data {
             let r = send(c, method, path, headers, body)
             guard (200...299).contains(r.status) else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
@@ -75,6 +78,7 @@ extension ProjectEnv {
             }
             if r.status == 0 { throw ProjectError("no answer from the gateway; repeat with --key \(key) (safe: no duplicate), or check with minigw kb submissions") }
             guard r.status == 201 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+            recordSubmitted(gw, project)
             if fl.bool("json") { say(ProjectText.jsonText(ProjectText.trim(String(decoding: r.data, as: UTF8.self)))) }
             else { say(Self.submissionResult(JSONValue.parse(r.data)?.dict ?? JDict())) }
             return
