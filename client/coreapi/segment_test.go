@@ -115,3 +115,41 @@ func TestSegmentRoutes(t *testing.T) {
 	call(admin, "DELETE", fmt.Sprintf("/teams/%d/members/%d", team.ID, f.uid["ana"]), "", 200)
 	call(member("dev-ana"), "GET", read, "", 404)
 }
+
+// depends over HTTP: only the owner changes the relation; a member sees only dependencies it can read.
+func TestDependsRoutes(t *testing.T) {
+	f := newFixture(t)
+	admin := Context{Kind: KindAdmin}
+	call := func(c Context, method, path string, want int) Response {
+		t.Helper()
+		r := f.api.Handle(bg, c, Request{Method: method, Path: path})
+		if r.Status != want {
+			t.Fatalf("%s %s: %d %s, want %d", method, path, r.Status, r.Body, want)
+		}
+		return r
+	}
+	fk, eu := f.pid["fakture"], f.pid["eureko"]
+	call(admin, "PUT", fmt.Sprintf("/projects/%d/depends/%d", fk, eu), 200)
+	if !strings.Contains(string(call(admin, "GET", fmt.Sprintf("/projects/%d/depends", fk), 200).Body), `"slug":"eureko"`) {
+		t.Fatal("admin list")
+	}
+	if !strings.Contains(string(call(admin, "GET", fmt.Sprintf("/projects/%d/depends", eu), 200).Body), `"usedBy":[{"id":`+fmt.Sprint(fk)) {
+		t.Fatal("usedBy")
+	}
+	call(admin, "PUT", fmt.Sprintf("/projects/%d/depends/%d", fk, fk), 400)
+	call(admin, "PUT", fmt.Sprintf("/projects/%d/depends/%d", fk, 1<<40+1), 404)
+	// eva reads fakture but not eureko: the list hides it. cene reads eureko (member) and fakture (grant).
+	if strings.Contains(string(call(member("dev-eva"), "GET", fmt.Sprintf("/minigw/v1/projects/%d/depends", fk), 200).Body), "eureko") {
+		t.Fatal("unreadable dependency listed")
+	}
+	if !strings.Contains(string(call(member("dev-cene"), "GET", fmt.Sprintf("/minigw/v1/projects/%d/depends", fk), 200).Body), "eureko") {
+		t.Fatal("readable dependency missing")
+	}
+	// No member route changes it.
+	for _, m := range []string{"PUT", "POST", "DELETE", "PATCH"} {
+		call(member("dev-fani"), m, fmt.Sprintf("/minigw/v1/projects/%d/depends/%d", fk, eu), 404)
+		call(member("dev-fani"), m, fmt.Sprintf("/minigw/v1/projects/%d/depends", fk), 404)
+	}
+	call(admin, "DELETE", fmt.Sprintf("/projects/%d/depends/%d", fk, eu), 200)
+	call(admin, "DELETE", fmt.Sprintf("/projects/%d/depends/%d", fk, eu), 404)
+}
