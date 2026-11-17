@@ -871,7 +871,7 @@ private let teamsAnswers: [(String, Int, String)] = [
         #expect(try m.request(assigns.rowActions![0], row: a, parent: web, values: ["role": .string("admin")]).get()
                 == CoreRequest(method: "PUT", path: "/teams/4/assignments", body: Data(#"{"project":1,"role":"admin","user":2}"#.utf8)))
         #expect(try m.request(assigns.rowActions![1], row: a, parent: web).get() == CoreRequest(method: "DELETE", path: "/teams/4/assignments", query: "project=1&user=2"))
-        #expect(m.confirmation(assigns.actions![0])?.message.contains("Manage lets a person read every person's private notes") == true)
+        #expect(m.confirmation(assigns.actions![0])?.message.contains("Manage (admin) lets a person read every person's private notes") == true)
         #expect(m.confirmation(assigns.rowActions![0], row: a)?.title == "Change the role of ana?" && m.confirmation(assigns.rowActions![1], row: a)?.destructive == true)
     }
 
@@ -893,8 +893,8 @@ private let teamsAnswers: [(String, Int, String)] = [
         let rows = m.data("projects/members", parent: p).rows
         let (ana, bor, eva) = (rows[0], rows[1], rows[2])
         // where a role comes from is in the columns: effective role, direct role, teams
-        #expect(members.columns!.map { m.cell($0, ana) } == ["ana", "Manage", "Develop", "web (admin)"])
-        #expect(members.columns!.map { m.cell($0, bor) } == ["bor", "Read", "None", "web (reader)"])
+        #expect(members.columns!.map { m.cell($0, ana) } == ["ana", "Manage (admin)", "Develop (developer)", "web (admin)"])
+        #expect(members.columns!.map { m.cell($0, bor) } == ["bor", "Read (reader)", "None", "web (reader)"])
         // the role actions depend on the direct role; only a LOWERING asks first
         #expect(m.rowActions(members, ana).map(\.id) == ["to-reader-from-developer", "to-admin-from-developer", "remove-developer"])
         #expect(m.rowActions(members, bor).map(\.id) == ["to-reader-from-none", "to-developer-from-none", "to-admin-from-none"])  // no direct role: nothing to remove
@@ -910,7 +910,7 @@ private let teamsAnswers: [(String, Int, String)] = [
         #expect(try m.request(lower, row: ana, parent: p).get().body == Data(#"{"role":"reader"}"#.utf8))
         #expect(try m.request(remove, row: ana, parent: p).get() == CoreRequest(method: "DELETE", path: "/projects/1/members/2"))
         // giving a role (any, so also admin) and giving one through a team ask first
-        #expect(m.confirmation(members.actions![0])?.message.contains("Manage lets a person read every person's private notes") == true)
+        #expect(m.confirmation(members.actions![0])?.message.contains("Manage (admin) lets a person read every person's private notes") == true)
         #expect(try m.request(members.actions![0], parent: p, values: ["user": .int(3), "role": .string("developer")]).get()
                 == CoreRequest(method: "PUT", path: "/projects/1/members/3", body: Data(#"{"role":"developer"}"#.utf8)))
         // git identities and dependencies
@@ -998,6 +998,44 @@ private let teamsAnswers: [(String, Int, String)] = [
             }
             let conf = m.confirmation(a, row: try row("row"))
             #expect((conf == nil ? "none" : conf!.destructive ? "destructive" : "plain") == c["confirm"] as! String, "\(c)")
+        }
+    }
+}
+
+@MainActor @Suite struct PanelPickerTests {
+    @Test(.enabled(if: haveFixtures)) func pickersOfferActiveEntriesOnlyButLabelsStillResolve() async throws {
+        let fake = Fake()
+        await fake.set("GET /projects", 200, #"{"projects":[{"id":1,"name":"Old","archived":true},{"id":2,"name":"Live","archived":false}]}"#)
+        await fake.set("GET /teams", 200, #"{"teams":[{"id":4,"name":"gone","archived":true,"segment":1099511627780},{"id":5,"name":"web","archived":false,"segment":1099511627781}]}"#)
+        await fake.set("GET /kb/submissions", 200, #"{"submissions":[]}"#)
+        for (k, b) in [("GET /kb/notes", #"{"notes":[]}"#), ("GET /kb/faq", #"{"entries":[]}"#)] { await fake.set(k, 200, b) }
+        let m = PanelModel(panel: try kb(), strings: try strings("C"), routes: PanelRoutes.builtin, send: { await fake.handle($0) })
+        await m.load()
+        #expect(m.refs["projects"]?.map(\.skipped) == [true, false] && m.pickerOptions("projects").map(\.id) == ["2"])
+        #expect(m.pickerOptions("teams").map(\.id) == ["1099511627781"])
+        #expect(m.selected[PanelListKey(path: "notes-project", parent: "")] == .int(2))  // the first entry that is offered
+        let log = await fake.log
+        #expect(log.contains("GET /kb/notes?project=2") && !log.contains("GET /kb/notes?project=1"))
+        // the users panel: an inactive user is not offered for a binding but still names the binding that refers to it
+        let f2 = Fake()
+        for (k, st, b) in userAnswers { await f2.set(k, st, b) }
+        await f2.set("GET /bindings", 200, #"{"bindings":[{"device":"dev-1","user":3}]}"#)
+        let um = PanelModel(panel: try users(), strings: try strings("C"), routes: PanelRoutes.builtin, send: { await f2.handle($0) })
+        await um.load()
+        #expect(um.pickerOptions("users").map(\.id) == ["1", "2"])
+        let bound = um.visibleRows(um.panel.sections[1], path: "bindings")[0]
+        #expect(um.cell(um.panel.sections[1].columns![1], bound) == "old")
+        #expect(um.refs["users"]?.first { $0.id == "3" }?.skipped == true)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func anEmptyValueIsAnEnDashAndRoleNamesCarryTheTechnicalName() async throws {
+        let m = try await usersModel(Fake())
+        let col = PanelColumn(field: "x", kind: "text", label: "k", yes: nil, no: nil, values: nil, ref: nil)
+        #expect(m.shown(col, PanelRow(id: "", values: [:])) == "\u{2013}" && m.shown(col, PanelRow(id: "", values: ["x": .string("v")])) == "v")
+        let roles = try teamsPanel().sections[1].detail!.sections[0].columns!.first { $0.field == "role" }!.values!
+        for (loc, want) in [("C", ["Read (reader)", "Develop (developer)", "Manage (admin)"]), ("sl_SI", ["Branje (reader)", "Razvijanje (developer)", "Upravljanje (admin)"])] {
+            let st = try strings(loc)
+            #expect(["reader", "developer", "admin"].map { st.text(roles[$0]) } == want)
         }
     }
 }

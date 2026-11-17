@@ -10,13 +10,21 @@
    "path": "/users",
    "items": "users",
    "key": "id",
-   "label": "name"
+   "label": "name",
+   "skip": {
+    "field": "active",
+    "equals": false
+   }
   },
   "projects": {
    "path": "/projects",
    "items": "projects",
    "key": "id",
-   "label": "name"
+   "label": "name",
+   "skip": {
+    "field": "archived",
+    "equals": true
+   }
   }
  },
  "sections": [

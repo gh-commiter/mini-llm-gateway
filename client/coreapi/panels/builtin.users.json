@@ -10,7 +10,11 @@
    "path": "/users",
    "items": "users",
    "key": "id",
-   "label": "name"
+   "label": "name",
+   "skip": {
+    "field": "active",
+    "equals": false
+   }
   },
   "devices": {
    "path": "/devices",

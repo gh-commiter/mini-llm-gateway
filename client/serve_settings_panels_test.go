@@ -65,7 +65,10 @@ func TestSettingsPanelRendererHasNoForbiddenSinks(t *testing.T) {
 		t.Error("the renderer makes a network call itself: only the transport it is given may")
 	}
 	// the page stays self-contained: nothing loaded from outside, no inline handler or style attribute in the document
-	for _, bad := range []string{"<link", "src=\"http", "href=\"http", "@import", "url(http", "onclick=", "onerror=", "<iframe", "<object", "<embed"} {
+	if strings.Count(settingsPage, "<link") != 1 || !strings.Contains(settingsPage, `<link rel="icon" href="data:,">`) {
+		t.Error("the page must have exactly one <link>: the empty data icon that stops the browser's /favicon.ico request (401 in the console)")
+	}
+	for _, bad := range []string{"src=\"http", "href=\"http", "@import", "url(http", "onclick=", "onerror=", "<iframe", "<object", "<embed"} {
 		if strings.Contains(settingsPage, bad) {
 			t.Errorf("settings.html contains %s", bad)
 		}
@@ -171,5 +174,15 @@ func TestSettingsPageDemandsTrustedTypes(t *testing.T) {
 	}
 	if strings.Contains(csp, "unsafe") {
 		t.Errorf("CSP: %s", csp)
+	}
+}
+
+// The one 401 line in the browser console on every load of the settings page: the browser asks for /favicon.ico, which is no
+// settings route and so needs the gateway token. The page now carries an empty icon, so it no longer asks.
+func TestFaviconRequestIsTheConsole401(t *testing.T) {
+	_, _, base := liveServer(t, nil)
+	host := strings.TrimPrefix(base, "http://")
+	if st, _, _ := settingsCall(t, base, host, "GET", "/favicon.ico", "", ""); st != 401 {
+		t.Fatalf("GET /favicon.ico: %d", st)
 	}
 }

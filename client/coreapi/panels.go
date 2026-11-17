@@ -113,6 +113,9 @@ type pRef struct {
 	Items string `json:"items"`
 	Key   string `json:"key"`
 	Label string `json:"label"`
+	// Skip: entries whose field equals the value are not offered in pickers (an archived project, an inactive user); they still
+	// give the labels of values that refer to them.
+	Skip *pWhen `json:"skip"`
 }
 
 type pSection struct {
@@ -346,6 +349,9 @@ func (c *panelCheck) panel() error {
 	for name, r := range d.Refs {
 		if !reID.MatchString(name) || !reName.MatchString(r.Items) || !reName.MatchString(r.Key) || !reName.MatchString(r.Label) {
 			return fmt.Errorf("ref %q: bad name, items, key or label", name)
+		}
+		if r.Skip != nil && (!reName.MatchString(r.Skip.Field) || !scalar(r.Skip.Equals)) {
+			return fmt.Errorf("ref %q: skip needs a plain field name and a scalar", name)
 		}
 		if err := c.path("ref "+name, "GET", r.Path, tpl{}); err != nil {
 			return err

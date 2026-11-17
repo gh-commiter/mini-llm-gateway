@@ -136,7 +136,7 @@ private struct PanelList: View {
             if let e = data.error { PanelErrorText(error: e) }
             if let e = model.actionError[key] { PanelErrorText(error: e) }
             if let sc = section.scope {
-                let options = model.refs[sc.ref] ?? []
+                let options = model.pickerOptions(sc.ref)
                 Picker(selection: Binding(get: { model.selected[key]?.scalarText ?? "" },
                                           set: { id in if let o = options.first(where: { $0.id == id }) { Task { await model.select(o.key, section: section, path: path, parent: parent) } } })) {
                     ForEach(options) { o in Text(verbatim: o.label).tag(o.id) }
@@ -218,11 +218,11 @@ private struct PanelRecord: View {
                         } else if c.kind == "multiline" {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(verbatim: model.text(c.label)).font(.caption).foregroundStyle(.secondary)
-                                Text(verbatim: model.cell(c, row)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                Text(verbatim: model.shown(c, row)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                                 if model.cellIsTruncated(c, row) { Text("The text is shortened here.").font(.caption).foregroundStyle(.orange) }
                             }
                         } else {
-                            LabeledContent { Text(verbatim: model.cell(c, row)).textSelection(.enabled) } label: { Text(verbatim: model.text(c.label)) }
+                            LabeledContent { Text(verbatim: model.shown(c, row)).textSelection(.enabled) } label: { Text(verbatim: model.text(c.label)) }
                         }
                     }
                 }
@@ -260,9 +260,9 @@ private struct PanelRowView: View {
                 if !c.supported {
                     Text("This part of the panel cannot be shown.").font(.caption).foregroundStyle(.secondary)
                 } else if i == 0 {
-                    Text(verbatim: model.cell(c, row)).fixedSize(horizontal: false, vertical: true)
+                    Text(verbatim: model.shown(c, row)).fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text(verbatim: model.text(c.label) + ": " + model.cell(c, row)).font(.caption).foregroundStyle(.secondary)
+                    Text(verbatim: model.text(c.label) + ": " + model.shown(c, row)).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -347,7 +347,7 @@ private struct PanelFormSheet: View {
                 ForEach(f.options ?? [], id: \.value) { o in Text(verbatim: model.text(o.label)).tag(o.value) }
             } label: { Text(verbatim: label) }
         default:  // ref
-            let options = model.refs[f.ref ?? ""] ?? []
+            let options = model.pickerOptions(f.ref ?? "")
             Picker(selection: Binding(get: { values[f.id]?.scalarText ?? "" }, set: { id in values[f.id] = options.first { $0.id == id }?.key })) {
                 Text("None").tag("")
                 ForEach(options) { o in Text(verbatim: o.label).tag(o.id) }

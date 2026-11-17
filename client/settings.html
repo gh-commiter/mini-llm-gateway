@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mini Gateway Settings</title>
+<link rel="icon" href="data:,">  <!-- no icon: without this the browser asks for /favicon.ico, which the gateway answers 401 (a harmless console line) -->
 <style nonce="{{NONCE}}">
 :root { color-scheme: light dark; --bg: #ececec; --side: #e2e2e4; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
   --line: #e5e5ea; --accent: #0a66d8; --sel: #d0d0d5; --btn: #e8e8ed; --ok: #28a745; --err: #d70015; --warn: #b25000;
@@ -812,7 +813,7 @@ const dArr = (v, w, f) => (Array.isArray(v) ? v.map((x, i) => f(x, w + "[" + i +
 const dMap = (v, w, f) => { dObj(v, w); return Object.fromEntries(Object.keys(v).map(k => [k, f(v[k], w + "." + k)])); };  // own keys only: "__proto__" stays a key
 const opt = (o, k, f, w) => (o[k] === undefined || o[k] === null ? undefined : f(o[k], w + "." + k));
 const anyJSON = (o, k, w) => (Object.hasOwn(o, k) ? o[k] : prefuse(w + "." + k + " is missing"));
-const dRef = (o, w) => (o = dObj(o, w), {path: dStr(o.path, w), items: dStr(o.items, w), key: dStr(o.key, w), label: dStr(o.label, w)});
+const dRef = (o, w) => (o = dObj(o, w), {path: dStr(o.path, w), items: dStr(o.items, w), key: dStr(o.key, w), label: dStr(o.label, w), skip: opt(o, "skip", dWhen, w)});
 const dColumn = (o, w) => (o = dObj(o, w), {field: dStr(o.field, w), kind: dStr(o.kind, w), label: dStr(o.label, w),
   yes: opt(o, "yes", dStr, w), no: opt(o, "no", dStr, w), values: opt(o, "values", (v, x) => dMap(v, x, dStr), w), ref: opt(o, "ref", dStr, w)});
 const dWhen = (o, w) => (o = dObj(o, w), {field: dStr(o.field, w), equals: anyJSON(o, "equals", w)});
@@ -1071,6 +1072,7 @@ function pValidate(d, routes) {
   if (Object.keys(d.refs).length > PL.refs) prefuse("more than " + PL.refs + " refs");
   for (const [name, r] of Object.entries(d.refs)) {
     if (!pIsID(name) || !pIsName(r.items) || !pIsName(r.key) || !pIsName(r.label)) prefuse("ref " + name + ": bad name, items, key or label");
+    if (r.skip !== undefined && !(pIsName(r.skip.field) && pScalarOK(r.skip.equals))) prefuse("ref " + name + ": skip needs a plain field name and a scalar");
     pCheckPath(d, routes, "ref " + name, "GET", r.path, {row: false, parent: false, fields: new Set()});
   }
   sections(d.sections, false);
@@ -1156,6 +1158,8 @@ class PanelModel {
     this.sending = new Set(); this.opened = new Map(); this.loading = false; this.redraw = () => {};
   }
   text(key) { return panelText(this.strings, key); }
+  // The entries a picker offers: the ref's entries without the ones its skip rule leaves out (they still name the values that refer to them).
+  pickerOptions(ref) { return (this.refs[ref] || []).filter(o => !o.skipped); }
   allowed(method, template) { const r = pRouteOf(method, template); return r !== null && this.routes.includes(r); }
   async load() {
     this.loading = true; this.redraw();
@@ -1183,7 +1187,7 @@ class PanelModel {
         const k = pGet(o, r.key);
         if (pScalarText(k) === null) return [];
         const lab = pScalarText(pGet(o, r.label));
-        return [{key: k, label: lab !== null ? lab : pScalarText(k), id: pScalarText(k)}];
+        return [{key: k, label: lab !== null ? lab : pScalarText(k), id: pScalarText(k), skipped: r.skip !== undefined && pGet(o, r.skip.field) === r.skip.equals}];
       });
     }
     this.redraw();
@@ -1207,7 +1211,7 @@ class PanelModel {
     const req = {method: "GET", path: p, query: ""};
     const query = [];
     if (s.scope) {  // the picker's value is a query parameter; nothing is requested until one is chosen
-      const opts = this.refs[s.scope.ref] || [];
+      const opts = this.pickerOptions(s.scope.ref);
       if (!this.selected.has(key) || !opts.some(o => o.key === this.selected.get(key))) { if (opts.length) this.selected.set(key, opts[0].key); else this.selected.delete(key); }
       const v = this.selected.has(key) ? pScalarText(this.selected.get(key)) : null;
       if (v === null) { d.rows = []; d.next = null; d.error = null; set(); return; }
@@ -1294,6 +1298,8 @@ class PanelModel {
     if (c.kind === "multiline") return [...raw].slice(0, PL.multiline).join("");
     return raw;
   }
+  // What the view shows for a cell: an empty value is an en dash, never a bare label.
+  shown(c, row) { const x = this.cell(c, row); return x === "" ? "\u2013" : x; }
   cellIsTruncated(c, row) { return c.kind === "multiline" && pLen(pScalarText(pGet(row.values, c.field)) ?? "") > PL.multiline; }
   rowActions(s, row) { return (s.rowActions || []).filter(a => pSupportedAction(a) && (a.when === undefined || pGet(row.values, a.when.field) === a.when.equals)); }
   actions(s) { return (s.actions || []).filter(pSupportedAction); }
@@ -1435,7 +1441,7 @@ function panelView(model, host) {
   });
   const cellNode = (c, row, sub) => {
     if (!pSupportedColumn(c)) return pe("div", "sub", t("pPart"));
-    const text = model.cell(c, row);
+    const text = model.shown(c, row);
     if (c.kind === "multiline") {
       const d = pe("div", "label");
       d.append(pe("div", "sub", model.text(c.label)), pe("div", "ptext", text));
@@ -1447,36 +1453,54 @@ function panelView(model, host) {
   const form = (path, parent) => {
     const f = view.form;
     if (!f || f.path !== path || (f.parent ? f.parent.id : "") !== (parent ? parent.id : "")) return [];
-    const problems = model.problems(f.a, f.values);
+    const fkey = pListKey(path, parent ? parent.id : "");
     const g = pe("div", "group");
     g.append(prow(pe("span", "label", model.text(f.a.label))));
+    const notes = [];
+    let ok;
+    // Validity is checked on every keystroke (input), not when the field loses focus: the notes and the OK button follow at once.
+    const refresh = () => {
+      const problems = model.problems(f.a, f.values);
+      notes.forEach(([id, n]) => {
+        const p = pGet(problems, id);
+        n.textContent = p && (pGet(f.values, id) !== undefined || !p.required) ? (p.required ? t("pRequired") : t("pTooLong", p.tooLong)) : "";
+      });
+      if (ok) ok.disabled = Object.keys(problems).length > 0 || model.sending.has(fkey);
+    };
+    const submit = () => { if (!ok.disabled) run(f.a, f.path, f.row, f.parent, f.values); };
+    const cancel = () => { view.form = null; render(); };
+    // Enter in a single-line field sends the form, Escape anywhere in it cancels (every field of a panel form is single-line).
+    const keys = (e, enter) => {
+      if (e.key === "Escape") { if (e.preventDefault) e.preventDefault(); cancel(); }
+      else if (enter && e.key === "Enter") { if (e.preventDefault) e.preventDefault(); submit(); }
+    };
+    g.addEventListener("keydown", e => keys(e, false));
     for (const fld of f.a.fields) {
       const label = pe("span", "label", model.text(fld.label));
       let input;
-      if (fld.type === "toggle") input = pswitch(pGet(f.values, fld.id) === true, v => { f.values[fld.id] = v; });
+      if (fld.type === "toggle") input = pswitch(pGet(f.values, fld.id) === true, v => { f.values[fld.id] = v; refresh(); });
       else if (fld.type === "text") {
         input = pe("input", "left"); input.type = "text"; input.value = typeof pGet(f.values, fld.id) === "string" ? pGet(f.values, fld.id) : "";
-        input.addEventListener("input", () => { f.values[fld.id] = input.value; });
-        input.addEventListener("change", () => render());
+        input.addEventListener("input", () => { f.values[fld.id] = input.value; refresh(); });
+        input.addEventListener("keydown", e => keys(e, true));
       } else {
         input = pe("select");
         const none = pe("option", "", t("pNone")); none.value = ""; input.append(none);
-        const opts = fld.type === "choice" ? fld.options.map(o => ({id: o.value, key: o.value, label: model.text(o.label)})) : (model.refs[fld.ref] || []);
+        const opts = fld.type === "choice" ? fld.options.map(o => ({id: o.value, key: o.value, label: model.text(o.label)})) : model.pickerOptions(fld.ref);
         for (const o of opts) { const op = pe("option", "", o.label); op.value = o.id; input.append(op); }
         input.value = pScalarText(pGet(f.values, fld.id) === undefined ? null : pGet(f.values, fld.id)) ?? "";
-        input.addEventListener("change", () => { const o = opts.find(x => x.id === input.value); if (o) f.values[fld.id] = o.key; else delete f.values[fld.id]; render(); });
+        input.addEventListener("change", () => { const o = opts.find(x => x.id === input.value); if (o) f.values[fld.id] = o.key; else delete f.values[fld.id]; refresh(); });
       }
-      const r = prow(label, input);
-      g.append(r);
-      const p = pGet(problems, fld.id);
-      if (p && (pGet(f.values, fld.id) !== undefined || !p.required)) g.append(pnote(p.required ? t("pRequired") : t("pTooLong", p.tooLong), true));
+      g.append(prow(label, input));
+      const n = pnote("", true); notes.push([fld.id, n]); g.append(n);
     }
-    const err = model.actionError.get(pListKey(path, parent ? parent.id : ""));
+    const err = model.actionError.get(fkey);
     if (err) g.append(pnote(panelErrorText(err), true));
     const bar = pe("div", "buttons");
-    bar.append(pbutton(t("cancel"), () => { view.form = null; render(); }),
-      (() => { const ok = pbutton(t("pOk"), () => run(f.a, f.path, f.row, f.parent, f.values), true); ok.disabled = Object.keys(problems).length > 0 || model.sending.has(pListKey(path, parent ? parent.id : "")); return ok; })());
+    ok = pbutton(t("pOk"), submit, true);
+    bar.append(pbutton(t("cancel"), cancel), ok);
     g.append(prow(bar));
+    refresh();
     return [g];
   };
   const list = (s, path, parent) => {
@@ -1489,9 +1513,9 @@ function panelView(model, host) {
     const g = pe("div", "group");
     if (s.scope) {
       const sel = pe("select"), cur = pScalarText(model.selected.get(pListKey(path, parent ? parent.id : "")) ?? null);
-      for (const o of model.refs[s.scope.ref] || []) { const op = pe("option", "", o.label); op.value = o.id; sel.append(op); }
+      for (const o of model.pickerOptions(s.scope.ref)) { const op = pe("option", "", o.label); op.value = o.id; sel.append(op); }
       sel.value = cur ?? "";
-      sel.addEventListener("change", () => { const o = (model.refs[s.scope.ref] || []).find(x => x.id === sel.value); if (o) model.select(o.key, s, path, parent); });
+      sel.addEventListener("change", () => { const o = model.pickerOptions(s.scope.ref).find(x => x.id === sel.value); if (o) model.select(o.key, s, path, parent); });
       g.append(prow(pe("span", "label", model.text(s.scope.label)), sel));
     }
     if (s.hide) g.append(prow(pe("span", "label", model.text(s.hide.toggle)), pswitch(d.showHidden, v => model.setShowHidden(v, path, parent))));
@@ -1536,7 +1560,7 @@ function panelView(model, host) {
       const row = {id: "", values: d.values};
       for (const c of s.columns || []) {
         if (c.kind === "multiline" || !pSupportedColumn(c)) g.append(prow(cellNode(c, row, false)));
-        else g.append(prow(pe("span", "label", model.text(c.label)), pe("span", "value ptext", model.cell(c, row))));
+        else g.append(prow(pe("span", "label", model.text(c.label)), pe("span", "value ptext", model.shown(c, row))));
       }
     }
     out.push(g);

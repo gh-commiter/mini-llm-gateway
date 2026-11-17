@@ -104,6 +104,8 @@ public struct PanelRow: Identifiable, Equatable, Sendable {
 public struct PanelOptionValue: Identifiable, Equatable, Sendable {
     public let key: PanelJSON
     public let label: String
+    /// Left out of pickers (the ref's `skip` rule); still used to name a value that refers to it.
+    public var skipped = false
     public var id: String { key.scalarText ?? "" }
 }
 
@@ -170,6 +172,9 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         for (_, o) in opened { await loadDetail(o.0, o.1) }
     }
 
+    /// The entries a picker offers: the ref's entries without the ones its `skip` rule leaves out.
+    public func pickerOptions(_ ref: String) -> [PanelOptionValue] { (refs[ref] ?? []).filter { !$0.skipped } }
+
     func allowed(_ method: String, _ template: String) -> Bool { PanelTemplate.route(method, template).map { routes.contains($0) } ?? false }
 
     private func loadRefs() async {
@@ -182,7 +187,7 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
             if items.count > PanelLimits.refEntries { refError = .refused("more than \(PanelLimits.refEntries) entries in \(r.path)"); refs[name] = []; continue }
             refs[name] = items.compactMap { o in
                 guard let k = o[r.key], k.scalarText != nil else { return nil }
-                return PanelOptionValue(key: k, label: o[r.label]?.scalarText ?? k.scalarText ?? "")
+                return PanelOptionValue(key: k, label: o[r.label]?.scalarText ?? k.scalarText ?? "", skipped: r.skip.map { o[$0.field] == $0.equals } ?? false)
             }
         }
     }
@@ -205,7 +210,8 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         req.path = p
         var query: [String] = []
         if let sc = s.scope {  // the picker's value is a query parameter; nothing is requested until one is chosen
-            if selected[key] == nil || !(refs[sc.ref] ?? []).contains(where: { $0.key == selected[key] }) { selected[key] = refs[sc.ref]?.first?.key }
+            let options = pickerOptions(sc.ref)
+            if selected[key] == nil || !options.contains(where: { $0.key == selected[key] }) { selected[key] = options.first?.key }
             guard let v = selected[key]?.scalarText else { d.rows = []; d.next = nil; d.error = nil; lists[key] = d; return }
             guard let e = PanelTemplate.encodeQuery(v) else { d.error = .refused("the choice cannot be sent"); lists[key] = d; return }
             query.append("\(sc.param)=\(e)")
@@ -322,6 +328,9 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         default: return raw
         }
     }
+
+    /// What a view shows for a cell: an empty value is an en dash, never a bare label.
+    public func shown(_ c: PanelColumn, _ row: PanelRow) -> String { let s = cell(c, row); return s.isEmpty ? "\u{2013}" : s }
 
     /// A long text is cut at PanelLimits.multiline characters; the view says so.
     public func cellIsTruncated(_ c: PanelColumn, _ row: PanelRow) -> Bool { c.kind == "multiline" && (row.values[c.field]?.scalarText?.count ?? 0) > PanelLimits.multiline }

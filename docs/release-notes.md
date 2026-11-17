@@ -1,5 +1,17 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Panels on the settings page: the OK button of a form now enables as soon as the form is valid (it waited until the field lost focus), Enter in a field sends the form and Escape cancels it. The Mac pane already did both.
+- Panels, both apps: an empty value in a detail row shows an en dash instead of a bare label ("Through teams:" with nothing after it).
+- Panels: pickers (the project and team choosers of Knowledge base, the person and project choosers of Teams and projects, the person chooser of Users and devices) offer only active entries: no archived project or team, no inactive user. The panel format gets one small optional key for it, `skip` on a `refs` entry. Names of archived or inactive entries still show where a value refers to them.
+- Panels: roles show their technical name beside the friendly one ("Manage (admin)", "Develop (developer)", "Read (reader)"), so the panel matches `minigw gw` and the documentation.
+- Settings page: the browser no longer asks for `/favicon.ico` on every load (the gateway answered 401, a harmless line in the console).
+
+### Known problems
+- Archived projects and teams cannot be chosen in the Knowledge base pickers any more; read their notes with `minigw`.
+
 ## 0.7.17
 
 ### New
