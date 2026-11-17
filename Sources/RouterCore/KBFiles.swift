@@ -2,6 +2,9 @@ import Foundation
 import CryptoKit
 
 extension ProjectEnv {
+    static let kbRetryAttempts = 30  // a gateway that keeps answering 429 is given up on
+    static let kbRetryTotal: TimeInterval = 10 * 60
+
     static func markdown(_ d: JDict) -> Data {
         let title = d["title"]?.string ?? "", body = d["body"]?.string ?? ""
         let hash = SHA256.hash(data: Data(("[" + GoJSON.string(title) + "," + GoJSON.string(body) + "]").utf8)).map { String(format: "%02x", $0) }.joined()
@@ -62,11 +65,22 @@ extension ProjectEnv {
         if pos[0] == "export" && (fl.set.contains("class") || fl.bool("submit")) { throw ProjectError("export takes no import options") }
         let (c, _) = connect()
         func request(_ method: String, _ path: String, _ body: Data? = nil) throws -> JDict {
+            var attempts = 0, waited: TimeInterval = 0
             while true {
+                attempts += 1
                 let r = send(c, method, path, [:], body)
                 if r.status == 429 {
-                    let seconds = Int(r.retryAfter ?? "") ?? 60
-                    sleep(TimeInterval((1...60).contains(seconds) ? seconds : 60))
+                    // A gateway that keeps answering 429 must not hold the command forever.
+                    guard attempts < Self.kbRetryAttempts, waited < Self.kbRetryTotal else {
+                        throw ProjectError("the gateway keeps answering 429: try again later")
+                    }
+                    let asked = Int(r.retryAfter ?? "") ?? 60
+                    let wait = TimeInterval(min(max(asked, 1), 120))
+                    guard waited + wait <= Self.kbRetryTotal else {
+                        throw ProjectError("the gateway keeps answering 429: try again later")
+                    }
+                    sleep(wait)
+                    waited += wait
                     continue
                 }
                 guard (200...299).contains(r.status) else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }

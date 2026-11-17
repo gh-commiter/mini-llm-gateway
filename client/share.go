@@ -70,6 +70,41 @@ type shareClient struct {
 	closing   atomic.Bool                // the end report of git is running: writes are refused (unregister)
 	gitNotice atomic.Bool                // the start line about commits through the mount was printed
 	fsWant    atomic.Int32               // #82 N1: čakajoča pisanja; branje se jim umakne (do svojega roka)
+	sleepFn   func(time.Duration)        // tests: a recorded wait; nil = time.Sleep
+}
+
+// How the long poll backs off: a usable answer resets the growth; an unusable one waits 0.5 s,
+// then doubles up to 30 s, so a server that is something else on that port cannot make it spin.
+const (
+	shareFirstDelay = 500 * time.Millisecond
+	shareMaxDelay   = 30 * time.Second
+	shareMinPoll    = time.Second
+)
+
+// shareWait: the wait after one long-poll answer; delay is the delay of the previous failure.
+func shareWait(usable bool, delay time.Duration) (wait, next time.Duration) {
+	if usable {
+		return 0, 0
+	}
+	next = delay * 2
+	if next < shareFirstDelay {
+		next = shareFirstDelay
+	}
+	if next > shareMaxDelay {
+		next = shareMaxDelay
+	}
+	return next, next
+}
+
+func (s *shareClient) pause(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	if s.sleepFn != nil {
+		s.sleepFn(d)
+		return
+	}
+	time.Sleep(d)
 }
 
 var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
@@ -174,21 +209,35 @@ func (s *shareClient) start(workers int) {
 }
 
 func (s *shareClient) work() {
+	var delay time.Duration
 	for {
 		k := s.currentKey()
+		start := time.Now()
 		st, data := call(s.c, "GET", "/minigw/share/next", map[string]string{"x-share-key": k}, nil, 40*time.Second)
+		elapsed := time.Since(start)
+		failed := func() {
+			wait, next := shareWait(false, delay)
+			delay = next
+			s.pause(wait)
+		}
 		switch st {
 		case 200:
 			var job davJob
-			if json.Unmarshal(data, &job) != nil {
+			if json.Unmarshal(data, &job) != nil || job.ID == "" { // not a job (unknown keys alone decode): wait, never a tight loop
+				failed()
 				continue
 			}
 			body, err := json.Marshal(davReply{ID: job.ID, Response: s.handle(job, k)})
 			if err != nil {
+				failed()
 				continue
 			}
 			call(s.c, "POST", "/minigw/share/reply", map[string]string{"x-share-key": k, "content-type": "application/json"}, body, 120*time.Second)
+			delay = 0
 		case 204:
+			wait, next := shareWait(elapsed >= shareMinPoll, delay)
+			delay = next
+			s.pause(wait) // an instant 204 is not a long poll
 		case 404:
 			s.syncMu.Lock()
 			if s.sync && s.unpulled { // nova registracija: router ne pozna več nepotrjenih sprememb
@@ -196,9 +245,10 @@ func (s *shareClient) work() {
 			}
 			s.syncMu.Unlock()
 			s.register() // router se je znova zagnal
-			time.Sleep(time.Second)
+			delay = 0
+			s.pause(time.Second)
 		default:
-			time.Sleep(2 * time.Second) // router nedosegljiv: poskusi znova
+			failed() // router nedosegljiv: poskusi znova
 		}
 	}
 }

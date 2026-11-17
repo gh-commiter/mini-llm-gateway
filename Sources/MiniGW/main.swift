@@ -282,6 +282,8 @@ final class ShareClient: @unchecked Sendable {
     private var gitWatch: GitWatch?  // #116 B1: direct: the repository at the start (GitWatch.swift)
     static let gitDrainWait: TimeInterval = 30  // how long the end report waits for the requests that are running
     static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
+    /// The wait before the next long poll; tests replace it. How long is SharePoll's decision.
+    var pause: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     private let lock = NSLock()
     private var current = ""
     var key: String { lock.withLock { current } }
@@ -353,12 +355,21 @@ final class ShareClient: @unchecked Sendable {
     }
 
     private func work() {
+        var pollDelay: TimeInterval = 0  // vsak delavec svoj: ena obljuba ne upočasni drugih
         while true {
             let k = key
+            let start = Date()
             let (s, d) = call(c, "GET", "/minigw/share/next", ["x-share-key": k], timeout: 40)
+            let elapsed = Date().timeIntervalSince(start)
+            // An answer that is not a job is a failure: wait before asking again, never a tight loop.
+            func failed(_ status: Int) {
+                let w = SharePoll.decide(status: status, hasJob: false, elapsed: elapsed, delay: pollDelay)
+                pollDelay = w.delay
+                if w.wait > 0 { pause(w.wait) }
+            }
             switch s {
             case 200:
-                guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d) else { continue }
+                guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d), !job.id.isEmpty else { failed(200); continue }
                 // Router ni zaupanja vreden: Sync.clientJob odloči po načinu (glej tam).
                 let r: DAVResponse
                 // L6 (#84): koren zamenjan med sejo → vsi posli (WebDAV, sync, worktree) zavrnjeni
@@ -377,18 +388,22 @@ final class ShareClient: @unchecked Sendable {
                     case nil: r = DAVResponse(403)
                     }
                 }
-                guard let body = try? JSONEncoder().encode(DAVReply(id: job.id, response: r)) else { continue }
+                guard let body = try? JSONEncoder().encode(DAVReply(id: job.id, response: r)) else { failed(200); continue }
                 _ = call(c, "POST", "/minigw/share/reply", ["x-share-key": k, "content-type": "application/json"], body, timeout: 120)
+                pollDelay = 0
             case 204:
-                continue
+                let w = SharePoll.decide(status: 204, hasJob: false, elapsed: elapsed, delay: pollDelay)
+                pollDelay = w.delay
+                if w.wait > 0 { pause(w.wait) }  // an instant 204 is not a long poll
             case 404:
                 if sync, syncLock.withLock({ unpulled }) {  // nova registracija: router ne pozna več nepotrjenih sprememb
                     note("the gateway restarted; the agent's changes that were not copied back may be overwritten by the next sync")
                 }
                 _ = register()  // router se je znova zagnal
-                sleep(1)
+                pollDelay = 0
+                pause(1)
             default:
-                sleep(2)        // router nedosegljiv: poskusi znova
+                failed(s)       // router nedosegljiv: poskusi znova
             }
         }
     }

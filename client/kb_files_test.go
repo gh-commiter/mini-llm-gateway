@@ -195,6 +195,34 @@ func TestMarkdownClientImportWaits(t *testing.T) {
 	}
 }
 
+// A gateway that always answers 429 must end the command after a bounded number of attempts, not
+// spin for ever with a sleep the tests replace by a no-op.
+func TestMarkdownClient429IsBounded(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "note.md")
+	if e := os.WriteFile(file, []byte("body"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	var waits []time.Duration
+	calls := 0
+	env := &projectEnv{out: os.Stdout, sleep: func(d time.Duration) { waits = append(waits, d) }, connect: func() (connection, string) { return connection{}, "" },
+		do: func(_ connection, _, _ string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+			calls++
+			return 429, nil, http.Header{"Retry-After": []string{"1"}}
+		}}
+	e := env.kb([]string{"import", "demo", file})
+	if e == nil || e.Error() != "the gateway keeps answering 429: try again later" {
+		t.Fatal(e)
+	}
+	if calls != kbRetryAttempts || len(waits) != kbRetryAttempts-1 {
+		t.Fatalf("%d calls, %d waits", calls, len(waits))
+	}
+	for _, d := range waits {
+		if d != time.Second {
+			t.Fatalf("waits %v", waits)
+		}
+	}
+}
+
 // A file this gateway exported from this project is the note it came from: exporting and importing again is a no-op, and an
 // edit of the file updates that note (never a second copy). A file from another project does not claim the note.
 func TestKBExportThenImportNeverDuplicates(t *testing.T) {
