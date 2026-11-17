@@ -7,6 +7,8 @@
   {"kind":"member","method":"GET","path":"/minigw/v1/projects/3/remotes","want":true},
   {"kind":"member","method":"POST","path":"/minigw/v1/projects/3/remotes","want":true},
   {"kind":"member","method":"GET","path":"/minigw/v1/projects/3/kb/faq","want":true},
+  {"kind":"member","method":"GET","path":"/minigw/v1/projects/1099511627777/kb/search","want":true},
+  {"kind":"member","method":"GET","path":"/minigw/v1/projects/1099511627777/notes/5","want":true},
   {"kind":"member","method":"POST","path":"/minigw/v1/projectsx/by-remote","want":false},
   {"kind":"admin","method":"GET","path":"/projects/3/remotes","want":true},
   {"kind":"admin","method":"POST","path":"/projects/3/remotes","want":true},

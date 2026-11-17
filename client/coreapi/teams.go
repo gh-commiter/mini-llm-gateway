@@ -16,6 +16,8 @@ type TeamJSON struct {
 	Name     string `json:"name"`
 	Archived bool   `json:"archived"`
 	Path     string `json:"path"`
+	// Segment is the id of the team's own notes: the notes, search and submission routes take it as a project id.
+	Segment int64 `json:"segment"`
 }
 
 type TeamMemberJSON struct {
@@ -29,7 +31,9 @@ type TeamDetailJSON struct {
 	Projects []ProjectJSON    `json:"projects"`
 }
 
-func toTeam(t core.Team) TeamJSON { return TeamJSON{t.ID, t.Name, t.Archived, t.Path} }
+func toTeam(t core.Team) TeamJSON {
+	return TeamJSON{t.ID, t.Name, t.Archived, t.Path, core.TeamSegment(t.ID)}
+}
 func teamMembers(ms []core.TeamMember) []TeamMemberJSON {
 	out := []TeamMemberJSON{}
 	for _, m := range ms {
