@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +72,8 @@ func TestKBHookFixture(t *testing.T) {
 		Now     int64
 		Cases   []struct {
 			Name, Event string
+			Hint        string
+			LinkSlug    string
 			Stdin       map[string]any
 			StdinRaw    *string
 			StdinPad    int
@@ -101,7 +105,14 @@ func TestKBHookFixture(t *testing.T) {
 			}
 			w.e.agent = c.Agent
 			if c.Linked {
-				w.link(t, f.Gateway, f.Project, f.Slug)
+				slug := f.Slug
+				if c.LinkSlug != "" {
+					slug = c.LinkSlug
+				}
+				w.link(t, f.Gateway, f.Project, slug)
+			}
+			if c.Hint != "" {
+				os.WriteFile(filepath.Join(w.work, hintFile), []byte(c.Hint+"\n"), 0o644)
 			}
 			if c.Enabled {
 				w.write(t, "kb-hooks.json", hookSettings{Version: 1, Enabled: []hookEnabled{{f.Gateway, f.Project}}})
@@ -114,7 +125,7 @@ func TestKBHookFixture(t *testing.T) {
 				w.write(t, "kb-hook/"+session+".json", c.Marker)
 			}
 			if c.Submitted != 0 {
-				w.write(t, "kb-hook/submitted.json", hookSubmitted{1, []hookSubmit{{f.Gateway, f.Project, c.Submitted}}})
+				w.write(t, "kb-submitted.json", hookSubmitted{1, []hookSubmit{{f.Gateway, f.Project, c.Submitted}}})
 			}
 			in := ""
 			switch {
@@ -156,7 +167,7 @@ func TestKBHookFixture(t *testing.T) {
 			filepath.Walk(w.root, func(p string, fi os.FileInfo, err error) error {
 				rel, _ := filepath.Rel(w.root, p)
 				rel = filepath.ToSlash(rel)
-				if fi.IsDir() || rel == "cfg/minigw/projects.json" || rel == "cfg/minigw/kb-hooks.json" ||
+				if fi.IsDir() || rel == "cfg/minigw/projects.json" || rel == "cfg/minigw/kb-hooks.json" || rel == "cfg/minigw/kb-submitted.json" || rel == "work/"+hintFile ||
 					strings.HasPrefix(rel, "cfg/minigw/kb-hook/") && !strings.Contains(strings.TrimPrefix(rel, "cfg/minigw/kb-hook/"), "/") {
 					return nil
 				}
@@ -179,7 +190,6 @@ func TestKBHookPrune(t *testing.T) {
 	w.e.now = func() time.Time { return time.Unix(now, 0) }
 	w.write(t, "kb-hook/old.json", hookMarker{Gateway: "gw1", Project: 7, Started: now - 15*day})
 	w.write(t, "kb-hook/fresh.json", hookMarker{Gateway: "gw1", Project: 7, Started: now - day})
-	w.write(t, "kb-hook/submitted.json", hookSubmitted{1, nil})
 	os.WriteFile(filepath.Join(w.cfg, "kb-hook", "junk.json"), []byte("{"), 0o600)
 	for i := 0; i < 230; i++ {
 		w.write(t, fmt.Sprintf("kb-hook/m%03d.json", i), hookMarker{Gateway: "gw1", Project: 7, Started: 4000000 + int64(i)})
@@ -191,10 +201,10 @@ func TestKBHookPrune(t *testing.T) {
 	for _, d := range entries {
 		names[d.Name()] = true
 	}
-	if names["old.json"] || names["junk.json"] || !names["fresh.json"] || !names["submitted.json"] || !names["new.json"] {
+	if names["old.json"] || names["junk.json"] || !names["fresh.json"] || !names["new.json"] {
 		t.Fatalf("prune: %v", names)
 	}
-	if len(entries) != hookKeepMax+1 { // 200 markers (the new one among them) and submitted.json
+	if len(entries) != hookKeepMax { // 200 markers, the new one among them
 		t.Fatalf("%d files", len(entries))
 	}
 	if names["m000.json"] || names["m031.json"] || !names["m032.json"] || !names["m229.json"] { // the oldest go first
@@ -261,8 +271,10 @@ func TestKBHooksOnOffStatus(t *testing.T) {
 		}
 	}
 	w.e.gateway = func() string { return "" }
-	if _, err := run("status"); err == nil || !strings.HasPrefix(err.Error(), "not connected") {
-		t.Fatal(err)
+	var shared struct{ NotConnected string }
+	json.Unmarshal(srcFile(t, "testdata/kb-hook.json"), &shared)
+	if _, err := run("status"); err == nil || err.Error() != shared.NotConnected || shared.NotConnected == "" {
+		t.Fatalf("%v, want %q", err, shared.NotConnected)
 	}
 	w.e.gateway = func() string { return "gw1" }
 	w.e.agent = true
@@ -301,7 +313,7 @@ func TestKBSubmitRecordsOnlyA201(t *testing.T) {
 			return tc.status, []byte(`{"id":1,"project":7,"state":"pending","class":"data","title":"t"}`), nil
 		}
 		w.e.kb([]string{"submit", "acme-shop", "--title", "t", "-"})
-		b, err := os.ReadFile(filepath.Join(w.cfg, "kb-hook", "submitted.json"))
+		b, err := os.ReadFile(filepath.Join(w.cfg, "kb-submitted.json"))
 		if tc.record != (err == nil) {
 			t.Fatalf("status %d: record=%v err=%v", tc.status, tc.record, err)
 		}
@@ -311,7 +323,7 @@ func TestKBSubmitRecordsOnlyA201(t *testing.T) {
 			if !reflect.DeepEqual(s, hookSubmitted{1, []hookSubmit{{"gw1", 7, 1000000}}}) {
 				t.Fatalf("%+v", s)
 			}
-			if fi, _ := os.Stat(filepath.Join(w.cfg, "kb-hook", "submitted.json")); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+			if fi, _ := os.Stat(filepath.Join(w.cfg, "kb-submitted.json")); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 				t.Fatalf("mode %v", fi.Mode().Perm())
 			}
 		}
@@ -330,24 +342,24 @@ func hookRepo(t *testing.T) string {
 
 func TestHookGitState(t *testing.T) {
 	dir := hookRepo(t)
-	head, status := hookGitState(dir)
+	head, status := hookGitStateWithin(dir, time.Minute)
 	want := strings.TrimSpace(gitIn(t, dir, "rev-parse", "HEAD"))
 	if head != want || len(status) != 64 {
 		t.Fatalf("%q %q", head, status)
 	}
-	if h, s := hookGitState(dir); h != head || s != status {
+	if h, s := hookGitStateWithin(dir, time.Minute); h != head || s != status {
 		t.Fatal("not stable")
 	}
 	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b"), 0o644)
-	if h, s := hookGitState(dir); h != head || s == status {
+	if h, s := hookGitStateWithin(dir, time.Minute); h != head || s == status {
 		t.Fatalf("an untracked file: %q %q", h, s)
 	}
 	gitIn(t, dir, "add", "b.txt")
 	gitIn(t, dir, "commit", "-qm", "two")
-	if h, _ := hookGitState(dir); h == head {
+	if h, _ := hookGitStateWithin(dir, time.Minute); h == head {
 		t.Fatal("a commit does not change head")
 	}
-	if h, s := hookGitState(t.TempDir()); h != "" || s != "" {
+	if h, s := hookGitStateWithin(t.TempDir(), time.Minute); h != "" || s != "" {
 		t.Fatalf("not a repository: %q %q", h, s)
 	}
 }
@@ -368,8 +380,93 @@ func TestHookGitStateDoesNotRunTheCheckoutsCode(t *testing.T) {
 		t.Fatal("the control did not run the fsmonitor script: the test proves nothing")
 	}
 	os.Remove(proof)
-	hookGitState(dir)
+	hookGitStateWithin(dir, time.Minute)
 	if _, err := os.Stat(proof); err == nil {
 		t.Fatal("the checkout's core.fsmonitor program ran")
+	}
+}
+
+// M1: git status and diff-files run the checkout's content filters (info/attributes + filter.<x>.clean) on a changed file; the
+// hook's git state must not.
+func TestHookGitStateDoesNotRunContentFilters(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the filter is a POSIX shell command")
+	}
+	dir := hookRepo(t)
+	proof := filepath.Join(t.TempDir(), "ran")
+	os.WriteFile(filepath.Join(dir, ".git", "info", "attributes"), []byte("* filter=x\n"), 0o644)
+	gitIn(t, dir, "config", "filter.x.clean", "touch '"+proof+"'; cat")
+	later := time.Now().Add(time.Hour) // a tracked file whose stat differs from the index, content the same: git compares content, through the filter
+	os.Chtimes(filepath.Join(dir, "a.txt"), later, later)
+	gitIn(t, dir, "status") // positive control: plain status runs the filter
+	if _, err := os.Stat(proof); err != nil {
+		t.Fatal("the control did not run the filter: the test proves nothing")
+	}
+	os.Rename(proof, proof+".1")
+	_, before := hookGitStateWithin(dir, time.Minute)
+	if _, err := os.Stat(proof); err == nil {
+		t.Fatal("the checkout's clean filter ran")
+	}
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("changed again, longer"), 0o644)
+	if _, after := hookGitStateWithin(dir, time.Minute); after == before || len(after) != 64 {
+		t.Fatal("an edit of a tracked file is not seen")
+	}
+	gitIn(t, dir, "add", "a.txt") // staged edits are seen too
+	if _, staged := hookGitStateWithin(dir, time.Minute); staged == before {
+		t.Fatal("a staged file is not seen")
+	}
+}
+
+// L3: with no kb-hooks.json nothing but that file is read: no profile, no projects.json.
+func TestKBHookReadsNothingWhenNotEnabled(t *testing.T) {
+	for _, settings := range []*hookSettings{nil, {Version: 1}} {
+		w := newHookWorld(t, "")
+		w.link(t, "gw1", 7, "acme-shop")
+		if settings != nil {
+			w.write(t, "kb-hooks.json", settings)
+		}
+		asked := 0
+		w.e.gateway = func() string { asked++; return "gw1" }
+		w.e.in = strings.NewReader(`{"session_id":"s1","cwd":"` + w.work + `"}`)
+		if err := w.e.kb([]string{"hook", "start"}); err != nil || asked != 0 || w.out.Len() != 0 {
+			t.Fatalf("settings %v: asked %d, out %q, err %v", settings, asked, w.out.String(), err)
+		}
+	}
+}
+
+// M2: the command in the hand-in request, parsed and run through the real argument parser with the text on stdin.
+func TestHookRequestCommandsWork(t *testing.T) {
+	text := strings.ReplaceAll(hookRequestText, "<slug>", "acme-shop")
+	cmds := regexp.MustCompile("`(minigw kb submit [^`]*)`").FindAllStringSubmatch(text, -1)
+	if len(cmds) != 2 {
+		t.Fatalf("%d commands in the request", len(cmds))
+	}
+	for i, kind := range []string{"finding", "faq"} {
+		var args []string
+		for _, m := range regexp.MustCompile(`"([^"]*)"|(\S+)`).FindAllStringSubmatch(cmds[i][1], -1) {
+			args = append(args, m[1]+m[2])
+		}
+		args = slices.Replace(args, 0, 1) // minigw
+		if args[0] != "kb" {
+			t.Fatal(args)
+		}
+		w := newHookWorld(t, "the text on stdin\n")
+		w.e.connect = func() (connection, string) { return connection{}, "gw1" }
+		w.e.sleep = func(time.Duration) {}
+		var sent map[string]any
+		w.e.do = func(_ connection, method, path string, h map[string]string, b []byte) (int, []byte, http.Header) {
+			if method == "GET" {
+				return 200, []byte(`{"id":7}`), nil
+			}
+			h["Idempotency-Key"] = ""
+			json.Unmarshal(b, &sent)
+			return 201, []byte(`{"id":1,"project":7,"state":"pending","class":"data","title":"t"}`), nil
+		}
+		if err := w.e.kb(args[1:]); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if sent["entryKind"] != kind || sent["body"] != "the text on stdin\n" || sent["title"] == "" || w.out.String() != "submission 1 pending\n" {
+			t.Fatalf("%v: %v %q", args, sent, w.out.String())
+		}
 	}
 }
