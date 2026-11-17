@@ -1,0 +1,37 @@
+import Foundation
+
+/// The argument parser of the Mac `minigw gw ...` commands (the function RouterCommand.swift calls), kept here so that a test can drive
+/// it: commands and options in any order (`--x v` or `--x=v`), and the option check of `gw usage`.
+public enum AdminArgs {
+    /// Options that take a value (`--x v`); any other `--x` is a switch.
+    public static let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder",
+                                             "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider",
+                                             "sort", "reason", "team", "by", "phase", "activity", "task"]
+
+    /// The options `gw usage` accepts (the report and --legacy); every option its help text names must be here.
+    public static let usageFlags: Set<String> = ["days", "provider", "model", "sort", "json", "csv", "legacy", "device", "folder", "user", "project",
+                                                 "by", "phase", "activity", "task"]
+
+    public static func parse(_ argv: [String]) -> (pos: [String], flags: [String: String]) {
+        var pos: [String] = [], flags: [String: String] = [:]
+        var i = 0
+        while i < argv.count {
+            let a = argv[i]
+            // A device ID (43 base64url characters) may start with "--": not an option.
+            if a.hasPrefix("--"), !(a.count == 43 && a.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) {
+                let kv = a.dropFirst(2).split(separator: "=", maxSplits: 1).map(String.init)
+                if kv.count == 2 { flags[kv[0]] = kv[1] } else if valued.contains(kv[0]), i + 1 < argv.count { flags[kv[0]] = argv[i + 1]; i += 1 } else { flags[kv[0]] = "true" }
+            } else {
+                pos.append(a)
+            }
+            i += 1
+        }
+        return (pos, flags)
+    }
+
+    /// The first option `gw usage` does not know, as the refusal text; nil when all are known.
+    public static func usageError(_ pos: [String], _ flags: [String: String]) -> String? {
+        guard pos.first == "usage", let bad = flags.keys.sorted().first(where: { !usageFlags.contains($0) }) else { return nil }
+        return "minigw gw usage: unknown option --\(bad)\n" + UsageReport.help
+    }
+}

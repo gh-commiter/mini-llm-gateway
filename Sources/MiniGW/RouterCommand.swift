@@ -225,21 +225,8 @@ func routerCommand(_ argv: [String]) {
         return
     }
 
-    // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
-    var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider", "sort", "reason", "team", "by", "phase", "activity", "task"]
-    var i = 0
-    while i < argv.count {
-        let a = argv[i]
-        // ID naprave (43 znakov base64url) se lahko začne z »--«: ni zastavica.
-        if a.hasPrefix("--"), !(a.count == 43 && a.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) {
-            let kv = a.dropFirst(2).split(separator: "=", maxSplits: 1).map(String.init)
-            if kv.count == 2 { flags[kv[0]] = kv[1] } else if valued.contains(kv[0]), i + 1 < argv.count { flags[kv[0]] = argv[i + 1]; i += 1 } else { flags[kv[0]] = "true" }
-        } else {
-            pos.append(a)
-        }
-        i += 1
-    }
+    // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«): AdminArgs (RouterCore), ki ga preizkusi test.
+    let (pos, flags) = AdminArgs.parse(argv)
     if pos.isEmpty || pos[0] == "help" || flags["help"] != nil { say(routerHelp); exit(0) }
     if flags["config"] != nil { fail("the Mac router keeps its settings in the Mini Gateway app (no --config)") }
     if pos.first == "claude" && flags["folder"] != nil || flags["allow-unsandboxed-bash"] != nil {
@@ -249,9 +236,7 @@ func routerCommand(_ argv: [String]) {
     if flags["work"] != nil, !["claude", "codex", "grok"].contains(pos[0]), pos != ["copilot"] {
         fail("--work only applies to minigw gw claude|codex|copilot")
     }
-    if pos[0] == "usage", let bad = flags.keys.first(where: { !["days", "provider", "model", "sort", "json", "csv", "legacy", "device", "folder", "user", "project"].contains($0) }) {
-        fail("minigw gw usage: unknown option --\(bad)\n" + UsageReport.help)
-    }
+    if let e = AdminArgs.usageError(pos, flags) { fail(e) }
     func need(_ min: Int, _ max: Int) { if pos.count < min || pos.count > max { fail(routerHelp) } }
     if pos.count == 3, pos[0] == "core", pos[1] == "restore" { coreRestore(pos[2], yes: flags["yes"] != nil) }  // the app must NOT run: no admin connection
     let a = AdminConnection.open()
@@ -347,7 +332,7 @@ func routerCommand(_ argv: [String]) {
         }
 
     case "usage" where flags["legacy"] == "true":  // the folder and device counters of 0.5.x
-        guard pos.count == 1, ["json", "csv", "model", "provider", "sort", "user", "project"].allSatisfy({ flags[$0] == nil }) else { fail(UsageReport.help) }
+        guard pos.count == 1, ["json", "csv", "model", "provider", "sort", "user", "project", "by", "phase", "activity", "task"].allSatisfy({ flags[$0] == nil }) else { fail(UsageReport.help) }
         let query = "?days=" + esc(flags["days"] ?? "7") + "&device=" + esc(flags["device"] ?? "") + "&folder=" + esc(flags["folder"] ?? "")
         let list = a.call("GET", "/usage" + query)["usage"] as? [[String: Any]] ?? []
         list.forEach { say(usageLine($0)) }

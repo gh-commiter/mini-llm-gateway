@@ -530,7 +530,7 @@ func routerCommand(args []string, in io.Reader) {
 			coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, provider: *evProvider, device: *device, folder: *folder, sort: *evSort, json: *asJSON, csv: *asCSV, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask})
 			break
 		}
-		if len(pos) != 1 || *asJSON || *asCSV || *evModel != "" || *evProvider != "" || *evSort != "" || *evUser != "" || *evProject != "" {
+		if len(pos) != 1 || *asJSON || *asCSV || *evModel != "" || *evProvider != "" || *evSort != "" || *evUser != "" || *evProject != "" || *evBy != "" || *evPhase != "" || *evActivity != "" || *evTask != "" {
 			fail(usageReportHelp)
 		}
 		var r struct{ Usage []projectUse }

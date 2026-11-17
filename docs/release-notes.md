@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- On the Mac gateway, `minigw gw usage --by ...` and `--phase`, `--activity`, `--task` answered "unknown option" (the Mac command's own option check had not been given the new options). They work now, with the same output as on Windows and Linux, and `--legacy` refuses them as it does the other report options. A test now feeds every option that the help text of `gw usage`, `gw usage-events`, `gw project-sessions` and `minigw project sessions` names to the real argument parser (Mac and Go).
+
 ## 0.7.16
 
 ### New
