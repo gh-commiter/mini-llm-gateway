@@ -54,7 +54,8 @@ func TestOwnerKBReads(t *testing.T) {
 	call(admin, "PUT", fmt.Sprintf("/teams/%d/members/%d", team.ID, f.uid["fani"]), "", 200)
 	seg := fmt.Sprint(core.TeamSegment(team.ID))
 	base := "/minigw/v1/projects/" + seg
-	call(member("dev-fani"), "POST", base+"/notes", `{"class":"data","title":"deploy order","body":"first migrate"}`, 201)
+	var teamNote NoteJSON
+	json.Unmarshal(call(member("dev-fani"), "POST", base+"/notes", `{"class":"data","title":"deploy order","body":"first migrate"}`, 201).Body, &teamNote)
 	call(member("dev-fani"), "POST", base+"/kb/submissions", `{"class":"data","title":"Where is it?","body":"Here.","entryKind":"faq"}`, 201)
 	teamList := string(call(admin, "GET", "/kb/notes?project="+seg, "", 200).Body)
 	if !strings.Contains(teamList, "deploy order") || !strings.Contains(teamList, `"team":"acme"`) || strings.Contains(teamList, seg) {
@@ -102,6 +103,31 @@ func TestOwnerKBReads(t *testing.T) {
 	}
 	if !rep.IsReplacement || rep.Body == nil || *rep.Body != "new text" || rep.Replaces != note {
 		t.Fatalf("replacement detail: %+v", rep)
+	}
+	// no owner answer carries the hidden segment id as a number: lists, note by id, submissions (list and by id), faq
+	var teamSub adminSubmissionJSON
+	for _, sub := range q.Submissions {
+		if sub.ScopeKind == "team" {
+			teamSub = sub
+		}
+	}
+	call(admin, "POST", fmt.Sprintf("/kb/submissions/%d/accept", teamSub.ID), "{}", 200)
+	for _, path := range []string{
+		"/kb/notes?project=" + seg, fmt.Sprintf("/kb/notes/%d", teamNote.ID), "/kb/submissions", fmt.Sprintf("/kb/submissions/%d", teamSub.ID),
+		"/kb/faq?project=" + seg, "/kb/notes?project=" + seg + "&kind=faq",
+	} {
+		body := string(call(admin, "GET", path, "", 200).Body)
+		if strings.Contains(body, seg) {
+			t.Errorf("GET %s shows the hidden segment id: %s", path, body)
+		}
+	}
+	if got := string(call(admin, "GET", "/kb/faq?project="+seg, "", 200).Body); !strings.Contains(got, "Where is it?") {
+		t.Fatalf("the accepted team faq is not listed: %s", got)
+	}
+	var detail adminSubmissionJSON
+	json.Unmarshal(call(admin, "GET", fmt.Sprintf("/kb/submissions/%d", teamSub.ID), "", 200).Body, &detail)
+	if detail.Project != 0 || detail.Provenance.Project != 0 || detail.ScopeKind != "team" || detail.ScopeName != "acme" {
+		t.Fatalf("%+v", detail)
 	}
 	// accept the project faq: it now lists as an faq note, and the kind filter finds it
 	for _, s := range q.Submissions {
@@ -159,5 +185,46 @@ func TestOwnerKBReadsAreNotOnOtherChannels(t *testing.T) {
 	}
 	if IsMemberPath("/minigw/v1/kb/notes") || IsMemberPath("/minigw/v1/kb/faq") {
 		t.Fatal("a member path")
+	}
+}
+
+// Reading one private note by id is audited (id and place, never the content); lists and other classes are not.
+func TestOwnerReadOfAPrivateNoteIsAudited(t *testing.T) {
+	f := newFixture(t)
+	admin := Context{Kind: KindAdmin}
+	reads := func() (out []core.AuditEvent) {
+		evs, err := f.st.AuditEvents(bg, 0, 500)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range evs {
+			if e.Action == "kb.owner.read" {
+				out = append(out, e)
+			}
+		}
+		return
+	}
+	get := func(path string) {
+		t.Helper()
+		if r := f.api.Handle(bg, admin, Request{Method: "GET", Path: path}); r.Status != 200 {
+			t.Fatalf("%s: %d", path, r.Status)
+		}
+	}
+	get(fmt.Sprintf("/kb/notes/%d", f.nid["data"]))
+	f.api.Handle(bg, admin, Request{Method: "GET", Path: "/kb/notes", RawQuery: fmt.Sprintf("project=%d&class=private", f.pid["fakture"])})
+	if len(reads()) != 0 {
+		t.Fatalf("a shared note or a list was audited: %v", reads())
+	}
+	get(fmt.Sprintf("/kb/notes/%d", f.nid["private"]))
+	get(fmt.Sprintf("/kb/notes/%d", f.nid["private"]))
+	rs := reads()
+	if len(rs) != 2 || rs[0].Subject != fmt.Sprint(f.nid["private"]) || !strings.Contains(string(rs[0].Detail), fmt.Sprintf(`"project":%d`, f.pid["fakture"])) {
+		t.Fatalf("%+v", rs)
+	}
+	if strings.Contains(string(rs[0].Detail), "body") || strings.Contains(rs[0].Subject, "t-private") {
+		t.Fatal("the audit row holds content")
+	}
+	if r := f.api.Handle(bg, admin, Request{Method: "GET", Path: "/kb/notes/999999"}); r.Status != 404 || len(reads()) != 2 {
+		t.Fatal("a failed read was audited")
 	}
 }

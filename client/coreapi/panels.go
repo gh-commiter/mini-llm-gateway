@@ -404,6 +404,9 @@ func (c *panelCheck) list(w string, s pSection, nested bool) error {
 		if _, ok := c.d.Refs[sc.Ref]; !ok || !reQueryName.MatchString(sc.Param) {
 			return fmt.Errorf("%sscope: an undeclared ref or a bad parameter name", w)
 		}
+		if s.Paging != nil && s.Paging.Param == sc.Param { // the paging cursor would overwrite the choice (a source path has no query of its own)
+			return fmt.Errorf("%sscope and paging use the same parameter %q", w, sc.Param)
+		}
 		if err := c.key("scope.label", sc.Label, maxLabel); err != nil {
 			return fmt.Errorf("%s%w", w, err)
 		}

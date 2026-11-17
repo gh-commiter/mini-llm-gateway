@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"database/sql"
+	"strconv"
 )
 
 // Owner reads of the knowledge base. The owner is no member and has no principal: these read what the project (or the
@@ -32,12 +33,27 @@ func (s *Store) OwnerListNotes(ctx context.Context, project int64, class Class, 
 }
 
 // OwnerGetNote reads one note by id, with its body and provenance.
+//
+// Reading a `private` note by id is audited (`kb.owner.read`: the note id, the project or the team's name, never the content),
+// once per read: lists are not audited, and there is no deduplication anywhere else in the audit trail to follow.
 func (s *Store) OwnerGetNote(ctx context.Context, id int64) (n Note, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		var e error
 		n, e = getNote(tx, id)
 		return e
 	})
+	if err != nil || n.Class != Private {
+		return
+	}
+	detail := map[string]any{"project": n.ProjectID}
+	if isSegment(n.ProjectID) {
+		detail = map[string]any{"team": n.Team}
+	}
+	if e := s.write(ctx, func(tx *sql.Tx) error {
+		return Audit(tx, adminActor, "kb.owner.read", strconv.FormatInt(id, 10), detail)
+	}); e != nil {
+		return Note{}, e
+	}
 	return
 }
 

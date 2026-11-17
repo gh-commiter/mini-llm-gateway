@@ -180,6 +180,7 @@ func (m nameMaps) submission(v core.Submission) adminSubmissionJSON {
 	j := adminSubmissionJSON{Submission: v, AuthorName: m.users[v.User], Received: v.Provenance.Received, IsReplacement: v.Replaces > 0, ScopeKind: "project", ScopeName: m.projects[v.Project]}
 	if team, ok := core.SegmentTeam(v.Project); ok {
 		j.ScopeKind, j.ScopeName = "team", m.teams[team]
+		j.Project, j.Provenance.Project = 0, 0 // the hidden segment id never leaves: scopeKind and scopeName say where it belongs
 	}
 	return j
 }
@@ -260,11 +261,11 @@ func (a *API) adminKBRead(ctx context.Context, st *core.Store, method string, se
 	return resp(200, res)
 }
 
-// adminNote is toNote without the hidden segment id: a team's note has project 0 and the team's name.
+// adminNote is toNote without the hidden segment id (also in the provenance): a team's note has project 0 and the team's name.
 func adminNote(n core.Note, withBody bool) NoteJSON {
-	j := toNote(n, withBody)
 	if _, seg := core.SegmentTeam(n.ProjectID); seg {
-		j.Project = 0
+		n.Provenance.Project = 0 // (n is a copy)
+		n.ProjectID = 0
 	}
-	return j
+	return toNote(n, withBody)
 }

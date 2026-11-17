@@ -195,6 +195,7 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     func loadList(_ s: PanelSection, path: String, parent: PanelRow?, more: Bool = false) async {
         let key = PanelListKey(path: path, parent: parent?.id ?? "")
         var d = lists[key] ?? PanelListData()
+        if more && d.loading { return }  // two quick "Load more" clicks would send one cursor twice
         guard let source = s.source else { return }
         let template = source.path
         var req = CoreRequest(method: "GET", path: "")
@@ -215,8 +216,10 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
             query.append("\(paging.param)=\(e)")
         }
         req.query = query.joined(separator: "&")
+        let sent = selected[key]
         d.loading = true; lists[key] = d
         let a = await send(req)
+        if s.scope != nil && selected[key] != sent { return }  // the picker moved meanwhile: this answer is for another choice
         d.loading = false
         if let e = a.panelError { d.error = e; lists[key] = d; return }
         guard let itemsKey = source.items, let items = Self.items(a.body, itemsKey) else { d.error = .refused("the answer has no list of rows"); lists[key] = d; return }

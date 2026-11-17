@@ -18,12 +18,15 @@ private actor Fake {
     var log: [String] = []
     var answers: [String: (Int, String)] = [:]
     var delay: UInt64 = 0
+    var delays: [String: UInt64] = [:]
     func slow(_ ns: UInt64) { delay = ns }
+    func slow(_ key: String, _ ns: UInt64) { delays[key] = ns }  // key: "METHOD path?query"
     func set(_ k: String, _ status: Int, _ body: String) { answers[k] = (status, body) }
     func handle(_ r: CoreRequest) async -> CoreResponse {
         log.append(r.method + " " + r.path + (r.query.isEmpty ? "" : "?" + r.query) + (r.body.isEmpty ? "" : " " + String(decoding: r.body, as: UTF8.self)))
-        if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
-        let (s, b) = answers[r.method + " " + r.path] ?? (404, #"{"error":{"message":"nothing here"}}"#)
+        let full = r.method + " " + r.path + (r.query.isEmpty ? "" : "?" + r.query)
+        if let d = delays[full] ?? (delay > 0 ? delay : nil) { try? await Task.sleep(nanoseconds: d) }
+        let (s, b) = answers[full] ?? answers[r.method + " " + r.path] ?? (404, #"{"error":{"message":"nothing here"}}"#)
         return CoreResponse(status: s, body: Data(b.utf8))
     }
     func clear() { log = [] }
@@ -657,6 +660,37 @@ private let kbAnswers: [(String, Int, String)] = [
         await m.loadMore(notesP, path: "notes-project")
         #expect(await fake.log == ["GET /kb/notes?project=2&after=c2"])
         _ = (queue, notesT)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func anAnswerForAnEarlierChoiceOfThePickerIsDropped() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let notes = m.panel.sections[2]
+        await fake.set("GET /kb/notes?project=1", 200, #"{"notes":[{"id":1,"title":"of one"}]}"#)
+        await fake.set("GET /kb/notes?project=2", 200, #"{"notes":[{"id":2,"title":"of two"}]}"#)
+        await fake.slow("GET /kb/notes?project=1", 150_000_000)   // the answer for the first choice arrives last
+        await fake.slow("GET /kb/notes?project=2", 10_000_000)
+        async let first: Void = m.select(.int(1), section: notes, path: "notes-project")
+        try await Task.sleep(nanoseconds: 20_000_000)
+        async let second: Void = m.select(.int(2), section: notes, path: "notes-project")
+        _ = await (first, second)
+        #expect(m.data("notes-project").rows.map(\.id) == ["2"] && m.selected[PanelListKey(path: "notes-project", parent: "")] == .int(2))
+        #expect(!m.data("notes-project").loading)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func twoQuickLoadMoreClicksSendTheCursorOnce() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let notes = m.panel.sections[2]
+        await fake.set("GET /kb/notes?project=1&after=c2", 200, #"{"notes":[{"id":10,"title":"more"}]}"#)
+        await fake.slow("GET /kb/notes?project=1&after=c2", 60_000_000)
+        await fake.clear()
+        async let a: Void = m.loadMore(notes, path: "notes-project")
+        try await Task.sleep(nanoseconds: 15_000_000)
+        async let b: Void = m.loadMore(notes, path: "notes-project")
+        _ = await (a, b)
+        #expect(await fake.log == ["GET /kb/notes?project=1&after=c2"])
+        #expect(m.data("notes-project").rows.map(\.id) == ["9", "10"] && m.data("notes-project").error == nil)
     }
 
     @Test(.enabled(if: haveFixtures)) func exactRequestsOfAcceptAndReject() async throws {

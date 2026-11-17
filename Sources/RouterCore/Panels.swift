@@ -284,6 +284,7 @@ public enum PanelValidator {
             guard s.body == nil, s.when == nil, let source = s.source, s.title != nil, let key = s.key else { throw Refusal("list \(s.id): needs title, source and key, and has no body or when") }
             if let sc = s.scope {
                 guard d.refs[sc.ref] != nil, m(sc.param, #"^[a-z][a-z0-9_]{0,31}\z"#) else { throw Refusal("list \(s.id): scope with an undeclared ref or a bad parameter name") }
+                if s.paging?.param == sc.param { throw Refusal("list \(s.id): scope and paging use the same parameter") }
                 try str("scope.label", sc.label)
             }
             try str("title", s.title)

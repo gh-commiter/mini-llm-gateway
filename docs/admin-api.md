@@ -625,8 +625,8 @@ Owner routes use the existing owner admin authentication and base URL:
 
 The three owner read routes (admin channel only: they are not member routes and the run port does not serve them)
 let the owner read what a project or a team holds, **including `private` notes**; the owner could already read all of it
-through backup and audit. `project` is a project id or a team's `segment` (from `GET /teams`); a team's own notes show the
-team's name in `team` and `project` 0, never the hidden id. Pending submissions are not notes and never appear. A bad or
+through backup and audit. Reading ONE `private` note by id writes an audit row (`kb.owner.read`: the note id and the project id or the team's name, never the content), once per read; lists and notes of other classes are not audited. `project` is a project id or a team's `segment` (from `GET /teams`); a team's own notes show the
+team's name in `team` and `project` 0 (also in `provenance`), never the hidden id; the same holds for the team submissions in the review answers. Pending submissions are not notes and never appear. A bad or
 missing `project` answers 400, an unknown one 404. The review answers (`GET /kb/submissions`, `/kb/submissions/{id}`) carry,
 besides the stored fields, `authorName`, `scopeKind` (`project` or `team`), `scopeName` (the project's or the team's name),
 `received` and `isReplacement`, so a panel needs no joins.

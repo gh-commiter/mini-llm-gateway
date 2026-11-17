@@ -662,6 +662,20 @@
     "/sections/1/scope/extra": 1
    },
    "swift": "accept"
+  },
+  {
+   "name": "a scope parameter equal to the paging parameter",
+   "set": {
+    "/sections/1/paging/param": "item"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a scope parameter equal to the paging parameter (the other way)",
+   "set": {
+    "/sections/1/scope/param": "after"
+   },
+   "swift": "refuse"
   }
  ]
 }
