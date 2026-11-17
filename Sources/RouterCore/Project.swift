@@ -8,8 +8,17 @@ import Foundation
 // Parity with Go is asserted by the shared fixtures client/testdata/project-*.json (Tests/RouterCoreTests/ProjectTests.swift).
 
 public struct ProjectError: Error, CustomStringConvertible {
-    public let message: String
-    public init(_ message: String) { self.message = message }
+    public var message: String
+    /// The HTTP status of the gateway's answer this error words (0 = not a gateway answer).
+    public var gatewayStatus = 0
+    public init(_ message: String, gatewayStatus: Int = 0) { self.message = message; self.gatewayStatus = gatewayStatus }
+
+    /// A refusal or a "not found" of a gateway says which gateway it came from when the client has more than one profile (the default
+    /// profile may be another gateway than the one the user means). Shared fixture client/testdata/gateway-hint.json.
+    public static func hint(_ message: String, status: Int, profile: String, url: String, profiles: Int) -> String {
+        guard status == 403 || status == 404, profiles >= 2, !profile.isEmpty else { return message }
+        return message + "\nhint: this answer came from profile \(profile) (\(url)); to ask another gateway add --minigw-profile <name> (minigw profiles lists them)"
+    }
     public var description: String { message }
 }
 

@@ -103,7 +103,7 @@ func runProjectCmd(kind string, args []string) {
 		err = e.project(args)
 	}
 	if err != nil {
-		fail(err.Error())
+		fail(withGatewayHint(err))
 	}
 }
 
@@ -135,8 +135,43 @@ func (e *projectEnv) say(s string) { fmt.Fprintln(e.out, s) }
 // noteTime: a note's time as note list and note read show it: local time, to the minute.
 func noteTime(t time.Time) string { return t.Local().Format("2006-01-02 15:04") }
 
+// gwStatusError is a gateway's answer (as gatewayError words it) with the HTTP status it came with.
+type gwStatusError struct {
+	error
+	status int
+}
+
+func (e gwStatusError) Unwrap() error { return e.error }
+
 // gatewayError: section 6's answers as short sentences. 403 forbidden is printed plainly.
 func gatewayError(st int, data []byte, h http.Header) error {
+	return gwStatusError{gatewayAnswer(st, data, h), st}
+}
+
+// gatewayHintText: a refusal or a "not found" of a gateway says which gateway it came from when the client has more than
+// one profile (the default profile may be another gateway than the one the user means). Shared fixture testdata/gateway-hint.json.
+func gatewayHintText(msg string, status int, profile, url string, profiles int) string {
+	if (status != 403 && status != 404) || profiles < 2 || profile == "" {
+		return msg
+	}
+	return msg + "\nhint: this answer came from profile " + profile + " (" + url + "); to ask another gateway add --minigw-profile <name> (minigw profiles lists them)"
+}
+
+// withGatewayHint adds that line to an error that is a gateway's refusal.
+func withGatewayHint(err error) string {
+	var g gwStatusError
+	if !errors.As(err, &g) || agentConn() != nil {
+		return err.Error()
+	}
+	names := profileNames()
+	ps := loadProfiles()
+	if len(ps) == 0 {
+		return err.Error()
+	}
+	return gatewayHintText(err.Error(), g.status, ps[0].name, ps[0].conn.URL, len(names))
+}
+
+func gatewayAnswer(st int, data []byte, h http.Header) error {
 	var b struct {
 		Error struct {
 			Type, Message string

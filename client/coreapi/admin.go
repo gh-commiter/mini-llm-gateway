@@ -111,7 +111,10 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
 	failErr := func(err error) (int, any, bool) {
 		var inv core.ErrInvalid
+		var ref core.ErrRefusal
 		switch {
+		case errors.As(err, &ref):
+			return fail(400, ref.Msg)
 		case errors.Is(err, core.ErrNotFound):
 			return fail(404, "not found")
 		case errors.As(err, &inv):

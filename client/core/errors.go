@@ -39,6 +39,13 @@ type ErrInvalid struct{ What string }
 
 func (e ErrInvalid) Error() string { return "invalid " + e.What }
 
+// ErrRefusal is a refusal that already is a sentence ("this bundle was exported by this gateway: ..."): it reads as it is,
+// without the "invalid " that ErrInvalid puts before a noun phrase. It is a bad request (400) like ErrInvalid.
+type ErrRefusal struct{ Msg string }
+
+func (e ErrRefusal) Error() string { return e.Msg }
+func (e ErrRefusal) Unwrap() error { return ErrInvalid{e.Msg} }
+
 func noAccess(reason string) error { return fmt.Errorf("%w: %s", ErrNoProjectAccess, reason) }
 
 // noAccessErr: a no-project-access error whose reason the member route can name (errors.Is), not only log.

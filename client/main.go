@@ -423,6 +423,11 @@ func main() {
 			i--
 		}
 	}
+	if profileFlag == "" && agentConn() == nil { // MINIGW_PROFILE=<name>: the environment form of --minigw-profile (the flag wins)
+		if v := os.Getenv("MINIGW_PROFILE"); v != "" {
+			profileFlag, profileFromEnv = v, true
+		}
+	}
 	first := ""
 	if len(args) > 0 {
 		first = args[0]
@@ -1301,7 +1306,7 @@ func modelProfile(args, names []string) []string {
 		if at <= 0 || !slices.Contains(names, v[at+1:]) {
 			continue
 		}
-		if profileFlag != "" && profileFlag != v[at+1:] {
+		if profileFlag != "" && !profileFromEnv && profileFlag != v[at+1:] { // a model@profile beats MINIGW_PROFILE
 			fail("--model " + v + " and --minigw-profile " + profileFlag + " name different gateways")
 		}
 		profileFlag = v[at+1:]

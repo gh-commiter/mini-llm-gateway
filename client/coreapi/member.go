@@ -58,10 +58,11 @@ type NoteJSON struct {
 	Revision         int64            `json:"revision"`
 	EntryKind        string           `json:"entryKind"`
 	Team             string           `json:"team,omitempty"` // the team of a note in a team's own notes (Project is then a hidden id)
+	Origin           string           `json:"origin,omitempty"`
 }
 
 func toNote(n core.Note, withBody bool) NoteJSON {
-	j := NoteJSON{ID: n.ID, Project: n.ProjectID, Class: n.Class, Title: n.Title, Author: n.Author, Created: n.Created, Updated: n.Updated, Revision: n.Revision, EntryKind: n.EntryKind, Team: n.Team}
+	j := NoteJSON{ID: n.ID, Project: n.ProjectID, Class: n.Class, Title: n.Title, Author: n.Author, Created: n.Created, Updated: n.Updated, Revision: n.Revision, EntryKind: n.EntryKind, Team: n.Team, Origin: n.Origin}
 	if j.EntryKind == "" { // an old idempotency receipt
 		j.EntryKind = core.KindFinding
 	}
@@ -412,6 +413,7 @@ func (a *API) noteRoute(ctx context.Context, st *core.Store, p core.Principal, p
 		if err != nil {
 			return a.errResponse(err)
 		}
+		n.Origin = st.NoteOrigin(n.ProjectID) // the export writes it into the file
 		return resp(200, toNote(n, true))
 	case "PUT":
 		var b noteBody

@@ -29,6 +29,9 @@ const (
 	keepSnaps = 3
 )
 
+// KeepSnapshots is how many pre-migration snapshots the core folder keeps (the newest ones).
+const KeepSnapshots = keepSnaps
+
 var (
 	ErrNewerSchema = errors.New("core database has a newer schema than this program")
 	ErrLocked      = errors.New("core database is in use by another process")
@@ -57,6 +60,8 @@ type Store struct {
 	bound atomic.Pointer[map[string]int64] // device -> user snapshot for event attribution
 	st    state
 	gw    string
+	// migrated: set by Open when it migrated an older database (see Migrated)
+	migrated *Migration
 }
 
 // state is what must outlive a restore: it is kept in core.state as well as in the database (max of both wins).
@@ -218,6 +223,9 @@ func (s *Store) Dir() string { return s.dir }
 
 // GatewayID is created once and kept by every backup.
 func (s *Store) GatewayID() string { return s.gw }
+
+// NoteOrigin is the origin of the notes of a project on this gateway (see Note.Origin).
+func (s *Store) NoteOrigin(project int64) string { return s.gw + ":" + strconv.FormatInt(project, 10) }
 
 // write runs fn in one immediate transaction. One writer at a time in this process; the folder lock keeps other
 // processes out, so a writer never meets "database is locked".

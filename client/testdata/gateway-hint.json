@@ -1,0 +1,11 @@
+{
+  "cases": [
+    {"name": "refusal with two profiles", "message": "no project access: this device is not bound to a user (the owner runs: minigw gw bind X USER)", "status": 403, "profile": "mini", "url": "http://10.0.2.5:8765", "profiles": 2,
+     "out": "no project access: this device is not bound to a user (the owner runs: minigw gw bind X USER)\nhint: this answer came from profile mini (http://10.0.2.5:8765); to ask another gateway add --minigw-profile <name> (minigw profiles lists them)"},
+    {"name": "not found with three profiles", "message": "not found or not visible", "status": 404, "profile": "win", "url": "http://hpx:8765", "profiles": 3,
+     "out": "not found or not visible\nhint: this answer came from profile win (http://hpx:8765); to ask another gateway add --minigw-profile <name> (minigw profiles lists them)"},
+    {"name": "one profile: nothing added", "message": "not found or not visible", "status": 404, "profile": "default", "url": "http://x", "profiles": 1, "out": "not found or not visible"},
+    {"name": "other statuses are not refusals", "message": "too many requests: try again in 5 seconds", "status": 429, "profile": "mini", "url": "http://x", "profiles": 2, "out": "too many requests: try again in 5 seconds"},
+    {"name": "no answer", "message": "no answer from the gateway", "status": 0, "profile": "mini", "url": "http://x", "profiles": 2, "out": "no answer from the gateway"}
+  ]
+}

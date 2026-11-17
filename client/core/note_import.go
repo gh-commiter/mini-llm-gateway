@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"path"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -58,10 +60,27 @@ func pendingLimit(tx *sql.Tx, user, project, size, exclude int64) error {
 	return nil
 }
 
+// ownFile: is the file one this gateway exported from this very project (or team notes)? Its front matter then names this
+// gateway and project as its origin and a note id. Nothing in it is trusted beyond that: the id is only a candidate, and the
+// note must exist in this project and be writable by the caller (see selfReceipt); anything else is imported as before.
+func (s *Store) ownFile(input MarkdownInput, project int64) (id int64, rev int64, hash, class string, ok bool) {
+	f, _, err := parseMarkdown([]byte(input.Markdown))
+	if err != nil || f["origin"] != s.NoteOrigin(project) {
+		return 0, 0, "", "", false
+	}
+	id, err = markdownID(f)
+	rev, err2 := strconv.ParseInt(f["revision"], 10, 64)
+	if err != nil || err2 != nil || rev < 1 || f["hash"] == "" {
+		return 0, 0, "", "", false
+	}
+	return id, rev, f["hash"], f["class"], true
+}
+
 // ImportMarkdown keeps a durable receipt, independently of push idempotency.
 func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, input MarkdownInput) (out ImportResult, err error) {
 	lim := s.rate(p.UserID, true)
 	in, key, parseErr := markdownInput(input)
+	selfID, selfRev, selfHash, selfClass, self := s.ownFile(input, project)
 	out.Key = key
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		a, e := memberAccess(tx, p, project)
@@ -80,9 +99,26 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 		if lim != nil {
 			return lim
 		}
+		// A file this gateway exported from this project is the note it came from: the receipt is that of the note itself (a
+		// later import remembers its own result under self:<id>); the revision of the file is what the note had at the export,
+		// so a note changed here since is kept ("local edit"). A note that is missing, of another project or that the caller may
+		// not write is not claimed: the file is imported as any other (a new note).
+		if self {
+			if _, _, we := writeAccess(tx, p, project, selfID); we == nil {
+				key = "self:" + i64(selfID)
+				out.Key = key
+			} else if !errors.Is(we, ErrNotFound) && !errors.Is(we, ErrForbidden) {
+				return we
+			} else {
+				self = false
+			}
+		}
 		r, e := receipt(tx, project, key)
 		if e != nil {
 			return e
+		}
+		if self && r.note == 0 && r.submission == 0 {
+			r = importReceipt{note: selfID, revision: selfRev, hash: selfHash, class: selfClass}
 		}
 		hash := contentHash(in.Title, in.Body)
 		out.NoteID, out.SubmissionID = r.note, r.submission

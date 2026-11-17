@@ -903,6 +903,10 @@ while let i = args.firstIndex(where: { $0 == "--minigw-profile" || $0.hasPrefix(
     } else { profileFlag = String(args[i].dropFirst("--minigw-profile=".count)); args.remove(at: i) }
 }
 
+// MINIGW_PROFILE=<ime>: okoljska oblika --minigw-profile (zastavica prevlada; model@profil prevlada okolje).
+var profileFromEnv = false
+if profileFlag == nil, agentConn() == nil, let v = ProcessInfo.processInfo.environment["MINIGW_PROFILE"], !v.isEmpty { profileFlag = v; profileFromEnv = true }
+
 if agentConn() != nil, let first = args.first, ["connect", "reconnect", "disconnect", "profiles", "plugin", "uninstall"].contains(first) {
     fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): \(first) is not available here")
 }
@@ -1086,7 +1090,7 @@ if let f = flagWork {
 if agentConn() == nil {  // --model …@profil: ves zagon s tem prehodom, kot --minigw-profile (#8)
     let mp = Profiles.modelProfile(args, names: profileNames())
     if let p = mp.profile {
-        if let f = profileFlag, f != p { fail("--model \(mp.model) and --minigw-profile \(f) name different gateways") }
+        if let f = profileFlag, f != p, !profileFromEnv { fail("--model \(mp.model) and --minigw-profile \(f) name different gateways") }
         profileFlag = p; args = mp.args
     }
 }

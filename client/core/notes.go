@@ -29,6 +29,9 @@ type Note struct {
 	EntryKind        string // finding or faq; "" (an old receipt) reads as finding
 	// Team names the team of a note that lives in a team's own notes; ProjectID is then a hidden id no output should show.
 	Team string `json:",omitempty"`
+	// Origin names the gateway and project the note lives in ("<gateway id>:<project id>"): the export writes it into the front
+	// matter so that a re-import into the same project knows its own file. Set by the API when a note is read, never stored.
+	Origin string `json:",omitempty"`
 }
 
 // NoteInput is the payload of create and update.

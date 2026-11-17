@@ -9,6 +9,9 @@ import Testing
         let note = try JSONSerialization.data(withJSONObject: fixture["note"]!)
         let expected = fixture["markdown"] as! String
         #expect(String(decoding: ProjectEnv.markdown(JSONValue.parse(note)!.dict), as: UTF8.self) == expected)
+        // the export names its gateway and project (origin): a re-import into the same project knows its own file
+        let originNote = try JSONSerialization.data(withJSONObject: fixture["originNote"]!)
+        #expect(String(decoding: ProjectEnv.markdown(JSONValue.parse(originNote)!.dict), as: UTF8.self) == fixture["originMarkdown"] as! String)
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }

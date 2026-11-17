@@ -655,9 +655,13 @@ func TestBundleSourceBinding(t *testing.T) {
 	source.ok(target.AddTeamProject(ctx, team.ID, project.ID))
 	self := filepath.Join(t.TempDir(), "self.zip")
 	source.ok(target.ExportBundle(ctx, BundleExport{Team: "Own", Path: self}))
-	_, e = target.ImportBundle(ctx, BundleImport{Path: self, Source: "three"})
+	rep, e := target.ImportBundle(ctx, BundleImport{Path: self, Source: "three"})
 	if e == nil || !strings.Contains(e.Error(), "exported by this gateway") {
 		t.Fatal(e)
+	}
+	// one clear sentence: no glued "refuse invalid" prefix
+	if want := "this bundle was exported by this gateway: a gateway cannot import its own bundle"; len(rep.Lines) != 1 || rep.Lines[0] != want || e.Error() != want {
+		t.Fatalf("%q %v", rep.Lines, e)
 	}
 	if _, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: ""}); e == nil {
 		t.Fatal("accepted an empty source name")

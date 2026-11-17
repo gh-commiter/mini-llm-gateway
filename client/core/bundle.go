@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -850,7 +851,7 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 	}
 	for _, v := range m.Assignments {
 		if !members[foldName(v.User)] {
-			return nil, ErrInvalid{"assignment requires team member"}
+			return nil, ErrRefusal{"an assignment names a user who is not a team member"}
 		}
 	}
 	for _, g := range m.Grants {
@@ -883,7 +884,7 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 			return nil, err
 		}
 		if v.Project == bundleSegment && in.Class == Private {
-			return nil, ErrInvalid{"a team's notes cannot be private"}
+			return nil, ErrRefusal{"a team's notes cannot be private"}
 		}
 		key := bundleKey(m.OriginGateway, v.Project, id)
 		if f["import_key"] != key || keys[key] || !users[foldName(f["author"])] || f["hash"] != contentHash(in.Title, in.Body) || v.Provenance.ContentHash != f["hash"] || v.Provenance.SourceKind != f["kind"] {
@@ -914,28 +915,28 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 // ImportBundle validates every byte before entering a transaction.
 func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (report BundleReport, err error) {
 	if !validSourceName(in.Source) {
-		err = ErrInvalid{"source name: 1-64 characters, using team-name validation"}
-		return BundleReport{[]string{"refuse " + err.Error()}}, err
+		err = ErrRefusal{"the source name must be 1-64 characters and valid as a team name"}
+		return BundleReport{[]string{bundleRefusal(err)}}, err
 	}
 	b, err := readBundle(in.Path)
 	if err != nil {
-		return BundleReport{[]string{"refuse " + err.Error()}}, err
+		return BundleReport{[]string{bundleRefusal(err)}}, err
 	}
 	notes, err := validateBundle(b)
 	if err != nil {
-		return BundleReport{[]string{"refuse " + err.Error()}}, err
+		return BundleReport{[]string{bundleRefusal(err)}}, err
 	}
 	// A bundle of this gateway's own export could claim its notes back.
 	if b.manifest.OriginGateway == s.GatewayID() {
-		err = ErrInvalid{"bundle was exported by this gateway"}
-		return BundleReport{[]string{"refuse " + err.Error()}}, err
+		err = ErrRefusal{"this bundle was exported by this gateway: a gateway cannot import its own bundle"}
+		return BundleReport{[]string{bundleRefusal(err)}}, err
 	}
 	mapping := map[string]string{}
 	for old, name := range in.Map {
 		k := foldName(old)
 		if !validName(old) || !validName(name) || mapping[k] != "" {
 			err = ErrInvalid{"user map"}
-			return BundleReport{[]string{"refuse " + err.Error()}}, err
+			return BundleReport{[]string{bundleRefusal(err)}}, err
 		}
 		mapping[k] = name
 	}
@@ -951,7 +952,7 @@ func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (report Bundl
 		if !in.DryRun {
 			report.Lines = nil
 		}
-		report.Lines = append(report.Lines, "refuse "+err.Error())
+		report.Lines = append(report.Lines, bundleRefusal(err))
 	}
 	return
 }
@@ -979,7 +980,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		return e
 	}
 	if e == nil && sourceOrigin != m.OriginGateway {
-		return ErrInvalid{"this source was first imported from another gateway"}
+		return ErrRefusal{"this source name was first imported from another gateway: choose another --source name"}
 	}
 	if e == sql.ErrNoRows {
 		line("create", "source "+source+", origin "+m.OriginGateway)
@@ -998,7 +999,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	}
 	newTeam := err == sql.ErrNoRows
 	if archived {
-		return ErrInvalid{"target team is archived"}
+		return ErrRefusal{"the target team is archived: unarchive it first"}
 	}
 	// Team ownership conflicts are checked before any write, including user creation.
 	for _, p := range m.Projects {
@@ -1008,7 +1009,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 			return e
 		}
 		if e == nil && (newTeam || existing != team) {
-			return ErrInvalid{"project already belongs to another team: " + p.Slug}
+			return ErrRefusal{"project " + p.Slug + " already belongs to another team"}
 		}
 	}
 	if newTeam {
@@ -1073,12 +1074,12 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		}
 		k := foldName(target)
 		if other, ok := used[k]; ok {
-			return ErrInvalid{"two bundle users map to one target user: " + other + ", " + name}
+			return ErrRefusal{"two bundle users map to one target user: " + other + ", " + name}
 		}
 		used[k] = name
 		matches := accounts[k]
 		if len(matches) > 1 {
-			return ErrInvalid{"ambiguous target users " + matches[0].name + ", " + matches[1].name + " for " + name}
+			return ErrRefusal{"ambiguous target users " + matches[0].name + ", " + matches[1].name + " for " + name + ": name the right one with --map"}
 		}
 		var a account
 		if len(matches) == 0 {
@@ -1370,7 +1371,7 @@ func (s *Store) bundleRemotes(tx *sql.Tx, id int64, p BundleProject, line func(a
 		known[r] = true
 		added++
 		if len(known) > maxRemotes {
-			return ErrInvalid{"project remotes: at most 8: " + p.Slug}
+			return ErrRefusal{"project " + p.Slug + " can have at most 8 remotes"}
 		}
 		line("create", "remote "+p.Slug+" "+r)
 		if err = exec(`INSERT OR IGNORE INTO project_remotes(project_id,identity) VALUES(?,?)`, id, r); err != nil {
@@ -1387,4 +1388,13 @@ func (s *Store) bundleRemotes(tx *sql.Tx, id int64, p BundleProject, line func(a
 		}
 	}
 	return nil
+}
+
+// bundleRefusal is the report line of a refused import: a sentence as it is, a noun phrase after "refused:".
+func bundleRefusal(err error) string {
+	var ref ErrRefusal
+	if errors.As(err, &ref) {
+		return ref.Msg
+	}
+	return "refused: " + err.Error()
 }

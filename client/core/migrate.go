@@ -46,8 +46,19 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	s.migrated = &Migration{From: cur, To: len(migrations), Snapshot: snap}
 	return appendAudit(s.dir, "migrate", detail)
 }
+
+// Migration is what the last Open did to an older database: the schema it came from and the snapshot of the old file (in the
+// core folder itself, named core-<schema>-<time>.db; not in backups/, which holds the owner's explicit backups).
+type Migration struct {
+	From, To int
+	Snapshot string // full path; "" for a new database
+}
+
+// Migrated reports the migration this Open ran, nil when the database was already current.
+func (s *Store) Migrated() *Migration { return s.migrated }
 
 var snapRe = regexp.MustCompile(`^core-\d+-(\d{8}T\d{6}\.\d{3}Z)\.db$`)
 
