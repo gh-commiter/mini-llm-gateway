@@ -3,9 +3,12 @@
 ## Unreleased
 
 ### New
+- Mac Settings: a **Teams and projects** pane (a panel): teams (add, rename, path label, archive, people, projects, roles through the team), projects (add, archive, people with the role and where it comes from, set or remove a direct role, git identities, dependencies) and grants between projects. Every access-changing action asks first and says what happens to running agent runs. The admin API answers carry the extra fields it needs (counts, names, `directRole` and `fromTeams`, `memberCount`), `DELETE /teams/{id}/assignments` also takes `?project=&user=`, and the owner's remotes route takes `addRemote` and `removeRemote`. No format change.
 - Mac Settings: a **Knowledge base** pane (a panel, like Users and devices): review the pending submissions of projects and teams with **Accept** and **Reject…** (with a reason), open one to read its text and, for a replacement, the note it replaces, and read the notes and the questions and answers of a project or a team. The admin API gains three read routes for it, `GET /kb/notes`, `GET /kb/notes/{id}` and `GET /kb/faq` (owner only, admin channel only), and the review answers carry the author's and the project's or team's name. The owner reads every class there, `private` notes included. The panel format gained a `record` element, a list `scope` picker, a `when` for a record in a detail page and an empty JSON body (`"body": {}`).
 
 ### Known problems
+- In the Teams and projects pane the "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI: the format has no cell that lists pairs of a team and a role. The structured list is in the answer (`teams`).
+- The Teams and projects pane has only been tried through tests, not in a real window. Team notes (the team's own notes segment) are not shown there, only in the Knowledge base pane.
 - The Knowledge base pane has only been tried through tests, not in a real window. Notes and questions are read, not edited; a replacement shows both texts, not a line difference.
 
 ## 0.7.15

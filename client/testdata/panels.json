@@ -221,6 +221,1102 @@
    "provider": "builtin",
    "description": {
     "format": 1,
+    "id": "builtin.teams",
+    "provider": "builtin",
+    "title": "builtin.teams.title",
+    "about": "builtin.teams.about",
+    "symbol": "person.3",
+    "refs": {
+     "users": {
+      "path": "/users",
+      "items": "users",
+      "key": "id",
+      "label": "name"
+     },
+     "projects": {
+      "path": "/projects",
+      "items": "projects",
+      "key": "id",
+      "label": "name"
+     }
+    },
+    "sections": [
+     {
+      "kind": "list",
+      "id": "teams",
+      "title": "builtin.teams.section.teams.title",
+      "source": {
+       "path": "/teams",
+       "items": "teams"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "name",
+        "kind": "text",
+        "label": "builtin.teams.section.teams.column.name"
+       },
+       {
+        "field": "path",
+        "kind": "text",
+        "label": "builtin.teams.section.teams.column.path"
+       },
+       {
+        "field": "memberCount",
+        "kind": "text",
+        "label": "builtin.teams.section.teams.column.membercount"
+       },
+       {
+        "field": "projectCount",
+        "kind": "text",
+        "label": "builtin.teams.section.teams.column.projectcount"
+       },
+       {
+        "field": "archived",
+        "kind": "bool",
+        "label": "builtin.teams.section.teams.column.archived",
+        "yes": "builtin.teams.section.teams.column.archived.yes",
+        "no": "builtin.teams.section.teams.column.archived.no"
+       }
+      ],
+      "filter": [
+       "name",
+       "path"
+      ],
+      "hide": {
+       "field": "archived",
+       "equals": true,
+       "toggle": "builtin.teams.section.teams.hide"
+      },
+      "empty": "builtin.teams.section.teams.empty",
+      "actions": [
+       {
+        "id": "add",
+        "label": "builtin.teams.section.teams.action.add",
+        "method": "POST",
+        "path": "/teams",
+        "fields": [
+         {
+          "id": "name",
+          "type": "text",
+          "label": "builtin.teams.section.teams.action.add.field.name",
+          "required": true,
+          "maxLength": 128
+         }
+        ],
+        "body": {
+         "name": {
+          "field": "name"
+         }
+        }
+       }
+      ],
+      "rowActions": [
+       {
+        "id": "rename",
+        "label": "builtin.teams.section.teams.action.rename",
+        "method": "PATCH",
+        "path": "/teams/{row.id}",
+        "fields": [
+         {
+          "id": "name",
+          "type": "text",
+          "label": "builtin.teams.section.teams.action.rename.field.name",
+          "required": true,
+          "maxLength": 128,
+          "default": {
+           "row": "name"
+          }
+         }
+        ],
+        "body": {
+         "name": {
+          "field": "name"
+         }
+        }
+       },
+       {
+        "id": "path",
+        "label": "builtin.teams.section.teams.action.path",
+        "method": "PATCH",
+        "path": "/teams/{row.id}",
+        "fields": [
+         {
+          "id": "path",
+          "type": "text",
+          "label": "builtin.teams.section.teams.action.path.field.path",
+          "maxLength": 128,
+          "default": {
+           "row": "path"
+          }
+         }
+        ],
+        "body": {
+         "path": {
+          "field": "path"
+         }
+        }
+       },
+       {
+        "id": "archive",
+        "label": "builtin.teams.section.teams.action.archive",
+        "method": "PATCH",
+        "path": "/teams/{row.id}",
+        "when": {
+         "field": "archived",
+         "equals": false
+        },
+        "body": {
+         "archived": {
+          "const": true
+         }
+        },
+        "destructive": true,
+        "confirm": {
+         "title": "builtin.teams.section.teams.action.archive.confirm.title",
+         "message": "builtin.teams.section.teams.action.archive.confirm.message",
+         "button": "builtin.teams.section.teams.action.archive.confirm.button",
+         "destructive": true
+        }
+       },
+       {
+        "id": "unarchive",
+        "label": "builtin.teams.section.teams.action.unarchive",
+        "method": "PATCH",
+        "path": "/teams/{row.id}",
+        "when": {
+         "field": "archived",
+         "equals": true
+        },
+        "body": {
+         "archived": {
+          "const": false
+         }
+        }
+       }
+      ],
+      "detail": {
+       "title": "name",
+       "sections": [
+        {
+         "kind": "list",
+         "id": "members",
+         "title": "builtin.teams.section.teams.detail.section.members.title",
+         "source": {
+          "path": "/teams/{parent.id}/members",
+          "items": "members"
+         },
+         "key": "user",
+         "columns": [
+          {
+           "field": "name",
+           "kind": "text",
+           "label": "builtin.teams.section.teams.detail.section.members.column.name"
+          }
+         ],
+         "empty": "builtin.teams.section.teams.detail.section.members.empty",
+         "actions": [
+          {
+           "id": "add",
+           "label": "builtin.teams.section.teams.detail.section.members.action.add",
+           "method": "PUT",
+           "path": "/teams/{parent.id}/members/{field.user}",
+           "fields": [
+            {
+             "id": "user",
+             "type": "ref",
+             "ref": "users",
+             "required": true,
+             "label": "builtin.teams.section.teams.detail.section.members.action.add.field.user"
+            }
+           ]
+          }
+         ],
+         "rowActions": [
+          {
+           "id": "remove",
+           "label": "builtin.teams.section.teams.detail.section.members.action.remove",
+           "method": "DELETE",
+           "path": "/teams/{parent.id}/members/{row.user}",
+           "confirm": {
+            "title": "builtin.teams.section.teams.detail.section.members.action.remove.confirm.title",
+            "message": "builtin.teams.section.teams.detail.section.members.action.remove.confirm.message",
+            "button": "builtin.teams.section.teams.detail.section.members.action.remove.confirm.button",
+            "destructive": true
+           }
+          }
+         ]
+        },
+        {
+         "kind": "list",
+         "id": "projects",
+         "title": "builtin.teams.section.teams.detail.section.projects.title",
+         "source": {
+          "path": "/teams/{parent.id}/projects",
+          "items": "projects"
+         },
+         "key": "id",
+         "columns": [
+          {
+           "field": "slug",
+           "kind": "text",
+           "label": "builtin.teams.section.teams.detail.section.projects.column.slug"
+          },
+          {
+           "field": "name",
+           "kind": "text",
+           "label": "builtin.teams.section.teams.detail.section.projects.column.name"
+          }
+         ],
+         "empty": "builtin.teams.section.teams.detail.section.projects.empty",
+         "actions": [
+          {
+           "id": "add",
+           "label": "builtin.teams.section.teams.detail.section.projects.action.add",
+           "method": "PUT",
+           "path": "/teams/{parent.id}/projects/{field.project}",
+           "fields": [
+            {
+             "id": "project",
+             "type": "ref",
+             "ref": "projects",
+             "required": true,
+             "label": "builtin.teams.section.teams.detail.section.projects.action.add.field.project"
+            }
+           ]
+          }
+         ],
+         "rowActions": [
+          {
+           "id": "remove",
+           "label": "builtin.teams.section.teams.detail.section.projects.action.remove",
+           "method": "DELETE",
+           "path": "/teams/{parent.id}/projects/{row.id}",
+           "confirm": {
+            "title": "builtin.teams.section.teams.detail.section.projects.action.remove.confirm.title",
+            "message": "builtin.teams.section.teams.detail.section.projects.action.remove.confirm.message",
+            "button": "builtin.teams.section.teams.detail.section.projects.action.remove.confirm.button",
+            "destructive": true
+           }
+          }
+         ]
+        },
+        {
+         "kind": "list",
+         "id": "assignments",
+         "title": "builtin.teams.section.teams.detail.section.assignments.title",
+         "source": {
+          "path": "/teams/{parent.id}/assignments",
+          "items": "assignments"
+         },
+         "key": "id",
+         "columns": [
+          {
+           "field": "userName",
+           "kind": "text",
+           "label": "builtin.teams.section.teams.detail.section.assignments.column.username"
+          },
+          {
+           "field": "projectName",
+           "kind": "text",
+           "label": "builtin.teams.section.teams.detail.section.assignments.column.projectname"
+          },
+          {
+           "field": "role",
+           "kind": "enum",
+           "label": "builtin.teams.section.teams.detail.section.assignments.column.role",
+           "values": {
+            "reader": "builtin.teams.section.teams.detail.section.assignments.column.role.value.reader",
+            "developer": "builtin.teams.section.teams.detail.section.assignments.column.role.value.developer",
+            "admin": "builtin.teams.section.teams.detail.section.assignments.column.role.value.admin"
+           }
+          }
+         ],
+         "empty": "builtin.teams.section.teams.detail.section.assignments.empty",
+         "actions": [
+          {
+           "id": "set",
+           "label": "builtin.teams.section.teams.detail.section.assignments.action.set",
+           "method": "PUT",
+           "path": "/teams/{parent.id}/assignments",
+           "fields": [
+            {
+             "id": "user",
+             "type": "ref",
+             "ref": "users",
+             "required": true,
+             "label": "builtin.teams.section.teams.detail.section.assignments.action.set.field.user"
+            },
+            {
+             "id": "project",
+             "type": "ref",
+             "ref": "projects",
+             "required": true,
+             "label": "builtin.teams.section.teams.detail.section.assignments.action.set.field.project"
+            },
+            {
+             "id": "role",
+             "type": "choice",
+             "options": [
+              {
+               "value": "reader",
+               "label": "builtin.teams.section.teams.detail.section.assignments.action.set.field.role.option.reader"
+              },
+              {
+               "value": "developer",
+               "label": "builtin.teams.section.teams.detail.section.assignments.action.set.field.role.option.developer"
+              },
+              {
+               "value": "admin",
+               "label": "builtin.teams.section.teams.detail.section.assignments.action.set.field.role.option.admin"
+              }
+             ],
+             "label": "builtin.teams.section.teams.detail.section.assignments.action.set.field.role",
+             "required": true
+            }
+           ],
+           "body": {
+            "user": {
+             "field": "user"
+            },
+            "project": {
+             "field": "project"
+            },
+            "role": {
+             "field": "role"
+            }
+           },
+           "confirm": {
+            "title": "builtin.teams.section.teams.detail.section.assignments.action.set.confirm.title",
+            "message": "builtin.teams.section.teams.detail.section.assignments.action.set.confirm.message",
+            "button": "builtin.teams.section.teams.detail.section.assignments.action.set.confirm.button"
+           }
+          }
+         ],
+         "rowActions": [
+          {
+           "id": "change",
+           "label": "builtin.teams.section.teams.detail.section.assignments.action.change",
+           "method": "PUT",
+           "path": "/teams/{parent.id}/assignments",
+           "fields": [
+            {
+             "id": "role",
+             "type": "choice",
+             "options": [
+              {
+               "value": "reader",
+               "label": "builtin.teams.section.teams.detail.section.assignments.action.change.field.role.option.reader"
+              },
+              {
+               "value": "developer",
+               "label": "builtin.teams.section.teams.detail.section.assignments.action.change.field.role.option.developer"
+              },
+              {
+               "value": "admin",
+               "label": "builtin.teams.section.teams.detail.section.assignments.action.change.field.role.option.admin"
+              }
+             ],
+             "label": "builtin.teams.section.teams.detail.section.assignments.action.change.field.role",
+             "required": true,
+             "default": {
+              "row": "role"
+             }
+            }
+           ],
+           "body": {
+            "user": {
+             "row": "user"
+            },
+            "project": {
+             "row": "project"
+            },
+            "role": {
+             "field": "role"
+            }
+           },
+           "confirm": {
+            "title": "builtin.teams.section.teams.detail.section.assignments.action.change.confirm.title",
+            "message": "builtin.teams.section.teams.detail.section.assignments.action.change.confirm.message",
+            "button": "builtin.teams.section.teams.detail.section.assignments.action.change.confirm.button"
+           }
+          },
+          {
+           "id": "remove",
+           "label": "builtin.teams.section.teams.detail.section.assignments.action.remove",
+           "method": "DELETE",
+           "path": "/teams/{parent.id}/assignments",
+           "query": "project={row.project}&user={row.user}",
+           "confirm": {
+            "title": "builtin.teams.section.teams.detail.section.assignments.action.remove.confirm.title",
+            "message": "builtin.teams.section.teams.detail.section.assignments.action.remove.confirm.message",
+            "button": "builtin.teams.section.teams.detail.section.assignments.action.remove.confirm.button",
+            "destructive": true
+           }
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "kind": "list",
+      "id": "projects",
+      "title": "builtin.teams.section.projects.title",
+      "source": {
+       "path": "/projects",
+       "items": "projects"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "slug",
+        "kind": "text",
+        "label": "builtin.teams.section.projects.column.slug"
+       },
+       {
+        "field": "name",
+        "kind": "text",
+        "label": "builtin.teams.section.projects.column.name"
+       },
+       {
+        "field": "teamName",
+        "kind": "text",
+        "label": "builtin.teams.section.projects.column.teamname"
+       },
+       {
+        "field": "memberCount",
+        "kind": "text",
+        "label": "builtin.teams.section.projects.column.membercount"
+       },
+       {
+        "field": "archived",
+        "kind": "bool",
+        "label": "builtin.teams.section.projects.column.archived",
+        "yes": "builtin.teams.section.projects.column.archived.yes",
+        "no": "builtin.teams.section.projects.column.archived.no"
+       }
+      ],
+      "filter": [
+       "slug",
+       "name",
+       "teamName"
+      ],
+      "hide": {
+       "field": "archived",
+       "equals": true,
+       "toggle": "builtin.teams.section.projects.hide"
+      },
+      "empty": "builtin.teams.section.projects.empty",
+      "actions": [
+       {
+        "id": "add",
+        "label": "builtin.teams.section.projects.action.add",
+        "method": "POST",
+        "path": "/projects",
+        "fields": [
+         {
+          "id": "slug",
+          "type": "text",
+          "label": "builtin.teams.section.projects.action.add.field.slug",
+          "required": true,
+          "maxLength": 63
+         },
+         {
+          "id": "name",
+          "type": "text",
+          "label": "builtin.teams.section.projects.action.add.field.name",
+          "required": true,
+          "maxLength": 128
+         }
+        ],
+        "body": {
+         "slug": {
+          "field": "slug"
+         },
+         "name": {
+          "field": "name"
+         }
+        }
+       }
+      ],
+      "rowActions": [
+       {
+        "id": "archive",
+        "label": "builtin.teams.section.projects.action.archive",
+        "method": "PATCH",
+        "path": "/projects/{row.id}",
+        "when": {
+         "field": "archived",
+         "equals": false
+        },
+        "body": {
+         "archived": {
+          "const": true
+         }
+        },
+        "destructive": true,
+        "confirm": {
+         "title": "builtin.teams.section.projects.action.archive.confirm.title",
+         "message": "builtin.teams.section.projects.action.archive.confirm.message",
+         "button": "builtin.teams.section.projects.action.archive.confirm.button",
+         "destructive": true
+        }
+       },
+       {
+        "id": "unarchive",
+        "label": "builtin.teams.section.projects.action.unarchive",
+        "method": "PATCH",
+        "path": "/projects/{row.id}",
+        "when": {
+         "field": "archived",
+         "equals": true
+        },
+        "body": {
+         "archived": {
+          "const": false
+         }
+        }
+       }
+      ],
+      "detail": {
+       "title": "name",
+       "sections": [
+        {
+         "kind": "list",
+         "id": "members",
+         "title": "builtin.teams.section.projects.detail.section.members.title",
+         "source": {
+          "path": "/projects/{parent.id}/members",
+          "items": "members"
+         },
+         "key": "user",
+         "columns": [
+          {
+           "field": "name",
+           "kind": "text",
+           "label": "builtin.teams.section.projects.detail.section.members.column.name"
+          },
+          {
+           "field": "role",
+           "kind": "enum",
+           "label": "builtin.teams.section.projects.detail.section.members.column.role",
+           "values": {
+            "reader": "builtin.teams.section.projects.detail.section.members.column.role.value.reader",
+            "developer": "builtin.teams.section.projects.detail.section.members.column.role.value.developer",
+            "admin": "builtin.teams.section.projects.detail.section.members.column.role.value.admin"
+           }
+          },
+          {
+           "field": "directRole",
+           "kind": "enum",
+           "label": "builtin.teams.section.projects.detail.section.members.column.directrole",
+           "values": {
+            "none": "builtin.teams.section.projects.detail.section.members.column.directrole.value.none",
+            "reader": "builtin.teams.section.projects.detail.section.members.column.directrole.value.reader",
+            "developer": "builtin.teams.section.projects.detail.section.members.column.directrole.value.developer",
+            "admin": "builtin.teams.section.projects.detail.section.members.column.directrole.value.admin"
+           }
+          },
+          {
+           "field": "fromTeams",
+           "kind": "text",
+           "label": "builtin.teams.section.projects.detail.section.members.column.fromteams"
+          }
+         ],
+         "empty": "builtin.teams.section.projects.detail.section.members.empty",
+         "actions": [
+          {
+           "id": "add",
+           "label": "builtin.teams.section.projects.detail.section.members.action.add",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/members/{field.user}",
+           "fields": [
+            {
+             "id": "user",
+             "type": "ref",
+             "ref": "users",
+             "required": true,
+             "label": "builtin.teams.section.projects.detail.section.members.action.add.field.user"
+            },
+            {
+             "id": "role",
+             "type": "choice",
+             "options": [
+              {
+               "value": "reader",
+               "label": "builtin.teams.section.projects.detail.section.members.action.add.field.role.option.reader"
+              },
+              {
+               "value": "developer",
+               "label": "builtin.teams.section.projects.detail.section.members.action.add.field.role.option.developer"
+              },
+              {
+               "value": "admin",
+               "label": "builtin.teams.section.projects.detail.section.members.action.add.field.role.option.admin"
+              }
+             ],
+             "label": "builtin.teams.section.projects.detail.section.members.action.add.field.role",
+             "required": true
+            }
+           ],
+           "body": {
+            "role": {
+             "field": "role"
+            }
+           },
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.members.action.add.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.members.action.add.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.members.action.add.confirm.button"
+           }
+          }
+         ],
+         "rowActions": [
+          {
+           "id": "to-reader-from-none",
+           "label": "builtin.teams.section.projects.detail.section.members.action.to-reader-from-none",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "none"
+           },
+           "body": {
+            "role": {
+             "const": "reader"
+            }
+           }
+          },
+          {
+           "id": "to-developer-from-none",
+           "label": "builtin.teams.section.projects.detail.section.members.action.to-developer-from-none",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "none"
+           },
+           "body": {
+            "role": {
+             "const": "developer"
+            }
+           }
+          },
+          {
+           "id": "to-admin-from-none",
+           "label": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-none",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "none"
+           },
+           "body": {
+            "role": {
+             "const": "admin"
+            }
+           },
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-none.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-none.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-none.confirm.button"
+           }
+          },
+          {
+           "id": "to-developer-from-reader",
+           "label": "builtin.teams.section.projects.detail.section.members.action.to-developer-from-reader",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "reader"
+           },
+           "body": {
+            "role": {
+             "const": "developer"
+            }
+           }
+          },
+          {
+           "id": "to-admin-from-reader",
+           "label": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-reader",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "reader"
+           },
+           "body": {
+            "role": {
+             "const": "admin"
+            }
+           },
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-reader.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-reader.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-reader.confirm.button"
+           }
+          },
+          {
+           "id": "to-reader-from-developer",
+           "label": "builtin.teams.section.projects.detail.section.members.action.to-reader-from-developer",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "developer"
+           },
+           "body": {
+            "role": {
+             "const": "reader"
+            }
+           },
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.members.action.to-reader-from-developer.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.members.action.to-reader-from-developer.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.members.action.to-reader-from-developer.confirm.button",
+            "destructive": true
+           }
+          },
+          {
+           "id": "to-admin-from-developer",
+           "label": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-developer",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "developer"
+           },
+           "body": {
+            "role": {
+             "const": "admin"
+            }
+           },
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-developer.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-developer.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-developer.confirm.button"
+           }
+          },
+          {
+           "id": "to-reader-from-admin",
+           "label": "builtin.teams.section.projects.detail.section.members.action.to-reader-from-admin",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "admin"
+           },
+           "body": {
+            "role": {
+             "const": "reader"
+            }
+           },
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.members.action.to-reader-from-admin.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.members.action.to-reader-from-admin.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.members.action.to-reader-from-admin.confirm.button",
+            "destructive": true
+           }
+          },
+          {
+           "id": "to-developer-from-admin",
+           "label": "builtin.teams.section.projects.detail.section.members.action.to-developer-from-admin",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "admin"
+           },
+           "body": {
+            "role": {
+             "const": "developer"
+            }
+           },
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.members.action.to-developer-from-admin.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.members.action.to-developer-from-admin.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.members.action.to-developer-from-admin.confirm.button",
+            "destructive": true
+           }
+          },
+          {
+           "id": "remove-reader",
+           "label": "builtin.teams.section.projects.detail.section.members.action.remove-reader",
+           "method": "DELETE",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "reader"
+           },
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.members.action.remove-reader.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.members.action.remove-reader.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.members.action.remove-reader.confirm.button",
+            "destructive": true
+           }
+          },
+          {
+           "id": "remove-developer",
+           "label": "builtin.teams.section.projects.detail.section.members.action.remove-developer",
+           "method": "DELETE",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "developer"
+           },
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.members.action.remove-developer.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.members.action.remove-developer.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.members.action.remove-developer.confirm.button",
+            "destructive": true
+           }
+          },
+          {
+           "id": "remove-admin",
+           "label": "builtin.teams.section.projects.detail.section.members.action.remove-admin",
+           "method": "DELETE",
+           "path": "/projects/{parent.id}/members/{row.user}",
+           "when": {
+            "field": "directRole",
+            "equals": "admin"
+           },
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.members.action.remove-admin.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.members.action.remove-admin.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.members.action.remove-admin.confirm.button",
+            "destructive": true
+           }
+          }
+         ]
+        },
+        {
+         "kind": "list",
+         "id": "remotes",
+         "title": "builtin.teams.section.projects.detail.section.remotes.title",
+         "source": {
+          "path": "/projects/{parent.id}/remotes",
+          "items": "entries"
+         },
+         "key": "remote",
+         "columns": [
+          {
+           "field": "remote",
+           "kind": "text",
+           "label": "builtin.teams.section.projects.detail.section.remotes.column.remote"
+          }
+         ],
+         "empty": "builtin.teams.section.projects.detail.section.remotes.empty",
+         "actions": [
+          {
+           "id": "add",
+           "label": "builtin.teams.section.projects.detail.section.remotes.action.add",
+           "method": "POST",
+           "path": "/projects/{parent.id}/remotes",
+           "fields": [
+            {
+             "id": "remote",
+             "type": "text",
+             "label": "builtin.teams.section.projects.detail.section.remotes.action.add.field.remote",
+             "required": true,
+             "maxLength": 512
+            }
+           ],
+           "body": {
+            "addRemote": {
+             "field": "remote"
+            }
+           }
+          }
+         ],
+         "rowActions": [
+          {
+           "id": "remove",
+           "label": "builtin.teams.section.projects.detail.section.remotes.action.remove",
+           "method": "POST",
+           "path": "/projects/{parent.id}/remotes",
+           "body": {
+            "removeRemote": {
+             "row": "remote"
+            }
+           },
+           "destructive": true,
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.remotes.action.remove.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.remotes.action.remove.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.remotes.action.remove.confirm.button",
+            "destructive": true
+           }
+          }
+         ]
+        },
+        {
+         "kind": "list",
+         "id": "depends",
+         "title": "builtin.teams.section.projects.detail.section.depends.title",
+         "source": {
+          "path": "/projects/{parent.id}/depends",
+          "items": "depends"
+         },
+         "key": "id",
+         "columns": [
+          {
+           "field": "slug",
+           "kind": "text",
+           "label": "builtin.teams.section.projects.detail.section.depends.column.slug"
+          },
+          {
+           "field": "name",
+           "kind": "text",
+           "label": "builtin.teams.section.projects.detail.section.depends.column.name"
+          }
+         ],
+         "empty": "builtin.teams.section.projects.detail.section.depends.empty",
+         "actions": [
+          {
+           "id": "add",
+           "label": "builtin.teams.section.projects.detail.section.depends.action.add",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/depends/{field.other}",
+           "fields": [
+            {
+             "id": "other",
+             "type": "ref",
+             "ref": "projects",
+             "required": true,
+             "label": "builtin.teams.section.projects.detail.section.depends.action.add.field.other"
+            }
+           ]
+          }
+         ],
+         "rowActions": [
+          {
+           "id": "remove",
+           "label": "builtin.teams.section.projects.detail.section.depends.action.remove",
+           "method": "DELETE",
+           "path": "/projects/{parent.id}/depends/{row.id}",
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.depends.action.remove.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.depends.action.remove.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.depends.action.remove.confirm.button",
+            "destructive": true
+           }
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "kind": "list",
+      "id": "grants",
+      "title": "builtin.teams.section.grants.title",
+      "source": {
+       "path": "/grants",
+       "items": "grants"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "sourceName",
+        "kind": "text",
+        "label": "builtin.teams.section.grants.column.sourcename"
+       },
+       {
+        "field": "readerName",
+        "kind": "text",
+        "label": "builtin.teams.section.grants.column.readername"
+       },
+       {
+        "field": "class",
+        "kind": "enum",
+        "label": "builtin.teams.section.grants.column.class",
+        "values": {
+         "structure": "builtin.teams.section.grants.column.class.value.structure",
+         "data": "builtin.teams.section.grants.column.class.value.data"
+        }
+       }
+      ],
+      "filter": [
+       "sourceName",
+       "readerName"
+      ],
+      "empty": "builtin.teams.section.grants.empty",
+      "actions": [
+       {
+        "id": "add",
+        "label": "builtin.teams.section.grants.action.add",
+        "method": "POST",
+        "path": "/grants",
+        "fields": [
+         {
+          "id": "source",
+          "type": "ref",
+          "ref": "projects",
+          "required": true,
+          "label": "builtin.teams.section.grants.action.add.field.source"
+         },
+         {
+          "id": "reader",
+          "type": "ref",
+          "ref": "projects",
+          "required": true,
+          "label": "builtin.teams.section.grants.action.add.field.reader"
+         },
+         {
+          "id": "class",
+          "type": "choice",
+          "options": [
+           {
+            "value": "structure",
+            "label": "builtin.teams.section.grants.action.add.field.class.option.structure"
+           },
+           {
+            "value": "data",
+            "label": "builtin.teams.section.grants.action.add.field.class.option.data"
+           }
+          ],
+          "label": "builtin.teams.section.grants.action.add.field.class",
+          "required": true
+         }
+        ],
+        "body": {
+         "source": {
+          "field": "source"
+         },
+         "reader": {
+          "field": "reader"
+         },
+         "class": {
+          "field": "class"
+         }
+        }
+       }
+      ],
+      "rowActions": [
+       {
+        "id": "remove",
+        "label": "builtin.teams.section.grants.action.remove",
+        "method": "DELETE",
+        "path": "/grants",
+        "query": "source={row.source}&reader={row.reader}&class={row.class}",
+        "confirm": {
+         "title": "builtin.teams.section.grants.action.remove.confirm.title",
+         "message": "builtin.teams.section.grants.action.remove.confirm.message",
+         "button": "builtin.teams.section.grants.action.remove.confirm.button",
+         "destructive": true
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "provider": "builtin",
+   "description": {
+    "format": 1,
     "id": "builtin.kb",
     "provider": "builtin",
     "title": "builtin.kb.title",

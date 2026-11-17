@@ -364,13 +364,13 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
 
     @Test(.enabled(if: haveFixtures)) func theGoAnswerLoads() async throws {
         let c = await catalog(200, String(decoding: try fixture("panels.json"), as: UTF8.self))
-        #expect(c.error == nil && c.entries.map(\.id) == ["builtin.users", "builtin.kb"])  // the order of the answer
+        #expect(c.error == nil && c.entries.map(\.id) == ["builtin.users", "builtin.teams", "builtin.kb"])  // the order of the answer
         let usersEntry = c.entries[0]
         #expect(usersEntry.title(c.strings) == "Users and devices" && usersEntry.sidebarSymbol == "person.2" && c.strings.locale == "C")
-        #expect(c.entries[1].title(c.strings) == "Knowledge base" && c.entries[1].sidebarSymbol == "book")
+        #expect(c.entries[2].title(c.strings) == "Knowledge base" && c.entries[2].sidebarSymbol == "book" && c.entries[1].title(c.strings) == "Teams and projects")
         for e in c.entries { guard case .ready = e.parse else { throw Err.bad } }
         let sl = await catalog(200, String(decoding: try fixture("panels.json"), as: UTF8.self), locale: "sl_SI")
-        #expect(sl.entries[0].title(sl.strings) == "Uporabniki in naprave" && sl.entries[1].title(sl.strings) == "Baza znanja" && sl.strings.locale == "sl_SI" && sl.stringsError == nil)
+        #expect(sl.entries[0].title(sl.strings) == "Uporabniki in naprave" && sl.entries[2].title(sl.strings) == "Baza znanja" && sl.entries[1].title(sl.strings) == "Ekipe in projekti" && sl.strings.locale == "sl_SI" && sl.stringsError == nil)
     }
 
     @Test(.enabled(if: haveFixtures)) func aMissingKeyIsShownAsTheKeyAndTheLanguageCarriesTheRest() throws {
@@ -446,7 +446,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         var p = try description("builtin.users")
         var s = p["sections"] as! [[String: Any]]
         var rows = s[0]["rowActions"] as! [[String: Any]]
-        rows[1]["path"] = "/projects/{row.id}"  // another provider's route
+        rows[1]["path"] = "/core/{row.id}"  // another provider's route
         s[0]["rowActions"] = rows
         p["sections"] = s
         let c = await catalog(200, answer([p]))
@@ -507,7 +507,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         let devices = await send(CoreRequest(method: "GET", path: "/devices"))
         #expect(devices.status == 200 && String(decoding: devices.body, as: UTF8.self) == #"{"devices":[{"id":"d1","name":"Mac"}]}"#)
         let before = await fake.log.count
-        for bad in [("POST", "/core/restore"), ("POST", "/core/backup"), ("POST", "/import"), ("POST", "/export"), ("POST", "/teams"), ("POST", "/projects"),
+        for bad in [("POST", "/core/restore"), ("POST", "/core/backup"), ("POST", "/import"), ("POST", "/export"), ("DELETE", "/teams/1"), ("PUT", "/projects/1"),
                     ("DELETE", "/users/7"), ("PATCH", "/users"), ("PATCH", "/users/7/x"), ("POST", "/kb/submissions/1/purge"), ("GET", "/users/7"), ("PUT", "/users"), ("POST", "/panels"), ("GET", "/panels/x"),
                     ("PATCH", "/users/.."), ("PATCH", "/users/%2e%2e"), ("PATCH", "/users/a%2Fb"), ("PATCH", "/users/"), ("GET", "/kb/search/rebuild"), ("GET", "/usage/events"),
                     ("GET", "users"), ("DELETE", "/devices/abc")] {
@@ -772,12 +772,188 @@ private let kbAnswers: [(String, Int, String)] = [
             #expect(await send(CoreRequest(method: ok.0, path: ok.1)).status == 200, "\(ok)")
         }
         let before = await fake.log.count
-        for bad in [("POST", "/kb/notes"), ("DELETE", "/kb/notes/3"), ("PUT", "/kb/notes/3"), ("POST", "/kb/search/rebuild"), ("POST", "/projects"), ("PATCH", "/projects/3"), ("POST", "/teams"),
-                    ("PUT", "/teams/1/members/2"), ("GET", "/kb/submissions/3/accept"), ("POST", "/kb/submissions/3/other"), ("GET", "/kb/notes/3/x"), ("GET", "/projects/3/members"),
-                    ("GET", "/kb/notes/%2e%2e"), ("GET", "/grants"), ("GET", "/audit")] {
+        for bad in [("POST", "/kb/notes"), ("DELETE", "/kb/notes/3"), ("PUT", "/kb/notes/3"), ("POST", "/kb/search/rebuild"), ("PUT", "/projects/3"), ("DELETE", "/projects/3"), ("PUT", "/teams/1"),
+                    ("POST", "/teams/1/members/2"), ("GET", "/kb/submissions/3/accept"), ("POST", "/kb/submissions/3/other"), ("GET", "/kb/notes/3/x"), ("GET", "/projects/3/grants"),
+                    ("GET", "/kb/notes/%2e%2e"), ("PUT", "/grants"), ("GET", "/audit")] {
             #expect(await send(CoreRequest(method: bad.0, path: bad.1)).status == 404, "\(bad)")
         }
         #expect(await fake.log.count == before)
+    }
+}
+
+private func teamsPanel() throws -> PanelDescription {
+    guard case .ready(let d) = PanelValidator.parse(data(try description("builtin.teams")), provider: "builtin") else { throw Err.bad }
+    return d
+}
+
+private let teamsAnswers: [(String, Int, String)] = [
+    ("GET /users", 200, #"{"users":[{"id":2,"name":"ana","active":true,"owner":false},{"id":3,"name":"bor","active":true,"owner":false}]}"#),
+    ("GET /projects", 200, ##"{"projects":[{"id":1,"slug":"acme-web","name":"Acme Web","archived":false,"teamName":"<b>web</b>","memberCount":2},{"id":8,"slug":"old","name":"Old","archived":true,"teamName":"","memberCount":0}]}"##),
+    ("GET /teams", 200, ##"{"teams":[{"id":4,"name":"web [x](https://evil.example)","archived":false,"path":"acme/web","segment":1099511627780,"memberCount":2,"projectCount":1},{"id":5,"name":"old","archived":true,"path":"","segment":1099511627781,"memberCount":0,"projectCount":0}]}"##),
+    ("GET /grants", 200, #"{"grants":[{"source":1,"reader":8,"class":"data","id":"1-8-data","sourceName":"Acme Web","readerName":"Old"}]}"#),
+    ("GET /teams/4/members", 200, #"{"members":[{"user":2,"name":"ana"}]}"#),
+    ("GET /teams/4/projects", 200, #"{"projects":[{"id":1,"slug":"acme-web","name":"Acme Web","archived":false}]}"#),
+    ("GET /teams/4/assignments", 200, #"{"assignments":[{"project":1,"user":2,"role":"developer","id":"1-2","userName":"ana","projectName":"Acme Web"}]}"#),
+    ("GET /projects/1/members", 200, #"{"members":[{"user":2,"name":"ana","role":"admin","directRole":"developer","fromTeams":"web (admin)"},{"user":3,"name":"bor","role":"reader","directRole":"none","fromTeams":"web (reader)"},{"user":9,"name":"eva","role":"admin","directRole":"admin","fromTeams":""}]}"#),
+    ("GET /projects/1/remotes", 200, #"{"remotes":["host.example/a/b"],"entries":[{"remote":"host.example/a/b"}]}"#),
+    ("GET /projects/1/depends", 200, #"{"depends":[{"id":8,"slug":"old","name":"Old"}],"usedBy":[]}"#),
+]
+
+@MainActor @Suite struct PanelTeamsTests {
+    private func model(_ fake: Fake, locale: String = "C") async throws -> PanelModel {
+        for (k, st, b) in teamsAnswers { await fake.set(k, st, b) }
+        let m = PanelModel(panel: try teamsPanel(), strings: try strings(locale), routes: PanelRoutes.builtin, send: { await fake.handle($0) })
+        await m.load()
+        return m
+    }
+
+    @Test(.enabled(if: haveFixtures)) func everyKeyHasATextAndTheSidebarOrderIsGiven() throws {
+        for loc in ["C", "sl_SI"] {
+            let st = try strings(loc)
+            let keys = panelKeys(try teamsPanel())
+            #expect(keys.count > 60)
+            for k in keys { #expect(st.table[k] != nil, "\(loc): no text for \(k)") }
+        }
+        #expect(try teamsPanel().sections.map(\.id) == ["teams", "projects", "grants"])
+    }
+
+    @Test(.enabled(if: haveFixtures)) func loadsRefsThenTheThreeLists() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        #expect(await fake.log == ["GET /projects", "GET /users", "GET /teams", "GET /projects", "GET /grants"])
+        // archived rows are hidden until the toggle is on; a hidden team segment is never a row (the project list is the admin list)
+        #expect(m.visibleRows(m.panel.sections[0], path: "teams").map(\.id) == ["4"])
+        m.setShowHidden(true, path: "teams")
+        #expect(m.visibleRows(m.panel.sections[0], path: "teams").map(\.id) == ["4", "5"])
+        #expect(m.visibleRows(m.panel.sections[1], path: "projects").map(\.id) == ["1"])
+        #expect(m.refs["projects"]?.map(\.id) == ["1", "8"])
+        #expect(m.panel.sections.allSatisfy { ($0.rowActions ?? []).count <= PanelLimits.actions })
+    }
+
+    @Test(.enabled(if: haveFixtures)) func exactRequestsOfTheTeamActions() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let teams = m.panel.sections[0]
+        let web = m.visibleRows(teams, path: "teams")[0]
+        let add = teams.actions![0]
+        let byID = Dictionary(uniqueKeysWithValues: teams.rowActions!.map { ($0.id, $0) })
+        #expect(try m.request(add, values: ["name": .string("acme")]).get() == CoreRequest(method: "POST", path: "/teams", body: Data(#"{"name":"acme"}"#.utf8)))
+        #expect(try m.request(byID["rename"]!, row: web, values: ["name": .string("platform")]).get() == CoreRequest(method: "PATCH", path: "/teams/4", body: Data(#"{"name":"platform"}"#.utf8)))
+        #expect(m.defaults(byID["path"]!, row: web) == ["path": .string("acme/web")])
+        #expect(try m.request(byID["path"]!, row: web, values: ["path": .string("")]).get().body == Data(#"{"path":""}"#.utf8))  // empty clears the label
+        #expect(try m.request(byID["archive"]!, row: web).get() == CoreRequest(method: "PATCH", path: "/teams/4", body: Data(#"{"archived":true}"#.utf8)))
+        #expect(try m.request(byID["unarchive"]!, row: web).get().body == Data(#"{"archived":false}"#.utf8))
+        let c = m.confirmation(byID["archive"]!, row: web)
+        #expect(c?.destructive == true && c?.title == "Archive web [x](https://evil.example)?" && c?.message.contains("do not come back") == true && c?.message.contains("not stopped") == true)
+        #expect(m.confirmation(byID["rename"]!, row: web) == nil && m.confirmation(byID["unarchive"]!, row: web) == nil)
+        #expect(m.rowActions(teams, web).map(\.id) == ["rename", "path", "archive"])  // archive only for an active team
+    }
+
+    @Test(.enabled(if: haveFixtures)) func theTeamDetailPageAndItsRequests() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let teams = m.panel.sections[0]
+        let web = m.visibleRows(teams, path: "teams")[0]
+        await fake.clear()
+        await m.openDetail(teams, row: web)
+        #expect(await fake.log == ["GET /teams/4/members", "GET /teams/4/projects", "GET /teams/4/assignments"])
+        let members = teams.detail!.sections[0], projects = teams.detail!.sections[1], assigns = teams.detail!.sections[2]
+        let person = m.data("teams/members", parent: web).rows[0]
+        #expect(try m.request(members.actions![0], parent: web, values: ["user": .int(3)]).get() == CoreRequest(method: "PUT", path: "/teams/4/members/3"))
+        #expect(try m.request(members.rowActions![0], row: person, parent: web).get() == CoreRequest(method: "DELETE", path: "/teams/4/members/2"))
+        #expect(m.confirmation(members.rowActions![0], row: person)?.message.contains("Direct roles stay") == true)
+        let project = m.data("teams/projects", parent: web).rows[0]
+        #expect(try m.request(projects.actions![0], parent: web, values: ["project": .int(8)]).get() == CoreRequest(method: "PUT", path: "/teams/4/projects/8"))
+        #expect(try m.request(projects.rowActions![0], row: project, parent: web).get() == CoreRequest(method: "DELETE", path: "/teams/4/projects/1"))
+        let a = m.data("teams/assignments", parent: web).rows[0]
+        #expect(try m.request(assigns.actions![0], parent: web, values: ["user": .int(3), "project": .int(1), "role": .string("reader")]).get()
+                == CoreRequest(method: "PUT", path: "/teams/4/assignments", body: Data(#"{"project":1,"role":"reader","user":3}"#.utf8)))
+        #expect(try m.request(assigns.rowActions![0], row: a, parent: web, values: ["role": .string("admin")]).get()
+                == CoreRequest(method: "PUT", path: "/teams/4/assignments", body: Data(#"{"project":1,"role":"admin","user":2}"#.utf8)))
+        #expect(try m.request(assigns.rowActions![1], row: a, parent: web).get() == CoreRequest(method: "DELETE", path: "/teams/4/assignments", query: "project=1&user=2"))
+        #expect(m.confirmation(assigns.actions![0])?.message.contains("Manage lets a person read every person's private notes") == true)
+        #expect(m.confirmation(assigns.rowActions![0], row: a)?.title == "Change the role of ana?" && m.confirmation(assigns.rowActions![1], row: a)?.destructive == true)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func exactRequestsOfTheProjectActionsAndTheRoleOrigins() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let projects = m.panel.sections[1]
+        let p = m.visibleRows(projects, path: "projects")[0]
+        #expect(try m.request(projects.actions![0], values: ["slug": .string("acme-web"), "name": .string("Acme Web")]).get()
+                == CoreRequest(method: "POST", path: "/projects", body: Data(#"{"name":"Acme Web","slug":"acme-web"}"#.utf8)))
+        #expect(m.problems(projects.actions![0], values: ["slug": .string(String(repeating: "a", count: 64)), "name": .string("x")]) == ["slug": .tooLong(63)])
+        let archive = projects.rowActions!.first { $0.id == "archive" }!
+        #expect(try m.request(archive, row: p).get() == CoreRequest(method: "PATCH", path: "/projects/1", body: Data(#"{"archived":true}"#.utf8)))
+        #expect(m.confirmation(archive, row: p)?.message.contains("Nobody can write") == true && m.confirmation(archive, row: p)?.message.contains("access does not change") == true)
+        await fake.clear()
+        await m.openDetail(projects, row: p)
+        #expect(await fake.log == ["GET /projects/1/members", "GET /projects/1/remotes", "GET /projects/1/depends"])
+        let members = projects.detail!.sections[0]
+        let rows = m.data("projects/members", parent: p).rows
+        let (ana, bor, eva) = (rows[0], rows[1], rows[2])
+        // where a role comes from is in the columns: effective role, direct role, teams
+        #expect(members.columns!.map { m.cell($0, ana) } == ["ana", "Manage", "Develop", "web (admin)"])
+        #expect(members.columns!.map { m.cell($0, bor) } == ["bor", "Read", "None", "web (reader)"])
+        // the role actions depend on the direct role; only a LOWERING asks first
+        #expect(m.rowActions(members, ana).map(\.id) == ["to-reader-from-developer", "to-admin-from-developer", "remove-developer"])
+        #expect(m.rowActions(members, bor).map(\.id) == ["to-reader-from-none", "to-developer-from-none", "to-admin-from-none"])  // no direct role: nothing to remove
+        #expect(m.rowActions(members, eva).map(\.id) == ["to-reader-from-admin", "to-developer-from-admin", "remove-admin"])
+        let lower = m.rowActions(members, ana)[0], raise = m.rowActions(members, ana)[1], remove = m.rowActions(members, ana)[2]
+        #expect(m.confirmation(lower, row: ana)?.title == "Lower the role of ana?")
+        // raising to admin is security relevant: it asks first, says why, and is not a destructive (red) confirmation
+        let toAdmin = m.confirmation(raise, row: ana)
+        #expect(toAdmin?.destructive == false && toAdmin?.message.contains("private notes") == true && toAdmin?.message.contains("manage the notes of the team") == true)
+        #expect(m.rowActions(members, bor).allSatisfy { ($0.id == "to-admin-from-none") == (m.confirmation($0, row: bor) != nil) })  // only the admin one asks
+        #expect(m.confirmation(lower, row: ana)?.message.contains("not stopped") == true && m.confirmation(remove, row: ana)?.message.contains("If no team gives this person a role either") == true)
+        #expect(try m.request(raise, row: ana, parent: p).get() == CoreRequest(method: "PUT", path: "/projects/1/members/2", body: Data(#"{"role":"admin"}"#.utf8)))
+        #expect(try m.request(lower, row: ana, parent: p).get().body == Data(#"{"role":"reader"}"#.utf8))
+        #expect(try m.request(remove, row: ana, parent: p).get() == CoreRequest(method: "DELETE", path: "/projects/1/members/2"))
+        // giving a role (any, so also admin) and giving one through a team ask first
+        #expect(m.confirmation(members.actions![0])?.message.contains("Manage lets a person read every person's private notes") == true)
+        #expect(try m.request(members.actions![0], parent: p, values: ["user": .int(3), "role": .string("developer")]).get()
+                == CoreRequest(method: "PUT", path: "/projects/1/members/3", body: Data(#"{"role":"developer"}"#.utf8)))
+        // git identities and dependencies
+        let remotes = projects.detail!.sections[1], deps = projects.detail!.sections[2]
+        let remote = m.data("projects/remotes", parent: p).rows[0]
+        #expect(try m.request(remotes.actions![0], parent: p, values: ["remote": .string("git@host.example:a/b.git")]).get()
+                == CoreRequest(method: "POST", path: "/projects/1/remotes", body: Data(#"{"addRemote":"git@host.example:a/b.git"}"#.utf8)))
+        #expect(try m.request(remotes.rowActions![0], row: remote, parent: p).get().body == Data(#"{"removeRemote":"host.example/a/b"}"#.utf8))
+        #expect(m.confirmation(remotes.rowActions![0], row: remote)?.destructive == true)
+        let dep = m.data("projects/depends", parent: p).rows[0]
+        #expect(try m.request(deps.actions![0], parent: p, values: ["other": .int(8)]).get() == CoreRequest(method: "PUT", path: "/projects/1/depends/8"))
+        #expect(try m.request(deps.rowActions![0], row: dep, parent: p).get() == CoreRequest(method: "DELETE", path: "/projects/1/depends/8"))
+        #expect(m.confirmation(deps.rowActions![0], row: dep)?.message.contains("only a search hint") == true)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func grantsListAndRemoveWithTheQuery() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let grants = m.panel.sections[2]
+        let g = m.data("grants").rows[0]
+        #expect(g.id == "1-8-data" && grants.columns!.map { m.cell($0, g) } == ["Acme Web", "Old", "Data"])
+        #expect(try m.request(grants.actions![0], values: ["source": .int(1), "reader": .int(8), "class": .string("data")]).get()
+                == CoreRequest(method: "POST", path: "/grants", body: Data(#"{"class":"data","reader":8,"source":1}"#.utf8)))
+        #expect(try m.request(grants.rowActions![0], row: g).get() == CoreRequest(method: "DELETE", path: "/grants", query: "source=1&reader=8&class=data"))
+        let c = m.confirmation(grants.rowActions![0], row: g)
+        #expect(c?.message.hasPrefix("Old can no longer read the notes of Acme Web") == true && c?.message.contains("not stopped") == true)
+        // a failed call shows the server's message and leaves the rows
+        let before = m.data("grants").rows
+        await fake.set("POST /grants", 400, #"{"error":{"message":"grant to the same project"}}"#)
+        #expect(await !m.perform(grants.actions![0], section: "grants", values: ["source": .int(1), "reader": .int(1), "class": .string("data")]))
+        #expect(m.actionError[PanelListKey(path: "grants", parent: "")] == .server("grant to the same project") && m.data("grants").rows == before)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func namesWithMarkupAreShownAsTypedAndSlovenianHasNoCaseSlip() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let teams = m.panel.sections[0], projects = m.panel.sections[1]
+        #expect(m.cell(teams.columns![0], m.visibleRows(teams, path: "teams")[0]) == "web [x](https://evil.example)")
+        #expect(m.cell(projects.columns![2], m.visibleRows(projects, path: "projects")[0]) == "<b>web</b>")
+        let sl = try await model(Fake(), locale: "sl_SI")
+        let web = sl.visibleRows(teams, path: "teams")[0]
+        #expect(sl.confirmation(teams.rowActions!.first { $0.id == "archive" }!, row: web)?.title == "Arhiviram ekipo web [x](https://evil.example)?")
+        #expect(sl.panel.sections[0].columns!.map { sl.text($0.label) } == ["Ime", "Oznaka poti", "Osebe", "Projekti", "Stanje"])
     }
 }
 

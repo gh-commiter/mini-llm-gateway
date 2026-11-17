@@ -3,7 +3,9 @@ package coreapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"minigw/core"
@@ -81,7 +83,7 @@ func (a *API) teamRoute(ctx context.Context, st *core.Store, p core.Principal, r
 	return resp(200, teamDetail(t))
 }
 
-func (a *API) adminTeams(ctx context.Context, st *core.Store, method string, seg []string, body []byte) (int, any, bool) {
+func (a *API) adminTeams(ctx context.Context, st *core.Store, method string, seg []string, q url.Values, body []byte) (int, any, bool) {
 	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
 	failErr := func(err error) (int, any, bool) {
 		var inv core.ErrInvalid
@@ -101,9 +103,13 @@ func (a *API) adminTeams(ctx context.Context, st *core.Store, method string, seg
 			if err != nil {
 				return failErr(err)
 			}
-			out := []TeamJSON{}
+			counts, err := st.AdminCounts(ctx)
+			if err != nil {
+				return failErr(err)
+			}
+			out := []adminTeamJSON{}
 			for _, t := range ts {
-				out = append(out, toTeam(t))
+				out = append(out, adminTeamJSON{toTeam(t), counts.MembersOfTeam[t.ID], counts.ProjectsOfTeam[t.ID]})
 			}
 			return 200, map[string]any{"teams": out}, true
 		case "POST":
@@ -169,7 +175,15 @@ func (a *API) adminTeams(ctx context.Context, st *core.Store, method string, seg
 			if err != nil {
 				return failErr(err)
 			}
-			return 200, map[string]any{"assignments": assignments}, true
+			names, err := a.names(ctx, st)
+			if err != nil {
+				return failErr(err)
+			}
+			rows := []adminAssignmentJSON{}
+			for _, x := range assignments {
+				rows = append(rows, adminAssignmentJSON{x, fmt.Sprintf("%d-%d", x.Project, x.User), names.users[x.User], names.projects[x.Project]})
+			}
+			return 200, map[string]any{"assignments": rows}, true
 		}
 		if method == "PUT" || method == "DELETE" {
 			var b struct {
@@ -177,7 +191,16 @@ func (a *API) adminTeams(ctx context.Context, st *core.Store, method string, seg
 				User    int64
 				Role    core.Role
 			}
-			if decodeStrict(body, &b) != nil || b.Project <= 0 || b.User <= 0 {
+			if method == "DELETE" && len(body) > 0 && (q.Get("project") != "" || q.Get("user") != "") {
+				return fail(400, "give the assignment either as a JSON body or as ?project=&user=, not both")
+			}
+			if method == "DELETE" && len(body) == 0 { // DELETE takes ?project=&user= (a panel sends no body with a DELETE); a body still works
+				b.Project, _ = strconv.ParseInt(q.Get("project"), 10, 64)
+				b.User, _ = strconv.ParseInt(q.Get("user"), 10, 64)
+			} else if decodeStrict(body, &b) != nil {
+				return fail(400, "bad assignment body")
+			}
+			if b.Project <= 0 || b.User <= 0 {
 				return fail(400, "bad assignment body")
 			}
 			var err error
@@ -236,4 +259,38 @@ func (a *API) adminTeams(ctx context.Context, st *core.Store, method string, seg
 		return 200, map[string]any{"ok": true}, true
 	}
 	return fail(404, "not found")
+}
+
+// adminTeamJSON is a team in the owner's list with its counts (so a panel needs no extra calls).
+type adminTeamJSON struct {
+	TeamJSON
+	MemberCount  int `json:"memberCount"`
+	ProjectCount int `json:"projectCount"`
+}
+
+// adminAssignmentJSON is a team role assignment with an id and the names of the person and the project.
+type adminAssignmentJSON struct {
+	core.TeamAssignment
+	ID          string `json:"id"`
+	UserName    string `json:"userName"`
+	ProjectName string `json:"projectName"`
+}
+
+// adminProjectJSON is a project in the owner's list with its team (a project is in at most one) and its number of members.
+type adminProjectJSON struct {
+	ProjectJSON
+	TeamName    string `json:"teamName"`
+	MemberCount int    `json:"memberCount"`
+}
+
+func (a *API) adminProjectRows(ctx context.Context, st *core.Store, ps []core.Project) ([]adminProjectJSON, error) {
+	counts, err := st.AdminCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []adminProjectJSON{}
+	for _, p := range ps {
+		out = append(out, adminProjectJSON{toProject(p), counts.TeamOfProject[p.ID], counts.MembersOfProject[p.ID]})
+	}
+	return out, nil
 }

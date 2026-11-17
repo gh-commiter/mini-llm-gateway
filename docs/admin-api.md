@@ -213,12 +213,12 @@ continue), in the same transaction.
 | `GET /projects` | – | `{"projects": [{"id", "slug", "name", "archived", "granted": []}]}` |
 | `POST /projects` | `{"slug", "name"}` | `{"project"}`; slug `[a-z0-9][a-z0-9-]{1,62}`, not only digits; the id is never reused |
 | `PATCH /projects/{id}` | `{"archived": bool}` | `{"ok": true}`; archived: nobody writes |
-| `GET /projects/{id}/remotes` | – | `{"remotes": [identity]}`: the registered git identities (`host/path`) |
-| `POST /projects/{id}/remotes` | `{"add": [url], "remove": [url]}` | `{"remotes": [...], "added": [...], "removed": [...]}`; one transaction, audit `project.remotes`; at most 8 per project, the same identity may belong to several projects; an archived project: 403 `archived` |
-| `GET /projects/{id}/members` | – | `{"members": [{"user", "name", "role"}]}` |
+| `GET /projects/{id}/remotes` | – | `{"remotes": [identity], "entries": [{"remote": identity}]}`: the registered git identities (`host/path`), also as rows |
+| `POST /projects/{id}/remotes` | `{"add": [url], "remove": [url]}`; the owner route also takes one value as `{"addRemote": url}` or `{"removeRemote": url}` (a form sends one value) | `{"remotes": [...], "added": [...], "removed": [...]}`; one transaction, audit `project.remotes`; at most 8 per project, the same identity may belong to several projects; an archived project: 403 `archived` |
+| `GET /projects/{id}/members` | – | `{"members": [{"user", "name", "role", "origins", "directRole", "fromTeams"}]}`; `directRole` is the role given directly (`none` when there is none) and `fromTeams` the teams that give one as display text (`acme (reader), web (developer)`; `teams` has the same as `[{team, role}]`), so a role and where it comes from can be shown flat |
 | `PUT /projects/{id}/members/{user}` | `{"role": "reader"\|"developer"\|"admin"}` | `{"ok": true}`; lowering the role raises the epoch |
 | `DELETE /projects/{id}/members/{user}` | – | `{"ok": true}`; raises the epoch |
-| `GET /grants` | – | `{"grants": [{"source", "reader", "class"}]}` |
+| `GET /grants` | – | `{"grants": [{"source", "reader", "class", "id", "sourceName", "readerName"}]}` |
 | `POST /grants` | `{"source", "reader", "class": "structure"\|"data"}` | `{"ok": true}`: the members of `reader` read that class of `source` |
 | `DELETE /grants?source=&reader=&class=` | – | `{"ok": true}`; raises the epoch |
 | `GET /audit?after=&limit=` | – | `{"events": [{"id", "time", "actor", "action", "subject", "detail"}], "next"?}`: oldest first, `next` is the last id (pass it as `after`); limit 1-500, default 100; metadata only |
@@ -270,7 +270,7 @@ is down.
 - The built-in provider (`builtin`) registers `GET users`, `POST users`, `PATCH users/{}`, `GET bindings`, `PUT bindings/{}`,
   `DELETE bindings/{}`, the gateway's `GET devices`, and for the knowledge base `GET kb/submissions`, `GET kb/submissions/{}`,
   `POST kb/submissions/{}/accept`, `POST kb/submissions/{}/reject`, `GET kb/notes`, `GET kb/notes/{}`, `GET kb/faq`, `GET projects`
-  and `GET teams`. Its panel `builtin.kb` ("Knowledge base") is described under the Mac Settings window in gateway.md. Its panel `builtin.users` ("Users and devices"), never sends
+  `GET teams`, and for the teams panel `POST teams`, `PATCH teams/{}`, `GET|PUT|DELETE teams/{}/members[/{}]`, `GET|PUT|DELETE teams/{}/projects[/{}]`, `GET|PUT|DELETE teams/{}/assignments`, `POST projects`, `PATCH projects/{}`, `GET|PUT|DELETE projects/{}/members[/{}]`, `GET|POST projects/{}/remotes`, `GET|PUT|DELETE projects/{}/depends[/{}]` and `GET|POST|DELETE grants`. Its panel `builtin.teams` ("Teams and projects") is described in gateway.md; its panel `builtin.kb` ("Knowledge base") is described under the Mac Settings window in gateway.md. Its panel `builtin.users` ("Users and devices"), never sends
   `owner`; a user name is at most 128 bytes, the server's own limit, and the server stays the authority.
 - Design and format: `docs/plans/plugin-panels-design.md`. The Go and Swift sides decode the same fixtures
   (`client/testdata/panels*.json`).
@@ -339,7 +339,7 @@ uniqueness as for users. Project display names are not unique; projects have sep
 |---|---|---|
 | `GET /projects/{id}/depends` | – | `{depends: [{id, slug, name}], usedBy: [...]}` |
 | `PUT /projects/{id}/depends/{other}` / `DELETE` | – | `{ok: true}`; at most 16 per project, not itself, not an archived project (remove is always allowed); a team's notes (segment ids) are never a side |
-| `GET /teams` | – | `{teams: [{id, name, archived, path, segment}]}` including archived teams; `segment` is the id of the team's own notes |
+| `GET /teams` | – | `{teams: [{id, name, archived, path, segment, memberCount, projectCount}]}` including archived teams; `segment` is the id of the team's own notes |
 | `POST /teams` | `{name}` | `{team: {id, name, archived, path, segment}}` |
 | `GET /teams/{id}` | – | `{id, name, archived, path, segment, members: [{user, name}], projects: [Project]}` |
 | `PATCH /teams/{id}` | `{name}`, `{archived: bool}` or `{path: string}` (one of them) | `{ok: true}`; archive instead of hard delete. `path` is a free-text label (folded to lower case, at most 128 bytes, no control characters, no leading or trailing `/`; `""` clears); a label never gives access |
@@ -585,9 +585,9 @@ For temporary-folder tests, record the copy IDs before and after the run and rem
 
 | Route | Body | Result |
 |---|---|---|
-| `GET /teams/{id}/assignments` | – | `{assignments: [{project, user, role}]}`, sorted by project/user |
+| `GET /teams/{id}/assignments` | – | `{assignments: [{project, user, role, id, userName, projectName}]}`, sorted by project/user |
 | `PUT /teams/{id}/assignments` | `{project, user, role}` | `{ok: true}` |
-| `DELETE /teams/{id}/assignments` | `{project, user}` | `{ok: true}`; absent assignment is 404 |
+| `DELETE /teams/{id}/assignments` | `{project, user}`, or without a body `?project=&user=` (both together: 400) | `{ok: true}`; absent assignment is 404 |
 
 Roles are reader, developer and admin. Set requires an unarchived team, its project and its member;
 invalid assignments return 400. Member authentication never permits owner writes.
