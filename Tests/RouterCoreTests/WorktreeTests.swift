@@ -283,7 +283,14 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     agentGit(Worktree.harnessEnv(root: repo, maven: root.appendingPathComponent("m2"), agent: "claude"))
     #expect(((try? FileManager.default.contentsOfDirectory(atPath: marks.path)) ?? []).isEmpty)
     try file(repo, "a.txt", "again\n")
-    agentGit([:])  // kontrola: brez okolja se vse troje zažene
+    // Kontrola: git brez vsakršnega varovala (ne Worktree.run, ta od pregleda klicev gita vedno doda skupne pripone): vse troje se zažene.
+    for args in [["status", "--porcelain"], ["diff"], ["add", "-A"], ["-c", "user.name=a", "-c", "user.email=a@x", "commit", "-qm", "x"]] {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        p.arguments = args; p.currentDirectoryURL = repo
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+    }
     #expect(Set((try? FileManager.default.contentsOfDirectory(atPath: marks.path)) ?? []) == ["fsmonitor", "clean", "hook"])
 }
 
