@@ -37,6 +37,8 @@ func TestNoProjectAccessMatchesFixture(t *testing.T) {
 	}
 }
 
+// Admin paths match by their first segment only ("projects", "teams", ...): the rest of the path is routed (and answered 404)
+// by the core, so a row such as /projects/3/dependsx is true here and a 404 from the route, not false.
 func TestPathFixture(t *testing.T) {
 	var rows []struct {
 		Kind, Method, Path string

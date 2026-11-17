@@ -249,6 +249,16 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			return a.errResponse(err)
 		}
 		return resp(200, map[string]any{"identity": identity, "projects": teamProjects(ps)})
+	case len(seg) == 2 && seg[1] == "depends" && r.Method == "GET":
+		pid, ok := posID(seg[0])
+		if !ok {
+			return a.errResponse(core.ErrInvalid{What: "project id"})
+		}
+		ds, err := st.ListDepends(ctx, p, pid)
+		if err != nil {
+			return a.errResponse(err)
+		}
+		return resp(200, map[string]any{"depends": dependsJSON(ds)})
 	case len(seg) == 2 && seg[1] == "remotes" && (r.Method == "GET" || r.Method == "POST"):
 		pid, ok := posID(seg[0])
 		if !ok {
@@ -547,6 +557,15 @@ func remotesReply(list []string, b remotesBody) map[string]any {
 		if len(ids) > 0 {
 			out[key] = ids
 		}
+	}
+	return out
+}
+
+// dependsJSON lists projects of a dependency view as {id, slug, name}.
+func dependsJSON(ps []core.Project) []map[string]any {
+	out := []map[string]any{}
+	for _, p := range ps {
+		out = append(out, map[string]any{"id": p.ID, "slug": p.Slug, "name": p.Name})
 	}
 	return out
 }

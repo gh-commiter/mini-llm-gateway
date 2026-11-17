@@ -238,6 +238,32 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 			return failErr(err)
 		}
 		return 200, map[string]any{"ok": true}, true
+	case "GET projects/{}/depends":
+		id, good := num(seg[1])
+		if !good {
+			return fail(400, "bad project id")
+		}
+		dep, used, err := st.AdminListDepends(ctx, id)
+		if err != nil {
+			return failErr(err)
+		}
+		return 200, map[string]any{"depends": dependsJSON(dep), "usedBy": dependsJSON(used)}, true
+	case "PUT projects/{}/depends/{}", "DELETE projects/{}/depends/{}":
+		id, good := num(seg[1])
+		other, good2 := num(seg[3])
+		if !good || !good2 {
+			return fail(400, "bad project id")
+		}
+		var err error
+		if method == "PUT" {
+			err = st.AddDepends(ctx, id, other)
+		} else {
+			err = st.RemoveDepends(ctx, id, other)
+		}
+		if err != nil {
+			return failErr(err)
+		}
+		return 200, map[string]any{"ok": true}, true
 	case "GET projects/{}/remotes", "POST projects/{}/remotes":
 		id, good := num(seg[1])
 		if !good {

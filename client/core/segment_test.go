@@ -469,6 +469,18 @@ func TestSegmentNeverInAListing(t *testing.T) {
 			check("GetTeam", prIDs(d.Projects)...)
 		}
 	}
+	f.ok(f.AddDepends(ctx, f.pid["fakture"], f.pid["eureko"]))
+	for _, pid := range []int64{f.pid["fakture"], f.pid["eureko"]} {
+		dep, used, e := f.AdminListDepends(ctx, pid)
+		f.ok(e)
+		check("AdminListDepends", prIDs(dep)...)
+		check("AdminListDepends usedBy", prIDs(used)...)
+		for _, u := range []string{"ana", "fani", "cene"} {
+			if ds, e := f.ListDepends(ctx, f.p(u), pid); e == nil {
+				check("ListDepends", prIDs(ds)...)
+			}
+		}
+	}
 	now := f.now()
 	f.event("u1", "", f.uid["fani"], f.pid["fakture"], "m", OutcomeOK, 1, 1, now)
 	for _, u := range []string{"ana", "fani", "eva", "bor"} {

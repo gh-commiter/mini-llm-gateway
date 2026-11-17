@@ -4,9 +4,16 @@
 
 ### New
 - Admin panels: the owner's admin API has a new read route, `GET /panels`, that describes panels declaratively (one validated format, no code or markup; texts are keys, with per-language tables from `GET /panels/strings`, English and Slovenian), and the Mac app draws them natively. The first panel is **Users and devices** in the Settings window, after Devices: add, rename, deactivate and activate users, bind and unbind devices. Device approval stays in Devices. See "Panels" in the admin API document.
+- Project dependencies: the owner records that a project depends on another (`minigw gw project depends add <project> <other>`, `remove`, `list`), across teams, at most 16 per project. A person's search of a project, and `note read` of a hit, then also cover the projects it depends on, each only as far as that person could read it directly (membership or grant): a dependency is a search hint and gives no permission. Such a hit ends with `from project:<slug>`. `minigw project depends [<project>]` lists the dependencies you can read. Team bundles carry the relation between projects that are both in the bundle (`gw import --dry-run` lists what it would add and skips names the gateway does not have).
+
+### Changed
+- The project database schema is now 16 (a snapshot is taken before the migration). An older gateway cannot open it.
+- Only one level is followed: a dependency of a dependency is not searched. A cycle is allowed and harmless.
+- An agent run gets nothing from a dependency by itself: it reads another project only through an owner grant, exactly as before; a dependency only labels and orders the hits such a grant already allows.
 
 ### Known problems
 - The Users and devices pane is new and has only been tried through tests, not in a real window. Windows and Linux have no panel renderer yet (the settings page and `minigw gw` still cover the same routes); the terminal UI neither. A detail page of a panel opens as a sheet, and no built-in panel uses one yet.
+- A project linked to a subfolder of another project's folder gets no automatic dependency; the owner sets it with `gw project depends add`.
 
 ## 0.7.14
 

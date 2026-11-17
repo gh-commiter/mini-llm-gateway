@@ -703,7 +703,7 @@ func (s *Store) runScope(tx *sql.Tx, c RunCap, approved, extended bool) ([]reada
 	}
 	rows.Close()
 	if extended { // search and read also cover the team segment, by the user's own right in it
-		more, err := extraSources(tx, c.UserID, c.ProjectID)
+		more, err := extraSources(tx, c.UserID, c.ProjectID, true)
 		if err != nil {
 			return nil, err
 		}

@@ -329,6 +329,8 @@ uniqueness as for users. Project display names are not unique; projects have sep
 
 | Method and path | Body | Response |
 |---|---|---|
+| `GET /projects/{id}/depends` | – | `{depends: [{id, slug, name}], usedBy: [...]}` |
+| `PUT /projects/{id}/depends/{other}` / `DELETE` | – | `{ok: true}`; at most 16 per project, not itself, not an archived project (remove is always allowed); a team's notes (segment ids) are never a side |
 | `GET /teams` | – | `{teams: [{id, name, archived, path, segment}]}` including archived teams; `segment` is the id of the team's own notes |
 | `POST /teams` | `{name}` | `{team: {id, name, archived, path, segment}}` |
 | `GET /teams/{id}` | – | `{id, name, archived, path, segment, members: [{user, name}], projects: [Project]}` |

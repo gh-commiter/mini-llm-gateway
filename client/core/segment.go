@@ -96,7 +96,8 @@ func checkSegments(tx *sql.Tx) error {
  + (SELECT count(*) FROM projects p WHERE p.id>?1 AND NOT EXISTS(SELECT 1 FROM teams t WHERE ?1+t.id=p.id))
  + (SELECT count(*) FROM memberships WHERE project_id>?1) + (SELECT count(*) FROM direct_memberships WHERE project_id>?1)
  + (SELECT count(*) FROM team_assignments WHERE project_id>?1) + (SELECT count(*) FROM team_projects WHERE project_id>?1)
- + (SELECT count(*) FROM project_remotes WHERE project_id>?1) + (SELECT count(*) FROM grants WHERE source_id>?1 OR reader_id>?1)`, segmentBase).Scan(&n)
+ + (SELECT count(*) FROM project_remotes WHERE project_id>?1) + (SELECT count(*) FROM grants WHERE source_id>?1 OR reader_id>?1)
+ + (SELECT count(*) FROM project_depends WHERE project_id>?1 OR depends_on>?1)`, segmentBase).Scan(&n)
 	if err != nil {
 		return err
 	}
@@ -109,30 +110,63 @@ func checkSegments(tx *sql.Tx) error {
 // extraSources: the readable sets, besides the home project, that search and read by id also cover: today the
 // team segment of the project's (active) team, as far as loadAccess gives the user read of it. THE one function
 // of search, note read and the run channel; a hit's source is a hint, never a permission of its own.
-func extraSources(tx *sql.Tx, user, project int64) ([]readable, error) {
+//
+// Dependencies (project_depends, one level) are added for a PERSON (run = false) only, each as far as the user could
+// read that project directly (role or grant, never private): a hint, never a permission. A run reads nothing through
+// a dependency: what an owner grant already allows it, the grant gives.
+func extraSources(tx *sql.Tx, user, project int64, run bool) (out []readable, err error) {
 	if isSegment(project) {
 		return nil, nil
 	}
 	var team int64
-	err := tx.QueryRow(`SELECT tp.team_id FROM team_projects tp JOIN teams t ON t.id=tp.team_id WHERE tp.project_id=? AND t.archived=0`, project).Scan(&team)
-	if err == sql.ErrNoRows {
-		return nil, nil
+	switch err = tx.QueryRow(`SELECT tp.team_id FROM team_projects tp JOIN teams t ON t.id=tp.team_id WHERE tp.project_id=? AND t.archived=0`, project).Scan(&team); err {
+	case nil:
+		a, e := loadAccess(tx, user, segmentID(team))
+		if e != nil {
+			return nil, e
+		}
+		if r := a.readable(segmentID(team), true); len(r.all)+len(r.own) > 0 {
+			out = append(out, r)
+		}
+	case sql.ErrNoRows:
+	default:
+		return nil, err
 	}
+	if run {
+		return out, nil
+	}
+	rows, err := tx.Query(`SELECT depends_on FROM project_depends WHERE project_id=? ORDER BY depends_on`, project)
 	if err != nil {
 		return nil, err
 	}
-	a, err := loadAccess(tx, user, segmentID(team))
+	var deps []int64
+	for rows.Next() {
+		var d int64
+		if err = rows.Scan(&d); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		deps = append(deps, d)
+	}
+	err = rows.Err()
+	rows.Close()
 	if err != nil {
 		return nil, err
 	}
-	if r := a.readable(segmentID(team), true); len(r.all)+len(r.own) > 0 {
-		return []readable{r}, nil
+	for _, d := range deps {
+		a, e := loadAccess(tx, user, d)
+		if e != nil {
+			return nil, e
+		}
+		if r := a.readable(d, true); len(r.all)+len(r.own) > 0 {
+			out = append(out, r)
+		}
 	}
-	return nil, nil
+	return out, nil
 }
 
 // noteSources is the home project's readable set (the caller's access a) followed by extraSources.
 func noteSources(tx *sql.Tx, user, project int64, a access) ([]readable, error) {
-	more, err := extraSources(tx, user, project)
+	more, err := extraSources(tx, user, project, false)
 	return append([]readable{a.readable(project, false)}, more...), err
 }

@@ -52,7 +52,8 @@ type SearchHit struct {
 	Updated time.Time `json:"updated"`
 	// EntryKind is finding or faq.
 	EntryKind string `json:"entryKind"`
-	// From names where a hit comes from when it is not the project asked: "team:<name>" for the team's notes.
+	// From names where a hit comes from when it is not the project asked: "team:<name>" for the team's notes,
+	// "project:<slug>" for a project the asked one depends on.
 	From string `json:"from,omitempty"`
 }
 type SearchPage struct {
@@ -95,12 +96,15 @@ func searchScope(user int64, rs []readable) string {
 // bodies are loaded only for visible hits.
 // The home project's hits come first, then the others, each by recency (there is no corpus rank).
 func searchSQL(filter string) string {
+	// Two bounded top-20 selections (the home project's, then the rest) instead of one ORDER BY on an expression:
+	// the expression made SQLite sort every match of a large corpus and blew the 250 ms deadline.
 	return `WITH visible AS MATERIALIZED (
  SELECT n.id,n.project_id,n.class,n.title,n.updated FROM notes n WHERE ` + filter + `),
- hits AS MATERIALIZED (SELECT v.* FROM visible v JOIN note_search ON note_search.rowid=v.id
- WHERE note_search MATCH ? ORDER BY v.project_id<>?,v.updated DESC,v.id LIMIT 20)
+ own AS (SELECT v.* FROM visible v JOIN note_search ON note_search.rowid=v.id WHERE note_search MATCH ? AND v.project_id=? ORDER BY v.updated DESC,v.id LIMIT 20),
+ other AS (SELECT v.* FROM visible v JOIN note_search ON note_search.rowid=v.id WHERE note_search MATCH ? AND v.project_id<>? ORDER BY v.updated DESC,v.id LIMIT 20),
+ hits AS MATERIALIZED (SELECT * FROM (SELECT *,0 g FROM own UNION ALL SELECT *,1 g FROM other) ORDER BY g,updated DESC,id LIMIT 20)
  SELECT h.id,h.project_id,h.class,h.title,substr(n.body,1,160),h.updated,n.entry_kind
- FROM hits h JOIN notes n ON n.id=h.id ORDER BY h.project_id<>?,h.updated DESC,h.id`
+ FROM hits h JOIN notes n ON n.id=h.id ORDER BY h.g,h.updated DESC,h.id`
 }
 func searchNotes(ctx context.Context, tx *sql.Tx, user, home int64, rs []readable, text string) (SearchPage, error) {
 	out := SearchPage{Hits: []SearchHit{}}
@@ -112,7 +116,8 @@ func searchNotes(ctx context.Context, tx *sql.Tx, user, home int64, rs []readabl
 	if filter == "0" {
 		return out, nil
 	}
-	args = append(args, searchScope(user, rs)+" AND {title body} : ("+query+")", home, home)
+	match := searchScope(user, rs) + " AND {title body} : (" + query + ")"
+	args = append(args, match, home, match, home)
 	rows, err := tx.QueryContext(ctx, searchSQL(filter), args...)
 	if err != nil {
 		return out, err
@@ -135,7 +140,22 @@ func searchNotes(ctx context.Context, tx *sql.Tx, user, home int64, rs []readabl
 	labels := map[int64]string{} // at most one lookup per source
 	for i := range found {
 		p := found[i].Project
+		if p == home && !isSegment(p) {
+			continue
+		}
+		if _, ok := labels[p]; !ok && !isSegment(p) { // a project that the home project depends on: its slug, else no label
+			var slug string
+			switch err = tx.QueryRow(`SELECT p.slug FROM project_depends d JOIN projects p ON p.id=d.depends_on WHERE d.project_id=? AND d.depends_on=?`, home, p).Scan(&slug); err {
+			case nil:
+				labels[p] = "project:" + slug
+			case sql.ErrNoRows:
+				labels[p] = ""
+			default:
+				return SearchPage{}, err
+			}
+		}
 		if !isSegment(p) {
+			found[i].From = labels[p]
 			continue
 		}
 		if _, ok := labels[p]; !ok {

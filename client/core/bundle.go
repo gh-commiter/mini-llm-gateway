@@ -26,6 +26,8 @@ type BundleProject struct {
 	Slug    string   `json:"slug"`
 	Name    string   `json:"name"`
 	Remotes []string `json:"remotes,omitempty"`
+	// DependsOn: slugs of projects this one depends on (at most 16); an export lists only projects of the bundle.
+	DependsOn []string `json:"depends_on,omitempty"`
 }
 type BundleMembership struct {
 	Project string `json:"project"`
@@ -170,6 +172,32 @@ func (s *Store) ExportBundle(ctx context.Context, in BundleExport) error {
 					if len(m.Projects[i].Remotes) == 0 {
 						m.Projects[i].Remotes = nil
 					}
+				}
+			}
+		}
+		for i, p := range m.Projects { // the relation between projects that are both in the bundle
+			for id, slug := range projects {
+				if slug != p.Slug {
+					continue
+				}
+				rows, err := tx.Query(`SELECT depends_on FROM project_depends WHERE project_id=? ORDER BY depends_on`, id)
+				if err != nil {
+					return err
+				}
+				for rows.Next() {
+					var other int64
+					if err = rows.Scan(&other); err != nil {
+						rows.Close()
+						return err
+					}
+					if s := projects[other]; s != "" {
+						m.Projects[i].DependsOn = append(m.Projects[i].DependsOn, s)
+					}
+				}
+				err = rows.Err()
+				rows.Close()
+				if err != nil {
+					return err
 				}
 			}
 		}
@@ -518,6 +546,7 @@ func preflightManifest(data []byte) error {
 	d := json.NewDecoder(bytes.NewReader(data))
 	limits := manifestLimits()
 	var value func(int, int) error
+	nested := ""
 	value = func(depth, limit int) error {
 		t, err := d.Token()
 		if err != nil {
@@ -532,6 +561,13 @@ func preflightManifest(data []byte) error {
 				}
 				name := key.(string)
 				n := -1
+				if depth == 2 && (name == "depends_on" || name == "remotes") { // nested per-project lists
+					nested = name
+					n = maxDepends
+					if name == "remotes" {
+						n = maxRemotes
+					}
+				}
 				if depth == 0 {
 					if !manifestFields[name] {
 						return ErrInvalid{"bundle manifest: unknown field " + strconv.Quote(name)}
@@ -550,6 +586,9 @@ func preflightManifest(data []byte) error {
 			for d.More() {
 				count++
 				if limit >= 0 && count > limit {
+					if depth == 3 { // a nested per-project list: the same refusal as validateBundle gives
+						return ErrInvalid{"project " + nested + ": too many entries"}
+					}
 					return ErrTooLarge
 				}
 				if err := value(depth+1, -1); err != nil {
@@ -761,6 +800,16 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 		projects[p.Slug] = true
 		if len(p.Remotes) > maxRemotes {
 			return nil, ErrInvalid{"project remotes: at most 8"}
+		}
+		if len(p.DependsOn) > maxDepends {
+			return nil, ErrInvalid{"project depends: at most 16"}
+		}
+		seenDep := map[string]bool{}
+		for _, d := range p.DependsOn {
+			if !slugRe.MatchString(d) || d == p.Slug || seenDep[d] {
+				return nil, ErrInvalid{"project depends"}
+			}
+			seenDep[d] = true
 		}
 		for i, r := range p.Remotes {
 			id, err := NormalizeRemote("https://" + r) // the manifest carries identities (host/path), not URLs
@@ -1136,6 +1185,42 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 			}
 			if e = exec(q, args...); e != nil {
 				return e
+			}
+		}
+	}
+	added := map[int64]int{}       // what this import adds per project (a dry run writes nothing, so the cap needs its own count)
+	for _, p := range m.Projects { // owner-managed relation: only between projects that exist here, never creating one
+		for _, d := range p.DependsOn {
+			a, b := projects[p.Slug], projects[d]
+			if b == 0 {
+				switch e := tx.QueryRow(`SELECT id FROM projects WHERE slug=?`, d).Scan(&b); e {
+				case nil:
+				case sql.ErrNoRows:
+					line("skip", "depends "+p.Slug+" "+d+": unknown project")
+					continue
+				default:
+					return e
+				}
+			}
+			var have, archived, count int
+			if e := tx.QueryRow(`SELECT (SELECT count(*) FROM project_depends WHERE project_id=?1 AND depends_on=?2), (SELECT count(*) FROM projects WHERE id IN(?1,?2) AND archived=1), (SELECT count(*) FROM project_depends WHERE project_id=?1)`, a, b).Scan(&have, &archived, &count); e != nil {
+				return e
+			}
+			switch {
+			case have > 0:
+				line("skip", "depends "+p.Slug+" "+d)
+			case archived > 0:
+				line("skip", "depends "+p.Slug+" "+d+": archived project")
+			case count+added[a] >= maxDepends:
+				line("skip", "depends "+p.Slug+" "+d+": at most 16")
+			default:
+				if dry {
+					added[a]++ // a real import counts the rows it has written
+				}
+				line("create", "depends "+p.Slug+" "+d)
+				if e := exec(`INSERT OR IGNORE INTO project_depends(project_id,depends_on) VALUES(?,?)`, a, b); e != nil {
+					return e
+				}
 			}
 		}
 	}

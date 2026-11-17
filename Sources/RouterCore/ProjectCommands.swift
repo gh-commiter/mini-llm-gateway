@@ -29,6 +29,7 @@ public final class ProjectEnv {
         minigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)
         minigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin
         minigw project remote remove <url> [<slug>]
+        minigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them
         minigw project unlink                       remove the link that applies here
         minigw project show                         the link that applies here, and why
         minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]
@@ -226,6 +227,7 @@ public final class ProjectEnv {
             guard pos.count <= 1 else { throw ProjectError("usage: minigw project link [<slug>]") }
             try link(pos.first ?? "")
         case "remote": try remote(pos, here: fl.bool("here"))
+        case "depends": try depends(pos)
         case "unlink":
             guard pos.isEmpty else { throw ProjectError("usage: minigw project unlink") }
             try unlink()
