@@ -17,7 +17,8 @@ enum CLITool {
             [], &req) == errSecSuccess && SecStaticCodeCheckValidity(code!, [], req) == errSecSuccess
     }
 
-    /// Povezava v PATH na ukaz v aplikaciji, nato `minigw connect <url> --token <t>`.
+    /// Povezava v PATH na ukaz v aplikaciji, nato `minigw connect <url> --token -`: žeton gre po stdin, ne v argumente,
+    /// kjer bi ga med tekom videli drugi uporabniki (ps).
     static func install(in dir: String, url: String, token: String) throws -> String {
         let link = URL(fileURLWithPath: dir).appendingPathComponent(name)
         let fm = FileManager.default
@@ -26,7 +27,7 @@ enum CLITool {
             try fm.removeItem(at: link)  // prejšnja povezava ali stara skripta
         }
         try fm.createSymbolicLink(at: link, withDestinationURL: helper)
-        return try run(["connect", url, "--token", token])
+        return try run(Profiles.connectArguments(url: url), stdin: token + "\n")
     }
 
     /// Kopija podpisanega ukaza za drug Mac (tam: minigw connect <ta Mac> --token …).
@@ -36,15 +37,27 @@ enum CLITool {
         try fm.copyItem(at: helper, to: file)
     }
 
-    /// Zažene ukaz in vrne njegov izpis (ali vrže napako z izpisom).
-    static func run(_ args: [String]) throws -> String {
+    /// Zažene ukaz in vrne njegov izpis (ali vrže napako z izpisom). stdin: besedilo gre otroku po cevi
+    /// (žeton ne sme biti v argumentih); cev se po pisanju zapre, da otrok vidi konec.
+    static func run(_ args: [String], stdin: String? = nil) throws -> String {
         let p = Process()
         p.executableURL = helper
         p.arguments = args
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
+        var input: Pipe?
+        if let stdin {
+            let i = Pipe()
+            p.standardInput = i
+            input = i
+        }
         try p.run()
+        if let stdin, let input {
+            // Žeton je kratek (cev sprejme več): pisanje po zagonu ne more blokirati, branje izhoda se ne ustavi.
+            try? input.fileHandleForWriting.write(contentsOf: Data(stdin.utf8))
+            try? input.fileHandleForWriting.close()
+        }
         let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         p.waitUntilExit()  // izhod je že zaprt, proces končan
