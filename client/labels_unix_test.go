@@ -78,13 +78,14 @@ func TestMinigwLabelsNeverChangeTheRun(t *testing.T) {
 			}
 		}
 		os.Remove(log + ".headers")
-		if n := strings.Count(stderr, "ignored: "); n != c.warning || strings.Count(strings.TrimSpace(stderr), "\n")+1 > max(c.warning, 1) && strings.TrimSpace(stderr) != "" {
-			t.Errorf("%s: warnings %d, want %d: %q", c.name, n, c.warning, stderr)
+		// Only the lines about labels are counted: on Linux the client also reports how the folder is shared with this fake gateway.
+		if n := strings.Count(stderr, "ignored: "); n != c.warning || len(labelLines(stderr)) != c.warning {
+			t.Errorf("%s: warnings %d (label lines %d), want %d: %q", c.name, n, len(labelLines(stderr)), c.warning, stderr)
 		}
 	}
 	// A label flag without a value does not swallow the next option: claude still gets --model claude-x.
 	stderr, code, got := run(nil, "--minigw-phase", "--model", "claude-x", "-p", "hi")
-	if code != 7 || !strings.Contains(got, " --model claude-x -p hi") || strings.Contains(got, "--minigw-") || strings.Count(strings.TrimSpace(stderr), "\n") != 0 || !strings.Contains(stderr, "has no value") {
+	if code != 7 || !strings.Contains(got, " --model claude-x -p hi") || strings.Contains(got, "--minigw-") || len(labelLines(stderr)) != 1 || !strings.Contains(stderr, "has no value") {
 		t.Errorf("flag without a value: exit %d, claude got %q, stderr %q", code, got, stderr)
 	}
 }
@@ -139,4 +140,15 @@ func TestGitBranchNeverBlocksOnOddFiles(t *testing.T) {
 	r = mk(t)
 	os.Symlink("/etc/hostname", filepath.Join(r, ".git", "HEAD"))
 	within("a link to a file", func() string { return gitBranch(r, r) })
+}
+
+// labelLines: the lines of minigw's stderr that are about a run label (they name the flag, also for a value from the environment).
+func labelLines(stderr string) []string {
+	var out []string
+	for _, l := range strings.Split(stderr, "\n") {
+		if strings.Contains(l, "--minigw-phase") || strings.Contains(l, "--minigw-activity") || strings.Contains(l, "--minigw-task") {
+			out = append(out, l)
+		}
+	}
+	return out
 }
