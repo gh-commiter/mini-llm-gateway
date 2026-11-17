@@ -54,7 +54,7 @@ type PanelProvider struct {
 var builtinPanelFiles embed.FS
 
 // BuiltinRoutes: the routes the built-in panels may use. The core's own routes plus the gateway's GET devices.
-var BuiltinRoutes = []string{"GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices", "GET kb/submissions", "GET kb/submissions/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject", "GET kb/notes", "GET kb/notes/{}", "GET kb/faq", "GET projects", "GET teams"}
+var BuiltinRoutes = []string{"GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices", "GET kb/submissions", "GET kb/submissions/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject", "GET kb/notes", "GET kb/notes/{}", "GET kb/faq", "GET projects", "GET teams", "POST teams", "PATCH teams/{}", "GET teams/{}/members", "PUT teams/{}/members/{}", "DELETE teams/{}/members/{}", "GET teams/{}/projects", "PUT teams/{}/projects/{}", "DELETE teams/{}/projects/{}", "GET teams/{}/assignments", "PUT teams/{}/assignments", "DELETE teams/{}/assignments", "POST projects", "PATCH projects/{}", "GET projects/{}/members", "PUT projects/{}/members/{}", "DELETE projects/{}/members/{}", "GET projects/{}/remotes", "POST projects/{}/remotes", "GET projects/{}/depends", "PUT projects/{}/depends/{}", "DELETE projects/{}/depends/{}", "GET grants", "POST grants", "DELETE grants"}
 
 // panelSymbols: the names a renderer maps to its icons.
 var panelSymbols = []string{"person.2", "person.3", "folder", "book", "tray", "gearshape", "doc.text", "key", "list.bullet"}
@@ -63,7 +63,7 @@ var panelSymbols = []string{"person.2", "person.3", "folder", "book", "tray", "g
 var builtinStringFiles embed.FS
 
 // builtinPanelOrder: the order of the built-in panels in GET /panels and so in the sidebar.
-var builtinPanelOrder = []string{"builtin.users.json", "builtin.kb.json"}
+var builtinPanelOrder = []string{"builtin.users.json", "builtin.teams.json", "builtin.kb.json"}
 
 func builtinProvider() PanelProvider {
 	p := PanelProvider{ID: "builtin", Routes: BuiltinRoutes, Strings: map[string]map[string]string{}}

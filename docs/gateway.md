@@ -86,7 +86,18 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   device again changes its user) and **Unbind** (asks first). Devices are still approved in **Devices**. The pane shows only
   plain text; a name that looks like a link or markup is shown as typed. If the project database is not available the pane
   says so.
-- **Knowledge base** (Mac, before Users and devices in the list): built from the panel `builtin.kb`. **Waiting for review:**
+- **Teams and projects** (Mac, between Users and devices and Knowledge base): built from the panel `builtin.teams`.
+  **Teams:** name, path label, number of people and projects, a switch for archived ones; **Add Team…**, **Rename…**,
+  **Set Path Label…** (empty clears it), **Archive** (asks first) and **Unarchive**; **Open** shows the people of the team
+  (add, remove), its projects (add, remove) and the roles it gives (give, change, remove). **Projects:** short name, name, team,
+  number of people, archived switch; **Add Project…**, **Archive** (asks first: nobody can write, reading and agents go on) and
+  **Unarchive**; **Open** shows the people with their role and where it comes from (directly, through which teams), with
+  buttons to set the direct role (lowering or removing asks first) and to give a role, the git identities (add, remove) and
+  the dependencies (add, remove; a search hint only). **Grants between projects:** which project reads which notes of
+  another, with add and remove. Every confirmation says what happens: access that ends, that agent runs which are already
+  going are not stopped but can no longer read notes (the next read fails), and what does not change. A team's hidden notes
+  segment is never listed as a project.
+- **Knowledge base** (Mac, last of the panels): built from the panel `builtin.kb`. **Waiting for review:**
   pending submissions of projects and teams (title, project or team, class, kind, author, received); **Accept**, **Reject…**
   (asks first; an optional reason the author sees) and **Open** to read the text, and for a replacement the text of the note it
   replaces under it (no line difference). Below: **Notes** and **Questions and answers** of a project or of a team, chosen

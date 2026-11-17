@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -137,7 +138,7 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		route = method + " " + seg[0] + "/" + seg[1]
 	}
 	if seg[0] == "teams" {
-		return a.adminTeams(ctx, st, method, seg, body)
+		return a.adminTeams(ctx, st, method, seg, q, body)
 	}
 	switch route {
 	case "GET users":
@@ -213,9 +214,9 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		if err != nil {
 			return failErr(err)
 		}
-		list := []ProjectJSON{}
-		for _, p := range ps {
-			list = append(list, toProject(p))
+		list, err := a.adminProjectRows(ctx, st, ps)
+		if err != nil {
+			return failErr(err)
 		}
 		return 200, map[string]any{"projects": list}, true
 	case "POST projects":
@@ -270,20 +271,36 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 			return fail(400, "bad project id")
 		}
 		var list []string
-		var b remotesBody
+		var b struct {
+			remotesBody
+			AddRemote    string `json:"addRemote"`    // one remote to add (a form sends one value, not a list)
+			RemoveRemote string `json:"removeRemote"` // one remote to remove
+		}
 		var err error
 		if method == "GET" {
 			list, err = st.AdminProjectRemotes(ctx, id)
 		} else {
 			if !dec(&b) {
-				return fail(400, "bad JSON body (add, remove)")
+				return fail(400, "bad JSON body (add, remove, addRemote, removeRemote)")
+			}
+			if b.AddRemote != "" {
+				b.Add = append(b.Add, b.AddRemote)
+			}
+			if b.RemoveRemote != "" {
+				b.Remove = append(b.Remove, b.RemoveRemote)
 			}
 			list, err = st.AdminChangeProjectRemotes(ctx, id, b.Add, b.Remove)
 		}
 		if err != nil {
 			return failErr(err)
 		}
-		return 200, remotesReply(list, b), true
+		reply := remotesReply(list, b.remotesBody)
+		entries := []map[string]string{} // the same remotes as rows, for a list that needs an object per row
+		for _, r := range list {
+			entries = append(entries, map[string]string{"remote": r})
+		}
+		reply["entries"] = entries
+		return 200, reply, true
 	case "GET projects/{}/members":
 		id, good := num(seg[1])
 		if !good {
@@ -295,7 +312,16 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		}
 		list := []map[string]any{}
 		for _, m := range ms {
-			list = append(list, map[string]any{"user": m.UserID, "name": m.Name, "role": m.Role, "origins": m.Origins})
+			direct, via := "none", []string{}
+			for _, o := range m.Origins {
+				if o.Kind == "direct" {
+					direct = string(o.Role)
+				} else {
+					via = append(via, fmt.Sprintf("%s (%s)", o.Name, o.Role))
+				}
+			}
+			// directRole and fromTeams say where the role comes from, flat, for a panel (origins stays for the CLI)
+			list = append(list, map[string]any{"user": m.UserID, "name": m.Name, "role": m.Role, "origins": m.Origins, "directRole": direct, "fromTeams": strings.Join(via, ", ")})
 		}
 		return 200, map[string]any{"members": list}, true
 	case "PUT projects/{}/members/{}", "DELETE projects/{}/members/{}":
@@ -332,9 +358,15 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		if err != nil {
 			return failErr(err)
 		}
+		names, err := a.names(ctx, st)
+		if err != nil {
+			return failErr(err)
+		}
 		list := []map[string]any{}
 		for _, g := range gs {
-			list = append(list, map[string]any{"source": g.SourceID, "reader": g.ReaderID, "class": g.Class})
+			// id, sourceName and readerName let a panel list and remove a grant without joins
+			list = append(list, map[string]any{"source": g.SourceID, "reader": g.ReaderID, "class": g.Class,
+				"id": fmt.Sprintf("%d-%d-%s", g.SourceID, g.ReaderID, g.Class), "sourceName": names.projects[g.SourceID], "readerName": names.projects[g.ReaderID]})
 		}
 		return 200, map[string]any{"grants": list}, true
 	case "POST grants", "DELETE grants":

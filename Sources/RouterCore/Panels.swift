@@ -167,9 +167,47 @@ public struct PanelOption: Decodable, Equatable, Sendable { public let value: St
 /// The routes a provider registered, "METHOD pattern" with {} for one path segment (as adminDo's switch). The renderer
 /// knows the built-in provider itself; the fixture client/testdata/panels-registry.json is asserted against it.
 public enum PanelRoutes {
-    public static let builtin = ["GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices",
-                                 "GET kb/submissions", "GET kb/submissions/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject",
-                                 "GET kb/notes", "GET kb/notes/{}", "GET kb/faq", "GET projects", "GET teams"]
+    public static let builtin = [
+        "GET users",
+        "POST users",
+        "PATCH users/{}",
+        "GET bindings",
+        "PUT bindings/{}",
+        "DELETE bindings/{}",
+        "GET devices",
+        "GET kb/submissions",
+        "GET kb/submissions/{}",
+        "POST kb/submissions/{}/accept",
+        "POST kb/submissions/{}/reject",
+        "GET kb/notes",
+        "GET kb/notes/{}",
+        "GET kb/faq",
+        "GET projects",
+        "GET teams",
+        "POST teams",
+        "PATCH teams/{}",
+        "GET teams/{}/members",
+        "PUT teams/{}/members/{}",
+        "DELETE teams/{}/members/{}",
+        "GET teams/{}/projects",
+        "PUT teams/{}/projects/{}",
+        "DELETE teams/{}/projects/{}",
+        "GET teams/{}/assignments",
+        "PUT teams/{}/assignments",
+        "DELETE teams/{}/assignments",
+        "POST projects",
+        "PATCH projects/{}",
+        "GET projects/{}/members",
+        "PUT projects/{}/members/{}",
+        "DELETE projects/{}/members/{}",
+        "GET projects/{}/remotes",
+        "POST projects/{}/remotes",
+        "GET projects/{}/depends",
+        "PUT projects/{}/depends/{}",
+        "DELETE projects/{}/depends/{}",
+        "GET grants",
+        "POST grants",
+        "DELETE grants"]
     public static func registered(for provider: String) -> [String]? { provider == "builtin" ? builtin : nil }
 
     /// Does a concrete (escaped) path with its method match one of the registered patterns, segment for segment? A segment
