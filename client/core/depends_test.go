@@ -248,3 +248,71 @@ func TestDependsMigration16AndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDependsBundle(t *testing.T) {
+	source, _ := bundleFixture(t) // team "Team" holds fakture and eureko; import is outside it
+	fk, eu, imp := source.pid["fakture"], source.pid["eureko"], source.pid["import"]
+	source.ok(source.AddDepends(ctx, fk, eu))
+	source.ok(source.AddDepends(ctx, fk, imp)) // outside the bundle: not exported
+	file := filepath.Join(t.TempDir(), "d.zip")
+	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: file}))
+	b, e := readBundle(file)
+	source.ok(e)
+	got := map[string][]string{}
+	for _, p := range b.manifest.Projects {
+		got[p.Slug] = p.DependsOn
+	}
+	if len(got["fakture"]) != 1 || got["fakture"][0] != "eureko" || len(got["eureko"]) != 0 {
+		t.Fatal(got)
+	}
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	dry, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "s", DryRun: true})
+	source.ok(e)
+	if !strings.Contains(strings.Join(dry.Lines, "\n"), "create depends fakture eureko") || countTable(t, target, "project_depends") != 0 {
+		t.Fatal(dry)
+	}
+	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "s"})
+	source.ok(e)
+	if countTable(t, target, "project_depends") != 1 {
+		t.Fatal("relation not imported")
+	}
+	rep, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "s"})
+	source.ok(e)
+	if !strings.Contains(strings.Join(rep.Lines, "\n"), "skip depends fakture eureko") {
+		t.Fatal(rep)
+	}
+	// A name outside the bundle that the target does not have is skipped with a line, never created.
+	b2, e := readBundle(file)
+	source.ok(e)
+	for i := range b2.manifest.Projects {
+		if b2.manifest.Projects[i].Slug == "eureko" {
+			b2.manifest.Projects[i].DependsOn = []string{"nowhere"}
+		}
+	}
+	t2 := openT(t, t.TempDir())
+	defer t2.Close()
+	rep, e = t2.ImportBundle(ctx, BundleImport{Path: rewriteZip(t, b2, nil), Source: "s", DryRun: true})
+	source.ok(e)
+	if !strings.Contains(strings.Join(rep.Lines, "\n"), "skip depends eureko nowhere: unknown project") {
+		t.Fatal(rep)
+	}
+	// More than 16 is refused; self and duplicates too.
+	for _, bad := range [][]string{make([]string, 17), {"fakture"}, {"eureko", "eureko"}} {
+		b3, _ := readBundle(file)
+		for i := range b3.manifest.Projects {
+			if b3.manifest.Projects[i].Slug == "fakture" {
+				d := bad
+				if len(bad) == 17 {
+					for j := range d {
+						d[j] = fmt.Sprint("proj-", j)
+					}
+				}
+				b3.manifest.Projects[i].DependsOn = d
+			}
+		}
+		if _, e = t2.ImportBundle(ctx, BundleImport{Path: rewriteZip(t, b3, nil), Source: "s", DryRun: true}); e == nil {
+			t.Fatal("accepted", bad)
+		}
+	}
+}

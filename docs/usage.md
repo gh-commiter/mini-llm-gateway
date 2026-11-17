@@ -1204,6 +1204,16 @@ nor inside an agent run (the run's project is its own). A search of a project al
 may read them, and a hit from there ends with `from team:<name>`; `minigw note read <id>` opens it. Inside an agent
 run the same holds when the person who started the run is on the team's roster.
 
+**Dependencies.** The owner can record that a project depends on another one, for example a topic project linked to a
+subfolder of a larger project's folder: `minigw gw project depends add <project> <other>` (`remove`, `list` likewise; at most
+16 per project, across teams, one level only). The people of `<project>` then also find the notes of `<other>` when they search
+`<project>`, and can open a hit with `minigw note read <id>`, but only the notes each person could read in `<other>` anyway
+(as a member, or through a grant): a dependency is a search hint and never a permission, and `private` notes never appear.
+Such a hit ends with `from project:<slug>`. `minigw project depends [<project>]` lists the dependencies you can read. An agent
+run is not widened by a dependency: it reads another project only through an owner grant, as before; the dependency only
+labels and orders those hits. A project linked to a subfolder of another project's folder gets **no automatic** dependency:
+the owner sets it.
+
 Only the author and owner reviewers see pending content. It never appears in note
 lists, reads, agent runs or counts. The owner uses `minigw gw kb review [<project>]`,
 `minigw gw kb accept <id>` and `minigw gw kb reject <id> [--reason text]`.
