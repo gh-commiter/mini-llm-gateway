@@ -55,10 +55,12 @@ public struct AdminClient: Sendable {
                 return true
             }
         }
+        var peerClosed = false  // the last read returned 0: errno is not set then, so it must not be reported
         func recv() -> Data? {
             var buf = [UInt8](repeating: 0, count: 64 << 10)
-            errno = 0  // a read that returns 0 (peer closed) leaves errno alone: do not report an old value in `why`
+            errno = 0
             let n = Sock.retry { read(fd, &buf, buf.count) }
+            peerClosed = n == 0
             return n > 0 ? Data(buf[0..<n]) : nil
         }
         var hs = Noise.Initiator(routerKey: routerKey, suite: .aesGCM)
@@ -80,7 +82,7 @@ public struct AdminClient: Sendable {
         }
         guard let sep = plain.range(of: Data("\r\n\r\n".utf8)),
               let line = String(data: plain[..<sep.lowerBound], encoding: .utf8)?.split(separator: "\r\n").first,
-              let status = line.split(separator: " ").dropFirst().first.flatMap({ Int($0) }) else { return (0, nil, why("no reply head: \(plain.count) bytes")) }
+              let status = line.split(separator: " ").dropFirst().first.flatMap({ Int($0) }) else { return (0, nil, peerClosed ? "no reply head: \(plain.count) bytes (peer closed without data)" : why("no reply head: \(plain.count) bytes")) }
         return (status, Data(plain[sep.upperBound...]), "")
     }
 }

@@ -194,6 +194,31 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(app.config.providers.isEmpty && app.keys[p.id] == nil)
     }
 
+    /// A router that finishes the handshake and then closes without a reply: the message says the peer closed, not an old errno.
+    @Test func peerClosingAfterTheHandshakeIsNamedAsSuch() {
+        let (fd, port) = listener()
+        defer { close(fd) }
+        let key = Noise.newKey()
+        Thread {
+            let c = Sock.retry { accept(fd, nil, nil) }
+            guard c >= 0 else { return }
+            defer { close(c) }
+            var received = 0, buf = [UInt8](repeating: 0, count: 4 + Noise.handshakeLength)
+            while received < buf.count {
+                let remaining = buf.count - received
+                let n = Sock.retry { Darwin.read(c, &buf, remaining) }
+                if n <= 0 { return }
+                received += n
+            }
+            guard let (reply, _) = try? Noise.respond(Data(buf.dropFirst(4)), key: key, suite: .aesGCM) else { return }
+            _ = reply.withUnsafeBytes { b in Sock.retry { write(c, b.baseAddress, b.count) } }
+            var rest = [UInt8](repeating: 0, count: 65536)
+            _ = Sock.retry { Darwin.read(c, &rest, rest.count) }  // take the request first: closing with it unread would be a reset, not a clean close
+        }.start()
+        let result = AdminClient(port: port, routerKey: key.publicKey.rawRepresentation).attempt("GET", "/health/live", nil, timeout: 5)
+        #expect(result.0 == 0 && result.2 == "no reply head: 0 bytes (peer closed without data)", "\(result.2)")
+    }
+
     @Test func rejectedHandshakeNamesGateway() {
         let (fd, port) = listener()
         defer { close(fd) }
