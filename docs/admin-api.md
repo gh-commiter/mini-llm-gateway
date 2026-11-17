@@ -226,6 +226,34 @@ continue), in the same transaction.
 
 Errors of these routes use the envelope above (`400` invalid, `404` not found, `503` core unavailable).
 
+### Panels (0.7.14, both gateways)
+
+`GET /panels` returns the admin panels as declarative descriptions that a renderer maps to its own controls; the Mac
+app draws them as panes of the Settings window. Owner admin authentication only; it is not a member route and the run
+port does not serve it (`POST` and the other methods answer `405`). It needs no database, so it answers while the core
+is down.
+
+```json
+{"format": 1, "panels": [{"format": 1, "id": "builtin.users", "provider": "builtin", "title": {"en": "...", "sl": "..."}, "...": "..."}]}
+```
+
+- A description is data, never code: no scripts, HTML, Markdown, links or images. Every string has `en` and `sl`; a
+  renderer shows every string and every value of an answer as plain text.
+- `format` is the only version. A renderer that meets a higher format says "needs a newer Mini Gateway" and shows nothing
+  else; an unknown element inside format 1 is shown as "cannot be shown".
+- One validator (`client/coreapi/panels.go`, `ValidatePanel`) checks every description before it is served; a panel that
+  fails is left out and logged. It refuses unknown keys, more than 64 KiB, more than 12 sections, 10 columns, 12 actions,
+  10 form fields or 5 refs, labels over 120 characters and messages over 600, control and format characters in strings,
+  a route its provider did not register, a path template with anything but whole segments (`{row.f}`, `{field.f}`,
+  `{parent.f}` fill exactly one segment each), a `DELETE` or `destructive` action without a confirmation, and a provider id
+  that does not match. The renderer validates again and also refuses a value that contains `/`, `..`, `?`, `#` or a
+  control character, or is empty, for a placeholder.
+- The built-in provider (`builtin`) registers `GET users`, `POST users`, `PATCH users/{}`, `GET bindings`, `PUT bindings/{}`,
+  `DELETE bindings/{}` and the gateway's `GET devices`. Its one panel, `builtin.users` ("Users and devices"), never sends
+  `owner`; a user name is at most 128 bytes, the server's own limit, and the server stays the authority.
+- Design and format: `docs/plans/plugin-panels-design.md`. The Go and Swift sides decode the same fixtures
+  (`client/testdata/panels*.json`).
+
 ### Usage events and quota (0.6.0, both gateways)
 
 | Method and path | Body | Response |
