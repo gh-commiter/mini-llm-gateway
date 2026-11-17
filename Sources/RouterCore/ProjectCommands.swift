@@ -41,6 +41,7 @@ public final class ProjectEnv {
         minigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)
            --project <slug> only confirms the project this folder is linked to; classes: structure, data, private
            (private = visible to you and the project admins)
+           --team <team> on any of these: the team's own notes instead of the linked project (every team member reads, a project admin of the team writes; structure and data only)
         """
     static let privateNote = "private = visible to you and the project admins"
     static let agentRefusal = "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available"
@@ -355,7 +356,7 @@ public final class ProjectEnv {
         if agent && !(runConn != nil && (sub == "list" || sub == "read")) { throw ProjectError(Self.agentRefusal) }
         let usage = ProjectError("usage:\n" + Self.noteHelp)
         guard let fl = try? GoFlags.parse([("class", .string), ("title", .string), ("limit", .int), ("after", .string), ("json", .bool),
-                                           ("project", .string), ("revision", .int64), ("key", .string)], Array(args.dropFirst())) else { throw usage }
+                                           ("project", .string), ("revision", .int64), ("key", .string), ("team", .string)], Array(args.dropFirst())) else { throw usage }
         var pos = fl.positional
         guard ["list", "read", "push", "edit", "rm"].contains(sub) else { throw ProjectError("unknown command minigw note " + sub + "\n" + Self.noteHelp) }
         var id: Int64 = 0
@@ -369,9 +370,15 @@ public final class ProjectEnv {
         let cls = fl.string("class"), title = fl.string("title")
         let c: ProjectConn
         var base = "/minigw/v1/notes"  // inside a run: the run's own project, named nowhere
+        let team = fl.string("team")
+        if !team.isEmpty && (agent || runConn != nil) { throw ProjectError(Self.teamAgentRefusal) }
+        if !team.isEmpty && !fl.string("project").isEmpty { throw ProjectError(Self.teamProjectUsage) }
         if let rc = runConn {
             if !fl.string("project").isEmpty { throw ProjectError("inside an agent run the project is the run's own: --project is not accepted") }
             c = rc
+        } else if !team.isEmpty {
+            (c, _) = connect()
+            base = "\(Self.apiProjects)/\(try teamSegment(c, team))/notes"
         } else {
             let (cc, link) = try linkedProject(fl.string("project"))
             c = cc

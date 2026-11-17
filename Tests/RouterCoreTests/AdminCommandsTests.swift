@@ -33,7 +33,7 @@ private func fixtureJSON(_ name: String) throws -> [String: Any] {
             var exit: Int32 = 0, errText = ""
             do {
                 try cmd.run(c["args"] as! [String], AdminOpts(days: o["days"] ?? "7", user: o["user"] ?? "", project: o["project"] ?? "",
-                                                              model: o["model"] ?? "", claudeProbe: o["claudeProbe"] ?? ""))
+                                                              model: o["model"] ?? "", claudeProbe: o["claudeProbe"] ?? "", team: o["team"] ?? ""))
             } catch let e as AdminCLIError { exit = e.code; errText = "minigw: " + e.message + "\n" }
             let want = c["want"] as! [String: Any]
             #expect(outText == want["out"] as! String, "\(name): stdout")

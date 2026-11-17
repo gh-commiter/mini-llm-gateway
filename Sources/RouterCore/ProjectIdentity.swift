@@ -113,10 +113,14 @@ extension ProjectEnv {
 
     /// minigw kb faq [<project>] [--json]; the pages are followed (at most 20).
     func kbFAQ(_ args: [String]) throws {
-        let usage = ProjectError("usage: minigw kb faq [<project>] [--json]")
-        guard let fl = try? GoFlags.parse([("json", .bool)], args), fl.positional.count <= 1 else { throw usage }
+        let usage = ProjectError("usage: minigw kb faq [<project>|--team <team>] [--json]")
+        guard let fl = try? GoFlags.parse([("json", .bool), ("team", .string)], args), fl.positional.count <= 1 else { throw usage }
+        if !fl.string("team").isEmpty && !fl.positional.isEmpty { throw ProjectError(Self.teamProjectUsage) }
         let c: ProjectConn, project: Int64
-        if let ref = fl.positional.first {
+        if !fl.string("team").isEmpty {
+            (c, _) = connect()
+            project = try teamSegment(c, fl.string("team"))
+        } else if let ref = fl.positional.first {
             (c, _) = connect()
             project = try projectIDOf(c, ref)
         } else {

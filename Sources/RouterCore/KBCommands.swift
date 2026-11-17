@@ -3,23 +3,33 @@ import CoreFoundation
 
 extension ProjectEnv {
     public static let kbHelp = """
-        minigw kb export <project> <dir>
-        minigw kb import <project> <dir|file.md> [--class c] [--submit]
+        minigw kb export <project>|--team <team> <dir>
+        minigw kb import <project>|--team <team> <dir|file.md> [--class c] [--submit]
         minigw kb mcp [--project slug] [--print-config]
-        minigw kb search [<project>] <query> [--json]
-        minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB)
-        minigw kb faq [<project>] [--json]   the project's questions and answers
+        minigw kb search [<project>|--team <team>] <query> [--json]   a project search also covers its team's notes (as far as you may read them); a hit from there ends with "from team:<name>"
+        minigw kb submit <project>|--team <team> [--class structure|data] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB); private is for projects only
+        minigw kb faq [<project>|--team <team>] [--json]   the project's (or the team's) questions and answers
         minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)
         minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)
         """
     public static let kbAdminHelp = """
         minigw gw kb rebuild-search
-        minigw gw kb review [<project>]   pending submissions, including bodies
+        minigw gw kb review [<project>|--team <team>]   pending submissions, including bodies
         minigw gw kb accept <id>
         minigw gw kb reject <id> [--reason text]
         """
-    static func submissionLine(_ d: JDict) -> String {
-        ProjectText.clean("submission \(d["id"]?.int ?? 0)  project \(d["project"]?.int ?? 0)  \(d["state"]?.string ?? "")  \(d["class"]?.string ?? "")  \(d["title"]?.string ?? "")\(kindSuffix(d))")
+    static let teamProjectUsage = "usage: give either a project or --team <team>"
+    static let teamAgentRefusal = "inside an agent run the project is the run's own: --team is not accepted"
+    /// Where a team's own notes live: ids above this are a team's notes (the team id is the difference).
+    static let segmentBase: Int64 = 1 << 40
+    /// "project <id>", or "team <name>" for a team's notes (names maps team ids to names; an unknown one prints the id).
+    static func subjectOf(_ project: Int64, _ names: [Int64: String]) -> String {
+        guard project > segmentBase else { return "project \(project)" }
+        let team = project - segmentBase
+        return "team " + (names[team].flatMap { $0.isEmpty ? nil : $0 } ?? String(team))
+    }
+    static func submissionLine(_ d: JDict, _ names: [Int64: String] = [:]) -> String {
+        ProjectText.clean("submission \(d["id"]?.int ?? 0)  \(subjectOf(d["project"]?.int ?? 0, names))  \(d["state"]?.string ?? "")  \(d["class"]?.string ?? "")  \(d["title"]?.string ?? "")\(kindSuffix(d))")
     }
     /// A faq is marked at the end of the first line; a finding prints as before.
     static func kindSuffix(_ d: JDict) -> String { d["entrykind"]?.string == "faq" ? "  (faq)" : "" }
@@ -34,6 +44,15 @@ extension ProjectEnv {
         return "null"
     }
 
+    /// --team: the id of the team's own notes, which the notes, search and submission routes take in place of a project id.
+    func teamSegment(_ c: ProjectConn, _ team: String) throws -> Int64 {
+        let r = request(c, "GET", "/minigw/v1/teams/" + ProjectText.pathEscape(team), [:], nil)
+        guard r.status == 200 else { throw gwError(r) }
+        guard let segment = JSONValue.parse(r.data)?.dict["segment"]?.int else { throw Self.malformed }
+        if segment == 0 { throw ProjectError("this gateway has no team notes: update it") }
+        return segment
+    }
+
     public func kb(_ args: [String]) throws {
         if args.first == "export" || args.first == "import" { try kbFiles(args); return }
         if args.first == "search" { try kbSearch(Array(args.dropFirst())); return }
@@ -42,9 +61,16 @@ extension ProjectEnv {
         if agent { throw ProjectError(Self.agentRefusal) }
         if args.first == "faq" { try kbFAQ(Array(args.dropFirst())); return }
         let usage = ProjectError("usage:\n" + Self.kbHelp)
-        guard let fl = try? GoFlags.parse([("class", .string), ("kind", .string), ("title", .string), ("key", .string), ("replaces", .int), ("revision", .int), ("json", .bool)], args) else { throw usage }
-        let pos = fl.positional
-        guard pos.count == 3 && pos[0] == "submit" || (1...2).contains(pos.count) && pos[0] == "submissions" else { throw usage }
+        guard let fl = try? GoFlags.parse([("class", .string), ("kind", .string), ("title", .string), ("key", .string), ("replaces", .int), ("revision", .int), ("json", .bool), ("team", .string)], args) else { throw usage }
+        var pos = fl.positional
+        let team = fl.string("team")
+        if !team.isEmpty {
+            guard pos.first == "submit" else { throw usage }
+            guard pos.count == 2 else { throw ProjectError(Self.teamProjectUsage) }
+            pos = ["submit", "", pos[1]]
+        } else {
+            guard pos.count == 3 && pos[0] == "submit" || (1...2).contains(pos.count) && pos[0] == "submissions" else { throw usage }
+        }
         let kind = fl.string("kind")
         if !kind.isEmpty && kind != "finding" && kind != "faq" { throw usage }
         let (c, gw) = connect()
@@ -54,7 +80,9 @@ extension ProjectEnv {
             return r.data
         }
         var project: Int64 = 0
-        if pos.count > 1 {
+        if !team.isEmpty {
+            project = try teamSegment(c, team)
+        } else if pos.count > 1 {
             let b = try request("GET", Self.apiProjects + "/" + ProjectText.pathEscape(pos[1]))
             project = JSONValue.parse(b)?.dict["id"]?.int ?? 0
         }
@@ -108,15 +136,20 @@ extension ProjectEnv {
     }
 
     func searchLine(_ d: JDict) -> String {
-        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  project \(d["project"]?.int ?? 0)  \(d["class"]?.string ?? "")  \(stamp(d["updated"]?.string.flatMap(ProjectText.parseTime)))\(Self.kindSuffix(d))\n\(d["snippet"]?.string ?? "")")
+        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  project \(d["project"]?.int ?? 0)  \(d["class"]?.string ?? "")  \(stamp(d["updated"]?.string.flatMap(ProjectText.parseTime)))\(Self.kindSuffix(d))\(d["from"]?.string.flatMap { $0.isEmpty ? nil : "  from " + $0 } ?? "")\n\(d["snippet"]?.string ?? "")")
     }
     func kbSearch(_ args: [String]) throws {
-        let usage = ProjectError("usage: minigw kb search [<project>] <query> [--json]")
-        guard let fl = try? GoFlags.parse([("json", .bool)], args), (1...2).contains(fl.positional.count) else { throw usage }
+        let usage = ProjectError("usage: minigw kb search [<project>|--team <team>] <query> [--json]")
+        guard let fl = try? GoFlags.parse([("json", .bool), ("team", .string)], args), (1...2).contains(fl.positional.count) else { throw usage }
         let pos = fl.positional
         let c: ProjectConn
         var base = "/minigw/v1/kb/search"
-        if let rc = runConn {
+        if !fl.string("team").isEmpty {
+            if agent || runConn != nil { throw ProjectError(Self.teamAgentRefusal) }
+            guard pos.count == 1 else { throw ProjectError(Self.teamProjectUsage) }
+            let (cc, _) = connect(); c = cc
+            base = "\(Self.apiProjects)/\(try teamSegment(c, fl.string("team")))/kb/search"
+        } else if let rc = runConn {
             guard pos.count == 1 else { throw ProjectError("inside an agent run the project is the run's own: a project argument is not accepted") }
             c = rc
         } else {
@@ -142,19 +175,27 @@ extension ProjectEnv {
 }
 
 extension AdminCommands {
-    func kb(_ pos: [String], reason: String) throws {
+    func kb(_ pos: [String], reason: String, team: String = "") throws {
         let usage = fail("usage:\n" + ProjectEnv.kbAdminHelp)
         guard pos.count >= 2 else { throw usage }
         if pos.count == 2 && pos[1] == "rebuild-search" { _ = try request("POST", "/kb/search/rebuild"); say("search index rebuilt"); return }
-        if pos[1] == "review" && pos.count <= 3 {
-            let project = pos.count == 3 ? try projectID(pos[2]) : 0
+        if pos[1] == "review" && pos.count <= 3 && (team.isEmpty || pos.count == 2) {
+            var project = pos.count == 3 ? try projectID(pos[2]) : 0
+            if !team.isEmpty { project = ProjectEnv.segmentBase + (try teamID(team)) }
+            var names: [Int64: String]?  // the notes of a team print as "team <name>"; asked for only when one shows up
+            func teamNames() throws -> [Int64: String] {
+                if let n = names { return n }
+                var m: [Int64: String] = [:]
+                for t in try request("GET", "/teams")["teams"]?.array ?? [] { m[t.dict["id"]?.int ?? 0] = t.dict["name"]?.string ?? "" }
+                names = m; return m
+            }
             var after: Int64 = 0
             var count = 0
             repeat {
                 let pg = try request("GET", "/kb/submissions?project=\(project)&after=\(after)")
                 for v in pg["submissions"]?.array ?? [] {
                     let full = try request("GET", "/kb/submissions/\(v.dict["id"]?.int ?? 0)")
-                    say(ProjectEnv.submissionLine(full))
+                    say(ProjectEnv.submissionLine(full, (full["project"]?.int ?? 0) > ProjectEnv.segmentBase ? try teamNames() : [:]))
                     say(clean("writer \(full["user"]?.int ?? 0)  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)"))
                     if let body = full["body"]?.string { say(clean(body)) }; count += 1
                 }

@@ -35,6 +35,14 @@ import Testing
             #expect(out == c["out"] as! String)
             #expect(requests == c["requests"] as! [[String]])
         }
+        for c in f["memberErrors"] as! [[String: Any]] {  // refused before any request
+            let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { _ in }, err: { _ in }, agent: false, send: { _, m, p, _, _ in
+                Issue.record("\(c["args"] as! [String]) sent \(m) \(p)")
+                return ProjectReply(status: 599)
+            })
+            do { try env.kb(c["args"] as! [String]); Issue.record("expected refusal") }
+            catch { #expect(String(describing: error) == c["error"] as! String) }
+        }
         var out = ""
         let body = f["noteJSON"] as! String
         let bodyOut = f["noteJSONOut"] as! String

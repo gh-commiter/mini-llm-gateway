@@ -51,9 +51,12 @@ extension ProjectEnv {
     func kbFiles(_ args: [String]) throws {
         if agent { throw ProjectError(Self.agentRefusal) }
         let usage = ProjectError("usage:\n" + Self.kbHelp)
-        guard let fl = try? GoFlags.parse([("class", .string), ("submit", .bool)], args), fl.positional.count == 3 else { throw usage }
-        let pos = fl.positional
-        guard ["export", "import"].contains(pos[0]) else { throw usage }
+        guard let fl = try? GoFlags.parse([("class", .string), ("submit", .bool), ("team", .string)], args) else { throw usage }
+        var pos = fl.positional
+        let team = fl.string("team")
+        if !team.isEmpty && pos.count == 3 { throw ProjectError(Self.teamProjectUsage) }
+        if !team.isEmpty && pos.count == 2 { pos = [pos[0], team, pos[1]] }  // the team stands where the project would
+        guard pos.count == 3, ["export", "import"].contains(pos[0]) else { throw usage }
         if pos[0] == "export" && (fl.set.contains("class") || fl.bool("submit")) { throw ProjectError("export takes no import options") }
         let (c, _) = connect()
         func request(_ method: String, _ path: String, _ body: Data? = nil) throws -> JDict {
@@ -69,9 +72,14 @@ extension ProjectEnv {
                 return d
             }
         }
-        let p = try request("GET", Self.apiProjects + "/" + ProjectText.pathEscape(pos[1]))
-        guard let id = p["id"]?.int else { throw Self.malformed }
-        let base = "\(Self.apiProjects)/\(id)"
+        let base: String
+        if !team.isEmpty {
+            base = "\(Self.apiProjects)/\(try teamSegment(c, team))"
+        } else {
+            let p = try request("GET", Self.apiProjects + "/" + ProjectText.pathEscape(pos[1]))
+            guard let id = p["id"]?.int else { throw Self.malformed }
+            base = "\(Self.apiProjects)/\(id)"
+        }
         let root = URL(fileURLWithPath: pos[2], relativeTo: URL(fileURLWithPath: cwd, isDirectory: true)).standardizedFileURL
         let fm = FileManager.default
         if pos[0] == "export" {

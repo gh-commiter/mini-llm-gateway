@@ -14,12 +14,12 @@ public struct AdminCLIError: Error, Equatable {
 
 /// The flags of the owner commands (Go's coreOpts).
 public struct AdminOpts {
-    public var reason = ""
+    public var reason = "", team = ""
     public var days = "7", user = "", project = "", model = "", claudeProbe = "", provider = "", device = "", folder = "", sort = ""
     public var json = false, csv = false, history = false, explain = false
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
-                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "") {
-        self.reason = reason
+                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "") {
+        self.reason = reason; self.team = team
         self.days = days; self.user = user; self.project = project; self.model = model; self.claudeProbe = claudeProbe
         self.provider = provider; self.device = device; self.folder = folder; self.sort = sort; self.json = json; self.csv = csv; self.history = history; self.explain = explain
     }
@@ -29,7 +29,7 @@ public final class AdminCommands {
     public static let help = """
         minigw gw export --team <name> [--project slug ...] [--with-private] <file.zip>
           minigw gw import --source <name> <file.zip> [--dry-run] [--map old=new]
-          minigw gw kb review [<project>] | accept <id> | reject <id> [--reason text]
+          minigw gw kb review [<project>|--team <team>] | accept <id> | reject <id> [--reason text]
           minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>
           minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to
           minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
@@ -108,7 +108,7 @@ public final class AdminCommands {
         func need(_ lo: Int, _ hi: Int) throws { if pos.count < lo || pos.count > hi { throw usage } }
         func s(_ n: Int64) -> String { String(n) }
         switch pos[0] {
-        case "kb": try kb(pos, reason: o.reason)
+        case "kb": try kb(pos, reason: o.reason, team: o.team)
         case "team": try team(pos)
         case "user":
             try need(2, 4)
