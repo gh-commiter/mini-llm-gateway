@@ -1,0 +1,269 @@
+{
+ "provider": "acme",
+ "routes": [
+  "GET plugins/acme/items",
+  "GET plugins/acme/orders",
+  "POST plugins/acme/orders",
+  "PATCH plugins/acme/orders/{}",
+  "DELETE plugins/acme/orders/{}",
+  "GET plugins/acme/orders/{}/lines",
+  "POST plugins/acme/orders/{}/lines",
+  "DELETE plugins/acme/orders/{}/lines/{}"
+ ],
+ "panel": {
+  "format": 1,
+  "id": "acme.shop",
+  "provider": "acme",
+  "title": "acme.shop.title",
+  "about": "acme.shop.about",
+  "symbol": "tray",
+  "refs": {
+   "items": {
+    "path": "/plugins/acme/items",
+    "items": "items",
+    "key": "sku",
+    "label": "title"
+   }
+  },
+  "sections": [
+   {
+    "kind": "text",
+    "id": "intro",
+    "body": "acme.shop.section.intro.body"
+   },
+   {
+    "kind": "list",
+    "id": "orders",
+    "title": "acme.shop.section.orders.title",
+    "source": {
+     "path": "/plugins/acme/orders",
+     "items": "orders"
+    },
+    "key": "id",
+    "columns": [
+     {
+      "field": "name",
+      "kind": "text",
+      "label": "acme.shop.section.orders.column.name"
+     },
+     {
+      "field": "note",
+      "kind": "multiline",
+      "label": "acme.shop.section.orders.column.note"
+     },
+     {
+      "field": "paid",
+      "kind": "bool",
+      "label": "acme.shop.section.orders.column.paid",
+      "yes": "acme.shop.section.orders.column.paid.yes",
+      "no": "acme.shop.section.orders.column.paid.no"
+     },
+     {
+      "field": "state",
+      "kind": "enum",
+      "label": "acme.shop.section.orders.column.state",
+      "values": {
+       "new": "acme.shop.section.orders.column.state.value.new",
+       "sent": "acme.shop.section.orders.column.state.value.sent"
+      }
+     },
+     {
+      "field": "item",
+      "kind": "ref",
+      "ref": "items",
+      "label": "acme.shop.section.orders.column.item"
+     },
+     {
+      "field": "created",
+      "kind": "time",
+      "label": "acme.shop.section.orders.column.created"
+     }
+    ],
+    "filter": [
+     "name",
+     "note"
+    ],
+    "hide": {
+     "field": "state",
+     "equals": "sent",
+     "toggle": "acme.shop.section.orders.hide"
+    },
+    "paging": {
+     "next": "next",
+     "param": "after"
+    },
+    "empty": "acme.shop.section.orders.empty",
+    "actions": [
+     {
+      "id": "add",
+      "label": "acme.shop.section.orders.action.add",
+      "method": "POST",
+      "path": "/plugins/acme/orders",
+      "query": "mode=draft&item={field.item}",
+      "fields": [
+       {
+        "id": "name",
+        "type": "text",
+        "required": true,
+        "maxLength": 64,
+        "default": {
+         "const": "new order"
+        },
+        "label": "acme.shop.section.orders.action.add.field.name"
+       },
+       {
+        "id": "item",
+        "type": "ref",
+        "ref": "items",
+        "required": true,
+        "label": "acme.shop.section.orders.action.add.field.item"
+       },
+       {
+        "id": "kind",
+        "type": "choice",
+        "options": [
+         {
+          "value": "web",
+          "label": "acme.shop.section.orders.action.add.field.kind.option.web"
+         },
+         {
+          "value": "shop",
+          "label": "acme.shop.section.orders.action.add.field.kind.option.shop"
+         }
+        ],
+        "label": "acme.shop.section.orders.action.add.field.kind"
+       },
+       {
+        "id": "paid",
+        "type": "toggle",
+        "default": {
+         "const": false
+        },
+        "label": "acme.shop.section.orders.action.add.field.paid"
+       }
+      ],
+      "body": {
+       "name": {
+        "field": "name"
+       },
+       "kind": {
+        "field": "kind"
+       },
+       "paid": {
+        "field": "paid"
+       },
+       "count": {
+        "const": 1
+       }
+      }
+     }
+    ],
+    "rowActions": [
+     {
+      "id": "rename",
+      "label": "acme.shop.section.orders.action.rename",
+      "method": "PATCH",
+      "path": "/plugins/acme/orders/{row.id}",
+      "when": {
+       "field": "state",
+       "equals": "new"
+      },
+      "fields": [
+       {
+        "id": "name",
+        "type": "text",
+        "required": true,
+        "default": {
+         "row": "name"
+        },
+        "label": "acme.shop.section.orders.action.rename.field.name"
+       }
+      ],
+      "body": {
+       "name": {
+        "field": "name"
+       },
+       "was": {
+        "row": "name"
+       }
+      }
+     },
+     {
+      "id": "delete",
+      "label": "acme.shop.section.orders.action.delete",
+      "method": "DELETE",
+      "path": "/plugins/acme/orders/{row.id}",
+      "confirm": {
+       "title": "acme.shop.section.orders.action.delete.confirm.title",
+       "message": "acme.shop.section.orders.action.delete.confirm.message",
+       "button": "acme.shop.section.orders.action.delete.confirm.button",
+       "destructive": true
+      }
+     }
+    ],
+    "detail": {
+     "title": "name",
+     "sections": [
+      {
+       "kind": "text",
+       "id": "hint",
+       "body": "acme.shop.section.orders.detail.section.hint.body"
+      },
+      {
+       "kind": "list",
+       "id": "lines",
+       "title": "acme.shop.section.orders.detail.section.lines.title",
+       "source": {
+        "path": "/plugins/acme/orders/{parent.id}/lines",
+        "items": "lines"
+       },
+       "key": "id",
+       "columns": [
+        {
+         "field": "title",
+         "kind": "text",
+         "label": "acme.shop.section.orders.detail.section.lines.column.title"
+        }
+       ],
+       "empty": "acme.shop.section.orders.detail.section.lines.empty",
+       "actions": [
+        {
+         "id": "add-line",
+         "label": "acme.shop.section.orders.detail.section.lines.action.add-line",
+         "method": "POST",
+         "path": "/plugins/acme/orders/{parent.id}/lines",
+         "fields": [
+          {
+           "id": "title",
+           "type": "text",
+           "required": true,
+           "label": "acme.shop.section.orders.detail.section.lines.action.add-line.field.title"
+          }
+         ],
+         "body": {
+          "title": {
+           "field": "title"
+          }
+         }
+        }
+       ],
+       "rowActions": [
+        {
+         "id": "drop",
+         "label": "acme.shop.section.orders.detail.section.lines.action.drop",
+         "method": "DELETE",
+         "path": "/plugins/acme/orders/{parent.id}/lines/{row.id}",
+         "confirm": {
+          "title": "acme.shop.section.orders.detail.section.lines.action.drop.confirm.title",
+          "message": "acme.shop.section.orders.detail.section.lines.action.drop.confirm.message",
+          "button": "acme.shop.section.orders.detail.section.lines.action.drop.confirm.button"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ }
+}

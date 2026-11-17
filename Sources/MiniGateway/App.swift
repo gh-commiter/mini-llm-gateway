@@ -120,6 +120,11 @@ final class AppState: ObservableObject {
     /// Its store is <Application Support>/Mini Gateway/core (0700); missing binary = project routes answer 503.
     let core: CoreHelper
     nonisolated(unsafe) static var coreHelper: CoreHelper?  // for applicationWillTerminate
+    /// The transport of the admin panels (docs/plans/plugin-panels-design.md): the core's admin routes through the helper in the owner's
+    /// context, GET /devices from the app's own device list. Nothing else.
+    var panelSend: PanelSend {
+        PanelTransport.send(core: core, devices: { [self] in await MainActor.run { self.config.devices.map { ($0.id, $0.name) } } })  // AppState lives as long as the app
+    }
     private var server: RouterServer?
     private let log = Logger(subsystem: "dev.trojar.minigateway", category: "app")
 

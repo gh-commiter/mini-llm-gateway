@@ -226,6 +226,47 @@ continue), in the same transaction.
 
 Errors of these routes use the envelope above (`400` invalid, `404` not found, `503` core unavailable).
 
+### Panels (both gateways)
+
+`GET /panels` returns the admin panels as declarative descriptions that a renderer maps to its own controls; the Mac
+app draws them as panes of the Settings window. The descriptions carry no translated text, only string keys
+(`builtin.users.title`); the texts come from `GET /panels/strings?lang=<locale>` (below). Owner admin authentication only; it is not a member route and the run
+port does not serve it (`POST` and the other methods answer `405`). It needs no database, so it answers while the core
+is down.
+
+```json
+{"format": 1, "panels": [{"provider": "builtin", "description": {"format": 1, "id": "builtin.users", "provider": "builtin", "title": "builtin.users.title", "...": "..."}}]}
+```
+
+- Each description comes under `provider`, the id the registry knows (`builtin` is reserved for the gateway's own code).
+  A renderer takes the routes of THAT id and refuses a description whose own `provider` field differs.
+- A text field's `maxLength` is in UTF-8 bytes, as the core counts a user name (128), not in characters.
+- A description is data, never code: no scripts, HTML, Markdown, links or images. Every text position holds a key
+  (`[a-z0-9._-]`, at most 120 characters, inside the panel's namespace `<provider>.<panel>.`); the validator refuses
+  anything else, so an inline text or another provider's key is refused. A renderer shows every text and every value of
+  an answer as plain text.
+- **Texts:** `GET /panels/strings?lang=<locale>` answers `{"format": 1, "locale": "sl_SI", "strings": {key: text}}`.
+  `lang` is `C`, a language such as `sl` (it gets that language's table, `sl_SI`) or a locale such as `sl_SI` (anything else: `400`; none: `C`). `C` is the base table and holds every key;
+  `en_US` and `sl_SI` lie on top of it. The answer is merged: the exact locale, then another table of the same language,
+  then `C`; a locale nobody has is answered with `C`, and `locale` says which one was returned. A text is plain, at most
+  600 characters, and may hold `{field}` placeholders that the renderer fills from the row's own fields as plain text; a
+  key without a text is shown as the key. The built-in tables are `client/coreapi/panels/strings/{C,en_US,sl_SI}.json`
+  (flat `{"key": "text"}`); a plugin ships its own per-language files the same way.
+- `format` is the only version. A renderer that meets a higher format says "needs a newer Mini Gateway" and shows nothing
+  else; an unknown element inside format 1 is shown as "cannot be shown".
+- One validator (`client/coreapi/panels.go`, `ValidatePanel`) checks every description before it is served; a panel that
+  fails is left out and logged. It refuses unknown keys, more than 64 KiB, more than 12 sections, 10 columns, 12 actions,
+  10 form fields or 5 refs, labels over 120 characters and messages over 600, control and format characters in strings,
+  a route its provider did not register, a path template with anything but whole segments (`{row.f}`, `{field.f}`,
+  `{parent.f}` fill exactly one segment each), a `DELETE` or `destructive` action without a confirmation, and a provider id
+  that does not match. The renderer validates again and also refuses a value that contains `/`, `..`, `?`, `#` or a
+  control character, or is empty, for a placeholder.
+- The built-in provider (`builtin`) registers `GET users`, `POST users`, `PATCH users/{}`, `GET bindings`, `PUT bindings/{}`,
+  `DELETE bindings/{}` and the gateway's `GET devices`. Its one panel, `builtin.users` ("Users and devices"), never sends
+  `owner`; a user name is at most 128 bytes, the server's own limit, and the server stays the authority.
+- Design and format: `docs/plans/plugin-panels-design.md`. The Go and Swift sides decode the same fixtures
+  (`client/testdata/panels*.json`).
+
 ### Usage events and quota (0.6.0, both gateways)
 
 | Method and path | Body | Response |

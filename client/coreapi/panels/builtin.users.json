@@ -1,0 +1,213 @@
+{
+ "format": 1,
+ "id": "builtin.users",
+ "provider": "builtin",
+ "title": "builtin.users.title",
+ "about": "builtin.users.about",
+ "symbol": "person.2",
+ "refs": {
+  "users": {
+   "path": "/users",
+   "items": "users",
+   "key": "id",
+   "label": "name"
+  },
+  "devices": {
+   "path": "/devices",
+   "items": "devices",
+   "key": "id",
+   "label": "name"
+  }
+ },
+ "sections": [
+  {
+   "kind": "list",
+   "id": "users",
+   "title": "builtin.users.section.users.title",
+   "source": {
+    "path": "/users",
+    "items": "users"
+   },
+   "key": "id",
+   "columns": [
+    {
+     "field": "name",
+     "kind": "text",
+     "label": "builtin.users.section.users.column.name"
+    },
+    {
+     "field": "active",
+     "kind": "bool",
+     "label": "builtin.users.section.users.column.active",
+     "yes": "builtin.users.section.users.column.active.yes",
+     "no": "builtin.users.section.users.column.active.no"
+    }
+   ],
+   "filter": [
+    "name"
+   ],
+   "hide": {
+    "field": "active",
+    "equals": false,
+    "toggle": "builtin.users.section.users.hide"
+   },
+   "empty": "builtin.users.section.users.empty",
+   "actions": [
+    {
+     "id": "add",
+     "label": "builtin.users.section.users.action.add",
+     "method": "POST",
+     "path": "/users",
+     "fields": [
+      {
+       "id": "name",
+       "type": "text",
+       "required": true,
+       "maxLength": 128,
+       "label": "builtin.users.section.users.action.add.field.name"
+      }
+     ],
+     "body": {
+      "name": {
+       "field": "name"
+      }
+     }
+    }
+   ],
+   "rowActions": [
+    {
+     "id": "rename",
+     "label": "builtin.users.section.users.action.rename",
+     "method": "PATCH",
+     "path": "/users/{row.id}",
+     "fields": [
+      {
+       "id": "name",
+       "type": "text",
+       "required": true,
+       "maxLength": 128,
+       "default": {
+        "row": "name"
+       },
+       "label": "builtin.users.section.users.action.rename.field.name"
+      }
+     ],
+     "body": {
+      "name": {
+       "field": "name"
+      }
+     }
+    },
+    {
+     "id": "deactivate",
+     "label": "builtin.users.section.users.action.deactivate",
+     "method": "PATCH",
+     "path": "/users/{row.id}",
+     "when": {
+      "field": "active",
+      "equals": true
+     },
+     "body": {
+      "active": {
+       "const": false
+      }
+     },
+     "destructive": true,
+     "confirm": {
+      "title": "builtin.users.section.users.action.deactivate.confirm.title",
+      "message": "builtin.users.section.users.action.deactivate.confirm.message",
+      "button": "builtin.users.section.users.action.deactivate.confirm.button"
+     }
+    },
+    {
+     "id": "activate",
+     "label": "builtin.users.section.users.action.activate",
+     "method": "PATCH",
+     "path": "/users/{row.id}",
+     "when": {
+      "field": "active",
+      "equals": false
+     },
+     "body": {
+      "active": {
+       "const": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "kind": "list",
+   "id": "bindings",
+   "title": "builtin.users.section.bindings.title",
+   "source": {
+    "path": "/bindings",
+    "items": "bindings"
+   },
+   "key": "device",
+   "columns": [
+    {
+     "field": "device",
+     "kind": "ref",
+     "ref": "devices",
+     "label": "builtin.users.section.bindings.column.device"
+    },
+    {
+     "field": "user",
+     "kind": "ref",
+     "ref": "users",
+     "label": "builtin.users.section.bindings.column.user"
+    }
+   ],
+   "empty": "builtin.users.section.bindings.empty",
+   "actions": [
+    {
+     "id": "bind",
+     "label": "builtin.users.section.bindings.action.bind",
+     "method": "PUT",
+     "path": "/bindings/{field.device}",
+     "fields": [
+      {
+       "id": "device",
+       "type": "ref",
+       "ref": "devices",
+       "required": true,
+       "label": "builtin.users.section.bindings.action.bind.field.device"
+      },
+      {
+       "id": "user",
+       "type": "ref",
+       "ref": "users",
+       "required": true,
+       "label": "builtin.users.section.bindings.action.bind.field.user"
+      }
+     ],
+     "body": {
+      "user": {
+       "field": "user"
+      }
+     }
+    }
+   ],
+   "rowActions": [
+    {
+     "id": "unbind",
+     "label": "builtin.users.section.bindings.action.unbind",
+     "method": "DELETE",
+     "path": "/bindings/{row.device}",
+     "confirm": {
+      "title": "builtin.users.section.bindings.action.unbind.confirm.title",
+      "message": "builtin.users.section.bindings.action.unbind.confirm.message",
+      "button": "builtin.users.section.bindings.action.unbind.confirm.button",
+      "destructive": true
+     }
+    }
+   ]
+  },
+  {
+   "kind": "text",
+   "id": "pending",
+   "body": "builtin.users.section.pending.body"
+  }
+ ]
+}

@@ -71,6 +71,8 @@ type Options struct {
 	Log         func(format string, args ...any)
 	// AfterAdmission is a test hook: called after a member request has its principal and before the route runs.
 	AfterAdmission func(ctx context.Context, c Context, r Request)
+	// PanelProviders are the panel providers besides the built-in one (the id "builtin" is reserved).
+	PanelProviders []PanelProvider
 }
 
 // API is the core's request handler.

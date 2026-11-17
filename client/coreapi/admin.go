@@ -46,6 +46,8 @@ func IsAdminPath(method, escapedPath string) bool {
 	switch seg[0] {
 	case "users", "bindings", "projects", "teams", "kb", "grants", "audit", "core", "export", "import":
 		return true
+	case "panels":
+		return len(seg) == 1 || (len(seg) == 2 && seg[1] == "strings")
 	case "quota":
 		return len(seg) == 2 && seg[1] == "history"
 	case "usage": // GET /usage itself remains the gateway counter report
@@ -74,6 +76,9 @@ func (a *API) admin(ctx context.Context, r Request) Response {
 		return Response{}
 	}
 	seg := adminSeg(r.Path)
+	if seg[0] == "panels" {
+		return a.adminPanels(r.Method, seg, r.RawQuery)
+	}
 	if seg[0] == "kb" && (r.BodyTooLarge || len(r.Body) > MaxBody) {
 		return a.errResponse(core.ErrTooLarge)
 	}

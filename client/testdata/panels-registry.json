@@ -1,0 +1,11 @@
+{
+ "builtin": [
+  "GET users",
+  "POST users",
+  "PATCH users/{}",
+  "GET bindings",
+  "PUT bindings/{}",
+  "DELETE bindings/{}",
+  "GET devices"
+ ]
+}

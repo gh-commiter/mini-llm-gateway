@@ -79,6 +79,13 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   unencrypted connections from other computers, devices waiting for approval (editable name, ID, address, time, OS,
   minigw version; **Allow** / **Reject**), allowed devices (rename, ID, last seen, **History**, **Copy ID**,
   **Remove**).
+- **Users and devices** (Mac): a pane the app builds from a panel description (`GET /panels`, see
+  [admin-api.md → Panels](admin-api.md#panels)), shown after Devices in the language of the app (English or Slovenian).
+  **Users:** the list of people with **Add User…**, **Rename…**, **Deactivate** (asks first) and **Activate**, and a switch
+  that shows the inactive ones. **Devices of users:** which device is bound to which user, with **Bind Device…** (binding a
+  device again changes its user) and **Unbind** (asks first). Devices are still approved in **Devices**. The pane shows only
+  plain text; a name that looks like a link or markup is shown as typed. If the project database is not available the pane
+  says so.
 - **Sessions:** **Projects (7 days)**: requests, agent minutes and tokens per folder and device (kept 31 days, also
   after their sessions are gone); the last 200 client sessions with device, folder, work mode and models; open one for
   requests, errors, refusals, time and tokens per model, and "read-only (cap worktree)" when the agent's cap made it
