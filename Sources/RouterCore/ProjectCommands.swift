@@ -26,8 +26,11 @@ public final class ProjectEnv {
     public static let usageHelp = "minigw usage [--project slug] [--days n] [--json]   your model usage (a developer sees own events in a project, an admin all of it)"
     public static let runningHelp = "minigw running [--json]                    your requests that run on the gateway now: model, folder, time, steps, last step"
     public static let projectHelp = """
-        minigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)
-        minigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of
+        minigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix
+        minigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote
+        minigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)
+        minigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin
+        minigw project remote remove <url> [<slug>]
         minigw project unlink                       remove the link that applies here
         minigw project show                         the link that applies here, and why
         minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]
@@ -61,6 +64,8 @@ public final class ProjectEnv {
     public var send: Send
     public var sleep: (TimeInterval) -> Void
     public var zone = TimeZone.current
+    /// The folder's raw remote.origin.url, "" = none; nil = ask git (tests inject it).
+    public var origin: ((String) -> String)?
 
     public init(connect: @escaping () -> (ProjectConn, String), state: String, cwd: String, stdin: @escaping () -> Data,
                 out: @escaping (String) -> Void, err: @escaping (String) -> Void, agent: Bool, runConn: ProjectConn? = nil,
@@ -177,16 +182,17 @@ public final class ProjectEnv {
         if agent { throw ProjectError(Self.agentRefusal) }
         guard let sub = args.first else { throw ProjectError("usage:\n" + Self.projectHelp) }
         if sub == "sessions" { try projectSessions(Array(args.dropFirst())); return }
-        guard let fl = try? GoFlags.parse([("archived", .bool), ("json", .bool)], Array(args.dropFirst())) else {
+        guard let fl = try? GoFlags.parse([("archived", .bool), ("json", .bool), ("path", .string), ("here", .bool)], Array(args.dropFirst())) else {
             throw ProjectError("usage:\n" + Self.projectHelp)
         }
         let pos = fl.positional
         switch sub {
         case "list":
             let (c, gw) = connect()
-            var path = Self.apiProjects
-            if fl.bool("archived") { path += "?archived=1" }
-            let r = request(c, "GET", path)
+            var q: [String: String] = [:]
+            if fl.bool("archived") { q["archived"] = "1" }
+            if !fl.string("path").isEmpty { q["path"] = fl.string("path") }
+            let r = request(c, "GET", Self.apiProjects + ProjectText.query(q))
             guard r.status == 200 else {
                 var e = Self.gatewayError(r.status, r.data, r.retryAfter)
                 if r.status == 404, let hint = olderGatewayHint(c) { e = ProjectError(e.message + "\n" + hint) }  // a gateway older than 0.6.0 has no projects
@@ -211,8 +217,9 @@ public final class ProjectEnv {
             }
             if list.isEmpty { say("no projects: ask the gateway owner to add you to one") }
         case "link":
-            guard pos.count == 1 else { throw ProjectError("usage: minigw project link <slug>") }
-            try link(pos[0])
+            guard pos.count <= 1 else { throw ProjectError("usage: minigw project link [<slug>]") }
+            try link(pos.first ?? "")
+        case "remote": try remote(pos, here: fl.bool("here"))
         case "unlink":
             guard pos.isEmpty else { throw ProjectError("usage: minigw project unlink") }
             try unlink()
@@ -221,14 +228,16 @@ public final class ProjectEnv {
         }
     }
 
-    private func link(_ slug: String) throws {
-        guard Projects.isSlug(slug) else { throw ProjectError("not a project slug (lower case letters, digits and -): " + slug) }
+    func link(_ slugArg: String) throws {
+        var slug = slugArg
+        guard slug.isEmpty || Projects.isSlug(slug) else { throw ProjectError("not a project slug (lower case letters, digits and -): " + slug) }
         let (c, gw) = connect()
         var st = try loadState()
         let real = try Projects.realFolder(cwd)
         for l in st.links where l.gateway == gw && Projects.samePath(real, l.path) {  // a deeper folder may be linked on its own; the same one not twice
             throw ProjectError("this folder is already linked to \(l.slug): run minigw project unlink first")
         }
+        if slug.isEmpty { slug = try findByRemote(c, real) }
         let r = request(c, "POST", Self.apiProjects + "/" + ProjectText.pathEscape(slug) + "/link-check")
         guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
         let p = JSONValue.parse(r.data)?.dict ?? JDict()

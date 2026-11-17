@@ -355,7 +355,7 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
             seen.insert(want.status); checked += 1
             if kind == "run" { runRows += 1; #expect(cap != nil) }
         }
-        #expect(checked == 53 && runRows == 8 && rows.count == checked)  // every row of the table (incl. the KB submission routes), the 8 run rows included
+        #expect(checked == 58 && runRows == 8 && rows.count == checked)  // every row of the table (incl. the KB submission routes), the 8 run rows included
         #expect(seen.isSuperset(of: [200, 400, 403, 404, 413]))  // incl. a no-device 403 and a 404
         #expect(rows.contains { ($0["name"] as! String) == "member: no device" })
     }

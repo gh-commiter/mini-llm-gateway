@@ -226,6 +226,7 @@ private func fileText(_ p: String) -> String? { FileManager.default.contents(atP
                     return ProjectReply(status: r["status"] as! Int, data: Data((r["body"] as! String).utf8), retryAfter: h?["Retry-After"])
                 }, sleep: { _ in })
             env.zone = TimeZone(identifier: "UTC")!
+            env.origin = { _ in c["origin"] as? String ?? "" }  // the folder's raw remote.origin.url
             let args = (c["args"] as! [String]).map(sub)
             var failure = ""
             do {
@@ -601,5 +602,56 @@ private final class Captured: @unchecked Sendable {
     @Test func noProjectMeansNoHeaderEvenIfTheProgramSendsOne() async throws {
         let seen = try await headSeen(project: "", forged: ["X-Minigw-Project: 9"])
         #expect(seen == "POST /v1/messages HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n", "\(seen.debugDescription)")
+    }
+}
+
+// MARK: git identity of a project (the cases through the shared fixtures are in ProjectCommandParity and KBCommandParity)
+
+@Suite struct ProjectIdentity {
+    @Test func credentialsAreRemovedFromUrlRemotesOnly() {
+        for (input, want) in [
+            ("https://tok:secret@host.example/a/b.git", "https://host.example/a/b.git"),
+            ("ssh://git@host.example:22/a/b", "ssh://host.example:22/a/b"),
+            ("git@host.example:a/b.git", "git@host.example:a/b.git"),
+            ("https://host.example/a@b/c", "https://host.example/a@b/c"),
+            ("  https://u@h.example/a/b \n", "https://h.example/a/b"),
+            ("/srv/git/a@b", "/srv/git/a@b"),
+        ] { #expect(ProjectEnv.stripUserinfo(input) == want, "\(input)") }
+    }
+
+    private func git(_ dir: String, _ args: [String]) throws -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["git"] + args
+        p.currentDirectoryURL = URL(fileURLWithPath: dir)
+        var env = ProcessInfo.processInfo.environment
+        env["HOME"] = dir; env["GIT_CONFIG_NOSYSTEM"] = "1"
+        p.environment = env
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        return p.terminationStatus == 0
+    }
+
+    @Test func theOriginIsTheRawConfigValue() throws {
+        let dir = try tempRoot()
+        guard try git(dir, ["init", "-q"]) else { return }  // no git: nothing to prove here
+        #expect(ProjectEnv.gitOrigin(dir) == "")
+        #expect(try git(dir, ["remote", "add", "origin", "https://tok:secret@Host.example/Eureko/Fakture.git"]))
+        #expect(ProjectEnv.gitOrigin(dir) == "https://tok:secret@Host.example/Eureko/Fakture.git")
+        // an insteadOf rule does not rewrite what the folder says
+        #expect(try git(dir, ["config", "--local", "url.git@other.example:.insteadOf", "https://tok:secret@Host.example/"]))
+        #expect(ProjectEnv.gitOrigin(dir) == "https://tok:secret@Host.example/Eureko/Fakture.git")
+        try mkdir(dir + "/src")
+        #expect(ProjectEnv.gitOrigin(dir + "/src") != "")
+        #expect(ProjectEnv.gitOrigin(try tempRoot()) == "")
+    }
+
+    @Test func kindAndFaqArguments() throws {
+        func env(agent: Bool = false) -> ProjectEnv {
+            ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { _ in }, err: { _ in }, agent: agent, send: { _, _, _, _, _ in ProjectReply(status: 599) })
+        }
+        #expect(throws: ProjectError.self) { try env().kb(["submit", "fakture", "--kind", "rumor", "-"]) }
+        #expect(throws: ProjectError.self) { try env().kb(["faq", "a", "b"]) }
+        do { try env(agent: true).kb(["faq"]); Issue.record("agent allowed") } catch { #expect((error as? ProjectError)?.message == ProjectEnv.agentRefusal) }
     }
 }

@@ -7,7 +7,8 @@ extension ProjectEnv {
         minigw kb import <project> <dir|file.md> [--class c] [--submit]
         minigw kb mcp [--project slug] [--print-config]
         minigw kb search [<project>] <query> [--json]
-        minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
+        minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB)
+        minigw kb faq [<project>] [--json]   the project's questions and answers
         minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)
         """
     public static let kbAdminHelp = """
@@ -17,8 +18,10 @@ extension ProjectEnv {
         minigw gw kb reject <id> [--reason text]
         """
     static func submissionLine(_ d: JDict) -> String {
-        ProjectText.clean("submission \(d["id"]?.int ?? 0)  project \(d["project"]?.int ?? 0)  \(d["state"]?.string ?? "")  \(d["class"]?.string ?? "")  \(d["title"]?.string ?? "")")
+        ProjectText.clean("submission \(d["id"]?.int ?? 0)  project \(d["project"]?.int ?? 0)  \(d["state"]?.string ?? "")  \(d["class"]?.string ?? "")  \(d["title"]?.string ?? "")\(kindSuffix(d))")
     }
+    /// A faq is marked at the end of the first line; a finding prints as before.
+    static func kindSuffix(_ d: JDict) -> String { d["entrykind"]?.string == "faq" ? "  (faq)" : "" }
     static func submissionResult(_ d: JDict) -> String { "submission \(d["id"]?.int ?? 0) \(d["state"]?.string ?? "")" }
 
     static func kbJSON(_ value: Any) -> String {
@@ -34,10 +37,13 @@ extension ProjectEnv {
         if args.first == "export" || args.first == "import" { try kbFiles(args); return }
         if args.first == "search" { try kbSearch(Array(args.dropFirst())); return }
         if agent { throw ProjectError(Self.agentRefusal) }
+        if args.first == "faq" { try kbFAQ(Array(args.dropFirst())); return }
         let usage = ProjectError("usage:\n" + Self.kbHelp)
-        guard let fl = try? GoFlags.parse([("class", .string), ("title", .string), ("key", .string), ("replaces", .int), ("revision", .int), ("json", .bool)], args) else { throw usage }
+        guard let fl = try? GoFlags.parse([("class", .string), ("kind", .string), ("title", .string), ("key", .string), ("replaces", .int), ("revision", .int), ("json", .bool)], args) else { throw usage }
         let pos = fl.positional
         guard pos.count == 3 && pos[0] == "submit" || (1...2).contains(pos.count) && pos[0] == "submissions" else { throw usage }
+        let kind = fl.string("kind")
+        if !kind.isEmpty && kind != "finding" && kind != "faq" { throw usage }
         let (c, _) = connect()
         func request(_ method: String, _ path: String, _ headers: [String: String] = [:], _ body: Data? = nil) throws -> Data {
             let r = send(c, method, path, headers, body)
@@ -59,7 +65,9 @@ extension ProjectEnv {
                 key = "mgw-" + (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255, using: &g)) }.joined()
             }
             let cls = fl.set.contains("class") ? fl.string("class") : "data"
-            let payload = try JSONSerialization.data(withJSONObject: ["class": cls, "title": title, "body": body, "replaces": fl.int("replaces"), "revision": fl.int("revision")])
+            var fields: [String: Any] = ["class": cls, "title": title, "body": body, "replaces": fl.int("replaces"), "revision": fl.int("revision")]
+            if !kind.isEmpty { fields["entryKind"] = kind }
+            let payload = try JSONSerialization.data(withJSONObject: fields)
             var r = ProjectReply(status: 0)
             for _ in 0...Self.pushRetries {
                 r = send(c, "POST", "\(Self.apiProjects)/\(project)/kb/submissions", ["Idempotency-Key": key], payload)
@@ -96,7 +104,7 @@ extension ProjectEnv {
     }
 
     func searchLine(_ d: JDict) -> String {
-        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  project \(d["project"]?.int ?? 0)  \(d["class"]?.string ?? "")  \(stamp(d["updated"]?.string.flatMap(ProjectText.parseTime)))\n\(d["snippet"]?.string ?? "")")
+        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  project \(d["project"]?.int ?? 0)  \(d["class"]?.string ?? "")  \(stamp(d["updated"]?.string.flatMap(ProjectText.parseTime)))\(Self.kindSuffix(d))\n\(d["snippet"]?.string ?? "")")
     }
     func kbSearch(_ args: [String]) throws {
         let usage = ProjectError("usage: minigw kb search [<project>] <query> [--json]")

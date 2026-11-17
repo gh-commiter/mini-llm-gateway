@@ -33,7 +33,9 @@ public final class AdminCommands {
           minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>
           minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to
           minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
+          minigw gw project remote list <project> | add <project> <url> | remove <project> <url>   git remotes registered for a project
           minigw gw team add <name> | list | rename <team> <name> | archive <team>
+          minigw gw team path <team> <label>                    free-text path label of a team ("-" clears it)
           minigw gw team member add|remove <team> <user>
           minigw gw team project add|remove <team> <project>
           minigw gw team access set <team> <project> <user> <role> | remove <team> <project> <user> | list <team>
@@ -146,7 +148,7 @@ public final class AdminCommands {
             default: throw usage
             }
         case "project":
-            try need(2, 4)
+            try need(2, 5)
             switch (pos[1], pos.count) {
             case ("list", 2):
                 for p in try request("GET", "/projects")["projects"]?.array ?? [] {
@@ -158,6 +160,18 @@ public final class AdminCommands {
                 say("project " + clean(pos[2]) + " added")
             case ("archive", 3), ("unarchive", 3):
                 try request("PATCH", "/projects/" + s(try projectID(pos[2])), ["archived": pos[1] == "archive"])
+            case ("remote", 4) where pos[2] == "list", ("remote", 5) where pos[2] == "add" || pos[2] == "remove":
+                let path = "/projects/" + s(try projectID(pos[3])) + "/remotes"
+                if pos[2] == "list" {
+                    let list = try request("GET", path)["remotes"]?.array.compactMap(\.string) ?? []
+                    for v in list { say(clean(v)) }
+                    if list.isEmpty { say("no remotes registered") }
+                    break
+                }
+                let r = try request("POST", path, [pos[2]: [ProjectEnv.stripUserinfo(pos[4])]])
+                let named = r[pos[2] == "add" ? "added" : "removed"]?.array.compactMap(\.string) ?? []
+                guard named.count == 1 else { throw fail("the gateway did not name the remote") }
+                say(clean(pos[2] == "add" ? "registered \(named[0]) for project \(pos[3])" : "removed \(named[0]) from project \(pos[3])"))
             default: throw usage
             }
         case "member":

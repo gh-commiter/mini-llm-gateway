@@ -34,6 +34,8 @@ extension AdminCommands {
             say("team " + clean(pos[2]) + " added")
         case ("rename", 4):
             try request("PATCH", "/teams/\(try teamID(pos[2]))", ["name": pos[3]])
+        case ("path", 4):  // "-" clears the label
+            try request("PATCH", "/teams/\(try teamID(pos[2]))", ["path": pos[3] == "-" ? "" : pos[3]])
         case ("archive", 3):
             try request("PATCH", "/teams/\(try teamID(pos[2]))", ["archived": true])
         case ("member", 5), ("project", 5):
@@ -53,7 +55,8 @@ extension ProjectEnv {
         """
 
     static func teamLine(_ d: JDict) -> String {
-        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["name"]?.string ?? "")\(d["archived"]?.bool == true ? "  (archived)" : "")")
+        let path = d["path"]?.string ?? ""
+        return ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["name"]?.string ?? "")\(d["archived"]?.bool == true ? "  (archived)" : "")\(path.isEmpty ? "" : "  path " + path)")
     }
 
     static let malformed = ProjectError("the gateway sent an answer minigw cannot read")

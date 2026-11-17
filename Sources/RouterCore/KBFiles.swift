@@ -7,7 +7,8 @@ extension ProjectEnv {
         let hash = SHA256.hash(data: Data(("[" + GoJSON.string(title) + "," + GoJSON.string(body) + "]").utf8)).map { String(format: "%02x", $0) }.joined()
         let fields: [(String, String)] = [
             ("id", String(d["id"]?.int ?? 0)), ("title", title), ("class", d["class"]?.string ?? ""),
-            ("kind", d["provenance"]?.dict["sourcekind"]?.string ?? ""), ("revision", String(d["revision"]?.int ?? 0)),
+            ("kind", d["provenance"]?.dict["sourcekind"]?.string ?? ""),
+            ("entry_kind", (d["entrykind"]?.string).flatMap { $0.isEmpty ? nil : $0 } ?? "finding"), ("revision", String(d["revision"]?.int ?? 0)),
             ("author", d["author"]?.string ?? ""), ("created", d["created"]?.string ?? ""),
             ("updated", d["updated"]?.string ?? ""), ("hash", hash)
         ]
