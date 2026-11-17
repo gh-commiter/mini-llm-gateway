@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"minigw/core"
 	"net/http"
@@ -323,5 +324,23 @@ func TestNoHiddenIDInOutput(t *testing.T) {
 	clean("kb mcp", out.String())
 	if !strings.Contains(out.String(), "acme") || len(asked) != 2 || !strings.HasSuffix(asked[1], "/notes/5") {
 		t.Fatal(out.String(), asked)
+	}
+}
+
+// The scope hint is added to the answer of a note outside the linked project, not when --team or a run already named the scope, and
+// the gateway's own answer (and its status, for the profile hint) stays as it was.
+func TestNoteScopeHint(t *testing.T) {
+	nf := gatewayError(404, nil, nil)
+	got := noteScopeHint(nf, false)
+	var g gwStatusError
+	if !errors.As(got, &g) || g.status != 404 || got.Error() != "not found or not visible\n"+noteScopeText {
+		t.Fatal(got)
+	}
+	if noteScopeHint(nf, true) != nf {
+		t.Fatal("hint added although the scope was named")
+	}
+	other := gatewayError(403, nil, nil)
+	if noteScopeHint(other, false) != other {
+		t.Fatal("hint added to another answer")
 	}
 }

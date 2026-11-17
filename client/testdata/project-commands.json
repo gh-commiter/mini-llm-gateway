@@ -2547,7 +2547,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "not found or not visible",
+    "error": "not found or not visible\na note of a team needs --team <team>; a note of another project needs a folder linked to that project (a search of a team or another project shows the ids)",
     "requests": [
      [
       "GET",
@@ -3779,7 +3779,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "not found or not visible",
+    "error": "not found or not visible\na note of a team needs --team <team>; a note of another project needs a folder linked to that project (a search of a team or another project shows the ids)",
     "requests": [
      [
       "GET",
@@ -4026,7 +4026,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "not found or not visible",
+    "error": "not found or not visible\na note of a team needs --team <team>; a note of another project needs a folder linked to that project (a search of a team or another project shows the ids)",
     "requests": [
      [
       "DELETE",

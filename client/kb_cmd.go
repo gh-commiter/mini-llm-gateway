@@ -463,6 +463,10 @@ func (e *projectEnv) kbSearch(args []string) error {
 	}
 	if len(pg.Hits) == 0 {
 		e.say("no hits")
+	} else if *team != "" {
+		e.say("read a team's note with: minigw note read <id> --team " + clean(*team)) // the folder's own project cannot read it
+	} else if len(pos) == 2 {
+		e.say("read a note of project " + clean(pos[0]) + " from a folder linked to it: minigw note read <id>")
 	}
 	return nil
 }

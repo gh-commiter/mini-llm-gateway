@@ -9,6 +9,7 @@
 - `minigw gw status` shows a provider that is switched off in the settings as "disabled" (it said "models loading" for ever), and `minigw gw provider list` marks it `(disabled)`; the Mac commands do the same.
 - `minigw gw team unarchive <team>` exists on both gateways (the API and the pane could already do it). Every archive pair (projects, teams) and activate pair (users) now has both commands in both command sets.
 - A project of an archived team can be moved: adding it to another team now says which team holds it (and that it is archived) and how to release it (`minigw gw team project remove <team> <project>`, which works on an archived team). Adding to an archived team says which team and how to unarchive it.
+- `minigw kb search --team <team>` (or with another project's name) prints one line under the hits saying how to read them (`minigw note read <id> --team <team>`, or from a folder linked to that project), and the "not found or not visible" answer of `note read`, `note edit` and `note rm` adds a line that a note of a team or another project needs `--team` or such a folder. Client-side text only: the gateway still does not tell a missing note from an invisible one. The MCP `note_read` reads in the same project as its `kb_search`, so it has no such gap.
 - Refusals that are sentences no longer read "invalid ..." in front: team, project, user, grant, remote and dependency refusals ("a team with this name already exists", "a project cannot depend on itself", ...), also in the API answers.
 
 ## 0.7.19

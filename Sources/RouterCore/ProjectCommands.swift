@@ -130,6 +130,12 @@ public final class ProjectEnv {
         }
     }
 
+    /// A note outside the linked project's scope answers like one that does not exist; the hint is client-side text only (as Go noteScopeHint).
+    static let noteScopeText = "a note of a team needs --team <team>; a note of another project needs a folder linked to that project (a search of a team or another project shows the ids)"
+    static func scopeHint(_ e: ProjectError, scoped: Bool) -> ProjectError {
+        scoped || e.message != "not found or not visible" ? e : ProjectError(e.message + "\n" + noteScopeText, gatewayStatus: e.gatewayStatus)
+    }
+
     /// gatewayError, with one clear line for a run that cannot reach its run port.
     func gwError(_ r: ProjectReply) -> ProjectError {
         if r.status == 0 && runConn != nil {
@@ -394,7 +400,7 @@ public final class ProjectEnv {
         }
         func one(_ method: String, _ body: Data? = nil) throws -> Data {
             let r = request(c, method, "\(base)/\(id)", [:], body)
-            guard (200...299).contains(r.status) else { throw gwError(r) }
+            guard (200...299).contains(r.status) else { throw Self.scopeHint(gwError(r), scoped: runConn != nil || !team.isEmpty) }
             return r.data
         }
         func emit(_ data: Data, _ f: (NoteView) -> Void) {
@@ -472,7 +478,7 @@ public final class ProjectEnv {
             var rev = fl.int64("revision")
             if !fl.set.contains("revision") { rev = NoteView(JSONValue.parse(try one("GET"))?.dict ?? JDict()).revision }
             let r = request(c, "DELETE", "\(base)/\(id)?revision=\(rev)")
-            guard r.status == 204 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+            guard r.status == 204 else { throw Self.scopeHint(Self.gatewayError(r.status, r.data, r.retryAfter), scoped: runConn != nil || !team.isEmpty) }
             say(asJSON ? "{\"deleted\":\(id)}" : "note \(id) deleted")
         default: break
         }

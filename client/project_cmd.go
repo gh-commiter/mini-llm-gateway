@@ -544,6 +544,22 @@ func defaultTitle(body, file string) string {
 	return "note"
 }
 
+// noteScopeHint: the answer for a note that is not in the linked project's scope is the same as for one that does not exist; the hint is
+// client-side text only, so the gateway still does not tell the two apart.
+func noteScopeHint(err error, scoped bool) error {
+	if err == nil || scoped || err.Error() != "not found or not visible" {
+		return err
+	}
+	out := errors.New(err.Error() + "\n" + noteScopeText)
+	var g gwStatusError
+	if errors.As(err, &g) {
+		return gwStatusError{out, g.status} // the profile hint still applies
+	}
+	return out
+}
+
+const noteScopeText = "a note of a team needs --team <team>; a note of another project needs a folder linked to that project (a search of a team or another project shows the ids)"
+
 func (e *projectEnv) note(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage:\n" + noteHelp)
@@ -612,7 +628,7 @@ func (e *projectEnv) note(args []string) error {
 	one := func(method string, hdr map[string]string, body []byte) ([]byte, error) {
 		st, data, h := e.do(c, method, fmt.Sprintf("%s/%d", base, id), hdr, body)
 		if st < 200 || st > 299 {
-			return nil, e.gwError(st, data, h)
+			return nil, noteScopeHint(e.gwError(st, data, h), e.runConn != nil || *team != "")
 		}
 		return data, nil
 	}
@@ -791,7 +807,7 @@ func (e *projectEnv) note(args []string) error {
 		}
 		st, data, h := e.do(c, "DELETE", fmt.Sprintf("%s/%d?revision=%d", base, id, r), nil, nil)
 		if st != 204 {
-			return gatewayError(st, data, h)
+			return noteScopeHint(gatewayError(st, data, h), e.runConn != nil || *team != "")
 		}
 		if *asJSON {
 			e.say(fmt.Sprintf(`{"deleted":%d}`, id))

@@ -425,7 +425,7 @@
           ""
         ]
       ],
-      "out": "7  Proposal ž  project 1  structure  2026-11-16 10:00\nReference <text>\n"
+      "out": "7  Proposal ž  project 1  structure  2026-11-16 10:00\nReference <text>\nread a note of project fakture from a folder linked to it: minigw note read <id>\n"
     },
     {
       "args": [
@@ -597,7 +597,7 @@
           "body": "{\"hits\":[{\"id\":9,\"title\":\"How do I reset?\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Press the button.\",\"updated\":\"2026-11-16T10:00:00Z\",\"entryKind\":\"faq\"},{\"id\":3,\"title\":\"Reset notes\",\"project\":1,\"class\":\"data\",\"snippet\":\"Old finding\",\"updated\":\"2026-11-15T10:00:00Z\",\"entryKind\":\"finding\"}]}"
         }
       ],
-      "out": "9  How do I reset?  project 1  structure  2026-11-16 10:00  (faq)\nPress the button.\n3  Reset notes  project 1  data  2026-11-15 10:00\nOld finding\n",
+      "out": "9  How do I reset?  project 1  structure  2026-11-16 10:00  (faq)\nPress the button.\n3  Reset notes  project 1  data  2026-11-15 10:00\nOld finding\nread a note of project fakture from a folder linked to it: minigw note read <id>\n",
       "requests": [
         [
           "GET",
@@ -766,7 +766,7 @@
           "body": "{\"hits\":[{\"id\":12,\"title\":\"Deploy order\",\"project\":1099511627777,\"class\":\"structure\",\"snippet\":\"Migrate first.\",\"updated\":\"2026-11-17T10:00:00Z\",\"team\":\"acme\"}]}"
         }
       ],
-      "out": "12  Deploy order  team acme  structure  2026-11-17 10:00\nMigrate first.\n",
+      "out": "12  Deploy order  team acme  structure  2026-11-17 10:00\nMigrate first.\nread a team's note with: minigw note read <id> --team acme\n",
       "requests": [
         [
           "GET",
@@ -799,7 +799,7 @@
           "body": "{\"hits\":[{\"id\":9,\"title\":\"How do I reset?\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Press the button.\",\"updated\":\"2026-11-17T10:00:00Z\",\"entryKind\":\"faq\"},{\"id\":12,\"title\":\"Reset order\",\"project\":1099511627777,\"class\":\"data\",\"snippet\":\"Team rule.\",\"updated\":\"2026-11-17T09:00:00Z\",\"entryKind\":\"faq\",\"team\":\"acme\",\"from\":\"team:acme\"}]}"
         }
       ],
-      "out": "9  How do I reset?  project 1  structure  2026-11-17 10:00  (faq)\nPress the button.\n12  Reset order  team acme  data  2026-11-17 09:00  (faq)  from team:acme\nTeam rule.\n",
+      "out": "9  How do I reset?  project 1  structure  2026-11-17 10:00  (faq)\nPress the button.\n12  Reset order  team acme  data  2026-11-17 09:00  (faq)  from team:acme\nTeam rule.\nread a note of project fakture from a folder linked to it: minigw note read <id>\n",
       "requests": [
         [
           "GET",
