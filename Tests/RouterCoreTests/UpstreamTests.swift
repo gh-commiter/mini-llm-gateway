@@ -331,7 +331,10 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
             #expect(plain.count == n && buf.isEmpty)
             return (Date().timeIntervalSince(t), plain.count)
         }
-        let (small, _) = try run(20_000), (big, _) = try run(80_000)
+        // The fastest of several runs for each size: one timing measures the machine's busy moment as much as the code (in a full
+        // parallel run a single pair gave 27x); a quadratic walk raises the minimum too.
+        func fastest(_ n: Int) throws -> Double { try (0..<5).map { _ in try run(n).0 }.min() ?? 0 }
+        let small = try fastest(20_000), big = try fastest(80_000)
         #expect(big < 3, "80000 frames took \(big) s")
         #expect(big < max(small, 0.005) * 12, "4x the frames took \(big / max(small, 0.005))x the time")  // linear is 4x, one copy per frame is 16x
     }
