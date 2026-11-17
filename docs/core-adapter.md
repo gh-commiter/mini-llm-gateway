@@ -97,7 +97,10 @@ needed. The app runs the handler on its helper queue (a plain thread), never on 
 runs with a budget of 10 seconds and ends with `more` (and the wait the upstream asked for, and `next`, the last note done); the CLI
 asks again. A `do` callout carries the remaining budget (`budgetMs`): the app's request has a hard TOTAL deadline of at most that long (not
 an idle timeout), and the helper waits a little longer for the answer. A `callout_result` that arrives after the helper stopped waiting is
-recognised by its kind and dropped, never read as a request.
+recognised by its kind and dropped, never read as a request. The callouts of one request are numbered (`seq`) and an answer carries the
+number back: a late answer of an earlier callout is dropped, one from the future ends the connection, and a callout read that fails or
+hits its deadline (perhaps inside a frame) closes the connection (the lane): the app finds it closed and starts the helper again. The app
+admits only the requests a push makes (method and path patterns, `client/testdata/upstream-requests.json`, asserted by Go and Swift).
 
 **The lane.** A callout waits for the network and the Keychain, and a connection serves one request at a time. So the upstream routes
 (`/upstreams...`, `/upstream-push`) have a connection of their own: the app starts the helper with `-lane` and a second socketpair on fd

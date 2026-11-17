@@ -47,6 +47,29 @@ private func isOpen(in fd: Int32, _ run: (_ exe: String, _ args: [String]) throw
         }
     }
 
+    /// The helper's connections are socketpairs (the first and the upstream lane), made without CLOEXEC for a moment as the pipes are:
+    /// a child that another thread starts in that moment (an agent CLI, git, a probe) must not get them either. Every spawn site of the app
+    /// is Foundation Process (CLOEXEC_DEFAULT, tested below) or posix_spawn with POSIX_SPAWN_CLOEXEC_DEFAULT (Native.spawnGroup,
+    /// Worktree, CoreProcess); the only ones that are not are in the `minigw` command line tool, a different process.
+    @Test func aSocketpairWithoutCloexecIsNotInheritedEither() throws {
+        var sv: [Int32] = [0, 0]
+        precondition(socketpair(AF_UNIX, SOCK_STREAM, 0, &sv) == 0)
+        defer { close(sv[0]); close(sv[1]) }
+        for fd in sv {
+            let viaProcess = try isOpen(in: fd) { exe, args in
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: exe); p.arguments = args
+                p.standardOutput = Pipe(); p.standardError = Pipe(); p.standardInput = Pipe()
+                try p.run(); p.waitUntilExit()
+                return p.terminationStatus
+            }
+            #expect(!viaProcess, "Foundation Process: socketpair fd \(fd) inherited")
+            let child = try #require(Native.spawnGroup("/bin/test", ["-e", "/dev/fd/\(fd)"], dir: URL(fileURLWithPath: "/tmp"), env: [:], input: false))
+            var st: Int32 = 0; waitpid(child.pid, &st, 0)
+            #expect((st >> 8) & 0xff != 0, "spawnGroup: socketpair fd \(fd) inherited")
+        }
+    }
+
     @Test func spawnGroupDoesNotInheritIt() throws {
         let m = marker(); defer { m.close() }
         for fd in m.fds {

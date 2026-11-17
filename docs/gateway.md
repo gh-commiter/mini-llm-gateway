@@ -529,7 +529,11 @@ most 1 MiB. The answer is read by one small incremental reader (`UpstreamHTTP.sw
 every cap checked before bytes are kept, `Transfer-Encoding` with `Content-Length` refused, any violation "no answer", no force unwrap or
 literal subscript (a source test enforces it) and a seeded test of thousands of mutated answers. The Go gateway reads the answer with
 `net/http` (redirects off, 60 s in total, at most 1 MiB and one byte kept). The app refuses an upstream that is this gateway by key and by address. The Keychain access rules are
-those of the provider keys: only the app reads them.
+those of the provider keys: only the app reads them. The idempotency keys and references that leave with a push are HMACs under a secret
+of this gateway (a random key in the core database, made on first use; it is a key, not an upstream's credential, and it is in backups
+like the notes), so an upstream cannot work out project or note ids from them. Children that the app spawns do not inherit the
+helper's connections: every spawn site is Foundation `Process` or `posix_spawn` with `POSIX_SPAWN_CLOEXEC_DEFAULT` (tested in
+`SpawnFdTests`, also for socketpairs).
 
 ## Usage events and quota (0.6.0, `minigw serve` and the Mac app)
 

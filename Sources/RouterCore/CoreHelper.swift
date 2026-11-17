@@ -272,7 +272,9 @@ public final class CoreHelper: @unchecked Sendable {
                 guard let handler = callouts, f["v"] as? Int == Self.protocolVersion, (f["id"] as? NSNumber)?.uint64Value == id else {
                     throw CoreError.unavailable("the helper asked for something this app does not do")
                 }
-                try sendFrame(fd, ["v": Self.protocolVersion, "id": id, "callout_result": handler.callout(q)])
+                var answer = handler.callout(q)
+                answer["seq"] = q["seq"] ?? 0  // the number of the callout this answers: the helper drops any other
+                try sendFrame(fd, ["v": Self.protocolVersion, "id": id, "callout_result": answer])
                 setTimeout(fd, requestTimeout)
                 f = try recvFrame(fd)
             }

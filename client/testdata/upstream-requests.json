@@ -1,0 +1,122 @@
+{
+ "patterns": [
+  {
+   "method": "GET",
+   "pattern": "^/minigw/v1/projects$"
+  },
+  {
+   "method": "GET",
+   "pattern": "^/minigw/v1/teams$"
+  },
+  {
+   "method": "GET",
+   "pattern": "^/minigw/v1/projects/[a-z0-9][a-z0-9-]{1,62}$"
+  },
+  {
+   "method": "GET",
+   "pattern": "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions/[0-9]{1,18}$"
+  },
+  {
+   "method": "POST",
+   "pattern": "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions$"
+  },
+  {
+   "method": "GET",
+   "pattern": "^/minigw/v1/projects/[0-9]{1,18}/notes/[0-9]{1,18}$"
+  }
+ ],
+ "refused": [
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/kb/submissions"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/shop/notes"
+  },
+  {
+   "method": "POST",
+   "path": "/minigw/v1/projects"
+  },
+  {
+   "method": "POST",
+   "path": "/minigw/v1/projects/7/notes"
+  },
+  {
+   "method": "POST",
+   "path": "/minigw/v1/projects/7/kb/submissions/5"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects?archived=1"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/kb/submissions/5?x=1"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/teams/3"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/Shop"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/a"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/shop/"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/1234567890123456789/notes/1"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/kb/search"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/usage"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/members"
+  },
+  {
+   "method": "PUT",
+   "path": "/minigw/v1/projects/7/kb/submissions"
+  },
+  {
+   "method": "DELETE",
+   "path": "/minigw/v1/projects/7/notes/5"
+  },
+  {
+   "method": "GET",
+   "path": "/v1/models"
+  },
+  {
+   "method": "GET",
+   "path": "/admin/users"
+  },
+  {
+   "method": "GET",
+   "path": "@evil.example/minigw/v1/projects"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/../teams"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/shop%2f..%2f"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/sh op"
+  }
+ ]
+}

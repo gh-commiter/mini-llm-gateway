@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -90,13 +91,14 @@ func (s *Store) PushUpstream(ctx context.Context, tr UpstreamTransport, project,
 }
 
 type pusher struct {
-	s     *Store
-	tr    UpstreamTransport
-	up    string
-	sleep func(time.Duration) bool
-	ctx   context.Context
-	more  bool          // set when a limit could not be waited out
-	wait  time.Duration // for how long
+	s      *Store
+	tr     UpstreamTransport
+	up     string
+	sleep  func(time.Duration) bool
+	ctx    context.Context
+	secret []byte        // this gateway's key for what it sends (Store.upstreamKey)
+	more   bool          // set when a limit could not be waited out
+	wait   time.Duration // for how long
 }
 
 type upAnswer struct {
@@ -204,9 +206,16 @@ func (p *pusher) resolve(l UpstreamLink) (int64, string) {
 	return pr.ID, ""
 }
 
+// mac: HMAC-SHA256 under this gateway's secret (upstreamKey): what leaves is not a hash of guessable numbers, so an upstream cannot work
+// out project or note ids from an idempotency key or a reference.
+func (p *pusher) mac(parts ...any) []byte {
+	m := hmac.New(sha256.New, p.secret)
+	fmt.Fprint(m, parts...)
+	return m.Sum(nil)
+}
+
 func (p *pusher) submissionKey(project int64, n UpstreamNote, supersedes int64) string {
-	h := sha256.Sum256([]byte(fmt.Sprint(p.up, "|", project, "|", n.ID, "|", n.Hash, "|", supersedes)))
-	return "up-" + hex.EncodeToString(h[:16])
+	return "up-" + hex.EncodeToString(p.mac("idem|", p.up, "|", project, "|", n.ID, "|", n.Hash, "|", supersedes)[:16])
 }
 
 // trailer: where the text came from, as display only, and as little as possible: an opaque reference (stable for this note on this
@@ -214,8 +223,7 @@ func (p *pusher) submissionKey(project int64, n UpstreamNote, supersedes int64) 
 // gateway id, note id or revision leaves with it. It carries no identity: that is the bound device.
 func (p *pusher) trailer(project int64, n UpstreamNote, supersedes int64) string {
 	author := strings.ReplaceAll(upText(n.Author, 64), "-", "\u2010") // never "-->"
-	h := sha256.Sum256([]byte(fmt.Sprint(p.s.GatewayID(), "|", p.up, "|", project, "|", n.ID)))
-	t := "\n\n<!-- minigw upstream ref " + hex.EncodeToString(h[:6]) + ", author " + author
+	t := "\n\n<!-- minigw upstream ref " + hex.EncodeToString(p.mac("ref|", p.up, "|", project, "|", n.ID)[:6]) + ", author " + author
 	if supersedes > 0 {
 		t += fmt.Sprintf("; supersedes submission %d", supersedes)
 	}
@@ -260,7 +268,11 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		res.More, res.Wait, res.Stopped, res.Next = true, wait, why, lastDone
 		return res, nil
 	}
-	p := &pusher{s: s, tr: tr, up: l.Upstream, sleep: sleep, ctx: ctx}
+	secret, err := s.upstreamKey(wctx)
+	if err != nil {
+		return UpstreamPush{}, err
+	}
+	p := &pusher{s: s, tr: tr, up: l.Upstream, sleep: sleep, ctx: ctx, secret: secret}
 	stop := func(why string) (UpstreamPush, error) {
 		res.Stopped = why
 		if !dry {

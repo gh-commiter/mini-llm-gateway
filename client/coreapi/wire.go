@@ -163,7 +163,9 @@ func (c *Client) Do(ctx context.Context, cx Context, r Request) (Response, error
 			if c.OnCallout == nil || f.ID != c.next {
 				return Response{}, errors.New("coreapi: unexpected callout")
 			}
-			if err := WriteCalloutResult(c.conn, f.ID, c.OnCallout(*f.Callout)); err != nil {
+			res := c.OnCallout(*f.Callout)
+			res.Seq = f.Callout.Seq
+			if err := WriteCalloutResult(c.conn, f.ID, res); err != nil {
 				return Response{}, err
 			}
 			continue

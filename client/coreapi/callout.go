@@ -43,6 +43,9 @@ type CalloutRequest struct {
 	Path       string            `json:"path,omitempty"`
 	Header     map[string]string `json:"header,omitempty"`
 	Body       []byte            `json:"body,omitempty"`
+	// Seq numbers the callouts of one request (1, 2, ...); the answer carries it back, so a late answer of an earlier callout can never be
+	// taken for the answer of this one.
+	Seq int `json:"seq"`
 }
 
 type CalloutResult struct {
@@ -52,6 +55,7 @@ type CalloutResult struct {
 	Error      string `json:"error,omitempty"`
 	Device     string `json:"device,omitempty"`
 	Where      string `json:"where,omitempty"`
+	Seq        int    `json:"seq"`
 }
 
 type wireCallout struct {
@@ -76,6 +80,7 @@ type CalloutHost struct {
 	mu      sync.Mutex
 	conn    io.ReadWriter
 	id      uint64
+	seq     int // of the callouts of the request being handled
 	enabled bool
 }
 
@@ -89,8 +94,20 @@ func (h *CalloutHost) Attach(conn io.ReadWriter, enabled bool) {
 // Begin names the request that is being handled (the callouts of it carry its id).
 func (h *CalloutHost) Begin(id uint64) {
 	h.mu.Lock()
-	h.id = id
+	h.id, h.seq = id, 0
 	h.mu.Unlock()
+}
+
+// broken ends the connection of a callout that went wrong in the middle (a deadline inside a frame leaves the stream out of step, and
+// nothing can be continued from there): the serve loop sees the end, the app finds its lane closed and starts the helper again.
+func (h *CalloutHost) broken() {
+	h.mu.Lock()
+	c := h.conn
+	h.enabled, h.conn = false, nil
+	h.mu.Unlock()
+	if cl, ok := c.(io.Closer); ok {
+		cl.Close()
+	}
 }
 
 func (h *CalloutHost) Available() bool {
@@ -103,6 +120,8 @@ func (h *CalloutHost) Available() bool {
 func (h *CalloutHost) call(req CalloutRequest, wait time.Duration) (CalloutResult, error) {
 	h.mu.Lock()
 	conn, id := h.conn, h.id
+	h.seq++
+	req.Seq = h.seq
 	h.mu.Unlock()
 	if conn == nil {
 		return CalloutResult{}, errors.New("no app to do this")
@@ -115,19 +134,27 @@ func (h *CalloutHost) call(req CalloutRequest, wait time.Duration) (CalloutResul
 		defer c.SetDeadline(time.Time{})
 	}
 	if err := writeFrame(conn, wireCallout{V: ProtocolVersion, ID: id, Callout: &req}); err != nil {
+		h.broken()
 		return CalloutResult{}, err
 	}
-	var f wireCalloutResult
-	if err := readFrame(conn, &f); err != nil {
-		return CalloutResult{}, err
+	for {
+		var f wireCalloutResult
+		if err := readFrame(conn, &f); err != nil { // a deadline or an error, perhaps inside a frame: the stream cannot be trusted any more
+			h.broken()
+			return CalloutResult{}, err
+		}
+		if f.V != ProtocolVersion || f.ID != id || f.Result == nil || f.Result.Seq > req.Seq {
+			h.broken()
+			return CalloutResult{}, errors.New("the app answered a callout out of step")
+		}
+		if f.Result.Seq < req.Seq { // the late answer of an earlier callout of this request: dropped
+			continue
+		}
+		if len(f.Result.Body) > MaxCalloutBody {
+			return CalloutResult{}, errors.New("an answer of the upstream is too large")
+		}
+		return *f.Result, nil
 	}
-	if f.V != ProtocolVersion || f.ID != id || f.Result == nil {
-		return CalloutResult{}, errors.New("the app answered a callout out of step")
-	}
-	if len(f.Result.Body) > MaxCalloutBody {
-		return CalloutResult{}, errors.New("an answer of the upstream is too large")
-	}
-	return *f.Result, nil
 }
 
 func (h *CalloutHost) Do(ctx context.Context, upstream, method, path string, header map[string]string, body []byte) (int, []byte, time.Duration, error) {

@@ -200,10 +200,10 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
     @Test func thePushRequestsPassAndOnlyTheIdempotencyKeyIsForwarded() {
         let t = FakeTransport(), h = host(t)
         for (m, p) in [("GET", "/minigw/v1/projects/shop"), ("GET", "/minigw/v1/teams"), ("GET", "/minigw/v1/projects/7/kb/submissions/12"), ("GET", "/minigw/v1/projects/7/notes/55"),
-                       ("POST", "/minigw/v1/projects/7/kb/submissions"), ("GET", "/minigw/v1/projects?archived=1")] {
+                       ("POST", "/minigw/v1/projects/7/kb/submissions")] {
             #expect(h.callout(["op": "do", "upstream": "hub", "method": m, "path": p, "header": ["Idempotency-Key": "up-0123abc", "Authorization": "Bearer evil", "Host": "evil.example", "X-Other": "1"]])["error"] == nil, Comment(rawValue: p))
         }
-        #expect(t.calls.count == 6 && t.calls.allSatisfy { $0.idempotencyKey == "up-0123abc" && $0.token == "SECRET-TOKEN" && $0.address == "hub.example:8765" })
+        #expect(t.calls.count == 5 && t.calls.allSatisfy { $0.idempotencyKey == "up-0123abc" && $0.token == "SECRET-TOKEN" && $0.address == "hub.example:8765" })
     }
 
     @Test func theDeviceNameIsTheOwnersChoiceAndTheBudgetIsTheHelpers() throws {
@@ -234,6 +234,41 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
         let own = Noise.newKey().publicKey.rawRepresentation
         let h = UpstreamHost(secrets: Stuck(), ownKey: { own }, ownPort: { 8765 }, transport: FakeTransport(), computerName: "mac")
         #expect((h.callout(["op": "forget", "upstream": "hub"])["error"] as? String)?.contains("could not be removed") == true)
+    }
+
+    /// client/testdata/upstream-requests.json: Go asserts that every request the core sends matches a pattern; here the app's own list is the
+    /// same list, and what the fixture says is refused is refused.
+    @Test func theAdmittedRequestsAreTheOnesTheCoreSends() throws {
+        let fx = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("client/testdata/upstream-requests.json"))) as! [String: Any]
+        let fixture = (fx["patterns"] as! [[String: String]]).map { "\($0["method"]!) \($0["pattern"]!)" }
+        #expect(UpstreamRequest.patterns.map { "\($0.method) \($0.pattern)" } == fixture)
+        for r in fx["refused"] as! [[String: String]] {
+            #expect(!UpstreamRequest.admits(method: r["method"] ?? "", path: r["path"] ?? ""), Comment(rawValue: "\(r)"))
+        }
+        for ok in ["/minigw/v1/projects", "/minigw/v1/teams", "/minigw/v1/projects/shop", "/minigw/v1/projects/7/kb/submissions/12", "/minigw/v1/projects/1099511627778/notes/55"] {
+            #expect(UpstreamRequest.admits(method: "GET", path: ok), Comment(rawValue: ok))
+        }
+        #expect(UpstreamRequest.admits(method: "POST", path: "/minigw/v1/projects/7/kb/submissions"))
+        // a body on a GET and a header that is not the idempotency key are not part of the set
+        #expect(UpstreamRequest.check(method: "GET", path: "/minigw/v1/projects", headers: [:], body: Data("x".utf8)) == nil)
+    }
+
+    @Test func aHeaderLineCannotBeBrokenOutOf() {
+        #expect(UpstreamRequest.headerLine("Idempotency-Key", "up-abc") == "Idempotency-Key: up-abc\r\n")
+        for v in ["a\r\nX: y", "a\nb", "a\u{0}b", "a\u{7f}", "caf\u{e9}", "a\tb"] { #expect(UpstreamRequest.headerLine("X", v) == nil, Comment(rawValue: v.debugDescription)) }
+        for n in ["", "A B", "A:B", "A\r\nB", "caf\u{e9}"] { #expect(UpstreamRequest.headerLine(n, "v") == nil, Comment(rawValue: n.debugDescription)) }
+    }
+
+    @Test func aTokenWithControlCharactersOrSpacesIsRefusedAtConnect() {
+        let s = MemorySecrets()
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let h = UpstreamHost(secrets: s, ownKey: { own }, ownPort: { 8765 }, transport: FakeTransport(), computerName: "mac")
+        let key = Noise.base64url(Noise.newKey().publicKey.rawRepresentation)
+        for tok in ["a\r\nX: y", "a b", "a\u{0}", "caf\u{e9}", "a\tb", "a\u{7f}"] {
+            #expect(h.callout(["op": "connect", "upstream": "x", "deviceName": "gw", "address": "hub.example:8765", "token": tok + "#" + key])["error"] != nil, Comment(rawValue: tok.debugDescription))
+        }
+        #expect(s.all.isEmpty)
+        #expect(h.callout(["op": "connect", "upstream": "x", "deviceName": "gw", "address": "hub.example:8765", "token": "tok-123_ABC#" + key])["error"] == nil)
     }
 
     @Test func anUnknownCalloutKindIsRefused() {
@@ -322,12 +357,27 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
             return (out, r.operations, raw.count)
         }
         for split in [1, 7, 4096, 1 << 30] {
-            let (small, o1, n1) = ops(10_000, split: split), (big, o2, n2) = ops(40_000, split: split)
-            #expect(small == .done(UpstreamAnswer(status: 200, body: Data(repeating: 0x78, count: 10_000))))
-            #expect(big == .done(UpstreamAnswer(status: 200, body: Data(repeating: 0x78, count: 40_000))))
+            let (small, o1, n1) = ops(1_000, split: split), (big, o2, n2) = ops(4_000, split: split)
+            #expect(small == .done(UpstreamAnswer(status: 200, body: Data(repeating: 0x78, count: 1_000))))
+            #expect(big == .done(UpstreamAnswer(status: 200, body: Data(repeating: 0x78, count: 4_000))))
             #expect(o1 <= 4 * n1 && o2 <= 4 * n2, "operations \(o1)/\(n1), \(o2)/\(n2) for split \(split)")  // a constant per byte, however the bytes arrive
             #expect(Double(o2) / Double(n2) < Double(o1) / Double(n1) * 1.5)   // and not growing with the size
         }
+        // at most 4096 chunks in one body, whatever their size
+        var many = Data("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".utf8)
+        for _ in 0..<UpstreamHTTPReader.maxChunks { many += Data("1\r\nx\r\n".utf8) }
+        var atLimit = UpstreamHTTPReader(cap: 1 << 20)
+        #expect(atLimit.feed(many + Data("0\r\n\r\n".utf8)) == .done(UpstreamAnswer(status: 200, body: Data(repeating: 0x78, count: UpstreamHTTPReader.maxChunks))))
+        var over = UpstreamHTTPReader(cap: 1 << 20)
+        #expect(over.feed(many + Data("1\r\nx\r\n0\r\n\r\n".utf8)) == .failed)
+        // an abandoned request (its deadline passed) stops the work at once
+        nonisolated(unsafe) var dead = false
+        var stopped = UpstreamHTTPReader(cap: 1 << 20)
+        stopped.cancelled = { dead }
+        #expect(stopped.feed(Data("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx".utf8)) == .needMore)
+        dead = true
+        let before = stopped.operations
+        #expect(stopped.feed(Data(repeating: 0x41, count: 100_000)) == .failed && stopped.operations == before)
         // one byte more than the cap: refused before it is kept
         var r = UpstreamHTTPReader(cap: 5)
         var raw = Data("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".utf8)
@@ -491,7 +541,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         let dead = ScriptedNoiseServer { _ in Data() }
         let port = dead.port; dead.stop()
         #expect(NoiseHTTPTransport(timeout: 3).send(address: "127.0.0.1:\(port)", routerKey: Noise.newKey().publicKey.rawRepresentation, device: (Curve25519.Signing.PrivateKey(), "x"),
-                                                    token: "t", method: "GET", path: "/minigw/v1/x", idempotencyKey: nil, body: nil, timeout: 3).status == 0)
+                                                    token: "t", method: "GET", path: "/minigw/v1/projects", idempotencyKey: nil, body: nil, timeout: 3).status == 0)
     }
 
     @Test func aServerThatTricklesIsStoppedAtTheTotalDeadline() {

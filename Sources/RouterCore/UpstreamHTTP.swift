@@ -24,6 +24,7 @@ struct UpstreamHTTPReader {
     static let maxTrailers = 4 << 10     // all trailer bytes together
     static let maxHeaders = 100
     static let maxInterim = 3            // "100 Continue" and the like, then it is refused
+    static let maxChunks = 4096          // chunks of one body: a body of tiny chunks is a way to burn time, not to send data
 
     private enum State { case head, bodyLength(Int), bodyUntilClose, chunkSize, chunkData(Int), chunkEnd, trailers, finished }
 
@@ -40,6 +41,9 @@ struct UpstreamHTTPReader {
     private var body: [UInt8] = []
     private var done = false
     private var failedFlag = false
+    private var chunks = 0
+    /// Asked at every step: true = the request is over (its deadline passed), so the work stops here instead of going on in the background.
+    var cancelled: (() -> Bool)?
     /// Operations counted (bytes looked at or copied): the tests assert that they stay linear in the input.
     private(set) var operations = 0
 
@@ -68,7 +72,7 @@ struct UpstreamHTTPReader {
     }
 
     mutating func feed(_ data: Data) -> UpstreamReadOutcome {
-        if failedFlag { return .failed }
+        if failedFlag || cancelled?() == true { return fail() }
         if done { return finished() }
         guard rawTotal + data.count <= rawCap else { return fail() }
         rawTotal += data.count
@@ -111,6 +115,7 @@ struct UpstreamHTTPReader {
 
     private mutating func step() -> UpstreamReadOutcome {
         while true {
+            if cancelled?() == true { return fail() }
             switch state {
             case .finished:
                 return finished()
@@ -159,7 +164,8 @@ struct UpstreamHTTPReader {
                 guard let size = Self.number(digits, radix: 16), line.dropFirst(digits.count).allSatisfy({ $0 >= 0x20 && $0 < 0x7f }) else { return fail() }
                 pos = end + 2; scan = pos
                 if size == 0 { state = .trailers } else {
-                    guard body.count + size <= cap else { return fail() }  // before any byte of it is kept
+                    chunks += 1
+                    guard chunks <= Self.maxChunks, body.count + size <= cap else { return fail() }  // before any byte of it is kept
                     state = .chunkData(size)
                 }
             case .chunkData(let n):

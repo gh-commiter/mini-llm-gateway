@@ -28,30 +28,47 @@ public protocol UpstreamTransport: Sendable {
 }
 
 /// What the helper may ask the app to send. The helper is the untrusted party here (it exists to keep a core that a hostile note or bundle
-/// has taken over away from the network and the credentials), so the app accepts only the requests the push makes: GET or POST of the
-/// member API of the upstream, a plain path, one header (the idempotency key) and a body of bounded size. The URL is never built from
-/// the helper's text: the request line is written by hand, to the address configured at `add`.
+/// has taken over away from the network and the credentials), so the app admits only the requests the push really makes, by method and
+/// path pattern (client/testdata/upstream-requests.json is asserted by Go, which sends them, and by Swift, which admits them), with one
+/// header (the idempotency key) and a body of bounded size. The request line is written by hand, to the address configured at `add`.
 public enum UpstreamRequest {
     public static let maxBody = 1 << 20
     public static let maxPath = 512
 
+    /// method, anchored path pattern. The ids are numbers of at most 18 digits (a project, a team's notes segment, a submission, a note);
+    /// the short name is as the gateways make them.
+    public static let patterns: [(method: String, pattern: String)] = [
+        ("GET", "^/minigw/v1/projects$"),
+        ("GET", "^/minigw/v1/teams$"),
+        ("GET", "^/minigw/v1/projects/[a-z0-9][a-z0-9-]{1,62}$"),
+        ("GET", "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions/[0-9]{1,18}$"),
+        ("POST", "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions$"),
+        ("GET", "^/minigw/v1/projects/[0-9]{1,18}/notes/[0-9]{1,18}$"),
+    ]
+
+    static func admits(method: String, path: String) -> Bool {
+        guard path.utf8.count <= maxPath else { return false }
+        return patterns.contains { p in
+            p.method == method && path.range(of: p.pattern, options: .regularExpression).map { $0 == path.startIndex..<path.endIndex } == true
+        }
+    }
+
     /// The checked idempotency key ("" = none), or nil when the request is refused.
     public static func check(method: String, path: String, headers: [String: String], body: Data?) -> String? {
-        guard method == "GET" || method == "POST", (body?.count ?? 0) <= maxBody, path.utf8.count <= maxPath, path.hasPrefix("/minigw/v1/") else { return nil }
-        let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
-        guard parts.count <= 2, let pathPart = parts.first else { return nil }
-        let queryPart = parts.count == 2 ? parts.last : nil
-        let pathChars = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_.-")
-        guard pathPart.unicodeScalars.allSatisfy({ pathChars.contains($0) }) else { return nil }  // no @ # % \ space or control character
-        for seg in pathPart.dropFirst().split(separator: "/", omittingEmptySubsequences: false) where seg.isEmpty || seg == "." || seg == ".." { return nil }
-        if let queryPart {
-            let queryChars = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.=&-")
-            guard queryPart.utf8.count <= 128, queryPart.unicodeScalars.allSatisfy({ queryChars.contains($0) }) else { return nil }
-        }
+        guard admits(method: method, path: path), (body?.count ?? 0) <= maxBody, method == "POST" || body == nil else { return nil }
         let key = headers.first { $0.key.lowercased() == "idempotency-key" }?.value ?? ""
         let keyChars = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
         guard key.utf8.count <= 64, key.unicodeScalars.allSatisfy({ keyChars.contains($0) }) else { return nil }
         return key
+    }
+
+    /// One header line, the only way a header is written: the name a token, the value printable ASCII (no CR, LF, other control character or
+    /// non-ASCII byte), so nothing a caller supplies can end a header or start another.
+    static func headerLine(_ name: String, _ value: String) -> String? {
+        let tokenChars = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+        guard !name.isEmpty, name.unicodeScalars.allSatisfy({ tokenChars.contains($0) }),
+              value.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value < 0x7f }) else { return nil }
+        return name + ": " + value + "\r\n"
     }
 }
 
@@ -105,7 +122,8 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
         guard Self.validDeviceName(deviceName) else { return ["error": "device name: printable ASCII, 1 to 64 characters"] }
         let parts = line.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
         guard let address = UpstreamAddress.normalize(address) else { return ["error": "upstream address: give host or host:port of a gateway (no scheme, user or path), for example mini.local:8765"] }
-        guard parts.count == 2, let tokenPart = parts.first, let keyPart = parts.last, !tokenPart.isEmpty, !keyPart.isEmpty else {
+        guard parts.count == 2, let tokenPart = parts.first, let keyPart = parts.last, !tokenPart.isEmpty, !keyPart.isEmpty,
+              tokenPart.unicodeScalars.allSatisfy({ $0.value >= 0x21 && $0.value <= 0x7e }) else {  // it goes into a header: as AdminCommands.secretLine allows
             return ["error": "the token line must be the upstream's whole Copy Token (<token>#<key>)"]
         }
         guard let kb = Noise.fromBase64url(keyPart), kb.count == 32 else {
@@ -178,9 +196,12 @@ public struct NoiseHTTPTransport: UpstreamTransport {
         let timeout = min(timeout, asked)
         guard let i = address.lastIndex(of: ":"), let port = NWEndpoint.Port(String(address[address.index(after: i)...])), routerKey.count == 32 else { return UpstreamAnswer(status: 0) }
         let host = String(address[..<i]).trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-        var head = "\(method) \(path) HTTP/1.1\r\nHost: upstream\r\nAuthorization: Bearer \(token)\r\nX-Minigw-Client: macOS, minigw gateway\r\nConnection: close\r\n"
-        if let idempotencyKey { head += "Idempotency-Key: \(idempotencyKey)\r\n" }
-        if let body { head += "Content-Type: application/json\r\nContent-Length: \(body.count)\r\n" }
+        var lines: [String?] = [UpstreamRequest.headerLine("Host", "upstream"), UpstreamRequest.headerLine("Authorization", "Bearer " + token),
+                                UpstreamRequest.headerLine("X-Minigw-Client", "macOS, minigw gateway"), UpstreamRequest.headerLine("Connection", "close")]
+        if let idempotencyKey { lines.append(UpstreamRequest.headerLine("Idempotency-Key", idempotencyKey)) }
+        if let body { lines += [UpstreamRequest.headerLine("Content-Type", "application/json"), UpstreamRequest.headerLine("Content-Length", String(body.count))] }
+        guard UpstreamRequest.admits(method: method, path: path), !lines.contains(where: { $0 == nil }) else { return UpstreamAnswer(status: 0) }
+        let head = "\(method) \(path) HTTP/1.1\r\n" + lines.compactMap { $0 }.joined()
         let request = Data((head + "\r\n").utf8) + (body ?? Data())
         return NoiseExchange(host: NWEndpoint.Host(host), port: port, routerKey: routerKey, device: device, request: request,
                              cap: UpstreamHost.maxAnswer - 1, timeout: timeout).run()  // the body, at most 1 MiB
@@ -202,7 +223,10 @@ final class NoiseExchange: @unchecked Sendable {
     init(host: NWEndpoint.Host, port: NWEndpoint.Port, routerKey: Data, device: (key: Curve25519.Signing.PrivateKey, name: String), request: Data, cap: Int, timeout: TimeInterval) {
         self.host = host; self.port = port; self.routerKey = routerKey; self.device = device; self.request = request; self.cap = cap; self.timeout = timeout
         reader = UpstreamHTTPReader(cap: cap)
+        reader.cancelled = { [unowned self] in self.isFinished }
     }
+
+    private var isFinished: Bool { lock.lock(); defer { lock.unlock() }; return result != nil }
 
     private func finish(_ a: UpstreamAnswer) {
         lock.lock()
@@ -254,6 +278,7 @@ final class NoiseExchange: @unchecked Sendable {
 
     private func readAnswer(_ c: NWConnection, _ cipher: Noise.Cipher, _ pending: Data) {
         c.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { data, _, end, error in
+            if self.isFinished { return }  // a result exists (an answer, or the deadline): nothing more is read or parsed
             var pending = pending + (data ?? Data())
             guard let plain = try? Noise.unframe(&pending, cipher) else { return self.finish(UpstreamAnswer(status: 0)) }
             let closed = end || error != nil

@@ -57,6 +57,11 @@ func (h upstreamHost) deviceOf(sec upstreamSecret) (*device, string) {
 // Connect: the token line is the upstream's "Copy Token" (<token>#<gateway key>). A token of this same gateway is refused.
 func (h upstreamHost) Connect(name, address, line, deviceName string) (coreapi.UpstreamInfo, error) {
 	tok, key, ok := newToken(strings.TrimSpace(line), nil)
+	for _, r := range tok { // it goes into an Authorization header: printable ASCII without spaces, as readKey allows
+		if r < 0x21 || r > 0x7e {
+			return coreapi.UpstreamInfo{}, errors.New("the token must be printable ASCII without spaces")
+		}
+	}
 	if !ok || key == nil {
 		return coreapi.UpstreamInfo{}, errors.New("the token line must be the upstream's whole Copy Token (<token>#<key>)")
 	}

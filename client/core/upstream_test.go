@@ -2,11 +2,14 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -638,11 +641,11 @@ func TestUpstreamArchivedIsRefused(t *testing.T) {
 		t.Fatalf("%+v %v", res[0], up.calls)
 	}
 	var ref ErrRefusal
-	if e = f.LinkUpstream(ctx, f.pid["import"], 0, "hub", "x", "", false); e != nil {
+	if e = f.LinkUpstream(ctx, f.pid["import"], 0, "hub", "xx", "", false); e != nil {
 		t.Fatal(e)
 	}
 	f.ok(f.SetProjectArchived(ctx, f.pid["import"], true))
-	if e = f.LinkUpstream(ctx, f.pid["import"], 0, "hub", "x", "", false); !errors.As(e, &ref) || !strings.Contains(ref.Msg, "archived") {
+	if e = f.LinkUpstream(ctx, f.pid["import"], 0, "hub", "xx", "", false); !errors.As(e, &ref) || !strings.Contains(ref.Msg, "archived") {
 		t.Fatal(e)
 	}
 	g := newSeg(t)
@@ -650,5 +653,130 @@ func TestUpstreamArchivedIsRefused(t *testing.T) {
 	g.ok(g.SetTeamArchived(ctx, g.acme, true))
 	if e = g.LinkUpstream(ctx, 0, g.acme, "hub", "x", "", false); !errors.As(e, &ref) || !strings.Contains(ref.Msg, "archived") {
 		t.Fatal(e)
+	}
+}
+
+// What leaves is not a hash of guessable numbers: the idempotency key and the reference are HMACs under this gateway's own secret, so an
+// upstream cannot recover project or note ids from them, and two gateways send different keys for the same ids.
+func TestUpstreamKeysDoNotRevealIDs(t *testing.T) {
+	keys := func() (string, string) {
+		f, notes := upFx(t)
+		fk := f.pid["fakture"]
+		f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
+		up := okUp()
+		_, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
+		f.ok(e)
+		var key, ref string
+		for _, c := range up.calls {
+			if c.method == "POST" && c.body["title"] == "Structure one" {
+				key = c.key
+				body := c.body["body"].(string)
+				ref = body[strings.Index(body, "ref ")+4 : strings.Index(body, ", author")]
+			}
+		}
+		// the old, guessable form: sha256 over the plain numbers
+		n := notes["Structure one"]
+		h := sha256.Sum256([]byte(fmt.Sprint("hub", "|", fk, "|", n.ID, "|", upstreamHash(n), "|", 0)))
+		if key == "" || key == "up-"+hex.EncodeToString(h[:16]) {
+			t.Fatalf("key %q is the plain hash", key)
+		}
+		// a second push of the same note is the same key (a repeat must be recognised)
+		up2 := okUp()
+		f.clock = f.clock.Add(time.Second)
+		f.ok(f.UnlinkUpstream(ctx, fk, 0, "hub"))
+		f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
+		_, e = f.PushUpstream(ctx, up2, fk, 0, "", 0, false, noSleep)
+		f.ok(e)
+		for _, c := range up2.calls {
+			if c.method == "POST" && c.body["title"] == "Structure one" && c.key != key {
+				t.Fatalf("the key of the same note changed: %q %q", key, c.key)
+			}
+		}
+		return key, ref
+	}
+	k1, r1 := keys()
+	k2, r2 := keys() // another gateway, the same ids
+	if k1 == k2 || r1 == r2 {
+		t.Fatalf("two gateways sent the same key or reference: %q %q", k1, k2)
+	}
+}
+
+// The paths the core sends are exactly the ones the Mac app admits (client/testdata/upstream-requests.json, asserted by both).
+func TestUpstreamRequestsMatchTheSharedFixture(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/upstream-requests.json")
+	if err != nil {
+		t.Skip("fixture not here:", err)
+	}
+	var fx struct {
+		Patterns []struct{ Method, Pattern string }
+		Refused  []struct{ Method, Path string }
+	}
+	if json.Unmarshal(raw, &fx) != nil || len(fx.Patterns) < 5 {
+		t.Fatal("bad fixture")
+	}
+	admitted := func(method, path string) bool {
+		for _, p := range fx.Patterns {
+			if p.Method == method && regexp.MustCompile(p.Pattern).MatchString(path) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, r := range fx.Refused {
+		if admitted(r.Method, r.Path) {
+			t.Errorf("%s %s is admitted by the fixture's patterns", r.Method, r.Path)
+		}
+	}
+	var seen []upCall
+	rec := func(h func(c upCall) (int, string, time.Duration)) *fakeUp {
+		return &fakeUp{handler: func(c upCall) (int, string, time.Duration) { seen = append(seen, c); return h(c) }}
+	}
+	// a project push, a replacement of an accepted note, a team push, a probe-like listing
+	f, notes := upFx(t)
+	fk := f.pid["fakture"]
+	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
+	ok := okUp().handler
+	_, e := f.PushUpstream(ctx, rec(ok), fk, 0, "", 0, false, noSleep)
+	f.ok(e)
+	n := notes["Structure one"]
+	f.clock = f.clock.Add(time.Second)
+	_, e = f.UpdateNote(ctx, f.p("ana"), fk, n.ID, n.Revision, NoteInput{Class: Structure, Title: "Structure one", Body: "again"})
+	f.ok(e)
+	_, e = f.PushUpstream(ctx, rec(func(c upCall) (int, string, time.Duration) {
+		switch {
+		case c.path == "/minigw/v1/projects/shop":
+			return 200, `{"id":7,"slug":"shop"}`, 0
+		case c.method == "GET" && strings.Contains(c.path, "/kb/submissions/"):
+			return 200, `{"id":1,"state":"accepted","note":55}`, 0
+		case c.method == "GET":
+			return 200, `{"id":55,"revision":3}`, 0
+		}
+		return 201, `{"id":9}`, 0
+	}), fk, 0, "", 0, false, noSleep)
+	f.ok(e)
+	g := newSeg(t)
+	g.ok(g.AddUpstream(ctx, "hub", "hub.example"))
+	g.put("fani", Structure, "Team rollout")
+	g.ok(g.LinkUpstream(ctx, 0, g.acme, "hub", "acme-hub", "", false))
+	_, e = g.PushUpstream(ctx, rec(func(c upCall) (int, string, time.Duration) {
+		if c.method == "GET" {
+			return 200, fmt.Sprintf(`[{"id":4,"name":"Acme-Hub","segment":%d}]`, segmentID(4)), 0
+		}
+		return 201, `{"id":1}`, 0
+	}), 0, g.acme, "", 0, false, noSleep)
+	g.ok(e)
+	if len(seen) < 6 {
+		t.Fatalf("only %d requests seen", len(seen))
+	}
+	for _, c := range seen {
+		if !admitted(c.method, c.path) {
+			t.Errorf("the core sent %s %s, which the fixture (and so the app) does not admit", c.method, c.path)
+		}
+	}
+	// a project link names a short name as the gateways make them: anything else could not be a path the app admits
+	for _, bad := range []string{"Shop", "a", "sh op", "12345", "../teams", "shop?x=1"} {
+		if e := f.LinkUpstream(ctx, f.pid["eureko"], 0, "hub", bad, "", false); e == nil {
+			t.Errorf("remote project %q accepted", bad)
+		}
 	}
 }

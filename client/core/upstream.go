@@ -78,6 +78,7 @@ func NormalizeUpstreamAddress(s string) (string, error) {
 func migrate19(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE TABLE upstreams(name TEXT PRIMARY KEY, address TEXT NOT NULL, created INTEGER NOT NULL) WITHOUT ROWID;
 CREATE TABLE upstream_links(project_id INTEGER NOT NULL REFERENCES projects(id), upstream TEXT NOT NULL REFERENCES upstreams(name), remote TEXT NOT NULL, remote_team INTEGER NOT NULL CHECK(remote_team IN(0,1)), classes TEXT NOT NULL, with_private INTEGER NOT NULL CHECK(with_private IN(0,1)), last_push INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', PRIMARY KEY(project_id,upstream)) WITHOUT ROWID;
+CREATE TABLE upstream_key(id INTEGER PRIMARY KEY CHECK(id=1), k BLOB NOT NULL);
 CREATE TABLE upstream_sent(project_id INTEGER NOT NULL, upstream TEXT NOT NULL, note_id INTEGER NOT NULL, hash TEXT NOT NULL, revision INTEGER NOT NULL, remote_sub INTEGER NOT NULL, remote_note INTEGER NOT NULL, sent INTEGER NOT NULL, PRIMARY KEY(project_id,upstream,note_id)) WITHOUT ROWID;`)
 	return err
 }
@@ -243,6 +244,9 @@ func (s *Store) LinkUpstream(ctx context.Context, project, team int64, upstream,
 		}
 		if remote == "" || len(remote) > 128 || strings.ContainsAny(remote, "/\\\r\n") {
 			return "", ErrRefusal{"the name of the project (or team) on the upstream is empty or not a name"}
+		}
+		if team == 0 && (!slugRe.MatchString(remote) || strings.Trim(remote, "0123456789") == "") { // it goes into a path: a short name as the gateways make them
+			return "", ErrRefusal{"the project's short name on the upstream: lowercase letters, digits and -, 2 to 63 characters"}
 		}
 		var n int
 		if e := tx.QueryRow(`SELECT count(*) FROM upstream_links WHERE project_id=? AND upstream<>?`, local, upstream).Scan(&n); e != nil {
@@ -513,4 +517,16 @@ func (s *Store) upstreamRecordPush(ctx context.Context, project int64, upstream,
 		_, e := tx.Exec(`UPDATE upstream_links SET last_error=? WHERE project_id=? AND upstream=?`, lastErr, project, upstream)
 		return e
 	})
+}
+
+// upstreamKey is this gateway's secret for what it sends upstream (idempotency keys, references): 32 random bytes, made on first use. It
+// is a key, not a credential of an upstream, and it never leaves; it is in the core database (so in its backups, like the notes).
+func (s *Store) upstreamKey(ctx context.Context) (k []byte, err error) {
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		if _, e := tx.Exec(`INSERT OR IGNORE INTO upstream_key(id,k) VALUES(1,randomblob(32))`); e != nil {
+			return e
+		}
+		return tx.QueryRow(`SELECT k FROM upstream_key WHERE id=1`).Scan(&k)
+	})
+	return
 }
