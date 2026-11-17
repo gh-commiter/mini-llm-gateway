@@ -34,4 +34,15 @@ public enum AdminArgs {
         guard pos.first == "usage", let bad = flags.keys.sorted().first(where: { !usageFlags.contains($0) }) else { return nil }
         return "minigw gw usage: unknown option --\(bad)\n" + UsageReport.help
     }
+
+}
+
+extension AdminCommands {
+    /// The end of a provider's status line (as Go gatewayReadyText): still loading is not a failure; a failure points at the log.
+    public static func gatewayReadyText(ready: Bool, state: String, reason: String) -> String {
+        if ready || state == "ready" { return ", ready" }
+        if state.isEmpty { return ", models not loaded (see the gateway log)" }  // an older gateway that sends no state
+        if state == "loading" { return ", models loading (not loaded yet)" }
+        return reason.isEmpty ? ", models failed to load (see the gateway log)" : ", models failed to load: " + reason + " (see the gateway log)"
+    }
 }

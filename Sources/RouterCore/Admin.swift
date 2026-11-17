@@ -765,15 +765,15 @@ extension Router {
         return g
     }
 
-    func gateway(_ p: ProviderConfig, ready: Bool) -> [String: Any] {
+    func gateway(_ p: ProviderConfig, ready: Bool, state: String? = nil) -> [String: Any] {
         ["name": p.name, "baseURL": p.baseURL, "insecure": p.insecure, "enabled": p.enabled,
-         "models": p.enabledModels.map { $0 as Any } ?? NSNull(), "hasKey": !(secrets.get(p.id) ?? "").isEmpty, "ready": ready,
+         "models": p.enabledModels.map { $0 as Any } ?? NSNull(), "hasKey": !(secrets.get(p.id) ?? "").isEmpty, "ready": ready, "state": state ?? (ready ? "ready" : "loading"),
          "tools": p.toolsCap(""), "modelTools": p.modelTools]
     }
 
     func gateways(_ c: RouterConfig) async -> [[String: Any]] {
-        let st = await catalog.status()
-        return c.providers.map { gateway($0, ready: st[$0.id] ?? false) }
+        let st = await catalog.states()
+        return c.providers.map { gateway($0, ready: st[$0.id] == "ready", state: st[$0.id]) }
     }
 
     func apiModels(_ p: ProviderConfig, _ models: [Discovery.Model], filter: String) -> [[String: Any]] {

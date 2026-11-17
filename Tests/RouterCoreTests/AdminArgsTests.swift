@@ -60,3 +60,14 @@ import Testing
         }
     }
 }
+
+@Suite struct ProviderStatusText {
+    /// The same texts as the Go gateway's gatewayReadyText (client/provider_status_test.go).
+    @Test func readyLoadingFailed() {
+        #expect(AdminCommands.gatewayReadyText(ready: true, state: "ready", reason: "") == ", ready")
+        #expect(AdminCommands.gatewayReadyText(ready: false, state: "loading", reason: "") == ", models loading (not loaded yet)")
+        #expect(AdminCommands.gatewayReadyText(ready: false, state: "failed", reason: "cannot connect: x") == ", models failed to load: cannot connect: x (see the gateway log)")
+        #expect(AdminCommands.gatewayReadyText(ready: false, state: "failed", reason: "") == ", models failed to load (see the gateway log)")
+        #expect(AdminCommands.gatewayReadyText(ready: false, state: "", reason: "") == ", models not loaded (see the gateway log)")
+    }
+}
