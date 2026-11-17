@@ -555,8 +555,10 @@ Export waits and retries if reads hit the gateway rate limit. It writes one Mark
 and an `INDEX.md`. It includes readable private notes,
 and excludes pending submissions and notes hidden from the caller. Use a new or empty destination directory: existing files
 are never overwritten, and the destination must not be a symbolic link. Each file has `---` front matter with JSON string values for `id`, `title`, `class`,
-`kind` (the provenance source kind), `revision`, `author`, `created`, `updated`, and `hash`, followed by
-the exact body. No YAML features are interpreted.
+`kind` (the provenance source kind), `revision`, `author`, `created`, `updated`, `hash` and `origin` (the gateway and project the file came from), followed by
+the exact body. No YAML features are interpreted. Importing a file back into the gateway and project it was exported from updates that same note
+(an unchanged file is skipped; a note changed here since the export is kept and reported); a file from anywhere else, or one naming a note you may
+not write, is imported as a new note. Files exported before `origin` existed import as new notes.
 
 Import accepts a directory tree or one `.md` file; front matter is optional and directory imports ignore
 `INDEX.md`. Without a title, the file name supplies it. `--class` overrides front matter; the default is

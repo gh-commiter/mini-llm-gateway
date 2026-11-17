@@ -142,7 +142,10 @@ func (a *API) errResponse(err error) Response {
 	var rev core.ErrRevision
 	var lim core.ErrLimit
 	var inv core.ErrInvalid
+	var ref core.ErrRefusal
 	switch {
+	case errors.As(err, &ref):
+		return jsonErr(400, "invalid", ref.Msg)
 	case errors.Is(err, core.ErrNoProjectAccess):
 		return jsonErr(403, "no_project_access", "No project access")
 	case errors.Is(err, core.ErrNotFound):

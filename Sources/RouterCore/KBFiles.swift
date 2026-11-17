@@ -12,7 +12,9 @@ extension ProjectEnv {
             ("author", d["author"]?.string ?? ""), ("created", d["created"]?.string ?? ""),
             ("updated", d["updated"]?.string ?? ""), ("hash", hash)
         ]
-        return Data(("---\n" + fields.map { $0.0 + ": " + GoJSON.string($0.1) + "\n" }.joined() + "---\n" + body).utf8)
+        var all = fields
+        if let origin = d["origin"]?.string, !origin.isEmpty { all.append(("origin", origin)) }  // this gateway and project: a re-import knows its own file
+        return Data(("---\n" + all.map { $0.0 + ": " + GoJSON.string($0.1) + "\n" }.joined() + "---\n" + body).utf8)
     }
 
     /// The note's bytes: the file is opened once without following a link and checked on that descriptor.

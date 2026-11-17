@@ -132,14 +132,19 @@ func TestMarkdownClientPagedExport(t *testing.T) {
 
 func TestMarkdownSharedFixtureAndBundleFlags(t *testing.T) {
 	var fixture struct {
-		Note     core.Note
-		Markdown string
+		Note           core.Note
+		Markdown       string
+		OriginNote     core.Note
+		OriginMarkdown string
 	}
 	if e := json.Unmarshal(srcFile(t, "testdata/markdown-copy.json"), &fixture); e != nil {
 		t.Fatal(e)
 	}
 	if string(core.Markdown(fixture.Note, "")) != fixture.Markdown {
 		t.Fatalf("%q", core.Markdown(fixture.Note, ""))
+	}
+	if got := string(core.Markdown(fixture.OriginNote, "")); got != fixture.OriginMarkdown || fixture.OriginNote.Origin != "gw1:1" { // the export names its gateway and project
+		t.Fatalf("%q", got)
 	}
 	_, route, body, e := bundleRequest([]string{"export", "--team", "Team", "--project", "one", "--project=two", "--with-private", "bundle.zip"})
 	if e != nil {
@@ -187,5 +192,63 @@ func TestMarkdownClientImportWaits(t *testing.T) {
 	}
 	if calls != 2 || slept != time.Second {
 		t.Fatal(calls, slept)
+	}
+}
+
+// A file this gateway exported from this project is the note it came from: exporting and importing again is a no-op, and an
+// edit of the file updates that note (never a second copy). A file from another project does not claim the note.
+func TestKBExportThenImportNeverDuplicates(t *testing.T) {
+	c := newClientFx(t)
+	s := c.f.s.core
+	ana := core.Principal{UserID: c.f.uid["ana"], DeviceID: devID(c.f.dev["ana"])}
+	pid := c.f.pid["fakture"]
+	n, _, e := s.CreateNote(context.Background(), ana, pid, "k1", core.NoteInput{Class: core.Data, Title: "Deploy", Body: "migrate first"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	dir := t.TempDir()
+	env, out, _ := c.env("ana", dir, "")
+	exp := filepath.Join(dir, "out")
+	if e := env.kb([]string{"export", "fakture", exp}); e != nil {
+		t.Fatal(e)
+	}
+	count := func(project int64) int {
+		pg, e := s.ListNotes(context.Background(), ana, project, "", "", 100)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return len(pg.Notes)
+	}
+	out.Reset()
+	if e := env.kb([]string{"import", "fakture", exp}); e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(out.String(), fmt.Sprintf("skip self:%d", n.ID)) || count(pid) != 1 {
+		t.Fatalf("%q, %d notes", out.String(), count(pid))
+	}
+	file := filepath.Join(exp, fmt.Sprintf("%d.md", n.ID))
+	b, _ := os.ReadFile(file)
+	if e := os.WriteFile(file, []byte(strings.Replace(string(b), "migrate first", "migrate, then deploy", 1)), 0600); e != nil {
+		t.Fatal(e)
+	}
+	out.Reset()
+	if e := env.kb([]string{"import", "fakture", exp}); e != nil {
+		t.Fatal(e)
+	}
+	g, _ := s.GetNote(context.Background(), ana, pid, n.ID)
+	if !strings.Contains(out.String(), fmt.Sprintf("merge self:%d", n.ID)) || count(pid) != 1 || g.Body != "migrate, then deploy" {
+		t.Fatalf("%q, %d notes, %q", out.String(), count(pid), g.Body)
+	}
+	// the same file into another project is a new note there, and leaves this one alone
+	cene := core.Principal{UserID: c.f.uid["cene"], DeviceID: devID(c.f.dev["cene"])}
+	cenv, _, _ := c.env("cene", dir, "")
+	if e := cenv.kb([]string{"import", "eureko", exp}); e != nil {
+		t.Fatal(e)
+	}
+	if pg, _ := s.ListNotes(context.Background(), cene, c.f.pid["eureko"], "", "", 100); len(pg.Notes) != 1 {
+		t.Fatalf("%d notes in eureko", len(pg.Notes))
+	}
+	if g2, _ := s.GetNote(context.Background(), ana, pid, n.ID); g2.Revision != g.Revision {
+		t.Fatal("the note of another project was changed by a file of this one")
 	}
 }

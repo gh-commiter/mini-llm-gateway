@@ -23,6 +23,9 @@ func validProfile(n string) bool { return profileRe.MatchString(n) }
 // profileFlag: --minigw-profile <ime> velja za cel ukaz (le ta prehod).
 var profileFlag string
 
+// profileFromEnv: profileFlag came from MINIGW_PROFILE, not from --minigw-profile (an explicit model@profile then wins).
+var profileFromEnv bool
+
 type profile struct {
 	name string
 	conn connection

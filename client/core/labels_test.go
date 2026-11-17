@@ -3,6 +3,7 @@ package core
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,6 +67,8 @@ func TestLabelsMigration17OldRowsEmpty(t *testing.T) {
 	}
 	if snaps, _ := filepath.Glob(filepath.Join(dir, "core-16-*.db")); len(snaps) != 1 {
 		t.Fatal("no snapshot", snaps)
+	} else if m := s.Migrated(); m == nil || m.From != 16 || m.Snapshot != snaps[0] || filepath.Dir(m.Snapshot) != dir || strings.Contains(m.Snapshot, BackupFolder) {
+		t.Fatalf("the migration does not name its snapshot (in the core folder, not backups/): %+v", m) // the gateway logs it
 	}
 	if err = checkSchemaObjects(ctx, s.DB(), len(migrations)); err != nil {
 		t.Fatal(err)

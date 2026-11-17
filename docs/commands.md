@@ -79,7 +79,7 @@ Claude Code's settings.
 | `--minigw-phase P` | `MINIGW_PHASE=P` | Usage label: plan, do, check, act (or another short word); never refuses a run |
 | `--minigw-activity A` | `MINIGW_ACTIVITY=A` | Usage label: feature, bugfix, security, refactor, docs, test, release, research, ops (or another short word) |
 | `--minigw-task REF` | `MINIGW_TASK=REF` | Usage label: an issue number or branch; in a linked git folder the branch is used when none is given |
-| `--minigw-profile P` | – | Use only profile `P` for this command |
+| `--minigw-profile P` | `MINIGW_PROFILE=P` | Use only profile `P` for this command (the flag wins over the variable; an unknown name is the same error). A project or KB refusal or "not found" names the profile and address it came from when you have several profiles |
 | `--model <model>@P` | – | Run on profile `P`'s gateway |
 | – | `MINIGW_NATIVE_MOUNT=<share>=<folder>` | Tell minigw where a gateway SMB share is mounted, where it cannot detect it |
 | – | `MINIGW_ALLOW_UNSAFE_FLAGS=1` | Turn off the option and prompt checks inside Claude Code ([how-it-works.md](how-it-works.md#what-minigw-passes-to-claude-code)) |

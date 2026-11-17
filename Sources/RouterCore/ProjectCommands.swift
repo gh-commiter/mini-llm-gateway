@@ -94,6 +94,11 @@ public final class ProjectEnv {
 
     /// Section 6's answers as short sentences. 403 forbidden is printed plainly.
     static func gatewayError(_ st: Int, _ data: Data, _ retryAfter: String?) -> ProjectError {
+        var e = gatewayAnswer(st, data, retryAfter)
+        e.gatewayStatus = st
+        return e
+    }
+    static func gatewayAnswer(_ st: Int, _ data: Data, _ retryAfter: String?) -> ProjectError {
         let e = JSONValue.parse(data)?.dict["error"]?.dict ?? JDict()
         let type = e["type"]?.string ?? "", message = e["message"]?.string ?? ""
         switch st {

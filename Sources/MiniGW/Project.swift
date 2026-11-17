@@ -47,6 +47,12 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
         case "running": try env.running(args)
         default: try env.project(args)
         }
-    } catch { fail((error as? ProjectError)?.message ?? "\(error)") }
+    } catch {
+        var message = (error as? ProjectError)?.message ?? "\(error)"
+        if let e = error as? ProjectError, agent == nil, let p = loadProfiles().first {
+            message = ProjectError.hint(message, status: e.gatewayStatus, profile: p.name, url: p.conn.url, profiles: profileNames().count)
+        }
+        fail(message)
+    }
     exit(0)
 }

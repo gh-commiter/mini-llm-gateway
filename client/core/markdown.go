@@ -17,6 +17,9 @@ func Markdown(n Note, key string) []byte {
 		kind = KindFinding
 	}
 	fields := [][2]string{{"id", i64(n.ID)}, {"title", n.Title}, {"class", string(n.Class)}, {"kind", n.Provenance.SourceKind}, {"entry_kind", kind}, {"revision", i64(n.Revision)}, {"author", n.Author}, {"created", n.Created.Format(time.RFC3339Nano)}, {"updated", n.Updated.Format(time.RFC3339Nano)}, {"hash", contentHash(n.Title, n.Body)}}
+	if n.Origin != "" {
+		fields = append(fields, [2]string{"origin", n.Origin})
+	}
 	if key != "" {
 		fields = append(fields, [2]string{"import_key", key})
 	}

@@ -14,5 +14,7 @@
       "sourceKind": "session summary"
     }
   },
-  "markdown": "---\nid: \"17\"\ntitle: \"Č \\u0026 \\u003cx\\u003e \\\"quote\\\"\"\nclass: \"private\"\nkind: \"session summary\"\nentry_kind: \"faq\"\nrevision: \"3\"\nauthor: \"Ana\"\ncreated: \"2026-11-14T10:00:00Z\"\nupdated: \"2026-11-14T10:00:00Z\"\nhash: \"29a76d89f3444b08537fce9c7e2edf87022ab92765ed08349e2b82a43f7f4190\"\n---\nraw\r\n---\n\u0000end "
+  "markdown": "---\nid: \"17\"\ntitle: \"Č \\u0026 \\u003cx\\u003e \\\"quote\\\"\"\nclass: \"private\"\nkind: \"session summary\"\nentry_kind: \"faq\"\nrevision: \"3\"\nauthor: \"Ana\"\ncreated: \"2026-11-14T10:00:00Z\"\nupdated: \"2026-11-14T10:00:00Z\"\nhash: \"29a76d89f3444b08537fce9c7e2edf87022ab92765ed08349e2b82a43f7f4190\"\n---\nraw\r\n---\n\u0000end ",
+  "originNote": {"id": 17, "project": 1, "class": "private", "title": "Č & <x> \"quote\"", "body": "raw\r\n---\n\u0000end ", "revision": 3, "entryKind": "faq", "author": "Ana", "created": "2026-11-14T10:00:00Z", "updated": "2026-11-14T10:00:00Z", "provenance": {"sourceKind": "session summary"}, "origin": "gw1:1"},
+  "originMarkdown": "---\nid: \"17\"\ntitle: \"Č \\u0026 \\u003cx\\u003e \\\"quote\\\"\"\nclass: \"private\"\nkind: \"session summary\"\nentry_kind: \"faq\"\nrevision: \"3\"\nauthor: \"Ana\"\ncreated: \"2026-11-14T10:00:00Z\"\nupdated: \"2026-11-14T10:00:00Z\"\nhash: \"29a76d89f3444b08537fce9c7e2edf87022ab92765ed08349e2b82a43f7f4190\"\norigin: \"gw1:1\"\n---\nraw\r\n---\n\u0000end "
 }
