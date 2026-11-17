@@ -2,14 +2,14 @@
 name: codex
 description: Hand a self-contained task to OpenAI Codex (GPT-6.1-Sol) through Mini Gateway. Codex runs on the gateway computer, but minigw shares the current folder with it, so Codex reads, edits and runs commands in your files here, and reports what it did.
 argument-hint: "[--ro] [--profile <p>] <task>"
-allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw profiles), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version), Bash(MINIGW_PHASE=* ${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(MINIGW_ACTIVITY=* ${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *)
+allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw profiles), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---
 
 Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
 
 If the arguments start with `--ro` (or the user asks Codex only to look, analyse or answer without changing files), share the folder read-only: put `--minigw-ro` right after `--model claude-codex-gpt-6.1-sol` and drop `--ro` from the task. Otherwise Codex may edit files.
 
-Labels for the usage reports (optional; the task never fails without them): put `MINIGW_PHASE=do` in front of the minigw command (this task is work being done) and, when you know it, `MINIGW_ACTIVITY=<feature|bugfix|security|refactor|docs|test|release|research|ops>` (and `MINIGW_TASK=<ref>`, e.g. an issue number), for example `MINIGW_PHASE=do MINIGW_ACTIVITY=bugfix "${CLAUDE_PLUGIN_DATA}/bin/minigw" -p --model ...`. Environment variables are used on purpose: every minigw version ignores the ones it does not know. Other safe words are accepted; leave out what you do not know.
+Labels for the usage reports (optional; the task never fails without them; they need minigw 0.7.16 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, leave them out, an older minigw would pass them on to claude): put `--minigw-phase do` right after `--model <model>` (this task is work being done) and, when you know it, `--minigw-activity <feature|bugfix|security|refactor|docs|test|release|research|ops>` (and `--minigw-task <ref>`, e.g. an issue number). Leave out what you do not know.
 
 `--profile <p>` (or the user names a gateway): use `--model claude-codex-gpt-6.1-sol@<p>`, or put `--minigw-profile <p>` right after `--model claude-codex-gpt-6.1-sol`. `minigw profiles` lists the gateways.
 

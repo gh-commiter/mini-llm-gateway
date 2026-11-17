@@ -47,6 +47,8 @@ func TestMinigwLabelsNeverChangeTheRun(t *testing.T) {
 			[]string{"x-claude-mini-phase: check", "x-claude-mini-activity: bugfix", "x-claude-mini-task: #149", "x-claude-mini-task-source: given"}, nil},
 		{"an unknown phase word", nil, []string{"--minigw-phase=remediate", "-p", "x"}, 0, []string{"x-claude-mini-phase: remediate"}, nil},
 		{"an unsafe value", nil, []string{"--minigw-phase", "not a token!", "-p", "x"}, 1, nil, []string{"x-claude-mini-phase"}},
+		{"a value that looks like another flag", nil, []string{"--minigw-task", "x --minigw-work=direct", "-p", "x"}, 1, nil, []string{"x-claude-mini-task", "x-claude-mini-work"}},
+		{"a value with a command", []string{"MINIGW_PHASE=x; rm -rf /", "MINIGW_ACTIVITY=ok"}, []string{"-p", "x"}, 1, []string{"x-claude-mini-activity: ok"}, []string{"x-claude-mini-phase", "x-claude-mini-work"}},
 		{"environment, unsafe", []string{"MINIGW_ACTIVITY=bad value", "MINIGW_TASK=ok/1"}, []string{"-p", "x"}, 1, []string{"x-claude-mini-task: ok/1"}, []string{"x-claude-mini-activity"}},
 	}
 	baseline := ""

@@ -2,7 +2,7 @@
 name: copilot
 description: Ask GitHub Copilot (through Mini Gateway) for a second opinion or a self-contained task in this folder. Copilot runs on the gateway; it reads the shared folder, and edits files only when the gateway allows it (off by default); it never runs commands.
 argument-hint: "[--ro] [--profile <p>] <task>"
-allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw profiles), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version), Bash(MINIGW_PHASE=* ${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(MINIGW_ACTIVITY=* ${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *)
+allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw profiles), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---
 
 Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
@@ -10,7 +10,7 @@ Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need mi
 If the arguments start with `--ro` (or the user asks Copilot only to look, analyse or answer), share the folder read-only:
 put `--minigw-ro` right after `--model claude-copilot` and drop `--ro` from the task.
 
-Labels for the usage reports (optional; the task never fails without them): when you know them, put `MINIGW_ACTIVITY=<feature|bugfix|security|refactor|docs|test|release|research|ops>` and `MINIGW_PHASE=<plan|do|check|act>` in front of the minigw command; leave them out when unknown. Environment variables are used on purpose: every minigw version ignores the ones it does not know.
+Labels for the usage reports (optional; the task never fails without them; they need minigw 0.7.16 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, leave them out, an older minigw would pass them on to claude): when you know them, put `--minigw-activity <feature|bugfix|security|refactor|docs|test|release|research|ops>` and `--minigw-phase <plan|do|check|act>` right after `--model <model>`; leave them out when unknown.
 
 `--profile <p>` (or the user names a gateway): use `--model claude-copilot@<p>`, or put `--minigw-profile <p>` right after `--model claude-copilot`. `minigw profiles` lists the gateways.
 

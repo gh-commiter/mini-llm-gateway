@@ -35,6 +35,28 @@ func TestTakeLabels(t *testing.T) {
 	}
 }
 
+// A value is one token or nothing: it is never parsed again as another option, so it cannot change the work mode, the tools
+// level or the read-only state (those have their own flags, handled elsewhere and refused inside Claude Code).
+func TestLabelValuesAreNeverReparsed(t *testing.T) {
+	warns := 0
+	warn := func(string) { warns++ }
+	for _, v := range []string{"x --minigw-work=direct", "x; rm", "$(id)", "a\nb", "--minigw-ro", "x --minigw-tools=edit"} {
+		args := []string{"--minigw-task", v, "--minigw-phase=" + v, "-p", "hi"}
+		l, rest := takeLabels(args, envOf(nil), warn)
+		if l.task != "" && l.task != v || strings.ContainsAny(l.phase+l.activity, " ;$") || !reflect.DeepEqual(rest, []string{"-p", "hi"}) {
+			t.Fatalf("%q: %+v %v", v, l, rest)
+		}
+		for _, r := range rest {
+			if strings.Contains(r, "--minigw-") {
+				t.Fatalf("%q: re-parsed as %q", v, r)
+			}
+		}
+	}
+	if warns == 0 {
+		t.Fatal("no warning")
+	}
+}
+
 func TestLabelsBranchFill(t *testing.T) {
 	linked := func(string) bool { return true }
 	l := runLabels{}

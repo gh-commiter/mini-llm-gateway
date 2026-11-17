@@ -50,4 +50,14 @@ import Testing
         try ("gitdir: " + dir + "/repo/.git/worktrees/wt\n").write(toFile: dir + "/wt/.git", atomically: true, encoding: .utf8)
         #expect(RunLabels.gitBranch(dir + "/wt") == "topic")
     }
+
+    @Test func aValueIsOneTokenOrNothingNeverReparsed() {
+        nonisolated(unsafe) var warns = 0
+        for v in ["x --minigw-work=direct", "x; rm", "$(id)", "--minigw-ro", "x --minigw-tools=edit"] {
+            let r = RunLabels.take(["--minigw-task", v, "--minigw-phase=" + v, "-p", "hi"], env: [:]) { _ in warns += 1 }
+            #expect(r.rest == ["-p", "hi"] && (r.labels.task.isEmpty || r.labels.task == v) && !r.labels.phase.contains(" ") && !r.labels.phase.contains(";"))
+            #expect(!r.rest.contains { $0.contains("--minigw-") })
+        }
+        #expect(warns > 0)
+    }
 }

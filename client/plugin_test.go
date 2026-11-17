@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -32,6 +33,35 @@ func pluginHome(t *testing.T) (home string, calls *[]string) {
 	runCmd = func(name string, args ...string) error { c = append(c, name+" "+strings.Join(args, " ")); return nil }
 	t.Cleanup(func() { findClaudeFn, runCmd = f, r })
 	return home, &c
+}
+
+// A skill's allowed-tools pattern never starts with an environment assignment or has `=*` before the minigw path: that would
+// pre-approve the environment prefix (MINIGW_WORK=direct ...) that makes Claude Code ask the user. Labels go as flags.
+func TestSkillsAllowedToolsHaveNoEnvironmentPrefix(t *testing.T) {
+	dir := filepath.Join("..", "plugins", "minigw", "skills")
+	if _, err := os.Stat(dir); err != nil {
+		t.Skip("the plugin folder is not here (the Linux Docker gate mounts only client/)")
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*", "SKILL.md"))
+	if len(files) == 0 {
+		t.Fatal("no skills found")
+	}
+	env := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+	for _, f := range files {
+		b, _ := os.ReadFile(f)
+		for _, line := range strings.Split(string(b), "\n") {
+			rest, ok := strings.CutPrefix(line, "allowed-tools:")
+			if !ok {
+				continue
+			}
+			for _, p := range strings.Split(rest, "Bash(")[1:] {
+				pat := strings.TrimSuffix(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(p), ",")), ")")
+				if env.MatchString(pat) || strings.Contains(pat[:max(0, strings.Index(pat, "minigw"))], "=*") {
+					t.Errorf("%s: allowed-tools pattern %q starts with an environment assignment", f, pat)
+				}
+			}
+		}
+	}
 }
 
 func TestPluginSettingsMergeKeepsUserFalseAndMode(t *testing.T) {
