@@ -616,6 +616,7 @@ private final class Captured: @unchecked Sendable {
             ("https://host.example/a@b/c", "https://host.example/a@b/c"),
             ("  https://u@h.example/a/b \n", "https://h.example/a/b"),
             ("/srv/git/a@b", "/srv/git/a@b"),
+            ("https://u:p@ss@host.example/a/b", "https://host.example/a/b"),
         ] { #expect(ProjectEnv.stripUserinfo(input) == want, "\(input)") }
     }
 
@@ -644,6 +645,20 @@ private final class Captured: @unchecked Sendable {
         try mkdir(dir + "/src")
         #expect(ProjectEnv.gitOrigin(dir + "/src") != "")
         #expect(ProjectEnv.gitOrigin(try tempRoot()) == "")
+    }
+
+    @Test func gitIsNeverTakenFromTheFolder() throws {
+        let dir = try tempRoot()
+        guard try git(dir, ["init", "-q"]), try git(dir, ["remote", "add", "origin", "https://host.example/a/b"]) else { return }
+        let marker = dir + "/ran-fake-git"
+        try Data("#!/bin/sh\ntouch '\(marker)'\necho evil\n".utf8).write(to: URL(fileURLWithPath: dir + "/git"))
+        chmod(dir + "/git", 0o755)
+        let saved = FileManager.default.currentDirectoryPath
+        FileManager.default.changeCurrentDirectoryPath(dir)
+        defer { FileManager.default.changeCurrentDirectoryPath(saved) }
+        #expect(ProjectEnv.gitOrigin(dir, path: ".:relative/bin:/usr/bin:/bin") == "https://host.example/a/b")
+        #expect(!FileManager.default.fileExists(atPath: marker), "the folder's own git ran")
+        #expect(ProjectEnv.gitOrigin(dir, path: "") == "https://host.example/a/b")  // fallback /usr/bin/git
     }
 
     @Test func kindAndFaqArguments() throws {

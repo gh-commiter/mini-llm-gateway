@@ -302,3 +302,14 @@ func TestSpoofedEntryKindOnPushAndEditIsIgnored(t *testing.T) {
 		t.Fatal(kind, err)
 	}
 }
+
+func TestRemoveRemoteByListedIdentityNamesIt(t *testing.T) {
+	f := newFixture(t)
+	fak := fmt.Sprintf("/minigw/v1/projects/%d/remotes", f.pid["fakture"])
+	call(t, f, member("dev-fani"), "POST", fak, `{"add":["git@host.example:a/b.git"]}`, 200)
+	r := call(t, f, member("dev-fani"), "POST", fak, `{"remove":["host.example/a/b"]}`, 200)
+	var out struct{ Remotes, Removed []string }
+	if err := json.Unmarshal(r.Body, &out); err != nil || len(out.Remotes) != 0 || len(out.Removed) != 1 || out.Removed[0] != "host.example/a/b" {
+		t.Fatal(string(r.Body), err)
+	}
+}

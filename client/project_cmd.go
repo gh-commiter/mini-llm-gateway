@@ -846,7 +846,7 @@ func (e *projectEnv) running(args []string) error {
 }
 
 // userinfoRe: the credentials of a URL remote; they never leave this computer.
-var userinfoRe = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@`)
+var userinfoRe = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@`)
 
 func stripUserinfo(raw string) string {
 	return userinfoRe.ReplaceAllString(strings.TrimSpace(raw), "$1")

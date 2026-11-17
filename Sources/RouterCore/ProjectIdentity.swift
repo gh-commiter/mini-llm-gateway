@@ -9,16 +9,17 @@ extension ProjectEnv {
     /// The credentials of a URL remote; they never leave this computer.
     static func stripUserinfo(_ raw: String) -> String {
         let s = ProjectText.trim(raw)
-        guard let re = try? NSRegularExpression(pattern: #"^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@"#) else { return s }
+        guard let re = try? NSRegularExpression(pattern: #"^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@"#) else { return s }
         return re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "$1")
     }
 
     /// The folder's raw remote.origin.url from the repository's own config (no insteadOf rewrite, no hooks). Git missing, no origin
     /// or an untrusted checkout all give "".
-    static func gitOrigin(_ dir: String) -> String {
+    static func gitOrigin(_ dir: String, path: String = ProcessInfo.processInfo.environment["PATH"] ?? "") -> String {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        p.arguments = ["git", "config", "--local", "--get", "remote.origin.url"]
+        // git comes only from an absolute PATH entry: the folder is untrusted, a "." or relative entry must not run its own ./git
+        p.executableURL = URL(fileURLWithPath: Profiles.executable("git", path: path) ?? "/usr/bin/git")
+        p.arguments = ["config", "--local", "--get", "remote.origin.url"]
         p.currentDirectoryURL = URL(fileURLWithPath: dir)
         var env = ProcessInfo.processInfo.environment
         env["GIT_TERMINAL_PROMPT"] = "0"
@@ -38,7 +39,7 @@ extension ProjectEnv {
 
     /// The folder's origin without credentials, or the error "no git remote origin ...".
     func folderRemote(_ dir: String) throws -> String {
-        let raw = Self.stripUserinfo((origin ?? Self.gitOrigin)(dir))
+        let raw = Self.stripUserinfo((origin ?? { Self.gitOrigin($0) })(dir))
         if raw.isEmpty { throw ProjectError("no git remote origin in this folder") }
         return raw
     }

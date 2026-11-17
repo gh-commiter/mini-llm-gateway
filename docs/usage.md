@@ -763,7 +763,7 @@ minigw project list --path eureko       only the projects of your teams whose pa
 
 - **Link by git remote.** A project admin (or the owner) registers the git remotes of a project:
   `minigw project remote add --here` in a checkout, or `minigw project remote add <url> [<slug>]`
-  (`list` shows them, `remove <url>` removes one; at most 8 per project). The gateway keeps only
+  (`list` shows them, `remove <url or identity as listed>` removes one; at most 8 per project). The gateway keeps only
   the identity `host/path` (lower case, without credentials, port and `.git`): `git@GitLab.example.com:Eureko/Shared.git`
   and `https://tok:x@gitlab.example.com:8443/eureko/shared` are the same. Then `minigw project link` without a slug reads
   this folder's `origin` (the value in the repository's own git config, without `insteadOf` rewriting), removes any
@@ -1185,7 +1185,7 @@ permissions apply; readers cannot submit. `minigw kb submissions [<project>]
 
 **Entry kinds.** An entry is a `finding` (the default) or a `faq`: the title is the question (at most 256 bytes)
 and the text a short answer (at most 2 KiB). The kind is chosen with `kb submit --kind`, travels with the
-review (the owner accepts a faq as a faq) and cannot be changed after publication; `note push` and `note edit` always
+review (the owner accepts a faq as a faq) and cannot be changed after publication (a Markdown or bundle import sets the kind only when it creates the note; a replacement always keeps the kind of the note it replaces); `note push` and `note edit` always
 make or keep a finding. A replacement without `--kind` keeps the kind of the note it replaces. A faq shows
 `  (faq)` at the end of its first line in `kb search`, `kb submissions` and `gw kb review`; findings print as before.
 `minigw kb faq [<project>] [--json]` lists the published questions of a project, newest first, each with its answer;

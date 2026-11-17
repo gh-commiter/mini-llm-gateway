@@ -540,6 +540,8 @@ func remotesReply(list []string, b remotesBody) map[string]any {
 		for _, r := range raw {
 			if id, err := core.NormalizeRemote(r); err == nil { // the core accepted them
 				ids = append(ids, id)
+			} else if key == "removed" { // an identity exactly as listed
+				ids = append(ids, r)
 			}
 		}
 		if len(ids) > 0 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -151,9 +152,21 @@ func applyRemotes(tx *sql.Tx, project int64, add, remove []string) (current []st
 	if err != nil {
 		return nil, nil, err
 	}
-	removes, err := norm(remove)
+	stored, err := remoteList(tx, project)
 	if err != nil {
 		return nil, nil, err
+	}
+	var removes []string
+	for _, r := range remove {
+		if slices.Contains(stored, r) { // an identity exactly as listed
+			removes = append(removes, r)
+			continue
+		}
+		id, e := NormalizeRemote(r)
+		if e != nil {
+			return nil, nil, e
+		}
+		removes = append(removes, id)
 	}
 	for _, id := range removes {
 		if _, err = tx.Exec(`DELETE FROM project_remotes WHERE project_id=? AND identity=?`, project, id); err != nil {

@@ -150,6 +150,12 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 			out.Action = "skip"
 			return nil
 		}
+		if old.ID != 0 { // the kind of a published note never changes through an import; its limits apply
+			in.EntryKind = old.EntryKind
+			if e = checkInput(in); e != nil {
+				return e
+			}
+		}
 		pr := writerProvenance(p, project, in, s.now())
 		pr.SourceKind, pr.SourceReference = SourceImport, path.Base(strings.ReplaceAll(input.Path, "\\", "/"))
 		size := int64(len(in.Title) + len(in.Body))
@@ -171,7 +177,7 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 			}
 			b, _ := json.Marshal(pr)
 			if r.submission == 0 {
-				res, e := tx.Exec(`INSERT INTO kb_submissions(project_id,user_id,device_id,class,title,body,bytes,replaces,revision,provenance,key,hash,received,entry_kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,`+newKind+`)`, project, p.UserID, p.DeviceID, in.Class, in.Title, in.Body, size, replacement.Replaces, replacement.Revision, string(b), key, hash, ms(s.now()), in.EntryKind, replacement.Replaces)
+				res, e := tx.Exec(`INSERT INTO kb_submissions(project_id,user_id,device_id,class,title,body,bytes,replaces,revision,provenance,key,hash,received,entry_kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,`+newKind+`)`, project, p.UserID, p.DeviceID, in.Class, in.Title, in.Body, size, replacement.Replaces, replacement.Revision, string(b), key, hash, ms(s.now()), replacement.Replaces, in.EntryKind)
 				if e != nil {
 					return e
 				}
@@ -235,7 +241,7 @@ func (s *Store) importNote(tx *sql.Tx, project, author, id int64, in NoteInput, 
 		}
 		id, _ = r.LastInsertId()
 	} else {
-		if _, err := tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1,entry_kind=COALESCE(NULLIF(?,''),entry_kind) WHERE id=?`, in.Class, in.Title, in.Body, size, ms(s.now()), in.EntryKind, id); err != nil {
+		if _, err := tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1 WHERE id=?`, in.Class, in.Title, in.Body, size, ms(s.now()), id); err != nil {
 			return 0, err
 		}
 		if _, err := tx.Exec(`UPDATE idempotency SET result='' WHERE note_id=?`, id); err != nil {

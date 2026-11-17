@@ -58,6 +58,7 @@ func TestStripUserinfo(t *testing.T) {
 		"https://host.example/a@b/c":              "https://host.example/a@b/c",
 		"  https://u@h.example/a/b \n":            "https://h.example/a/b",
 		"/srv/git/a@b":                            "/srv/git/a@b",
+		"https://u:p@ss@host.example/a/b":         "https://host.example/a/b",
 	} {
 		if got := stripUserinfo(in); got != want {
 			t.Errorf("%q: %q want %q", in, got, want)

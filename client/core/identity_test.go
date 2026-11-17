@@ -2,6 +2,7 @@ package core
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -579,4 +580,73 @@ func openTWith(t *testing.T) *Store {
 	s := openT(t, t.TempDir())
 	t.Cleanup(func() { s.Close() })
 	return s
+}
+
+// A replacement or a re-import without a kind inherits the kind of the published note, and with it the faq limits.
+func TestInheritedFAQKeepsItsLimitsAndKind(t *testing.T) {
+	f := newFx(t)
+	project := f.pid["fakture"]
+	ana := f.p("ana")
+	v, _, err := f.Submit(ctx, ana, project, "k", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Q?", Body: "A.", EntryKind: KindFAQ}})
+	f.ok(err)
+	v, err = f.ReviewSubmission(ctx, v.ID, true, "")
+	f.ok(err)
+	n, err := f.GetNote(ctx, ana, project, v.NoteID)
+	f.ok(err)
+	long := strings.Repeat("a", maxFAQBody+1)
+	_, _, err = f.Submit(ctx, ana, project, "r", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Q?", Body: long}, Replaces: n.ID, Revision: n.Revision})
+	is(t, err, ErrInvalid{"faq answer: at most 2048 bytes"})
+	// an explicit finding does not shed the limit or the kind either
+	r, _, err := f.Submit(ctx, ana, project, "r2", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Q?", Body: "B.", EntryKind: KindFinding}, Replaces: n.ID, Revision: n.Revision})
+	f.ok(err)
+	if r.EntryKind != KindFAQ {
+		t.Fatal(r.EntryKind)
+	}
+	// backstop: an oversized body stored for a faq is refused on accept
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`UPDATE kb_submissions SET body=? WHERE id=?`, long, r.ID)
+		return e
+	}))
+	_, err = f.ReviewSubmission(ctx, r.ID, true, "")
+	is(t, err, ErrInvalid{"faq answer: at most 2048 bytes"})
+
+	// Markdown re-import without entry_kind: same limits; a different entry_kind never changes the kind.
+	md := func(kind, body string) MarkdownInput {
+		front := "---\ntitle: \"Imported Q?\"\n"
+		if kind != "" {
+			front += "entry_kind: \"" + kind + "\"\n"
+		}
+		return MarkdownInput{Markdown: front + "---\n" + body, Path: "q.md", Class: Structure}
+	}
+	_, err = f.ImportMarkdown(ctx, ana, project, md("faq", "short"))
+	f.ok(err)
+	_, err = f.ImportMarkdown(ctx, ana, project, md("", long))
+	is(t, err, ErrInvalid{"faq answer: at most 2048 bytes"})
+	_, err = f.ImportMarkdown(ctx, ana, project, md("finding", "changed"))
+	f.ok(err)
+	var kind string
+	f.ok(f.DB().QueryRow(`SELECT entry_kind FROM notes WHERE title='Imported Q?'`).Scan(&kind))
+	if kind != KindFAQ {
+		t.Fatal("import changed the kind of a published note:", kind)
+	}
+}
+
+func TestRemoveRemoteByIdentityOrUrl(t *testing.T) {
+	f := newFx(t)
+	project := f.pid["fakture"]
+	fani := f.p("fani")
+	_, err := f.ChangeProjectRemotes(ctx, fani, project, []string{"git@host.example:a/b.git", "git@host.example:c/d.git"}, nil)
+	f.ok(err)
+	got, err := f.ChangeProjectRemotes(ctx, fani, project, nil, []string{"host.example/a/b"})
+	f.ok(err)
+	if !reflect.DeepEqual(got, []string{"host.example/c/d"}) {
+		t.Fatal(got)
+	}
+	got, err = f.ChangeProjectRemotes(ctx, fani, project, nil, []string{"https://tok@host.example/c/d.git"})
+	f.ok(err)
+	if len(got) != 0 {
+		t.Fatal(got)
+	}
+	_, err = f.ChangeProjectRemotes(ctx, fani, project, nil, []string{"not-registered"})
+	is(t, err, ErrInvalid{"git remote"}) // not an identity of this project and not a URL
 }

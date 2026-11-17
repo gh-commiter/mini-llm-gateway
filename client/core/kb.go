@@ -151,9 +151,9 @@ func noteProvenance(tx *sql.Tx, n *Note) error {
 
 const maxReason = 1024
 
-// newKind is the SQL for a new submission's kind: the given one, else the replaced note's, else a finding.
-// Arguments: the kind, then the replaced note id.
-const newKind = `COALESCE(NULLIF(?,''),(SELECT entry_kind FROM notes WHERE id=?),'finding')`
+// newKind is the SQL for a new submission's kind: the replaced note's (a published kind never changes), else the given one,
+// else a finding. Arguments: the replaced note id, then the kind.
+const newKind = `COALESCE((SELECT entry_kind FROM notes WHERE id=?),NULLIF(?,''),'finding')`
 
 var maxPendingUser = 100
 var maxPendingProject = 500
@@ -223,7 +223,13 @@ func (s *Store) Submit(ctx context.Context, p Principal, project int64, key stri
 		if err := submissionAccess(tx, p, project, SubmissionInput{NoteInput: in.NoteInput}, false); err != nil {
 			return err
 		}
-		if err := checkInput(in.NoteInput); err != nil {
+		chk := in.NoteInput
+		if in.Replaces > 0 { // a replacement keeps the kind of the replaced note: its limits apply
+			if e := tx.QueryRow(`SELECT entry_kind FROM notes WHERE id=?`, in.Replaces).Scan(&chk.EntryKind); e != nil && e != sql.ErrNoRows {
+				return e
+			}
+		}
+		if err := checkInput(chk); err != nil {
 			return err
 		}
 		if err := checkSize(in.NoteInput); err != nil {
@@ -273,7 +279,7 @@ func (s *Store) Submit(ctx context.Context, p Principal, project int64, key stri
 		}
 		pr := writerProvenance(p, project, in.NoteInput, fromMs(ms(s.now())))
 		enc, _ := json.Marshal(pr)
-		r, e := tx.Exec(`INSERT INTO kb_submissions(project_id,user_id,device_id,class,title,body,bytes,replaces,revision,provenance,key,hash,received,entry_kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,`+newKind+`)`, project, p.UserID, p.DeviceID, in.Class, in.Title, in.Body, size, in.Replaces, in.Revision, string(enc), key, hash, ms(s.now()), in.EntryKind, in.Replaces)
+		r, e := tx.Exec(`INSERT INTO kb_submissions(project_id,user_id,device_id,class,title,body,bytes,replaces,revision,provenance,key,hash,received,entry_kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,`+newKind+`)`, project, p.UserID, p.DeviceID, in.Class, in.Title, in.Body, size, in.Replaces, in.Revision, string(enc), key, hash, ms(s.now()), in.Replaces, in.EntryKind)
 		if e != nil {
 			return e
 		}
@@ -414,6 +420,9 @@ func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, rea
 			var body string
 			if e = tx.QueryRow(`SELECT body FROM kb_submissions WHERE id=?`, id).Scan(&body); e != nil {
 				return e
+			}
+			if e = checkInput(NoteInput{Class: v.Class, Title: v.Title, Body: body, EntryKind: v.EntryKind}); e != nil {
+				return e // backstop: the stored kind's limits
 			}
 			size := int64(len(v.Title) + len(body))
 			var oldSize int64

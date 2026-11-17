@@ -1189,6 +1189,13 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		if counts[pid] > int64(maxNotes) || sizes[pid] > maxBytes {
 			return ErrTooLarge
 		}
+		if r.note != 0 { // the kind of a published note never changes through an import; its limits apply
+			chk := v.in
+			chk.EntryKind = old.EntryKind
+			if e = checkInput(chk); e != nil {
+				return e
+			}
+		}
 		action := "create"
 		if r.note != 0 {
 			action = "merge"
