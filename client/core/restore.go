@@ -397,13 +397,20 @@ func checkSchemaObjects(ctx context.Context, db *sql.DB, version int) error {
 		return err
 	}
 	defer rows.Close()
+	seen := map[string]bool{}
 	for rows.Next() {
 		var typ, name string
 		if err := rows.Scan(&typ, &name); err != nil {
 			return err
 		}
+		seen[typ+" "+name] = true
 		if !want[typ+" "+name] && !strings.HasPrefix(name, "sqlite_autoindex_") {
 			return fmt.Errorf("unexpected %s %q in a core database of schema %d", typ, name, version)
+		}
+	}
+	for k := range want { // triggers guard permissions: a backup must not lack them
+		if strings.HasPrefix(k, "trigger ") && !seen[k] {
+			return fmt.Errorf("missing %s in a core database of schema %d", k, version)
 		}
 	}
 	return rows.Err()

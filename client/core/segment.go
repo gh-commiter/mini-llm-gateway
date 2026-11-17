@@ -69,9 +69,14 @@ func migrate15(tx *sql.Tx) error {
 CREATE TRIGGER segment_no_archive BEFORE UPDATE OF archived ON projects WHEN NEW.id>` + b + ` AND NEW.archived<>0 BEGIN SELECT RAISE(ABORT,'segment cannot be archived'); END;
 CREATE TRIGGER segment_no_grant_source BEFORE INSERT ON grants WHEN NEW.source_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in a grant'); END;
 CREATE TRIGGER segment_no_grant_reader BEFORE INSERT ON grants WHEN NEW.reader_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in a grant'); END;`
+	q += `
+CREATE TRIGGER segment_keep_shape BEFORE UPDATE OF id,slug ON projects WHEN (NEW.id>` + b + `)<>(NEW.slug LIKE '@team-%') OR (OLD.id>` + b + ` AND (NEW.id<>OLD.id OR NEW.slug<>OLD.slug)) BEGIN SELECT RAISE(ABORT,'segment id and slug'); END;
+CREATE TRIGGER segment_no_grant_source_upd BEFORE UPDATE OF source_id ON grants WHEN NEW.source_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in a grant'); END;
+CREATE TRIGGER segment_no_grant_reader_upd BEFORE UPDATE OF reader_id ON grants WHEN NEW.reader_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in a grant'); END;`
 	for _, t := range []string{"memberships", "direct_memberships", "team_assignments", "team_projects", "project_remotes"} {
 		q += `
-CREATE TRIGGER segment_no_` + t + ` BEFORE INSERT ON ` + t + ` WHEN NEW.project_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in ` + t + `'); END;`
+CREATE TRIGGER segment_no_` + t + ` BEFORE INSERT ON ` + t + ` WHEN NEW.project_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in ` + t + `'); END;
+CREATE TRIGGER segment_no_` + t + `_upd BEFORE UPDATE OF project_id ON ` + t + ` WHEN NEW.project_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment in ` + t + `'); END;`
 	}
 	_, err = tx.Exec(q)
 	return err
