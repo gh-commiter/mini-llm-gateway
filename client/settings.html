@@ -766,7 +766,7 @@ const PANEL_ROUTES = {builtin: [
   "GET teams/{}/projects", "PUT teams/{}/projects/{}", "DELETE teams/{}/projects/{}", "GET teams/{}/assignments",
   "PUT teams/{}/assignments", "DELETE teams/{}/assignments", "POST projects", "PATCH projects/{}", "GET projects/{}/members",
   "PUT projects/{}/members/{}", "DELETE projects/{}/members/{}", "GET projects/{}/remotes", "POST projects/{}/remotes",
-  "GET projects/{}/depends", "PUT projects/{}/depends/{}", "DELETE projects/{}/depends/{}", "GET grants", "POST grants", "DELETE grants"]};
+  "GET projects/{}/depends", "PUT projects/{}/depends/{}", "DELETE projects/{}/depends/{}", "PUT projects/{}/depends/teams/{}", "DELETE projects/{}/depends/teams/{}", "GET grants", "POST grants", "DELETE grants"]};
 const PANEL_SYMBOLS = ["person.2", "person.3", "folder", "book", "tray", "gearshape", "doc.text", "key", "list.bullet"];
 class PanelRefusal extends Error {}
 const prefuse = m => { throw new PanelRefusal(m); };

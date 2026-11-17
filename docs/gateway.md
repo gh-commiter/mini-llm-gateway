@@ -93,7 +93,7 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   number of people, archived switch; **Add Project…**, **Archive** (asks first: nobody can write, reading and agents go on) and
   **Unarchive**; **Open** shows the people with their role and where it comes from (directly, through which teams), with
   buttons to set the direct role (giving a role, raising to manage, lowering and removing all ask first) and to give a role, the git remotes (add, remove) and
-  the dependencies (add, remove; a search hint only). **Grants between projects:** which project reads which notes of
+  the dependencies on projects and on teams (add, remove; a search hint only). **Grants between projects:** which project reads which notes of
   another, with add and remove. Every confirmation says what happens: access that ends, that agent runs which are already
   going are not stopped but can no longer read notes (the next read fails), and what does not change. A team's hidden notes
   segment is never listed as a project.

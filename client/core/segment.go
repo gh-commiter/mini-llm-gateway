@@ -97,7 +97,8 @@ func checkSegments(tx *sql.Tx) error {
  + (SELECT count(*) FROM memberships WHERE project_id>?1) + (SELECT count(*) FROM direct_memberships WHERE project_id>?1)
  + (SELECT count(*) FROM team_assignments WHERE project_id>?1) + (SELECT count(*) FROM team_projects WHERE project_id>?1)
  + (SELECT count(*) FROM project_remotes WHERE project_id>?1) + (SELECT count(*) FROM grants WHERE source_id>?1 OR reader_id>?1)
- + (SELECT count(*) FROM project_depends WHERE project_id>?1 OR depends_on>?1)`, segmentBase).Scan(&n)
+ + (SELECT count(*) FROM project_depends WHERE project_id>?1 OR depends_on>?1)
+ + (SELECT count(*) FROM project_team_depends WHERE project_id>?1 OR team_id NOT IN (SELECT id FROM teams))`, segmentBase).Scan(&n)
 	if err != nil {
 		return err
 	}
@@ -159,6 +160,35 @@ func extraSources(tx *sql.Tx, user, project int64, run bool) (out []readable, er
 			return nil, e
 		}
 		if r := a.readable(d, true); len(r.all)+len(r.own) > 0 {
+			out = append(out, r)
+		}
+	}
+	// Team dependencies: the team's segment, only when the caller is on its roster (loadSegmentAccess decides, as for a
+	// direct read) and the team is not archived. The project's own team is already in out.
+	trows, err := tx.Query(`SELECT d.team_id FROM project_team_depends d JOIN teams t ON t.id=d.team_id WHERE d.project_id=? AND t.archived=0 AND d.team_id<>? ORDER BY d.team_id`, project, team)
+	if err != nil {
+		return nil, err
+	}
+	var teams []int64
+	for trows.Next() {
+		var t int64
+		if err = trows.Scan(&t); err != nil {
+			trows.Close()
+			return nil, err
+		}
+		teams = append(teams, t)
+	}
+	err = trows.Err()
+	trows.Close()
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range teams {
+		a, e := loadAccess(tx, user, segmentID(t))
+		if e != nil {
+			return nil, e
+		}
+		if r := a.readable(segmentID(t), true); len(r.all)+len(r.own) > 0 {
 			out = append(out, r)
 		}
 	}

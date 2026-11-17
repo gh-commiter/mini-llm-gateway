@@ -161,3 +161,53 @@ func TestDependsxIsA404(t *testing.T) {
 		t.Fatal(r.Status, r.Body)
 	}
 }
+
+// team dependencies over HTTP: only the owner changes them; a member sees only the teams it is on.
+func TestTeamDependsRoutes(t *testing.T) {
+	f := newFixture(t)
+	admin := Context{Kind: KindAdmin}
+	call := func(c Context, method, path, body string, want int) Response {
+		t.Helper()
+		r := f.api.Handle(bg, c, Request{Method: method, Path: path, Body: []byte(body)})
+		if r.Status != want {
+			t.Fatalf("%s %s: %d %s, want %d", method, path, r.Status, r.Body, want)
+		}
+		return r
+	}
+	var team struct{ Team TeamJSON }
+	if err := json.Unmarshal(call(admin, "POST", "/teams", `{"name":"acme"}`, 200).Body, &team); err != nil {
+		t.Fatal(err)
+	}
+	fk, eu := f.pid["fakture"], f.pid["eureko"]
+	call(admin, "PUT", fmt.Sprintf("/teams/%d/projects/%d", team.Team.ID, fk), "", 200)
+	call(admin, "PUT", fmt.Sprintf("/teams/%d/members/%d", team.Team.ID, f.uid["eva"]), "", 200)
+	if err := f.st.SetMember(bg, eu, f.uid["eva"], core.Reader); err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("/projects/%d/depends/teams/%d", eu, team.Team.ID)
+	call(admin, "PUT", path, "", 200)
+	call(admin, "PUT", path, "", 200) // twice: still one
+	if b := string(call(admin, "GET", fmt.Sprintf("/projects/%d/depends", eu), "", 200).Body); !strings.Contains(b, `"teams":[{"archived":false,"id":`) || !strings.Contains(b, `"name":"acme"`) {
+		t.Fatal("admin list", b)
+	}
+	// The project's own team: refused with the reason; unknown ids.
+	r := call(admin, "PUT", fmt.Sprintf("/projects/%d/depends/teams/%d", fk, team.Team.ID), "", 400)
+	if !strings.Contains(string(r.Body), "already holds this project") {
+		t.Fatal(string(r.Body))
+	}
+	call(admin, "PUT", fmt.Sprintf("/projects/%d/depends/teams/999", eu), "", 404)
+	call(admin, "PUT", fmt.Sprintf("/projects/%d/depends/teams/x", eu), "", 400)
+	// eva is on the roster: she sees the team; cene (member of eureko, not on the roster) does not.
+	if !strings.Contains(string(call(member("dev-eva"), "GET", fmt.Sprintf("/minigw/v1/projects/%d/depends", eu), "", 200).Body), `"name":"acme"`) {
+		t.Fatal("roster member does not see the team")
+	}
+	if strings.Contains(string(call(member("dev-cene"), "GET", fmt.Sprintf("/minigw/v1/projects/%d/depends", eu), "", 200).Body), "acme") {
+		t.Fatal("a name outside the roster was listed")
+	}
+	// No member route changes it.
+	for _, m := range []string{"PUT", "POST", "DELETE", "PATCH"} {
+		call(member("dev-fani"), m, fmt.Sprintf("/minigw/v1/projects/%d/depends/teams/%d", eu, team.Team.ID), "", 404)
+	}
+	call(admin, "DELETE", path, "", 200)
+	call(admin, "DELETE", path, "", 404)
+}

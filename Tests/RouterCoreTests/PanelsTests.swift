@@ -820,7 +820,7 @@ private let teamsAnswers: [(String, Int, String)] = [
     @Test(.enabled(if: haveFixtures)) func loadsRefsThenTheThreeLists() async throws {
         let fake = Fake()
         let m = try await model(fake)
-        #expect(await fake.log == ["GET /projects", "GET /users", "GET /teams", "GET /projects", "GET /grants"])
+        #expect(await fake.log == ["GET /projects", "GET /teams", "GET /users", "GET /teams", "GET /projects", "GET /grants"])
         // archived rows are hidden until the toggle is on; a hidden team segment is never a row (the project list is the admin list)
         #expect(m.visibleRows(m.panel.sections[0], path: "teams").map(\.id) == ["4"])
         m.setShowHidden(true, path: "teams")
@@ -888,7 +888,7 @@ private let teamsAnswers: [(String, Int, String)] = [
         #expect(m.confirmation(archive, row: p)?.message.contains("Nobody can write") == true && m.confirmation(archive, row: p)?.message.contains("access does not change") == true)
         await fake.clear()
         await m.openDetail(projects, row: p)
-        #expect(await fake.log == ["GET /projects/1/members", "GET /projects/1/remotes", "GET /projects/1/depends"])
+        #expect(await fake.log == ["GET /projects/1/members", "GET /projects/1/remotes", "GET /projects/1/depends", "GET /projects/1/depends"])
         let members = projects.detail!.sections[0]
         let rows = m.data("projects/members", parent: p).rows
         let (ana, bor, eva) = (rows[0], rows[1], rows[2])

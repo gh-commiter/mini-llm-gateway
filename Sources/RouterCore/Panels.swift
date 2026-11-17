@@ -209,6 +209,8 @@ public enum PanelRoutes {
         "GET projects/{}/depends",
         "PUT projects/{}/depends/{}",
         "DELETE projects/{}/depends/{}",
+        "PUT projects/{}/depends/teams/{}",
+        "DELETE projects/{}/depends/teams/{}",
         "GET grants",
         "POST grants",
         "DELETE grants"]

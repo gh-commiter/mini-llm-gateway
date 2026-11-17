@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### New
+- A project can depend on a team: `minigw gw project depends add <project> --team <team>` (`remove` likewise; `list` shows teams too, and the Teams and projects pane has a "Depends on teams" list). The people of the project who are on the team's roster then also find the team's notes when they search the project (`from team:<name>`) and can open them with `minigw note read`; for everyone else nothing changes. It is a search hint, never a permission, and an agent run gets nothing from it. The cap of 16 counts both kinds; an archived team gives nothing; the project's own team is refused. A team dependency is not carried by a bundle (export/import). Database schema 18.
+
 ## 0.7.19
 
 ### Fixed

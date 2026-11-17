@@ -250,6 +250,16 @@
        "field": "archived",
        "equals": true
       }
+     },
+     "teams": {
+      "path": "/teams",
+      "items": "teams",
+      "key": "id",
+      "label": "name",
+      "skip": {
+       "field": "archived",
+       "equals": true
+      }
      }
     },
     "sections": [
@@ -1212,6 +1222,55 @@
             "title": "builtin.teams.section.projects.detail.section.depends.action.remove.confirm.title",
             "message": "builtin.teams.section.projects.detail.section.depends.action.remove.confirm.message",
             "button": "builtin.teams.section.projects.detail.section.depends.action.remove.confirm.button",
+            "destructive": true
+           }
+          }
+         ]
+        },
+        {
+         "kind": "list",
+         "id": "teamdepends",
+         "title": "builtin.teams.section.projects.detail.section.teamdepends.title",
+         "source": {
+          "path": "/projects/{parent.id}/depends",
+          "items": "teams"
+         },
+         "key": "id",
+         "columns": [
+          {
+           "field": "name",
+           "kind": "text",
+           "label": "builtin.teams.section.projects.detail.section.teamdepends.column.name"
+          }
+         ],
+         "empty": "builtin.teams.section.projects.detail.section.teamdepends.empty",
+         "actions": [
+          {
+           "id": "add",
+           "label": "builtin.teams.section.projects.detail.section.teamdepends.action.add",
+           "method": "PUT",
+           "path": "/projects/{parent.id}/depends/teams/{field.team}",
+           "fields": [
+            {
+             "id": "team",
+             "type": "ref",
+             "ref": "teams",
+             "required": true,
+             "label": "builtin.teams.section.projects.detail.section.teamdepends.action.add.field.team"
+            }
+           ]
+          }
+         ],
+         "rowActions": [
+          {
+           "id": "remove",
+           "label": "builtin.teams.section.projects.detail.section.teamdepends.action.remove",
+           "method": "DELETE",
+           "path": "/projects/{parent.id}/depends/teams/{row.id}",
+           "confirm": {
+            "title": "builtin.teams.section.projects.detail.section.teamdepends.action.remove.confirm.title",
+            "message": "builtin.teams.section.projects.detail.section.teamdepends.action.remove.confirm.message",
+            "button": "builtin.teams.section.projects.detail.section.teamdepends.action.remove.confirm.button",
             "destructive": true
            }
           }

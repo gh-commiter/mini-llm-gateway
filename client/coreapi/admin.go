@@ -137,6 +137,9 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 	if len(seg) > 3 {
 		route += "/{}"
 	}
+	if seg[0] == "projects" && len(seg) == 5 && seg[2] == "depends" && seg[3] == "teams" {
+		route = method + " projects/{}/depends/teams/{}"
+	}
 	if (seg[0] == "core" || seg[0] == "usage") && len(seg) == 2 {
 		route = method + " " + seg[0] + "/" + seg[1]
 	}
@@ -251,7 +254,27 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		if err != nil {
 			return failErr(err)
 		}
-		return 200, map[string]any{"depends": dependsJSON(dep), "usedBy": dependsJSON(used)}, true
+		tds, err := st.AdminListTeamDepends(ctx, id)
+		if err != nil {
+			return failErr(err)
+		}
+		return 200, map[string]any{"depends": dependsJSON(dep), "usedBy": dependsJSON(used), "teams": teamDependsJSON(tds)}, true
+	case "PUT projects/{}/depends/teams/{}", "DELETE projects/{}/depends/teams/{}":
+		id, good := num(seg[1])
+		team, good2 := num(seg[4])
+		if !good || !good2 {
+			return fail(400, "bad project or team id")
+		}
+		var err error
+		if method == "PUT" {
+			err = st.AddTeamDepends(ctx, id, team)
+		} else {
+			err = st.RemoveTeamDepends(ctx, id, team)
+		}
+		if err != nil {
+			return failErr(err)
+		}
+		return 200, map[string]any{"ok": true}, true
 	case "PUT projects/{}/depends/{}", "DELETE projects/{}/depends/{}":
 		id, good := num(seg[1])
 		other, good2 := num(seg[3])

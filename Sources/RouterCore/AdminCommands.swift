@@ -35,6 +35,7 @@ public final class AdminCommands {
           minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
           minigw gw project remote list <project> | add <project> <url> | remove <project> <url>   git remotes registered for a project
           minigw gw project depends list <project> | add <project> <other> | remove <project> <other>   <project> depends on <other>: its members' search also covers <other> as far as they may read it
+          minigw gw project depends add|remove <project> --team <team>   the same for a team's notes: only for members of that team (list shows teams too)
           minigw gw team add <name> | list | rename <team> <name> | archive <team>
           minigw gw team path <team> <label>                    free-text path label of a team ("-" clears it)
           minigw gw team member add|remove <team> <user>
@@ -173,14 +174,22 @@ public final class AdminCommands {
                 let named = r[pos[2] == "add" ? "added" : "removed"]?.array.compactMap(\.string) ?? []
                 guard named.count == 1 else { throw fail("the gateway did not name the remote") }
                 say(clean(pos[2] == "add" ? "registered \(named[0]) for project \(pos[3])" : "removed \(named[0]) from project \(pos[3])"))
-            case ("depends", 4) where pos[2] == "list", ("depends", 5) where pos[2] == "add" || pos[2] == "remove":
+            case ("depends", 4) where pos[2] == "list", ("depends", 5) where (pos[2] == "add" || pos[2] == "remove") && o.team.isEmpty,
+                 ("depends", 4) where (pos[2] == "add" || pos[2] == "remove") && !o.team.isEmpty:
                 let base = "/projects/" + s(try projectID(pos[3])) + "/depends"
                 if pos[2] == "list" {
                     let r = try request("GET", base)
-                    let depends = r["depends"]?.array ?? [], usedBy = r["usedBy"]?.array ?? []
+                    let depends = r["depends"]?.array ?? [], usedBy = r["usedBy"]?.array ?? [], teams = r["teams"]?.array ?? []
                     for p in depends { say(clean("depends on " + (p.dict["slug"]?.string ?? ""))) }
+                    for t in teams { say(clean("depends on team " + (t.dict["name"]?.string ?? "") + (t.dict["archived"]?.bool == true ? " (archived: gives nothing)" : ""))) }
                     for p in usedBy { say(clean("used by " + (p.dict["slug"]?.string ?? ""))) }
-                    if depends.isEmpty && usedBy.isEmpty { say("no dependencies") }
+                    if depends.isEmpty && usedBy.isEmpty && teams.isEmpty { say("no dependencies") }
+                    break
+                }
+                if !o.team.isEmpty {
+                    let path = base + "/teams/" + s(try teamID(o.team))
+                    if pos[2] == "add" { try request("PUT", path); say(clean(pos[3] + " depends on team " + o.team)) }
+                    else { try request("DELETE", path); say(clean(pos[3] + " no longer depends on team " + o.team)) }
                     break
                 }
                 let path = base + "/" + s(try projectID(pos[4]))

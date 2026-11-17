@@ -246,6 +246,7 @@ minigw kb faq [<project>|--team <team>] [--json]
 minigw kb hooks on|off|status [<project>]
 minigw gw kb review [<project>|--team <team>]
 minigw gw project depends list <project> | add <project> <other> | remove <project> <other>
+minigw gw project depends add|remove <project> --team <team>
 minigw project depends [<project>]
 minigw gw kb accept <id>
 minigw gw kb reject <id> [--reason text]

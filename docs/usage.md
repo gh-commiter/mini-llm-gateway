@@ -1230,6 +1230,15 @@ run is not widened by a dependency: it reads another project only through an own
 labels and orders those hits. A project linked to a subfolder of another project's folder gets **no automatic** dependency:
 the owner sets it.
 
+A project can also depend on a **team**: `minigw gw project depends add <project> --team <team>` (`remove` likewise; `list`
+shows both kinds, a team as `depends on team <name>`). The people of `<project>` who are **on that team's roster** then also find
+the team's notes when they search `<project>` (hit ends with `from team:<name>`) and can open them with `minigw note read <id>`;
+everyone else sees no hit, no label and no count. It is a search hint like the one above: the roster decides, as for a direct
+read, and an agent run gets nothing from it (a run reads the notes of the project's own team when its user is on that roster, as
+before). The cap of 16 counts both kinds; an archived team gives nothing; the project's own team is refused (its notes are
+searched anyway). A team dependency is not carried by `minigw gw export` / `import`: a bundle holds one team and its own projects,
+and a project never depends on its own team.
+
 Only the author and owner reviewers see pending content. It never appears in note
 lists, reads, agent runs or counts. The owner uses `minigw gw kb review [<project>]`,
 `minigw gw kb accept <id>` and `minigw gw kb reject <id> [--reason text]`.

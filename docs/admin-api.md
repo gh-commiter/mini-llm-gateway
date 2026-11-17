@@ -270,7 +270,7 @@ is down.
 - The built-in provider (`builtin`) registers `GET users`, `POST users`, `PATCH users/{}`, `GET bindings`, `PUT bindings/{}`,
   `DELETE bindings/{}`, the gateway's `GET devices`, and for the knowledge base `GET kb/submissions`, `GET kb/submissions/{}`,
   `POST kb/submissions/{}/accept`, `POST kb/submissions/{}/reject`, `GET kb/notes`, `GET kb/notes/{}`, `GET kb/faq`, `GET projects`
-  `GET teams`, and for the teams panel `POST teams`, `PATCH teams/{}`, `GET|PUT|DELETE teams/{}/members[/{}]`, `GET|PUT|DELETE teams/{}/projects[/{}]`, `GET|PUT|DELETE teams/{}/assignments`, `POST projects`, `PATCH projects/{}`, `GET|PUT|DELETE projects/{}/members[/{}]`, `GET|POST projects/{}/remotes`, `GET|PUT|DELETE projects/{}/depends[/{}]` and `GET|POST|DELETE grants`. Its panel `builtin.teams` ("Teams and projects") is described in gateway.md; its panel `builtin.kb` ("Knowledge base") is described under the Mac Settings window in gateway.md. Its panel `builtin.users` ("Users and devices"), never sends
+  `GET teams`, and for the teams panel `POST teams`, `PATCH teams/{}`, `GET|PUT|DELETE teams/{}/members[/{}]`, `GET|PUT|DELETE teams/{}/projects[/{}]`, `GET|PUT|DELETE teams/{}/assignments`, `POST projects`, `PATCH projects/{}`, `GET|PUT|DELETE projects/{}/members[/{}]`, `GET|POST projects/{}/remotes`, `GET|PUT|DELETE projects/{}/depends[/{}]`, `PUT|DELETE projects/{}/depends/teams/{}` and `GET|POST|DELETE grants`. Its panel `builtin.teams` ("Teams and projects") is described in gateway.md; its panel `builtin.kb` ("Knowledge base") is described under the Mac Settings window in gateway.md. Its panel `builtin.users` ("Users and devices"), never sends
   `owner`; a user name is at most 128 bytes, the server's own limit, and the server stays the authority.
 - Design and format: `docs/plans/plugin-panels-design.md`. The Go and Swift sides decode the same fixtures
   (`client/testdata/panels*.json`).
@@ -337,7 +337,8 @@ uniqueness as for users. Project display names are not unique; projects have sep
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /projects/{id}/depends` | – | `{depends: [{id, slug, name}], usedBy: [...]}` |
+| `GET /projects/{id}/depends` | – | `{depends: [{id, slug, name}], usedBy: [...], teams: [{id, name, archived}]}` |
+| `PUT /projects/{id}/depends/teams/{team}` / `DELETE` | – | `{ok: true}`; the project depends on the notes of a team (the listing above then has `teams: [{id, name, archived}]`); counts toward the same cap of 16; refused for an archived team and for the project's own team (400 with the reason); the notes are searched only for callers on the team's roster, never in a run |
 | `PUT /projects/{id}/depends/{other}` / `DELETE` | – | `{ok: true}`; at most 16 per project, not itself, not an archived project (remove is always allowed); a team's notes (segment ids) are never a side |
 | `GET /teams` | – | `{teams: [{id, name, archived, path, segment, memberCount, projectCount}]}` including archived teams; `segment` is the id of the team's own notes |
 | `POST /teams` | `{name}` | `{team: {id, name, archived, path, segment}}` |

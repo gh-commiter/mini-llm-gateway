@@ -20,6 +20,19 @@ CREATE TRIGGER segment_no_depends_upd BEFORE UPDATE OF project_id,depends_on ON 
 	return err
 }
 
+// migrate18: a project may also depend on another TEAM's notes (the owner's decision): a search of the project then covers
+// that team's segment for the people on the team's roster (never a permission of its own). A second table, so that the
+// guarantee of migration 16 stays whole: a segment id is on neither side of project_depends. A segment can never HAVE a
+// team dependency either (trigger).
+func migrate18(tx *sql.Tx) error {
+	b := strconv.FormatInt(segmentBase, 10)
+	_, err := tx.Exec(`CREATE TABLE project_team_depends(project_id INTEGER NOT NULL REFERENCES projects(id), team_id INTEGER NOT NULL REFERENCES teams(id), PRIMARY KEY(project_id,team_id)) WITHOUT ROWID;
+CREATE INDEX project_team_depends_team ON project_team_depends(team_id);
+CREATE TRIGGER segment_no_team_depends BEFORE INSERT ON project_team_depends WHEN NEW.project_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment with a dependency'); END;
+CREATE TRIGGER segment_no_team_depends_upd BEFORE UPDATE OF project_id ON project_team_depends WHEN NEW.project_id>` + b + ` BEGIN SELECT RAISE(ABORT,'segment with a dependency'); END;`)
+	return err
+}
+
 func (s *Store) AddDepends(ctx context.Context, project, other int64) error {
 	if project == other {
 		return ErrInvalid{"depends: a project cannot depend on itself"}
@@ -34,7 +47,7 @@ func (s *Store) AddDepends(ctx context.Context, project, other int64) error {
 			}
 		}
 		var n int
-		if e := tx.QueryRow(`SELECT count(*) FROM project_depends WHERE project_id=? AND depends_on<>?`, project, other).Scan(&n); e != nil {
+		if e := tx.QueryRow(`SELECT (SELECT count(*) FROM project_depends WHERE project_id=?1 AND depends_on<>?2)+(SELECT count(*) FROM project_team_depends WHERE project_id=?1)`, project, other).Scan(&n); e != nil {
 			return "", e
 		}
 		if n >= maxDepends {
@@ -112,6 +125,117 @@ func (s *Store) ListDepends(ctx context.Context, p Principal, project int64) (ou
 			}
 		}
 		return nil
+	})
+	return
+}
+
+// AddTeamDepends: the project depends on a team's notes. Refused for an archived project or team, for the project's own team
+// (its notes are already searched) and above the cap (project and team dependencies together). Adding twice is a no-op.
+func (s *Store) AddTeamDepends(ctx context.Context, project, team int64) error {
+	return s.adminWrite(ctx, "project.depends.team.add", strconv.FormatInt(project, 10), map[string]any{"team": team}, func(tx *sql.Tx) (string, error) {
+		if e := existsProject(tx, project); e != nil {
+			return "", e
+		}
+		if e := archivedErr(tx, project); e != nil {
+			return "", e
+		}
+		var name string
+		var archived bool
+		if e := tx.QueryRow(`SELECT name,archived FROM teams WHERE id=?`, team).Scan(&name, &archived); e != nil {
+			return "", notFound(e)
+		}
+		if archived {
+			return "", ErrRefusal{"team " + name + " is archived: unarchive it first"}
+		}
+		var own int
+		if e := tx.QueryRow(`SELECT count(*) FROM team_projects WHERE project_id=? AND team_id=?`, project, team).Scan(&own); e != nil {
+			return "", e
+		}
+		if own > 0 {
+			return "", ErrRefusal{"team " + name + " already holds this project: its notes are searched anyway"}
+		}
+		var n int
+		if e := tx.QueryRow(`SELECT (SELECT count(*) FROM project_depends WHERE project_id=?1)+(SELECT count(*) FROM project_team_depends WHERE project_id=?1 AND team_id<>?2)`, project, team).Scan(&n); e != nil {
+			return "", e
+		}
+		if n >= maxDepends {
+			return "", ErrInvalid{"depends: at most 16"}
+		}
+		_, e := tx.Exec(`INSERT OR IGNORE INTO project_team_depends(project_id,team_id) VALUES(?,?)`, project, team)
+		return "", e
+	})
+}
+
+// RemoveTeamDepends is always allowed.
+func (s *Store) RemoveTeamDepends(ctx context.Context, project, team int64) error {
+	return s.adminWrite(ctx, "project.depends.team.remove", strconv.FormatInt(project, 10), map[string]any{"team": team}, func(tx *sql.Tx) (string, error) {
+		return "", countOne(tx.Exec(`DELETE FROM project_team_depends WHERE project_id=? AND team_id=?`, project, team))
+	})
+}
+
+func teamDependsList(tx *sql.Tx, project int64, user int64) (out []Team, err error) {
+	rows, err := tx.Query(`SELECT t.id,t.name,t.archived,t.path FROM project_team_depends d JOIN teams t ON t.id=d.team_id WHERE d.project_id=? ORDER BY t.name COLLATE NOCASE`, project)
+	if err != nil {
+		return nil, err
+	}
+	var all []Team
+	for rows.Next() {
+		var t Team
+		if err = rows.Scan(&t.ID, &t.Name, &t.Archived, &t.Path); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		all = append(all, t)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range all {
+		if user != 0 { // the member view: only the teams the caller is on (a name the caller may not know is never shown)
+			a, e := loadAccess(tx, user, segmentID(t.ID))
+			if e != nil {
+				return nil, e
+			}
+			if !a.visible() {
+				continue
+			}
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// AdminListTeamDepends: the teams the project depends on (the owner sees all).
+func (s *Store) AdminListTeamDepends(ctx context.Context, project int64) (out []Team, err error) {
+	err = s.read(ctx, func(tx *sql.Tx) error {
+		if e := existsProject(tx, project); e != nil {
+			return e
+		}
+		var e error
+		out, e = teamDependsList(tx, project, 0)
+		return e
+	})
+	return
+}
+
+// ListTeamDepends is the member view: only the teams the caller is on.
+func (s *Store) ListTeamDepends(ctx context.Context, p Principal, project int64) (out []Team, err error) {
+	lim := s.rate(p.UserID, false)
+	err = s.read(ctx, func(tx *sql.Tx) error {
+		if _, e := memberAccess(tx, p, project); e != nil || isSegment(project) {
+			if e == nil {
+				e = ErrNotFound
+			}
+			return e
+		}
+		if lim != nil {
+			return lim
+		}
+		var e error
+		out, e = teamDependsList(tx, project, p.UserID)
+		return e
 	})
 	return
 }

@@ -27,6 +27,7 @@ const coreHelp = `
   minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
   minigw gw project remote list <project> | add <project> <url> | remove <project> <url>   git remotes registered for a project
   minigw gw project depends list <project> | add <project> <other> | remove <project> <other>   <project> depends on <other>: its members' search also covers <other> as far as they may read it
+  minigw gw project depends add|remove <project> --team <team>   the same for a team's notes: only for members of that team (list shows teams too)
   minigw gw team add <name> | list | rename <team> <name> | archive <team>
   minigw gw team path <team> <label>                    free-text path label of a team ("-" clears it)
   minigw gw team member add|remove <team> <user>
@@ -199,19 +200,40 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 				fail("the gateway did not name the remote")
 			}
 			say(clean(fmt.Sprintf("%s %s %s project %s", verb, ids[0], prep, pos[3])))
-		case pos[1] == "depends" && (pos[2] == "list" && len(pos) == 4 || (pos[2] == "add" || pos[2] == "remove") && len(pos) == 5):
+		case pos[1] == "depends" && (pos[2] == "list" && len(pos) == 4 || (pos[2] == "add" || pos[2] == "remove") && len(pos) == 5 && o.team == "" || (pos[2] == "add" || pos[2] == "remove") && len(pos) == 4 && o.team != ""):
 			base := "/projects/" + id(projectID(a, pos[3]), 10) + "/depends"
 			if pos[2] == "list" {
-				var r struct{ Depends, UsedBy []coreProject }
+				var r struct {
+					Depends, UsedBy []coreProject
+					Teams           []cliTeam
+				}
 				a.do("GET", base, nil, &r)
 				for _, p := range r.Depends {
 					say(clean("depends on " + p.Slug))
 				}
+				for _, t := range r.Teams {
+					note := ""
+					if t.Archived {
+						note = " (archived: gives nothing)"
+					}
+					say(clean("depends on team " + t.Name + note))
+				}
 				for _, p := range r.UsedBy {
 					say(clean("used by " + p.Slug))
 				}
-				if len(r.Depends)+len(r.UsedBy) == 0 {
+				if len(r.Depends)+len(r.UsedBy)+len(r.Teams) == 0 {
 					say("no dependencies")
+				}
+				break
+			}
+			if o.team != "" {
+				path := base + "/teams/" + id(teamID(a, o.team), 10)
+				if pos[2] == "add" {
+					a.do("PUT", path, nil, nil)
+					say(clean(pos[3] + " depends on team " + o.team))
+				} else {
+					a.do("DELETE", path, nil, nil)
+					say(clean(pos[3] + " no longer depends on team " + o.team))
 				}
 				break
 			}
