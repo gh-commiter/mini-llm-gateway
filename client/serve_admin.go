@@ -577,6 +577,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(400, "provider name: letters, digits, . _ - (up to 32)")
 		}
 		base, err := checkGatewayURL(b.BaseURL, b.Insecure)
+		if err == nil {
+			err = checkGatewayName(base)
+		}
 		if err != nil {
 			return fail(400, err.Error())
 		}
@@ -647,6 +650,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				u = *b.BaseURL
 			}
 			base, err := checkGatewayURL(u, g.Insecure)
+			if err == nil {
+				err = checkGatewayName(base)
+			}
 			if err != nil {
 				return fail(400, err.Error())
 			}

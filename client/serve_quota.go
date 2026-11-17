@@ -545,7 +545,8 @@ func markStale(vals []quotaValue, now time.Time) []quotaValue {
 
 // --- OpenRouter and LiteLLM ---
 
-var quotaHTTP = &http.Client{Timeout: 10 * time.Second, CheckRedirect: noRedirect}
+var quotaHTTP = &http.Client{Timeout: 10 * time.Second, CheckRedirect: noRedirect,
+	Transport: func() *http.Transport { t := http.DefaultTransport.(*http.Transport).Clone(); t.DialContext = gwDial; return t }()}
 
 func providerKind(g serveGateway) string {
 	switch {

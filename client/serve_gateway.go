@@ -140,7 +140,8 @@ func checkGatewayURL(raw string, insecure bool) (string, error) {
 		// iskalna domena DNS ga lahko naredi javnega.
 		h := strings.ToLower(u.Hostname())
 		ip := net.ParseIP(h)
-		local := h == "localhost" || strings.HasSuffix(h, ".local") || (ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()))
+		local := h == "localhost" || strings.HasSuffix(h, ".local") || (ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())) ||
+			(containerMode() && singleLabel(h)) // Compose service name (http://litellm:4000): private at add time and at every dial (gwDial)
 		if !local {
 			return "", errors.New("provider URL must be https (http only to localhost, a private IP or a .local name, with --insecure)")
 		}
@@ -151,6 +152,64 @@ func checkGatewayURL(raw string, insecure bool) (string, error) {
 		return "", errors.New("provider URL must be https: " + raw)
 	}
 	return strings.TrimSuffix(strings.TrimSuffix(u.String(), "/"), "/v1"), nil
+}
+
+// singleLabel: a host name without a dot that is not an IP address (a Docker Compose service name).
+func singleLabel(h string) bool {
+	return h != "" && !strings.ContainsAny(h, ".:") && net.ParseIP(h) == nil && h != "localhost"
+}
+
+func privateIP(ip net.IP) bool { return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() }
+
+// resolveHost: the resolver of provider names; tests replace it.
+var resolveHost = func(ctx context.Context, h string) ([]net.IP, error) {
+	a, err := net.DefaultResolver.LookupIPAddr(ctx, h)
+	ips := make([]net.IP, len(a))
+	for i := range a {
+		ips[i] = a[i].IP
+	}
+	return ips, err
+}
+
+// privateHost: a single-label name must resolve, and only to private addresses (container mode); returns the one to use.
+func privateHost(ctx context.Context, h string) (net.IP, error) {
+	ips, err := resolveHost(ctx, h)
+	if err != nil || len(ips) == 0 {
+		return nil, fmt.Errorf("the name %s does not resolve (is the service on a shared Docker network?)", h)
+	}
+	for _, ip := range ips {
+		if !privateIP(ip) {
+			return nil, fmt.Errorf("the name %s resolves to a public address (%s): refused", h, ip)
+		}
+	}
+	return ips[0], nil
+}
+
+// checkGatewayName (add and change of a provider, not the start: the service may start later): in container mode a
+// single-label http host must resolve to private addresses now.
+func checkGatewayName(base string) error {
+	u, err := url.Parse(base)
+	if err != nil || !containerMode() || u.Scheme != "http" || !singleLabel(strings.ToLower(u.Hostname())) {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = privateHost(ctx, strings.ToLower(u.Hostname()))
+	return err
+}
+
+// gwDial: every connection to a provider. A single-label name (container mode) is resolved again here and followed only
+// while it resolves to private addresses: a name that later points to a public address is not dialled.
+func gwDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	if host, port, err := net.SplitHostPort(addr); err == nil && containerMode() && singleLabel(strings.ToLower(host)) {
+		ip, err := privateHost(ctx, strings.ToLower(host))
+		if err != nil {
+			return nil, err
+		}
+		return d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+	}
+	return d.DialContext(ctx, network, addr)
 }
 
 // publishedID: v /model v Claude Code so le ID-ji, ki se začnejo s »claude-« (kot na Macu).
@@ -215,6 +274,7 @@ var gwClients = func() [2]*http.Client {
 	var out [2]*http.Client
 	for i := range out {
 		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.DialContext = gwDial
 		t.ResponseHeaderTimeout = 10 * time.Minute // odgovor brez toka pride šele na koncu
 		if i == 1 {
 			t.Proxy = nil
