@@ -504,6 +504,20 @@ agent). Usage events are sent to the helper, which stores them; while the helper
 at most, a longer outage becomes a gap). The Claude CLI agent reads notes with `minigw kb search` or `minigw note list|read` only with
 **Allow local tools**, Codex only with its network switch on.
 
+## An upstream gateway (0.7.21, `minigw serve`)
+
+`minigw gw upstream` (usage.md, "Sending a project's knowledge to another gateway") makes this gateway a client of another one.
+The non-secret part lives in the core database (schema 19): `upstreams` (name, address), `upstream_links` (project or team, the
+name there, classes, the last push and the last refusal) and `upstream_sent` (per link and local note: the content hash, the
+revision and the upstream's submission and note ids). The secret, the upstream's token line and this gateway's own device key for
+it (one per upstream, made when the upstream is added), is kept as the provider keys are, under the name `upstream:<name>`: the
+credential store (Windows Credential Manager, Secret Service), else a private file next to `serve.json` (mode 0600). It never
+appears in the database, a backup, the log, an API answer or an argument. Each request opens its own encrypted connection in memory
+(Noise, the upstream's key pinned), so there is no local listener to borrow; redirects are not followed and an answer is read up to 8
+MiB (up to 1 MiB of it is parsed). The routes are the owner's (`/upstreams`, `/upstream-push`, admin-api.md); the push uses only the
+upstream's existing member routes (`GET /minigw/v1/projects/<slug>`, `GET /minigw/v1/teams`, `POST .../kb/submissions` with an
+idempotency key, `GET` of a submission and of a note to learn what exists). The panel for it is a later step.
+
 ## Usage events and quota (0.6.0, `minigw serve` and the Mac app)
 
 **What is counted.** Every model invocation is one event: a request to `POST /v1/messages` that reaches a model (a

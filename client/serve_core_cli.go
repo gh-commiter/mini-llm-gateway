@@ -90,6 +90,11 @@ func projectID(a *adminClient, ref string) int64 {
 type coreOpts struct {
 	days, user, project, model, claudeProbe, provider, device, folder, sort, reason, team, by, phase, activity, task string
 	json, csv, history, explain                                                                                      bool
+	// upstream (upstream_cmd.go): the token comes from in; the rest are the link and push options
+	in                        io.Reader
+	remoteProject, remoteTeam string
+	class                     string
+	withPrivate, dryRun       bool
 }
 
 func coreCommand(a *adminClient, pos []string, o coreOpts) {
@@ -104,6 +109,8 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		kbAdmin(a, pos, o.reason, o.team)
 	case "team":
 		teamAdmin(a, pos)
+	case "upstream":
+		upstreamCommand(a, pos, o)
 	case "user":
 		need(2, 4)
 		switch {

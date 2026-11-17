@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,7 +37,14 @@ type admCase struct {
 		Phase       string `json:"phase,omitempty"`
 		Activity    string `json:"activity,omitempty"`
 		Task        string `json:"task,omitempty"`
+		// upstream commands
+		RemoteProject string `json:"remoteProject,omitempty"`
+		RemoteTeam    string `json:"remoteTeam,omitempty"`
+		Class         string `json:"class,omitempty"`
+		WithPrivate   bool   `json:"withPrivate,omitempty"`
+		DryRun        bool   `json:"dryRun,omitempty"`
 	} `json:"opts"`
+	Stdin     string    `json:"stdin,omitempty"` // what the command reads (the upstream's token)
 	Responses []cmdResp `json:"responses"`
 	Want      *admWant  `json:"want,omitempty"`
 }
@@ -93,7 +101,8 @@ func runAdminCase(c *admCase) *admWant {
 		return 599, []byte(`{"error":{"message":"no such response in the fixture"}}`)
 	}}
 	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
-		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, team: c.Opts.Team, by: c.Opts.By, phase: c.Opts.Phase, activity: c.Opts.Activity, task: c.Opts.Task}
+		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, team: c.Opts.Team, by: c.Opts.By, phase: c.Opts.Phase, activity: c.Opts.Activity, task: c.Opts.Task,
+		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun}
 	if c.Opts.Days != "" {
 		o.days = c.Opts.Days
 	}
@@ -166,5 +175,40 @@ func TestUsageReportParity(t *testing.T) {
 	}
 	if updateFixtures() {
 		writeFixture(t, "usage-report.json", fx)
+	}
+}
+
+// The upstream commands (minigw gw upstream ...): client/testdata/upstream-commands.json. The Go gateway only for now (the Mac app's
+// gateway does not support upstreams yet).
+func TestUpstreamCommandParity(t *testing.T) {
+	var fx struct {
+		Cases []*admCase `json:"cases"`
+	}
+	readFixture(t, "upstream-commands.json", &fx)
+	saved := time.Local
+	time.Local = time.UTC
+	defer func() { time.Local = saved }()
+	if len(fx.Cases) < 15 {
+		t.Fatalf("only %d cases", len(fx.Cases))
+	}
+	for _, c := range fx.Cases {
+		t.Run(c.Name, func(t *testing.T) {
+			got := runAdminCase(c)
+			if updateFixtures() {
+				c.Want = got
+				return
+			}
+			if c.Want == nil {
+				t.Fatal("no expected values in the fixture")
+			}
+			gj, _ := json.Marshal(got)
+			wj, _ := json.Marshal(c.Want)
+			if !bytes.Equal(gj, wj) {
+				t.Fatalf("\n got %s\nwant %s", gj, wj)
+			}
+		})
+	}
+	if updateFixtures() {
+		writeFixture(t, "upstream-commands.json", fx)
 	}
 }

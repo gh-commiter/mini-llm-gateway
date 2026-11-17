@@ -87,8 +87,9 @@ func (s *server) newAPI() *coreapi.API {
 			}
 			return ""
 		},
-		Dir: filepath.Join(s.cfgDir, coreDirName), // the usage spool lives inside the protected core folder
-		Log: s.log.Printf,
+		Dir:      filepath.Join(s.cfgDir, coreDirName), // the usage spool lives inside the protected core folder
+		Log:      s.log.Printf,
+		Upstream: upstreamHost{s},
 		AfterAdmission: func(ctx context.Context, _ coreapi.Context, _ coreapi.Request) {
 			if rq, _ := ctx.Value(reqCtxKey{}).(*req); rq != nil && s.coreHook != nil {
 				s.coreHook(rq, "admitted")

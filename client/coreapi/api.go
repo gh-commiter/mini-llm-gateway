@@ -73,6 +73,9 @@ type Options struct {
 	AfterAdmission func(ctx context.Context, c Context, r Request)
 	// PanelProviders are the panel providers besides the built-in one (the id "builtin" is reserved).
 	PanelProviders []PanelProvider
+	// Upstream sends to another gateway (nil: the upstream routes answer 501). UpstreamSleep waits out its rate limit (nil: time.Sleep).
+	Upstream      UpstreamHost
+	UpstreamSleep func(time.Duration)
 }
 
 // API is the core's request handler.

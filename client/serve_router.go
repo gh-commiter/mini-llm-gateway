@@ -63,7 +63,7 @@ runs; otherwise they go to serve.json.
   minigw gw api GET|POST|PATCH|DELETE <path>            one admin API request (docs/admin-api.md): the JSON body
                                                         on stdin, the JSON answer on stdout (used by minigw-tui)
 
-` + coreHelp + `
+` + coreHelp + upstreamHelp + `
 
 All take --config FILE (default: the minigw serve config).`
 
@@ -225,6 +225,9 @@ func (a *adminClient) do(method, path string, body, out any) int {
 		if path == "/general/scratch/move" { // kopija na drug disk traja
 			timeout = 4 * time.Hour
 		}
+		if path == "/upstream-push" { // waits out the upstream's rate limit
+			timeout = 2 * time.Hour
+		}
 		if status, resp, err = a.http(method, path, data, timeout); err != nil {
 			fail("gateway admin API: " + err.Error())
 		}
@@ -297,6 +300,11 @@ func routerCommand(args []string, in io.Reader) {
 	evBy := fs.String("by", "", "usage: group by phase, activity, task, project or model (one or two, comma separated)")
 	evPhase := fs.String("phase", "", "usage, usage-events, project-sessions: only this phase")
 	evActivity := fs.String("activity", "", "usage, usage-events, project-sessions: only this activity")
+	upRemoteProject := fs.String("remote-project", "", "upstream link: the project's short name on the upstream (default: the same)")
+	upRemoteTeam := fs.String("remote-team", "", "upstream link --team: the team's name on the upstream (default: the same)")
+	upClass := fs.String("class", "", "upstream link: classes to send, comma-separated (default structure,data)")
+	upWithPrivate := fs.Bool("with-private", false, "upstream link: also send private notes (needs private in --class)")
+	upDryRun := fs.Bool("dry-run", false, "upstream push: only ask the upstream what exists; write nothing")
 	evTask := fs.String("task", "", "usage, usage-events, project-sessions: only this task")
 	explain := fs.Bool("explain", false, "member list: show membership origins")
 	history := fs.Bool("history", false, "quota: recorded probes, without fetching")
@@ -823,8 +831,8 @@ func routerCommand(args []string, in io.Reader) {
 		var out json.RawMessage
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
-	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota":
-		coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask})
+	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota", "upstream":
+		coreCommand(a, pos, coreOpts{in: in, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, withPrivate: *upWithPrivate, dryRun: *upDryRun, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

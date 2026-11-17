@@ -1329,6 +1329,55 @@ The [stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/b
 uses one UTF-8 JSON message per line, protocol-only stdout, stderr diagnostics,
 and exits cleanly when stdin closes.
 
+## Sending a project's knowledge to another gateway
+
+A gateway can send the **published notes** of a project (or of a team's own notes) to another gateway, the *upstream*, for example
+from the gateway on your own computer to the team's gateway. This is step A of the upstream feature (0.7.21): **one way, by hand,
+and as submissions**: nothing is sent unless the owner of the local gateway runs `push`, and what arrives is a *proposal* that the
+upstream's reviewers accept or reject with the usual `minigw gw kb review`. Nothing is pulled back, nothing is sent automatically,
+and nothing is written there directly.
+
+The local gateway is an ordinary **client** of the upstream, with a device key of its own. No new trust is created: the upstream's
+owner decides what it may do with the existing means.
+
+1. On the upstream, copy its token (Mini Gateway, Settings, General, Copy Token). Locally, as the owner:
+
+   ```text
+   minigw gw upstream add hub mini.example:8765      # the token line on stdin (or typed, not echoed): never an argument
+   ```
+
+   The command prints the **device ID** of this gateway, where the credentials are kept (the credential store, like a provider key;
+   never the project database, so never in a backup) and what the upstream says about it. The address is `host` or `host:port` of a
+   gateway (the same encrypted protocol as `minigw connect`; no scheme, user or path). The gateway contacts the upstream only for
+   the commands on this page, never on its own, and never follows a redirect.
+2. On the upstream, its owner **allows that device** (`minigw gw devices allow <device id>`), **binds it to a user** (best a
+   dedicated one, for example `gw-mini`: `minigw gw bind <device id> gw-mini`) and **gives that user a role** (developer or admin)
+   in the project that should receive the notes, or in a team's notes (an admin of a project of the team).
+3. Locally, link a project to a project there. A project without a link sends nothing:
+
+   ```text
+   minigw gw upstream link <project> hub [--remote-project <slug>] [--class structure,data] [--with-private]
+   minigw gw upstream link --team <team> hub [--remote-team <name>]     # a team's own notes
+   minigw gw upstream status [<project>|--team <team>]                  # what would go, when it last went, the last refusal
+   minigw gw upstream push [<project>|--team <team>] [--dry-run]
+   minigw gw upstream unlink <project> hub        # also: list, remove <name>
+   ```
+
+   `private` notes go only when the link says `--with-private` (and names the class). `push --dry-run` only asks the upstream what
+   exists and writes nothing, there or here. The author's name of a note travels as text in the submission (a line at its end, with
+   the gateway, the local note and its revision); the submission itself belongs to the bound user.
+
+A repeated push sends only what changed: every note is remembered by its content (class, kind, title, text). A changed note is sent
+as a **replacement** of the note the upstream accepted before; if that note is still pending there, or cannot be read by the bound
+user, it goes as a new submission that names the earlier one. Notes deleted here, and changes of class to private, are not
+propagated; the copy there stays until it is removed there. If the upstream limits writes the push waits and goes on. Every note
+of a run is reported as `create`, `skip`, `replace` or `refused` with the upstream's own text; a refusal that would apply to all
+notes (not allowed, no such project, too many pending submissions) ends the run for that link and is shown by `status`.
+
+What an upstream answers is treated as data: it can make this gateway neither write a note, nor change a setting, nor call another
+host. The gateway sends nothing to itself (an upstream that is this same gateway is refused). The Mac app's gateway does not support
+upstreams yet; use `minigw serve` for this step.
+
 ## Hand findings in from a session
 
 The `minigw` plugin for Claude Code can ask a session to hand in what it learned, so the project knowledge base grows

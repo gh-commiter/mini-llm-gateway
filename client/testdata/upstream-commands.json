@@ -1,0 +1,749 @@
+{
+ "cases": [
+  {
+   "name": "add",
+   "args": [
+    "upstream",
+    "add",
+    "hub",
+    "hub.example"
+   ],
+   "opts": {},
+   "stdin": "tok#key\n",
+   "responses": [
+    {
+     "match": "PUT /upstreams/hub",
+     "status": 200,
+     "body": "{\"name\": \"hub\", \"address\": \"hub.example:8765\", \"device\": \"DEVICEID43\", \"where\": \"a private file (mode 0600)\", \"probe\": \"connected: the device is allowed and bound to a user there\"}"
+    }
+   ],
+   "want": {
+    "out": "upstream hub: hub.example:8765\ndevice DEVICEID43: the upstream's owner must allow this device and bind it to a user there, and give that user a role in the project\ncredentials stored in a private file (mode 0600)\nconnected: the device is allowed and bound to a user there\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "PUT",
+      "/upstreams/hub",
+      "{\"address\":\"hub.example\",\"token\":\"tok#key\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "add device not allowed yet",
+   "args": [
+    "upstream",
+    "add",
+    "hub",
+    "10.0.0.5:8765"
+   ],
+   "opts": {},
+   "stdin": "tok#key",
+   "responses": [
+    {
+     "match": "PUT /upstreams/hub",
+     "status": 200,
+     "body": "{\"name\": \"hub\", \"address\": \"10.0.0.5:8765\", \"device\": \"DEVICEID43\", \"where\": \"the Secret Service\", \"probe\": \"the upstream says: no project access: this device is not on the gateway's device list\"}"
+    }
+   ],
+   "want": {
+    "out": "upstream hub: 10.0.0.5:8765\ndevice DEVICEID43: the upstream's owner must allow this device and bind it to a user there, and give that user a role in the project\ncredentials stored in the Secret Service\nthe upstream says: no project access: this device is not on the gateway's device list\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "PUT",
+      "/upstreams/hub",
+      "{\"address\":\"10.0.0.5:8765\",\"token\":\"tok#key\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "add refused",
+   "args": [
+    "upstream",
+    "add",
+    "me",
+    "hub.example"
+   ],
+   "opts": {},
+   "stdin": "tok#key",
+   "responses": [
+    {
+     "match": "PUT /upstreams/me",
+     "status": 400,
+     "body": "{\"error\": {\"message\": \"this is the token of this same gateway: an upstream must be another gateway\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: this is the token of this same gateway: an upstream must be another gateway\n",
+    "exit": 1,
+    "requests": [
+     [
+      "PUT",
+      "/upstreams/me",
+      "{\"address\":\"hub.example\",\"token\":\"tok#key\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "add no token",
+   "args": [
+    "upstream",
+    "add",
+    "hub",
+    "hub.example"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: no Copy Token of the upstream (pipe it on stdin or type it at the prompt)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "add usage",
+   "args": [
+    "upstream",
+    "add",
+    "hub"
+   ],
+   "opts": {},
+   "stdin": "tok#key",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw upstream add <name> <address>              another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "list",
+   "args": [
+    "upstream",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /upstreams",
+     "status": 200,
+     "body": "{\"upstreams\": [{\"name\": \"hub\", \"address\": \"hub.example:8765\", \"device\": \"DEVICEID43\"}, {\"name\": \"team-gw\", \"address\": \"10.0.0.9:8765\", \"device\": \"DEVICE2\"}], \"links\": []}"
+    }
+   ],
+   "want": {
+    "out": "hub  hub.example:8765  device DEVICEID43\nteam-gw  10.0.0.9:8765  device DEVICE2\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/upstreams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "list none",
+   "args": [
+    "upstream",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /upstreams",
+     "status": 200,
+     "body": "{\"upstreams\":[],\"links\":[]}"
+    }
+   ],
+   "want": {
+    "out": "no upstreams (add one with: minigw gw upstream add <name> <address>)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/upstreams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "remove",
+   "args": [
+    "upstream",
+    "remove",
+    "hub"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "DELETE /upstreams/hub",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "removed upstream hub, its links and its credentials (what was sent stays there)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "DELETE",
+      "/upstreams/hub",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "linked shop to hub as shop: nothing is sent until minigw gw upstream push\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"classes\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link with options",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "remoteProject": "web-shop",
+    "class": "structure,data,private",
+    "withPrivate": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "linked shop to hub as web-shop: nothing is sent until minigw gw upstream push\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"classes\":\"structure,data,private\",\"remote\":\"web-shop\",\"team\":false,\"withPrivate\":true}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link team",
+   "args": [
+    "upstream",
+    "link",
+    "hub"
+   ],
+   "opts": {
+    "team": "engineering",
+    "remoteTeam": "eng"
+   },
+   "responses": [
+    {
+     "match": "GET /teams",
+     "status": 200,
+     "body": "{\"teams\": [{\"id\": 1, \"name\": \"Engineering\"}, {\"id\": 2, \"name\": \"Old\", \"archived\": true}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/1",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "linked engineering to hub as eng: nothing is sent until minigw gw upstream push\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/teams",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/1",
+      "{\"classes\":\"\",\"remote\":\"eng\",\"team\":true,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link team with a project name",
+   "args": [
+    "upstream",
+    "link",
+    "hub"
+   ],
+   "opts": {
+    "team": "engineering",
+    "remoteProject": "x"
+   },
+   "responses": [
+    {
+     "match": "GET /teams",
+     "status": 200,
+     "body": "{\"teams\": [{\"id\": 1, \"name\": \"Engineering\"}, {\"id\": 2, \"name\": \"Old\", \"archived\": true}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: --remote-project is for a project; a team link takes --remote-team\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/teams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link refused",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "class": "private"
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 400,
+     "body": "{\"error\": {\"message\": \"private notes are sent only with --with-private on the link\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: private notes are sent only with --with-private on the link\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"classes\":\"private\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "unlink",
+   "args": [
+    "upstream",
+    "unlink",
+    "shop",
+    "hub"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "DELETE /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "unlinked shop from hub\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "DELETE",
+      "/upstreams/hub/links/3",
+      "{\"team\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "unlink team",
+   "args": [
+    "upstream",
+    "unlink",
+    "hub"
+   ],
+   "opts": {
+    "team": "engineering"
+   },
+   "responses": [
+    {
+     "match": "GET /teams",
+     "status": 200,
+     "body": "{\"teams\": [{\"id\": 1, \"name\": \"Engineering\"}, {\"id\": 2, \"name\": \"Old\", \"archived\": true}]}"
+    },
+    {
+     "match": "DELETE /upstreams/hub/links/1",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "unlinked engineering from hub\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/teams",
+      ""
+     ],
+     [
+      "DELETE",
+      "/upstreams/hub/links/1",
+      "{\"team\":true}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "status",
+   "args": [
+    "upstream",
+    "status"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /upstreams",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"lastPush\": \"2026-11-17T10:30:00Z\", \"label\": \"shop\", \"pending\": 1, \"total\": 3}, {\"project\": 1099511627777, \"team\": true, \"upstream\": \"hub\", \"remote\": \"eng\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"lastError\": \"the upstream says: not allowed: your role in this project does not permit it\", \"label\": \"team Engineering\", \"pending\": 2, \"total\": 2}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data\nteam Engineering -> hub (eng): 2 of 2 notes would go, never pushed, classes structure,data\n  last refusal: the upstream says: not allowed: your role in this project does not permit it\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/upstreams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "status of a project",
+   "args": [
+    "upstream",
+    "status",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"lastPush\": \"2026-11-17T10:30:00Z\", \"label\": \"shop\", \"pending\": 1, \"total\": 3}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstreams?project=3",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "status none",
+   "args": [
+    "upstream",
+    "status"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /upstreams",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": []}"
+    }
+   ],
+   "want": {
+    "out": "no upstream links (minigw gw upstream link <project> <name>)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/upstreams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "push",
+   "args": [
+    "upstream",
+    "push",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-push",
+     "status": 200,
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"create 12 Invoice numbering\", \"skip 13 Reset steps: unchanged since the last push\", \"replace 14 Deploy order: replaces the accepted note 55\", \"refused 15 Too big: the upstream says: too large (title up to 256 bytes, body up to 512 KiB, project limits apply)\"], \"created\": 1, \"skipped\": 1, \"replaced\": 1, \"refused\": 1, \"dryRun\": false}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  create 12 Invoice numbering\n  skip 13 Reset steps: unchanged since the last push\n  replace 14 Deploy order: replaces the accepted note 55\n  refused 15 Too big: the upstream says: too large (title up to 256 bytes, body up to 512 KiB, project limits apply)\n  created 1, replaced 1, skipped 1, refused 1\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-push",
+      "{\"dryRun\":false,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "push dry run",
+   "args": [
+    "upstream",
+    "push",
+    "shop"
+   ],
+   "opts": {
+    "dryRun": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-push",
+     "status": 200,
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"would create 12 Invoice numbering\"], \"created\": 1, \"skipped\": 0, \"replaced\": 0, \"refused\": 0, \"dryRun\": true}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  would create 12 Invoice numbering\n  would be created 1, replaced 0, skipped 0, refused 0\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-push",
+      "{\"dryRun\":true,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "push team stopped",
+   "args": [
+    "upstream",
+    "push"
+   ],
+   "opts": {
+    "team": "engineering"
+   },
+   "responses": [
+    {
+     "match": "GET /teams",
+     "status": 200,
+     "body": "{\"teams\": [{\"id\": 1, \"name\": \"Engineering\"}, {\"id\": 2, \"name\": \"Old\", \"archived\": true}]}"
+    },
+    {
+     "match": "POST /upstream-push",
+     "status": 200,
+     "body": "{\"pushes\": [{\"label\": \"team Engineering\", \"upstream\": \"hub\", \"remote\": \"eng\", \"lines\": [], \"created\": 0, \"skipped\": 0, \"replaced\": 0, \"refused\": 0, \"stopped\": \"the upstream refuses this gateway (HTTP 401): the owner there must allow its device, bind it to a user and give that user a role\", \"dryRun\": false}]}"
+    }
+   ],
+   "want": {
+    "out": "team Engineering -> hub (eng)\n  created 0, replaced 0, skipped 0, refused 0\n  stopped: the upstream refuses this gateway (HTTP 401): the owner there must allow its device, bind it to a user and give that user a role\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/teams",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-push",
+      "{\"dryRun\":false,\"team\":1}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "push no link",
+   "args": [
+    "upstream",
+    "push"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /upstream-push",
+     "status": 400,
+     "body": "{\"error\": {\"message\": \"no upstream link for this: minigw gw upstream link <project> <upstream>\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no upstream link for this: minigw gw upstream link <project> <upstream>\n",
+    "exit": 1,
+    "requests": [
+     [
+      "POST",
+      "/upstream-push",
+      "{\"dryRun\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage",
+   "args": [
+    "upstream"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw upstream add <name> <address>              another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "unknown verb",
+   "args": [
+    "upstream",
+    "frob"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw upstream add <name> <address>              another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
+    "exit": 1,
+    "requests": []
+   }
+  }
+ ]
+}
