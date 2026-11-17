@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"minigw/core"
+	"minigw/coreapi"
 )
 
 // upFx: two real gateways of this binary on loopback (their real member and admin routes, real encrypted connections): the local
@@ -451,5 +452,99 @@ func TestUpstreamPushAsksAgainWhileTheGatewaySaysMore(t *testing.T) {
 	})
 	if calls != 2 || !strings.Contains(out, "no progress") {
 		t.Fatalf("%d calls: %s", calls, out)
+	}
+}
+
+// The Go side reads an upstream's answer with net/http (not a reader of its own): redirects off, a total timeout, and at most 1 MiB and one
+// byte of body kept (what the core accepts). A table of hostile answers, through the real host over a real encrypted connection: none may
+// panic, hang or return more than the cap.
+func TestUpstreamHostSurvivesHostileAnswers(t *testing.T) {
+	keys := fakeKeys(t)
+	local, _, _ := coreLiveServer(t)
+	_ = keys
+	big := bytes.Repeat([]byte("a"), 3<<20)
+	chunked := func(sizeLine string) []byte {
+		return []byte("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + sizeLine + "\r\nabcde\r\n0\r\n\r\n")
+	}
+	table := map[string][]byte{
+		"empty size line":      chunked(""),
+		"extension only":       chunked(";x"),
+		"plus sign":            chunked("+5"),
+		"minus":                chunked("-1"),
+		"not hex":              chunked("zz"),
+		"huge hex":             chunked("ffffffffffffffffffff"),
+		"huge decimal length":  []byte("HTTP/1.1 200 OK\r\nContent-Length: 99999999999999999999\r\n\r\nx"),
+		"length above the cap": append([]byte("HTTP/1.1 200 OK\r\nContent-Length: 3145728\r\n\r\n"), big...),
+		"close-delimited big":  append([]byte("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n"), big...),
+		"both length and TE":   []byte("HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n\r\n"),
+		"endless interim":      bytes.Repeat([]byte("HTTP/1.1 100 Continue\r\n\r\n"), 5000),
+		"garbage":              []byte("\x00\xff\xfe not http at all\r\n\r\n"),
+		"truncated":            []byte("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc"),
+		"no head end":          []byte("HTTP/1.1 200 OK\r\nX: y"),
+		"many tiny chunks":     append([]byte("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"), bytes.Repeat([]byte("1\r\nx\r\n"), 100000)...),
+	}
+	for name, answer := range table {
+		t.Run(name, func(t *testing.T) {
+			key, _ := ecdh.X25519().GenerateKey(rand.Reader)
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			go func() {
+				for {
+					c, err := ln.Accept()
+					if err != nil {
+						return
+					}
+					go func() {
+						defer c.Close()
+						hs := make([]byte, 4+handshakeLen)
+						c.SetDeadline(time.Now().Add(20 * time.Second))
+						if _, err := readFull(c, hs); err != nil {
+							return
+						}
+						reply, sess, err := respond(hs[4:], key)
+						if err != nil {
+							return
+						}
+						c.Write(reply)
+						var plain, pending []byte
+						buf := make([]byte, 64<<10)
+						for !bytes.Contains(plain, []byte("\r\n\r\n")) {
+							n, err := c.Read(buf)
+							if n > 0 {
+								var p []byte
+								p, pending, _ = unframe(append(pending, buf[:n]...), sess.receive)
+								plain = append(plain, p...)
+							}
+							if err != nil {
+								return
+							}
+						}
+						for off := 0; off < len(answer); off += maxPlain {
+							if _, err := c.Write(frames(answer[off:min(off+maxPlain, len(answer))], sess.send)); err != nil {
+								return
+							}
+						}
+					}()
+				}
+			}()
+			h := upstreamHost{local}
+			if _, err := h.Connect("evil", ln.Addr().String(), "tok#"+base64url(key.PublicKey().Bytes()), "test device"); err != nil {
+				t.Fatal(err)
+			}
+			local.core.AddUpstream(t0, "evil", ln.Addr().String())
+			defer local.core.RemoveUpstream(t0, "evil")
+			start := time.Now()
+			st, body, _, err := h.Do(context.Background(), "evil", "GET", "/minigw/v1/projects/shop", nil, nil)
+			if len(body) > coreapi.MaxCalloutBody {
+				t.Fatalf("%d bytes of body kept", len(body))
+			}
+			_ = st // a body of more than 1 MiB reaches the core as one byte too many, which it refuses (TestUpstreamAnswersAreData)
+			if time.Since(start) > 30*time.Second {
+				t.Fatal("took", time.Since(start))
+			}
+		})
 	}
 }

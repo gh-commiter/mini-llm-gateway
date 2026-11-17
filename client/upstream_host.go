@@ -153,7 +153,7 @@ func (h upstreamHost) Do(ctx context.Context, name, method, path string, header 
 		return 0, nil, 0, errors.New("no answer from the upstream")
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, coreapi.MaxCalloutBody)) // 1 MiB and one byte: the core refuses more
 	if err != nil {
 		return 0, nil, 0, errors.New("no answer from the upstream")
 	}

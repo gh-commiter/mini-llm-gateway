@@ -39,13 +39,14 @@ public enum UpstreamRequest {
     public static func check(method: String, path: String, headers: [String: String], body: Data?) -> String? {
         guard method == "GET" || method == "POST", (body?.count ?? 0) <= maxBody, path.utf8.count <= maxPath, path.hasPrefix("/minigw/v1/") else { return nil }
         let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
-        guard parts.count <= 2 else { return nil }
+        guard parts.count <= 2, let pathPart = parts.first else { return nil }
+        let queryPart = parts.count == 2 ? parts.last : nil
         let pathChars = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_.-")
-        guard parts[0].unicodeScalars.allSatisfy({ pathChars.contains($0) }) else { return nil }  // no @ # % \ space or control character
-        for seg in parts[0].dropFirst().split(separator: "/", omittingEmptySubsequences: false) where seg.isEmpty || seg == "." || seg == ".." { return nil }
-        if parts.count == 2 {
+        guard pathPart.unicodeScalars.allSatisfy({ pathChars.contains($0) }) else { return nil }  // no @ # % \ space or control character
+        for seg in pathPart.dropFirst().split(separator: "/", omittingEmptySubsequences: false) where seg.isEmpty || seg == "." || seg == ".." { return nil }
+        if let queryPart {
             let queryChars = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.=&-")
-            guard parts[1].utf8.count <= 128, parts[1].unicodeScalars.allSatisfy({ queryChars.contains($0) }) else { return nil }
+            guard queryPart.utf8.count <= 128, queryPart.unicodeScalars.allSatisfy({ queryChars.contains($0) }) else { return nil }
         }
         let key = headers.first { $0.key.lowercased() == "idempotency-key" }?.value ?? ""
         let keyChars = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
@@ -104,10 +105,10 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
         guard Self.validDeviceName(deviceName) else { return ["error": "device name: printable ASCII, 1 to 64 characters"] }
         let parts = line.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
         guard let address = UpstreamAddress.normalize(address) else { return ["error": "upstream address: give host or host:port of a gateway (no scheme, user or path), for example mini.local:8765"] }
-        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else {
+        guard parts.count == 2, let tokenPart = parts.first, let keyPart = parts.last, !tokenPart.isEmpty, !keyPart.isEmpty else {
             return ["error": "the token line must be the upstream's whole Copy Token (<token>#<key>)"]
         }
-        guard let kb = Noise.fromBase64url(parts[1]), kb.count == 32 else {
+        guard let kb = Noise.fromBase64url(keyPart), kb.count == 32 else {
             return ["error": "the key part of the token is not a gateway key: copy the token again on the upstream"]
         }
         if let mine = ownKey(), mine == kb { return ["error": "this is the token of this same gateway: an upstream must be another gateway"] }
@@ -118,7 +119,7 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
             }
         }
         let dev = Curve25519.Signing.PrivateKey()
-        let s = Secret(token: parts[0], key: parts[1], device: Noise.base64url(dev.rawRepresentation), address: address, name: deviceName)
+        let s = Secret(token: tokenPart, key: keyPart, device: Noise.base64url(dev.rawRepresentation), address: address, name: deviceName)
         guard let data = try? JSONEncoder().encode(s) else { return ["error": "cannot store the credentials"] }
         secrets.set(Self.account(upstream), String(decoding: data, as: UTF8.self))
         guard load(upstream) != nil else { return ["error": "cannot store the credentials in the Keychain: unlock the login keychain and try again"] }
@@ -182,49 +183,7 @@ public struct NoiseHTTPTransport: UpstreamTransport {
         if let body { head += "Content-Type: application/json\r\nContent-Length: \(body.count)\r\n" }
         let request = Data((head + "\r\n").utf8) + (body ?? Data())
         return NoiseExchange(host: NWEndpoint.Host(host), port: port, routerKey: routerKey, device: device, request: request,
-                             cap: UpstreamHost.maxAnswer, timeout: timeout).run()
-    }
-}
-
-/// The answer of an HTTP/1.1 server as far as the bytes go: nil while it is incomplete. A body above `cap` is refused (status 0).
-enum UpstreamHTTPAnswer {
-    static let maxHead = 64 << 10
-
-    static func parse(_ raw: Data, closed: Bool, cap: Int) -> UpstreamAnswer? {
-        let sep = Data("\r\n\r\n".utf8)
-        guard let end = raw.range(of: sep) else { return raw.count > maxHead ? UpstreamAnswer(status: 0) : (closed ? UpstreamAnswer(status: 0) : nil) }
-        guard end.lowerBound <= maxHead, let head = String(data: raw[..<end.lowerBound], encoding: .utf8) else { return UpstreamAnswer(status: 0) }
-        let lines = head.components(separatedBy: "\r\n")
-        let first = lines[0].split(separator: " ")
-        guard first.count >= 2, first[0].hasPrefix("HTTP/1."), let status = Int(first[1]), (100...599).contains(status) else { return UpstreamAnswer(status: 0) }
-        var h: [String: String] = [:]
-        for l in lines.dropFirst() {
-            guard let c = l.firstIndex(of: ":") else { return UpstreamAnswer(status: 0) }
-            h[l[..<c].lowercased()] = l[l.index(after: c)...].trimmingCharacters(in: .whitespaces)
-        }
-        let retry = Int(h["retry-after"] ?? "") ?? 0
-        let body = Data(raw[end.upperBound...])
-        func done(_ b: Data) -> UpstreamAnswer { b.count > cap ? UpstreamAnswer(status: 0) : UpstreamAnswer(status: status, body: b, retryAfter: max(0, retry)) }
-        if (h["transfer-encoding"] ?? "").lowercased().contains("chunked") {
-            var out = Data(), rest = body
-            while true {
-                guard let eol = rest.range(of: Data("\r\n".utf8)) else { return closed ? UpstreamAnswer(status: 0) : nil }
-                guard let size = Int(String(decoding: rest[..<eol.lowerBound], as: UTF8.self).split(separator: ";")[0], radix: 16), size >= 0 else { return UpstreamAnswer(status: 0) }
-                if size == 0 { return done(out) }
-                guard size <= cap + 1, out.count + size <= cap + 1 else { return UpstreamAnswer(status: 0) }
-                let start = eol.upperBound
-                guard rest.count >= start + size + 2 else { return closed ? UpstreamAnswer(status: 0) : nil }
-                out += rest[start..<start + size]
-                rest = Data(rest[(start + size + 2)...])
-            }
-        }
-        if let n = Int(h["content-length"] ?? "") {
-            guard n >= 0, n <= cap else { return UpstreamAnswer(status: 0) }
-            if body.count >= n { return done(Data(body.prefix(n))) }
-            return closed ? UpstreamAnswer(status: 0) : nil
-        }
-        if body.count > cap { return UpstreamAnswer(status: 0) }
-        return closed ? done(body) : nil  // no length: the end of the connection ends the answer
+                             cap: UpstreamHost.maxAnswer - 1, timeout: timeout).run()  // the body, at most 1 MiB
     }
 }
 
@@ -238,9 +197,11 @@ final class NoiseExchange: @unchecked Sendable {
     private let lock = NSLock()
     private var result: UpstreamAnswer?
     private var conn: NWConnection?
+    private var reader: UpstreamHTTPReader  // touched only by the receive callbacks, which run one after another
 
     init(host: NWEndpoint.Host, port: NWEndpoint.Port, routerKey: Data, device: (key: Curve25519.Signing.PrivateKey, name: String), request: Data, cap: Int, timeout: TimeInterval) {
         self.host = host; self.port = port; self.routerKey = routerKey; self.device = device; self.request = request; self.cap = cap; self.timeout = timeout
+        reader = UpstreamHTTPReader(cap: cap)
     }
 
     private func finish(_ a: UpstreamAnswer) {
@@ -270,7 +231,7 @@ final class NoiseExchange: @unchecked Sendable {
                         c.send(content: Noise.frames(request.subdata(in: off..<off + n), session.send), completion: .contentProcessed { _ in })
                         off += n
                     }
-                    readAnswer(c, session.receive, Data(), Data())
+                    readAnswer(c, session.receive, Data())
                 }
             case .failed, .cancelled: finish(UpstreamAnswer(status: 0))
             default: break
@@ -291,16 +252,18 @@ final class NoiseExchange: @unchecked Sendable {
         }
     }
 
-    private func readAnswer(_ c: NWConnection, _ cipher: Noise.Cipher, _ pending: Data, _ plain: Data) {
+    private func readAnswer(_ c: NWConnection, _ cipher: Noise.Cipher, _ pending: Data) {
         c.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { data, _, end, error in
-            var pending = pending + (data ?? Data()), plain = plain
-            guard let more = try? Noise.unframe(&pending, cipher) else { return self.finish(UpstreamAnswer(status: 0)) }
-            plain += more
-            if plain.count > self.cap + UpstreamHTTPAnswer.maxHead { return self.finish(UpstreamAnswer(status: 0)) }  // never more than this is held
+            var pending = pending + (data ?? Data())
+            guard let plain = try? Noise.unframe(&pending, cipher) else { return self.finish(UpstreamAnswer(status: 0)) }
             let closed = end || error != nil
-            if let a = UpstreamHTTPAnswer.parse(plain, closed: closed, cap: self.cap) { return self.finish(a) }
-            if closed { return self.finish(UpstreamAnswer(status: 0)) }
-            self.readAnswer(c, cipher, pending, plain)
+            var outcome = self.reader.feed(plain)  // incremental: the bytes already looked at are never looked at again
+            if outcome == .needMore && closed { outcome = self.reader.end() }
+            switch outcome {
+            case .done(let a): self.finish(a)
+            case .failed: self.finish(UpstreamAnswer(status: 0))
+            case .needMore: if closed { self.finish(UpstreamAnswer(status: 0)) } else { self.readAnswer(c, cipher, pending) }
+            }
         }
     }
 }
@@ -327,10 +290,10 @@ public enum UpstreamAddress {
            host.range(of: "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$", options: .regularExpression) == nil { return nil }
         if inet_pton(AF_INET, host, &v4) == 1 {
             let b = withUnsafeBytes(of: &v4) { Array($0) }
-            if b == [0, 0, 0, 0] || (b[0] == 169 && b[1] == 254) || (224...239).contains(b[0]) { return nil }
+            if b == [0, 0, 0, 0] || b.starts(with: [169, 254]) || (b.first.map { (224...239).contains($0) } ?? true) { return nil }
         } else if inet_pton(AF_INET6, host, &v6) == 1 {
             let b = withUnsafeBytes(of: &v6) { Array($0) }
-            if b.allSatisfy({ $0 == 0 }) || (b[0] == 0xfe && b[1] & 0xc0 == 0x80) || b[0] == 0xff { return nil }
+            if b.allSatisfy({ $0 == 0 }) || (b.first == 0xfe && (b.dropFirst().first ?? 0) & 0xc0 == 0x80) || b.first == 0xff { return nil }
         } else if host.range(of: "^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$", options: .regularExpression) == nil
                     || host.range(of: "^(0[xX][0-9a-fA-F]+|[0-9]+)(\\.(0[xX][0-9a-fA-F]+|[0-9]+))*$", options: .regularExpression) != nil { return nil }  // an address in disguise
         let h = host.lowercased()

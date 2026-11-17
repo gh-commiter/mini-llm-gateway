@@ -266,21 +266,118 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
         #expect(parse("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhi") == nil)  // incomplete: wait
         #expect(parse("HTTP/1.1 429 Too Many\r\nRetry-After: 12\r\nContent-Length: 0\r\n\r\n") == UpstreamAnswer(status: 429, body: Data(), retryAfter: 12))
         #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n") == UpstreamAnswer(status: 200, body: Data("abcde".utf8)))
+        #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3;ext=1\r\nabc\r\n0\r\nX-Trailer: y\r\n\r\n") == UpstreamAnswer(status: 200, body: Data("abc".utf8)))
         #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nab") == nil)
         #expect(parse("HTTP/1.1 200 OK\r\n\r\nrest", closed: true) == UpstreamAnswer(status: 200, body: Data("rest".utf8)))
         #expect(parse("HTTP/1.1 200 OK\r\n\r\nrest") == nil)  // no length, still open
+        #expect(parse("HTTP/1.1 204 No Content\r\n\r\n") == UpstreamAnswer(status: 204))
+        #expect(parse("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 201 Created\r\nContent-Length: 1\r\n\r\nx") == UpstreamAnswer(status: 201, body: Data("x".utf8)))
+        #expect(parse("HTTP/1.0 200 OK\r\nContent-Length: 1\r\n\r\nx")?.status == 200)
         // a redirect is an answer like any other
         #expect(parse("HTTP/1.1 302 Found\r\nLocation: http://evil.example/\r\nContent-Length: 0\r\n\r\n")?.status == 302)
     }
 
-    @Test func garbageAndOversizeAreNoAnswer() {
-        for bad in ["", "garbage\r\n\r\n", "HTTP/1.1 abc\r\n\r\n", "HTTP/1.1 99 X\r\n\r\n", "HTTP/1.1 200 OK\r\nno colon\r\n\r\n", "SMTP/1.1 200 OK\r\n\r\n"] {
-            let a = parse(bad, closed: true)
-            #expect(a == nil || a?.status == 0, Comment(rawValue: bad.debugDescription))
+    /// The size lines the review named (they trapped the first parser), and the other ways a number can be wrong.
+    @Test func hostileChunkSizeLinesAreNoAnswerAndNeverATrap() {
+        let head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+        for line in ["", ";x", "+5", "-1", " 5", "5 ", "g", "0x5", "5;\u{01}", ";", "123456789", "ffffffff", "fffffffff", "00000000000000005", "\u{ff}", "5\u{0}", "٥"] {
+            let a = parse(head + line + "\r\nabcde\r\n0\r\n\r\n", closed: true, cap: 100)
+            #expect(a?.status == 0, Comment(rawValue: "size line \(line.debugDescription): \(String(describing: a))"))
+        }
+        // "5;" with an empty extension and upper-case hex are fine
+        #expect(parse(head + "A;\r\n0123456789\r\n0\r\n\r\n", cap: 100)?.body.count == 10)
+        #expect(parse(head + "000005\r\nabcde\r\n0\r\n\r\n", cap: 100)?.body.count == 5)
+    }
+
+    @Test func malformedAnswersAreNoAnswer() {
+        let bad = ["", "garbage\r\n\r\n", "HTTP/1.1 abc\r\n\r\n", "HTTP/1.1 99 X\r\n\r\n", "HTTP/1.1 1000 X\r\n\r\n", "HTTP/1.1 200OK\r\n\r\n", "HTTP/2 200 OK\r\n\r\n", "SMTP/1.1 200 OK\r\n\r\n",
+                   "HTTP/1.1 200 OK\r\nno colon\r\n\r\n", "HTTP/1.1 200 OK\r\n: empty name\r\n\r\n", "HTTP/1.1 200 OK\r\n folded: x\r\n\r\n", "HTTP/1.1 200 OK\r\nbad name: x\r\n\r\n",
+                   "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\nhi", "HTTP/1.1 200 OK\r\nContent-Length: -1\r\n\r\n", "HTTP/1.1 200 OK\r\nContent-Length: +1\r\n\r\nx",
+                   "HTTP/1.1 200 OK\r\nContent-Length: 1 2\r\n\r\nx", "HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n", "HTTP/1.1 200 OK\r\nContent-Length: 99999999999\r\n\r\n",
+                   "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n\r\n", "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n",
+                   "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", "HTTP/1.1 101 Switching\r\n\r\n",
+                   "HTTP/1.1 100 C\r\n\r\nHTTP/1.1 100 C\r\n\r\nHTTP/1.1 100 C\r\n\r\nHTTP/1.1 100 C\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+                   "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nxZZ0\r\n\r\n", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\nx\r\n0\r\n\r\n",
+                   "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n", "HTTP/1.1 200 OK\u{0}\r\n\r\n", "HTTP/1.1 200 OK\r\nX: \u{e9}\r\n\r\n", "HTTP/1.1 200 OK\nX: y\n\n"]
+        for b in bad {
+            let a = parse(b, closed: true)
+            #expect(a?.status == 0, Comment(rawValue: b.debugDescription))
         }
         #expect(parse("HTTP/1.1 200 OK\r\nContent-Length: 101\r\n\r\n", cap: 100)?.status == 0)
         #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + String(repeating: "ff\r\n" + String(repeating: "a", count: 255) + "\r\n", count: 3), cap: 100)?.status == 0)
-        #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n-5\r\nabc\r\n", cap: 100)?.status == 0)
+        let longTrailer = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n" + String(repeating: "X-T: " + String(repeating: "a", count: 900) + "\r\n", count: 6) + "\r\n"
+        #expect(parse(longTrailer, closed: true)?.status == 0)  // trailers are bounded
+        #expect(parse("HTTP/1.1 200 OK\r\n" + String(repeating: "X: y\r\n", count: 101) + "Content-Length: 0\r\n\r\n", closed: true)?.status == 0)  // so are headers
+        #expect(parse("HTTP/1.1 200 OK\r\nX: " + String(repeating: "a", count: 70_000) + "\r\n\r\n", closed: true)?.status == 0)  // and the head
+    }
+
+    @Test func oneByteChunksAreReadInLinearTime() {
+        func ops(_ n: Int, split: Int) -> (UpstreamReadOutcome, Int, Int) {
+            var raw = Data("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".utf8)
+            for _ in 0..<n { raw += Data("1\r\nx\r\n".utf8) }
+            raw += Data("0\r\n\r\n".utf8)
+            var r = UpstreamHTTPReader(cap: n)
+            var out = UpstreamReadOutcome.needMore, i = 0
+            while i < raw.count && out == .needMore { let e = min(raw.count, i + split); out = r.feed(raw[i..<e]); i = e }
+            return (out, r.operations, raw.count)
+        }
+        for split in [1, 7, 4096, 1 << 30] {
+            let (small, o1, n1) = ops(10_000, split: split), (big, o2, n2) = ops(40_000, split: split)
+            #expect(small == .done(UpstreamAnswer(status: 200, body: Data(repeating: 0x78, count: 10_000))))
+            #expect(big == .done(UpstreamAnswer(status: 200, body: Data(repeating: 0x78, count: 40_000))))
+            #expect(o1 <= 4 * n1 && o2 <= 4 * n2, "operations \(o1)/\(n1), \(o2)/\(n2) for split \(split)")  // a constant per byte, however the bytes arrive
+            #expect(Double(o2) / Double(n2) < Double(o1) / Double(n1) * 1.5)   // and not growing with the size
+        }
+        // one byte more than the cap: refused before it is kept
+        var r = UpstreamHTTPReader(cap: 5)
+        var raw = Data("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".utf8)
+        for _ in 0..<6 { raw += Data("1\r\nx\r\n".utf8) }
+        #expect(r.feed(raw) == .failed)
+    }
+
+    /// Several thousand answers from a seeded generator: valid ones of every kind and mutations of them (cut at every byte, bytes flipped,
+    /// digit strings inserted, long runs of tiny chunks), fed in random pieces. Nothing may crash, the caps hold, the work stays linear.
+    @Test func thousandsOfMutatedAnswersNeverCrashAndStayWithinTheCaps() {
+        struct Rng { var s: UInt64
+            mutating func next() -> UInt64 { s &+= 0x9E3779B97F4A7C15; var z = s; z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9; z = (z ^ (z >> 27)) &* 0x94D049BB133111EB; return z ^ (z >> 31) }
+            mutating func below(_ n: Int) -> Int { Int(next() % UInt64(max(n, 1))) } }
+        var rng = Rng(s: 20260717)
+        let cap = 2000
+        let bodies = ["", "hi", String(repeating: "abc", count: 100), String(repeating: "z", count: 1999)]
+        var valid: [Data] = []
+        for b in bodies {
+            valid.append(Data("HTTP/1.1 200 OK\r\nContent-Length: \(b.utf8.count)\r\nContent-Type: application/json\r\n\r\n\(b)".utf8))
+            valid.append(Data("HTTP/1.1 201 Created\r\nTransfer-Encoding: chunked\r\n\r\n\(String(b.utf8.count, radix: 16))\r\n\(b)\r\n0\r\n\r\n".utf8))
+            valid.append(Data("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n\(b)".utf8))
+        }
+        valid.append(Data("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 429 Slow\r\nRetry-After: 9\r\nContent-Length: 0\r\n\r\n".utf8))
+        var tiny = Data("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".utf8)
+        for _ in 0..<500 { tiny += Data("1;e=1\r\nq\r\n".utf8) }
+        valid.append(tiny + Data("0\r\nT: 1\r\n\r\n".utf8))
+        var cases: [Data] = valid
+        for v in valid { for cut in 0..<v.count { cases.append(v.prefix(cut)) } }  // cut at every byte
+        for _ in 0..<4000 {
+            var v = Array(valid[rng.below(valid.count)])
+            switch rng.below(5) {
+            case 0: for _ in 0...rng.below(4) where !v.isEmpty { v[rng.below(v.count)] = UInt8(truncatingIfNeeded: rng.next()) }
+            case 1: let at = rng.below(v.count + 1); v.insert(contentsOf: Array(String(repeating: "9", count: 1 + rng.below(40)).utf8), at: at)
+            case 2: let at = rng.below(v.count + 1); v.insert(contentsOf: Array("\r\n".utf8), at: at)
+            case 3: if v.count > 3 { v.removeSubrange(rng.below(v.count - 1)..<v.count - 1 - rng.below(2)) }
+            default: v = (0..<rng.below(300)).map { _ in UInt8(truncatingIfNeeded: rng.next()) }  // noise
+            }
+            cases.append(Data(v))
+        }
+        #expect(cases.count > 5000)
+        let started = Date()
+        for c in cases {
+            var r = UpstreamHTTPReader(cap: cap)
+            var out = UpstreamReadOutcome.needMore, i = 0
+            while i < c.count && out == .needMore { let e = min(c.count, i + 1 + rng.below(64)); out = r.feed(c[i..<e]); i = e }
+            if out == .needMore { out = r.end() }
+            if case .done(let a) = out { #expect(a.body.count <= cap && (100...599).contains(a.status)) }
+            #expect(r.operations <= 12 * c.count + 2000, "operations \(r.operations) for \(c.count) bytes")
+        }
+        #expect(Date().timeIntervalSince(started) < 30)
     }
 }
 
@@ -405,6 +502,22 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         let a = send(srv, timeout: 1.5)
         #expect(a.status == 0)
         #expect(Date().timeIntervalSince(start) < 3, "waited \(Date().timeIntervalSince(start)) s")
+    }
+
+    @Test func theUpstreamCodeHasNoTrapsToFindAnAdversaryCanTrigger() throws {
+        // no force unwrap, no try!, no as!, no literal subscript ([0], [1]) in the code that handles what an upstream or the helper sends
+        for file in ["Upstream.swift", "UpstreamHTTP.swift"] {
+            let all = try String(contentsOf: repo.appendingPathComponent("Sources/RouterCore/" + file), encoding: .utf8)
+            for (n, raw) in all.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                var line = String(raw)
+                if line.trimmingCharacters(in: .whitespaces).hasPrefix("//") { continue }
+                line = line.replacingOccurrences(of: #""(\\.|[^"\\])*""#, with: "\"\"", options: .regularExpression)  // the text of string literals
+                if let c = line.range(of: "//") { line = String(line[..<c.lowerBound]) }
+                for (pattern, what) in [(#"[A-Za-z0-9_)\]]!(?!=)"#, "a force unwrap"), (#"\btry!"#, "try!"), (#"\bas!"#, "as!"), (#"\[[0-9]+\]"#, "a literal subscript")] {
+                    #expect(line.range(of: pattern, options: .regularExpression) == nil, Comment(rawValue: "\(file):\(n + 1) \(what): \(raw)"))
+                }
+            }
+        }
     }
 
     @Test func theHostHasNoListenerToBorrow() throws {
