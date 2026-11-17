@@ -154,9 +154,11 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 			Remote      string `json:"remote"`
 			Classes     string `json:"classes"`
 			WithPrivate bool   `json:"withPrivate"`
+			Auto        *bool  `json:"auto"` // nil: keep what the link has
+			Mode        string `json:"mode"`
 		}
 		if len(body) > 0 && decodeStrict(body, &b) != nil {
-			return fail(400, "bad JSON body (team, remote, classes, withPrivate)")
+			return fail(400, "bad JSON body (team, remote, classes, withPrivate, auto, mode)")
 		}
 		var project, team int64 = id, 0
 		if b.Team {
@@ -164,7 +166,7 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		}
 		var err error
 		if method == "PUT" {
-			err = st.LinkUpstream(ctx, project, team, seg[1], b.Remote, b.Classes, b.WithPrivate)
+			err = st.LinkUpstreamWith(ctx, core.LinkSpec{Project: project, Team: team, Upstream: seg[1], Remote: b.Remote, Classes: b.Classes, WithPrivate: b.WithPrivate, Auto: b.Auto, Mode: b.Mode})
 		} else {
 			err = st.UnlinkUpstream(ctx, project, team, seg[1])
 		}
@@ -258,4 +260,39 @@ func ProbeUpstream(ctx context.Context, h UpstreamHost, upstream, deviceName, de
 		return "the device is allowed there; the upstream says: " + core.UpText(e.Error.Message, 200)
 	}
 	return "the upstream answered HTTP " + strconv.Itoa(status)
+}
+
+// adminUpstreamAuto serves POST /upstream-auto: one step of the automatic push (the next due link, if any). The gateway's timer calls the
+// store directly; this route is for a host whose timer lives outside the process that has the network (the Mac app drives the helper's
+// lane with it). It only ever pushes links the owner set to auto, to upstreams the owner added.
+func (a *API) adminUpstreamAuto(ctx context.Context, st *core.Store, method string, failErr func(error) (int, any, bool)) (int, any, bool) {
+	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
+	h := a.upstreamHost(ctx)
+	if h == nil || !h.Available() {
+		return fail(501, "this gateway cannot send to an upstream here")
+	}
+	if method != "POST" {
+		return fail(404, "not found")
+	}
+	sleep := a.o.UpstreamSleep
+	if sleep == nil {
+		sleep = func(d time.Duration) bool { time.Sleep(d); return true }
+	}
+	if a.o.UpstreamBudget > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.o.UpstreamBudget)
+		defer cancel()
+		inner := sleep
+		sleep = func(d time.Duration) bool {
+			if dl, ok := ctx.Deadline(); ok && time.Until(dl) < d+time.Second {
+				return false
+			}
+			return inner(d)
+		}
+	}
+	run, err := st.AutoPush(ctx, h, sleep)
+	if err != nil {
+		return failErr(err)
+	}
+	return 200, run, true
 }

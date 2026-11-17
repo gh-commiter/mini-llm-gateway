@@ -292,6 +292,9 @@ func (s *Store) importNote(tx *sql.Tx, project, author, id int64, in NoteInput, 
 	if err := syncSearch(tx, id); err != nil {
 		return 0, err
 	}
+	if err := s.markUpstreamDirty(tx, project); err != nil {
+		return 0, err
+	}
 	if err := saveProvenance(tx, id, revision+1, pr); err != nil {
 		return 0, err
 	}

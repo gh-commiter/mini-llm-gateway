@@ -1376,6 +1376,19 @@ note id, revision, gateway id, user name of the owner, path, session or usage da
 with another port than this gateway's own) is allowed: it is another gateway. Names that are numbers in disguise (`2852039166`,
 `0x7f000001`) are refused as addresses. An archived project or team cannot be linked, and nothing is sent for one that was archived later.
 
+**Automatic push (opt-in per link).** `minigw gw upstream link <project> <name> --auto` makes the gateway send a link's notes by itself; `--manual`
+turns it off (manual is the default). When a note of the project is published, edited, imported or accepted, the link is marked as having unsent
+changes (two timestamps in the database, never a queue of notes: a restart loses nothing). A background pusher sends the link once it has been quiet
+for a minute, and no later than ten minutes after the first change, so a burst of edits (or a member editing again and again) is one push, and a
+member can never cause more than one push per window. One link at a time. If the push fails, the next attempt is after a minute, then two, four and
+so on up to an hour (with up to 20 % jitter either way), a limit of the upstream's writes is waited out and is not a failure, and a push that has
+unsent changes arriving while it runs leaves the link marked. `minigw gw upstream status` shows per link whether it is auto or manual, since when it
+has unsent changes, the last success, the last failure and how many in a row, the reason and the next attempt, and lists sent notes that were deleted
+here ("deleted here") or made private here ("now private here"): neither is propagated, the copy stays on the upstream until you remove it there.
+Each automatic run leaves one audit row (the link and the counts, never a title or a text). **The gateway never calls an outside host on its own
+account:** the automatic push contacts only an upstream you added with `upstream add` and only for a link you set to `--auto`. On the Mac the app's
+timer asks the core's upstream lane every few seconds (`POST /upstream-auto`, at most one link per request), because the helper cannot call out by itself.
+
 A repeated push sends only what changed: every note is remembered by its content (class, kind, title, text). A changed note is sent
 as a **replacement** of the note the upstream accepted before; if that note is still pending there, or cannot be read by the bound
 user, it goes as a new submission that names the earlier one. Notes deleted here, and changes of class to private, are not

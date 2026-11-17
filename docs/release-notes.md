@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Upstream gateway, step B (part 1): **automatic push**. `minigw gw upstream link <project> <name> --auto` (and `--manual` to turn it off again; manual stays the default) makes the gateway push a link by itself: when a note of the project (or team) is published, edited, imported or accepted, the link is marked as having unsent changes (an outbox of two timestamps per link, in the database, so a restart loses nothing), and a background pusher sends it once the link has been quiet for a minute (at the latest ten minutes after the first change, so a stream of edits cannot hold it back for ever), one link at a time. A burst of edits is one push. After a failure it tries again after a minute, then 2, 4 and so on up to an hour (with jitter), and a write limit of the upstream is waited out, not counted as a failure. `gw upstream status` shows per link: auto or manual, dirty since, last success, last failure (and how many in a row), the reason, the next attempt, and the sent notes that were deleted or made private here (neither is propagated; the copy stays on the upstream until you remove it there). One audit row per automatic run, with counts only. It contacts only an upstream you added and a link you set to `--auto`. On the Mac the app's timer asks the helper (`POST /upstream-auto` on the upstream lane). Database schema 20.
+
 ## 0.7.22
 
 ### Fixed

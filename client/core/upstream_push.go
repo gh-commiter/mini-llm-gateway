@@ -41,9 +41,10 @@ type UpstreamPush struct {
 	DryRun   bool     `json:"dryRun"`
 	// More: the run used its time budget (or must wait out the upstream's write limit) and stopped without a fault: push again
 	// (after Wait seconds). The notes done so far are remembered, so the next run goes on where this one ended.
-	More bool `json:"more,omitempty"`
-	Wait int  `json:"wait,omitempty"`
-	more int  // lines left out of Lines (see maxReportLines)
+	More     bool `json:"more,omitempty"`
+	Wait     int  `json:"wait,omitempty"`
+	more     int  // lines left out of Lines (see maxReportLines)
+	archived bool // the link's project or team is archived: nothing was tried
 	// Next: with More, the id of the last local note this run has dealt with; the next call names it as `after` (with Project or Team and
 	// Upstream) and goes on with the notes above it, so the run always gets further, whatever happened to a note that was refused.
 	Next    int64 `json:"next,omitempty"`
@@ -234,7 +235,13 @@ func (p *pusher) trailer(project int64, n UpstreamNote, supersedes int64) string
 const maxReportLines = 200
 
 func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, after int64, dry bool, sleep func(time.Duration) bool) (UpstreamPush, error) {
+	started := ms(s.now())
 	res, err := s.pushLinkRun(ctx, tr, l, label, after, dry, sleep)
+	if err == nil && !dry && !res.archived { // the outbox: cleared by a success, a back-off after a failure
+		if e := s.afterRun(context.WithoutCancel(ctx), l, res, started); e != nil {
+			return res, e
+		}
+	}
 	if res.more > 0 {
 		res.Lines = append(res.Lines, fmt.Sprintf("... and %d more", res.more))
 	}
@@ -253,7 +260,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 	if archived { // linked before it was archived: nothing is sent for an archived project or team
 		_, isT := SegmentTeam(l.Project)
 		return UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, DryRun: dry, Project: l.Project, Team: isT,
-			Stopped: label + " is archived: nothing is sent until it is unarchived"}, nil
+			Stopped: label + " is archived: nothing is sent until it is unarchived", archived: true}, nil
 	}
 	notes := scan.Notes
 	wctx := context.WithoutCancel(ctx) // a receipt is written even when the time budget of the call is used up meanwhile

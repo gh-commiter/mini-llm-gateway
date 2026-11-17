@@ -592,3 +592,82 @@ func TestUpstreamAddMakesTheDeviceWaitingAndItIsDescribed(t *testing.T) {
 		t.Fatalf("device list after a push: %s", b)
 	}
 }
+
+func waitUntil(t *testing.T, what string, d time.Duration, ok func() bool) {
+	t.Helper()
+	end := time.Now().Add(d)
+	for !ok() {
+		if time.Now().After(end) {
+			t.Fatal("timed out waiting for", what)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// The automatic push between two real gateways (loopback): a published note reaches the upstream by itself after the debounce, a storm of
+// edits is one push, an upstream that refuses is retried with a back-off and the link recovers, and status tells all of it.
+func TestUpstreamAutoPushBetweenTwoGateways(t *testing.T) {
+	f := newUpFx(t, core.Developer)
+	f.add("hub")
+	f.allow()
+	p, project, notes := f.seed()
+	// timing: a quarter of a second quiet, the loop looks every 30 ms
+	f.local.core.SetAutoTiming(core.AutoTiming{Debounce: 300 * time.Millisecond, MaxWait: 5 * time.Second, BackoffBase: 250 * time.Millisecond, BackoffMax: time.Second})
+	f.local.autoTick.Store(int64(30 * time.Millisecond))
+	out, err := f.cmd(coreOpts{auto: true}, "link", "shop", "hub")
+	f.must(err)
+	if !strings.Contains(out, "changes are sent automatically") {
+		t.Fatal(out)
+	}
+	// the notes that were already there go by themselves (switching auto on marks what is unsent)
+	waitUntil(t, "the first automatic push", 10*time.Second, func() bool { n, _ := f.remoteSubmissions(); return n == 2 })
+	st, _ := f.cmd(coreOpts{}, "status", "shop")
+	if !strings.Contains(st, ", auto") || !strings.Contains(st, "last success") || strings.Contains(st, "dirty since") {
+		t.Fatalf("status after the push: %s", st)
+	}
+	// a storm of edits (a member edits the same note 40 times in a quick row): ONE more submission, with the last text
+	n := notes["Invoice numbering"]
+	before, _ := f.remoteSubmissions()
+	for i := 0; i < 40; i++ {
+		cur, err := f.local.core.GetNote(t0, p, project, n.ID)
+		f.must(err)
+		_, err = f.local.core.UpdateNote(t0, p, project, n.ID, cur.Revision, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: fmt.Sprint("storm ", i)})
+		f.must(err)
+	}
+	waitUntil(t, "the push after the storm", 10*time.Second, func() bool { n, _ := f.remoteSubmissions(); return n > before })
+	time.Sleep(1200 * time.Millisecond) // long enough for a second (wrong) push to show
+	after, titles := f.remoteSubmissions()
+	if after != before+1 {
+		t.Fatalf("a storm of 40 edits made %d pushes (%s)", after-before, titles)
+	}
+	var body string
+	f.must(f.remote.core.DB().QueryRow(`SELECT body FROM kb_submissions ORDER BY id DESC LIMIT 1`).Scan(&body))
+	if !strings.Contains(body, "storm 39") {
+		t.Fatalf("not the last text: %q", body)
+	}
+	// the upstream refuses (the device is unbound there): failures with a back-off, shown in status; bound again: it recovers by itself
+	f.must(f.remote.core.RemoveBinding(t0, f.localDev))
+	cur, err := f.local.core.GetNote(t0, p, project, n.ID)
+	f.must(err)
+	_, err = f.local.core.UpdateNote(t0, p, project, n.ID, cur.Revision, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "while it is down"})
+	f.must(err)
+	waitUntil(t, "a failure in status", 10*time.Second, func() bool {
+		s, _ := f.cmd(coreOpts{}, "status", "shop")
+		return strings.Contains(s, "last failure") && strings.Contains(s, "next attempt") && strings.Contains(s, "last refusal")
+	})
+	f.must(f.remote.core.SetBinding(t0, f.localDev, f.ruser))
+	waitUntil(t, "the recovery", 15*time.Second, func() bool {
+		s, _ := f.cmd(coreOpts{}, "status", "shop")
+		return !strings.Contains(s, "dirty since") && strings.Contains(s, "last success")
+	})
+	if n2, _ := f.remoteSubmissions(); n2 != after+1 {
+		t.Fatalf("the change made while it was down arrived %d times", n2-after)
+	}
+	// an audit row per automatic run, counts only
+	var rows int
+	var detail string
+	f.must(f.local.core.DB().QueryRow(`SELECT count(*), coalesce(max(detail),'') FROM audit_events WHERE action='upstream.auto-push'`).Scan(&rows, &detail))
+	if rows < 3 || strings.Contains(detail, "storm") || strings.Contains(detail, "Invoice") {
+		t.Fatalf("%d audit rows, %s", rows, detail)
+	}
+}

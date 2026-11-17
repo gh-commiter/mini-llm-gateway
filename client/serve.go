@@ -587,6 +587,9 @@ type server struct {
 	activity      activityLog         // tekoče in zadnje zahteve modelom (GET /activity)
 	core          *core.Store         // 0.6.0 core (serve_core.go); nil = not opened (offline) or unusable (coreErr)
 	coreErr       error
+	autoStop      chan struct{} // the automatic upstream push (serve_upstream_auto.go): closed to stop it
+	autoDone      chan struct{}
+	autoTick      atomic.Int64               // ns between looks for a due link (0: ten seconds); a test shortens it
 	coreStale     string                     // the core folder of an earlier period that still holds data while the core is refused (serve_core_sandbox.go)
 	coreHook      func(r *req, point string) // tests: pause a member operation after admission
 	api           *coreapi.API               // the core's request handler (serve_core.go); the usage recorder runs in it once openCore started it

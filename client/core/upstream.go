@@ -83,6 +83,24 @@ CREATE TABLE upstream_sent(project_id INTEGER NOT NULL, upstream TEXT NOT NULL, 
 	return err
 }
 
+// migrate20: step B of the upstream gateway: the automatic push (an outbox per link: a flag with the time of the first unsent change and
+// the time of the last one, the outcome of the last runs and the back-off), the mode of a link (submit, or publish: notes written on the
+// upstream directly) and what publish needs to remember of an upstream note (its revision after our last write, a conflict).
+func migrate20(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE upstream_links ADD COLUMN auto INTEGER NOT NULL DEFAULT 0 CHECK(auto IN(0,1));
+ALTER TABLE upstream_links ADD COLUMN mode TEXT NOT NULL DEFAULT 'submit' CHECK(mode IN('submit','publish'));
+ALTER TABLE upstream_links ADD COLUMN dirty_since INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN last_change INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN last_ok INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN last_fail INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN next_attempt INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_sent ADD COLUMN remote_rev INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_sent ADD COLUMN conflict INTEGER NOT NULL DEFAULT 0 CHECK(conflict IN(0,1));
+ALTER TABLE upstream_sent ADD COLUMN conflict_rev INTEGER NOT NULL DEFAULT 0;`)
+	return err
+}
+
 type Upstream struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
@@ -160,14 +178,34 @@ type UpstreamLink struct {
 	WithPrivate bool       `json:"withPrivate"`
 	LastPush    *time.Time `json:"lastPush,omitempty"`
 	LastError   string     `json:"lastError,omitempty"`
+	// Step B: the automatic push and its outbox. DirtySince is the first change not yet sent, LastChange the latest (the debounce counts
+	// from it), NextAttempt the earliest time of the next automatic attempt (the back-off after a failure).
+	Auto        bool       `json:"auto"`
+	Mode        string     `json:"mode"` // submit or publish
+	DirtySince  *time.Time `json:"dirtySince,omitempty"`
+	LastChange  *time.Time `json:"lastChange,omitempty"`
+	LastOK      *time.Time `json:"lastOk,omitempty"`
+	LastFail    *time.Time `json:"lastFail,omitempty"`
+	FailCount   int        `json:"failCount,omitempty"`
+	NextAttempt *time.Time `json:"nextAttempt,omitempty"`
 }
+
+// NotPropagated is a note that was sent and has since been deleted or made private here: neither is propagated (the copy stays on the
+// upstream until removed there), so the status lists them for the owner to act on.
+type NotPropagated struct {
+	Note int64  `json:"note"`
+	Why  string `json:"why"` // "deleted here" or "now private here"
+}
+
+const maxNotPropagated = 50
 
 // UpstreamLinkInfo is a link with what a status shows.
 type UpstreamLinkInfo struct {
 	UpstreamLink
-	Label   string `json:"label"`   // the project's short name, or "team <name>"
-	Pending int    `json:"pending"` // notes that a push would send now (new or changed)
-	Total   int    `json:"total"`   // published notes the link covers
+	NotPropagated []NotPropagated `json:"notPropagated,omitempty"`
+	Label         string          `json:"label"`   // the project's short name, or "team <name>"
+	Pending       int             `json:"pending"` // notes that a push would send now (new or changed)
+	Total         int             `json:"total"`   // published notes the link covers
 }
 
 func parseClasses(csv string, withPrivate bool) ([]Class, error) {
@@ -201,6 +239,27 @@ func classesCSV(cs []Class) string {
 // LinkUpstream creates or changes a link. The local side is named by the owner: a real project, or (team > 0) a team. A project
 // without a link sends nothing.
 func (s *Store) LinkUpstream(ctx context.Context, project, team int64, upstream, remote, classes string, withPrivate bool) error {
+	return s.LinkUpstreamWith(ctx, LinkSpec{Project: project, Team: team, Upstream: upstream, Remote: remote, Classes: classes, WithPrivate: withPrivate})
+}
+
+// LinkSpec is what an owner's `upstream link` says. Auto nil and Mode "" keep what the link has (a new link: manual, submit).
+type LinkSpec struct {
+	Project, Team   int64
+	Upstream        string
+	Remote, Classes string
+	WithPrivate     bool
+	Auto            *bool
+	Mode            string
+}
+
+func (s *Store) LinkUpstreamWith(ctx context.Context, sp LinkSpec) error {
+	project, team, upstream, remote, classes, withPrivate := sp.Project, sp.Team, sp.Upstream, sp.Remote, sp.Classes, sp.WithPrivate
+	if sp.Mode != "" && sp.Mode != "submit" && sp.Mode != "publish" {
+		return ErrRefusal{"mode: submit or publish"}
+	}
+	if sp.Mode == "publish" {
+		return ErrRefusal{"mode publish is not available yet"} // replaced when publish is implemented (part 2 of step B)
+	}
 	if classes == "" {
 		classes = "structure,data"
 		if withPrivate {
@@ -214,7 +273,7 @@ func (s *Store) LinkUpstream(ctx context.Context, project, team int64, upstream,
 	if withPrivate && !contains(cls, Private) {
 		return ErrRefusal{"--with-private names the private class: add it to --class (or leave --class out)"}
 	}
-	return s.adminWrite(ctx, "upstream.link", upstream, map[string]any{"project": project, "team": team, "remote": remote, "classes": classesCSV(cls), "withPrivate": withPrivate}, func(tx *sql.Tx) (string, error) {
+	return s.adminWrite(ctx, "upstream.link", upstream, map[string]any{"project": project, "team": team, "remote": remote, "classes": classesCSV(cls), "withPrivate": withPrivate, "auto": sp.Auto, "mode": sp.Mode}, func(tx *sql.Tx) (string, error) {
 		if e := tx.QueryRow(`SELECT name FROM upstreams WHERE name=?`, upstream).Scan(new(string)); e != nil {
 			return "", notFound(e)
 		}
@@ -263,8 +322,24 @@ func (s *Store) LinkUpstream(ctx context.Context, project, team int64, upstream,
 		if withPrivate {
 			p = 1
 		}
-		_, e := tx.Exec(`INSERT INTO upstream_links(project_id,upstream,remote,remote_team,classes,with_private) VALUES(?,?,?,?,?,?)
-ON CONFLICT(project_id,upstream) DO UPDATE SET remote=excluded.remote, remote_team=excluded.remote_team, classes=excluded.classes, with_private=excluded.with_private, last_error=''`, local, upstream, remote, t, classesCSV(cls), p)
+		var au any
+		if sp.Auto != nil {
+			au = 0
+			if *sp.Auto {
+				au = 1
+			}
+		}
+		_, e := tx.Exec(`INSERT INTO upstream_links(project_id,upstream,remote,remote_team,classes,with_private,auto,mode) VALUES(?,?,?,?,?,?,COALESCE(?,0),CASE WHEN ?='' THEN 'submit' ELSE ? END)
+ON CONFLICT(project_id,upstream) DO UPDATE SET remote=excluded.remote, remote_team=excluded.remote_team, classes=excluded.classes, with_private=excluded.with_private, last_error='', auto=COALESCE(?,auto), mode=CASE WHEN ?='' THEN mode ELSE ? END`,
+			local, upstream, remote, t, classesCSV(cls), p, au, sp.Mode, sp.Mode, au, sp.Mode, sp.Mode)
+		if e != nil {
+			return "", e
+		}
+		if sp.Auto != nil && *sp.Auto { // switching it on: what is already unsent goes with the next push after the debounce
+			_, e = tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN dirty_since=0 THEN ?1 ELSE dirty_since END, last_change=?1 WHERE project_id=?2 AND upstream=?3`, ms(s.now()), local, upstream)
+		} else if sp.Auto != nil { // switching it off: no outbox, no back-off
+			_, e = tx.Exec(`UPDATE upstream_links SET dirty_since=0, last_change=0, fail_count=0, next_attempt=0 WHERE project_id=? AND upstream=?`, local, upstream)
+		}
 		return "", e
 	})
 }
@@ -332,12 +407,20 @@ func linkLabel(tx *sql.Tx, project int64) (string, error) {
 
 func scanLink(sc interface{ Scan(...any) error }) (l UpstreamLink, err error) {
 	var cls string
-	var t, p int
-	var last int64
-	if err = sc.Scan(&l.Project, &l.Upstream, &l.Remote, &t, &cls, &p, &last, &l.LastError); err != nil {
+	var t, p, auto int
+	var last, dirty, change, ok, fail, next int64
+	if err = sc.Scan(&l.Project, &l.Upstream, &l.Remote, &t, &cls, &p, &last, &l.LastError, &auto, &l.Mode, &dirty, &change, &ok, &fail, &l.FailCount, &next); err != nil {
 		return
 	}
-	l.Team, l.WithPrivate = t == 1, p == 1
+	l.Team, l.WithPrivate, l.Auto = t == 1, p == 1, auto == 1
+	ptr := func(ms int64) *time.Time {
+		if ms <= 0 {
+			return nil
+		}
+		x := fromMs(ms)
+		return &x
+	}
+	l.DirtySince, l.LastChange, l.LastOK, l.LastFail, l.NextAttempt = ptr(dirty), ptr(change), ptr(ok), ptr(fail), ptr(next)
 	for _, c := range strings.Split(cls, ",") {
 		l.Classes = append(l.Classes, Class(c))
 	}
@@ -348,7 +431,7 @@ func scanLink(sc interface{ Scan(...any) error }) (l UpstreamLink, err error) {
 	return
 }
 
-const linkCols = `project_id,upstream,remote,remote_team,classes,with_private,last_push,last_error`
+const linkCols = `project_id,upstream,remote,remote_team,classes,with_private,last_push,last_error,auto,mode,dirty_since,last_change,last_ok,last_fail,fail_count,next_attempt`
 
 // upstreamScan is what upstreamNotes found.
 type upstreamScan struct {
@@ -464,7 +547,30 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 			if e != nil {
 				return e
 			}
-			out = append(out, UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending})
+			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending}
+			// notes that went and are no longer here as they were: deleted, or now private (and not covered by the link): the copy on the
+			// upstream stays until the owner removes it there
+			nr, e := tx.Query(`SELECT s.note_id, n.id IS NULL, coalesce(n.class,'') FROM upstream_sent s LEFT JOIN notes n ON n.id=s.note_id AND n.project_id=s.project_id WHERE s.project_id=? AND s.upstream=? ORDER BY s.note_id`, l.Project, l.Upstream)
+			if e != nil {
+				return e
+			}
+			for nr.Next() && len(info.NotPropagated) < maxNotPropagated {
+				var id int64
+				var gone bool
+				var cl string
+				if e = nr.Scan(&id, &gone, &cl); e != nil {
+					nr.Close()
+					return e
+				}
+				switch {
+				case gone:
+					info.NotPropagated = append(info.NotPropagated, NotPropagated{id, "deleted here"})
+				case Class(cl) == Private && !contains(l.Classes, Private):
+					info.NotPropagated = append(info.NotPropagated, NotPropagated{id, "now private here"})
+				}
+			}
+			nr.Close()
+			out = append(out, info)
 		}
 		return nil
 	})
