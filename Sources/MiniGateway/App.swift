@@ -116,6 +116,14 @@ final class AppState: ObservableObject {
     struct Running: Identifiable { let id: String; let time: Date; let model: String; var step: String? }
     @Published var inflight: [Running] = []
     let keychain = Keychain()
+    /// This gateway's own public key and port as the upstream host needs them (an upstream must be another gateway).
+    final class OwnGateway: @unchecked Sendable {
+        private let lock = NSLock()
+        private var key: Data?, port: UInt16 = 0
+        func set(key: Data?, port: UInt16) { lock.lock(); self.key = key; self.port = port; lock.unlock() }
+        func get() -> (key: Data?, port: UInt16) { lock.lock(); defer { lock.unlock() }; return (key, port) }
+    }
+    let ownGateway = OwnGateway()
     /// 0.6.0: the helper that hosts the project core; lives as long as the app (a router restart does not restart it).
     /// Its store is <Application Support>/Mini Gateway/core (0700); missing binary = project routes answer 503.
     let core: CoreHelper
@@ -133,6 +141,10 @@ final class AppState: ObservableObject {
         core = CoreHelper(binary: CoreHelper.bundled(), store: CoreHelper.defaultStore, marks: marks)
         marks.state = self
         Self.coreHelper = core
+        // The upstream gateway (docs/gateway.md): the helper has no network and no Keychain, so this app does the work for it. The
+        // Keychain items are the provider keys' service; the own key and port are filled in by start() (a thread-safe box).
+        let own = ownGateway
+        core.callouts = UpstreamHost(secrets: keychain, ownKey: { own.get().key }, ownPort: { own.get().port })
         for (folder, real) in config.claudeCLI.recordFolders() {  // M2: stara nastavitev brez zapisov: enkrat zapiši trenutno stanje
             log.notice("recorded \(folder, privacy: .public) -> \(real, privacy: .public)")
         }
@@ -284,6 +296,7 @@ final class AppState: ObservableObject {
         }, admin: adminHooks(), core: core, allowedFolders: allowedFolders)
         writeAdminItem()
         Task { await router.checkClaudeSandbox() }  // 0.6.0: the kernel layer under Claude CLI without local tools: checked now, not at the first request
+        ownGateway.set(key: routerKey?.publicKey.rawRepresentation, port: UInt16(clamping: config.port))
         let s = RouterServer(router: router, key: routerKey)
         s.onState = { [weak self] state in
             Task { @MainActor in self?.show(state) }

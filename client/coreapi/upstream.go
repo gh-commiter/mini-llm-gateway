@@ -19,6 +19,8 @@ type UpstreamHost interface {
 	Connect(name, address, token string) (UpstreamInfo, error)
 	Info(name string) UpstreamInfo
 	Forget(name string)
+	// Available: false when the host cannot do upstream work in this process (the Mac helper without a connected app): the routes answer 501.
+	Available() bool
 }
 
 // UpstreamInfo is what an answer may say about an upstream's credentials: the device ID (a public key, what the upstream's owner has
@@ -38,8 +40,8 @@ type upstreamJSON struct {
 func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string, seg []string, q url.Values, body []byte, failErr func(error) (int, any, bool)) (int, any, bool) {
 	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
 	h := a.o.Upstream
-	if h == nil {
-		return fail(501, "this gateway cannot send to an upstream yet (the Mac app does not support it in this version)")
+	if h == nil || !h.Available() {
+		return fail(501, "this gateway cannot send to an upstream here")
 	}
 	num := func(v string) (int64, bool) { n, err := strconv.ParseInt(v, 10, 64); return n, err == nil && n > 0 }
 	switch {
@@ -141,8 +143,8 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 func (a *API) adminUpstreamPush(ctx context.Context, st *core.Store, method string, body []byte, failErr func(error) (int, any, bool)) (int, any, bool) {
 	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
 	h := a.o.Upstream
-	if h == nil {
-		return fail(501, "this gateway cannot send to an upstream yet (the Mac app does not support it in this version)")
+	if h == nil || !h.Available() {
+		return fail(501, "this gateway cannot send to an upstream here")
 	}
 	if method != "POST" {
 		return fail(404, "not found")
@@ -157,7 +159,19 @@ func (a *API) adminUpstreamPush(ctx context.Context, st *core.Store, method stri
 	}
 	sleep := a.o.UpstreamSleep
 	if sleep == nil {
-		sleep = time.Sleep
+		sleep = func(d time.Duration) bool { time.Sleep(d); return true }
+	}
+	if a.o.UpstreamBudget > 0 { // one call of a helper has a time limit: the run ends with "more" and the caller asks again
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.o.UpstreamBudget)
+		defer cancel()
+		inner := sleep
+		sleep = func(d time.Duration) bool {
+			if dl, ok := ctx.Deadline(); ok && time.Until(dl) < d+time.Second {
+				return false
+			}
+			return inner(d)
+		}
 	}
 	res, err := st.PushUpstream(ctx, h, b.Project, b.Team, b.DryRun, sleep)
 	if err != nil {

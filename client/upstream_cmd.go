@@ -121,33 +121,59 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		case len(pos) != 2:
 			usage()
 		}
-		var r struct {
-			Pushes []struct {
-				Label, Upstream, Remote string
-				Lines                   []string
-				Created, Skipped        int
-				Replaced, Refused       int
-				Stopped                 string
-				DryRun                  bool
+		var r struct{ Pushes []upPush }
+		// A helper answers a call within 30 seconds: a long push comes back with "more" (and how long to wait): ask again.
+		for calls := 1; ; calls++ {
+			r.Pushes = nil
+			a.do("POST", "/upstream-push", body, &r)
+			more, wait := false, 0
+			for _, p := range r.Pushes {
+				if p.More {
+					more, wait = true, max(wait, p.Wait)
+				}
 			}
-		}
-		a.do("POST", "/upstream-push", body, &r)
-		for _, p := range r.Pushes {
-			say(clean(fmt.Sprintf("%s -> %s (%s)", p.Label, p.Upstream, p.Remote)))
-			for _, l := range p.Lines {
-				say(clean("  " + l))
+			upstreamPrint(r.Pushes)
+			if !more || calls >= 1000 {
+				break
 			}
-			verb := ""
-			if p.DryRun {
-				verb = "would be "
-			}
-			say(fmt.Sprintf("  %screated %d, replaced %d, skipped %d, refused %d", verb, p.Created, p.Replaced, p.Skipped, p.Refused))
-			if p.Stopped != "" {
-				say(clean("  stopped: " + p.Stopped))
+			if wait > 0 {
+				pause := u.pause
+				if pause == nil {
+					pause = time.Sleep
+				}
+				pause(time.Duration(wait) * time.Second)
 			}
 		}
 	default:
 		usage()
+	}
+}
+
+type upPush struct {
+	Label, Upstream, Remote string
+	Lines                   []string
+	Created, Skipped        int
+	Replaced, Refused       int
+	Stopped                 string
+	DryRun                  bool
+	More                    bool
+	Wait                    int
+}
+
+func upstreamPrint(pushes []upPush) {
+	for _, p := range pushes {
+		say(clean(fmt.Sprintf("%s -> %s (%s)", p.Label, p.Upstream, p.Remote)))
+		for _, l := range p.Lines {
+			say(clean("  " + l))
+		}
+		verb := ""
+		if p.DryRun {
+			verb = "would be "
+		}
+		say(fmt.Sprintf("  %screated %d, replaced %d, skipped %d, refused %d", verb, p.Created, p.Replaced, p.Skipped, p.Refused))
+		if p.Stopped != "" {
+			say(clean("  stopped: " + p.Stopped))
+		}
 	}
 }
 

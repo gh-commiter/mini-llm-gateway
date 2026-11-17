@@ -100,6 +100,8 @@ func (h upstreamHost) Info(name string) coreapi.UpstreamInfo {
 	return coreapi.UpstreamInfo{Device: id}
 }
 
+func (h upstreamHost) Available() bool { return true }
+
 func (h upstreamHost) Forget(name string) { keyDel(h.s.cfgDir, upstreamKeyName(name)) }
 
 // Do: one request to the upstream over a fresh encrypted connection made in memory. Redirects are never followed, an answer is read up to

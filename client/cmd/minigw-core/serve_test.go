@@ -29,9 +29,14 @@ func testAPI(t *testing.T) *coreapi.API {
 // start serves one end of an in-memory connection and returns the other end and the result of serve.
 func start(t *testing.T, api *coreapi.API, timeout time.Duration) (net.Conn, chan error) {
 	t.Helper()
+	return startWith(t, api, nil, timeout)
+}
+
+func startWith(t *testing.T, api *coreapi.API, host *coreapi.CalloutHost, timeout time.Duration) (net.Conn, chan error) {
+	t.Helper()
 	a, b := net.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- serve(context.Background(), b, testSecret, api, timeout) }()
+	go func() { done <- serve(context.Background(), b, testSecret, api, host, timeout) }()
 	t.Cleanup(func() { a.Close() })
 	return a, done
 }
@@ -46,7 +51,12 @@ func send(t *testing.T, c net.Conn, m msg) {
 // clientHandshake is the app's side; secret lets a test use a wrong one.
 func clientHandshake(t *testing.T, c net.Conn, secret []byte, lo, hi int) (reply msg) {
 	t.Helper()
-	send(t, c, msg{Type: "hello", Min: lo, Max: hi, Nonce: "cn"})
+	return clientHandshakeWith(t, c, secret, lo, hi, false)
+}
+
+func clientHandshakeWith(t *testing.T, c net.Conn, secret []byte, lo, hi int, callouts bool) (reply msg) {
+	t.Helper()
+	send(t, c, msg{Type: "hello", Min: lo, Max: hi, Nonce: "cn", Callouts: callouts})
 	r, err := readMsg(c)
 	if err != nil {
 		t.Fatalf("hello answer: %v", err)
@@ -208,5 +218,64 @@ func TestWatchParentCallsExitWhenItChanges(t *testing.T) {
 	case <-called:
 	case <-time.After(2 * time.Second):
 		t.Fatal("watchParent did not fire")
+	}
+}
+
+// The upstream routes of the helper: the app does the work through callouts on the connection. Without "callouts" in its hello the
+// routes answer 501; with it, the token goes to the app once (connect) and never comes back in an answer.
+func TestUpstreamCalloutsThroughTheHelper(t *testing.T) {
+	newAPI := func(t *testing.T, host *coreapi.CalloutHost) *coreapi.API {
+		st, err := core.Open(t.TempDir(), core.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		return coreapi.New(coreapi.Options{Store: func() *core.Store { return st }, Upstream: host, UpstreamBudget: 5 * time.Second})
+	}
+	admin := coreapi.Context{Kind: coreapi.KindAdmin}
+	put := coreapi.Request{Method: "PUT", Path: "/upstreams/hub", Body: []byte(`{"address":"hub.example","token":"SECRET-TOKEN#KEY"}`)}
+
+	// an app without callouts
+	host := &coreapi.CalloutHost{}
+	c, _ := startWith(t, newAPI(t, host), host, time.Second)
+	if r := clientHandshakeWith(t, c, testSecret, 1, 1, false); r.Type != "ready" {
+		t.Fatal(r)
+	}
+	if r, err := coreapi.NewClient(c).Do(context.Background(), admin, put); err != nil || r.Status != 501 {
+		t.Fatalf("%v %+v", err, r)
+	}
+
+	// an app with callouts
+	host = &coreapi.CalloutHost{}
+	c, _ = startWith(t, newAPI(t, host), host, 5*time.Second)
+	if r := clientHandshakeWith(t, c, testSecret, 1, 1, true); r.Type != "ready" {
+		t.Fatal(r)
+	}
+	var seen []coreapi.CalloutRequest
+	cl := coreapi.NewClient(c)
+	cl.OnCallout = func(q coreapi.CalloutRequest) coreapi.CalloutResult {
+		seen = append(seen, q)
+		switch q.Op {
+		case coreapi.CalloutConnect:
+			return coreapi.CalloutResult{Device: "DEVICEID", Where: "the Keychain"}
+		case coreapi.CalloutDo:
+			return coreapi.CalloutResult{Status: 403, Body: []byte(`{"error":{"message":"No project access"}}`)}
+		case coreapi.CalloutInfo:
+			return coreapi.CalloutResult{Device: "DEVICEID"}
+		}
+		return coreapi.CalloutResult{}
+	}
+	r, err := cl.Do(context.Background(), admin, put)
+	if err != nil || r.Status != 200 {
+		t.Fatalf("%v %+v", err, r)
+	}
+	if strings.Contains(string(r.Body), "SECRET-TOKEN") || !strings.Contains(string(r.Body), "DEVICEID") || !strings.Contains(string(r.Body), "No project access") {
+		t.Fatalf("answer: %s", r.Body)
+	}
+	if len(seen) != 2 || seen[0].Op != coreapi.CalloutConnect || seen[0].Token != "SECRET-TOKEN#KEY" || seen[0].Address != "hub.example:8765" || seen[1].Op != coreapi.CalloutDo || seen[1].Token != "" {
+		t.Fatalf("%+v", seen)
+	}
+	if r, err = cl.Do(context.Background(), admin, coreapi.Request{Method: "GET", Path: "/upstreams"}); err != nil || r.Status != 200 || strings.Contains(string(r.Body), "SECRET") || !strings.Contains(string(r.Body), "hub.example:8765") {
+		t.Fatalf("%v %s", err, r.Body)
 	}
 }

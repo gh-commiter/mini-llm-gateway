@@ -38,12 +38,18 @@ type UpstreamPush struct {
 	Refused  int      `json:"refused"`
 	Stopped  string   `json:"stopped,omitempty"` // why the run ended before the last note
 	DryRun   bool     `json:"dryRun"`
+	// More: the run used its time budget (or must wait out the upstream's write limit) and stopped without a fault: push again
+	// (after Wait seconds). The notes done so far are remembered, so the next run goes on where this one ended.
+	More bool `json:"more,omitempty"`
+	Wait int  `json:"wait,omitempty"`
 }
 
 // PushUpstream sends the published notes of the linked projects (project or team > 0: that one; both 0: every link) to their upstreams as
 // SUBMISSIONS for the upstream's reviewers. dry: only asks the upstream what exists; nothing is written there or here. sleep waits out a
-// rate limit (the tests give a fake).
-func (s *Store) PushUpstream(ctx context.Context, tr UpstreamTransport, project, team int64, dry bool, sleep func(time.Duration)) ([]UpstreamPush, error) {
+// rate limit and says whether it did (false: it cannot, for example the time budget of ctx is nearly used: the run then ends with More).
+// ctx may carry a deadline, the time budget of one call (the Mac helper answers one request within 30 seconds): when it is used the
+// run ends with More and the next call goes on.
+func (s *Store) PushUpstream(ctx context.Context, tr UpstreamTransport, project, team int64, dry bool, sleep func(time.Duration) bool) ([]UpstreamPush, error) {
 	links, err := s.UpstreamLinks(ctx, project, team)
 	if err != nil {
 		return nil, err
@@ -66,8 +72,10 @@ type pusher struct {
 	s     *Store
 	tr    UpstreamTransport
 	up    string
-	sleep func(time.Duration)
+	sleep func(time.Duration) bool
 	ctx   context.Context
+	more  bool          // set when a limit could not be waited out
+	wait  time.Duration // for how long
 }
 
 type upAnswer struct {
@@ -100,7 +108,10 @@ func (p *pusher) call(method, path string, hdr map[string]string, body []byte) (
 		if retry > maxRateWait {
 			retry = maxRateWait
 		}
-		p.sleep(retry)
+		if !p.sleep(retry) {
+			p.more, p.wait = true, retry
+			return a
+		}
 	}
 }
 
@@ -188,29 +199,34 @@ func (p *pusher) trailer(n UpstreamNote, supersedes int64) string {
 	return t + " -->\n"
 }
 
-func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, dry bool, sleep func(time.Duration)) (UpstreamPush, error) {
+func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, dry bool, sleep func(time.Duration) bool) (UpstreamPush, error) {
 	l, _, _, notes, err := s.upstreamPlan(ctx, l.Project, l.Upstream)
 	if err != nil {
 		return UpstreamPush{}, err
 	}
+	wctx := context.WithoutCancel(ctx) // a receipt is written even when the time budget of the call is used up meanwhile
 	res := UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, DryRun: dry}
 	p := &pusher{s: s, tr: tr, up: l.Upstream, sleep: sleep, ctx: ctx}
 	stop := func(why string) (UpstreamPush, error) {
 		res.Stopped = why
 		if !dry {
-			if err := s.upstreamRecordPush(ctx, l.Project, l.Upstream, why, false); err != nil {
+			if err := s.upstreamRecordPush(wctx, l.Project, l.Upstream, why, false); err != nil {
 				return res, err
 			}
 		}
 		return res, nil
 	}
 	remote, why := p.resolve(l)
+	if p.more { // the upstream's write limit cannot be waited out within this call
+		res.More, res.Wait, res.Stopped = true, int(p.wait/time.Second), "the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds"
+		return res, nil
+	}
 	if why != "" {
 		return stop(why)
 	}
 	if len(notes) > maxPushNotes {
 		notes = notes[:maxPushNotes]
-		res.Stopped = fmt.Sprintf("only the first %d notes this run: push again for the rest", maxPushNotes)
+		res.More, res.Stopped = true, fmt.Sprintf("only the first %d notes this run: push again for the rest", maxPushNotes)
 	}
 	line := func(action string, n UpstreamNote, detail string) {
 		l := action + " " + strconv.FormatInt(n.ID, 10) + " " + upText(n.Title, 80)
@@ -221,6 +237,10 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 	}
 	base := fmt.Sprintf("/minigw/v1/projects/%d/kb/submissions", remote)
 	for _, n := range notes {
+		if ctx.Err() != nil { // the time budget of this call is used: the next call goes on (nothing is lost, the receipts are written)
+			res.More, res.Stopped = true, "time budget of this call used: push again"
+			return res, nil
+		}
 		if n.Sent != nil && n.Sent.Hash == n.Hash {
 			res.Skipped++
 			line("skip", n, "unchanged since the last push")
@@ -232,6 +252,10 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 			action = "replace"
 			supersedes = n.Sent.RemoteSub
 			a := p.call("GET", fmt.Sprintf("%s/%d", base, n.Sent.RemoteSub), nil, nil)
+			if p.more {
+				res.More, res.Wait, res.Stopped = true, int(p.wait/time.Second), "the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds"
+				return res, nil
+			}
 			var sub struct {
 				State string
 				Note  int64
@@ -269,6 +293,11 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 		payload, _ := json.Marshal(fields)
 		a := p.call("POST", base, map[string]string{"Idempotency-Key": p.submissionKey(l.Project, n, supersedes)}, payload)
 		if a.status != 201 {
+			if p.more { // a write limit that cannot be waited out in this call: not a refusal of the note
+				res.More, res.Wait = true, int(p.wait/time.Second)
+				res.Stopped = "the upstream's write limit: push again in " + strconv.Itoa(res.Wait) + " seconds"
+				return res, nil
+			}
 			res.Refused++
 			line("refused", n, refusal(a))
 			if a.status == 0 || a.status == 401 || a.status == 403 || a.status == 404 || a.errType == "pending_limit" || a.status == 429 {
@@ -282,7 +311,7 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 			line("refused", n, "the upstream's answer names no submission")
 			continue
 		}
-		if err := s.upstreamRecordSent(ctx, l.Project, l.Upstream, n, sub.ID, replaces); err != nil {
+		if err := s.upstreamRecordSent(wctx, l.Project, l.Upstream, n, sub.ID, replaces); err != nil {
 			return res, err
 		}
 		if action == "replace" {
@@ -293,13 +322,13 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 		line(action, n, detail)
 	}
 	if !dry && res.Refused == 0 && res.Stopped == "" {
-		if err := s.upstreamRecordPush(ctx, l.Project, l.Upstream, "", true); err != nil {
+		if err := s.upstreamRecordPush(wctx, l.Project, l.Upstream, "", true); err != nil {
 			return res, err
 		}
 	} else if !dry && res.Refused > 0 {
 		for i := len(res.Lines) - 1; i >= 0; i-- {
 			if strings.HasPrefix(res.Lines[i], "refused ") {
-				if err := s.upstreamRecordPush(ctx, l.Project, l.Upstream, upText(res.Lines[i], 300), false); err != nil {
+				if err := s.upstreamRecordPush(wctx, l.Project, l.Upstream, upText(res.Lines[i], 300), false); err != nil {
 					return res, err
 				}
 				break

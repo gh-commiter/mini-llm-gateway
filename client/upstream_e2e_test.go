@@ -409,3 +409,26 @@ func readFull(c net.Conn, b []byte) (int, error) {
 	}
 	return n, nil
 }
+
+// A push that the gateway ends with "more" (a helper answers a call within 30 seconds) is asked for again, after the wait it names.
+func TestUpstreamPushAsksAgainWhileTheGatewaySaysMore(t *testing.T) {
+	calls := 0
+	a := &adminClient{fake: func(method, path string, _ []byte) (int, []byte) {
+		if path == "/projects" {
+			return 200, []byte(`{"projects":[{"ID":3,"Slug":"shop","Name":"Shop"}]}`)
+		}
+		calls++
+		more := ""
+		if calls < 3 {
+			more = `,"more":true,"wait":7,"stopped":"the upstream's write limit: push again in 7 seconds"`
+		}
+		return 200, []byte(fmt.Sprintf(`{"pushes":[{"label":"shop","upstream":"hub","remote":"shop","lines":["create %d n"],"created":1%s}]}`, calls, more))
+	}}
+	var waits []time.Duration
+	out, _, exit := captured(func() {
+		coreCommand(a, []string{"upstream", "push", "shop"}, coreOpts{pause: func(d time.Duration) { waits = append(waits, d) }})
+	})
+	if exit != 0 || calls != 3 || len(waits) != 2 || waits[0] != 7*time.Second || strings.Count(out, "create ") != 3 {
+		t.Fatalf("%d calls, waits %v, exit %d: %s", calls, waits, exit, out)
+	}
+}

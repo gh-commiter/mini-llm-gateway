@@ -17,6 +17,7 @@ func (noHost) Do(context.Context, string, string, string, map[string]string, []b
 func (noHost) Connect(string, string, string) (UpstreamInfo, error) { return UpstreamInfo{}, nil }
 func (noHost) Info(string) UpstreamInfo                             { return UpstreamInfo{} }
 func (noHost) Forget(string)                                        {}
+func (noHost) Available() bool                                      { return true }
 
 // Only the owner reaches the upstream routes: no member route exists for them, and a host without the feature answers 501.
 func TestUpstreamRoutesAreTheOwnersOnly(t *testing.T) {

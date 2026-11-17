@@ -504,7 +504,7 @@ agent). Usage events are sent to the helper, which stores them; while the helper
 at most, a longer outage becomes a gap). The Claude CLI agent reads notes with `minigw kb search` or `minigw note list|read` only with
 **Allow local tools**, Codex only with its network switch on.
 
-## An upstream gateway (0.7.21, `minigw serve`)
+## An upstream gateway (0.7.21)
 
 `minigw gw upstream` (usage.md, "Sending a project's knowledge to another gateway") makes this gateway a client of another one.
 The non-secret part lives in the core database (schema 19): `upstreams` (name, address), `upstream_links` (project or team, the
@@ -517,6 +517,13 @@ appears in the database, a backup, the log, an API answer or an argument. Each r
 MiB (up to 1 MiB of it is parsed). The routes are the owner's (`/upstreams`, `/upstream-push`, admin-api.md); the push uses only the
 upstream's existing member routes (`GET /minigw/v1/projects/<slug>`, `GET /minigw/v1/teams`, `POST .../kb/submissions` with an
 idempotency key, `GET` of a submission and of a note to learn what exists). The panel for it is a later step.
+
+On the Mac app the helper has no network and no Keychain, so the app does that work for it: the core asks through callouts
+(core-adapter.md), the app keeps the secret as the Keychain item `upstream:<name>` of the provider keys' service (the helper never sees
+it, except the token once at `add`, which it does not keep), and makes the connection with the client's own Noise code (`NoiseProxy`,
+the upstream's key pinned) through a proxy that lives for one request on a port chosen by the system, with a session that follows no
+redirect and reads at most 1 MiB. The app refuses an upstream that is this gateway by key and by address. The Keychain access rules are
+those of the provider keys: only the app reads them.
 
 ## Usage events and quota (0.6.0, `minigw serve` and the Mac app)
 

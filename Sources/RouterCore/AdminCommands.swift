@@ -17,6 +17,11 @@ public struct AdminOpts {
     public var reason = "", team = "", by = "", phase = "", activity = "", task = ""
     public var days = "7", user = "", project = "", model = "", claudeProbe = "", provider = "", device = "", folder = "", sort = ""
     public var json = false, csv = false, history = false, explain = false
+    /// upstream commands: the link and push options, and what the token is read with (the command reads it only after its arguments are
+    /// right: raw text from stdin or the terminal, checked by AdminCommands.secretLine)
+    public var remoteProject = "", remoteTeam = "", classes = ""
+    public var withPrivate = false, dryRun = false
+    public var tokenInput: (() throws -> String)?
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
                 provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "", by: String = "", phase: String = "", activity: String = "", task: String = "") {
         self.reason = reason; self.team = team; self.by = by; self.phase = phase; self.activity = activity; self.task = task
@@ -60,6 +65,8 @@ public final class AdminCommands {
     let out: (String) -> Void
     public var zone = TimeZone.current
     public var now: () -> Date = { Date() }
+    /// Waits (seconds) between the calls of a long `upstream push`; tests give a fake.
+    public var pause: (Double) -> Void = { Thread.sleep(forTimeInterval: $0) }
 
     public init(call: @escaping Call, out: @escaping (String) -> Void) { self.call = call; self.out = out }
 
@@ -112,6 +119,7 @@ public final class AdminCommands {
         switch pos[0] {
         case "kb": try kb(pos, reason: o.reason, team: o.team)
         case "team": try team(pos)
+        case "upstream": try upstream(pos, o)
         case "user":
             try need(2, 4)
             switch (pos[1], pos.count) {

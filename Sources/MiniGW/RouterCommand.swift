@@ -33,7 +33,7 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw settings                                    the settings in this terminal (minigw-tui; also over SSH)
   minigw gw api GET|POST|PATCH|DELETE <path>            one admin API request (docs/admin-api.md): the JSON body
                                                         on stdin, the JSON answer on stdout (used by minigw-tui)
-""" + "\n  " + AdminCommands.help
+""" + "\n  " + AdminCommands.help + "\n  " + AdminCommands.upstreamHelp
 
 private struct AdminConnection {
     let port: UInt16
@@ -475,16 +475,20 @@ func routerCommand(_ argv: [String]) {
         let argv = [tui, "--minigw", me].map { strdup($0) } + [nil]
         execv(tui, argv)
         fail("cannot start \(tui): \(String(cString: strerror(errno)))")
-    case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage", "usage-events", "project-sessions", "quota":  // 0.6.0: the owner's commands of the project database
+    case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage", "usage-events", "project-sessions", "quota", "upstream":  // 0.6.0: the owner's commands of the project database
         let cmd = AdminCommands(call: { method, path, body in
             let (status, data) = a.raw(method, Router.adminPrefix + path, body, proof: true)
             return (status, data ?? Data())
         }, out: { try? out.write(contentsOf: Data($0.utf8)) })
         do {
-            try cmd.run(pos, AdminOpts(days: flags["days"] ?? "7", user: flags["user"] ?? "", project: flags["project"] ?? "",
+            var opts = AdminOpts(days: flags["days"] ?? "7", user: flags["user"] ?? "", project: flags["project"] ?? "",
                                        model: flags["model"] ?? "", claudeProbe: flags["claude-probe"] ?? "",
                                        provider: flags["provider"] ?? "", device: flags["device"] ?? "", folder: flags["folder"] ?? "", sort: flags["sort"] ?? "",
-                                       json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true", explain: flags["explain"] == "true", reason: flags["reason"] ?? "", team: flags["team"] ?? "", by: flags["by"] ?? "", phase: flags["phase"] ?? "", activity: flags["activity"] ?? "", task: flags["task"] ?? ""))
+                                       json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true", explain: flags["explain"] == "true", reason: flags["reason"] ?? "", team: flags["team"] ?? "", by: flags["by"] ?? "", phase: flags["phase"] ?? "", activity: flags["activity"] ?? "", task: flags["task"] ?? "")
+            opts.remoteProject = flags["remote-project"] ?? ""; opts.remoteTeam = flags["remote-team"] ?? ""; opts.classes = flags["class"] ?? ""
+            opts.withPrivate = flags["with-private"] == "true"; opts.dryRun = flags["dry-run"] == "true"
+            opts.tokenInput = { readKey("Copy Token of the upstream") }  // stdin or the terminal, not echoed, never an argument
+            try cmd.run(pos, opts)
         } catch let e as AdminCLIError { fail(e.message, code: e.code) } catch { fail("\(error)") }
 
     default:

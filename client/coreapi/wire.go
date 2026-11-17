@@ -125,6 +125,9 @@ type Client struct {
 	mu   sync.Mutex
 	conn io.ReadWriter
 	next uint64
+	// OnCallout answers the callouts of the helper (callout.go) while a request is handled; nil: the helper gets no answer and the
+	// request fails.
+	OnCallout func(CalloutRequest) CalloutResult
 }
 
 func NewClient(conn io.ReadWriter) *Client { return &Client{conn: conn} }
@@ -137,12 +140,32 @@ func (c *Client) Do(ctx context.Context, cx Context, r Request) (Response, error
 	if err := WriteRequest(c.conn, c.next, cx, r); err != nil {
 		return Response{}, err
 	}
-	id, resp, err := ReadResponse(c.conn)
-	if err != nil {
-		return Response{}, err
+	for {
+		var f struct {
+			wireResponse
+			Callout *CalloutRequest `json:"callout"`
+		}
+		if err := readFrame(c.conn, &f); err != nil {
+			return Response{}, err
+		}
+		if f.V != ProtocolVersion {
+			return Response{}, fmt.Errorf("%w: %d", ErrVersion, f.V)
+		}
+		if f.Callout != nil {
+			if c.OnCallout == nil || f.ID != c.next {
+				return Response{}, errors.New("coreapi: unexpected callout")
+			}
+			if err := WriteCalloutResult(c.conn, f.ID, c.OnCallout(*f.Callout)); err != nil {
+				return Response{}, err
+			}
+			continue
+		}
+		if f.Error != "" {
+			return Response{}, errors.New(f.Error)
+		}
+		if f.ID != c.next {
+			return Response{}, fmt.Errorf("coreapi: answer %d to request %d", f.ID, c.next)
+		}
+		return f.Response, nil
 	}
-	if id != c.next {
-		return Response{}, fmt.Errorf("coreapi: answer %d to request %d", id, c.next)
-	}
-	return resp, nil
 }

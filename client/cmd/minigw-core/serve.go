@@ -44,6 +44,7 @@ type msg struct {
 	Code      string `json:"code,omitempty"`
 	ServerMin int    `json:"server_min,omitempty"`
 	ServerMax int    `json:"server_max,omitempty"`
+	Callouts  bool   `json:"callouts,omitempty"` // hello: the app can do upstream work for the helper (callouts, coreapi/callout.go)
 }
 
 func mac(secret []byte, label string, version int, a, b string) string {
@@ -80,40 +81,44 @@ func readMsg(c net.Conn) (m msg, err error) {
 	return m, json.Unmarshal(b, &m)
 }
 
-func handshake(c net.Conn, secret []byte) error {
+func handshake(c net.Conn, secret []byte) (callouts bool, err error) {
 	c.SetDeadline(time.Now().Add(handshakeTimeout))
 	defer c.SetDeadline(time.Time{})
 	h, err := readMsg(c)
 	if err != nil || h.Type != "hello" || h.Nonce == "" || len(h.Nonce) > 128 {
-		return errors.New("bad hello")
+		return false, errors.New("bad hello")
 	}
 	v := coreapi.ProtocolVersion
 	if h.Min > v || h.Max < v {
 		writeMsg(c, msg{Type: "error", Code: "version_mismatch", ServerMin: v, ServerMax: v})
-		return fmt.Errorf("version mismatch: the app speaks %d..%d, the helper %d", h.Min, h.Max, v)
+		return false, fmt.Errorf("version mismatch: the app speaks %d..%d, the helper %d", h.Min, h.Max, v)
 	}
 	nb := make([]byte, 16)
 	rand.Read(nb)
 	sn := fmt.Sprintf("%x", nb)
 	if err := writeMsg(c, msg{Type: "hello_ok", Version: v, Nonce: sn, MAC: mac(secret, "srv", v, h.Nonce, sn)}); err != nil {
-		return err
+		return false, err
 	}
 	a, err := readMsg(c)
 	if err != nil || a.Type != "auth" || !hmac.Equal([]byte(a.MAC), []byte(mac(secret, "cli", v, sn, h.Nonce))) {
 		writeMsg(c, msg{Type: "error", Code: "auth_failed"})
-		return errors.New("auth failed (wrong or stale secret)")
+		return false, errors.New("auth failed (wrong or stale secret)")
 	}
-	return writeMsg(c, msg{Type: "ready"})
+	return h.Callouts, writeMsg(c, msg{Type: "ready"})
 }
 
 // serve: handshake, then coreapi frames one at a time until the app closes the connection (nil). A frame over
 // coreapi.MaxFrame is refused before its payload is read (coreapi.ReadRequest); a request is answered within timeout or
 // with coreapi's 503. ponytail: a peer that stalls inside a frame is not timed out; the peer is the authenticated parent
 // and its own deadline kills this process.
-func serve(ctx context.Context, c net.Conn, secret []byte, api *coreapi.API, timeout time.Duration) error {
+func serve(ctx context.Context, c net.Conn, secret []byte, api *coreapi.API, host *coreapi.CalloutHost, timeout time.Duration) error {
 	defer c.Close()
-	if err := handshake(c, secret); err != nil {
+	callouts, err := handshake(c, secret)
+	if err != nil {
 		return err
+	}
+	if host != nil {
+		host.Attach(c, callouts)
 	}
 	for {
 		id, cx, rq, err := coreapi.ReadRequest(c)
@@ -127,6 +132,9 @@ func serve(ctx context.Context, c net.Conn, secret []byte, api *coreapi.API, tim
 			return err
 		}
 		rctx, cancel := context.WithTimeout(ctx, timeout)
+		if host != nil {
+			host.Begin(id)
+		}
 		resp := api.Handle(rctx, cx, rq)
 		if rctx.Err() != nil {
 			resp = coreapi.Unavailable() // the outcome of a write is unknown to the caller: it must not assume

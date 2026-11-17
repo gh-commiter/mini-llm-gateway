@@ -79,8 +79,12 @@ func main() {
 		log.Printf("WARNING: the core store cannot be used, every request answers 503 core_unavailable: %v", openErr)
 		st = nil
 	}
+	host := &coreapi.CalloutHost{} // the app does the upstream work (network, credential store) for the helper: callouts
 	api := coreapi.New(coreapi.Options{
-		Store: func() *core.Store { return st },
+		Upstream: host,
+		// one call of the helper has 30 seconds: a push ends with "more" well before and the caller asks again
+		UpstreamBudget: 10 * time.Second,
+		Store:          func() *core.Store { return st },
 		Unavailable: func() string {
 			if openErr != nil {
 				return openErr.Error()
@@ -93,7 +97,7 @@ func main() {
 	if openErr == nil { // as in minigw serve: no recorder and no spool file while the core is not open (nothing is written next to protected data)
 		api.StartRecorder() // usage events (the app sends them): stored in the core; spooled (bounded) in the store folder if a write fails
 	}
-	err = serve(context.Background(), conn, secret, api, requestTimeout)
+	err = serve(context.Background(), conn, secret, api, host, requestTimeout)
 	api.StopRecorder() // drain the queue while the core is still open
 	if st != nil {
 		st.Close()

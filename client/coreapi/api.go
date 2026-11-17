@@ -75,7 +75,9 @@ type Options struct {
 	PanelProviders []PanelProvider
 	// Upstream sends to another gateway (nil: the upstream routes answer 501). UpstreamSleep waits out its rate limit (nil: time.Sleep).
 	Upstream      UpstreamHost
-	UpstreamSleep func(time.Duration)
+	UpstreamSleep func(time.Duration) bool
+	// UpstreamBudget: the time one push call may use (0 = unlimited); a longer push ends with "more" and is asked for again.
+	UpstreamBudget time.Duration
 }
 
 // API is the core's request handler.

@@ -1375,8 +1375,8 @@ of a run is reported as `create`, `skip`, `replace` or `refused` with the upstre
 notes (not allowed, no such project, too many pending submissions) ends the run for that link and is shown by `status`.
 
 What an upstream answers is treated as data: it can make this gateway neither write a note, nor change a setting, nor call another
-host. The gateway sends nothing to itself (an upstream that is this same gateway is refused). The Mac app's gateway does not support
-upstreams yet; use `minigw serve` for this step.
+host. The gateway sends nothing to itself (an upstream that is this same gateway is refused). The commands are the same on the Mac app
+and on `minigw serve`; on the Mac the credentials are Keychain items of the app.
 
 ## Hand findings in from a session
 

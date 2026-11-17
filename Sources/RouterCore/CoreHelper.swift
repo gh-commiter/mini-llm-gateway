@@ -128,6 +128,13 @@ public enum CoreRevokeResult: Equatable, Sendable {
     case failed(String)       // the helper answered an error: the mark stays
 }
 
+/// What the app does for the helper while it handles one request (client/coreapi/callout.go): the helper has no network and no
+/// credential store. `callout` gets the CalloutRequest as JSON and returns the CalloutResult; it runs on the helper's own queue (a
+/// plain thread, not the cooperative pool), so it may block.
+public protocol CoreCalloutHandler: Sendable {
+    func callout(_ request: [String: Any]) -> [String: Any]
+}
+
 public final class CoreHelper: @unchecked Sendable {
     public static let protocolVersion = 1
     public static let maxFrame = 4 << 20  // coreapi.MaxFrame
@@ -158,6 +165,8 @@ public final class CoreHelper: @unchecked Sendable {
     public private(set) var spawnTimes: [Date] = []
     public private(set) var lastExit: Int32?
     public private(set) var lastFailure = ""
+    /// Set before start(): the helper is told in the handshake that this app answers callouts (the upstream routes need it).
+    public var callouts: CoreCalloutHandler?
 
     public init(binary: URL?, store: URL, ownerName: String = NSUserName(), marks: CoreRevocationMarks,
                 versions: ClosedRange<Int> = CoreHelper.protocolVersion...CoreHelper.protocolVersion,
@@ -248,7 +257,15 @@ public final class CoreHelper: @unchecked Sendable {
         do {
             setTimeout(c.fd, requestTimeout)
             try sendFrame(c.fd, ["v": Self.protocolVersion, "id": id, "context": cx.json, "request": rq.json])
-            let f = try recvFrame(c.fd)
+            var f = try recvFrame(c.fd)
+            while let q = f["callout"] as? [String: Any] {  // the helper asks the app for something while it handles this request
+                guard let handler = callouts, f["v"] as? Int == Self.protocolVersion, (f["id"] as? NSNumber)?.uint64Value == id else {
+                    throw CoreError.unavailable("the helper asked for something this app does not do")
+                }
+                try sendFrame(c.fd, ["v": Self.protocolVersion, "id": id, "callout_result": handler.callout(q)])
+                setTimeout(c.fd, requestTimeout)
+                f = try recvFrame(c.fd)
+            }
             guard f["v"] as? Int == Self.protocolVersion, (f["id"] as? NSNumber)?.uint64Value == id,
                   (f["error"] as? String ?? "").isEmpty, let r = (f["response"] as? [String: Any]).flatMap(CoreResponse.init(json:)) else {
                 throw CoreError.unavailable("the helper answered out of step: " + (f["error"] as? String ?? "bad frame"))
@@ -313,7 +330,7 @@ public final class CoreHelper: @unchecked Sendable {
                 guard let binary, FileManager.default.isExecutableFile(atPath: binary.path) else { throw CoreError.unavailable("minigw-core not found") }
                 let p = try CoreProcess.spawn(binary: binary, store: store)
                 do {
-                    _ = try handshake(fd: p.fd, secret: p.secret, versions: versions)
+                    _ = try handshake(fd: p.fd, secret: p.secret, versions: versions, callouts: callouts != nil)
                     cond.lock(); conn = p; cond.unlock()
                     let sem = DispatchSemaphore(value: 0)
                     nonisolated(unsafe) var prepared = false
@@ -449,10 +466,12 @@ private func recvFrame(_ fd: Int32, max: Int = CoreHelper.maxFrame) throws -> [S
 
 /// The client side of the handshake in client/cmd/minigw-core/serve.go: the app checks the helper's MAC before it sends
 /// anything derived from the secret.
-private func handshake(fd: Int32, secret: Data, versions: ClosedRange<Int>) throws -> Int {
+private func handshake(fd: Int32, secret: Data, versions: ClosedRange<Int>, callouts: Bool = false) throws -> Int {
     let cn = hex((0..<16).map { _ in UInt8.random(in: 0...255) })
     setTimeout(fd, 5)
-    try sendFrame(fd, ["type": "hello", "min": versions.lowerBound, "max": versions.upperBound, "nonce": cn])
+    var hello: [String: Any] = ["type": "hello", "min": versions.lowerBound, "max": versions.upperBound, "nonce": cn]
+    if callouts { hello["callouts"] = true }
+    try sendFrame(fd, hello)
     let r = try recvFrame(fd, max: 1 << 10)
     if r["type"] as? String == "error" {
         if r["code"] as? String == "version_mismatch" {

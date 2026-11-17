@@ -85,6 +85,17 @@ Request frame `{"v":1,"id":N,"context":Context,"request":Request}`, response fra
 carries the id of its request. Go: `coreapi.WriteRequest/ReadRequest/WriteResponse/ReadResponse`, `API.Serve(ctx, conn)`,
 `NewClient(conn).Do(ctx, context, request)`. A body travels base64-encoded inside the JSON.
 
+### Callouts (0.7.21, the upstream gateway)
+
+The helper has no network and no credential store. While it handles ONE request it may send the app a **callout** frame on the same
+connection and wait for the answer (client/coreapi/callout.go): `{"v":1,"id":N,"callout":{op,upstream,address,token,method,path,header,body}}`
+and back `{"v":1,"id":N,"callout_result":{status,body,retryAfter,error,device,where}}`, `id` being the request being handled. The ops are
+`connect` (store the upstream's token line and make this gateway's device key for it; the token is sent once and not kept by the helper),
+`info` (the public device ID), `forget` and `do` (one request to the upstream as that device). The app says `"callouts":true` in its hello
+when it can answer them (`CoreHelper.callouts`); for any other peer the upstream routes answer 501, and a protocol version bump is not
+needed. The app runs the handler on its helper queue (a plain thread), never on the cooperative pool. A request has 30 seconds, so a push
+runs with a budget of 10 seconds and ends with `more` (and the wait the upstream asked for); the CLI asks again.
+
 ## Stays in the adapter (the Mac app's list)
 
 1. **Tunnel and device proof**: the Noise tunnel, the Ed25519 device proof, so that `device` is trustworthy.

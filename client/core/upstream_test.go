@@ -78,7 +78,7 @@ func upFx(t *testing.T) (*fx, map[string]Note) {
 	return f, notes
 }
 
-func noSleep(time.Duration) {}
+func noSleep(time.Duration) bool { return true }
 
 func TestUpstreamAddressAndName(t *testing.T) {
 	for in, want := range map[string]string{"mini.local": "mini.local:8765", "Hub.Example:9000": "hub.example:9000", "10.0.0.5": "10.0.0.5:8765", "[::1]:8765": "[::1]:8765"} {
@@ -362,7 +362,7 @@ func TestUpstreamWaitsOutTheRateLimit(t *testing.T) {
 		return 201, fmt.Sprintf(`{"id":%d}`, next), 0
 	}}
 	var waited []time.Duration
-	res, e := f.PushUpstream(ctx, up, fk, 0, false, func(d time.Duration) { waited = append(waited, d) })
+	res, e := f.PushUpstream(ctx, up, fk, 0, false, func(d time.Duration) bool { waited = append(waited, d); return true })
 	f.ok(e)
 	if res[0].Created != 2 || len(waited) != 2 || waited[0] != 3*time.Second {
 		t.Fatalf("%+v %v", res[0], waited)
@@ -377,7 +377,7 @@ func TestUpstreamWaitsOutTheRateLimit(t *testing.T) {
 	f.ok(f.UnlinkUpstream(ctx, fk, 0, "hub"))
 	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
 	waited = nil
-	res, e = f.PushUpstream(ctx, forever, fk, 0, false, func(d time.Duration) { waited = append(waited, d) })
+	res, e = f.PushUpstream(ctx, forever, fk, 0, false, func(d time.Duration) bool { waited = append(waited, d); return true })
 	f.ok(e)
 	if res[0].Stopped == "" || len(waited) != maxRateWaits || waited[0] > maxRateWait {
 		t.Fatalf("%+v %v", res[0], waited)
@@ -427,4 +427,50 @@ func TestUpstreamTablesCarryNoSecretAndRemoveCleans(t *testing.T) {
 		t.Fatal("links or receipts stayed behind", n)
 	}
 	is(t, f.RemoveUpstream(ctx, "hub"), ErrNotFound)
+}
+
+// A call with a time budget (the Mac helper answers one request within 30 seconds) ends with More, not with a fault, and the next call
+// goes on where it stopped: what was sent is remembered, nothing is sent twice.
+func TestUpstreamPushInSteps(t *testing.T) {
+	f, _ := upFx(t)
+	fk := f.pid["fakture"]
+	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
+	// the limit cannot be waited out within this call
+	limited := &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
+		if c.method == "GET" {
+			return 200, `{"id":7,"slug":"shop"}`, 0
+		}
+		return 429, `{}`, 30 * time.Second
+	}}
+	res, e := f.PushUpstream(ctx, limited, fk, 0, false, func(time.Duration) bool { return false })
+	f.ok(e)
+	if !res[0].More || res[0].Wait != 30 || res[0].Refused != 0 || res[0].Created != 0 {
+		t.Fatalf("%+v", res[0])
+	}
+	if ls, _ := f.UpstreamLinks(ctx, fk, 0); ls[0].LastError != "" || ls[0].Pending != 2 {
+		t.Fatalf("a limit that has to be waited for is not a refusal: %+v", ls[0])
+	}
+	// the budget ends after the first note: More; the next call sends the second and skips the first
+	bctx, cancel := context.WithCancel(ctx)
+	posts := 0
+	up := &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
+		switch {
+		case c.method == "GET":
+			return 200, `{"id":7,"slug":"shop"}`, 0
+		default:
+			posts++
+			cancel()
+			return 201, fmt.Sprintf(`{"id":%d}`, posts), 0
+		}
+	}}
+	res, e = f.PushUpstream(bctx, up, fk, 0, false, noSleep)
+	f.ok(e)
+	if !res[0].More || res[0].Created != 1 || posts != 1 {
+		t.Fatalf("%+v", res[0])
+	}
+	res, e = f.PushUpstream(ctx, okUp(), fk, 0, false, noSleep)
+	f.ok(e)
+	if res[0].More || res[0].Created != 1 || res[0].Skipped != 1 {
+		t.Fatalf("%+v", res[0])
+	}
 }
