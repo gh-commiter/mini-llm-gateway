@@ -226,7 +226,7 @@ continue), in the same transaction.
 
 Errors of these routes use the envelope above (`400` invalid, `404` not found, `503` core unavailable).
 
-### Panels (0.7.14, both gateways)
+### Panels (both gateways)
 
 `GET /panels` returns the admin panels as declarative descriptions that a renderer maps to its own controls; the Mac
 app draws them as panes of the Settings window. Owner admin authentication only; it is not a member route and the run

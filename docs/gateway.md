@@ -79,7 +79,7 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   unencrypted connections from other computers, devices waiting for approval (editable name, ID, address, time, OS,
   minigw version; **Allow** / **Reject**), allowed devices (rename, ID, last seen, **History**, **Copy ID**,
   **Remove**).
-- **Users and devices** (Mac, 0.7.14): a pane the app builds from a panel description (`GET /panels`, see
+- **Users and devices** (Mac): a pane the app builds from a panel description (`GET /panels`, see
   [admin-api.md → Panels](admin-api.md#panels)), shown after Devices in the language of the app (English or Slovenian).
   **Users:** the list of people with **Add User…**, **Rename…**, **Deactivate** (asks first) and **Activate**, and a switch
   that shows the inactive ones. **Devices of users:** which device is bound to which user, with **Bind Device…** (binding a
