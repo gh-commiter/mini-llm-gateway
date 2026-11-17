@@ -16,13 +16,30 @@ enum TestNet {
         if let p = env["MG_TEST_NET"], fm.isExecutableFile(atPath: p) { return p }
         if fm.isExecutableFile(atPath: installed) { return installed }
         if let ci = env["CI"], !ci.isEmpty {
-            for b in Bundle.allBundles where b.bundlePath.hasSuffix(".xctest") {
-                let built = b.bundleURL.deletingLastPathComponent().appendingPathComponent("mg-test-net").path
-                if fm.isExecutableFile(atPath: built) { return built }
-            }
+            if let built = builtNextToTests() { return built }
+            Issue.record("CI: no mg-test-net next to the test bundle (\(testImageDirectory() ?? "unknown")): the workflow must run `swift build` before `swift test`")
+            throw Missing()
         }
         Issue.record(Comment(rawValue: hint))
         throw Missing()
+    }
+
+    /// The folder of this test module's image: the dynamic loader knows it whatever the build system's layout (`.build/debug`, `Products/Debug`), and Swift
+    /// Testing does not list the .xctest in Bundle.allBundles (that lookup found nothing on the runner).
+    static func testImageDirectory() -> String? {
+        let marker: @convention(c) () -> Void = {}
+        var info = Dl_info()
+        guard dladdr(unsafeBitCast(marker, to: UnsafeRawPointer.self), &info) != 0, let name = info.dli_fname else { return nil }
+        let image = String(cString: name)
+        if let r = image.range(of: ".xctest") { return (String(image[..<r.upperBound]) as NSString).deletingLastPathComponent }
+        return (image as NSString).deletingLastPathComponent
+    }
+
+    /// The package's own unsigned build of the utility, in the folder of the test bundle.
+    static func builtNextToTests() -> String? {
+        guard let dir = testImageDirectory() else { return nil }
+        let built = dir + "/mg-test-net"
+        return FileManager.default.isExecutableFile(atPath: built) ? built : nil
     }
 
     /// One run of the utility; its JSON lines are collected. stop() (or deinit) closes its stdin, which ends it.
