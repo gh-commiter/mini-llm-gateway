@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.21
 
 ### New
 - Upstream gateway, step A (one way, by hand, submit mode): `minigw gw upstream add <name> <address>` (the upstream's Copy Token on stdin) makes this gateway a client of another one with a device key of its own; the upstream's owner allows the device, binds it to a user and gives that user a role. `gw upstream link <project> <name>` (or `--team`), `status`, `unlink`, `list`, `remove` and `gw upstream push [<project>] [--dry-run]` send the published notes of a linked project as submissions for the upstream's reviewers; a second push skips unchanged notes and sends a changed one as a replacement of the accepted note (or a new submission that names the earlier one). Private notes only with `--with-private`. The secret is kept like a provider key, never in the database or a backup; what an upstream answers is data only. Database schema 19. On the Mac app the app itself does the network and Keychain work for its helper (the credentials are Keychain items "upstream:<name>" next to the provider keys), and `minigw gw upstream` works the same as on `minigw serve`.
@@ -8,6 +8,27 @@
 
 ### Known problems
 - Upstream gateway: one way (nothing is pulled), manual (no automatic push yet), submit mode only (no direct publish), and deletions are not propagated. On the Mac, a long push is done in steps of at most about ten seconds (the helper answers one call within 30 seconds), so a rate-limited upstream makes `push` wait and ask again; the app makes the encrypted connection to the upstream itself, with no local listener, and accepts from its helper only the requests a push makes. The upstream routes have a connection of their own to the helper, so a slow upstream cannot hold up other requests. A run sends at most 1000 notes (new or changed ones; unchanged ones are passed over) and says where it stopped (`more`, `next`); the CLI asks again for that link and stops when a call gets no further. A push to a team's notes needs a gateway-bound user who is an admin of a project of the team there. The panel for upstreams is a later step.
+- Archived projects and teams cannot be chosen in the Knowledge base pickers any more; read their notes with `minigw`.
+- The panels on the settings page were tried on one Windows gateway in a Chromium browser (they work; no Content Security Policy error); not yet in Edge or Firefox, and not on Linux. A detail page opens in place of the panel with a Back button. The Mac app does not use this page.
+- In the Teams and projects pane the "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI: the format has no cell that lists pairs of a team and a role. The structured list is in the answer (`teams`).
+- The Teams and projects pane has only been tried through tests, not in a real window. Team notes (the team's own notes segment) are not shown there, only in the Knowledge base pane.
+- The Knowledge base pane has only been tried through tests, not in a real window. Notes and questions are read, not edited; a replacement shows both texts, not a line difference.
+- Labels are data, never permissions: a member sees them only on sessions and usage already visible to them, and a label filter never widens whose events are read. A call made by hand gets labels only when the caller sets them (or the branch fills the task); classifying unlabelled calls is not done yet.
+- A role of the form `<phase>.<activity>` set by older scripts is not read as labels.
+- The three admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base) are new and have only been tried through tests, not yet looked at in a real window. Windows and Linux have no panel renderer yet (the settings page there is unchanged).
+- A project linked to a subfolder of another project's folder gets no automatic dependency; the owner sets it with `gw project depends add`.
+- Team notes have no `private` class, and only a project admin of the team writes them; there is no owner shortcut into them (the owner reviews submissions and exports bundles).
+- The hooks ask after a commit or a compaction, not at the end of a session: Claude Code gives a hook no way to talk to the model then. A failed hand-in is not retried. Checked by tests of both clients and of the plugin script, but not yet tried in a real Claude Code session (neither on a Mac nor on Windows).
+- Project git identity, team path labels and entry kinds are new and not yet in daily use. `minigw project link` without a slug needs `git` on the computer; on Windows it has only been built, not tried.
+- A replacement of a `faq` entry keeps the kind `faq`, and an import never changes the kind of an existing note: to change a kind, remove the entry and hand it in again.
+- `minigw gw import`: an `INDEX.md` inside a bundle has no size limit of its own (only the 100 MiB total). Import only bundles you made yourself.
+- `minigw kb export` on Windows: the protection of each exported file is still set by path after the file is created through the opened folder; not tested on Windows yet.
+- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.20
 
