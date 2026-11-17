@@ -28,6 +28,10 @@ public enum Profiles {
         n.range(of: "^[a-z0-9][a-z0-9-]{0,31}$", options: .regularExpression) != nil
     }
 
+    /// Ukaz, s katerim aplikacija po namestitvi poveže ta Mac: žeton gre po stdin (»-«), ne v argumente,
+    /// kjer bi ga med tekom videli drugi uporabniki (ps).
+    public static func connectArguments(url: String) -> [String] { ["connect", url, "--token", "-"] }
+
     /// minigw reconnect: vrstica »Copy Token« (<žeton>#<ključ>) ali le žeton; brez ključa ostane shranjeni ključ prehoda.
     /// nil = prazen ali nepopoln žeton (»#«, »#kljuc«, »zeton#«), kot Go newToken.
     public static func newToken(_ line: String, key: String?) -> (token: String, key: String?)? {

@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Security
+- Installing `minigw` from the Mac app now gives the gateway token to `minigw connect` on standard input (`--token -`) instead of on the command line, so other local users cannot see it in the process list while the connection is made.
+
 ## 0.7.22
 
 ### Fixed

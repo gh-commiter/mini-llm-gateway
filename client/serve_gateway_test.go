@@ -240,6 +240,17 @@ func TestServeGatewayCLIKeepsKeyOutOfConfig(t *testing.T) {
 	}
 }
 
+// connect --token - (tudi --token - v aplikaciji Mini Gateway) bere žeton s stdin, da ga ni v argumentih procesa (issue 146).
+func TestReadKeyFromStdin(t *testing.T) {
+	key, err := readKey(strings.NewReader("tok-SECRET-123#gateway-key\n"), "gateway token")
+	if err != nil || key != "tok-SECRET-123#gateway-key" {
+		t.Fatalf("readKey from stdin: %q, %v", key, err)
+	}
+	if _, err := readKey(strings.NewReader("\n"), "gateway token"); err == nil {
+		t.Fatal("an empty stdin must be refused")
+	}
+}
+
 func TestServeGatewayURLRules(t *testing.T) {
 	for _, tc := range []struct {
 		url      string

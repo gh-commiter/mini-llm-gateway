@@ -20,6 +20,15 @@ import Testing
             && !Profiles.isAgentModel("claude-siri-ai") && !Profiles.isAgentModel("claude-chat-haiku"))
 }
 
+/// Namestitev ukaza pošlje žeton po stdin: v argumentih, ki jih vidi `ps`, ga ni (issue 146).
+@Test func installKeepsTheTokenOffTheCommandLine() {
+    let token = "tok-SECRET-123#gateway-key"
+    let args = Profiles.connectArguments(url: "http://127.0.0.1:8765")
+    #expect(args == ["connect", "http://127.0.0.1:8765", "--token", "-"])
+    #expect(!args.contains(token))
+    #expect(!args.contains(where: { $0.contains("SECRET") }), "the token must go on stdin, not in the arguments")
+}
+
 /// #8: --model …@profil izbere profil za ves zagon (enako kot TestModelProfileSelectsTheGateway).
 @Test func modelSuffixSelectsTheProfile() {
     let names = ["default", "local"]
