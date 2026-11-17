@@ -74,5 +74,9 @@
   {"kind": "admin", "method": "GET", "path": "/panels/x", "want": false},
   {"kind": "member", "method": "GET", "path": "/minigw/v1/panels", "want": false},
   {"kind": "admin", "method": "GET", "path": "/panels/strings", "want": true},
-  {"kind": "admin", "method": "GET", "path": "/panels/strings/x", "want": false}
+  {"kind": "admin", "method": "GET", "path": "/panels/strings/x", "want": false},
+  {"kind": "admin", "method": "GET", "path": "/kb/notes", "want": true},
+  {"kind": "admin", "method": "GET", "path": "/kb/notes/5", "want": true},
+  {"kind": "admin", "method": "GET", "path": "/kb/faq", "want": true},
+  {"kind": "member", "method": "GET", "path": "/minigw/v1/kb/notes", "want": false}
 ]

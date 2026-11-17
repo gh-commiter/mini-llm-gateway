@@ -5,6 +5,7 @@ import (
 	"minigw/core"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 func (a *API) submissionRoute(ctx context.Context, st *core.Store, p core.Principal, project int64, rest []string, q url.Values, r Request) Response {
@@ -80,6 +81,9 @@ func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []
 		}
 		return resp(200, map[string]bool{"rebuilt": true})
 	}
+	if len(seg) >= 2 && (seg[1] == "notes" || seg[1] == "faq") {
+		return a.adminKBRead(ctx, st, method, seg, q)
+	}
 	if len(seg) < 2 || seg[1] != "submissions" {
 		return a.errResponse(core.ErrNotFound)
 	}
@@ -100,7 +104,7 @@ func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []
 		if e != nil {
 			return a.errResponse(e)
 		}
-		return submissionPage(vs)
+		return a.adminSubmissionPage(ctx, st, vs)
 	}
 	if len(seg) < 3 {
 		return a.errResponse(core.ErrNotFound)
@@ -114,7 +118,7 @@ func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []
 		if e != nil {
 			return a.errResponse(e)
 		}
-		return resp(200, v)
+		return a.adminSubmission(ctx, st, v)
 	}
 	if len(seg) == 4 && method == "POST" && (seg[3] == "accept" || seg[3] == "reject") {
 		var b struct {
@@ -130,4 +134,137 @@ func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []
 		return resp(200, v)
 	}
 	return a.errResponse(core.ErrNotFound)
+}
+
+// adminSubmissionJSON is a submission as the owner's admin routes show it: the stored fields, plus what a panel would
+// otherwise have to join: the author's name, the project's name or the team's (never the hidden segment id as a project),
+// when it was received, and whether it replaces a note.
+type adminSubmissionJSON struct {
+	core.Submission
+	AuthorName    string    `json:"authorName"`
+	ScopeKind     string    `json:"scopeKind"` // "project" or "team"
+	ScopeName     string    `json:"scopeName"`
+	Received      time.Time `json:"received"`
+	IsReplacement bool      `json:"isReplacement"`
+}
+
+type nameMaps struct{ users, projects, teams map[int64]string }
+
+func (a *API) names(ctx context.Context, st *core.Store) (nameMaps, error) {
+	m := nameMaps{map[int64]string{}, map[int64]string{}, map[int64]string{}}
+	us, err := st.ListUsers(ctx)
+	if err != nil {
+		return m, err
+	}
+	for _, u := range us {
+		m.users[u.ID] = u.Name
+	}
+	ps, err := st.AdminListProjects(ctx)
+	if err != nil {
+		return m, err
+	}
+	for _, p := range ps {
+		m.projects[p.ID] = p.Name
+	}
+	ts, err := st.AdminListTeams(ctx)
+	if err != nil {
+		return m, err
+	}
+	for _, t := range ts {
+		m.teams[t.ID] = t.Name
+	}
+	return m, nil
+}
+
+func (m nameMaps) submission(v core.Submission) adminSubmissionJSON {
+	j := adminSubmissionJSON{Submission: v, AuthorName: m.users[v.User], Received: v.Provenance.Received, IsReplacement: v.Replaces > 0, ScopeKind: "project", ScopeName: m.projects[v.Project]}
+	if team, ok := core.SegmentTeam(v.Project); ok {
+		j.ScopeKind, j.ScopeName = "team", m.teams[team]
+	}
+	return j
+}
+
+func (a *API) adminSubmissionPage(ctx context.Context, st *core.Store, vs []core.Submission) Response {
+	m, e := a.names(ctx, st)
+	if e != nil {
+		return a.errResponse(e)
+	}
+	out := []adminSubmissionJSON{}
+	for _, v := range vs {
+		out = append(out, m.submission(v))
+	}
+	var next int64
+	if len(vs) == 100 {
+		next = vs[len(vs)-1].ID
+	}
+	return resp(200, map[string]any{"submissions": out, "next": next})
+}
+
+func (a *API) adminSubmission(ctx context.Context, st *core.Store, v core.Submission) Response {
+	m, e := a.names(ctx, st)
+	if e != nil {
+		return a.errResponse(e)
+	}
+	return resp(200, m.submission(v))
+}
+
+// adminKBRead: GET /kb/notes?project=&class=&kind=&after=&limit=, GET /kb/notes/{id}, GET /kb/faq?project=&after=. The
+// owner reads every class, `private` included (owner only: the member routes keep their own checks). `project` is a project
+// id or a team's segment id (the `segment` of GET /teams); a team's notes carry the team's name and never the hidden id.
+func (a *API) adminKBRead(ctx context.Context, st *core.Store, method string, seg []string, q url.Values) Response {
+	if method != "GET" || len(seg) > 3 || (seg[1] == "faq" && len(seg) != 2) {
+		return a.errResponse(core.ErrNotFound)
+	}
+	if seg[1] == "notes" && len(seg) == 3 {
+		id, ok := posID(seg[2])
+		if !ok {
+			return a.errResponse(core.ErrNotFound)
+		}
+		n, e := st.OwnerGetNote(ctx, id)
+		if e != nil {
+			return a.errResponse(e)
+		}
+		return resp(200, adminNote(n, true))
+	}
+	project, ok := posID(q.Get("project"))
+	if !ok {
+		return a.errResponse(core.ErrInvalid{What: "project"})
+	}
+	if seg[1] == "faq" {
+		pg, e := st.OwnerListFAQ(ctx, project, q.Get("after"))
+		if e != nil {
+			return a.errResponse(e)
+		}
+		return resp(200, faqJSON(pg))
+	}
+	limit := 0
+	if v := q.Get("limit"); v != "" {
+		n, e := strconv.Atoi(v)
+		if e != nil {
+			return a.errResponse(core.ErrInvalid{What: "limit"})
+		}
+		limit = n
+	}
+	pg, e := st.OwnerListNotes(ctx, project, core.Class(q.Get("class")), q.Get("kind"), q.Get("after"), limit)
+	if e != nil {
+		return a.errResponse(e)
+	}
+	notes := []NoteJSON{}
+	for _, n := range pg.Notes {
+		notes = append(notes, adminNote(n, false))
+	}
+	res := map[string]any{"notes": notes}
+	if pg.Next != "" {
+		res["next"] = pg.Next
+	}
+	return resp(200, res)
+}
+
+// adminNote is toNote without the hidden segment id: a team's note has project 0 and the team's name.
+func adminNote(n core.Note, withBody bool) NoteJSON {
+	j := toNote(n, withBody)
+	if _, seg := core.SegmentTeam(n.ProjectID); seg {
+		j.Project = 0
+	}
+	return j
 }

@@ -154,8 +154,12 @@ func decodeCursor(s string, user, project int64, class Class) (c cursor, err err
 }
 
 // listNotes pages through the notes in rs: updated descending, then id; limit+1 rows tell whether there is a next page.
-func listNotes(tx *sql.Tx, user, project int64, rs []readable, class Class, after string, limit int) (NotePage, error) {
+func listNotes(tx *sql.Tx, user, project int64, rs []readable, class Class, kind, after string, limit int) (NotePage, error) {
 	q, args := where(user, rs)
+	if kind != "" {
+		q += " AND n.entry_kind=?"
+		args = append(args, kind)
+	}
 	if class != "" {
 		q += " AND n.class=?"
 		args = append(args, class)
@@ -290,7 +294,7 @@ func (s *Store) ListNotes(ctx context.Context, p Principal, project int64, class
 		if lim != nil {
 			return lim
 		}
-		pg, err = listNotes(tx, p.UserID, project, []readable{a.readable(project, false)}, class, after, limit)
+		pg, err = listNotes(tx, p.UserID, project, []readable{a.readable(project, false)}, class, "", after, limit)
 		return err
 	})
 	return
@@ -756,7 +760,7 @@ func (s *Store) RunListNotes(ctx context.Context, c RunCap, approved bool, class
 		if lim != nil {
 			return lim
 		}
-		pg, err = listNotes(tx, c.UserID, c.ProjectID, rs, class, after, limit)
+		pg, err = listNotes(tx, c.UserID, c.ProjectID, rs, class, "", after, limit)
 		return err
 	})
 	return
