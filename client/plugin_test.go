@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -496,5 +497,61 @@ func TestPluginMarketplaceAutoUpdate(t *testing.T) {
 		if ch, _ := pluginRemove(s); !ch || len(s["extraKnownMarketplaces"].(map[string]any)) != 0 || len(s["enabledPlugins"].(map[string]any)) != 0 {
 			t.Fatalf("remove %s: %v", m, s)
 		}
+	}
+}
+
+// hooks.json of the plugin: the kb hook entries (brief kb7b) exist, call only the plugin's own scripts, finish within a minute
+// and never use exit code 2 (a hook that blocks the session).
+func TestPluginHooksFile(t *testing.T) {
+	var f struct {
+		Hooks map[string][]struct {
+			Matcher string
+			Hooks   []struct {
+				Type, Command string
+				Timeout       int
+			}
+		}
+	}
+	if err := json.Unmarshal(srcFile(t, "../plugins/minigw/hooks/hooks.json"), &f); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"SessionStart": "kb-hook.sh\" start", "PreCompact": "kb-hook.sh\" compact", "Stop": "kb-hook.sh\" stop", "SessionEnd": "kb-hook.sh\" end"}
+	for event, suffix := range want {
+		found := false
+		for _, g := range f.Hooks[event] {
+			for _, h := range g.Hooks {
+				found = found || strings.HasSuffix(h.Command, suffix)
+			}
+		}
+		if !found {
+			t.Errorf("%s: no entry ending in %s", event, suffix)
+		}
+	}
+	if m := f.Hooks["PreCompact"][0].Matcher; m != "manual|auto" {
+		t.Errorf("PreCompact matcher %q", m)
+	}
+	scripts := map[string]bool{}
+	for event, groups := range f.Hooks {
+		for _, g := range groups {
+			for _, h := range g.Hooks {
+				if h.Type != "command" || !strings.HasPrefix(h.Command, `"${CLAUDE_PLUGIN_ROOT}/scripts/`) || strings.Contains(h.Command, "exit") {
+					t.Errorf("%s: unexpected command %q", event, h.Command)
+				}
+				if h.Timeout < 1 || h.Timeout > 60 {
+					t.Errorf("%s: timeout %d", event, h.Timeout)
+				}
+				name := strings.TrimPrefix(strings.SplitN(h.Command, `"`, 3)[1], "${CLAUDE_PLUGIN_ROOT}/scripts/")
+				scripts[name] = true
+			}
+		}
+	}
+	for name := range scripts {
+		body := string(srcFile(t, "../plugins/minigw/scripts/"+name))
+		if strings.Contains(body, "exit 2") {
+			t.Errorf("%s uses exit code 2", name)
+		}
+	}
+	if !scripts["kb-hook.sh"] || !scripts["install-minigw.sh"] {
+		t.Errorf("scripts %v", scripts)
 	}
 }
