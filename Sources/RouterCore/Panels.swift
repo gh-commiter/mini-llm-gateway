@@ -5,16 +5,15 @@ import Foundation
 // because a description from the network is not trusted even when the server validated it. The fixtures
 // client/testdata/panels-*.json are decoded by both sides. The model (PanelModel.swift) builds the requests.
 
-/// The locale the renderer asks the core's string tables for: "sl_SI" from the app's preferred localization ("sl", "sl-SI",
-/// "en-US" …); a language without a region gets its own as region (the core falls back to another table of the language);
-/// "C" (the base table) when there is no usable language.
+/// The locale the renderer asks the core's string tables for: the app's own ("sl_SI" from "sl-SI"), or just the language
+/// ("sl") when the app has no region; a region is never made up. "C" (the base table) when there is no usable language.
 public enum PanelLocale {
     public static func tag(_ preferred: [String]) -> String {
         guard let first = preferred.first else { return "C" }
         let l = Locale(identifier: first.replacingOccurrences(of: "-", with: "_"))
         guard let lang = l.language.languageCode?.identifier.lowercased(), lang.count == 2, lang.allSatisfy({ $0.isASCII && $0.isLetter }) else { return "C" }
-        let region = l.region?.identifier.uppercased() ?? lang.uppercased()
-        return region.count == 2 && region.allSatisfy({ $0.isASCII && $0.isLetter }) ? lang + "_" + region : "C"
+        guard let r = l.region?.identifier.uppercased(), r.count == 2, r.allSatisfy({ $0.isASCII && $0.isLetter }) else { return lang }
+        return lang + "_" + r
     }
     public static var current: String { tag(Bundle.main.preferredLocalizations) }
 }

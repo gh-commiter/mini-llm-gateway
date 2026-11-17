@@ -300,12 +300,12 @@ func TestStringsLocaleChoice(t *testing.T) {
 		json.Unmarshal(r.Body, &o)
 		return r.Status, o.Locale
 	}
-	for q, want := range map[string]string{"lang=sl_SI": "sl_SI", "lang=sl_AT": "sl_SI", "lang=en_US": "en_US", "lang=en_GB": "en_US", "lang=de_DE": "C", "lang=C": "C", "": "C"} {
+	for q, want := range map[string]string{"lang=sl_SI": "sl_SI", "lang=sl": "sl_SI", "lang=en": "en_US", "lang=de": "C", "lang=sl_AT": "sl_SI", "lang=en_US": "en_US", "lang=en_GB": "en_US", "lang=de_DE": "C", "lang=C": "C", "": "C"} {
 		if st, loc := ask(q); st != 200 || loc != want {
 			t.Errorf("%q: %d %s, want %s", q, st, loc, want)
 		}
 	}
-	for _, q := range []string{"lang=sl", "lang=sl_si", "lang=../x", "lang=c", "lang=sl_SI%0a", "lang=sl-SI"} {
+	for _, q := range []string{"lang=sl_si", "lang=s", "lang=SL", "lang=../x", "lang=c", "lang=sl_SI%0a", "lang=sl-SI"} {
 		if st, _ := ask(q); st != 400 {
 			t.Errorf("%q: %d, want 400", q, st)
 		}

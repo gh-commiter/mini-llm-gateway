@@ -243,7 +243,7 @@ is down.
   anything else, so an inline text or another provider's key is refused. A renderer shows every text and every value of
   an answer as plain text.
 - **Texts:** `GET /panels/strings?lang=<locale>` answers `{"format": 1, "locale": "sl_SI", "strings": {key: text}}`.
-  `lang` is `C` or a locale such as `sl_SI` (anything else: `400`; none: `C`). `C` is the base table and holds every key;
+  `lang` is `C`, a language such as `sl` (it gets that language's table, `sl_SI`) or a locale such as `sl_SI` (anything else: `400`; none: `C`). `C` is the base table and holds every key;
   `en_US` and `sl_SI` lie on top of it. The answer is merged: the exact locale, then another table of the same language,
   then `C`; a locale nobody has is answered with `C`, and `locale` says which one was returned. A text is plain, at most
   600 characters, and may hold `{field}` placeholders that the renderer fills from the row's own fields as plain text; a

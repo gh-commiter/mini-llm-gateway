@@ -20,7 +20,7 @@ const (
 )
 
 var (
-	reLocale  = regexp.MustCompile(`^(C|[a-z]{2}_[A-Z]{2})$`)
+	reLocale  = regexp.MustCompile(`^(C|[a-z]{2}|[a-z]{2}_[A-Z]{2})$`)
 	reTextVar = regexp.MustCompile(`\{[a-z][A-Za-z0-9_]{0,63}\}`)
 )
 

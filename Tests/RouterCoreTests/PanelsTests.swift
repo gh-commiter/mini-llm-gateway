@@ -244,7 +244,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     }
 
     @Test(.enabled(if: haveFixtures)) func renderersUseTheSlovenianStringsWhenTheAppIsSlovenian() async throws {
-        #expect(PanelLocale.tag(["sl-SI", "en"]) == "sl_SI" && PanelLocale.tag(["sl"]) == "sl_SL" && PanelLocale.tag(["en-US"]) == "en_US")
+        #expect(PanelLocale.tag(["sl-SI", "en"]) == "sl_SI" && PanelLocale.tag(["sl"]) == "sl" && PanelLocale.tag(["en-US"]) == "en_US")
         #expect(PanelLocale.tag(["zh-Hans-CN"]) == "zh_CN" && PanelLocale.tag([]) == "C" && PanelLocale.tag(["Base"]) == "C" && PanelLocale.tag(["../x"]) == "C")
         let fake = Fake()
         let m = try await usersModel(fake, locale: "sl_SI")
