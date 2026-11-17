@@ -109,11 +109,12 @@ func TestHostilePanels(t *testing.T) {
 	panelFixture(t, "panels-format1.json", &base)
 	var table struct {
 		Cases []struct {
-			Name   string
-			Set    map[string]any
-			Remove []string
-			Grow   map[string]int
-			Pad    map[string]int
+			Name      string
+			Set       map[string]any
+			Remove    []string
+			Grow      map[string]int
+			Pad       map[string]int
+			GoAccepts bool // the cases where this validator accepts too (a key that stays an own key, a plain name)
 		}
 	}
 	panelFixture(t, "panels-hostile.json", &table)
@@ -160,7 +161,10 @@ func TestHostilePanels(t *testing.T) {
 			parent.(map[string]any)[key] = strings.Repeat("x", n)
 		}
 		out, _ := json.Marshal(doc)
-		if err := ValidatePanel(out, PanelProvider{ID: base.Provider, Routes: base.Routes}); err == nil {
+		err := ValidatePanel(out, PanelProvider{ID: base.Provider, Routes: base.Routes})
+		if c.GoAccepts && err != nil {
+			t.Errorf("%s: the validator refused it: %v", c.Name, err)
+		} else if !c.GoAccepts && err == nil {
 			t.Errorf("%s: the validator accepted it", c.Name)
 		}
 	}

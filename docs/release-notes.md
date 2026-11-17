@@ -2,8 +2,14 @@
 
 ## Unreleased
 
+### New
+- The settings page of `minigw serve` (Windows, Linux, Docker) draws the same three admin panels as the Mac app: Users and devices, Teams and projects and Knowledge base. Same rules as the Mac renderer (registered routes only, one plain path segment per value, confirmations before destructive or access-changing actions, plain-text rendering of every text, English or Slovenian by the browser's language). It is covered by a script test over the same fixtures as the Go validator and the Swift model.
+
 ### Fixed
 - On the Mac gateway, `minigw gw usage --by ...` and `--phase`, `--activity`, `--task` answered "unknown option" (the Mac command's own option check had not been given the new options). They work now, with the same output as on Windows and Linux, and `--legacy` refuses them as it does the other report options. A test now feeds every option that the help text of `gw usage`, `gw usage-events`, `gw project-sessions` and `minigw project sessions` names to the real argument parser (Mac and Go).
+
+### Known problems
+- The panels on the settings page have only been tried through tests, not in a real browser. A detail page opens in place of the panel with a Back button. The Mac app does not use this page.
 
 ## 0.7.16
 

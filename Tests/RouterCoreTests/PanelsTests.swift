@@ -957,6 +957,51 @@ private let teamsAnswers: [(String, Int, String)] = [
     }
 }
 
+/// The shared table of exact requests (client/testdata/panels-requests.json): the web renderer's script test reads the same file.
+@MainActor @Suite struct PanelRequestFixtureTests {
+    @Test(.enabled(if: haveFixtures)) func aRowValueInAConfirmationIsShortPlainText() throws {
+        let cases = try object("panels-requests.json")["confirmations"] as! [[String: Any]]
+        #expect(cases.count >= 7)
+        for c in cases {
+            guard case .ready(let d) = PanelValidator.parse(data(try description(c["panel"] as! String)), provider: "builtin") else { throw Err.bad }
+            let m = PanelModel(panel: d, strings: try strings("C"), routes: PanelRoutes.builtin, send: { _ in .unavailable })
+            let a = d.sections.first { $0.id == c["section"] as! String }!.rowActions!.first { $0.id == c["action"] as! String }!
+            let values = try JSONDecoder().decode([String: PanelJSON].self, from: data(c["row"] as! [String: Any]))
+            #expect(m.confirmation(a, row: PanelRow(id: "", values: values))?.title == c["title"] as? String, "\(c["row"]!)")
+        }
+    }
+
+    @Test(.enabled(if: haveFixtures)) func everyCaseOfTheSharedTableHasTheSameRequestAndConfirmation() throws {
+        let cases = try object("panels-requests.json")["cases"] as! [[String: Any]]
+        #expect(cases.count >= 60)
+        for c in cases {
+            let id = c["panel"] as! String
+            guard case .ready(let d) = PanelValidator.parse(data(try description(id)), provider: "builtin") else { throw Err.bad }
+            let m = PanelModel(panel: d, strings: PanelStrings(), routes: PanelRoutes.builtin, send: { _ in .unavailable })
+            let parts = (c["section"] as! String).split(separator: "/").map(String.init)
+            var sec = d.sections.first { $0.id == parts[0] }!
+            if parts.count > 1 { sec = sec.detail!.sections.first { $0.id == parts[1] }! }
+            let list = (c["kind"] as! String) == "actions" ? sec.actions : sec.rowActions
+            let a = list!.first { $0.id == c["action"] as! String }!
+            func row(_ k: String) throws -> PanelRow? {
+                guard let o = c[k] as? [String: Any] else { return nil }
+                return PanelRow(id: "", values: try JSONDecoder().decode([String: PanelJSON].self, from: data(o)))
+            }
+            let values = try (c["values"] as? [String: Any]).map { try JSONDecoder().decode([String: PanelJSON].self, from: data($0)) } ?? [:]
+            let result = m.request(a, row: try row("row"), parent: try row("parent"), values: values)
+            if (c["want"] as? String) == "refused" {
+                if case .success(let r) = result { Issue.record("sent \(r) for \(c)") }
+            } else {
+                let w = c["want"] as! [String: String]
+                guard case .success(let r) = result else { Issue.record("refused: \(c)"); continue }
+                #expect(r.method == w["method"] && r.path == w["path"] && r.query == w["query"] && String(decoding: r.body, as: UTF8.self) == w["body"], "\(c)")
+            }
+            let conf = m.confirmation(a, row: try row("row"))
+            #expect((conf == nil ? "none" : conf!.destructive ? "destructive" : "plain") == c["confirm"] as! String, "\(c)")
+        }
+    }
+}
+
 // MARK: the renderer's source (the app target cannot be unit-tested, so its rules are checked in the text)
 
 /// The code of a source text: comments cut (a `//` inside a string literal stays), then every rule below applied to EVERY

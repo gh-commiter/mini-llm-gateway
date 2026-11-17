@@ -1,0 +1,1307 @@
+{
+ "cases": [
+  {
+   "panel": "builtin.users",
+   "section": "users",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "name": "acme two"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"name\":\"acme two\"}",
+    "method": "POST",
+    "path": "/users"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "users",
+   "kind": "rowActions",
+   "action": "rename",
+   "row": {
+    "id": 2,
+    "name": "shop",
+    "active": true,
+    "owner": false
+   },
+   "values": {
+    "name": "web"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"name\":\"web\"}",
+    "method": "PATCH",
+    "path": "/users/2"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "users",
+   "kind": "rowActions",
+   "action": "deactivate",
+   "row": {
+    "id": 2,
+    "name": "shop",
+    "active": true,
+    "owner": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"active\":false}",
+    "method": "PATCH",
+    "path": "/users/2"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "users",
+   "kind": "rowActions",
+   "action": "activate",
+   "row": {
+    "id": 2,
+    "name": "shop",
+    "active": true,
+    "owner": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"active\":true}",
+    "method": "PATCH",
+    "path": "/users/2"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "users",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "name": "  "
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "users",
+   "kind": "actions",
+   "action": "add",
+   "values": {},
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "dev-2",
+    "user": 2
+   },
+   "want": {
+    "query": "",
+    "body": "{\"user\":2}",
+    "method": "PUT",
+    "path": "/bindings/dev-2"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "dev 1",
+    "user": 2
+   },
+   "want": {
+    "query": "",
+    "body": "{\"user\":2}",
+    "method": "PUT",
+    "path": "/bindings/dev%201"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "dev-1",
+    "user": 1
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "DELETE",
+    "path": "/bindings/dev-1"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a/b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "a/b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "..",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "..",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a..b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "a..b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": ".",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": ".",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a?x=1",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "a?x=1",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a#f",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "a#f",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a\nb",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "a\nb",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a\u0000b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "a\u0000b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "ab",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "ab",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a‮b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "a‮b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "a b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a\\b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "a\\b",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "../users",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "../users",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "/users",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "actions",
+   "action": "bind",
+   "values": {
+    "device": "/users",
+    "user": 1
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": null
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": {}
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": []
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": 1.5
+   },
+   "want": "refused",
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a.b"
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "DELETE",
+    "path": "/bindings/a.b"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "é"
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "DELETE",
+    "path": "/bindings/%C3%A9"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "50%"
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "DELETE",
+    "path": "/bindings/50%25"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.users",
+   "section": "bindings",
+   "kind": "rowActions",
+   "action": "unbind",
+   "row": {
+    "device": "a+b"
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "DELETE",
+    "path": "/bindings/a%2Bb"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "accept",
+   "row": {
+    "id": 5,
+    "title": "<script>alert(1)</script>"
+   },
+   "want": {
+    "query": "",
+    "body": "{}",
+    "method": "POST",
+    "path": "/kb/submissions/5/accept"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "<script>alert(1)</script>"
+   },
+   "values": {
+    "reason": "a duplicate"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"reason\":\"a duplicate\"}",
+    "method": "POST",
+    "path": "/kb/submissions/5/reject"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "<script>alert(1)</script>"
+   },
+   "values": {
+    "reason": ""
+   },
+   "want": {
+    "query": "",
+    "body": "{\"reason\":\"\"}",
+    "method": "POST",
+    "path": "/kb/submissions/5/reject"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "name": "acme"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"name\":\"acme\"}",
+    "method": "POST",
+    "path": "/teams"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams",
+   "kind": "rowActions",
+   "action": "rename",
+   "row": {
+    "id": 4,
+    "name": "web",
+    "archived": false,
+    "path": "acme/web"
+   },
+   "values": {
+    "name": "platform"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"name\":\"platform\"}",
+    "method": "PATCH",
+    "path": "/teams/4"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams",
+   "kind": "rowActions",
+   "action": "path",
+   "row": {
+    "id": 4,
+    "name": "web",
+    "archived": false,
+    "path": "acme/web"
+   },
+   "values": {
+    "path": ""
+   },
+   "want": {
+    "query": "",
+    "body": "{\"path\":\"\"}",
+    "method": "PATCH",
+    "path": "/teams/4"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams",
+   "kind": "rowActions",
+   "action": "archive",
+   "row": {
+    "id": 4,
+    "name": "web",
+    "archived": false,
+    "path": "acme/web"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"archived\":true}",
+    "method": "PATCH",
+    "path": "/teams/4"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams",
+   "kind": "rowActions",
+   "action": "unarchive",
+   "row": {
+    "id": 4,
+    "name": "web",
+    "archived": false,
+    "path": "acme/web"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"archived\":false}",
+    "method": "PATCH",
+    "path": "/teams/4"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams/members",
+   "kind": "actions",
+   "action": "add",
+   "parent": {
+    "id": 4,
+    "name": "web"
+   },
+   "values": {
+    "user": 3
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "PUT",
+    "path": "/teams/4/members/3"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams/members",
+   "kind": "rowActions",
+   "action": "remove",
+   "row": {
+    "user": 2,
+    "name": "ana"
+   },
+   "parent": {
+    "id": 4,
+    "name": "web"
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "DELETE",
+    "path": "/teams/4/members/2"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams/projects",
+   "kind": "actions",
+   "action": "add",
+   "parent": {
+    "id": 4,
+    "name": "web"
+   },
+   "values": {
+    "project": 8
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "PUT",
+    "path": "/teams/4/projects/8"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams/projects",
+   "kind": "rowActions",
+   "action": "remove",
+   "row": {
+    "id": 1,
+    "name": "Acme Web"
+   },
+   "parent": {
+    "id": 4,
+    "name": "web"
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "DELETE",
+    "path": "/teams/4/projects/1"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams/assignments",
+   "kind": "actions",
+   "action": "set",
+   "parent": {
+    "id": 4,
+    "name": "web"
+   },
+   "values": {
+    "user": 3,
+    "project": 1,
+    "role": "reader"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"project\":1,\"role\":\"reader\",\"user\":3}",
+    "method": "PUT",
+    "path": "/teams/4/assignments"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams/assignments",
+   "kind": "rowActions",
+   "action": "change",
+   "row": {
+    "project": 1,
+    "user": 2,
+    "role": "developer",
+    "id": "1-2",
+    "userName": "ana",
+    "projectName": "Acme Web"
+   },
+   "parent": {
+    "id": 4,
+    "name": "web"
+   },
+   "values": {
+    "role": "admin"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"project\":1,\"role\":\"admin\",\"user\":2}",
+    "method": "PUT",
+    "path": "/teams/4/assignments"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "teams/assignments",
+   "kind": "rowActions",
+   "action": "remove",
+   "row": {
+    "project": 1,
+    "user": 2,
+    "role": "developer",
+    "id": "1-2",
+    "userName": "ana",
+    "projectName": "Acme Web"
+   },
+   "parent": {
+    "id": 4,
+    "name": "web"
+   },
+   "want": {
+    "query": "project=1&user=2",
+    "body": "",
+    "method": "DELETE",
+    "path": "/teams/4/assignments"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "slug": "acme-web",
+    "name": "Acme Web"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"name\":\"Acme Web\",\"slug\":\"acme-web\"}",
+    "method": "POST",
+    "path": "/projects"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "name": "x"
+   },
+   "want": "refused",
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects",
+   "kind": "rowActions",
+   "action": "archive",
+   "row": {
+    "id": 1,
+    "slug": "acme-web",
+    "name": "Acme Web",
+    "archived": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"archived\":true}",
+    "method": "PATCH",
+    "path": "/projects/1"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects",
+   "kind": "rowActions",
+   "action": "unarchive",
+   "row": {
+    "id": 1,
+    "slug": "acme-web",
+    "name": "Acme Web",
+    "archived": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"archived\":false}",
+    "method": "PATCH",
+    "path": "/projects/1"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects/members",
+   "kind": "rowActions",
+   "action": "to-admin-from-developer",
+   "row": {
+    "user": 2,
+    "name": "ana",
+    "role": "admin",
+    "directRole": "developer",
+    "fromTeams": "web (admin)"
+   },
+   "parent": {
+    "id": 1,
+    "slug": "acme-web",
+    "name": "Acme Web",
+    "archived": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"role\":\"admin\"}",
+    "method": "PUT",
+    "path": "/projects/1/members/2"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects/members",
+   "kind": "rowActions",
+   "action": "to-reader-from-developer",
+   "row": {
+    "user": 2,
+    "name": "ana",
+    "role": "admin",
+    "directRole": "developer",
+    "fromTeams": "web (admin)"
+   },
+   "parent": {
+    "id": 1,
+    "slug": "acme-web",
+    "name": "Acme Web",
+    "archived": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"role\":\"reader\"}",
+    "method": "PUT",
+    "path": "/projects/1/members/2"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects/members",
+   "kind": "rowActions",
+   "action": "remove-developer",
+   "row": {
+    "user": 2,
+    "name": "ana",
+    "role": "admin",
+    "directRole": "developer",
+    "fromTeams": "web (admin)"
+   },
+   "parent": {
+    "id": 1,
+    "slug": "acme-web",
+    "name": "Acme Web",
+    "archived": false
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "DELETE",
+    "path": "/projects/1/members/2"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects/members",
+   "kind": "actions",
+   "action": "add",
+   "parent": {
+    "id": 1,
+    "slug": "acme-web",
+    "name": "Acme Web",
+    "archived": false
+   },
+   "values": {
+    "user": 3,
+    "role": "developer"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"role\":\"developer\"}",
+    "method": "PUT",
+    "path": "/projects/1/members/3"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects/remotes",
+   "kind": "actions",
+   "action": "add",
+   "parent": {
+    "id": 1,
+    "slug": "acme-web",
+    "name": "Acme Web",
+    "archived": false
+   },
+   "values": {
+    "remote": "git@host.example:a/b.git"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"addRemote\":\"git@host.example:a/b.git\"}",
+    "method": "POST",
+    "path": "/projects/1/remotes"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects/remotes",
+   "kind": "rowActions",
+   "action": "remove",
+   "row": {
+    "remote": "host.example/a/b"
+   },
+   "parent": {
+    "id": 1,
+    "slug": "acme-web",
+    "name": "Acme Web",
+    "archived": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"removeRemote\":\"host.example/a/b\"}",
+    "method": "POST",
+    "path": "/projects/1/remotes"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects/depends",
+   "kind": "actions",
+   "action": "add",
+   "parent": {
+    "id": 1,
+    "slug": "acme-web",
+    "name": "Acme Web",
+    "archived": false
+   },
+   "values": {
+    "other": 8
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "PUT",
+    "path": "/projects/1/depends/8"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "projects/depends",
+   "kind": "rowActions",
+   "action": "remove",
+   "row": {
+    "id": 8,
+    "slug": "old",
+    "name": "Old"
+   },
+   "parent": {
+    "id": 1,
+    "slug": "acme-web",
+    "name": "Acme Web",
+    "archived": false
+   },
+   "want": {
+    "query": "",
+    "body": "",
+    "method": "DELETE",
+    "path": "/projects/1/depends/8"
+   },
+   "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "grants",
+   "kind": "actions",
+   "action": "add",
+   "values": {
+    "source": 1,
+    "reader": 8,
+    "class": "data"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"class\":\"data\",\"reader\":8,\"source\":1}",
+    "method": "POST",
+    "path": "/grants"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.teams",
+   "section": "grants",
+   "kind": "rowActions",
+   "action": "remove",
+   "row": {
+    "source": 1,
+    "reader": 8,
+    "class": "data",
+    "id": "1-8-data",
+    "sourceName": "Acme Web",
+    "readerName": "Old"
+   },
+   "want": {
+    "query": "source=1&reader=8&class=data",
+    "body": "",
+    "method": "DELETE",
+    "path": "/grants"
+   },
+   "confirm": "destructive"
+  }
+ ],
+ "confirmations": [
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "acme\n\n(This only hides the account; nothing is deleted.)"
+   },
+   "title": "Reject acme  (This only hides the account; nothing is deleted.)?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "title": "Reject xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "a‮b c d\u0007e​f"
+   },
+   "title": "Reject a b c d e f?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaé"
+   },
+   "title": "Reject aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀😀"
+   },
+   "title": "Reject aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "a\r\nb"
+   },
+   "title": "Reject a  b?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "short"
+   },
+   "title": "Reject short?"
+  }
+ ]
+}
