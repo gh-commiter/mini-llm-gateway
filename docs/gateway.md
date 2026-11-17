@@ -203,6 +203,57 @@ characters with a note, a panel it cannot show (newer format, unknown element) s
 or an answer is put on the page as plain text, never as HTML. On the Mac app the page is not used: the Settings window draws
 the panels natively. Not tried in a real browser yet: see Known problems in the release notes.
 
+### Remote settings listener
+
+`minigw serve` can opt in to a separate HTTPS settings listener. It is disabled by default and is not a web page in
+the Mac app. The loopback settings link and CLI proof keep their existing authentication. The remote page has a password
+form, its own session storage and a Sign out button; this first version manages providers, models and devices only.
+Host service installation, file dialogs, agents, core panels, project/member routes, sync and inference are unavailable
+on this listener. Gateway tokens, local settings sessions, device credentials and agent headers cannot authenticate here.
+
+Set a password locally with `minigw gw settings password` (hidden terminal input, or stdin); it also works while the
+gateway is stopped. Use the same `--config` selection as the gateway. No argument or environment variable supplies the
+password. Resetting it invalidates remote sessions on their next use. There is no initial remote registration. Five failed
+attempts lock a source out for 15 minutes; bounded global backoff also limits distributed attempts. Lockout deadlines
+survive restart. Wait for expiry for recovery; resetting the password does not bypass lockouts. Sessions expire after
+30 minutes idle or eight hours total, and end on logout, password reset, gateway-token rotation, disabling the listener
+or restart. A password/session authenticates its holder; it does not prove that the caller is a person.
+
+Example `serve.json` block (paths name existing PEM files; restart after configuration or certificate changes):
+
+```json
+"remoteSettings": {
+  "enabled": true,
+  "listen": "0.0.0.0:8766",
+  "origin": "https://settings.example.net",
+  "allowedSourceCIDRs": ["192.168.10.0/24"],
+  "proxyIdentity": "settings-proxy.internal",
+  "proxyCA": "/config/tls/proxy-ca.pem",
+  "certificate": "/config/tls/gateway.pem",
+  "privateKey": "/config/tls/gateway.key"
+}
+```
+
+The listener requires TLS 1.3 and a proxy client certificate verified against `proxyCA` with the exact DNS SAN
+`proxyIdentity` (a common name is insufficient). It never falls back to HTTP. The proxy must verify the gateway's
+server certificate and overwrite `X-Minigw-Client-IP` with one browser TCP-peer IP. The gateway ignores other forwarding
+headers and checks that address against `allowedSourceCIDRs` only after verifying the proxy certificate. It requires
+the exact external Host and, for login, logout and mutations, the exact Origin, JSON and `X-Minigw-Remote-Request: 1`.
+There is no CORS. The remote session header is `X-Minigw-Remote-Session`; neither passwords nor sessions go in URLs.
+
+Keep port 8766 private to the proxy network. Upstream mutual TLS does not prove the browser used HTTPS: an HTTPS-only
+proxy virtual host, HSTS and forwarding-header replacement are part of the required boundary. The Compose proxy profile
+and certificate provisioning guide are a later step; this listener alone is not the supported Compose admin deployment.
+Trust, origin and listener changes require restart. Setting `enabled` to false and restarting stops the listener and
+discards its sessions. Startup rejects missing credentials/material, noncanonical origins, invalid CIDRs and incomplete
+proxy trust; expired proxy certificates fail the handshake. Replace renewed files and restart; there is no HTTP fallback.
+
+Password records, persisted lockouts and the rotating admin audit are stored beside `serve.json` as private files.
+The audit records login outcomes, revocations and fixed mutation operations with verified source IPs and generated request
+IDs. It never records credential values, request bodies or user-supplied route IDs. A failed audit intent prevents a
+mutation. If saving its result fails after dispatch, the reply says the operation may have completed; inspect the current
+settings before retrying. Audit rotation retains the current file (up to about 1 MiB) and one previous file.
+
 ## Providers
 
 Any Anthropic-compatible upstream works: OpenRouter, LiteLLM, xAI, or another. Add as many as you like, each with its own

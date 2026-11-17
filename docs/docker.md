@@ -4,7 +4,9 @@ A Linux gateway (`minigw serve`) in a container, for providers only: Claude CLI,
 are off and stay off (the default container has no user namespaces, so the agent sandbox does not work; the gateway
 refuses them in the settings, in an imported `serve.json` and when a request runs). Providers (LiteLLM, OpenRouter, xAI,
 any OpenAI-compatible endpoint), devices, projects and notes work as on any other gateway. Remote web settings are not
-part of this deployment yet: you administer it with `docker compose exec minigw minigw gw …`.
+part of the Compose deployment yet: you administer it with `docker compose exec minigw minigw gw …`. The gateway has
+an opt-in password listener behind mutual TLS ([configuration](gateway.md#remote-settings-listener)); the supported
+Compose reverse-proxy profile will follow separately. Do not publish its internal port.
 
 The files are in [`deploy/docker/`](../deploy/docker): `compose.yaml` and `Dockerfile`. The image is built on your
 computer from the GitHub release: no registry, no account. The build checks the signature of `SHA256SUMS` with the
@@ -113,5 +115,5 @@ on the host, once, not recursively from a container).
 ## Not supported yet
 
 - Agents (Claude CLI, Codex, Grok, Copilot, Foundry Local) in the container.
-- Remote web settings, `minigw serve install` and updates from inside the container (`gw` administration works).
+- The remote settings reverse-proxy profile, `minigw serve install` and updates from inside the container (`gw` administration works).
 - Pre-built images in a registry, automatic updates, Kubernetes or Swarm, several gateways on one database.

@@ -206,10 +206,24 @@ func (a *remoteAuth) saveLocks() error {
 	return writeFileAtomic(a.lockPath(), b)
 }
 func (a *remoteAuth) audit(action, result, ip, rid string) error {
+	return a.auditOperation(action, result, ip, rid, "")
+}
+
+func (a *remoteAuth) auditOperation(action, result, ip, rid, operation string) error {
 	allowed := map[string]bool{"login": true, "logout": true, "revoke": true, "mutation": true, "lockout": true}
-	outcomes := map[string]bool{"ok": true, "denied": true, "limited": true, "error": true}
+	outcomes := map[string]bool{"ok": true, "denied": true, "limited": true, "error": true, "started": true}
 	if !allowed[action] || !outcomes[result] {
 		return errors.New("invalid audit event")
+	}
+	if operation != "" {
+		switch operation {
+		case "POST providers", "PATCH providers/{}", "DELETE providers/{}", "POST providers/{}/models", "POST devices", "PATCH devices/{}", "DELETE devices/{}":
+		default:
+			return errors.New("invalid audit operation")
+		}
+		if action != "mutation" {
+			return errors.New("invalid audit action")
+		}
 	}
 	if ip != "" {
 		if _, err := netip.ParseAddr(ip); err != nil {
@@ -246,9 +260,9 @@ func (a *remoteAuth) audit(action, result, ip, rid string) error {
 		return err
 	}
 	b, _ := json.Marshal(struct {
-		Time                                     time.Time
-		Principal, IP, RequestID, Action, Result string
-	}{a.now().UTC(), "remote-admin", ip, rid, action, result})
+		Time                                                time.Time
+		Principal, IP, RequestID, Action, Result, Operation string
+	}{a.now().UTC(), "remote-admin", ip, rid, action, result, operation})
 	if _, err = f.Write(append(b, '\n')); err != nil {
 		return err
 	}

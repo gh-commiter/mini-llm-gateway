@@ -135,11 +135,7 @@ func (s *server) settingsHTTP(w http.ResponseWriter, r *req) int {
 	h.Set("Referrer-Policy", "no-referrer")
 	switch r.Method + " " + r.URL.Path {
 	case "GET /minigw/settings": // statična, brez skrivnosti
-		nonce := randomToken()
-		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'nonce-"+nonce+
-			"'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'")
-		page := strings.NewReplacer("{{NONCE}}", nonce, "{{PICKER}}", strconv.FormatBool(s.pick.Load() != nil)).Replace(settingsPage)
-		return writeStatus(w, 200, "text/html; charset=utf-8", []byte(page))
+		return writeSettingsPage(w, s.pick.Load() != nil, false)
 	case "GET /favicon.ico": // the browser asks for it on its own; the page has no icon, so an empty answer (not a 401 in the console)
 		h.Set("Cache-Control", "max-age=86400")
 		w.WriteHeader(http.StatusNoContent)
@@ -196,4 +192,12 @@ func (s *server) settingsHTTP(w http.ResponseWriter, r *req) int {
 		return writeJSON(w, r.rid, 200, map[string]bool{"ok": true})
 	}
 	return writeError(w, r.rid, 405, "Not allowed: "+r.Method+" "+r.URL.Path)
+}
+
+func writeSettingsPage(w http.ResponseWriter, picker, remote bool) int {
+	nonce := randomToken()
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'nonce-"+nonce+
+		"'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'")
+	page := strings.NewReplacer("{{NONCE}}", nonce, "{{PICKER}}", strconv.FormatBool(picker && !remote), "{{REMOTE}}", strconv.FormatBool(remote)).Replace(settingsPage)
+	return writeStatus(w, 200, "text/html; charset=utf-8", []byte(page))
 }
