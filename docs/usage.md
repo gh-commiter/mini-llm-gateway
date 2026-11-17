@@ -461,6 +461,19 @@ mode to let it change files.
 session history, for example `security` in a subagent's environment. It is a guard against mistakes, not a security
 boundary.
 
+**Usage labels** (`--minigw-phase`, `--minigw-activity`, `--minigw-task`, or `MINIGW_PHASE`, `MINIGW_ACTIVITY`, `MINIGW_TASK`): say what a run was for, so
+the quota can be read by type of work. The phase is plan, do, check or act (act: correcting the plan because of a new state found while
+doing or checking); the activity is the kind of work: feature, bugfix, security, refactor, docs, test, release, research, ops; the task is
+a short reference such as an issue number or a branch. All three are optional and none ever refuses or delays a run: a value outside the
+suggested words is kept as it is when it is a short token (phase and activity: lower case letters, digits and `. _ -`, up to 32; task: also
+`#` and `/`, up to 64); anything else is dropped with one warning line and the run goes on. In a folder linked to a project and inside a git
+repository, an empty task becomes the current branch name (marked `branch`; the branch is read from the repository's files, nothing runs).
+A role such as `plan.feature` is not parsed into labels. The labels are data, not permissions. Read them with `minigw gw usage --by phase`
+(also `activity`, `task`, `project`, `model`, or two of them: `--by project,phase`), filter with `--phase`, `--activity`, `--task` on
+`gw usage`, `gw usage-events`, `gw project-sessions` and `minigw project sessions`. Usage without a label is its own row, `(unlabelled)`.
+Totals older than 400 days are folded without labels. A topic project is the place for a task of its own: link its subfolder and the branch
+names the task.
+
 `MINIGW_SHARE=0` turns folder sharing off; `MINIGW_SHARE=1` shares a folder that is not shared automatically, for
 one run.
 

@@ -6,7 +6,8 @@ import Foundation
 
 public enum UsageReport {
     public static let help = """
-        minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
+        minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
+          minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels); unlabelled usage is its own row
           minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)
         """
 
@@ -185,6 +186,92 @@ public enum UsageReport {
             let cost = s.reportedKnown ? String(format: "%lld.%09lld", s.reported / 1_000_000_000, s.reported % 1_000_000_000) : ""
             let estimated = s.estimateKnown ? String(format: "%lld.%09lld", s.estimated / 1_000_000_000, s.estimated % 1_000_000_000) : ""
             out += "\(cell(k[0])),\(cell(k[1])),\(cell(k[2])),\(s.events),\(s.failed),\(s.tin),\(s.tout),\(cost),\(estimated),\(s.unknown),\(s.errors),\(s.durationMs),\(s.failedMs),\(s.unknownMs),\(s.cin),\(s.cout)\n"
+        }
+        return out
+    }
+
+    // MARK: --by
+
+    static let byDims = ["phase", "activity", "task", "project", "model"]
+    static let unlabelled = "(unlabelled)"
+
+    /// --by: one or two different dimensions, comma separated.
+    static func parseBy(_ v: String) -> [String]? {
+        let parts = v.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+        guard (1...2).contains(parts.count), parts.allSatisfy(byDims.contains), parts.count == 1 || parts[0] != parts[1] else { return nil }
+        return parts
+    }
+    /// Does --by need the rows split by label (labels=1)?
+    static func byLabels(_ by: [String]) -> Bool { by.contains { ["phase", "activity", "task"].contains($0) } }
+
+    /// The value of one dimension of a row ("(unlabelled)" for no label).
+    static func byValue(_ r: JDict, _ dim: String, _ projects: [Int64: String]) -> String {
+        var v = ""
+        switch dim {
+        case "phase": v = r["phase"]?.string ?? ""
+        case "activity": v = r["activity"]?.string ?? ""
+        case "task":
+            v = r["task"]?.string ?? ""
+            if !v.isEmpty && r["tasksource"]?.string == "branch" { v += " (branch)" }
+        case "model": return r["model"]?.string ?? ""
+        default:
+            let p = r["project"]?.int ?? 0
+            if p == 0 { return "(no project)" }
+            return projects[p].flatMap { $0.isEmpty ? nil : $0 } ?? String(p)
+        }
+        return v.isEmpty ? unlabelled : v
+    }
+
+    /// The usage numbers per one or two dimensions (groups ordered by the first dimension's cost, the unlabelled one last), a share
+    /// column (the row's requests of all requests) and a total line. A port of usageByText.
+    static func byText(_ rows: [JDict], _ gaps: [JDict], _ by: [String], _ projects: [Int64: String]) -> String {
+        if rows.isEmpty { return "no events\n" }
+        var total = Sum()
+        var groups: [[String]: Sum] = [:]
+        for r in rows {
+            let k = [byValue(r, by[0], projects), by.count > 1 ? byValue(r, by[1], projects) : ""]
+            groups[k, default: Sum()].add(r)
+            total.add(r)
+        }
+        var first: [String: (events: Int64, nanos: Int64)] = [:]
+        for (k, g) in groups { first[k[0], default: (0, 0)].events += g.events; first[k[0], default: (0, 0)].nanos += g.nanos }
+        let keys = groups.keys.sorted { a, b in
+            if a[0] != b[0] {
+                let x = first[a[0]]!, y = first[b[0]]!
+                if (a[0] == unlabelled) != (b[0] == unlabelled) { return b[0] == unlabelled }
+                if x.nanos != y.nanos { return x.nanos > y.nanos }
+                if x.events != y.events { return x.events > y.events }
+                return before(a[0], b[0])
+            }
+            let x = groups[a]!, y = groups[b]!
+            if x.nanos != y.nanos { return x.nanos > y.nanos }
+            if x.events != y.events { return x.events > y.events }
+            return before(a[1], b[1])
+        }
+        let withFailedTime = total.failedMs > 0, withCache = total.cin > 0
+        var head = by, right = [Bool](repeating: false, count: by.count)
+        head += ["requests", "share", "failed"]; right += [true, true, true]
+        if withFailedTime { head.append("failed min"); right.append(true) }
+        head.append("tokens in"); right.append(true)
+        if withCache { head.append("cached in"); right.append(true) }
+        head += ["tokens out", "cost USD"]; right += [true, false]
+        let table = keys.map { k -> [String] in
+            let s = groups[k]!
+            var row = [oneLine(k[0])]
+            if by.count > 1 { row.append(oneLine(k[1])) }
+            let share = total.events > 0 ? "\((s.events * 100 + total.events / 2) / total.events)%" : "0%"
+            row += [String(s.events), share, String(s.failed)]
+            if withFailedTime { row.append(s.failedMs > 0 ? minutes(s.failedMs) : "-") }
+            row.append(human(s.tin))
+            if withCache { row.append(human(s.cin)) }
+            return row + [human(s.tout), s.cost]
+        }
+        var out = Self.table(head, table, right) + "\ntotal: \(total.events) requests (\(total.failed) failed), \(human(total.tin)) tokens in, "
+        if withCache { out += "\(human(total.cin)) cached in, " }
+        out += "\(human(total.tout)) tokens out, cost USD \(total.cost)\(total.failedSummary)\n"
+        let utc = TimeZone(identifier: "UTC")!
+        for g in gaps {
+            out += "\(g["count"]?.int ?? 0) events lost between \(ProjectText.stamp(g["from"]?.string.flatMap(ProjectText.parseTime), utc)) and \(ProjectText.stamp(g["to"]?.string.flatMap(ProjectText.parseTime), utc)) (UTC)\n"
         }
         return out
     }

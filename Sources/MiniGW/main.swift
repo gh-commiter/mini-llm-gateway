@@ -881,6 +881,12 @@ let roleArg = GatewayHistory.takeRole(args, env: ProcessInfo.processInfo.environ
 let role = roleArg.role
 args = roleArg.rest
 if !roleArg.ok { fail("--minigw-role: 1-32 letters, digits, . _ or -") }
+// --minigw-phase/-activity/-task (ali MINIGW_PHASE/...): oznake za poročila o porabi; teka nikoli ne zavrnejo.
+var runLabels: RunLabels
+do {
+    let taken = RunLabels.take(args, env: ProcessInfo.processInfo.environment, warn: { try? err.write(contentsOf: Data(("minigw: " + $0 + "\n").utf8)) })
+    runLabels = taken.labels; args = taken.rest
+}
 // --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto auto.
 // native: mapa je prek SMB mapa routerja → agenti delajo neposredno v njej (glej Native).
 // Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > auto.
@@ -1190,6 +1196,7 @@ let implicitWork = SharedFolders.implicitWork(asked: askedWork, work: work)
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : "")
        + (role.isEmpty ? "" : "\nx-claude-mini-role: \(role)")
+       + { runLabels.withBranch(cwd: cwd, linked: { RunLabels.folderLinked($0, statePath: Projects.statePath()) }, branch: RunLabels.gitBranch); return runLabels.headers }()
        + (readOnly ? "\nx-claude-mini-ro: 1" : "")
        + (toolsPlan.tools.map { "\nx-claude-mini-tools: " + $0 } ?? ""), 1)  // the level of this run: the gateway refuses one above its cap for the model  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
 

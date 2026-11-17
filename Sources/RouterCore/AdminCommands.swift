@@ -14,12 +14,12 @@ public struct AdminCLIError: Error, Equatable {
 
 /// The flags of the owner commands (Go's coreOpts).
 public struct AdminOpts {
-    public var reason = "", team = ""
+    public var reason = "", team = "", by = "", phase = "", activity = "", task = ""
     public var days = "7", user = "", project = "", model = "", claudeProbe = "", provider = "", device = "", folder = "", sort = ""
     public var json = false, csv = false, history = false, explain = false
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
-                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "") {
-        self.reason = reason; self.team = team
+                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "", by: String = "", phase: String = "", activity: String = "", task: String = "") {
+        self.reason = reason; self.team = team; self.by = by; self.phase = phase; self.activity = activity; self.task = task
         self.days = days; self.user = user; self.project = project; self.model = model; self.claudeProbe = claudeProbe
         self.provider = provider; self.device = device; self.folder = folder; self.sort = sort; self.json = json; self.csv = csv; self.history = history; self.explain = explain
     }
@@ -45,8 +45,8 @@ public final class AdminCommands {
           minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)
           minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups
           minigw gw core audit                                  the audit trail of the core
-          minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--json]
-          minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)
+          minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]
+          minigw gw usage-events [--days n] [--user u] [--project p] [--model m] [--phase p] [--activity a] [--task t]   model invocations per day, model and user (core; all of them)
           minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
           minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
         (<user> and <project>: the name or slug, or the number.)
@@ -223,21 +223,37 @@ public final class AdminCommands {
             if !o.device.isEmpty || !o.folder.isEmpty { throw fail("--device and --folder belong to the old counters: use minigw gw usage --legacy") }
             if !o.user.isEmpty || !o.project.isEmpty { throw fail("--user and --project belong to minigw gw usage-events") }
             if !o.sort.isEmpty && (o.sort != "failed" || o.json || o.csv) { throw fail(UsageReport.help.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            var by: [String] = []
+            if !o.by.isEmpty {
+                guard let b = UsageReport.parseBy(o.by), !o.csv, o.sort.isEmpty else { throw fail(UsageReport.help.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                by = b
+            }
             var q = ["days": o.days]
             if !o.provider.isEmpty { q["provider"] = o.provider }
             if !o.model.isEmpty { q["model"] = o.model }
+            addLabelFilters(&q, o)
+            if UsageReport.byLabels(by) { q["labels"] = "1" }
             let r = call("GET", "/usage/events" + ProjectText.query(q), nil)
             guard r.status != 0 else { throw fail("lost the connection to Mini Gateway") }
             if r.status >= 300 { throw fail(clean(JSONValue.parse(r.data)?.dict["error"]?.dict["message"]?.string ?? "")) }
             if o.json { say(String(decoding: r.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)); break }
             guard let (rows, gaps) = UsageReport.rows(r.data) else { throw fail("the usage answer is not understood") }
-            out(o.csv ? UsageReport.csv(rows) : UsageReport.text(rows, gaps, sortFailed: o.sort == "failed"))
+            if !by.isEmpty {
+                var projects: [Int64: String] = [:]
+                if by.contains("project") {
+                    for p in try request("GET", "/projects")["projects"]?.array ?? [] { projects[p.dict["id"]?.int ?? 0] = p.dict["slug"]?.string ?? "" }
+                }
+                out(UsageReport.byText(rows, gaps, by, projects))
+            } else {
+                out(o.csv ? UsageReport.csv(rows) : UsageReport.text(rows, gaps, sortFailed: o.sort == "failed"))
+            }
         case "project-sessions":
             try need(1, 1)
             guard !o.project.isEmpty else { throw fail("--project required") }
             var q = ["project": s(try projectID(o.project)), "days": o.days, "model": o.model, "device": o.device]
+            addLabelFilters(&q, o)
             let page = try SessionHistory.collect { after in
-                q["after"] = after
+                q["after"] = after.isEmpty ? nil : after  // only a continuation carries a cursor (as the Go client)
                 return try self.requestRaw("GET", "/usage/sessions" + ProjectText.query(q))
             }
             out(o.json ? try SessionHistory.json(page) + "\n" : SessionHistory.text(page))
@@ -247,6 +263,7 @@ public final class AdminCommands {
             if !o.user.isEmpty { q["user"] = s(try userID(o.user)) }
             if !o.project.isEmpty { q["project"] = s(try projectID(o.project)) }
             if !o.model.isEmpty { q["model"] = o.model }
+            addLabelFilters(&q, o)
             printUsage(try request("GET", "/usage/events" + ProjectText.query(q)))
         case "quota":
             try need(1, 1)
@@ -329,6 +346,11 @@ public final class AdminCommands {
     }
 
     /// printUsage with the admin view: one line per day, model and user, the totals, the gaps.
+    /// The label filters of the owner's usage commands (they select events; they never widen access).
+    func addLabelFilters(_ q: inout [String: String], _ o: AdminOpts) {
+        for (k, v) in [("phase", o.phase), ("activity", o.activity), ("task", o.task)] where !v.isEmpty { q[k] = v }
+    }
+
     func printUsage(_ r: JDict) {
         var ev: Int64 = 0, tin: Int64 = 0, tout: Int64 = 0
         let days = (r["days"]?.array ?? []).map(\.dict)

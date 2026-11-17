@@ -1,5 +1,20 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Usage by phase, activity and task: a run can carry three optional labels, `--minigw-phase` (suggested: plan, do, check, act), `--minigw-activity` (feature, bugfix, security, refactor, docs, test, release, research, ops) and `--minigw-task` (an issue number, a branch), or `MINIGW_PHASE`, `MINIGW_ACTIVITY`, `MINIGW_TASK`. A label never refuses or delays a run: a missing one is stored empty, an unusual value is kept as given when it is a short safe word, and a value that is not one is dropped with one warning line. In a folder linked to a project and inside a git repository, an empty task is filled with the current branch name (marked `branch`; read from the repository's files, no git command runs). Each label records where it came from (`given`, `branch`).
+- `minigw gw usage --by phase|activity|task|project|model` (one or two, comma separated, for example `--by project,phase`) shows requests, share, failures, tokens, cached tokens, cost and failed agent minutes per group; usage without a label is its own row, `(unlabelled)`, with its share. `--phase`, `--activity` and `--task` filter `gw usage`, `gw usage-events`, `gw project-sessions` and `minigw project sessions`; sessions show the labels of their first request.
+- The plugin skills for models (ask, codex, review, copilot) tell Claude to set the phase and activity when it knows them (review: check; codex: do).
+
+### Changed
+- The project database schema is now 17 (a snapshot is taken before the migration). An older gateway cannot open it. Old usage rows have no labels. Daily totals older than 400 days (folded) carry none and show as unlabelled.
+- `minigw gw project-sessions` and `minigw project sessions` on the Mac no longer send an empty `after=` on the first page (as on Windows and Linux).
+
+### Known problems
+- Labels are data, never permissions: a member sees them only on sessions and usage already visible to them, and a label filter never widens whose events are read. A call made by hand gets labels only when the caller sets them (or the branch fills the task); classifying unlabelled calls is not done yet.
+- A role of the form `<phase>.<activity>` set by older scripts is not read as labels.
+
 ## 0.7.15
 
 ### New

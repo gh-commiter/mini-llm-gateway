@@ -32,7 +32,7 @@ public final class ProjectEnv {
         minigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them
         minigw project unlink                       remove the link that applies here
         minigw project show                         the link that applies here, and why
-        minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]
+        minigw project sessions [<project>] [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]
         """
     public static let noteHelp = """
         minigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project
@@ -170,13 +170,14 @@ public final class ProjectEnv {
     // MARK: project
 
     private func projectSessions(_ args: [String]) throws {
-        guard let fl = try? GoFlags.parse([("days", .int), ("model", .string), ("device", .string), ("json", .bool)], args), fl.positional.count <= 1 else { throw ProjectError("usage: minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]") }
+        guard let fl = try? GoFlags.parse([("days", .int), ("model", .string), ("device", .string), ("json", .bool), ("phase", .string), ("activity", .string), ("task", .string)], args), fl.positional.count <= 1 else { throw ProjectError("usage: minigw project sessions [<project>] [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]") }
         let c: ProjectConn, project: String
         if let ref = fl.positional.first { (c, _) = connect(); project = ref }
         else { let linked = try linkedProject(""); c = linked.0; project = String(linked.1.project) }
         var q = ["days": fl.set.contains("days") ? fl.string("days") : "7", "model": fl.string("model"), "device": fl.string("device")]
+        for k in ["phase", "activity", "task"] where !fl.string(k).isEmpty { q[k] = fl.string(k) }
         let page = try SessionHistory.collect { after in
-            q["after"] = after
+            q["after"] = after.isEmpty ? nil : after  // only a continuation carries a cursor (as the Go client)
             let r = self.request(c, "GET", Self.apiProjects + "/" + ProjectText.queryEscape(project) + "/sessions" + ProjectText.query(q))
             guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
             guard let obj = try JSONSerialization.jsonObject(with: r.data) as? [String: Any] else { throw ProjectError("the sessions answer is not understood") }

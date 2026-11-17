@@ -17,6 +17,7 @@ final class AgentRun: @unchecked Sendable {
     let ask: Bool                // »May ask other models«: the models' routes exist on the port (a run with a project but without it has the notes only)
     let project: ProjectRun?     // 0.6.0: the run's project (notes capability, usage); a nested run inherits the root's
     let evID: String, evUser: Int  // 0.6.0: the usage event of the request that started this run (parent of its nested calls) and its user
+    let labels: (phase: String, activity: String, task: String, taskSource: String)  // the labels of that request: its nested calls carry them
     /// M3: žeton v datoteki 0600 v začasni mapi izvajanja, ne v okolju (KERN_PROCARGS2 ga drugim procesom istega uporabnika
     /// pokaže tudi v peskovniku); `ownDir`: mapa, ki jo izbriše stop.
     private(set) var authFile = URL(fileURLWithPath: "/dev/null")
@@ -42,6 +43,7 @@ final class AgentRun: @unchecked Sendable {
                  ask: Bool, project: ProjectRun?, event: UsageEvent?) {
         self.kind = kind; self.chain = chain; self.dir = dir; self.readOnly = readOnly; self.listener = listener; self.token = token
         self.ask = ask; self.project = project; evID = event?.id ?? ""; evUser = event?.userId ?? 0
+        labels = (event?.phase ?? "", event?.activity ?? "", event?.task ?? "", event?.taskSource ?? "")
         peer = req.peer; device = req.device
         session = req.header("x-claude-mini-session") ?? ""; cwd = req.header("x-claude-mini-cwd") ?? ""
         role = GatewayHistory.role(req)
