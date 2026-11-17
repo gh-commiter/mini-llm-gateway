@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.14
 
 ### New
 - Team notes: a team now has notes of its own (its "general segment"). Every member of the team reads them; a member who is admin of at least one of the team's projects writes them (`structure` and `data` only, never `private`). Use `--team <team>` instead of a project on `minigw kb submit|import|export|search|faq` and on `minigw note list|read|push|edit|rm`. The owner reviews a submission to a team with `minigw gw kb review --team <team>`.
@@ -13,6 +13,17 @@
 
 ### Known problems
 - Team notes have no `private` class, and only a project admin of the team writes them; there is no owner shortcut into them (the owner reviews submissions and exports bundles).
+- The hooks ask after a commit or a compaction, not at the end of a session: Claude Code gives a hook no way to talk to the model then. A failed hand-in is not retried. Checked by tests of both clients and of the plugin script, but not yet tried in a real Claude Code session (neither on a Mac nor on Windows).
+- Project git identity, team path labels and entry kinds are new and not yet in daily use. `minigw project link` without a slug needs `git` on the computer; on Windows it has only been built, not tried.
+- A replacement of a `faq` entry keeps the kind `faq`, and an import never changes the kind of an existing note: to change a kind, remove the entry and hand it in again.
+- `minigw gw import`: an `INDEX.md` inside a bundle has no size limit of its own (only the 100 MiB total). Import only bundles you made yourself.
+- `minigw kb export` on Windows: the protection of each exported file is still set by path after the file is created through the opened folder; not tested on Windows yet.
+- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.13
 
