@@ -53,11 +53,12 @@ struct SettingsView: View {
 
     @State private var panelEntries: [PanelEntry] = []
     @State private var panelError: PanelError?
+    @State private var panelStrings = PanelStrings()
 
     /// The panes of the panel catalog, after Devices; a catalog that cannot be loaded is one page that says why.
     private var panelItems: [Item] {
-        let lang = PanelLang.current
-        if let e = panelError, panelEntries.isEmpty { _ = e; return [Item(pane: .panel(""), title: String(localized: "Panels"), symbol: "square.dashed", color: .indigo)] }
+        let lang = panelStrings
+        if panelError != nil, panelEntries.isEmpty { return [Item(pane: .panel(""), title: String(localized: "Panels"), symbol: "square.dashed", color: .indigo)] }
         return panelEntries.map { Item(pane: .panel($0.id), title: $0.title(lang), symbol: $0.sidebarSymbol.isEmpty ? "square.dashed" : $0.sidebarSymbol, color: .indigo, about: $0.about(lang)) }
     }
 
@@ -282,6 +283,7 @@ struct SettingsView: View {
             await catalog.load()
             panelEntries = catalog.entries
             panelError = catalog.error
+            panelStrings = catalog.strings
         }
         .task {
             while !Task.isCancelled {  // dovoljenje se spreminja v Sistemskih nastavitvah
@@ -329,7 +331,7 @@ struct SettingsView: View {
             let item = items.first { $0.pane == .panel(id) }
             let header = PaneHeader(symbol: item?.symbol ?? "square.dashed", color: .indigo, title: item?.title ?? "", about: item?.about ?? "")
             if let e = panelEntries.first(where: { $0.id == id }) {
-                PanelPane(entry: e, color: .indigo, send: state.panelSend)
+                PanelPane(entry: e, color: .indigo, send: state.panelSend, strings: panelStrings)
             } else if let panelError {
                 PanelsUnavailablePane(header: header, error: panelError)
             }

@@ -26,6 +26,11 @@ private actor Fake {
     func clear() { log = [] }
 }
 
+private func strings(_ locale: String) throws -> PanelStrings {
+    guard let t = PanelStrings.parse(try fixture("panels-strings-\(locale).json")) else { throw Err.bad }
+    return t
+}
+
 private func users() throws -> PanelDescription {
     let panels = try object("panels.json")["panels"] as! [Any]
     guard case .ready(let d) = PanelValidator.parse(data(panels[0])) else { throw Err.bad }
@@ -39,9 +44,9 @@ private let userAnswers: [(String, Int, String)] = [
     ("GET /bindings", 200, #"{"bindings":[{"device":"dev-1","user":1}]}"#),
 ]
 
-@MainActor private func usersModel(_ fake: Fake, lang: PanelLang = .en) async throws -> PanelModel {
+@MainActor private func usersModel(_ fake: Fake, locale: String = "C") async throws -> PanelModel {
     for (k, s, b) in userAnswers { await fake.set(k, s, b) }
-    let m = PanelModel(panel: try users(), lang: lang, send: { await fake.handle($0) })
+    let m = PanelModel(panel: try users(), strings: try strings(locale), send: { await fake.handle($0) })
     await m.load()
     await fake.clear()
     return m
@@ -55,7 +60,7 @@ private let userAnswers: [(String, Int, String)] = [
 
     @Test(.enabled(if: haveFixtures)) func builtinDescriptionDecodesAndValidates() throws {
         let d = try users()
-        #expect(d.id == "builtin.users" && d.title.sl == "Uporabniki in naprave")
+        #expect(d.id == "builtin.users" && d.title == "builtin.users.title")  // a key, not a text
         #expect(d.sections.count == 3 && d.refs.keys.sorted() == ["devices", "users"])
         // the user name limit is the server's: core.validName, 128 bytes
         let add = d.sections[0].actions![0]
@@ -122,7 +127,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     @Test(.enabled(if: haveFixtures)) func loadsRefsThenListsAndShowsLabels() async throws {
         let fake = Fake()
         for (k, s, b) in userAnswers { await fake.set(k, s, b) }
-        let m = PanelModel(panel: try users(), lang: .en, send: { await fake.handle($0) })
+        let m = PanelModel(panel: try users(), strings: try strings("C"), send: { await fake.handle($0) })
         await m.load()
         let log1 = await fake.log
         #expect(log1 == ["GET /devices", "GET /users", "GET /users", "GET /bindings"])
@@ -239,9 +244,10 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     }
 
     @Test(.enabled(if: haveFixtures)) func renderersUseTheSlovenianStringsWhenTheAppIsSlovenian() async throws {
-        #expect(PanelLang.choose(["sl-SI", "en"]) == .sl && PanelLang.choose(["en-US"]) == .en && PanelLang.choose([]) == .en && PanelLang.choose(["de"]) == .en)
+        #expect(PanelLocale.tag(["sl-SI", "en"]) == "sl_SI" && PanelLocale.tag(["sl"]) == "sl_SL" && PanelLocale.tag(["en-US"]) == "en_US")
+        #expect(PanelLocale.tag(["zh-Hans-CN"]) == "zh_CN" && PanelLocale.tag([]) == "C" && PanelLocale.tag(["Base"]) == "C" && PanelLocale.tag(["../x"]) == "C")
         let fake = Fake()
-        let m = try await usersModel(fake, lang: .sl)
+        let m = try await usersModel(fake, locale: "sl_SI")
         let u = m.panel.sections[0]
         let row = m.visibleRows(u, path: "users")[0]
         #expect(m.cell(u.columns![1], row) == "Aktiven")
@@ -256,7 +262,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         let rows = nasty.enumerated().map { #"{"id":\#($0.offset + 1),"name":\#(String(decoding: try! JSONEncoder().encode($0.element), as: UTF8.self)),"active":true}"# }
         await fake.set("GET /users", 200, #"{"users":[\#(rows.joined(separator: ","))]}"#)
         await fake.set("GET /devices", 200, #"{"devices":[]}"#); await fake.set("GET /bindings", 200, #"{"bindings":[]}"#)
-        let m = PanelModel(panel: try users(), lang: .en, send: { await fake.handle($0) })
+        let m = PanelModel(panel: try users(), strings: try strings("C"), send: { await fake.handle($0) })
         await m.load()
         let u = m.panel.sections[0]
         let shown = m.visibleRows(u, path: "users")
@@ -271,7 +277,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         for (k, s, b) in userAnswers { await fake.set(k, s, b) }
         let many = (1...1001).map { #"{"id":\#($0),"name":"u\#($0)"}"# }.joined(separator: ",")
         await fake.set("GET /users", 200, #"{"users":[\#(many)]}"#)
-        let m = PanelModel(panel: try users(), lang: .en, send: { await fake.handle($0) })
+        let m = PanelModel(panel: try users(), strings: try strings("C"), send: { await fake.handle($0) })
         await m.load()
         #expect(m.refError == .refused("more than 1000 entries in /users") && m.refs["users"] == [])
     }
@@ -279,11 +285,12 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     @Test(.enabled(if: haveFixtures)) func pagingAndDetailPagesOfTheFormat1Fixture() async throws {
         let f = try object("panels-format1.json")
         guard case .ready(let d) = PanelValidator.parse(data(f["panel"]!), provider: "acme", routes: f["routes"] as? [String]) else { throw Err.bad }
+        let tabs = try JSONSerialization.jsonObject(with: fixture("panels-format1-strings.json")) as! [String: [String: String]]
         let fake = Fake()
         await fake.set("GET /plugins/acme/items", 200, #"{"items":[{"sku":"s1","title":"Shirt"}]}"#)
         await fake.set("GET /plugins/acme/orders", 200, #"{"orders":[{"id":5,"name":"first","paid":true,"state":"new","item":"s1","created":"2026-11-17T10:00:00Z","note":"a\nb"}],"next":6}"#)
         await fake.set("GET /plugins/acme/orders/5/lines", 200, #"{"lines":[{"id":9,"title":"one"}]}"#)
-        let m = PanelModel(panel: d, lang: .en, routes: f["routes"] as? [String], send: { await fake.handle($0) })
+        let m = PanelModel(panel: d, strings: PanelStrings(locale: "C", table: tabs["C"]!), routes: f["routes"] as? [String], send: { await fake.handle($0) })
         await m.load()
         let orders = d.sections[1]
         #expect(m.data("orders").next == "6")
@@ -320,13 +327,13 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         // a model built with fewer routes than the description uses never sends the unregistered ones
         let fake = Fake()
         let d = try users()
-        let m = PanelModel(panel: d, lang: .en, routes: ["GET users"], send: { await fake.handle($0) })
+        let m = PanelModel(panel: d, strings: PanelStrings(), routes: ["GET users"], send: { await fake.handle($0) })
         await m.load()
         let log9 = await fake.log
         #expect(log9 == ["GET /users", "GET /users"])  // the ref and the list; devices and bindings are not registered
         #expect(m.request(d.sections[0].actions![0], values: ["name": .string("x")]) == .failure(.refused("the route POST /users is not registered")))
         // an unknown provider has no routes at all
-        let none = PanelModel(panel: d, lang: .en, routes: [], send: { await fake.handle($0) })
+        let none = PanelModel(panel: d, strings: PanelStrings(), routes: [], send: { await fake.handle($0) })
         await none.load()
         let log10 = await fake.log
         #expect(log10 == ["GET /users", "GET /users"])
@@ -334,8 +341,9 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
 }
 
 @MainActor @Suite struct PanelCatalogTests {
-    private func catalog(_ status: Int, _ body: String) async -> PanelCatalog {
-        let c = PanelCatalog(send: { _ in CoreResponse(status: status, body: Data(body.utf8)) })
+    private func catalog(_ status: Int, _ body: String, locale: String = "C") async -> PanelCatalog {
+        let texts = (try? fixture("panels-strings-\(locale).json")) ?? Data(#"{"format":1,"locale":"C","strings":{}}"#.utf8)
+        let c = PanelCatalog(send: { r in r.path == "/panels/strings" ? CoreResponse(status: 200, body: texts) : CoreResponse(status: status, body: Data(body.utf8)) }, locale: locale)
         await c.load()
         return c
     }
@@ -343,8 +351,46 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
     @Test(.enabled(if: haveFixtures)) func theGoAnswerLoads() async throws {
         let c = await catalog(200, String(decoding: try fixture("panels.json"), as: UTF8.self))
         #expect(c.error == nil && c.entries.map(\.id) == ["builtin.users"])
-        #expect(c.entries[0].title(.sl) == "Uporabniki in naprave" && c.entries[0].title(.en) == "Users and devices" && c.entries[0].sidebarSymbol == "person.2")
+        #expect(c.entries[0].title(c.strings) == "Users and devices" && c.entries[0].sidebarSymbol == "person.2" && c.strings.locale == "C")
         guard case .ready = c.entries[0].parse else { throw Err.bad }
+        let sl = await catalog(200, String(decoding: try fixture("panels.json"), as: UTF8.self), locale: "sl_SI")
+        #expect(sl.entries[0].title(sl.strings) == "Uporabniki in naprave" && sl.strings.locale == "sl_SI" && sl.stringsError == nil)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func aMissingKeyIsShownAsTheKeyAndTheLanguageCarriesTheRest() throws {
+        let t = PanelStrings(locale: "sl_SI", table: ["acme.a": "A"])
+        #expect(t.text("acme.a") == "A" && t.text("acme.missing") == "acme.missing" && t.text(nil) == "")
+        #expect(PanelStrings.parse(Data(#"{"format":2,"locale":"C","strings":{}}"#.utf8)) == nil && PanelStrings.parse(Data("[]".utf8)) == nil)
+        // the table of the language answers for every key of the built-in panel, and C does too
+        let d = try users()
+        for loc in ["C", "sl_SI"] {
+            let st = try strings(loc)
+            var keys = Set<String>()
+            func walk(_ s: [PanelSection]) {
+                for x in s {
+                    keys.formUnion([x.title, x.body, x.empty, x.hide?.toggle].compactMap { $0 })
+                    for c in x.columns ?? [] { keys.formUnion([c.label, c.yes, c.no].compactMap { $0 } + (c.values ?? [:]).values) }
+                    for a in (x.actions ?? []) + (x.rowActions ?? []) {
+                        keys.insert(a.label)
+                        if let c = a.confirm { keys.formUnion([c.title, c.message, c.button]) }
+                        for f in a.fields ?? [] { keys.insert(f.label) }
+                    }
+                    walk(x.detail?.sections ?? [])
+                }
+            }
+            walk(d.sections); keys.formUnion([d.title, d.about])
+            #expect(keys.count > 20)
+            for k in keys { #expect(st.table[k] != nil, "\(loc): no text for \(k)") }
+        }
+    }
+
+    @Test func theStringsCallCarriesTheLocaleAndAFailureLeavesTheKeys() async {
+        let seen = Fake()
+        await seen.set("GET /panels", 200, #"{"format":1,"panels":[]}"#)
+        let c = PanelCatalog(send: { await seen.handle($0) }, locale: "sl_SI")
+        await c.load()
+        let log = await seen.log
+        #expect(log.contains("GET /panels/strings?lang=sl_SI") && c.stringsError == .server("nothing here") && c.strings.text("x.y") == "x.y")
     }
 
     @Test(.enabled(if: haveFixtures)) func aHigherFormatIsNotGuessed() async throws {
@@ -352,7 +398,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         var newer = good[0]; newer["format"] = 2; newer["id"] = "builtin.future"; newer["sections"] = [["kind": "hologram"]]
         let c = await catalog(200, String(decoding: data(["format": 1, "panels": [newer, good[0]]]), as: UTF8.self))
         #expect(c.entries.map(\.id) == ["builtin.future", "builtin.users"])
-        #expect(c.entries[0].parse == .needsNewer(2) && c.entries[0].title(.en) == "Users and devices")  // still in the sidebar
+        #expect(c.entries[0].parse == .needsNewer(2) && c.entries[0].title(c.strings) == "Users and devices")  // still in the sidebar
         let top = await catalog(200, #"{"format":2,"panels":[]}"#)
         #expect(top.error == .needsNewer && top.entries.isEmpty)
     }
@@ -368,7 +414,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         let c = await catalog(200, String(decoding: data(["format": 1, "panels": [p]]), as: UTF8.self))
         guard case .ready(let d) = c.entries[0].parse else { throw Err.bad }
         #expect(!d.sections[3].supported && d.sections[3].kind == "chart")
-        let m = PanelModel(panel: d, lang: .en, send: { _ in .unavailable })
+        let m = PanelModel(panel: d, strings: PanelStrings(), send: { _ in .unavailable })
         #expect(m.unsupportedCount(d.sections[0]) == 1)  // the markdown column: its cell is replaced, nothing is rendered as markdown
     }
 

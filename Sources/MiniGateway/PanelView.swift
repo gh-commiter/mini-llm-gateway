@@ -11,14 +11,14 @@ struct PanelPane: View {
     let entry: PanelEntry
     let color: Color
     let send: PanelSend
-    private let lang = PanelLang.current
+    let strings: PanelStrings
 
     var body: some View {
         let header = PaneHeader(symbol: entry.sidebarSymbol.isEmpty ? "square.dashed" : entry.sidebarSymbol, color: color,
-                                title: entry.title(lang), about: entry.about(lang))
+                                title: entry.title(strings), about: entry.about(strings))
         switch entry.parse {
         case .ready(let d):
-            ReadyPanel(header: header, model: PanelModel(panel: d, lang: lang, send: { [send] in await send($0) })).id(d.id)
+            ReadyPanel(header: header, model: PanelModel(panel: d, strings: strings, send: { [send] in await send($0) })).id(d.id)
         case .needsNewer:
             Form { header; Section { Text("This panel needs a newer Mini Gateway.").foregroundStyle(.secondary) } }
         case .refused(let why):
@@ -97,7 +97,7 @@ private struct PanelSections: View {
         ForEach(sections, id: \.id) { s in
             switch s.kind {
             case "text":
-                Section { Text(verbatim: s.body?.text(model.lang) ?? "").foregroundStyle(.secondary) }
+                Section { Text(verbatim: model.text(s.body)).foregroundStyle(.secondary) }
             case "list":
                 PanelList(model: model, section: s, path: path + s.id, parent: parent)
             default:
@@ -128,7 +128,7 @@ private struct PanelList: View {
             if let e = data.error { PanelErrorText(error: e) }
             if let e = model.actionError[key] { PanelErrorText(error: e) }
             if let h = section.hide {
-                Toggle(isOn: Binding(get: { data.showHidden }, set: { model.setShowHidden($0, path: path, parent: parent) })) { Text(verbatim: h.toggle.text(model.lang)) }
+                Toggle(isOn: Binding(get: { data.showHidden }, set: { model.setShowHidden($0, path: path, parent: parent) })) { Text(verbatim: model.text(h.toggle)) }
             }
             if !(section.filter ?? []).isEmpty {
                 TextField("Search", text: Binding(get: { data.search }, set: { model.setSearch($0, path: path, parent: parent) }))
@@ -138,7 +138,7 @@ private struct PanelList: View {
                 PanelRowView(model: model, section: section, row: row,
                              onAction: { act($0, row: row) }, onOpen: section.detail == nil ? nil : { opened = row })
             }
-            if rows.isEmpty && !data.loading && data.error == nil, let e = section.empty { Text(verbatim: e.text(model.lang)).foregroundStyle(.secondary) }
+            if rows.isEmpty && !data.loading && data.error == nil, let e = section.empty { Text(verbatim: model.text(e)).foregroundStyle(.secondary) }
             if data.next != nil { Button("Load More") { Task { await model.loadMore(section, path: path, parent: parent) } } }
             if model.unsupportedCount(section) > 0 {
                 Label { Text("This part of the panel cannot be shown.") } icon: { Image(systemName: "questionmark.square.dashed") }.foregroundStyle(.secondary)
@@ -147,12 +147,12 @@ private struct PanelList: View {
             if !actions.isEmpty {
                 EqualWidthHStack {
                     ForEach(actions, id: \.id) { a in
-                        Button { act(a, row: nil) } label: { Text(verbatim: a.label.text(model.lang)).frame(maxWidth: .infinity) }
+                        Button { act(a, row: nil) } label: { Text(verbatim: model.text(a.label)).frame(maxWidth: .infinity) }
                     }
                 }
             }
         } header: {
-            Text(verbatim: section.title?.text(model.lang) ?? "")
+            Text(verbatim: model.text(section.title))
         }
         .sheet(item: $form) { f in
             PanelFormSheet(model: model, action: f.action, row: f.row, parent: parent, path: path)
@@ -197,7 +197,7 @@ private struct PanelRowView: View {
                 if !actions.isEmpty {
                     Menu {
                         ForEach(actions, id: \.id) { a in
-                            Button(role: a.destructive == true || a.method == "DELETE" ? .destructive : nil) { onAction(a) } label: { Text(verbatim: a.label.text(model.lang)) }
+                            Button(role: a.destructive == true || a.method == "DELETE" ? .destructive : nil) { onAction(a) } label: { Text(verbatim: model.text(a.label)) }
                         }
                     } label: { Image(systemName: "ellipsis.circle") }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(String(localized: "Actions"))
@@ -210,7 +210,7 @@ private struct PanelRowView: View {
                 } else if i == 0 {
                     Text(verbatim: model.cell(c, row)).fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text(verbatim: c.label.text(model.lang) + ": " + model.cell(c, row)).font(.caption).foregroundStyle(.secondary)
+                    Text(verbatim: model.text(c.label) + ": " + model.cell(c, row)).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -245,7 +245,7 @@ private struct PanelFormSheet: View {
                             }
                         }
                     }
-                } header: { Text(verbatim: action.label.text(model.lang)) }
+                } header: { Text(verbatim: model.text(action.label)) }
                 if let e = model.actionError[key] { Section { PanelErrorText(error: e) } }
             }
             .formStyle(.grouped)
@@ -283,7 +283,7 @@ private struct PanelFormSheet: View {
     }
 
     @ViewBuilder private func fieldView(_ f: PanelField) -> some View {
-        let label = f.label.text(model.lang)
+        let label = model.text(f.label)
         switch f.type {
         case "text":
             TextField(text: Binding(get: { if case .string(let s)? = values[f.id] { s } else { "" } }, set: { values[f.id] = .string($0) })) { Text(verbatim: label) }
@@ -292,7 +292,7 @@ private struct PanelFormSheet: View {
         case "choice":
             Picker(selection: Binding(get: { if case .string(let s)? = values[f.id] { s } else { "" } }, set: { values[f.id] = $0.isEmpty ? nil : .string($0) })) {
                 Text("None").tag("")
-                ForEach(f.options ?? [], id: \.value) { o in Text(verbatim: o.label.text(model.lang)).tag(o.value) }
+                ForEach(f.options ?? [], id: \.value) { o in Text(verbatim: model.text(o.label)).tag(o.value) }
             } label: { Text(verbatim: label) }
         default:  // ref
             let options = model.refs[f.ref ?? ""] ?? []

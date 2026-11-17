@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### New
-- Admin panels: the owner's admin API has a new read route, `GET /panels`, that describes panels declaratively (one validated format, English and Slovenian text, no code or markup), and the Mac app draws them natively. The first panel is **Users and devices** in the Settings window, after Devices: add, rename, deactivate and activate users, bind and unbind devices. Device approval stays in Devices. See "Panels" in the admin API document.
+- Admin panels: the owner's admin API has a new read route, `GET /panels`, that describes panels declaratively (one validated format, no code or markup; texts are keys, with per-language tables from `GET /panels/strings`, English and Slovenian), and the Mac app draws them natively. The first panel is **Users and devices** in the Settings window, after Devices: add, rename, deactivate and activate users, bind and unbind devices. Device approval stays in Devices. See "Panels" in the admin API document.
 
 ### Known problems
 - The Users and devices pane is new and has only been tried through tests, not in a real window. Windows and Linux have no panel renderer yet (the settings page and `minigw gw` still cover the same routes); the terminal UI neither. A detail page of a panel opens as a sheet, and no built-in panel uses one yet.

@@ -229,16 +229,26 @@ Errors of these routes use the envelope above (`400` invalid, `404` not found, `
 ### Panels (both gateways)
 
 `GET /panels` returns the admin panels as declarative descriptions that a renderer maps to its own controls; the Mac
-app draws them as panes of the Settings window. Owner admin authentication only; it is not a member route and the run
+app draws them as panes of the Settings window. The descriptions carry no translated text, only string keys
+(`builtin.users.title`); the texts come from `GET /panels/strings?lang=<locale>` (below). Owner admin authentication only; it is not a member route and the run
 port does not serve it (`POST` and the other methods answer `405`). It needs no database, so it answers while the core
 is down.
 
 ```json
-{"format": 1, "panels": [{"format": 1, "id": "builtin.users", "provider": "builtin", "title": {"en": "...", "sl": "..."}, "...": "..."}]}
+{"format": 1, "panels": [{"format": 1, "id": "builtin.users", "provider": "builtin", "title": "builtin.users.title", "...": "..."}]}
 ```
 
-- A description is data, never code: no scripts, HTML, Markdown, links or images. Every string has `en` and `sl`; a
-  renderer shows every string and every value of an answer as plain text.
+- A description is data, never code: no scripts, HTML, Markdown, links or images. Every text position holds a key
+  (`[a-z0-9._-]`, at most 120 characters, inside the panel's namespace `<provider>.<panel>.`); the validator refuses
+  anything else, so an inline text or another provider's key is refused. A renderer shows every text and every value of
+  an answer as plain text.
+- **Texts:** `GET /panels/strings?lang=<locale>` answers `{"format": 1, "locale": "sl_SI", "strings": {key: text}}`.
+  `lang` is `C` or a locale such as `sl_SI` (anything else: `400`; none: `C`). `C` is the base table and holds every key;
+  `en_US` and `sl_SI` lie on top of it. The answer is merged: the exact locale, then another table of the same language,
+  then `C`; a locale nobody has is answered with `C`, and `locale` says which one was returned. A text is plain, at most
+  600 characters, and may hold `{field}` placeholders that the renderer fills from the row's own fields as plain text; a
+  key without a text is shown as the key. The built-in tables are `client/coreapi/panels/strings/{C,en_US,sl_SI}.json`
+  (flat `{"key": "text"}`); a plugin ships its own per-language files the same way.
 - `format` is the only version. A renderer that meets a higher format says "needs a newer Mini Gateway" and shows nothing
   else; an unknown element inside format 1 is shown as "cannot be shown".
 - One validator (`client/coreapi/panels.go`, `ValidatePanel`) checks every description before it is served; a panel that

@@ -5,17 +5,33 @@ import Foundation
 // because a description from the network is not trusted even when the server validated it. The fixtures
 // client/testdata/panels-*.json are decoded by both sides. The model (PanelModel.swift) builds the requests.
 
-/// Languages of the descriptions. A string always has en and sl.
-public enum PanelLang: String, Sendable { case en, sl
-    /// `sl` when the app's preferred localization is Slovenian, else `en`.
-    public static func choose(_ preferred: [String]) -> PanelLang { preferred.first?.lowercased().hasPrefix("sl") == true ? .sl : .en }
-    public static var current: PanelLang { choose(Bundle.main.preferredLocalizations) }
+/// The locale the renderer asks the core's string tables for: "sl_SI" from the app's preferred localization ("sl", "sl-SI",
+/// "en-US" …); a language without a region gets its own as region (the core falls back to another table of the language);
+/// "C" (the base table) when there is no usable language.
+public enum PanelLocale {
+    public static func tag(_ preferred: [String]) -> String {
+        guard let first = preferred.first else { return "C" }
+        let l = Locale(identifier: first.replacingOccurrences(of: "-", with: "_"))
+        guard let lang = l.language.languageCode?.identifier.lowercased(), lang.count == 2, lang.allSatisfy({ $0.isASCII && $0.isLetter }) else { return "C" }
+        let region = l.region?.identifier.uppercased() ?? lang.uppercased()
+        return region.count == 2 && region.allSatisfy({ $0.isASCII && $0.isLetter }) ? lang + "_" + region : "C"
+    }
+    public static var current: String { tag(Bundle.main.preferredLocalizations) }
 }
 
-public struct PStr: Decodable, Equatable, Sendable {
-    public let en: String
-    public let sl: String
-    public func text(_ l: PanelLang) -> String { l == .sl ? sl : en }
+/// The texts of the descriptions: the merged table of GET /panels/strings (the core already applied exact locale, same
+/// language, then C). A key that has no text is shown as the key itself, never empty and never guessed.
+public struct PanelStrings: Equatable, Sendable {
+    public var locale: String
+    public var table: [String: String]
+    public init(locale: String = "C", table: [String: String] = [:]) { self.locale = locale; self.table = table }
+    public func text(_ key: String?) -> String { key.map { table[$0] ?? $0 } ?? "" }
+
+    static func parse(_ data: Data) -> PanelStrings? {
+        struct Answer: Decodable { let format: Int; let locale: String; let strings: [String: String] }
+        guard let a = try? JSONDecoder().decode(Answer.self, from: data), a.format == 1, a.strings.count <= 2000 else { return nil }
+        return PanelStrings(locale: a.locale, table: a.strings)
+    }
 }
 
 /// A JSON value of a description or of an API answer. Numbers keep their kind (an id stays an integer).
@@ -65,8 +81,8 @@ public struct PanelDescription: Decodable, Equatable, Sendable {
     public let format: Int
     public let id: String
     public let provider: String
-    public let title: PStr
-    public let about: PStr
+    public let title: String
+    public let about: String
     public let symbol: String
     public let refs: [String: PanelRef]
     public let sections: [PanelSection]
@@ -77,15 +93,15 @@ public struct PanelRef: Decodable, Equatable, Sendable { public let path: String
 public struct PanelSection: Decodable, Equatable, Sendable {
     public let kind: String
     public let id: String
-    public let title: PStr?
-    public let body: PStr?
+    public let title: String?
+    public let body: String?
     public let source: PanelSource?
     public let key: String?
     public let columns: [PanelColumn]?
     public let filter: [String]?
     public let hide: PanelHide?
     public let paging: PanelPaging?
-    public let empty: PStr?
+    public let empty: String?
     public let actions: [PanelAction]?
     public let rowActions: [PanelAction]?
     public let detail: PanelDetail?
@@ -97,21 +113,21 @@ public struct PanelSource: Decodable, Equatable, Sendable { public let path: Str
 public struct PanelColumn: Decodable, Equatable, Sendable {
     public let field: String
     public let kind: String
-    public let label: PStr
-    public let yes: PStr?
-    public let no: PStr?
-    public let values: [String: PStr]?
+    public let label: String
+    public let yes: String?
+    public let no: String?
+    public let values: [String: String]?
     public let ref: String?
     public var supported: Bool { ["text", "multiline", "bool", "enum", "ref", "time"].contains(kind) }
 }
 
-public struct PanelHide: Decodable, Equatable, Sendable { public let field: String; public let equals: PanelJSON; public let toggle: PStr }
+public struct PanelHide: Decodable, Equatable, Sendable { public let field: String; public let equals: PanelJSON; public let toggle: String }
 public struct PanelPaging: Decodable, Equatable, Sendable { public let next: String; public let param: String }
 public struct PanelDetail: Decodable, Equatable, Sendable { public let title: String; public let sections: [PanelSection] }
 
 public struct PanelAction: Decodable, Equatable, Sendable {
     public let id: String
-    public let label: PStr
+    public let label: String
     public let method: String
     public let path: String
     public let query: String?
@@ -127,12 +143,12 @@ public struct PanelAction: Decodable, Equatable, Sendable {
 
 public struct PanelBodyValue: Decodable, Equatable, Sendable { public let field: String?; public let row: String?; public let `const`: PanelJSON? }
 public struct PanelWhen: Decodable, Equatable, Sendable { public let field: String; public let equals: PanelJSON }
-public struct PanelConfirm: Decodable, Equatable, Sendable { public let title: PStr; public let message: PStr; public let button: PStr; public let destructive: Bool? }
+public struct PanelConfirm: Decodable, Equatable, Sendable { public let title: String; public let message: String; public let button: String; public let destructive: Bool? }
 
 public struct PanelField: Decodable, Equatable, Sendable {
     public let id: String
     public let type: String
-    public let label: PStr
+    public let label: String
     public let required: Bool?
     public let maxLength: Int?
     public let `default`: PanelDefault?
@@ -142,7 +158,7 @@ public struct PanelField: Decodable, Equatable, Sendable {
 }
 
 public struct PanelDefault: Decodable, Equatable, Sendable { public let `const`: PanelJSON?; public let row: String? }
-public struct PanelOption: Decodable, Equatable, Sendable { public let value: String; public let label: PStr }
+public struct PanelOption: Decodable, Equatable, Sendable { public let value: String; public let label: String }
 
 // MARK: parsing and validation
 
@@ -187,16 +203,6 @@ public enum PanelValidator {
     static func isID(_ s: String) -> Bool { m(s, #"^[a-z][a-z0-9-]{0,31}\z"#) }
     static func isName(_ s: String) -> Bool { m(s, #"^[A-Za-z][A-Za-z0-9_]{0,63}\z"#) }
 
-    /// Both languages, non-empty, at most `max` characters, no control or format characters (bidi tricks included).
-    static func str(_ name: String, _ s: PStr?, _ max: Int = PanelLimits.label) throws {
-        guard let s else { throw Refusal("\(name) is missing") }
-        for (lang, v) in [("en", s.en), ("sl", s.sl)] {
-            if v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw Refusal("\(name).\(lang) is empty") }
-            if v.unicodeScalars.count > max { throw Refusal("\(name).\(lang) is longer than \(max) characters") }
-            if hasControl(v) { throw Refusal("\(name).\(lang) has a control character") }
-        }
-    }
-
     static func hasControl(_ s: String) -> Bool {
         s.unicodeScalars.contains {
             switch $0.properties.generalCategory { case .control, .format, .lineSeparator, .paragraphSeparator: true; default: false }
@@ -212,6 +218,13 @@ public enum PanelValidator {
     struct Check {
         let d: PanelDescription
         let routes: [String]
+
+        /// A text of the description is a key of the panel's namespace: [a-z0-9._-], at most 120 characters, "<panel id>.…".
+        func str(_ name: String, _ k: String?, _ max: Int = 0) throws {
+            guard let k, m(k, #"^[a-z0-9._-]{1,120}\z"#), k.hasPrefix(d.id + "."), !k.contains(".."), !k.hasSuffix(".") else {
+                throw Refusal("\(name): \(k.map { "\($0.prefix(60))" } ?? "nothing") is not a string key of panel \(d.id)")
+            }
+        }
 
         func panel() throws {
             guard isID(d.provider) else { throw Refusal("provider \(d.provider) is not valid") }
@@ -312,12 +325,7 @@ public enum PanelValidator {
             }
             if let w = a.when { guard sc.row, isName(w.field), scalar(w.equals) else { throw Refusal("action \(a.id): when") } }
             if a.method == "DELETE" || a.destructive == true { guard a.confirm != nil else { throw Refusal("action \(a.id): a destructive action needs a confirmation") } }
-            if let c = a.confirm {
-                for (n, s, max) in [("title", c.title, PanelLimits.label), ("message", c.message, PanelLimits.message), ("button", c.button, PanelLimits.label)] {
-                    try str("confirm.\(n)", s, max)
-                    for t in [s.en, s.sl] { try messagePlaceholders(t, row: sc.row) }
-                }
-            }
+            if let c = a.confirm { try str("confirm.title", c.title); try str("confirm.message", c.message); try str("confirm.button", c.button) }
         }
 
         func field(_ f: PanelField, _ sc: Scope) throws {
@@ -338,14 +346,6 @@ public enum PanelValidator {
                 for x in o { guard !x.value.isEmpty, x.value.utf8.count <= 64 else { throw Refusal("field \(f.id): option value") }; try str("option", x.label) }
             }
             if f.type == "ref" { guard let r = f.ref, d.refs[r] != nil else { throw Refusal("field \(f.id): ref is not declared") } }
-        }
-
-        func messagePlaceholders(_ s: String, row: Bool) throws {
-            let found = s.ranges(of: try! Regex(#"\{[A-Za-z][A-Za-z0-9_]{0,63}\}"#))
-            var rest = s
-            for r in found.reversed() { rest.removeSubrange(r) }
-            if rest.contains("{") || rest.contains("}") { throw Refusal("a stray brace in a confirmation") }
-            if !row && !found.isEmpty { throw Refusal("placeholders in a confirmation need a row") }
         }
 
         /// A path template: whole segments, each a plain name or exactly one placeholder; the route it resolves to must be registered.

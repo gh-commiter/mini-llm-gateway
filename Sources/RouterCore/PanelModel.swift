@@ -33,9 +33,9 @@ extension CoreResponse {
 public struct PanelEntry: Identifiable, Equatable, Sendable {
     public let id: String
     public let parse: PanelParse
-    let title: PStr?, about: PStr?, symbol: String
-    public func title(_ l: PanelLang) -> String { title?.text(l) ?? id }
-    public func about(_ l: PanelLang) -> String { about?.text(l) ?? "" }
+    let title: String?, about: String?, symbol: String   // keys of the string tables
+    public func title(_ t: PanelStrings) -> String { title.map { t.text($0) } ?? id }
+    public func about(_ t: PanelStrings) -> String { t.text(about) }
     public var sidebarSymbol: String { symbol }
 }
 
@@ -44,10 +44,23 @@ public struct PanelEntry: Identifiable, Equatable, Sendable {
     @Published public private(set) var entries: [PanelEntry] = []
     @Published public private(set) var error: PanelError?
     @Published public private(set) var loaded = false
+    @Published public private(set) var strings = PanelStrings()
+    /// Why the texts could not be loaded (the keys are shown meanwhile); nil when they were.
+    @Published public private(set) var stringsError: PanelError?
     private let send: PanelSend
-    public init(send: @escaping PanelSend) { self.send = send }
+    private let locale: String
+    public init(send: @escaping PanelSend, locale: String = PanelLocale.current) { self.send = send; self.locale = locale }
+
+    /// GET /panels/strings?lang=<locale>: the core answers with the locale it chose and one merged table.
+    private func loadStrings() async {
+        let r = await send(CoreRequest(method: "GET", path: "/panels/strings", query: "lang=" + locale))
+        if let e = r.panelError { stringsError = e; strings = PanelStrings(); return }
+        guard let t = PanelStrings.parse(r.body) else { stringsError = .refused("GET /panels/strings: not the expected answer"); strings = PanelStrings(); return }
+        strings = t; stringsError = nil
+    }
 
     public func load() async {
+        await loadStrings()
         let r = await send(CoreRequest(method: "GET", path: "/panels"))
         loaded = true
         if let e = r.panelError { error = r.status == 404 ? .notFound : e; entries = []; return }
@@ -69,10 +82,7 @@ public struct PanelEntry: Identifiable, Equatable, Sendable {
     static func entry(_ data: Data, _ raw: [String: Any], index: Int) -> PanelEntry {
         let parse = PanelValidator.parse(data)
         if case .ready(let d) = parse { return PanelEntry(id: d.id, parse: parse, title: d.title, about: d.about, symbol: d.symbol) }
-        func s(_ k: String) -> PStr? {
-            guard let o = raw[k] as? [String: Any], let en = o["en"] as? String, let sl = o["sl"] as? String else { return nil }
-            return PStr(en: String(en.prefix(PanelLimits.label)), sl: String(sl.prefix(PanelLimits.label)))
-        }
+        func s(_ k: String) -> String? { (raw[k] as? String).map { String($0.prefix(PanelLimits.label)) } }
         let id = (raw["id"] as? String).map { String($0.prefix(64)) } ?? "invalid-\(index)"
         return PanelEntry(id: id, parse: parse, title: s("title"), about: nil, symbol: "")
     }
@@ -112,7 +122,7 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
 
 @MainActor public final class PanelModel: ObservableObject {
     public let panel: PanelDescription
-    public let lang: PanelLang
+    public let strings: PanelStrings
     private let send: PanelSend
     private let routes: [String]
     @Published public private(set) var refs: [String: [PanelOptionValue]] = [:]
@@ -123,8 +133,8 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     private var opened: [PanelListKey: (PanelSection, PanelRow)] = [:]  // detail pages that are open: reloaded with the panel
 
     /// `routes`: what the panel's provider registered (nil for an unknown provider: nothing is ever called).
-    public init(panel: PanelDescription, lang: PanelLang, routes: [String]? = nil, send: @escaping PanelSend) {
-        self.panel = panel; self.lang = lang; self.send = send
+    public init(panel: PanelDescription, strings: PanelStrings, routes: [String]? = nil, send: @escaping PanelSend) {
+        self.panel = panel; self.strings = strings; self.send = send
         self.routes = routes ?? PanelRoutes.registered(for: panel.provider) ?? []
     }
 
@@ -207,6 +217,9 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
 
     // MARK: what a view shows
 
+    /// The text of a key of the description (the key itself when the table has none).
+    public func text(_ key: String?) -> String { strings.text(key) }
+
     public func data(_ path: String, parent: PanelRow? = nil) -> PanelListData { lists[PanelListKey(path: path, parent: parent?.id ?? "")] ?? PanelListData() }
 
     public func setSearch(_ text: String, path: String, parent: PanelRow? = nil) { mutate(path, parent) { $0.search = text } }
@@ -234,8 +247,8 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         switch c.kind {
         case "bool":
             guard case .bool(let b)? = v else { return raw }
-            return (b ? c.yes : c.no)?.text(lang) ?? raw
-        case "enum": return c.values?[raw]?.text(lang) ?? raw
+            return (b ? c.yes : c.no).map { text($0) } ?? raw
+        case "enum": return c.values?[raw].map { text($0) } ?? raw
         case "ref": return refs[c.ref ?? ""]?.first { $0.id == raw }?.label ?? raw
         case "time": return Self.time(raw).map { $0.formatted(date: .abbreviated, time: .shortened) } ?? raw
         default: return raw
@@ -321,8 +334,8 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     /// The confirmation of an action; `{field}` takes the row's value as plain text. nil when the action needs none.
     public func confirmation(_ a: PanelAction, row: PanelRow? = nil) -> PanelConfirmText? {
         guard a.needsConfirmation, let c = a.confirm else { return nil }
-        func fill(_ s: PStr) -> String {
-            var t = s.text(lang)
+        func fill(_ key: String) -> String {
+            var t = text(key)
             let re = try! Regex(#"\{([A-Za-z][A-Za-z0-9_]{0,63})\}"#)
             for m in t.matches(of: re).reversed() {  // one pass: a value that looks like a placeholder is not filled again
                 guard let name = m.output[1].substring.map(String.init) else { continue }
