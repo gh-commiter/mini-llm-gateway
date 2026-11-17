@@ -4,6 +4,26 @@
       {
         "matcher": "startup|resume|clear|compact",
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/install-minigw.sh\"", "timeout": 60 }]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/kb-hook.sh\" start", "timeout": 10 }]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/kb-hook.sh\" compact", "timeout": 10 }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/kb-hook.sh\" stop", "timeout": 10 }]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/kb-hook.sh\" end", "timeout": 10 }]
       }
     ]
   }

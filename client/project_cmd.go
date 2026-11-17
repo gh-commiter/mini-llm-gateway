@@ -61,6 +61,10 @@ type projectEnv struct {
 	do      func(c connection, method, path string, headers map[string]string, body []byte) (int, []byte, http.Header)
 	sleep   func(time.Duration)
 	origin  func(dir string) string // the raw remote.origin.url of the folder's repository, "" = none; nil = ask git
+	// kb hooks (kb_hook.go), per instance so that parallel tests do not interfere; nil = the real thing
+	gateway  func() string                          // the default profile's gateway id, "" = not connected
+	gitState func(dir string) (head, status string) // HEAD and the status hash of the linked folder
+	now      func() time.Time
 }
 
 // projectMain, noteMain and usageMain are the entry points of main().
@@ -420,6 +424,13 @@ func (e *projectEnv) show() error {
 	return nil
 }
 
+func notLinkedMessage(res projectResolution) string {
+	if res.Hint != "" {
+		return fmt.Sprintf("this folder suggests project %s (%s); run minigw project link %s", res.Hint, hintFile, res.Hint)
+	}
+	return "this folder is not linked to a project: run minigw project link <slug>"
+}
+
 // linkedProject is the project of the current folder for the note commands; --project only confirms it.
 func (e *projectEnv) linkedProject(flagSlug string) (connection, projectLink, error) {
 	c, gw := e.connect()
@@ -433,11 +444,7 @@ func (e *projectEnv) linkedProject(flagSlug string) (connection, projectLink, er
 	}
 	switch res.State {
 	case noLink:
-		msg := "this folder is not linked to a project: run minigw project link <slug>"
-		if res.Hint != "" {
-			msg = fmt.Sprintf("this folder suggests project %s (%s); run minigw project link %s", res.Hint, hintFile, res.Hint)
-		}
-		return c, projectLink{}, errors.New(msg)
+		return c, projectLink{}, errors.New(notLinkedMessage(res))
 	case linkHintDiff:
 		return c, projectLink{}, errors.New(hintDiffMessage(res))
 	}

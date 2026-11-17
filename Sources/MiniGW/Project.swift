@@ -16,7 +16,11 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
             return (ProjectConn(url: c.url, token: c.token), Projects.gatewayID(url: p.conn.url, key: p.conn.key))
         },
         state: Projects.statePath(), cwd: FileManager.default.currentDirectoryPath,
-        stdin: { (try? FileHandle.standardInput.read(upToCount: ProjectEnv.maxNoteBody + 1)) ?? Data() },
+        stdin: {  // until the end of input or one byte over the limit (a pipe may deliver in pieces)
+            var all = Data()
+            while all.count <= ProjectEnv.maxNoteBody, let piece = try? FileHandle.standardInput.read(upToCount: ProjectEnv.maxNoteBody + 1 - all.count), !piece.isEmpty { all += piece }
+            return all
+        },
         out: { try? out.write(contentsOf: Data($0.utf8)) }, err: { try? err.write(contentsOf: Data($0.utf8)) },
         agent: runMode, runConn: agent.map { ProjectConn(url: $0.url, token: $0.token) },
         send: { c, method, path, headers, body in
@@ -27,6 +31,7 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
             }
             return ProjectHTTP.send(c, method, path, headers, body, clientInfo: clientInfo)
         })
+    env.gateway = { loadProfiles().first.map { Projects.gatewayID(url: $0.conn.url, key: $0.conn.key) } ?? "" }  // kb hooks: no profile is not an error
     do {
         switch kind {
         case "kb":

@@ -1276,3 +1276,51 @@ encoded replies to 256 KiB; oversized metadata produces a bounded tool error.
 The [stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 uses one UTF-8 JSON message per line, protocol-only stdout, stderr diagnostics,
 and exits cleanly when stdin closes.
+
+## Hand findings in from a session
+
+The `minigw` plugin for Claude Code can ask a session to hand in what it learned, so the project knowledge base grows
+without someone having to remember it. It is **off by default**: installing or updating the plugin enables nothing, and the
+hook entries print nothing until you switch them on for a project.
+
+```text
+minigw kb hooks on [<project>]
+minigw kb hooks off [<project>]
+minigw kb hooks status [<project>]
+```
+
+Without a project, the folder you run it in must be linked (`minigw project link`); with a slug, it is a project that one of
+your folders on this computer is linked to. The switch is per project, per gateway and per user, and it is stored only on this
+computer in `kb-hooks.json` next to `projects.json` (mode 0600, never inside a repository). These commands make no network call
+and need no project role. `off` stops the hooks without uninstalling the plugin; uninstalling the plugin removes the entries.
+
+What the hooks do, in a folder linked to a project with hooks on (`minigw kb hook start|compact|stop|end`, called by the plugin
+and not meant to be typed):
+
+- At the start of a session (and after `resume`, `clear` and `compact`) they tell the model that the folder is linked to a
+  project with a shared knowledge base and how to search it (`minigw kb search`).
+- Before a compaction they ask the summary to include up to three one-line candidates (decisions, pitfalls, recurring
+  questions) or the line `KB: nothing new`; after the compaction they ask the model once to hand them in.
+- When the model stops after a **commit** was made in the folder during the session, and nothing was handed in yet, they ask
+  once per session for a hand-in of at most three short entries (`minigw kb submit <project> --kind finding|faq`). "Nothing to
+  hand in" is the normal answer and the model is told to give it when nothing is new.
+
+What they do not do: they do not ask at the end of a session (Claude Code gives a hook no way to talk to the model then), they
+never read or send the transcript, they never block a compaction, and they make no network call. They add no permission: each
+`minigw kb submit` the model runs goes through Claude Code's normal Bash prompt, so you see every entry before it is sent, and
+members review it before it is published. A failed hand-in is reported once and not retried.
+
+Privacy: the hook texts are fixed and contain only the project's slug; no file names, no knowledge entries and no transcript
+text. The only thing that can reach the gateway is the model's own short text, after your Bash approval. `git` is run read-only
+in the linked folder (`git rev-parse HEAD`, `git status --porcelain`) with the guarded environment of the other client git calls
+and the checkout's own configuration switched off; only HEAD and a hash of the status are kept.
+
+Files, all under the same `minigw` folder as `projects.json` (macOS: `~/Library/Application Support/minigw`; Windows and Linux:
+the user's config folder), mode 0600:
+
+- `kb-hooks.json`: the projects the hooks are on for.
+- `kb-hook/<session id>.json`: one marker per session (where it started and whether it was already asked); removed at the end of
+  the session, markers older than 14 days are removed at the next session start and at most 200 are kept.
+- `kb-hook/submitted.json`: when `minigw kb submit` last succeeded for a project (a manual submit counts as a hand-in too).
+
+Hooks inside an agent run of the gateway do nothing. Hand-in requires the gateway to be reachable when the model submits.

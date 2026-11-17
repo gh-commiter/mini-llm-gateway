@@ -66,6 +66,10 @@ public final class ProjectEnv {
     public var origin: ((String) -> String)?
     /// Test seam, per instance so that parallel tests do not interfere: runs after the export destination is opened and checked; nil in production.
     public var exportHook: (() -> Void)?
+    /// kb hooks (KBHook.swift), per instance so that parallel tests do not interfere; nil = the real thing.
+    public var gateway: (() -> String)?  // the default profile's gateway id, "" = not connected
+    public var gitState: ((String) -> (head: String, status: String))?  // HEAD and the status hash of the linked folder
+    public var now: (() -> Date)?
 
     public init(connect: @escaping () -> (ProjectConn, String), state: String, cwd: String, stdin: @escaping () -> Data,
                 out: @escaping (String) -> Void, err: @escaping (String) -> Void, agent: Bool, runConn: ProjectConn? = nil,
@@ -293,10 +297,7 @@ public final class ProjectEnv {
         let st = try loadState()
         let res = try Projects.resolve(st, gateway: gw, cwd: cwd)
         switch res.state {
-        case .none:
-            var msg = "this folder is not linked to a project: run minigw project link <slug>"
-            if !res.hint.isEmpty { msg = "this folder suggests project \(res.hint) (\(Projects.hintFile)); run minigw project link \(res.hint)" }
-            throw ProjectError(msg)
+        case .none: throw ProjectError(Self.notLinkedMessage(res))
         case .hintDiff: throw ProjectError(Projects.hintDiffMessage(res))
         case .ok: break
         }

@@ -33,3 +33,5 @@ question, at most 256 bytes; the text is the answer, at most 2 KiB); the default
 an ordinary note. Accepted entries keep their kind; `kb search` marks a faq with `(faq)` at the end of
 the first line. `minigw kb faq [<project>]` lists the published questions with their answers (not inside
 an agent run). Use a faq only for a question people really ask, and never put customer data in it.
+
+Session hooks (off by default): the plugin ships hooks that, once the user ran `minigw kb hooks on [<project>]` for a linked project (`off` stops them, `status` shows them; nothing is sent anywhere by turning them on), tell a session about the project knowledge base and, after a commit or a compaction, ask it once to hand in at most 3 short entries with `minigw kb submit --kind finding|faq`. Each submit goes through the user's normal Bash prompt, so show the entry first as above. Search first and skip what is already there. "Nothing to hand in" is the normal and correct answer when the session learned nothing new; never invent an entry to have something to hand in. If a submit fails, say so once and do not retry.

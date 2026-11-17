@@ -239,6 +239,7 @@ Both clients support identical commands:
 minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->
 minigw kb submissions [<project>] [--json]
 minigw kb faq [<project>] [--json]
+minigw kb hooks on|off|status [<project>]
 minigw gw kb review [<project>]
 minigw gw kb accept <id>
 minigw gw kb reject <id> [--reason text]
@@ -253,6 +254,10 @@ publishes immediately. `minigw note read <id> --json` includes provenance.
 answer (the text, at most 2 KiB); the default is `finding`. `minigw kb faq` lists the
 published questions with their answers (not inside an agent run). A faq shows `  (faq)` at
 the end of the first line in `kb search`, `kb submissions` and `gw kb review`.
+
+`minigw kb hooks on|off|status [<project>]` switches the Claude Code plugin's hooks that ask a session to hand findings in
+(off by default; per project, gateway and user; stored only on this computer; no network call). `kb hook start|compact|stop|end`
+is the plugin's own entry and is not meant to be typed. See "Hand findings in from a session" in the usage guide.
 
 ## KB lexical search
 

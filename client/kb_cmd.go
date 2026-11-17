@@ -24,7 +24,8 @@ minigw kb mcp [--project slug] [--print-config]
 minigw kb search [<project>] <query> [--json]
 minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB)
 minigw kb faq [<project>] [--json]   the project's questions and answers
-minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)`
+minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)
+minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)`
 const kbAdminHelp = `minigw gw kb rebuild-search
 minigw gw kb review [<project>]   pending submissions, including bodies
 minigw gw kb accept <id>
@@ -55,6 +56,12 @@ func (e *projectEnv) kb(args []string) error {
 	if len(args) > 0 && args[0] == "search" {
 		return e.kbSearch(args[1:])
 	}
+	if len(args) > 0 && args[0] == "hook" { // before the agent refusal: a hook inside an agent run is silent
+		return e.kbHook(args[1:])
+	}
+	if len(args) > 0 && args[0] == "hooks" {
+		return e.kbHooks(args[1:])
+	}
 	if e.agent {
 		return errors.New(agentRefusal)
 	}
@@ -83,7 +90,7 @@ func (e *projectEnv) kb(args []string) error {
 	if *kind != "" && *kind != "finding" && *kind != "faq" {
 		return usage
 	}
-	c, _ := e.connect()
+	c, gw := e.connect()
 	project := int64(0)
 	resolve := func(ref string) (int64, error) {
 		st, b, h := e.do(c, "GET", apiProjects+"/"+url.PathEscape(ref), nil, nil)
@@ -131,6 +138,7 @@ func (e *projectEnv) kb(args []string) error {
 		if st != 201 {
 			return gatewayError(st, b, h)
 		}
+		e.recordSubmitted(gw, project)
 		if *asJSON {
 			e.say(jsonText(strings.TrimSpace(string(b))))
 			return nil
