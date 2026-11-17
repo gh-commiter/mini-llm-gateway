@@ -61,7 +61,14 @@ func (e *projectEnv) kbFiles(args []string) error {
 	fs := flag.NewFlagSet("kb", flag.ContinueOnError)
 	class := fs.String("class", "", "")
 	submit := fs.Bool("submit", false, "")
+	team := fs.String("team", "", "")
 	pos, err := parseFlags(fs, args)
+	if err == nil && *team != "" && len(pos) == 3 {
+		return errors.New(teamProjectUsage)
+	}
+	if err == nil && *team != "" && len(pos) == 2 {
+		pos = []string{pos[0], *team, pos[1]} // the team stands where the project would
+	}
 	if err != nil || len(pos) != 3 || (pos[0] != "export" && pos[0] != "import") {
 		return errors.New("usage:\n" + kbHelp)
 	}
@@ -86,15 +93,25 @@ func (e *projectEnv) kbFiles(args []string) error {
 			return b, nil
 		}
 	}
-	b, err := request("GET", apiProjects+"/"+url.PathEscape(pos[1]), nil)
-	if err != nil {
-		return err
+	var b []byte
+	var base string
+	if *team != "" {
+		id, err := e.teamSegment(c, *team)
+		if err != nil {
+			return err
+		}
+		base = fmt.Sprintf("%s/%d", apiProjects, id)
+	} else {
+		b, err = request("GET", apiProjects+"/"+url.PathEscape(pos[1]), nil)
+		if err != nil {
+			return err
+		}
+		var p struct{ ID int64 }
+		if err = json.Unmarshal(b, &p); err != nil {
+			return err
+		}
+		base = fmt.Sprintf("%s/%d", apiProjects, p.ID)
 	}
-	var p struct{ ID int64 }
-	if err = json.Unmarshal(b, &p); err != nil {
-		return err
-	}
-	base := fmt.Sprintf("%s/%d", apiProjects, p.ID)
 	if pos[0] == "export" {
 		var notes []core.Note
 		after := ""

@@ -31,6 +31,7 @@ type admCase struct {
 		Explain     bool   `json:"explain,omitempty"`
 		CSV         bool   `json:"csv,omitempty"`
 		Sort        string `json:"sort,omitempty"`
+		Team        string `json:"team,omitempty"`
 	} `json:"opts"`
 	Responses []cmdResp `json:"responses"`
 	Want      *admWant  `json:"want,omitempty"`
@@ -88,7 +89,7 @@ func runAdminCase(c *admCase) *admWant {
 		return 599, []byte(`{"error":{"message":"no such response in the fixture"}}`)
 	}}
 	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
-		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason}
+		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, team: c.Opts.Team}
 	if c.Opts.Days != "" {
 		o.days = c.Opts.Days
 	}

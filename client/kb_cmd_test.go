@@ -23,9 +23,22 @@ func TestKBCommandParity(t *testing.T) {
 			Requests   [][]string
 		}
 		NoteJSON, NoteJSONOut string
+		MemberErrors          []struct {
+			Args  []string
+			Error string
+		}
 	}
 	if e := json.Unmarshal(srcFile(t, "testdata/teams-kb-submissions.json"), &f); e != nil {
 		t.Fatal(e)
+	}
+	for _, c := range f.MemberErrors { // refused before any request
+		env := &projectEnv{out: new(bytes.Buffer), connect: func() (connection, string) { return connection{}, "" }, do: func(_ connection, m, p string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+			t.Fatalf("%v sent %s %s", c.Args, m, p)
+			return 599, nil, nil
+		}}
+		if e := env.kb(c.Args); e == nil || e.Error() != c.Error {
+			t.Fatalf("%v: %v, want %s", c.Args, e, c.Error)
+		}
 	}
 	for _, c := range f.Admin {
 		got := runAdminCase(c)
@@ -100,11 +113,11 @@ func TestKBClientGatewayFlow(t *testing.T) {
 		t.Fatal("reader submitted")
 	}
 	owner := &adminClient{off: c.f.s}
-	review := stdout(t, func() { kbAdmin(owner, []string{"kb", "review"}, "") })
+	review := stdout(t, func() { kbAdmin(owner, []string{"kb", "review"}, "", "") })
 	if !strings.Contains(review, "Reviewed knowledge") {
 		t.Fatal(review)
 	}
-	accepted := stdout(t, func() { kbAdmin(owner, []string{"kb", "accept", "1"}, "") })
+	accepted := stdout(t, func() { kbAdmin(owner, []string{"kb", "accept", "1"}, "", "") })
 	if accepted != "submission 1 accepted\n" {
 		t.Fatal(accepted)
 	}
@@ -168,5 +181,50 @@ func TestKBRunSearchParity(t *testing.T) {
 	e := &projectEnv{agent: true}
 	if err := e.kb([]string{"search", "comet"}); err == nil || err.Error() != agentRefusal {
 		t.Fatal(err)
+	}
+}
+
+// --team over a real gateway: the team's own notes are written by a team member who is admin of a team project, read
+// by every team member, found by a search of the project, and invisible to anyone off the roster.
+func TestKBTeamFlagEndToEnd(t *testing.T) {
+	c := newClientFx(t)
+	core, ctx := c.f.s.core, t0
+	team, err := core.CreateTeam(ctx, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{"ana", "fani"} { // eva is a project reader off the roster
+		if err = core.AddTeamMember(ctx, team.ID, c.f.uid[u]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = core.AddTeamProject(ctx, team.ID, c.f.pid["fakture"]); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	out, err := c.run("fani", dir, "Migrate before deploy.", "note", "push", "--team", "acme", "--title", "Deploy order", "-")
+	if err != nil || !strings.Contains(out, "created (data") {
+		t.Fatal(out, err)
+	}
+	if out, err = c.run("ana", dir, "x", "note", "push", "--team", "acme", "-"); err == nil {
+		t.Fatal("a roster member who is not a project admin wrote", out)
+	}
+	if out = c.must("ana", dir, "", "note", "list", "--team", "acme"); !strings.Contains(out, "Deploy order") {
+		t.Fatal(out)
+	}
+	e, o, _ := c.env("ana", dir, "")
+	if err = e.kb([]string{"search", "--team", "acme", "migrate"}); err != nil || !strings.Contains(o.String(), "Deploy order") || !strings.Contains(o.String(), "from team:acme") {
+		t.Fatal(o.String(), err)
+	}
+	o.Reset()
+	if err = e.kb([]string{"search", "fakture", "migrate"}); err != nil || !strings.Contains(o.String(), "from team:acme") {
+		t.Fatal(o.String(), err)
+	}
+	eva, ev, _ := c.env("eva", dir, "")
+	if err = eva.kb([]string{"search", "fakture", "migrate"}); err != nil || strings.Contains(ev.String(), "Deploy") {
+		t.Fatal(ev.String(), err)
+	}
+	if out, err = c.run("eva", dir, "", "note", "list", "--team", "acme"); err == nil || !strings.Contains(err.Error(), "404") && !strings.Contains(err.Error(), "not found") {
+		t.Fatal("off the roster", out, err)
 	}
 }

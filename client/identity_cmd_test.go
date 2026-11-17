@@ -114,11 +114,11 @@ func TestKBFAQThroughGateway(t *testing.T) {
 		t.Fatal(out.String(), err)
 	}
 	owner := &adminClient{off: c.f.s}
-	review := stdout(t, func() { kbAdmin(owner, []string{"kb", "review"}, "") })
+	review := stdout(t, func() { kbAdmin(owner, []string{"kb", "review"}, "", "") })
 	if !strings.Contains(review, "How do I reset?  (faq)\n") {
 		t.Fatal(review)
 	}
-	stdout(t, func() { kbAdmin(owner, []string{"kb", "accept", "1"}, "") })
+	stdout(t, func() { kbAdmin(owner, []string{"kb", "accept", "1"}, "", "") })
 	out.Reset()
 	if err := e.kb([]string{"faq", "fakture"}); err != nil {
 		t.Fatal(err)

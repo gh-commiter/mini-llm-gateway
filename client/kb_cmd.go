@@ -18,16 +18,16 @@ import (
 // faqPages bounds the pages of kb faq (50 entries each).
 const faqPages = 20
 
-const kbHelp = `minigw kb export <project> <dir>
-minigw kb import <project> <dir|file.md> [--class c] [--submit]
+const kbHelp = `minigw kb export <project>|--team <team> <dir>
+minigw kb import <project>|--team <team> <dir|file.md> [--class c] [--submit]
 minigw kb mcp [--project slug] [--print-config]
-minigw kb search [<project>] <query> [--json]
-minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB)
-minigw kb faq [<project>] [--json]   the project's questions and answers
+minigw kb search [<project>|--team <team>] <query> [--json]   a project search also covers its team's notes (as far as you may read them); a hit from there ends with "from team:<name>"
+minigw kb submit <project>|--team <team> [--class structure|data] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB); private is for projects only
+minigw kb faq [<project>|--team <team>] [--json]   the project's (or the team's) questions and answers
 minigw kb submissions [<project>] [--json]   your submissions (all projects if omitted)
 minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)`
 const kbAdminHelp = `minigw gw kb rebuild-search
-minigw gw kb review [<project>]   pending submissions, including bodies
+minigw gw kb review [<project>|--team <team>]   pending submissions, including bodies
 minigw gw kb accept <id>
 minigw gw kb reject <id> [--reason text]`
 
@@ -39,8 +39,42 @@ func kindSuffix(kind string) string {
 	return ""
 }
 
-func submissionLine(v core.Submission) string {
-	return clean(fmt.Sprintf("submission %d  project %d  %s  %s  %s%s", v.ID, v.Project, v.State, v.Class, v.Title, kindSuffix(v.EntryKind)))
+const (
+	teamProjectUsage = "usage: give either a project or --team <team>"
+	teamAgentRefusal = "inside an agent run the project is the run's own: --team is not accepted"
+)
+
+// teamSegment resolves --team to the id of the team's own notes, which the notes, search and submission routes
+// take in place of a project id. A team the caller is not on is the usual 404.
+func (e *projectEnv) teamSegment(c connection, team string) (int64, error) {
+	st, b, h := e.do(c, "GET", "/minigw/v1/teams/"+url.PathEscape(team), nil, nil)
+	if st != 200 {
+		return 0, gatewayError(st, b, h)
+	}
+	var t struct{ Segment int64 }
+	if err := json.Unmarshal(b, &t); err != nil {
+		return 0, err
+	}
+	if t.Segment == 0 {
+		return 0, errors.New("this gateway has no team notes: update it")
+	}
+	return t.Segment, nil
+}
+
+// subjectOf names where a submission belongs: "project <id>", or "team <name>" for a team's notes (names maps
+// team ids to names; an unknown one prints the id).
+func subjectOf(project int64, names map[int64]string) string {
+	if team, ok := core.SegmentTeam(project); ok {
+		if names[team] != "" {
+			return "team " + names[team]
+		}
+		return "team " + strconv.FormatInt(team, 10)
+	}
+	return fmt.Sprintf("project %d", project)
+}
+
+func submissionLine(v core.Submission, names map[int64]string) string {
+	return clean(fmt.Sprintf("submission %d  %s  %s  %s  %s%s", v.ID, subjectOf(v.Project, names), v.State, v.Class, v.Title, kindSuffix(v.EntryKind)))
 }
 func submissionResult(v core.Submission) string {
 	return fmt.Sprintf("submission %d %s", v.ID, v.State)
@@ -76,6 +110,7 @@ func (e *projectEnv) kb(args []string) error {
 	replaces := fs.Int64("replaces", 0, "")
 	revision := fs.Int64("revision", 0, "")
 	asJSON := fs.Bool("json", false, "")
+	team := fs.String("team", "", "")
 	pos, err := parseFlags(fs, args)
 	usage := errors.New("usage:\n" + kbHelp)
 	if err != nil || len(pos) == 0 {
@@ -84,7 +119,15 @@ func (e *projectEnv) kb(args []string) error {
 	if pos[0] != "submit" && pos[0] != "submissions" {
 		return usage
 	}
-	if pos[0] == "submit" && len(pos) != 3 || pos[0] == "submissions" && len(pos) > 2 {
+	if *team != "" {
+		if pos[0] != "submit" {
+			return usage
+		}
+		if len(pos) != 2 {
+			return errors.New(teamProjectUsage)
+		}
+		pos = []string{"submit", "", pos[1]}
+	} else if pos[0] == "submit" && len(pos) != 3 || pos[0] == "submissions" && len(pos) > 2 {
 		return usage
 	}
 	if *kind != "" && *kind != "finding" && *kind != "faq" {
@@ -103,11 +146,13 @@ func (e *projectEnv) kb(args []string) error {
 		}
 		return p.ID, nil
 	}
-	if len(pos) > 1 {
+	if *team != "" {
+		project, err = e.teamSegment(c, *team)
+	} else if len(pos) > 1 {
 		project, err = resolve(pos[1])
-		if err != nil {
-			return err
-		}
+	}
+	if err != nil {
+		return err
 	}
 	base := fmt.Sprintf("%s/%d/kb/submissions", apiProjects, project)
 	if pos[0] == "submit" {
@@ -203,7 +248,7 @@ func (e *projectEnv) kb(args []string) error {
 		return nil
 	}
 	for _, v := range all {
-		e.say(submissionLine(v))
+		e.say(submissionLine(v, nil))
 	}
 	if len(all) == 0 {
 		e.say("no submissions")
@@ -212,20 +257,33 @@ func (e *projectEnv) kb(args []string) error {
 }
 
 func searchLine(v core.SearchHit) string {
-	return clean(fmt.Sprintf("%d  %s  project %d  %s  %s%s\n%s", v.ID, v.Title, v.Project, v.Class, noteTime(v.Updated), kindSuffix(v.EntryKind), v.Snippet))
+	from := ""
+	if v.From != "" {
+		from = "  from " + v.From
+	}
+	return clean(fmt.Sprintf("%d  %s  project %d  %s  %s%s%s\n%s", v.ID, v.Title, v.Project, v.Class, noteTime(v.Updated), kindSuffix(v.EntryKind), from, v.Snippet))
 }
 
 // kbFAQ: minigw kb faq [<project>] [--json]. The pages are followed (at most faqPages).
 func (e *projectEnv) kbFAQ(args []string) error {
 	fs := flag.NewFlagSet("kb faq", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "")
+	team := fs.String("team", "", "")
 	pos, err := parseFlags(fs, args)
 	if err != nil || len(pos) > 1 {
-		return errors.New("usage: minigw kb faq [<project>] [--json]")
+		return errors.New("usage: minigw kb faq [<project>|--team <team>] [--json]")
+	}
+	if *team != "" && len(pos) > 0 {
+		return errors.New(teamProjectUsage)
 	}
 	var c connection
 	var project int64
-	if len(pos) == 1 {
+	if *team != "" {
+		c, _ = e.connect()
+		if project, err = e.teamSegment(c, *team); err != nil {
+			return err
+		}
+	} else if len(pos) == 1 {
 		c, _ = e.connect()
 		if project, err = e.projectIDOf(c, pos[0]); err != nil {
 			return err
@@ -305,13 +363,27 @@ func (e *projectEnv) projectIDOf(c connection, ref string) (int64, error) {
 func (e *projectEnv) kbSearch(args []string) error {
 	fs := flag.NewFlagSet("kb search", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "")
+	team := fs.String("team", "", "")
 	pos, err := parseFlags(fs, args)
 	if err != nil || len(pos) < 1 || len(pos) > 2 {
-		return errors.New("usage: minigw kb search [<project>] <query> [--json]")
+		return errors.New("usage: minigw kb search [<project>|--team <team>] <query> [--json]")
 	}
 	var c connection
 	base := "/minigw/v1/kb/search"
-	if e.runConn != nil {
+	if *team != "" {
+		if e.agent || e.runConn != nil {
+			return errors.New(teamAgentRefusal)
+		}
+		if len(pos) != 1 {
+			return errors.New(teamProjectUsage)
+		}
+		c, _ = e.connect()
+		id, err := e.teamSegment(c, *team)
+		if err != nil {
+			return err
+		}
+		base = fmt.Sprintf("%s/%d/kb/search", apiProjects, id)
+	} else if e.runConn != nil {
 		if len(pos) != 1 {
 			return errors.New("inside an agent run the project is the run's own: a project argument is not accepted")
 		}
@@ -361,7 +433,7 @@ func (e *projectEnv) kbSearch(args []string) error {
 	return nil
 }
 
-func kbAdmin(a *adminClient, pos []string, reason string) {
+func kbAdmin(a *adminClient, pos []string, reason, team string) {
 	usage := func() { fail("usage:\n" + kbAdminHelp) }
 	if len(pos) < 2 {
 		usage()
@@ -372,10 +444,25 @@ func kbAdmin(a *adminClient, pos []string, reason string) {
 		say("search index rebuilt")
 		return
 	}
-	if pos[1] == "review" && len(pos) <= 3 {
+	if pos[1] == "review" && len(pos) <= 3 && (team == "" || len(pos) == 2) {
 		project := int64(0)
 		if len(pos) == 3 {
 			project = projectID(a, pos[2])
+		}
+		if team != "" {
+			project = core.TeamSegment(teamID(a, team))
+		}
+		var names map[int64]string // the notes of a team print as "team <name>"; asked for only when one shows up
+		teamNames := func() map[int64]string {
+			if names == nil {
+				names = map[int64]string{}
+				var ts struct{ Teams []cliTeam }
+				a.do("GET", "/teams", nil, &ts)
+				for _, t := range ts.Teams {
+					names[t.ID] = t.Name
+				}
+			}
+			return names
 		}
 		after := int64(0)
 		count := 0
@@ -388,7 +475,11 @@ func kbAdmin(a *adminClient, pos []string, reason string) {
 			for _, v := range pg.Submissions {
 				var full core.Submission
 				a.do("GET", "/kb/submissions/"+strconv.FormatInt(v.ID, 10), nil, &full)
-				say(submissionLine(full))
+				var known map[int64]string
+				if _, seg := core.SegmentTeam(full.Project); seg {
+					known = teamNames()
+				}
+				say(submissionLine(full, known))
 				say(clean(fmt.Sprintf("writer %d  device %s  replaces %d  revision %d", full.User, full.Provenance.Device, full.Replaces, full.Revision)))
 				if full.Body != nil {
 					say(clean(*full.Body))

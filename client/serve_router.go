@@ -293,6 +293,7 @@ func routerCommand(args []string, in io.Reader) {
 	asCSV := fs.Bool("csv", false, "usage: one CSV row per day, provider and model")
 	legacy := fs.Bool("legacy", false, "usage: the counters per folder and device")
 	reason := fs.String("reason", "", "submission rejection reason")
+	evTeam := fs.String("team", "", "kb review: only the notes of this team")
 	explain := fs.Bool("explain", false, "member list: show membership origins")
 	history := fs.Bool("history", false, "quota: recorded probes, without fetching")
 	claudeProbe := fs.String("claude-probe", "", "quota: on or off (the Claude quota probe)")
@@ -823,7 +824,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota":
-		coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, provider: *evProvider, json: *asJSON})
+		coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

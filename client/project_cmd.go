@@ -40,7 +40,8 @@ minigw note push [--class structure|data|private] [--title t] [--key k] <file|->
 minigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]
 minigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)
    --project <slug> only confirms the project this folder is linked to; classes: structure, data, private
-   (private = visible to you and the project admins)`
+   (private = visible to you and the project admins)
+   --team <team> on any of these: the team's own notes instead of the linked project (every team member reads, a project admin of the team writes; structure and data only)`
 	privateNote  = "private = visible to you and the project admins"
 	agentRefusal = "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available"
 	maxNoteBody  = 64 << 10
@@ -518,6 +519,7 @@ func (e *projectEnv) note(args []string) error {
 	after := fs.String("after", "", "cursor")
 	asJSON := fs.Bool("json", false, "JSON")
 	proj := fs.String("project", "", "the linked project's slug")
+	team := fs.String("team", "", "a team's own notes, in place of the linked project")
 	rev := fs.Int64("revision", 0, "revision")
 	key := fs.String("key", "", "idempotency key")
 	pos, err := parseFlags(fs, args[1:])
@@ -544,11 +546,24 @@ func (e *projectEnv) note(args []string) error {
 	var c connection
 	var link projectLink
 	base := "/minigw/v1/notes" // inside a run: the run's own project, named nowhere
+	if *team != "" && (e.agent || e.runConn != nil) {
+		return errors.New(teamAgentRefusal)
+	}
+	if *team != "" && *proj != "" {
+		return errors.New(teamProjectUsage)
+	}
 	if e.runConn != nil {
 		if *proj != "" {
 			return errors.New("inside an agent run the project is the run's own: --project is not accepted")
 		}
 		c = *e.runConn
+	} else if *team != "" {
+		c, _ = e.connect()
+		id, err := e.teamSegment(c, *team)
+		if err != nil {
+			return err
+		}
+		base = fmt.Sprintf("%s/%d/notes", apiProjects, id)
 	} else {
 		if c, link, err = e.linkedProject(*proj); err != nil {
 			return err

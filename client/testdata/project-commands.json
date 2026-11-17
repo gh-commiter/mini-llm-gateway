@@ -2298,7 +2298,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)\n   --team <team> on any of these: the team's own notes instead of the linked project (every team member reads, a project admin of the team writes; structure and data only)",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -2319,7 +2319,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)\n   --team <team> on any of these: the team's own notes instead of the linked project (every team member reads, a project admin of the team writes; structure and data only)",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -2341,7 +2341,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "unknown command minigw note frobnicate\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "error": "unknown command minigw note frobnicate\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)\n   --team <team> on any of these: the team's own notes instead of the linked project (every team member reads, a project admin of the team writes; structure and data only)",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -2518,7 +2518,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)\n   --team <team> on any of these: the team's own notes instead of the linked project (every team member reads, a project admin of the team writes; structure and data only)",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -2956,7 +2956,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)\n   --team <team> on any of these: the team's own notes instead of the linked project (every team member reads, a project admin of the team writes; structure and data only)",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -3808,7 +3808,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)\n   --team <team> on any of these: the team's own notes instead of the linked project (every team member reads, a project admin of the team writes; structure and data only)",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -3833,7 +3833,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)\n   --team <team> on any of these: the team's own notes instead of the linked project (every team member reads, a project admin of the team writes; structure and data only)",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -4057,7 +4057,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)\n   --team <team> on any of these: the team's own notes instead of the linked project (every team member reads, a project admin of the team writes; structure and data only)",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -5045,6 +5045,108 @@
       ""
      ]
     ],
+    "links": []
+   }
+  },
+  {
+   "name": "note list team",
+   "args": [
+    "note",
+    "list",
+    "--team",
+    "acme"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/teams/acme",
+     "status": 200,
+     "body": "{\"id\":1,\"name\":\"acme\",\"archived\":false,\"path\":\"\",\"segment\":1099511627777,\"members\":[],\"projects\":[]}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/1099511627777/notes",
+     "status": 200,
+     "body": "{\"notes\":[{\"id\":5,\"project\":1099511627777,\"class\":\"data\",\"title\":\"Deploy order\",\"author\":\"fani\",\"created\":\"2026-11-17T10:00:00Z\",\"updated\":\"2026-11-17T10:00:00Z\",\"revision\":1}]}"
+    }
+   ],
+   "want": {
+    "out": "5      data      r1   2026-11-17 10:00  fani         Deploy order\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/teams/acme",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/1099511627777/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "note read team",
+   "args": [
+    "note",
+    "read",
+    "5",
+    "--team",
+    "acme"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/teams/acme",
+     "status": 200,
+     "body": "{\"id\":1,\"name\":\"acme\",\"archived\":false,\"path\":\"\",\"segment\":1099511627777,\"members\":[],\"projects\":[]}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/1099511627777/notes/5",
+     "status": 200,
+     "body": "{\"id\":5,\"project\":1099511627777,\"class\":\"data\",\"title\":\"Deploy order\",\"body\":\"Migrate first.\\n\",\"author\":\"fani\",\"created\":\"2026-11-17T10:00:00Z\",\"updated\":\"2026-11-17T10:00:00Z\",\"revision\":1}"
+    }
+   ],
+   "want": {
+    "out": "note 5  data  revision 1  by fani  2026-11-17 10:00\nDeploy order\n\nMigrate first.\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/teams/acme",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/1099511627777/notes/5",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "note list team and project",
+   "args": [
+    "note",
+    "list",
+    "--team",
+    "acme",
+    "--project",
+    "fakture"
+   ],
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage: give either a project or --team <team>",
+    "requests": [],
     "links": []
    }
   }

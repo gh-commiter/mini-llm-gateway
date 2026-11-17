@@ -18,6 +18,9 @@ func segmentID(team int64) int64 { return segmentBase + team }
 // TeamSegment is the id under which the notes of a team live (a project-shaped id for the notes routes only).
 func TeamSegment(team int64) int64 { return segmentID(team) }
 
+// SegmentTeam is the team id behind a segment id (ok false for a real project id).
+func SegmentTeam(id int64) (team int64, ok bool) { return id - segmentBase, isSegment(id) }
+
 func segmentSlug(team int64) string { return "@team-" + strconv.FormatInt(team, 10) }
 
 // ensureSegment creates the hidden row of a team (idempotent).
