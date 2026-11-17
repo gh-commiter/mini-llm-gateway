@@ -27,12 +27,12 @@ import (
 
 const (
 	usageHelp   = `minigw usage [--project slug] [--days n] [--json]   your model usage (a developer sees own events in a project, an admin all of it)`
-	projectHelp = `minigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix
+	projectHelp = `minigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label equals the prefix or starts with prefix/
 minigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote
 minigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)
 minigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin
 minigw project remote remove <url> [<slug>]
-minigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them
+minigw project depends [<slug>]             the projects and teams this project depends on (those you may see) (default: the linked one); a search of the project also covers them
 minigw project unlink                       remove the link that applies here
 minigw project show                         the link that applies here, and why
 minigw project sessions [<project>] [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]`

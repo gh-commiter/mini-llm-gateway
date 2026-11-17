@@ -18,6 +18,7 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw reconnect [--name P] [--token T \| --token -]` | New token for an existing profile (default: the default profile); address, gateway key and device key stay. Without `--token` it asks for the token (no echo) or reads stdin. A token without `#<key>` keeps the saved gateway key. Then prints the `minigw status` lines of that profile; exits 1 when it is not connected |
 | `minigw disconnect [--name P]` | Remove a profile (default: the default profile). The device key stays, so connecting again is the same device to the gateway; `minigw uninstall --purge` removes it |
 | `minigw status` | Each profile: gateway and encryption, minigw and gateway version, providers, number of models, device ID and approval, status. Exits 1 when the default profile is not connected |
+| `minigw running [--json]` | Your requests that are running on the gateway now: model, folder, time running, steps, last step and how long ago (only your device's; see [usage.md](usage.md#watching-a-long-run)) |
 | `minigw models` | Models of all profiles; other profiles' models end in `@P` |
 | `minigw profiles [list]` | List profiles; `*` marks the default |
 | `minigw profiles default P` | Make `P` the default (its models also appear without `@P`) |
@@ -29,11 +30,18 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw project list [--archived] [--path <prefix>] [--json]` | The gateway projects you can see, with your role and grants (see [usage.md](usage.md#projects-and-notes)); `--path`: only those of your teams whose path label equals the prefix or starts with `prefix/` |
 | `minigw project link [<slug>]` / `unlink` / `show` | Link this folder tree to a project you are a direct member of, remove the link, or show which link applies here. Without a slug the project is found by this folder's git remote (exactly one of your projects must be registered for it) |
 | `minigw project remote list [<slug>]` \| `add <url>\|--here [<slug>]` \| `remove <url> [<slug>]` | The git remotes registered for a project (default: the linked one); changing them needs the project admin role |
-| `minigw note list [--class c] [--limit n] [--after cursor] [--json]` / `read <id> [--json]` | Notes of the linked project (also inside an agent run, on the run's own project) |
+| `minigw project depends [<slug>]` | The projects (and teams) this project depends on that you can read (default: the linked one; a team appears only if you are on its roster); a search of the project also covers their notes |
+| `minigw note list [--class c] [--limit n] [--after cursor] [--json] [--project slug] [--team <team>]` / `read <id> [--json] [--team <team>]` | Notes of the linked project (also inside an agent run, on the run's own project); `--project` only confirms the link; `--team`: the team's own notes instead (structure and data only) |
 | `minigw kb export <project>\|--team <team> <dir>` | Copy published readable notes, including readable private notes, to Markdown plus INDEX.md on this computer; gateway running, no agent runs |
-| `minigw kb import <project> <dir\|file.md> [--class c] [--submit]` | Create or update by stable ID/path; unchanged content skips, local edits are preserved; normal member permissions and write limits |
-| `minigw note push [--class structure\|data\|private] [--title t] [--key k] <file\|->` | Create a note (default class `data`); `--key` repeats a push whose answer was lost |
-| `minigw note edit <id> [--class c] [--title t] [--revision n] [<file\|->]` / `rm <id> [--revision n]` | Change or delete a note (not inside an agent run) |
+| `minigw kb import <project>\|--team <team> <dir\|file.md> [--class c] [--submit]` | Create or update by stable ID/path; unchanged content skips, local edits are preserved; normal member permissions and write limits |
+| `minigw kb mcp [--project slug] [--print-config]` | Read-only knowledge base over MCP (stdio): `kb_search` and `note_read` only, no private notes; `--print-config` prints the `minigw-kb` client configuration instead (see [usage.md](usage.md#read-only-kb-tools-over-mcp)) |
+| `minigw kb search [<project>\|--team <team>] <query> [--json]` | Search the published notes you may read; a project search also covers its team's notes and the notes of projects it depends on (a hit says where it came from) |
+| `minigw kb submit <project>\|--team <team> [--class structure\|data\|private] [--kind finding\|faq] [--title t] [--key k] [--replaces id --revision n] <file\|->` | Propose a note for the owner's review instead of publishing it; `private` is for projects only; `--kind faq`: the title is the question, the text a short answer |
+| `minigw kb submissions [<project>\|--team <team>] [--json]` | Your submissions; without a project or team: all projects and your teams' own notes |
+| `minigw kb faq [<project>\|--team <team>] [--json]` | The published questions and answers (faqs), newest first |
+| `minigw kb hooks on\|off\|status [<project>]` | The Claude Code plugin's hooks that ask a session to hand findings in (off by default; per project, gateway and user; stored on this computer) |
+| `minigw note push [--class structure\|data\|private] [--title t] [--key k] [--team <team>] <file\|->` | Create a note (default class `data`); `--key` repeats a push whose answer was lost; `--team`: push to the team's own notes |
+| `minigw note edit <id> [--class c] [--title t] [--revision n] [--team <team>] [<file\|->]` / `rm <id> [--revision n] [--team <team>]` | Change or delete a note (not inside an agent run) |
 | `minigw usage [--project slug] [--days n] [--json]` | Your model usage per day and model: the linked project's, or your own events in all projects (see [usage.md](usage.md#projects-and-notes)) |
 | `minigw project sessions [<project>] [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]` | Recorded request chains for the selected or linked project; metadata only, readers and developers see their own history |
 | `minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]` | Authenticated owner's session history for one project |
@@ -42,7 +50,7 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw plugin install` | Add the Claude Code plugin `minigw@mini-gateway` to `~/.claude/settings.json` with its marketplace on the `release` branch and `"autoUpdate": true` (an entry from minigw 0.5.21 or older is updated; a `false` you set stays; invalid JSON is not changed) and point the plugin's `bin/minigw` at this minigw |
 | `minigw plugin uninstall [--upgrading]` | Remove only what `plugin install` added, and `claude plugin marketplace remove mini-gateway` only for the entry minigw added (yours stays; not with `--upgrading`) |
 | `minigw plugin status` | Versions of minigw, Claude Code, the plugin and the default gateway; which minigw the plugin uses. A plugin older than minigw: it prints `claude plugin marketplace update mini-gateway` and `claude plugin update minigw@mini-gateway` |
-| `minigw uninstall [--purge] [--yes]` | List, confirm, then remove what minigw added here (plugin, sign-in start, scratch folders); `--purge` also profiles, the device key and settings. minigw itself stays: it prints the command for that ([install.md](install.md#plugin-and-uninstall-one-command-everywhere)) |
+| `minigw uninstall [--purge] [--yes]` | List, confirm, then remove what minigw added here (plugin, sign-in start, scratch folders); `--purge` also settings, profiles, the device key and the project database. minigw itself stays: it prints the command for that ([install.md](install.md#plugin-and-uninstall-one-command-everywhere)) |
 
 Examples:
 
@@ -131,8 +139,8 @@ only on the gateway computer.
 | `minigw gw claude\|codex\|grok\|copilot login` | The agent's login (set / not set / logged in), never the value |
 | `minigw gw claude token [remove]` | The token from `claude setup-token` (needed in the Windows sandbox). Read from stdin or asked for. Copilot has no token: it uses the gateway user's `copilot login` |
 | `minigw gw claude\|codex\|grok apikey [remove]` | Use an API key instead of the login (billed through the provider's API), read from stdin or asked for; `remove`: back to the login |
-| `minigw gw scratch [move [DIR]]` | Show the Scratch folder (mirrors, clones, deps, caches, agent state); `move`: all of it to DIR (no DIR: the proposed folder), only while no minigw session or agent runs (`minigw serve` only) |
-| `minigw gw autostart [on\|off]` | Mac: Open at Login. Windows: the tray at sign-in. No argument: show it |
+| `minigw gw scratch [move [DIR]\|take [NAME]]` | Show the Scratch folder (mirrors, clones, deps, caches, agent state); `move`: all of it to DIR/<instance> (no DIR: the proposed folder), only while no minigw session or agent runs; `take`: take over that folder (or NAME next to it) of a gateway that is gone (`minigw serve` only) |
+| `minigw gw autostart [on\|off]` | Mac: Open at Login. Windows: the tray at sign-in. Linux: `minigw serve install`. No argument: show it |
 | `minigw gw token [rotate]` | Print the connect line for clients; `rotate` makes a new token |
 | `minigw gw settings` | The settings in this terminal, also over SSH: the pages General, Devices, Providers, Agents, Folders, Sessions, Activity (`minigw-tui`) |
 | `minigw gw settings link` | Print a one-time link (60 s) to the settings page (`minigw serve` only) |
@@ -143,9 +151,11 @@ only on the gateway computer.
 | `minigw gw team add <name>` \| `list` \| `rename <team> <name>` \| `archive <team>` \| `unarchive <team>` | Owner-managed directory; `<team>` is a name or number |
 | `minigw gw team path <team> <label>` | Free-text path label of a team (`-` clears it); used by `minigw project list --path`, grants no access |
 | `minigw gw project remote list <project>` \| `add <project> <url>` \| `remove <project> <url>` | The git remotes registered for a project (owner) |
+| `minigw gw project depends list <project>` \| `add <project> <other>` \| `remove <project> <other>` | `<project>` depends on `<other>`: its members' searches also cover `<other>`, as far as they may read it (at most 16, one level); `add`/`remove` take `--team <team>` for a team's own notes |
 | `minigw gw team member add\|remove <team> <user>` | Change directory membership without changing project roles |
 | `minigw gw team project add\|remove <team> <project>` | Group a project under at most one team without changing permissions |
-| `minigw gw member <project> list` \| `set <user> <role>` \| `remove <user>` | Members of a project; role: reader, developer, admin |
+| `minigw gw team access set <team> <project> <user> <role>` \| `remove <team> <project> <user>` \| `list <team>` | Project roles that come from a team; the strongest of team and direct wins, and removing one does not remove the other |
+| `minigw gw member <project> list [--explain]` \| `set <user> <role>` \| `remove <user>` | Members of a project; role: reader, developer, admin; `--explain` adds every origin and role |
 | `minigw gw grant <source> list` \| `add <reader> <class>` \| `remove <reader> <class>` | Which project reads which class (structure, data) of another |
 | `minigw gw core backup [name]` | A consistent copy of the core database into `<core>/backups` (the gateway or app running); a name, not a path |
 | `minigw gw core restore <file\|name> [--yes]` | Only with the gateway stopped (on the Mac: with the app quit; the Mac `minigw` runs `minigw-core restore`); a name is looked up in `<core>/backups`, a path is accepted here |
@@ -153,8 +163,19 @@ only on the gateway computer.
 | `minigw gw usage-events [--days n] [--user u] [--project p] [--model m] [--phase p] [--activity a] [--task t]` | Model invocations per day, model and user, with the gaps (events that were lost) |
 | `minigw gw quota [--claude-probe=on\|off]` | Subscription quota and provider credit with source, time and staleness; the Claude probe (`claude -p /usage`, at most every 10 minutes) is off until you turn it on (Mac: also Settings → Claude CLI) |
 | `minigw gw quota --history [--days N] [--provider P] [--json]` | Existing probes only, default 7 days, range 1–400; exact provider filter. One line per probe with windows, values, units and resets, or failure kind. JSON preserves the API response. Capped results warn on stderr. Cannot combine with `--claude-probe`. |
+| `minigw gw upstream add <name> <address> [--device-name <text>]` | Another gateway to send knowledge to (`host[:port]`); its Copy Token on stdin; `--device-name`: how this gateway appears on the upstream's device list (default `gateway <id>`) |
+| `minigw gw upstream list` \| `remove <name>` | The upstreams of this gateway, or remove one with its links and credentials (what was sent stays there) |
+| `minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]` | Send a project's published notes there as submissions (`--remote-project`: its name there, default the same); `--class`: classes to send (default `structure,data`); private notes need `--with-private` and `private` in `--class` |
+| `minigw gw upstream link --team <team> <name> [--remote-team <name>]` | The same for a team's own notes |
+| `minigw gw upstream unlink <project> <name>` \| `--team <team> <name>` | Remove a link (what was already sent stays there) |
+| `minigw gw upstream status [<project>\|--team <team>]` | Per link: how many notes would go, when it last went, and the last refusal |
+| `minigw gw upstream push [<project>\|--team <team>] [--dry-run]` | Send the published notes as submissions; `--dry-run` only asks the upstream what exists and writes nothing |
+| `minigw gw kb rebuild-search` | Rebuild the published-note index (repairs search; grants no search access) |
+| `minigw gw kb review [<project>\|--team <team>]` | Pending submissions of a project (or a team's own notes), including bodies |
+| `minigw gw kb accept <id>` | Publish a pending submission as a note or replacement revision |
+| `minigw gw kb reject <id> [--reason text]` | Refuse a pending submission, with an optional reason |
 
-On Windows and Linux every `minigw gw` command also takes `--config FILE`. `minigw serve allow`, `deny`, `devices`,
+Every `minigw gw` command also takes `--config FILE` (default: the `minigw serve` config). `minigw serve allow`, `deny`, `devices`,
 `provider` and `status` are older names for the same commands.
 
 Examples:
@@ -175,6 +196,7 @@ minigw gw token rotate                                            # every client
 | `minigw serve install [--config FILE]` | Install minigw to a fixed place, add it to PATH, start the gateway now and at sign-in or boot (no admin rights). Run it again to update |
 | `minigw serve uninstall [--config FILE]` | Stop the gateway and remove autostart; the config and keys stay |
 | `minigw serve [--port N] [--config FILE]` | Run the gateway in this terminal |
+| `minigw serve healthcheck [--port N]` | Exit 0 when the running gateway answers on loopback (Docker HEALTHCHECK) |
 
 Details: [gateway.md → minigw serve](gateway.md#minigw-serve-on-windows-and-linux).
 
@@ -235,7 +257,7 @@ removing a team assignment does not remove a direct one. `gw member` edits only 
 The explanation lists each origin and role; the member project list displays role and origin names.
 The user and project must belong to the active team. Removal from the team or team archive deletes
 matching assignments; direct access survives. Narrowing effective access invalidates existing runs.
-# KB review commands
+## KB review commands
 
 Both clients support identical commands:
 

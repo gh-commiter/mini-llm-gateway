@@ -125,17 +125,25 @@ In the root of a git repository the agent works in a clone and its work comes ba
 `minigw/<agent>-…`; minigw prints the range to review. Elsewhere the folder is synced and the changes land in your
 files. See [docs/usage.md → Work modes](docs/usage.md#work-modes-what-happens-to-your-files).
 
-## Projects and notes (0.6.0)
+## Projects and the shared knowledge base
 
-A gateway can keep projects for a team: the owner creates users, binds each person's device to a user, creates a project
-and adds members (`minigw gw user|bind|project|member|grant`). A member links a folder to a project
-(`minigw project link`), pushes and reads short notes (`minigw note`), and an agent started in that folder can read the
-project's notes. `minigw kb search [<project>] <query>` searches published notes within the caller's permissions;
-inside an agent run, omit the project to use only that run's scope. `minigw kb mcp [--project slug]`
-exposes read-only search and note tools over stdio; add `--print-config` for a credential-free MCP configuration.
-See [KB tools over MCP](docs/usage.md#read-only-kb-tools-over-mcp) for setup and limits.
-`minigw usage` shows model usage per project, user and model. It works on the Mac app and on
-`minigw serve`; the Mac app keeps the database in a helper. Backups with `minigw gw core backup`. Walk-through:
+A gateway can keep projects and teams for a shared knowledge base. The owner creates users, binds each person's
+device to a user, creates a project, adds members and groups projects into teams (`minigw gw user|bind|project|team|member|grant`); a
+member links a folder to a project (`minigw project link`), pushes and reads notes (`minigw note`), and an agent
+started in that folder can read the project's notes. Teams have notes of their own (`minigw team list|show`, notes
+with `--team`). `minigw kb search [<project>|--team <team>] <query>` searches published notes within the caller's
+permissions; `minigw kb mcp [--project slug]` exposes read-only search and note tools over stdio, and
+`--print-config` prints a credential-free MCP configuration (see [KB tools over MCP](docs/usage.md#read-only-kb-tools-over-mcp)).
+
+The three admin panels — Users and devices, Teams and projects, Knowledge base — are in the Mac app's Settings
+window and on the `minigw serve` settings page; the commands remain `minigw gw`. Usage labels
+(`--minigw-phase|activity|task`, or `MINIGW_PHASE|ACTIVITY|TASK`) say what a run was for, and
+`minigw gw usage --by phase|activity|task` reads them. The owner can send a project's or team's published notes to
+another gateway as submissions (`minigw gw upstream add|link|push`). `minigw usage` shows model usage per project,
+user and model.
+
+It works on the Mac app and on `minigw serve`; the Mac app keeps the database in a helper. Backups with
+`minigw gw core backup`. Walk-through:
 [docs/usage.md → Projects in 10 minutes](docs/usage.md#projects-in-10-minutes).
 
 ## Documentation

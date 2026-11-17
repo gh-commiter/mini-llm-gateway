@@ -20,8 +20,9 @@ random scope (a change made while it was stopped cannot be seen). CLI logins (Cl
 identifier: they keep one scope per provider. History exposes no scopes, source metadata or raw errors. Loss gaps describe recorder losses across all
 providers, including when the probe list is filtered. See [the admin API](admin-api.md) for the response contract.
 
-Scenarios from first use to parallel agents. Every command here runs on the client, the computer where you work.
-For the full option list see [commands.md](commands.md); for what happens on the wire see
+Scenarios from first use to parallel agents. Unless it starts with `minigw gw` or `minigw serve` (owner commands, on the
+gateway computer), every command here runs on the client, the computer where you work. For the full option list see
+[commands.md](commands.md); for what happens on the wire see
 [how-it-works.md](how-it-works.md).
 
 - [Run Claude Code through the gateway](#run-claude-code-through-the-gateway)
@@ -465,7 +466,7 @@ boundary.
 the quota can be read by type of work. The phase is plan, do, check or act (act: correcting the plan because of a new state found while
 doing or checking); the activity is the kind of work: feature, bugfix, security, refactor, docs, test, release, research, ops; the task is
 a short reference such as an issue number or a branch. All three are optional and none ever refuses or delays a run: a value outside the
-suggested words is kept as it is when it is a short token (phase and activity: lower case letters, digits and `. _ -`, up to 32; task: also
+suggested words is kept (trimmed; phase and activity are also lower-cased) when it is a short token (phase and activity: letters, digits and `. _ -`, up to 32; task: also
 `#` and `/`, up to 64); anything else is dropped with one warning line and the run goes on. In a folder linked to a project and inside a git
 repository, an empty task becomes the current branch name (marked `branch`; the branch is read from the repository's files, nothing runs).
 A role such as `plan.feature` is not parsed into labels. The labels are data, not permissions. Read them with `minigw gw usage --by phase`
@@ -763,8 +764,8 @@ What differs on the Mac app:
 - **The helper.** The Mac app keeps the database in the helper `minigw-core`. While it is not running, project routes
   and every request that carries a project answer `503 core_unavailable`; plain model requests work as before.
   `minigw gw status` and Settings → General say whether the project database works.
-- **No project pages in Settings.** The Mac app has only that status row; users, projects, members and grants are
-  managed with `minigw gw …` on both gateways. Teams and delegated administration are not in 0.6.0.
+- **Admin panes.** The Mac app's Settings window has the three admin panes (Users and devices, Teams and projects,
+  Knowledge base); the `minigw serve` settings page draws the same three. `minigw gw …` still does everything on both gateways.
 - **Agents.** On the Mac the Claude CLI agent reads notes only with **Allow local tools**, Codex only with its network
   switch on ([gateway.md](gateway.md#the-mac-app-agents-with-a-project)). A Windows or Linux gateway without a sandbox
   keeps projects off until the owner accepts that agents can read all notes
@@ -777,7 +778,7 @@ minigw project link                     no slug: find the project by this folder
 minigw project show                     which link applies here and why
 minigw project unlink
 minigw project remote list|add|remove   the git remotes registered for a project
-minigw project list --path acme       only the projects of your teams whose path label starts with "acme"
+minigw project list --path acme         only the projects of your teams whose path label is "acme" or starts with "acme/"
 ```
 
 - **Link by git remote.** A project admin (or the owner) registers the git remotes of a project:
@@ -1187,7 +1188,7 @@ each sandbox request, without secrets (variables with TOKEN, KEY, SECRET, PASSWO
 run with outbound network denied and loopback allowed; it prints `nonce:<line>`, `write:ok`, `deny:ok`, `loopback:ok`
 and `final:<path>` and exits 7 (wrong arguments: a message on stderr and exit 2). A failed `loopback` check alone does
 not make the sandbox unavailable; only "May ask other models" does not work there then.
-# KB submissions and provenance
+## KB submissions and provenance
 
 `minigw note push` still publishes directly. `note read <id> --json` now includes
 authenticated writer user/device, project, actor/source kind, source reference,
@@ -1196,8 +1197,8 @@ known authors/projects/times, with `UNKNOWN` device and source. Older revisions
 cannot be reconstructed. Import, session summary and gateway synthesis are reserved
 source names; ingestion and service writes are deferred.
 
-Use `minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t]
-[--key k] <file|->` to propose a note. Input and title defaults match note push.
+Use `minigw kb submit <project>|--team <team> [--class structure|data|private] [--kind finding|faq] [--title t]
+[--key k] <file|->` to propose a note (`private` is for projects only). Input and title defaults match note push.
 For a replacement add `--replaces <note-id> --revision <n>`. Existing project write
 permissions apply; readers cannot submit. `minigw kb submissions [<project>|--team <team>]
 [--json]` lists your submissions, across readable projects and the teams you are on (labelled `team <name>`) when omitted.
@@ -1207,7 +1208,7 @@ and the text a short answer (at most 2 KiB). The kind is chosen with `kb submit 
 review (the owner accepts a faq as a faq) and cannot be changed after publication (a Markdown or bundle import sets the kind only when it creates the note; a replacement always keeps the kind of the note it replaces); `note push` and `note edit` always
 make or keep a finding. A replacement without `--kind` keeps the kind of the note it replaces. A faq shows
 `  (faq)` at the end of its first line in `kb search`, `kb submissions` and `gw kb review`; findings print as before.
-`minigw kb faq [<project>] [--json]` lists the published questions of a project, newest first, each with its answer;
+`minigw kb faq [<project>|--team <team>] [--json]` lists the published questions of a project (or a team's own notes), newest first, each with its answer;
 it follows the same visibility as `note list` (private entries only for their author and the project admins) and is not
 available inside an agent run. Exported Markdown and team bundles carry `entry_kind`.
 
@@ -1229,7 +1230,7 @@ subfolder of a larger project's folder: `minigw gw project depends add <project>
 16 per project, across teams, one level only). The people of `<project>` then also find the notes of `<other>` when they search
 `<project>`, and can open a hit with `minigw note read <id>`, but only the notes each person could read in `<other>` anyway
 (as a member, or through a grant): a dependency is a search hint and never a permission, and `private` notes never appear.
-Such a hit ends with `from project:<slug>`. `minigw project depends [<project>]` lists the dependencies you can read. An agent
+Such a hit ends with `from project:<slug>`. `minigw project depends [<project>]` lists the dependencies you can read (a team on its own line, and only if you are on its roster). An agent
 run is not widened by a dependency: it reads another project only through an owner grant, as before; the dependency only
 labels and orders those hits. A project linked to a subfolder of another project's folder gets **no automatic** dependency:
 the owner sets it.
@@ -1261,9 +1262,9 @@ customer data. Preview and sanitize before publishing or submitting; this beta
 does not detect customer data. Rejection is not deletion. Backups and snapshots
 retain content and provenance; restore can restore old content and permissions.
 
-# Search the published KB
+## Search the published KB
 
-Use `minigw kb search [<project>] <query> [--json]`, quoting queries with spaces.
+Use `minigw kb search [<project>|--team <team>] <query> [--json]`, quoting queries with spaces.
 Without a project, it uses this folder's linked project. An explicit project may
 be an ID or slug you can read. Inside an agent run, omit the project: the gateway
 uses only the run's capability, including explicit one-hop grants to that project;
