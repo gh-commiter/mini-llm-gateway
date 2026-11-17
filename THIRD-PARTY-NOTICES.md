@@ -30,7 +30,7 @@ are linked into minigw, minigw-tui and minigw-core (Windows, Linux and macOS bui
 | github.com/rivo/uniseg | v0.4.7 | MIT |
 | github.com/xo/terminfo | v0.0.0-20220910002029-abceb7e1c41e | MIT |
 | golang.org/x/sys | v0.49.0 | BSD-3-Clause |
-| golang.org/x/text | v0.3.8 | BSD-3-Clause |
+| golang.org/x/text | v0.39.0 | BSD-3-Clause |
 | modernc.org/libc | v1.80.1 | BSD-3-Clause |
 | modernc.org/mathutil | v1.7.1 | BSD-3-Clause |
 | modernc.org/memory | v1.12.1 | BSD-3-Clause |
@@ -664,10 +664,10 @@ rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 ~~~~
 
-## golang.org/x/text v0.3.8 (BSD-3-Clause)
+## golang.org/x/text v0.39.0 (BSD-3-Clause)
 
 ~~~~
-Copyright (c) 2009 The Go Authors. All rights reserved.
+Copyright 2009 The Go Authors.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -679,7 +679,7 @@ notice, this list of conditions and the following disclaimer.
 copyright notice, this list of conditions and the following disclaimer
 in the documentation and/or other materials provided with the
 distribution.
-   * Neither the name of Google Inc. nor the names of its
+   * Neither the name of Google LLC nor the names of its
 contributors may be used to endorse or promote products derived from
 this software without specific prior written permission.
 
