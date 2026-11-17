@@ -433,7 +433,8 @@ final class ProjectStore: @unchecked Sendable {
         #expect(s.run(["note", "edit", "1", "--title", "Numbering v2"]).out == "note 1 updated (structure, revision 2)\n")
         #expect(s.run(["note", "rm", "1", "--revision", "1"]).error.contains("current revision is 2"))
         #expect(s.run(["note", "rm", "1"]).out == "note 1 deleted\n")
-        #expect(s.run(["note", "read", "1"]).error == "not found or not visible")  // 404
+        let gone = s.run(["note", "read", "1"]).error  // 404: the server's text first, then the client's hint about other projects and teams
+        #expect(gone.hasPrefix("not found or not visible") && gone.contains("--team"))
         #expect(s.run(["project", "unlink"], cwd: "proj/src").out == "unlinked \(s.root)/proj from project fakture\n")
         #expect(s.run(["note", "list"]).error.contains("not linked"))
     }
