@@ -14,14 +14,8 @@
   "format": 1,
   "id": "acme.shop",
   "provider": "acme",
-  "title": {
-   "en": "Shop",
-   "sl": "Trgovina"
-  },
-  "about": {
-   "en": "Orders of the shop",
-   "sl": "Naročila trgovine"
-  },
+  "title": "acme.shop.title",
+  "about": "acme.shop.about",
   "symbol": "tray",
   "refs": {
    "items": {
@@ -35,18 +29,12 @@
    {
     "kind": "text",
     "id": "intro",
-    "body": {
-     "en": "Orders are kept by the shop plugin.",
-     "sl": "Naročila hrani vtičnik trgovine."
-    }
+    "body": "acme.shop.section.intro.body"
    },
    {
     "kind": "list",
     "id": "orders",
-    "title": {
-     "en": "Orders",
-     "sl": "Naročila"
-    },
+    "title": "acme.shop.section.orders.title",
     "source": {
      "path": "/plugins/acme/orders",
      "items": "orders"
@@ -56,69 +44,39 @@
      {
       "field": "name",
       "kind": "text",
-      "label": {
-       "en": "Name",
-       "sl": "Ime"
-      }
+      "label": "acme.shop.section.orders.column.name"
      },
      {
       "field": "note",
       "kind": "multiline",
-      "label": {
-       "en": "Note",
-       "sl": "Opomba"
-      }
+      "label": "acme.shop.section.orders.column.note"
      },
      {
       "field": "paid",
       "kind": "bool",
-      "label": {
-       "en": "Paid",
-       "sl": "Plačano"
-      },
-      "yes": {
-       "en": "Paid",
-       "sl": "Plačano"
-      },
-      "no": {
-       "en": "Open",
-       "sl": "Odprto"
-      }
+      "label": "acme.shop.section.orders.column.paid",
+      "yes": "acme.shop.section.orders.column.paid.yes",
+      "no": "acme.shop.section.orders.column.paid.no"
      },
      {
       "field": "state",
       "kind": "enum",
-      "label": {
-       "en": "State",
-       "sl": "Stanje"
-      },
+      "label": "acme.shop.section.orders.column.state",
       "values": {
-       "new": {
-        "en": "New",
-        "sl": "Novo"
-       },
-       "sent": {
-        "en": "Sent",
-        "sl": "Poslano"
-       }
+       "new": "acme.shop.section.orders.column.state.value.new",
+       "sent": "acme.shop.section.orders.column.state.value.sent"
       }
      },
      {
       "field": "item",
       "kind": "ref",
       "ref": "items",
-      "label": {
-       "en": "Item",
-       "sl": "Artikel"
-      }
+      "label": "acme.shop.section.orders.column.item"
      },
      {
       "field": "created",
       "kind": "time",
-      "label": {
-       "en": "Created",
-       "sl": "Ustvarjeno"
-      }
+      "label": "acme.shop.section.orders.column.created"
      }
     ],
     "filter": [
@@ -128,26 +86,17 @@
     "hide": {
      "field": "state",
      "equals": "sent",
-     "toggle": {
-      "en": "Show sent orders",
-      "sl": "Pokaži poslana naročila"
-     }
+     "toggle": "acme.shop.section.orders.hide"
     },
     "paging": {
      "next": "next",
      "param": "after"
     },
-    "empty": {
-     "en": "No orders.",
-     "sl": "Ni naročil."
-    },
+    "empty": "acme.shop.section.orders.empty",
     "actions": [
      {
       "id": "add",
-      "label": {
-       "en": "Add Order…",
-       "sl": "Dodaj naročilo …"
-      },
+      "label": "acme.shop.section.orders.action.add",
       "method": "POST",
       "path": "/plugins/acme/orders",
       "query": "mode=draft&item={field.item}",
@@ -160,20 +109,14 @@
         "default": {
          "const": "new order"
         },
-        "label": {
-         "en": "Name",
-         "sl": "Ime"
-        }
+        "label": "acme.shop.section.orders.action.add.field.name"
        },
        {
         "id": "item",
         "type": "ref",
         "ref": "items",
         "required": true,
-        "label": {
-         "en": "Item",
-         "sl": "Artikel"
-        }
+        "label": "acme.shop.section.orders.action.add.field.item"
        },
        {
         "id": "kind",
@@ -181,23 +124,14 @@
         "options": [
          {
           "value": "web",
-          "label": {
-           "en": "Web",
-           "sl": "Splet"
-          }
+          "label": "acme.shop.section.orders.action.add.field.kind.option.web"
          },
          {
           "value": "shop",
-          "label": {
-           "en": "Shop",
-           "sl": "Trgovina"
-          }
+          "label": "acme.shop.section.orders.action.add.field.kind.option.shop"
          }
         ],
-        "label": {
-         "en": "Kind",
-         "sl": "Vrsta"
-        }
+        "label": "acme.shop.section.orders.action.add.field.kind"
        },
        {
         "id": "paid",
@@ -205,10 +139,7 @@
         "default": {
          "const": false
         },
-        "label": {
-         "en": "Paid",
-         "sl": "Plačano"
-        }
+        "label": "acme.shop.section.orders.action.add.field.paid"
        }
       ],
       "body": {
@@ -230,10 +161,7 @@
     "rowActions": [
      {
       "id": "rename",
-      "label": {
-       "en": "Rename…",
-       "sl": "Preimenuj …"
-      },
+      "label": "acme.shop.section.orders.action.rename",
       "method": "PATCH",
       "path": "/plugins/acme/orders/{row.id}",
       "when": {
@@ -248,10 +176,7 @@
         "default": {
          "row": "name"
         },
-        "label": {
-         "en": "Name",
-         "sl": "Ime"
-        }
+        "label": "acme.shop.section.orders.action.rename.field.name"
        }
       ],
       "body": {
@@ -265,25 +190,13 @@
      },
      {
       "id": "delete",
-      "label": {
-       "en": "Delete",
-       "sl": "Izbriši"
-      },
+      "label": "acme.shop.section.orders.action.delete",
       "method": "DELETE",
       "path": "/plugins/acme/orders/{row.id}",
       "confirm": {
-       "title": {
-        "en": "Delete {name}?",
-        "sl": "Izbrišem {name}?"
-       },
-       "message": {
-        "en": "The order is removed.",
-        "sl": "Naročilo bo odstranjeno."
-       },
-       "button": {
-        "en": "Delete",
-        "sl": "Izbriši"
-       },
+       "title": "acme.shop.section.orders.action.delete.confirm.title",
+       "message": "acme.shop.section.orders.action.delete.confirm.message",
+       "button": "acme.shop.section.orders.action.delete.confirm.button",
        "destructive": true
       }
      }
@@ -294,18 +207,12 @@
       {
        "kind": "text",
        "id": "hint",
-       "body": {
-        "en": "Lines of the order.",
-        "sl": "Vrstice naročila."
-       }
+       "body": "acme.shop.section.orders.detail.section.hint.body"
       },
       {
        "kind": "list",
        "id": "lines",
-       "title": {
-        "en": "Lines",
-        "sl": "Vrstice"
-       },
+       "title": "acme.shop.section.orders.detail.section.lines.title",
        "source": {
         "path": "/plugins/acme/orders/{parent.id}/lines",
         "items": "lines"
@@ -315,23 +222,14 @@
         {
          "field": "title",
          "kind": "text",
-         "label": {
-          "en": "Title",
-          "sl": "Naslov"
-         }
+         "label": "acme.shop.section.orders.detail.section.lines.column.title"
         }
        ],
-       "empty": {
-        "en": "No lines.",
-        "sl": "Ni vrstic."
-       },
+       "empty": "acme.shop.section.orders.detail.section.lines.empty",
        "actions": [
         {
          "id": "add-line",
-         "label": {
-          "en": "Add Line…",
-          "sl": "Dodaj vrstico …"
-         },
+         "label": "acme.shop.section.orders.detail.section.lines.action.add-line",
          "method": "POST",
          "path": "/plugins/acme/orders/{parent.id}/lines",
          "fields": [
@@ -339,10 +237,7 @@
            "id": "title",
            "type": "text",
            "required": true,
-           "label": {
-            "en": "Title",
-            "sl": "Naslov"
-           }
+           "label": "acme.shop.section.orders.detail.section.lines.action.add-line.field.title"
           }
          ],
          "body": {
@@ -355,25 +250,13 @@
        "rowActions": [
         {
          "id": "drop",
-         "label": {
-          "en": "Remove",
-          "sl": "Odstrani"
-         },
+         "label": "acme.shop.section.orders.detail.section.lines.action.drop",
          "method": "DELETE",
          "path": "/plugins/acme/orders/{parent.id}/lines/{row.id}",
          "confirm": {
-          "title": {
-           "en": "Remove this line?",
-           "sl": "Odstranim to vrstico?"
-          },
-          "message": {
-           "en": "The line is removed.",
-           "sl": "Vrstica bo odstranjena."
-          },
-          "button": {
-           "en": "Remove",
-           "sl": "Odstrani"
-          }
+          "title": "acme.shop.section.orders.detail.section.lines.action.drop.confirm.title",
+          "message": "acme.shop.section.orders.detail.section.lines.action.drop.confirm.message",
+          "button": "acme.shop.section.orders.detail.section.lines.action.drop.confirm.button"
          }
         }
        ]

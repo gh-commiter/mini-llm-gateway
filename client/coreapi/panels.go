@@ -15,7 +15,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -45,9 +44,10 @@ const (
 // PanelProvider registers panels and the routes its panels may call, as "METHOD pattern" in the notation of adminDo's
 // switch ("PATCH users/{}": a {} is one path segment).
 type PanelProvider struct {
-	ID     string
-	Routes []string
-	Panels []json.RawMessage
+	ID      string
+	Routes  []string
+	Panels  []json.RawMessage
+	Strings map[string]map[string]string // locale -> {key: text}; "C" is the base and holds every key
 }
 
 //go:embed panels/*.json
@@ -59,8 +59,18 @@ var BuiltinRoutes = []string{"GET users", "POST users", "PATCH users/{}", "GET b
 // panelSymbols: the names a renderer maps to its icons.
 var panelSymbols = []string{"person.2", "person.3", "folder", "book", "tray", "gearshape", "doc.text", "key", "list.bullet"}
 
+//go:embed panels/strings/*.json
+var builtinStringFiles embed.FS
+
 func builtinProvider() PanelProvider {
-	p := PanelProvider{ID: "builtin", Routes: BuiltinRoutes}
+	p := PanelProvider{ID: "builtin", Routes: BuiltinRoutes, Strings: map[string]map[string]string{}}
+	sents, _ := builtinStringFiles.ReadDir("panels/strings")
+	for _, e := range sents {
+		var t map[string]string
+		if b, err := builtinStringFiles.ReadFile("panels/strings/" + e.Name()); err == nil && json.Unmarshal(b, &t) == nil {
+			p.Strings[strings.TrimSuffix(e.Name(), ".json")] = t
+		}
+	}
 	ents, _ := builtinPanelFiles.ReadDir("panels") // sorted by name
 	for _, e := range ents {
 		b, err := builtinPanelFiles.ReadFile("panels/" + e.Name())
@@ -73,17 +83,12 @@ func builtinProvider() PanelProvider {
 
 // --- the description ---
 
-type pStr struct {
-	En string `json:"en"`
-	Sl string `json:"sl"`
-}
-
 type pPanel struct {
 	Format   int             `json:"format"`
 	ID       string          `json:"id"`
 	Provider string          `json:"provider"`
-	Title    pStr            `json:"title"`
-	About    pStr            `json:"about"`
+	Title    string          `json:"title"`
+	About    string          `json:"about"`
 	Symbol   string          `json:"symbol"`
 	Refs     map[string]pRef `json:"refs"`
 	Sections []pSection      `json:"sections"`
@@ -99,15 +104,15 @@ type pRef struct {
 type pSection struct {
 	Kind       string    `json:"kind"`
 	ID         string    `json:"id"`
-	Title      *pStr     `json:"title"`
-	Body       *pStr     `json:"body"`
+	Title      *string   `json:"title"`
+	Body       *string   `json:"body"`
 	Source     *pSource  `json:"source"`
 	Key        string    `json:"key"`
 	Columns    []pColumn `json:"columns"`
 	Filter     []string  `json:"filter"`
 	Hide       *pHide    `json:"hide"`
 	Paging     *pPaging  `json:"paging"`
-	Empty      *pStr     `json:"empty"`
+	Empty      *string   `json:"empty"`
 	Actions    []pAction `json:"actions"`
 	RowActions []pAction `json:"rowActions"`
 	Detail     *pDetail  `json:"detail"`
@@ -119,19 +124,19 @@ type pSource struct {
 }
 
 type pColumn struct {
-	Field  string          `json:"field"`
-	Kind   string          `json:"kind"`
-	Label  pStr            `json:"label"`
-	Yes    *pStr           `json:"yes"`
-	No     *pStr           `json:"no"`
-	Values map[string]pStr `json:"values"`
-	Ref    string          `json:"ref"`
+	Field  string            `json:"field"`
+	Kind   string            `json:"kind"`
+	Label  string            `json:"label"`
+	Yes    *string           `json:"yes"`
+	No     *string           `json:"no"`
+	Values map[string]string `json:"values"`
+	Ref    string            `json:"ref"`
 }
 
 type pHide struct {
 	Field  string          `json:"field"`
 	Equals json.RawMessage `json:"equals"`
-	Toggle pStr            `json:"toggle"`
+	Toggle string          `json:"toggle"`
 }
 
 type pPaging struct {
@@ -146,7 +151,7 @@ type pDetail struct {
 
 type pAction struct {
 	ID          string              `json:"id"`
-	Label       pStr                `json:"label"`
+	Label       string              `json:"label"`
 	Method      string              `json:"method"`
 	Path        string              `json:"path"`
 	Query       string              `json:"query"`
@@ -169,16 +174,16 @@ type pWhen struct {
 }
 
 type pConfirm struct {
-	Title       pStr `json:"title"`
-	Message     pStr `json:"message"`
-	Button      pStr `json:"button"`
-	Destructive bool `json:"destructive"`
+	Title       string `json:"title"`
+	Message     string `json:"message"`
+	Button      string `json:"button"`
+	Destructive bool   `json:"destructive"`
 }
 
 type pField struct {
 	ID        string    `json:"id"`
 	Type      string    `json:"type"`
-	Label     pStr      `json:"label"`
+	Label     string    `json:"label"`
 	Required  bool      `json:"required"`
 	MaxLength int       `json:"maxLength"`
 	Default   *pDefault `json:"default"`
@@ -193,7 +198,7 @@ type pDefault struct {
 
 type pOption struct {
 	Value string `json:"value"`
-	Label pStr   `json:"label"`
+	Label string `json:"label"`
 }
 
 // --- the validator ---
@@ -205,38 +210,48 @@ var (
 	rePlace    = regexp.MustCompile(`^\{(row|field|parent)\.([A-Za-z][A-Za-z0-9_]{0,63})\}$`)
 	reQueryKV  = regexp.MustCompile(`^([a-z][a-z0-9_]{0,31})=(.*)$`)
 	reQueryLit = regexp.MustCompile(`^[A-Za-z0-9_.-]{0,64}$`)
-	reMsgPlace = regexp.MustCompile(`\{([A-Za-z][A-Za-z0-9_]{0,63})\}`)
+	reKey      = regexp.MustCompile(`^[a-z0-9._-]{1,120}$`)
 )
 
 // ValidatePanel: one description against the provider's registered routes. Strict: unknown keys (exact spelling),
 // anything above the limits, a route the provider did not register, a path template that is not whole segments, a
-// destructive action without a confirmation, a string without en and sl.
+// destructive action without a confirmation, a text that is not a key of the panel's namespace.
 func ValidatePanel(raw []byte, p PanelProvider) error {
+	_, err := PanelKeys(raw, p)
+	return err
+}
+
+// PanelKeys validates like ValidatePanel and returns the string keys the description uses, each with the longest text its
+// position allows.
+func PanelKeys(raw []byte, p PanelProvider) (map[string]int, error) {
 	if len(raw) > maxPanelBytes {
-		return fmt.Errorf("the description is larger than %d bytes", maxPanelBytes)
+		return nil, fmt.Errorf("the description is larger than %d bytes", maxPanelBytes)
 	}
 	var probe struct {
 		Format *int `json:"format"`
 	}
 	if err := json.Unmarshal(raw, &probe); err != nil || probe.Format == nil {
-		return fmt.Errorf("not a JSON object with a format")
+		return nil, fmt.Errorf("not a JSON object with a format")
 	}
 	if *probe.Format != PanelFormat {
-		return fmt.Errorf("format %d is not supported (this gateway knows format %d)", *probe.Format, PanelFormat)
+		return nil, fmt.Errorf("format %d is not supported (this gateway knows format %d)", *probe.Format, PanelFormat)
 	}
 	var d pPanel
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&d); err != nil {
-		return err
+		return nil, err
 	}
 	var generic any
 	_ = json.Unmarshal(raw, &generic)
 	if key := exactKeys(generic, reflect.TypeOf(d)); key != "" {
-		return fmt.Errorf("unknown key %q", key)
+		return nil, fmt.Errorf("unknown key %q", key)
 	}
-	v := &panelCheck{p: p, d: d}
-	return v.panel()
+	v := &panelCheck{p: p, d: d, keys: map[string]int{}}
+	if err := v.panel(); err != nil {
+		return nil, err
+	}
+	return v.keys, nil
 }
 
 // exactKeys returns the first object key that is not the exact (case-sensitive) json tag of the struct it lands in.
@@ -281,8 +296,9 @@ func exactKeys(v any, t reflect.Type) string {
 }
 
 type panelCheck struct {
-	p PanelProvider
-	d pPanel
+	p    PanelProvider
+	d    pPanel
+	keys map[string]int
 }
 
 func (c *panelCheck) panel() error {
@@ -293,7 +309,7 @@ func (c *panelCheck) panel() error {
 	if name, ok := strings.CutPrefix(d.ID, d.Provider+"."); !ok || !reID.MatchString(name) {
 		return fmt.Errorf("id %q must be %s.<name>", d.ID, d.Provider)
 	}
-	if err := firstErr(str("title", d.Title, maxLabel), str("about", d.About, maxLabel)); err != nil {
+	if err := firstErr(c.key("title", d.Title, maxLabel), c.key("about", d.About, maxLabel)); err != nil {
 		return err
 	}
 	if !slices.Contains(panelSymbols, d.Symbol) {
@@ -337,7 +353,7 @@ func (c *panelCheck) sections(where string, ss []pSection, nested bool) error {
 				s.Paging != nil || s.Empty != nil || s.Actions != nil || s.RowActions != nil || s.Detail != nil {
 				return fmt.Errorf("%sa text section has only id and body", w)
 			}
-			if err := str("body", *s.Body, maxMessage); err != nil {
+			if err := c.key("body", *s.Body, maxMessage); err != nil {
 				return fmt.Errorf("%s%w", w, err)
 			}
 		case "list":
@@ -355,7 +371,7 @@ func (c *panelCheck) list(w string, s pSection, nested bool) error {
 	if s.Body != nil || s.Source == nil || s.Title == nil {
 		return fmt.Errorf("%sa list needs title and source, and has no body", w)
 	}
-	if err := firstErr(str("title", *s.Title, maxLabel), optStr("empty", s.Empty, maxLabel)); err != nil {
+	if err := firstErr(c.key("title", *s.Title, maxLabel), c.optKey("empty", s.Empty, maxLabel)); err != nil {
 		return fmt.Errorf("%s%w", w, err)
 	}
 	if !reName.MatchString(s.Source.Items) || !reName.MatchString(s.Key) {
@@ -384,7 +400,7 @@ func (c *panelCheck) list(w string, s pSection, nested bool) error {
 		if !reName.MatchString(h.Field) || !scalar(h.Equals) {
 			return fmt.Errorf("%shide: bad field or equals", w)
 		}
-		if err := str("hide.toggle", h.Toggle, maxLabel); err != nil {
+		if err := c.key("hide.toggle", h.Toggle, maxLabel); err != nil {
 			return fmt.Errorf("%s%w", w, err)
 		}
 	}
@@ -420,7 +436,7 @@ func (c *panelCheck) column(col pColumn) error {
 	if !reName.MatchString(col.Field) {
 		return fmt.Errorf("bad field")
 	}
-	if err := str("label", col.Label, maxLabel); err != nil {
+	if err := c.key("label", col.Label, maxLabel); err != nil {
 		return err
 	}
 	extra := func(yesNo, values, ref bool) error {
@@ -439,7 +455,7 @@ func (c *panelCheck) column(col pColumn) error {
 		if col.Yes == nil || col.No == nil {
 			return fmt.Errorf("bool needs yes and no")
 		}
-		return firstErr(str("yes", *col.Yes, maxLabel), str("no", *col.No, maxLabel))
+		return firstErr(c.key("yes", *col.Yes, maxLabel), c.key("no", *col.No, maxLabel))
 	case "enum":
 		if err := extra(false, true, false); err != nil {
 			return err
@@ -451,7 +467,7 @@ func (c *panelCheck) column(col pColumn) error {
 			if k == "" || len(k) > 64 {
 				return fmt.Errorf("enum: bad value key")
 			}
-			if err := str("value "+k, l, maxLabel); err != nil {
+			if err := c.key("value "+k, l, maxLabel); err != nil {
 				return err
 			}
 		}
@@ -472,7 +488,7 @@ func (c *panelCheck) action(a pAction, t tpl) error {
 	if !reID.MatchString(a.ID) {
 		return fmt.Errorf("bad id")
 	}
-	if err := str("label", a.Label, maxLabel); err != nil {
+	if err := c.key("label", a.Label, maxLabel); err != nil {
 		return err
 	}
 	switch a.Method {
@@ -535,19 +551,8 @@ func (c *panelCheck) action(a pAction, t tpl) error {
 		}
 	}
 	if cf := a.Confirm; cf != nil {
-		for _, s := range []struct {
-			n string
-			v pStr
-			m int
-		}{{"confirm.title", cf.Title, maxLabel}, {"confirm.message", cf.Message, maxMessage}, {"confirm.button", cf.Button, maxLabel}} {
-			if err := str(s.n, s.v, s.m); err != nil {
-				return err
-			}
-			for _, txt := range []string{s.v.En, s.v.Sl} {
-				if err := messagePlaceholders(txt, t.row); err != nil {
-					return fmt.Errorf("%s: %w", s.n, err)
-				}
-			}
+		if err := firstErr(c.key("confirm.title", cf.Title, maxLabel), c.key("confirm.message", cf.Message, maxMessage), c.key("confirm.button", cf.Button, maxLabel)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -557,7 +562,7 @@ func (c *panelCheck) field(f pField, t tpl) error {
 	if !reName.MatchString(f.ID) {
 		return fmt.Errorf("bad id")
 	}
-	if err := str("label", f.Label, maxLabel); err != nil {
+	if err := c.key("label", f.Label, maxLabel); err != nil {
 		return err
 	}
 	if f.MaxLength < 0 || f.MaxLength > maxFieldLength {
@@ -594,7 +599,7 @@ func (c *panelCheck) field(f pField, t tpl) error {
 			if o.Value == "" || len(o.Value) > 64 {
 				return fmt.Errorf("choice: bad option value")
 			}
-			if err := str("option "+o.Value, o.Label, maxLabel); err != nil {
+			if err := c.key("option "+o.Value, o.Label, maxLabel); err != nil {
 				return err
 			}
 		}
@@ -664,41 +669,23 @@ func query(q string, t tpl) error {
 	return nil
 }
 
-// messagePlaceholders: {field} in a confirmation takes a row value; no other braces.
-func messagePlaceholders(s string, row bool) error {
-	rest := reMsgPlace.ReplaceAllString(s, "")
-	if strings.ContainsAny(rest, "{}") {
-		return fmt.Errorf("a stray brace")
+// key: a text of the description is a key of the provider's string tables, never the text itself: [a-z0-9._-], at most
+// 120 characters, inside the namespace of the panel's id. `max` is the longest text the table may give it.
+func (c *panelCheck) key(name, k string, max int) error {
+	if !reKey.MatchString(k) || !strings.HasPrefix(k, c.d.ID+".") || strings.Contains(k, "..") || strings.HasSuffix(k, ".") {
+		return fmt.Errorf("%s: %q is not a string key of panel %s (a key is %s.<name>, characters a-z 0-9 . _ -)", name, k, c.d.ID, c.d.ID)
 	}
-	if !row && reMsgPlace.MatchString(s) {
-		return fmt.Errorf("placeholders need a row")
-	}
-	return nil
-}
-
-// str: both languages, non-empty, at most max characters, no control or format characters (bidi tricks included).
-func str(name string, s pStr, max int) error {
-	for lang, v := range map[string]string{"en": s.En, "sl": s.Sl} {
-		if strings.TrimSpace(v) == "" {
-			return fmt.Errorf("%s.%s is empty (en and sl are required)", name, lang)
-		}
-		if utf8.RuneCountInString(v) > max || !utf8.ValidString(v) {
-			return fmt.Errorf("%s.%s is longer than %d characters", name, lang, max)
-		}
-		for _, r := range v {
-			if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == ' ' || r == ' ' {
-				return fmt.Errorf("%s.%s has a control character", name, lang)
-			}
-		}
+	if c.keys[k] < max {
+		c.keys[k] = max
 	}
 	return nil
 }
 
-func optStr(name string, s *pStr, max int) error {
+func (c *panelCheck) optKey(name string, s *string, max int) error {
 	if s == nil {
 		return nil
 	}
-	return str(name, *s, max)
+	return c.key(name, *s, max)
 }
 
 func firstErr(errs ...error) error {
@@ -757,9 +744,12 @@ func (a *API) panelsAnswer(ps []PanelProvider) []json.RawMessage {
 }
 
 // adminPanels serves GET /panels. It needs no store, so it answers while the project database is down.
-func (a *API) adminPanels(method string) Response {
+func (a *API) adminPanels(method string, seg []string, rawQuery string) Response {
 	if method != http.MethodGet {
-		return resp(405, errorBody(405, "Use GET /panels"))
+		return resp(405, errorBody(405, "Use GET /panels or GET /panels/strings?lang=<locale>"))
+	}
+	if len(seg) == 2 {
+		return a.adminPanelStrings(rawQuery)
 	}
 	return resp(200, map[string]any{"format": PanelFormat, "panels": a.panelsAnswer(panelProviders())})
 }

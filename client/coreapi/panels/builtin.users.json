@@ -1,73 +1,213 @@
 {
-  "format": 1,
-  "id": "builtin.users",
-  "provider": "builtin",
-  "title": {"en": "Users and devices", "sl": "Uporabniki in naprave"},
-  "about": {"en": "People who use the gateway and their devices", "sl": "Ljudje, ki uporabljajo gateway, in njihove naprave"},
-  "symbol": "person.2",
-  "refs": {
-    "users": {"path": "/users", "items": "users", "key": "id", "label": "name"},
-    "devices": {"path": "/devices", "items": "devices", "key": "id", "label": "name"}
+ "format": 1,
+ "id": "builtin.users",
+ "provider": "builtin",
+ "title": "builtin.users.title",
+ "about": "builtin.users.about",
+ "symbol": "person.2",
+ "refs": {
+  "users": {
+   "path": "/users",
+   "items": "users",
+   "key": "id",
+   "label": "name"
   },
-  "sections": [
+  "devices": {
+   "path": "/devices",
+   "items": "devices",
+   "key": "id",
+   "label": "name"
+  }
+ },
+ "sections": [
+  {
+   "kind": "list",
+   "id": "users",
+   "title": "builtin.users.section.users.title",
+   "source": {
+    "path": "/users",
+    "items": "users"
+   },
+   "key": "id",
+   "columns": [
     {
-      "kind": "list", "id": "users",
-      "title": {"en": "Users", "sl": "Uporabniki"},
-      "source": {"path": "/users", "items": "users"},
-      "key": "id",
-      "columns": [
-        {"field": "name", "kind": "text", "label": {"en": "Name", "sl": "Ime"}},
-        {"field": "active", "kind": "bool", "label": {"en": "Status", "sl": "Stanje"},
-         "yes": {"en": "Active", "sl": "Aktiven"}, "no": {"en": "Inactive", "sl": "Neaktiven"}}
-      ],
-      "filter": ["name"],
-      "hide": {"field": "active", "equals": false, "toggle": {"en": "Show inactive users", "sl": "Pokaži neaktivne uporabnike"}},
-      "empty": {"en": "No users yet.", "sl": "Še ni uporabnikov."},
-      "actions": [
-        {"id": "add", "label": {"en": "Add User…", "sl": "Dodaj uporabnika …"}, "method": "POST", "path": "/users",
-         "fields": [{"id": "name", "type": "text", "required": true, "maxLength": 128, "label": {"en": "Name", "sl": "Ime"}}],
-         "body": {"name": {"field": "name"}}}
-      ],
-      "rowActions": [
-        {"id": "rename", "label": {"en": "Rename…", "sl": "Preimenuj …"}, "method": "PATCH", "path": "/users/{row.id}",
-         "fields": [{"id": "name", "type": "text", "required": true, "maxLength": 128, "default": {"row": "name"}, "label": {"en": "Name", "sl": "Ime"}}],
-         "body": {"name": {"field": "name"}}},
-        {"id": "deactivate", "label": {"en": "Deactivate", "sl": "Deaktiviraj"}, "method": "PATCH", "path": "/users/{row.id}",
-         "when": {"field": "active", "equals": true}, "body": {"active": {"const": false}}, "destructive": true,
-         "confirm": {"title": {"en": "Deactivate {name}?", "sl": "Deaktiviram uporabnika {name}?"},
-                     "message": {"en": "Their devices lose access to projects and notes. Running agents finish their current request.",
-                                 "sl": "Njegove naprave izgubijo dostop do projektov in zapiskov. Agenti, ki tečejo, končajo trenutno zahtevo."},
-                     "button": {"en": "Deactivate", "sl": "Deaktiviraj"}}},
-        {"id": "activate", "label": {"en": "Activate", "sl": "Aktiviraj"}, "method": "PATCH", "path": "/users/{row.id}",
-         "when": {"field": "active", "equals": false}, "body": {"active": {"const": true}}}
-      ]
+     "field": "name",
+     "kind": "text",
+     "label": "builtin.users.section.users.column.name"
     },
     {
-      "kind": "list", "id": "bindings",
-      "title": {"en": "Devices of users", "sl": "Naprave uporabnikov"},
-      "source": {"path": "/bindings", "items": "bindings"},
-      "key": "device",
-      "columns": [
-        {"field": "device", "kind": "ref", "ref": "devices", "label": {"en": "Device", "sl": "Naprava"}},
-        {"field": "user", "kind": "ref", "ref": "users", "label": {"en": "User", "sl": "Uporabnik"}}
-      ],
-      "empty": {"en": "No device is bound to a user.", "sl": "Nobena naprava ni vezana na uporabnika."},
-      "actions": [
-        {"id": "bind", "label": {"en": "Bind Device…", "sl": "Veži napravo …"}, "method": "PUT", "path": "/bindings/{field.device}",
-         "fields": [{"id": "device", "type": "ref", "ref": "devices", "required": true, "label": {"en": "Device", "sl": "Naprava"}},
-                    {"id": "user", "type": "ref", "ref": "users", "required": true, "label": {"en": "User", "sl": "Uporabnik"}}],
-         "body": {"user": {"field": "user"}}}
-      ],
-      "rowActions": [
-        {"id": "unbind", "label": {"en": "Unbind", "sl": "Odveži"}, "method": "DELETE", "path": "/bindings/{row.device}",
-         "confirm": {"title": {"en": "Unbind this device?", "sl": "Odvežem to napravo?"},
-                     "message": {"en": "The device keeps its gateway access but loses access to projects and notes.",
-                                 "sl": "Naprava obdrži dostop do gatewaya, izgubi pa dostop do projektov in zapiskov."},
-                     "button": {"en": "Unbind", "sl": "Odveži"}, "destructive": true}}
-      ]
+     "field": "active",
+     "kind": "bool",
+     "label": "builtin.users.section.users.column.active",
+     "yes": "builtin.users.section.users.column.active.yes",
+     "no": "builtin.users.section.users.column.active.no"
+    }
+   ],
+   "filter": [
+    "name"
+   ],
+   "hide": {
+    "field": "active",
+    "equals": false,
+    "toggle": "builtin.users.section.users.hide"
+   },
+   "empty": "builtin.users.section.users.empty",
+   "actions": [
+    {
+     "id": "add",
+     "label": "builtin.users.section.users.action.add",
+     "method": "POST",
+     "path": "/users",
+     "fields": [
+      {
+       "id": "name",
+       "type": "text",
+       "required": true,
+       "maxLength": 128,
+       "label": "builtin.users.section.users.action.add.field.name"
+      }
+     ],
+     "body": {
+      "name": {
+       "field": "name"
+      }
+     }
+    }
+   ],
+   "rowActions": [
+    {
+     "id": "rename",
+     "label": "builtin.users.section.users.action.rename",
+     "method": "PATCH",
+     "path": "/users/{row.id}",
+     "fields": [
+      {
+       "id": "name",
+       "type": "text",
+       "required": true,
+       "maxLength": 128,
+       "default": {
+        "row": "name"
+       },
+       "label": "builtin.users.section.users.action.rename.field.name"
+      }
+     ],
+     "body": {
+      "name": {
+       "field": "name"
+      }
+     }
     },
-    {"kind": "text", "id": "pending",
-     "body": {"en": "New devices are approved in Devices; bind them to a user here afterwards.",
-              "sl": "Nove naprave odobriš v razdelku Naprave, nato jih tukaj vežeš na uporabnika."}}
-  ]
+    {
+     "id": "deactivate",
+     "label": "builtin.users.section.users.action.deactivate",
+     "method": "PATCH",
+     "path": "/users/{row.id}",
+     "when": {
+      "field": "active",
+      "equals": true
+     },
+     "body": {
+      "active": {
+       "const": false
+      }
+     },
+     "destructive": true,
+     "confirm": {
+      "title": "builtin.users.section.users.action.deactivate.confirm.title",
+      "message": "builtin.users.section.users.action.deactivate.confirm.message",
+      "button": "builtin.users.section.users.action.deactivate.confirm.button"
+     }
+    },
+    {
+     "id": "activate",
+     "label": "builtin.users.section.users.action.activate",
+     "method": "PATCH",
+     "path": "/users/{row.id}",
+     "when": {
+      "field": "active",
+      "equals": false
+     },
+     "body": {
+      "active": {
+       "const": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "kind": "list",
+   "id": "bindings",
+   "title": "builtin.users.section.bindings.title",
+   "source": {
+    "path": "/bindings",
+    "items": "bindings"
+   },
+   "key": "device",
+   "columns": [
+    {
+     "field": "device",
+     "kind": "ref",
+     "ref": "devices",
+     "label": "builtin.users.section.bindings.column.device"
+    },
+    {
+     "field": "user",
+     "kind": "ref",
+     "ref": "users",
+     "label": "builtin.users.section.bindings.column.user"
+    }
+   ],
+   "empty": "builtin.users.section.bindings.empty",
+   "actions": [
+    {
+     "id": "bind",
+     "label": "builtin.users.section.bindings.action.bind",
+     "method": "PUT",
+     "path": "/bindings/{field.device}",
+     "fields": [
+      {
+       "id": "device",
+       "type": "ref",
+       "ref": "devices",
+       "required": true,
+       "label": "builtin.users.section.bindings.action.bind.field.device"
+      },
+      {
+       "id": "user",
+       "type": "ref",
+       "ref": "users",
+       "required": true,
+       "label": "builtin.users.section.bindings.action.bind.field.user"
+      }
+     ],
+     "body": {
+      "user": {
+       "field": "user"
+      }
+     }
+    }
+   ],
+   "rowActions": [
+    {
+     "id": "unbind",
+     "label": "builtin.users.section.bindings.action.unbind",
+     "method": "DELETE",
+     "path": "/bindings/{row.device}",
+     "confirm": {
+      "title": "builtin.users.section.bindings.action.unbind.confirm.title",
+      "message": "builtin.users.section.bindings.action.unbind.confirm.message",
+      "button": "builtin.users.section.bindings.action.unbind.confirm.button",
+      "destructive": true
+     }
+    }
+   ]
+  },
+  {
+   "kind": "text",
+   "id": "pending",
+   "body": "builtin.users.section.pending.body"
+  }
+ ]
 }

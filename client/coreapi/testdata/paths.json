@@ -64,5 +64,7 @@
   {"kind": "admin", "method": "GET", "path": "/panels", "want": true},
   {"kind": "admin", "method": "GET", "path": "/%70anels", "want": true},
   {"kind": "admin", "method": "GET", "path": "/panels/x", "want": false},
-  {"kind": "member", "method": "GET", "path": "/minigw/v1/panels", "want": false}
+  {"kind": "member", "method": "GET", "path": "/minigw/v1/panels", "want": false},
+  {"kind": "admin", "method": "GET", "path": "/panels/strings", "want": true},
+  {"kind": "admin", "method": "GET", "path": "/panels/strings/x", "want": false}
 ]

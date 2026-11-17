@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -173,16 +174,18 @@ func TestPanelValidatorEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, mut := range map[string]func(string) string{
-		"a key in the wrong case": func(s string) string { return strings.Replace(s, `"title":{"en":"Shop"`, `"Title":{"en":"Shop"`, 1) },
-		"more than 64 KiB":        func(s string) string { return s[:len(s)-1] + `,"x":"` + strings.Repeat("a", 64<<10) + `"}` },
-		"trailing data":           func(s string) string { return s + ` {}` },
-		"not an object":           func(string) string { return `[1]` },
-		"format as a string":      func(s string) string { return strings.Replace(s, `"format":1`, `"format":"1"`, 1) },
+		"a key in the wrong case": func(s string) string {
+			return strings.Replace(s, `"title":"acme.shop.title"`, `"Title":"acme.shop.title"`, 1)
+		},
+		"more than 64 KiB":   func(s string) string { return s[:len(s)-1] + `,"x":"` + strings.Repeat("a", 64<<10) + `"}` },
+		"trailing data":      func(s string) string { return s + ` {}` },
+		"not an object":      func(string) string { return `[1]` },
+		"format as a string": func(s string) string { return strings.Replace(s, `"format":1`, `"format":"1"`, 1) },
 		"more than 12 sections": func(s string) string {
-			return strings.Replace(s, `"sections":[`, `"sections":[`+strings.Repeat(`{"kind":"text","id":"t","body":{"en":"a","sl":"b"}},`, 12), 1)
+			return strings.Replace(s, `"sections":[`, `"sections":[`+strings.Repeat(`{"kind":"text","id":"t","body":"acme.shop.section.t.body"},`, 12), 1)
 		},
 		"the same section id twice": func(s string) string {
-			return strings.Replace(s, `"sections":[`, `"sections":[{"kind":"text","id":"intro","body":{"en":"a","sl":"b"}},`, 1)
+			return strings.Replace(s, `"sections":[`, `"sections":[{"kind":"text","id":"intro","body":"acme.shop.section.intro.body"},`, 1)
 		},
 	} {
 		if err := ValidatePanel([]byte(mut(string(raw))), p); err == nil {
@@ -235,6 +238,153 @@ func TestPanelsRouteIsAdminOnly(t *testing.T) {
 		r := a.Handle(ctx, c.cx, Request{Method: "GET", Path: c.path})
 		if r.Status == 200 || strings.Contains(string(r.Body), "builtin.users") {
 			t.Errorf("%s: GET %s answered %d %s", c.name, c.path, r.Status, r.Body)
+		}
+	}
+}
+
+func TestStringTablesCoverTheBuiltinPanels(t *testing.T) {
+	p := builtinProvider()
+	used := map[string]int{}
+	for _, raw := range p.Panels {
+		keys, err := PanelKeys(raw, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k, m := range keys {
+			used[k] = max(used[k], m)
+		}
+	}
+	for _, loc := range []string{"C", "en_US", "sl_SI"} {
+		tab, ok := p.Strings[loc]
+		if !ok {
+			t.Fatalf("no table for %s", loc)
+		}
+		if err := ValidateStringTable(p.ID, tab); err != nil {
+			t.Errorf("%s: %v", loc, err)
+		}
+		for k, v := range tab {
+			m, isUsed := used[k]
+			if !isUsed {
+				t.Errorf("%s: the entry %s is used by no panel", loc, k)
+			} else if len([]rune(v)) > m {
+				t.Errorf("%s: %s is longer than the %d its position allows", loc, k, m)
+			}
+		}
+	}
+	for k := range used { // C holds every key, sl_SI too; en_US only what differs
+		for _, loc := range []string{"C", "sl_SI"} {
+			if _, ok := p.Strings[loc][k]; !ok {
+				t.Errorf("%s has no entry for %s", loc, k)
+			}
+		}
+	}
+}
+
+func TestStringsAnswerMatchesFixtures(t *testing.T) {
+	for _, loc := range []string{"C", "sl_SI"} {
+		var want any
+		panelFixture(t, "panels-strings-"+loc+".json", &want)
+		r := New(Options{}).Handle(context.Background(), Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/panels/strings", RawQuery: "lang=" + loc})
+		var got any
+		if r.Status != 200 || json.Unmarshal(r.Body, &got) != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: %d %s", loc, r.Status, r.Body)
+		}
+	}
+}
+
+func TestStringsLocaleChoice(t *testing.T) {
+	a := New(Options{})
+	ask := func(q string) (int, string) {
+		r := a.Handle(context.Background(), Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/panels/strings", RawQuery: q})
+		var o struct{ Locale string }
+		json.Unmarshal(r.Body, &o)
+		return r.Status, o.Locale
+	}
+	for q, want := range map[string]string{"lang=sl_SI": "sl_SI", "lang=sl_AT": "sl_SI", "lang=en_US": "en_US", "lang=en_GB": "en_US", "lang=de_DE": "C", "lang=C": "C", "": "C"} {
+		if st, loc := ask(q); st != 200 || loc != want {
+			t.Errorf("%q: %d %s, want %s", q, st, loc, want)
+		}
+	}
+	for _, q := range []string{"lang=sl", "lang=sl_si", "lang=../x", "lang=c", "lang=sl_SI%0a", "lang=sl-SI"} {
+		if st, _ := ask(q); st != 400 {
+			t.Errorf("%q: %d, want 400", q, st)
+		}
+	}
+	if r := a.Handle(context.Background(), Context{Kind: KindAdmin}, Request{Method: "POST", Path: "/panels/strings"}); r.Status != 405 {
+		t.Fatalf("POST: %d", r.Status)
+	}
+	if IsAdminPath("GET", "/panels/strings/x") || IsAdminPath("GET", "/panels/other") {
+		t.Fatal("only /panels and /panels/strings")
+	}
+	for _, cx := range []Context{{Kind: KindMember, DeviceID: "d", Approved: true}, {Kind: KindRun, Approved: true}} {
+		if r := a.Handle(context.Background(), cx, Request{Method: "GET", Path: "/panels/strings"}); r.Status == 200 {
+			t.Errorf("%s served the strings", cx.Kind)
+		}
+	}
+}
+
+func TestMergedStringsFallBackToTheBase(t *testing.T) {
+	a := New(Options{})
+	ps := []PanelProvider{{ID: "acme", Strings: map[string]map[string]string{
+		"C": {"acme.a": "A", "acme.b": "B"}, "sl_SI": {"acme.a": "Ah"}, "sl_AT": {"acme.b": "Bh"}}}}
+	got := a.mergedStrings(ps, "sl_SI")
+	if got["acme.a"] != "Ah" || got["acme.b"] != "Bh" { // exact locale, then another table of the language, then C
+		t.Fatalf("%v", got)
+	}
+	if got := a.mergedStrings(ps, "C"); got["acme.a"] != "A" {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestStringTableRefusals(t *testing.T) {
+	long := strings.Repeat("x", 601)
+	many := map[string]string{}
+	for i := 0; i < 2001; i++ {
+		many["acme.k"+strconv.Itoa(i)] = "x"
+	}
+	for name, tab := range map[string]map[string]string{
+		"a foreign key":            {"builtin.a": "x"},
+		"a bad key":                {"acme.A": "x"},
+		"an empty text":            {"acme.a": " "},
+		"a long text":              {"acme.a": long},
+		"a control char":           {"acme.a": "a\u0007b"},
+		"a bidi char":              {"acme.a": "a\u202eb"},
+		"a format specifier brace": {"acme.a": "%d {0}"},
+		"a stray brace":            {"acme.a": "hi {name"},
+		"an upper case var":        {"acme.a": "hi {Name}"},
+		"too many entries":         many,
+	} {
+		if len(tab) > 0 && ValidateStringTable("acme", tab) == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if err := ValidateStringTable("acme", map[string]string{"acme.a": "Deactivate {name}? 100% <b>plain</b>"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFormat1StringsFixture(t *testing.T) {
+	var f formatFixture
+	panelFixture(t, "panels-format1.json", &f)
+	var tabs map[string]map[string]string
+	panelFixture(t, "panels-format1-strings.json", &tabs)
+	raw, _ := json.Marshal(f.Panel)
+	p := PanelProvider{ID: f.Provider, Routes: f.Routes}
+	keys, err := PanelKeys(raw, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for loc, tab := range tabs {
+		if err := ValidateStringTable(f.Provider, tab); err != nil {
+			t.Fatalf("%s: %v", loc, err)
+		}
+		if len(tab) != len(keys) {
+			t.Errorf("%s: %d entries for %d keys", loc, len(tab), len(keys))
+		}
+		for k := range keys {
+			if _, ok := tab[k]; !ok {
+				t.Errorf("%s: no entry for %s", loc, k)
+			}
 		}
 	}
 }
