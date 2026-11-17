@@ -35,9 +35,6 @@ public final class NoiseProxy: @unchecked Sendable {
         do { try listen(NWEndpoint.Port(rawValue: stablePort)!) } catch { try listen(.any) }
     }
 
-    /// A port nobody can guess (the upstream host of a gateway: it lives for one request and carries the gateway's own device key).
-    public func startEphemeral() throws { try listen(.any) }
-
     private func listen(_ lp: NWEndpoint.Port) throws {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: lp)

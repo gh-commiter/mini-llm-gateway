@@ -45,21 +45,34 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
         }
     }
 
-    @Test func aLongPushAsksAgainWhileTheHelperSaysMore() throws {
+    @Test func aLongPushAsksAgainForTheLinkWhereItStoppedAndOnlyWhileItGetsFurther() throws {
         nonisolated(unsafe) var calls = 0
         nonisolated(unsafe) var waits: [Double] = []
+        nonisolated(unsafe) var bodies: [String] = []
         nonisolated(unsafe) var outText = ""
         let proj = #"{"projects":[{"ID":3,"Slug":"shop","Name":"Shop","Archived":false}]}"#
-        let cmd = AdminCommands(call: { method, path, _ in
+        let cmd = AdminCommands(call: { method, path, body in
             if path == "/projects" { return (200, Data(proj.utf8)) }
             calls += 1
+            bodies.append(String(decoding: body ?? Data(), as: UTF8.self))
             let more = calls < 3
-            return (200, Data(#"{"pushes":[{"label":"shop","upstream":"hub","remote":"shop","lines":["create \#(calls) n"],"created":1,"skipped":0,"replaced":0,"refused":0,"dryRun":false\#(more ? #","more":true,"wait":7,"stopped":"the upstream's write limit: push again in 7 seconds""# : "")}]}"#.utf8))
+            return (200, Data(#"{"pushes":[{"label":"shop","upstream":"hub","remote":"shop","project":3,"lines":["create \#(calls) n"],"created":1,"skipped":0,"replaced":0,"refused":0,"dryRun":false\#(more ? #","more":true,"wait":7,"next":\#(calls * 100),"stopped":"the upstream's write limit: push again in 7 seconds""# : "")}]}"#.utf8))
         }, out: { outText += $0 })
         cmd.pause = { waits.append($0) }
         try cmd.run(["upstream", "push", "shop"], AdminOpts())
         #expect(calls == 3 && waits == [7, 7])
+        #expect(bodies[1] == #"{"after":100,"dryRun":false,"project":3,"upstream":"hub"}"# && bodies[2] == #"{"after":200,"dryRun":false,"project":3,"upstream":"hub"}"#, "\(bodies)")
         #expect(outText.components(separatedBy: "create ").count == 4)
+        // a gateway that says "more" without getting further is not asked for ever
+        calls = 0; outText = ""
+        let stuck = AdminCommands(call: { method, path, _ in
+            if path == "/projects" { return (200, Data(proj.utf8)) }
+            calls += 1
+            return (200, Data(#"{"pushes":[{"label":"shop","upstream":"hub","remote":"shop","project":3,"lines":[],"more":true,"next":50}]}"#.utf8))
+        }, out: { outText += $0 })
+        stuck.pause = { _ in }
+        try stuck.run(["upstream", "push", "shop"], AdminOpts())
+        #expect(calls == 2 && outText.contains("no progress"))
     }
 
     @Test func theTokenIsCheckedLikeAProviderKey() {
@@ -79,14 +92,14 @@ final class MemorySecrets: UpstreamSecretStore, @unchecked Sendable {
 }
 
 final class FakeTransport: UpstreamTransport, @unchecked Sendable {
-    struct Call { var address: String; var key: Data; var device: String; var token: String; var method: String; var path: String; var body: Data? }
+    struct Call { var address: String; var key: Data; var device: String; var token: String; var method: String; var path: String; var idempotencyKey: String?; var body: Data? }
     private let lock = NSLock()
     private var _calls: [Call] = []
     var handler: @Sendable (Call) -> UpstreamAnswer = { _ in UpstreamAnswer(status: 200, body: Data("{}".utf8)) }
     var calls: [Call] { lock.lock(); defer { lock.unlock() }; return _calls }
     func send(address: String, routerKey: Data, device: (key: Curve25519.Signing.PrivateKey, name: String), token: String, method: String, path: String,
-              headers: [String: String], body: Data?) -> UpstreamAnswer {
-        let c = Call(address: address, key: routerKey, device: Noise.base64url(device.key.publicKey.rawRepresentation), token: token, method: method, path: path, body: body)
+              idempotencyKey: String?, body: Data?) -> UpstreamAnswer {
+        let c = Call(address: address, key: routerKey, device: Noise.base64url(device.key.publicKey.rawRepresentation), token: token, method: method, path: path, idempotencyKey: idempotencyKey, body: body)
         lock.lock(); _calls.append(c); lock.unlock()
         return handler(c)
     }
@@ -155,24 +168,198 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
     }
 }
 
-/// The fetch behind the real transport, against a plain loopback server (the Noise proxy in front of it is the existing one).
-@Suite(.serialized) struct UpstreamFetchTests {
-    @Test func aRedirectIsTheAnswerAndIsNotFollowed() {
-        let other = ProjectFakeGateway { _ in .init(status: 200, body: "followed") }
-        defer { other.stop() }
-        let gw = ProjectFakeGateway { _ in .init(status: 302, headers: ["Location": other.url + "/elsewhere"]) }
-        defer { gw.stop() }
-        let a = CappedFetch.send(url: gw.url + "/x", method: "GET", headers: [:], body: nil, timeout: 10, cap: 1000)
-        #expect(a.status == 302)
-        #expect(other.requests.isEmpty, "the redirect was followed")
+/// The requests the helper may ask the app to send are a closed set: the helper is the untrusted party.
+@Suite struct UpstreamRequestsAreAClosedSet {
+    func host(_ t: FakeTransport) -> UpstreamHost {
+        let s = MemorySecrets()
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let h = UpstreamHost(secrets: s, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac")
+        _ = h.callout(["op": "connect", "upstream": "hub", "address": "hub.example:8765", "token": "SECRET-TOKEN#" + Noise.base64url(Noise.newKey().publicKey.rawRepresentation)])
+        return h
     }
 
-    @Test func anAnswerAboveTheCapIsNoAnswer() {
-        let gw = ProjectFakeGateway { _ in .init(status: 200, body: String(repeating: "a", count: 5000)) }
-        defer { gw.stop() }
-        #expect(CappedFetch.send(url: gw.url + "/x", method: "GET", headers: [:], body: nil, timeout: 10, cap: 1000).status == 0)
-        let ok = CappedFetch.send(url: gw.url + "/x", method: "GET", headers: [:], body: nil, timeout: 10, cap: 5000)
-        #expect(ok.status == 200 && ok.body.count == 5000)
+    @Test func hostilePathsMethodsAndHeadersNeverReachTheTransport() {
+        let t = FakeTransport(), h = host(t)
+        let paths = ["@evil.example/x", "/minigw/v1/../admin", "/minigw/v1/a/../b", "/minigw/v1/./x", "/minigw/v1//x", "/minigw/v1/a b", "/minigw/v1/x#y", "/minigw/v1/x\\y",
+                     "/minigw/v1/%2e%2e/x", "/minigw/v1/x@evil.example", "http://evil.example/minigw/v1/x", "//evil.example/minigw/v1/x", "/admin/users", "minigw/v1/x",
+                     "/minigw/v1/x\r\nHost: evil", "/minigw/v1/x?a=1?b=2", "/minigw/v1/x?q=a b", "/minigw/v1/" + String(repeating: "a", count: 600), ""]
+        for p in paths {
+            let r = h.callout(["op": "do", "upstream": "hub", "method": "GET", "path": p])
+            #expect(r["error"] != nil && r["status"] == nil, Comment(rawValue: "path \(p.debugDescription)"))
+        }
+        for m in ["PUT", "DELETE", "PATCH", "CONNECT", "get", "", "GET /x HTTP/1.1\r\nX: y"] {
+            #expect(h.callout(["op": "do", "upstream": "hub", "method": m, "path": "/minigw/v1/projects"])["error"] != nil, Comment(rawValue: "method \(m.debugDescription)"))
+        }
+        #expect(h.callout(["op": "do", "upstream": "hub", "method": "POST", "path": "/minigw/v1/projects/7/kb/submissions", "header": ["Idempotency-Key": "a b"]])["error"] != nil)
+        #expect(h.callout(["op": "do", "upstream": "hub", "method": "POST", "path": "/minigw/v1/projects/7/kb/submissions", "header": ["Idempotency-Key": String(repeating: "k", count: 65)]])["error"] != nil)
+        let big = Data(count: UpstreamRequest.maxBody + 1).base64EncodedString()
+        #expect(h.callout(["op": "do", "upstream": "hub", "method": "POST", "path": "/minigw/v1/projects/7/kb/submissions", "body": big])["error"] != nil)
+        #expect(t.calls.isEmpty, "a refused request reached the transport")
+    }
+
+    @Test func thePushRequestsPassAndOnlyTheIdempotencyKeyIsForwarded() {
+        let t = FakeTransport(), h = host(t)
+        for (m, p) in [("GET", "/minigw/v1/projects/shop"), ("GET", "/minigw/v1/teams"), ("GET", "/minigw/v1/projects/7/kb/submissions/12"), ("GET", "/minigw/v1/projects/7/notes/55"),
+                       ("POST", "/minigw/v1/projects/7/kb/submissions"), ("GET", "/minigw/v1/projects?archived=1")] {
+            #expect(h.callout(["op": "do", "upstream": "hub", "method": m, "path": p, "header": ["Idempotency-Key": "up-0123abc", "Authorization": "Bearer evil", "Host": "evil.example", "X-Other": "1"]])["error"] == nil, Comment(rawValue: p))
+        }
+        #expect(t.calls.count == 6 && t.calls.allSatisfy { $0.idempotencyKey == "up-0123abc" && $0.token == "SECRET-TOKEN" && $0.address == "hub.example:8765" })
+    }
+
+    @Test func anUnknownCalloutKindIsRefused() {
+        let h = host(FakeTransport())
+        for op in ["frobnicate", "exec", "fetch", "", "DO"] { #expect(h.callout(["op": op, "upstream": "hub", "method": "GET", "path": "/minigw/v1/x"])["error"] != nil, Comment(rawValue: op)) }
+        #expect(h.callout(["upstream": "hub"])["error"] != nil && h.callout(["op": "do"])["error"] != nil)
+    }
+
+    @Test func theAddressTheHelperNamesIsCheckedAgainAsTheCoreChecksIt() throws {
+        let fx = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("client/testdata/upstream-addresses.json"))) as! [String: Any]
+        for (input, want) in fx["valid"] as! [String: String] { #expect(UpstreamAddress.normalize(input) == want, Comment(rawValue: input)) }
+        for input in fx["invalid"] as! [String] { #expect(UpstreamAddress.normalize(input) == nil, Comment(rawValue: input.debugDescription)) }
+        // and `connect` refuses a bad address with nothing stored
+        let s = MemorySecrets()
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let h = UpstreamHost(secrets: s, ownKey: { own }, ownPort: { 8765 }, transport: FakeTransport(), computerName: "mac")
+        let line = "t#" + Noise.base64url(Noise.newKey().publicKey.rawRepresentation)
+        for bad in ["evil.example/x", "user@evil.example", "https://evil.example", "0.0.0" + ".0:1"] {
+            #expect(h.callout(["op": "connect", "upstream": "x", "address": bad, "token": line])["error"] != nil, Comment(rawValue: bad))
+        }
+        #expect(s.all.isEmpty)
+    }
+}
+
+@Suite struct UpstreamHTTPAnswerParsing {
+    func parse(_ s: String, closed: Bool = false, cap: Int = 100) -> UpstreamAnswer? { UpstreamHTTPAnswer.parse(Data(s.utf8), closed: closed, cap: cap) }
+
+    @Test func contentLengthChunkedAndCloseDelimitedAnswers() {
+        #expect(parse("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi") == UpstreamAnswer(status: 200, body: Data("hi".utf8)))
+        #expect(parse("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhi") == nil)  // incomplete: wait
+        #expect(parse("HTTP/1.1 429 Too Many\r\nRetry-After: 12\r\nContent-Length: 0\r\n\r\n") == UpstreamAnswer(status: 429, body: Data(), retryAfter: 12))
+        #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n") == UpstreamAnswer(status: 200, body: Data("abcde".utf8)))
+        #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nab") == nil)
+        #expect(parse("HTTP/1.1 200 OK\r\n\r\nrest", closed: true) == UpstreamAnswer(status: 200, body: Data("rest".utf8)))
+        #expect(parse("HTTP/1.1 200 OK\r\n\r\nrest") == nil)  // no length, still open
+        // a redirect is an answer like any other
+        #expect(parse("HTTP/1.1 302 Found\r\nLocation: http://evil.example/\r\nContent-Length: 0\r\n\r\n")?.status == 302)
+    }
+
+    @Test func garbageAndOversizeAreNoAnswer() {
+        for bad in ["", "garbage\r\n\r\n", "HTTP/1.1 abc\r\n\r\n", "HTTP/1.1 99 X\r\n\r\n", "HTTP/1.1 200 OK\r\nno colon\r\n\r\n", "SMTP/1.1 200 OK\r\n\r\n"] {
+            let a = parse(bad, closed: true)
+            #expect(a == nil || a?.status == 0, Comment(rawValue: bad.debugDescription))
+        }
+        #expect(parse("HTTP/1.1 200 OK\r\nContent-Length: 101\r\n\r\n", cap: 100)?.status == 0)
+        #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + String(repeating: "ff\r\n" + String(repeating: "a", count: 255) + "\r\n", count: 3), cap: 100)?.status == 0)
+        #expect(parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n-5\r\nabc\r\n", cap: 100)?.status == 0)
+    }
+}
+
+/// A gateway that speaks the encrypted protocol and answers with whatever the test says: the real NoiseHTTPTransport against it. No local
+/// listener of the app is involved (there is none); this server is the test's, on loopback.
+final class ScriptedNoiseServer: @unchecked Sendable {
+    let key = Noise.newKey()
+    private(set) var port: UInt16 = 0
+    private var fd: Int32 = -1
+    private let lock = NSLock()
+    private var _heads: [String] = [], _devices: [Noise.Device] = [], _accepted = 0
+    var heads: [String] { lock.withLock { _heads } }
+    var devices: [Noise.Device] { lock.withLock { _devices } }
+    var accepted: Int { lock.withLock { _accepted } }
+    let reply: @Sendable (String) -> Data
+
+    init(reply: @escaping @Sendable (String) -> Data) {
+        self.reply = reply
+        fd = socket(AF_INET, SOCK_STREAM, 0)
+        var one: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
+        var a = sockaddr_in()
+        a.sin_family = sa_family_t(AF_INET); a.sin_addr.s_addr = inet_addr("127.0.0.1")
+        _ = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        listen(fd, 8)
+        var l = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &l) } }
+        port = UInt16(bigEndian: a.sin_port)
+        let listener = fd
+        Thread { [self] in
+            while true {
+                let c = accept(listener, nil, nil)
+                if c < 0 { return }
+                lock.withLock { _accepted += 1 }
+                Thread { self.serve(c) }.start()
+            }
+        }.start()
+    }
+    func stop() { close(fd) }
+
+    private func serve(_ c: Int32) {
+        defer { close(c) }
+        var buf = [UInt8](repeating: 0, count: 65536), hs = Data()
+        while hs.count < 4 + Noise.handshakeLength {
+            let k = read(c, &buf, min(buf.count, 4 + Noise.handshakeLength - hs.count))
+            if k <= 0 { return }
+            hs += buf[0..<k]
+        }
+        guard let (r, session) = try? Noise.respond(Data(hs.dropFirst(4)), key: key, suite: .aesGCM) else { return }
+        _ = r.withUnsafeBytes { write(c, $0.baseAddress, $0.count) }
+        var raw = Data(), plain = Data(), deviceDone = false
+        while true {
+            if !deviceDone, case .device(let d) = Noise.readDevice(&plain, hash: session.hash) { lock.withLock { _devices.append(d) }; deviceDone = true }
+            if deviceDone, plain.range(of: Data("\r\n\r\n".utf8)) != nil { break }
+            let k = read(c, &buf, buf.count)
+            if k <= 0 { return }
+            raw += buf[0..<k]
+            if let p = try? Noise.unframe(&raw, session.receive) { plain += p }
+        }
+        let head = String(decoding: plain, as: UTF8.self)
+        lock.withLock { _heads.append(head) }
+        let out = Noise.frames(reply(head), session.send)
+        _ = out.withUnsafeBytes { write(c, $0.baseAddress, $0.count) }
+    }
+}
+
+@Suite(.serialized) struct UpstreamNoiseTransport {
+    func send(_ srv: ScriptedNoiseServer, key: Data? = nil, device: Curve25519.Signing.PrivateKey = Curve25519.Signing.PrivateKey(), method: String = "GET",
+              path: String = "/minigw/v1/projects/shop", idem: String? = nil, body: Data? = nil, timeout: TimeInterval = 10) -> UpstreamAnswer {
+        NoiseHTTPTransport(timeout: timeout).send(address: "127.0.0.1:\(srv.port)", routerKey: key ?? srv.key.publicKey.rawRepresentation, device: (device, "minigw gateway test"),
+                                                 token: "TOKEN-1", method: method, path: path, idempotencyKey: idem, body: body)
+    }
+
+    @Test func requestAndAnswerOverTheEncryptedConnectionAsTheGatewaysDevice() throws {
+        let srv = ScriptedNoiseServer { _ in Data("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 8\r\nConnection: close\r\n\r\n{\"id\":5}".utf8) }
+        defer { srv.stop() }
+        let dev = Curve25519.Signing.PrivateKey()
+        let a = send(srv, device: dev, method: "POST", path: "/minigw/v1/projects/7/kb/submissions", idem: "up-abc", body: Data("{}".utf8))
+        #expect(a.status == 201 && a.body == Data(#"{"id":5}"#.utf8))
+        #expect(srv.devices == [Noise.Device(id: Noise.base64url(dev.publicKey.rawRepresentation), name: "minigw gateway test")])
+        let head = try #require(srv.heads.first)
+        #expect(head.hasPrefix("POST /minigw/v1/projects/7/kb/submissions HTTP/1.1\r\n") && head.contains("Authorization: Bearer TOKEN-1\r\n") && head.contains("Idempotency-Key: up-abc\r\n") && head.contains("Content-Length: 2\r\n"))
+        #expect(!head.lowercased().contains("evil"))
+    }
+
+    @Test func aRedirectIsTheAnswerAndNothingFollowsIt() {
+        let other = ScriptedNoiseServer { _ in Data("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".utf8) }
+        defer { other.stop() }
+        let srv = ScriptedNoiseServer { _ in Data("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:\(other.port)/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8) }
+        defer { srv.stop() }
+        #expect(send(srv).status == 302)
+        #expect(srv.accepted == 1 && other.accepted == 0, "the redirect was followed")
+    }
+
+    @Test func aWrongGatewayKeyAnOversizedAnswerAndAServerThatDiesAreNoAnswer() {
+        let srv = ScriptedNoiseServer { _ in Data("HTTP/1.1 200 OK\r\nContent-Length: 2000000\r\n\r\n".utf8) }
+        defer { srv.stop() }
+        #expect(send(srv, key: Noise.newKey().publicKey.rawRepresentation, timeout: 3).status == 0)  // pinned key does not match: no session
+        #expect(send(srv).status == 0)                                                                 // above the cap
+        let dead = ScriptedNoiseServer { _ in Data() }
+        let port = dead.port; dead.stop()
+        #expect(NoiseHTTPTransport(timeout: 3).send(address: "127.0.0.1:\(port)", routerKey: Noise.newKey().publicKey.rawRepresentation, device: (Curve25519.Signing.PrivateKey(), "x"),
+                                                    token: "t", method: "GET", path: "/minigw/v1/x", idempotencyKey: nil, body: nil).status == 0)
+    }
+
+    @Test func theHostHasNoListenerToBorrow() throws {
+        let all = try String(contentsOf: repo.appendingPathComponent("Sources/RouterCore/Upstream.swift"), encoding: .utf8)
+        let src = all.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")  // code, not the comments
+        for word in ["NWListener", "NoiseProxy", "startEphemeral", "listen(", "bind("] { #expect(!src.contains(word), Comment(rawValue: word)) }
     }
 }
 

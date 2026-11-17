@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"minigw/core"
 	"net/url"
 	"strconv"
 	"strings"
@@ -121,22 +122,44 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		case len(pos) != 2:
 			usage()
 		}
-		var r struct{ Pushes []upPush }
-		// A helper answers a call within 30 seconds: a long push comes back with "more" (and how long to wait): ask again.
-		for calls := 1; ; calls++ {
-			r.Pushes = nil
-			a.do("POST", "/upstream-push", body, &r)
-			more, wait := false, 0
-			for _, p := range r.Pushes {
-				if p.More {
-					more, wait = true, max(wait, p.Wait)
+		// A helper answers a call within 30 seconds and a run sends a bounded number of notes: a push that is not through comes back with
+		// "more" and where it stopped; ask again for that link, as long as it gets further (or only waits for the upstream's write limit,
+		// a bounded number of times).
+		targets := []map[string]any{body}
+		lastNext, stalls := map[string]int64{}, map[string]int{}
+		for len(targets) > 0 {
+			var next []map[string]any
+			wait := 0
+			for _, tgt := range targets {
+				var r struct{ Pushes []upPush }
+				a.do("POST", "/upstream-push", tgt, &r)
+				upstreamPrint(r.Pushes)
+				for _, p := range r.Pushes {
+					if !p.More {
+						continue
+					}
+					key := fmt.Sprint(p.Project, "|", p.Upstream)
+					switch {
+					case p.Next > lastNext[key]:
+						lastNext[key], stalls[key] = p.Next, 0
+					case p.Wait > 0 && stalls[key] < 30:
+						stalls[key]++
+					default:
+						say(clean(fmt.Sprintf("  %s -> %s: no progress: run the push again later", p.Label, p.Upstream)))
+						continue
+					}
+					nt := map[string]any{"upstream": p.Upstream, "after": p.Next, "dryRun": u.dryRun}
+					if t, ok := core.SegmentTeam(p.Project); p.Team && ok {
+						nt["team"] = t
+					} else {
+						nt["project"] = p.Project
+					}
+					next = append(next, nt)
+					wait = max(wait, p.Wait)
 				}
 			}
-			upstreamPrint(r.Pushes)
-			if !more || calls >= 1000 {
-				break
-			}
-			if wait > 0 {
+			targets = next
+			if wait > 0 && len(targets) > 0 {
 				pause := u.pause
 				if pause == nil {
 					pause = time.Sleep
@@ -158,6 +181,9 @@ type upPush struct {
 	DryRun                  bool
 	More                    bool
 	Wait                    int
+	Next                    int64
+	Project                 int64
+	Team                    bool
 }
 
 func upstreamPrint(pushes []upPush) {

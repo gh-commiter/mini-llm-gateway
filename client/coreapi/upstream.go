@@ -150,12 +150,14 @@ func (a *API) adminUpstreamPush(ctx context.Context, st *core.Store, method stri
 		return fail(404, "not found")
 	}
 	var b struct {
-		Project int64 `json:"project"`
-		Team    int64 `json:"team"`
-		DryRun  bool  `json:"dryRun"`
+		Project  int64  `json:"project"`
+		Team     int64  `json:"team"`
+		Upstream string `json:"upstream"`
+		After    int64  `json:"after"`
+		DryRun   bool   `json:"dryRun"`
 	}
-	if decodeStrict(body, &b) != nil || b.Project < 0 || b.Team < 0 || b.Project > 0 && b.Team > 0 {
-		return fail(400, "bad JSON body (project or team, dryRun)")
+	if decodeStrict(body, &b) != nil || b.Project < 0 || b.Team < 0 || b.Project > 0 && b.Team > 0 || b.Upstream != "" && !core.ValidUpstreamName(b.Upstream) {
+		return fail(400, "bad JSON body (project or team, upstream, after, dryRun)")
 	}
 	sleep := a.o.UpstreamSleep
 	if sleep == nil {
@@ -173,7 +175,7 @@ func (a *API) adminUpstreamPush(ctx context.Context, st *core.Store, method stri
 			return inner(d)
 		}
 	}
-	res, err := st.PushUpstream(ctx, h, b.Project, b.Team, b.DryRun, sleep)
+	res, err := st.PushUpstream(ctx, h, b.Project, b.Team, b.Upstream, b.After, b.DryRun, sleep)
 	if err != nil {
 		return failErr(err)
 	}

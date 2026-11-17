@@ -413,16 +413,18 @@ func readFull(c net.Conn, b []byte) (int, error) {
 // A push that the gateway ends with "more" (a helper answers a call within 30 seconds) is asked for again, after the wait it names.
 func TestUpstreamPushAsksAgainWhileTheGatewaySaysMore(t *testing.T) {
 	calls := 0
-	a := &adminClient{fake: func(method, path string, _ []byte) (int, []byte) {
+	var bodies []string
+	a := &adminClient{fake: func(method, path string, b []byte) (int, []byte) {
 		if path == "/projects" {
 			return 200, []byte(`{"projects":[{"ID":3,"Slug":"shop","Name":"Shop"}]}`)
 		}
 		calls++
+		bodies = append(bodies, string(b))
 		more := ""
 		if calls < 3 {
-			more = `,"more":true,"wait":7,"stopped":"the upstream's write limit: push again in 7 seconds"`
+			more = fmt.Sprintf(`,"more":true,"wait":7,"next":%d,"stopped":"the upstream's write limit: push again in 7 seconds"`, calls*100)
 		}
-		return 200, []byte(fmt.Sprintf(`{"pushes":[{"label":"shop","upstream":"hub","remote":"shop","lines":["create %d n"],"created":1%s}]}`, calls, more))
+		return 200, []byte(fmt.Sprintf(`{"pushes":[{"label":"shop","upstream":"hub","remote":"shop","project":3,"lines":["create %d n"],"created":1%s}]}`, calls, more))
 	}}
 	var waits []time.Duration
 	out, _, exit := captured(func() {
@@ -430,5 +432,24 @@ func TestUpstreamPushAsksAgainWhileTheGatewaySaysMore(t *testing.T) {
 	})
 	if exit != 0 || calls != 3 || len(waits) != 2 || waits[0] != 7*time.Second || strings.Count(out, "create ") != 3 {
 		t.Fatalf("%d calls, waits %v, exit %d: %s", calls, waits, exit, out)
+	}
+	// the continuation names the link and where the last call ended
+	if bodies[1] != `{"after":100,"dryRun":false,"project":3,"upstream":"hub"}` || bodies[2] != `{"after":200,"dryRun":false,"project":3,"upstream":"hub"}` {
+		t.Fatalf("%v", bodies)
+	}
+	// a gateway that says "more" without getting further is not asked for ever
+	calls = 0
+	stuck := &adminClient{fake: func(method, path string, b []byte) (int, []byte) {
+		if path == "/projects" {
+			return 200, []byte(`{"projects":[{"ID":3,"Slug":"shop","Name":"Shop"}]}`)
+		}
+		calls++
+		return 200, []byte(`{"pushes":[{"label":"shop","upstream":"hub","remote":"shop","project":3,"lines":[],"more":true,"next":50}]}`)
+	}}
+	out, _, _ = captured(func() {
+		coreCommand(stuck, []string{"upstream", "push", "shop"}, coreOpts{pause: func(time.Duration) {}})
+	})
+	if calls != 2 || !strings.Contains(out, "no progress") {
+		t.Fatalf("%d calls: %s", calls, out)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -81,12 +82,24 @@ func upFx(t *testing.T) (*fx, map[string]Note) {
 func noSleep(time.Duration) bool { return true }
 
 func TestUpstreamAddressAndName(t *testing.T) {
-	for in, want := range map[string]string{"mini.local": "mini.local:8765", "Hub.Example:9000": "hub.example:9000", "10.0.0.5": "10.0.0.5:8765", "[::1]:8765": "[::1]:8765"} {
+	// the same fixture is asserted by the Mac app (Tests/RouterCoreTests/UpstreamTests.swift): the two normalizers cannot drift
+	raw, err := os.ReadFile("../testdata/upstream-addresses.json")
+	if err != nil {
+		t.Skip("fixture not here:", err)
+	}
+	var fx struct {
+		Valid   map[string]string
+		Invalid []string
+	}
+	if json.Unmarshal(raw, &fx) != nil || len(fx.Valid) < 5 || len(fx.Invalid) < 15 {
+		t.Fatal("bad fixture")
+	}
+	for in, want := range fx.Valid {
 		if got, e := NormalizeUpstreamAddress(in); e != nil || got != want {
 			t.Errorf("%q: %q %v, want %q", in, got, e, want)
 		}
 	}
-	for _, in := range []string{"", "https://hub.example", "http://hub.example:8765", "user@hub.example", "hub.example/path", "hub.example:0", "hub.example:99999", "hub.example:x", "0.0.0" + ".0:8765", "169.254.169.254", "[fe80::1]:8765", "a b", "bad_host"} {
+	for _, in := range fx.Invalid {
 		if got, e := NormalizeUpstreamAddress(in); e == nil {
 			t.Errorf("%q accepted as %q", in, got)
 		}
@@ -136,7 +149,7 @@ func TestUpstreamLinkRules(t *testing.T) {
 	is(t, f.UnlinkUpstream(ctx, fk, 0, "hub"), ErrNotFound)
 	// a project without a link sends nothing: there is nothing to push
 	up := okUp()
-	if _, e = f.PushUpstream(ctx, up, fk, 0, false, noSleep); e == nil || len(up.calls) != 0 {
+	if _, e = f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep); e == nil || len(up.calls) != 0 {
 		t.Fatal("a push without a link", e, up.calls)
 	}
 }
@@ -146,7 +159,7 @@ func TestUpstreamPushCreateSkipReplace(t *testing.T) {
 	fk := f.pid["fakture"]
 	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
 	up := okUp()
-	res, e := f.PushUpstream(ctx, up, fk, 0, false, noSleep)
+	res, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
 	if len(res) != 1 || res[0].Created != 2 || res[0].Refused != 0 || up.count("POST") != 2 {
 		t.Fatalf("%+v %v", res, up.calls)
@@ -173,7 +186,7 @@ func TestUpstreamPushCreateSkipReplace(t *testing.T) {
 	}
 	// the second push sends nothing
 	up2 := okUp()
-	res, e = f.PushUpstream(ctx, up2, fk, 0, false, noSleep)
+	res, e = f.PushUpstream(ctx, up2, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
 	if res[0].Skipped != 2 || res[0].Created != 0 || up2.count("POST") != 0 {
 		t.Fatalf("%+v", res)
@@ -194,7 +207,7 @@ func TestUpstreamPushCreateSkipReplace(t *testing.T) {
 		}
 		return 404, `{}`, 0
 	}}
-	res, e = f.PushUpstream(ctx, up3, fk, 0, false, noSleep)
+	res, e = f.PushUpstream(ctx, up3, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
 	var post upCall
 	for _, c := range up3.calls {
@@ -224,7 +237,7 @@ func TestUpstreamPushCreateSkipReplace(t *testing.T) {
 		}
 		return 404, `{}`, 0
 	}}
-	res, e = f.PushUpstream(ctx, up4, fk, 0, false, noSleep)
+	res, e = f.PushUpstream(ctx, up4, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
 	post = upCall{}
 	for _, c := range up4.calls {
@@ -242,7 +255,7 @@ func TestUpstreamDryRunWritesNothing(t *testing.T) {
 	fk := f.pid["fakture"]
 	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
 	up := okUp()
-	res, e := f.PushUpstream(ctx, up, fk, 0, true, noSleep)
+	res, e := f.PushUpstream(ctx, up, fk, 0, "", 0, true, noSleep)
 	f.ok(e)
 	if up.count("POST") != 0 || res[0].Created != 2 || !res[0].DryRun || !strings.HasPrefix(res[0].Lines[0], "would create") {
 		t.Fatalf("%+v %v", res, up.calls)
@@ -258,7 +271,7 @@ func TestUpstreamDryRunWritesNothing(t *testing.T) {
 	}
 	// a refusal in a dry run is not remembered either
 	bad := &fakeUp{handler: func(upCall) (int, string, time.Duration) { return 403, `{"error":{"message":"No project access"}}`, 0 }}
-	res, e = f.PushUpstream(ctx, bad, fk, 0, true, noSleep)
+	res, e = f.PushUpstream(ctx, bad, fk, 0, "", 0, true, noSleep)
 	f.ok(e)
 	if res[0].Stopped == "" {
 		t.Fatal("no refusal shown")
@@ -279,7 +292,7 @@ func TestUpstreamRefusalStopsAndIsRemembered(t *testing.T) {
 		}
 		return 403, `{"error":{"type":"forbidden","message":"not allowed:\u001b[31m your role\n in this project  does not permit it"}}`, 0
 	}}
-	res, e := f.PushUpstream(ctx, up, fk, 0, false, noSleep)
+	res, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
 	if res[0].Refused != 1 || res[0].Created != 0 || res[0].Stopped == "" || up.count("POST") != 1 { // the second note is not even tried
 		t.Fatalf("%+v", res)
@@ -294,7 +307,7 @@ func TestUpstreamRefusalStopsAndIsRemembered(t *testing.T) {
 		t.Fatalf("%+v", ls[0])
 	}
 	// a later success clears the refusal
-	if _, e = f.PushUpstream(ctx, okUp(), fk, 0, false, noSleep); e != nil {
+	if _, e = f.PushUpstream(ctx, okUp(), fk, 0, "", 0, false, noSleep); e != nil {
 		t.Fatal(e)
 	}
 	if ls, _ = f.UpstreamLinks(ctx, fk, 0); ls[0].LastError != "" || ls[0].LastPush == nil {
@@ -322,7 +335,7 @@ func TestUpstreamAnswersAreData(t *testing.T) {
 		"junk":        func(upCall) (int, string, time.Duration) { return 200, `<html>`, 0 },
 		"negative id": func(upCall) (int, string, time.Duration) { return 200, `{"id":-5,"slug":"shop"}`, 0 },
 	} {
-		res, e := f.PushUpstream(ctx, &fakeUp{handler: h}, fk, 0, false, noSleep)
+		res, e := f.PushUpstream(ctx, &fakeUp{handler: h}, fk, 0, "", 0, false, noSleep)
 		f.ok(e)
 		if res[0].Stopped == "" || res[0].Created != 0 {
 			t.Errorf("%s: %+v", name, res[0])
@@ -335,7 +348,7 @@ func TestUpstreamAnswersAreData(t *testing.T) {
 		}
 		return 201, `{"state":"pending","id":0,"note":99999}`, 0
 	}}
-	res, e := f.PushUpstream(ctx, up, fk, 0, false, noSleep)
+	res, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
 	if res[0].Refused != 2 || res[0].Created != 0 {
 		t.Fatalf("%+v", res[0])
@@ -362,7 +375,7 @@ func TestUpstreamWaitsOutTheRateLimit(t *testing.T) {
 		return 201, fmt.Sprintf(`{"id":%d}`, next), 0
 	}}
 	var waited []time.Duration
-	res, e := f.PushUpstream(ctx, up, fk, 0, false, func(d time.Duration) bool { waited = append(waited, d); return true })
+	res, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, func(d time.Duration) bool { waited = append(waited, d); return true })
 	f.ok(e)
 	if res[0].Created != 2 || len(waited) != 2 || waited[0] != 3*time.Second {
 		t.Fatalf("%+v %v", res[0], waited)
@@ -377,7 +390,7 @@ func TestUpstreamWaitsOutTheRateLimit(t *testing.T) {
 	f.ok(f.UnlinkUpstream(ctx, fk, 0, "hub"))
 	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
 	waited = nil
-	res, e = f.PushUpstream(ctx, forever, fk, 0, false, func(d time.Duration) bool { waited = append(waited, d); return true })
+	res, e = f.PushUpstream(ctx, forever, fk, 0, "", 0, false, func(d time.Duration) bool { waited = append(waited, d); return true })
 	f.ok(e)
 	if res[0].Stopped == "" || len(waited) != maxRateWaits || waited[0] > maxRateWait {
 		t.Fatalf("%+v %v", res[0], waited)
@@ -398,7 +411,7 @@ func TestUpstreamPushOfATeamsNotes(t *testing.T) {
 		}
 		return 404, `{}`, 0
 	}}
-	res, e := f.PushUpstream(ctx, up, 0, f.acme, false, noSleep)
+	res, e := f.PushUpstream(ctx, up, 0, f.acme, "", 0, false, noSleep)
 	f.ok(e)
 	if len(res) != 1 || res[0].Created != 1 || res[0].Label != "team acme" {
 		t.Fatalf("%+v %v", res, up.calls)
@@ -407,7 +420,7 @@ func TestUpstreamPushOfATeamsNotes(t *testing.T) {
 	none := &fakeUp{handler: func(c upCall) (int, string, time.Duration) { return 200, `[]`, 0 }}
 	f.ok(f.UnlinkUpstream(ctx, 0, f.acme, "hub"))
 	f.ok(f.LinkUpstream(ctx, 0, f.acme, "hub", "acme-hub", "", false))
-	if res, e = f.PushUpstream(ctx, none, 0, f.acme, false, noSleep); e != nil || !strings.Contains(res[0].Stopped, "not on team") {
+	if res, e = f.PushUpstream(ctx, none, 0, f.acme, "", 0, false, noSleep); e != nil || !strings.Contains(res[0].Stopped, "not on team") {
 		t.Fatal(res, e)
 	}
 }
@@ -416,7 +429,7 @@ func TestUpstreamTablesCarryNoSecretAndRemoveCleans(t *testing.T) {
 	f, _ := upFx(t)
 	fk := f.pid["fakture"]
 	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
-	_, e := f.PushUpstream(ctx, okUp(), fk, 0, false, noSleep)
+	_, e := f.PushUpstream(ctx, okUp(), fk, 0, "", 0, false, noSleep)
 	f.ok(e)
 	f.ok(f.RemoveUpstream(ctx, "hub"))
 	var n int
@@ -442,7 +455,7 @@ func TestUpstreamPushInSteps(t *testing.T) {
 		}
 		return 429, `{}`, 30 * time.Second
 	}}
-	res, e := f.PushUpstream(ctx, limited, fk, 0, false, func(time.Duration) bool { return false })
+	res, e := f.PushUpstream(ctx, limited, fk, 0, "", 0, false, func(time.Duration) bool { return false })
 	f.ok(e)
 	if !res[0].More || res[0].Wait != 30 || res[0].Refused != 0 || res[0].Created != 0 {
 		t.Fatalf("%+v", res[0])
@@ -463,14 +476,91 @@ func TestUpstreamPushInSteps(t *testing.T) {
 			return 201, fmt.Sprintf(`{"id":%d}`, posts), 0
 		}
 	}}
-	res, e = f.PushUpstream(bctx, up, fk, 0, false, noSleep)
+	res, e = f.PushUpstream(bctx, up, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
 	if !res[0].More || res[0].Created != 1 || posts != 1 {
 		t.Fatalf("%+v", res[0])
 	}
-	res, e = f.PushUpstream(ctx, okUp(), fk, 0, false, noSleep)
+	res, e = f.PushUpstream(ctx, okUp(), fk, 0, "", 0, false, noSleep)
 	f.ok(e)
 	if res[0].More || res[0].Created != 1 || res[0].Skipped != 1 {
 		t.Fatalf("%+v", res[0])
+	}
+}
+
+// A link with more notes than one run sends: each call goes further (the continuation is the last note dealt with, also when a note was
+// refused), the end state has a receipt for every accepted note, and a dry run reports all of them.
+func TestUpstreamPushOfManyNotesGetsPastTheLimit(t *testing.T) {
+	t.Run("with the continuation", func(t *testing.T) { pushManyNotes(t, true) })
+	t.Run("a plain push again each time", func(t *testing.T) { pushManyNotes(t, false) }) // unchanged notes are passed over, not counted
+}
+
+func pushManyNotes(t *testing.T, cursor bool) {
+	f := newFx(t)
+	f.ok(f.AddUpstream(ctx, "hub", "hub.example"))
+	fk := f.pid["fakture"]
+	const total = 2500
+	f.ok(f.write(ctx, func(tx *sql.Tx) error { // the notes are written directly: 2500 API calls would test nothing more
+		for i := 1; i <= total; i++ {
+			if _, e := tx.Exec(`INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated,revision,imported,entry_kind) VALUES(?,?,?,?,?,?,?,?,1,0,'finding')`,
+				fk, "data", fmt.Sprintf("n%04d", i), "body", 4, f.uid["ana"], 1, 1); e != nil {
+				return e
+			}
+		}
+		return nil
+	}))
+	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
+	// a dry run reports all 2500 in one call
+	res, e := f.PushUpstream(ctx, okUp(), fk, 0, "", 0, true, noSleep)
+	f.ok(e)
+	if res[0].More || res[0].Created != total || len(res[0].Lines) != total {
+		t.Fatalf("dry run: more=%v created=%d lines=%d", res[0].More, res[0].Created, len(res[0].Lines))
+	}
+	// the upstream refuses the first note for good (it stays unsent) and takes the rest
+	next := 0
+	up := &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
+		switch {
+		case c.method == "GET":
+			return 200, `{"id":7,"slug":"shop"}`, 0
+		case c.body["title"] == "n0001":
+			return 400, `{"error":{"message":"title refused"}}`, 0
+		}
+		next++
+		return 201, fmt.Sprintf(`{"id":%d}`, next), 0
+	}}
+	var after int64
+	sent, calls := 0, 0
+	for {
+		calls++
+		res, e = f.PushUpstream(ctx, up, fk, 0, "hub", after, false, noSleep)
+		f.ok(e)
+		sent += res[0].Created
+		if !res[0].More {
+			break
+		}
+		if cursor && res[0].Next <= after {
+			t.Fatalf("call %d did not get further: next %d after %d", calls, res[0].Next, after)
+		}
+		if cursor {
+			after = res[0].Next
+		}
+		if calls > 5 {
+			t.Fatal("too many calls")
+		}
+	}
+	if calls != 3 || sent != total-1 {
+		t.Fatalf("%d calls, %d sent", calls, sent)
+	}
+	var n int
+	f.ok(f.read(ctx, func(tx *sql.Tx) error { return tx.QueryRow(`SELECT count(*) FROM upstream_sent`).Scan(&n) }))
+	if n != total-1 {
+		t.Fatalf("%d receipts", n)
+	}
+	// a continuation must name its link
+	if _, e = f.PushUpstream(ctx, up, 0, 0, "", 5, false, noSleep); e == nil {
+		t.Fatal("a bare continuation was accepted")
+	}
+	if _, e = f.PushUpstream(ctx, up, fk, 0, "hub", -1, false, noSleep); e == nil {
+		t.Fatal("a negative continuation was accepted")
 	}
 }

@@ -520,9 +520,12 @@ idempotency key, `GET` of a submission and of a note to learn what exists). The 
 
 On the Mac app the helper has no network and no Keychain, so the app does that work for it: the core asks through callouts
 (core-adapter.md), the app keeps the secret as the Keychain item `upstream:<name>` of the provider keys' service (the helper never sees
-it, except the token once at `add`, which it does not keep), and makes the connection with the client's own Noise code (`NoiseProxy`,
-the upstream's key pinned) through a proxy that lives for one request on a port chosen by the system, with a session that follows no
-redirect and reads at most 1 MiB. The app refuses an upstream that is this gateway by key and by address. The Keychain access rules are
+it, except the token once at `add`, which it does not keep), and makes the connection with the client's own Noise code (`Noise.Initiator`,
+the upstream's key pinned) over a connection it opens itself, in process: there is no local listener, so no other program can borrow the
+gateway's device key. The request line is written by hand, never built from the helper's text: the app accepts only GET or POST of
+`/minigw/v1/...` with a plain path, the idempotency key as the only header and a body of at most 1 MiB, to the address configured at `add`
+(checked again with the core's rules, `client/testdata/upstream-addresses.json`); a redirect is just an answer and an answer is read to at
+most 1 MiB. The app refuses an upstream that is this gateway by key and by address. The Keychain access rules are
 those of the provider keys: only the app reads them.
 
 ## Usage events and quota (0.6.0, `minigw serve` and the Mac app)

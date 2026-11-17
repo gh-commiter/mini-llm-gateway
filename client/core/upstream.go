@@ -36,7 +36,11 @@ func NormalizeUpstreamAddress(s string) (string, error) {
 	host, port := s, "8765"
 	if h, p, err := net.SplitHostPort(s); err == nil {
 		host, port = h, p
-	} else if strings.Count(s, ":") > 0 && !strings.HasPrefix(s, "[") {
+	} else if strings.HasPrefix(s, "[") {
+		if !strings.HasSuffix(s, "]") { // "[::1]" without a port; anything else after the bracket is not an address
+			return "", bad
+		}
+	} else if strings.Contains(s, ":") {
 		return "", bad
 	}
 	host = strings.Trim(host, "[]")
@@ -263,6 +267,7 @@ type UpstreamNote struct {
 	Author    string
 	Hash      string
 	Sent      *UpstreamSent
+	Unchanged bool // sent before with this very content: nothing to send
 }
 
 type UpstreamSent struct {
@@ -309,54 +314,80 @@ func scanLink(sc interface{ Scan(...any) error }) (l UpstreamLink, err error) {
 
 const linkCols = `project_id,upstream,remote,remote_team,classes,with_private,last_push,last_error`
 
-// upstreamNotes: the published notes of the link's local side in its classes, oldest first, with their receipts.
-func upstreamNotes(tx *sql.Tx, l UpstreamLink, limit int) (out []UpstreamNote, err error) {
-	q := `SELECT ` + noteCols + ` FROM notes n JOIN users u ON u.id=n.author_id WHERE n.project_id=? AND n.class IN (`
-	args := []any{l.Project}
+// upstreamScan is what upstreamNotes found.
+type upstreamScan struct {
+	Notes    []UpstreamNote // in id order, from the first note after the cursor: the ones to send (Body set) and the unchanged ones (Unchanged, no Body)
+	Pending  int            // of Notes: how many are to send
+	Total    int            // of Notes
+	Overflow bool           // more notes to send follow the last of Notes (limit reached)
+}
+
+const scanPage = 200
+
+// upstreamNotes: the published notes of the link's local side in its classes with an id above `after`, oldest first, with their receipts.
+// Notes that were sent unchanged are passed over (they do not count against `limit`, the number of notes to SEND; 0 = no limit), so a run
+// always reaches the notes that still need sending. It reads in pages, never the whole table at once.
+func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upstreamScan, err error) {
+	q := `SELECT ` + noteCols + ` FROM notes n JOIN users u ON u.id=n.author_id WHERE n.project_id=? AND n.id>? AND n.class IN (`
+	base := []any{l.Project}
+	var cls []any
 	for i, c := range l.Classes {
 		if i > 0 {
 			q += ","
 		}
 		q += "?"
-		args = append(args, string(c))
+		cls = append(cls, string(c))
 	}
-	q += `) ORDER BY n.id`
-	if limit > 0 {
-		q += ` LIMIT ` + strconv.Itoa(limit)
-	}
-	rows, err := tx.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	var notes []Note
-	for rows.Next() {
-		n, e := scanNote(rows, true)
+	q += `) ORDER BY n.id LIMIT ` + strconv.Itoa(scanPage)
+	for {
+		args := append(append(append([]any{}, base...), after), cls...)
+		rows, e := tx.Query(q, args...)
 		if e != nil {
-			rows.Close()
-			return nil, e
+			return out, e
 		}
-		notes = append(notes, n)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
-	}
-	for _, n := range notes {
-		u := UpstreamNote{ID: n.ID, Class: n.Class, Title: n.Title, Body: n.Body, EntryKind: n.EntryKind, Revision: n.Revision, Author: n.Author, Hash: upstreamHash(n)}
-		var sent UpstreamSent
-		var at int64
-		switch e := tx.QueryRow(`SELECT hash,revision,remote_sub,remote_note,sent FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID).Scan(&sent.Hash, &sent.Revision, &sent.RemoteSub, &sent.RemoteNote, &at); e {
-		case nil:
-			sent.Sent = fromMs(at)
-			u.Sent = &sent
-		case sql.ErrNoRows:
-		default:
-			return nil, e
+		var page []Note
+		for rows.Next() {
+			n, e := scanNote(rows, true)
+			if e != nil {
+				rows.Close()
+				return out, e
+			}
+			page = append(page, n)
 		}
-		out = append(out, u)
+		e = rows.Err()
+		rows.Close()
+		if e != nil {
+			return out, e
+		}
+		for _, n := range page {
+			after = n.ID
+			u := UpstreamNote{ID: n.ID, Class: n.Class, Title: n.Title, Body: n.Body, EntryKind: n.EntryKind, Revision: n.Revision, Author: n.Author, Hash: upstreamHash(n)}
+			var sent UpstreamSent
+			var at int64
+			switch e := tx.QueryRow(`SELECT hash,revision,remote_sub,remote_note,sent FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID).Scan(&sent.Hash, &sent.Revision, &sent.RemoteSub, &sent.RemoteNote, &at); e {
+			case nil:
+				sent.Sent = fromMs(at)
+				u.Sent = &sent
+			case sql.ErrNoRows:
+			default:
+				return out, e
+			}
+			if u.Sent != nil && u.Sent.Hash == u.Hash {
+				u.Unchanged, u.Body = true, ""
+			} else {
+				if limit > 0 && out.Pending >= limit {
+					out.Overflow = true
+					return out, nil
+				}
+				out.Pending++
+			}
+			out.Total++
+			out.Notes = append(out.Notes, u)
+		}
+		if len(page) < scanPage {
+			return out, nil
+		}
 	}
-	return out, nil
 }
 
 // UpstreamLinks lists the links of one project or team segment (local = 0: all) with how many notes would go.
@@ -393,17 +424,11 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 			if e != nil {
 				return e
 			}
-			notes, e := upstreamNotes(tx, l, 0)
+			scan, e := upstreamNotes(tx, l, 0, 0)
 			if e != nil {
 				return e
 			}
-			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: len(notes)}
-			for _, n := range notes {
-				if n.Sent == nil || n.Sent.Hash != n.Hash {
-					info.Pending++
-				}
-			}
-			out = append(out, info)
+			out = append(out, UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending})
 		}
 		return nil
 	})
@@ -412,7 +437,7 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 }
 
 // upstreamPlan reads one link and its notes in one transaction.
-func (s *Store) upstreamPlan(ctx context.Context, project int64, upstream string) (l UpstreamLink, label, address string, notes []UpstreamNote, err error) {
+func (s *Store) upstreamPlan(ctx context.Context, project int64, upstream string, after int64, limit int) (l UpstreamLink, label, address string, scan upstreamScan, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		var e error
 		if l, e = scanLink(tx.QueryRow(`SELECT `+linkCols+` FROM upstream_links WHERE project_id=? AND upstream=?`, project, upstream)); e != nil {
@@ -424,7 +449,7 @@ func (s *Store) upstreamPlan(ctx context.Context, project int64, upstream string
 		if label, e = linkLabel(tx, project); e != nil {
 			return e
 		}
-		notes, e = upstreamNotes(tx, l, maxPushNotes+1)
+		scan, e = upstreamNotes(tx, l, after, limit)
 		return e
 	})
 	return

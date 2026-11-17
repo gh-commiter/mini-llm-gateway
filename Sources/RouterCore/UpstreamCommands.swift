@@ -83,23 +83,40 @@ extension AdminCommands {
             if !team.isEmpty && pos.count == 2 { body["team"] = try teamID(team) }
             else if team.isEmpty && pos.count == 3 { body["project"] = try projectID(pos[2]) }
             else if pos.count != 2 { throw usage }
-            // The helper answers a call within 30 seconds: a long push comes back with "more" (and how long to wait): ask again.
-            var calls = 0
-            while true {
-                calls += 1
-                let r = try request("POST", "/upstream-push", body)
-                var more = false, wait: Int64 = 0
-                for p in r["pushes"]?.array ?? [] {
-                    let d = p.dict
-                    say(clean("\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? ""))"))
-                    for l in d["lines"]?.array ?? [] { say(clean("  " + (l.string ?? ""))) }
-                    let verb = d["dryRun"]?.bool == true ? "would be " : ""
-                    say("  \(verb)created \(d["created"]?.int ?? 0), replaced \(d["replaced"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), refused \(d["refused"]?.int ?? 0)")
-                    if let s = d["stopped"]?.string, !s.isEmpty { say(clean("  stopped: " + s)) }
-                    if d["more"]?.bool == true { more = true; wait = max(wait, d["wait"]?.int ?? 0) }
+            // A helper answers a call within 30 seconds and a run sends a bounded number of notes: a push that is not through comes back with
+            // "more" and where it stopped; ask again for that link, as long as it gets further (or only waits for the upstream's write
+            // limit, a bounded number of times).
+            var targets: [[String: Any]] = [body]
+            var lastNext: [String: Int64] = [:], stalls: [String: Int] = [:]
+            while !targets.isEmpty {
+                var next: [[String: Any]] = []
+                var wait: Int64 = 0
+                for tgt in targets {
+                    let r = try request("POST", "/upstream-push", tgt)
+                    for p in r["pushes"]?.array ?? [] {
+                        let d = p.dict
+                        say(clean("\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? ""))"))
+                        for l in d["lines"]?.array ?? [] { say(clean("  " + (l.string ?? ""))) }
+                        let verb = d["dryRun"]?.bool == true ? "would be " : ""
+                        say("  \(verb)created \(d["created"]?.int ?? 0), replaced \(d["replaced"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), refused \(d["refused"]?.int ?? 0)")
+                        if let s = d["stopped"]?.string, !s.isEmpty { say(clean("  stopped: " + s)) }
+                    }
+                    for p in r["pushes"]?.array ?? [] {
+                        let d = p.dict
+                        guard d["more"]?.bool == true else { continue }
+                        let project = d["project"]?.int ?? 0, upstream = d["upstream"]?.string ?? "", nextID = d["next"]?.int ?? 0, w = d["wait"]?.int ?? 0
+                        let key = "\(project)|\(upstream)"
+                        if nextID > lastNext[key] ?? 0 { lastNext[key] = nextID; stalls[key] = 0 }
+                        else if w > 0 && (stalls[key] ?? 0) < 30 { stalls[key] = (stalls[key] ?? 0) + 1 }
+                        else { say(clean("  \(d["label"]?.string ?? "") -> \(upstream): no progress: run the push again later")); continue }
+                        var nt: [String: Any] = ["upstream": upstream, "after": nextID, "dryRun": o.dryRun]
+                        if d["team"]?.bool == true { nt["team"] = project - ProjectEnv.segmentBase } else { nt["project"] = project }
+                        next.append(nt)
+                        wait = max(wait, w)
+                    }
                 }
-                if !more || calls >= 1000 { break }
-                if wait > 0 { pause(Double(wait)) }
+                targets = next
+                if wait > 0 && !targets.isEmpty { pause(Double(wait)) }
             }
         default: throw usage
         }
