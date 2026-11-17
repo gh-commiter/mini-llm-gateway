@@ -780,7 +780,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         #expect(Date().timeIntervalSince(start) < 3, "held up for \(Date().timeIntervalSince(start)) s")
         release.signal()
         let r = await push.value
-        #expect(r.status == 200)
+        #expect(r.status == 200, "push answered \(r.status): \(String(decoding: r.body.prefix(300), as: UTF8.self))")  // the reason, when the lane failed (#150)
     }
 
     /// D1: a failure of the upstream lane takes down only the lane. Requests on the first connection go on, the helper is not restarted, and
