@@ -262,10 +262,16 @@ func (s *Store) AdminChangeProjectRemotes(ctx context.Context, project int64, ad
 		if e := archivedErr(tx, project); e != nil {
 			return e
 		}
+		before, e := remoteList(tx, project)
+		if e != nil {
+			return e
+		}
 		var detail map[string]any
-		var e error
 		if out, detail, e = applyRemotes(tx, project, add, remove); e != nil {
 			return e
+		}
+		if slices.Equal(before, out) { // nothing changed (a remote that was there is added again): no audit event
+			return nil
 		}
 		return Audit(tx, adminActor, "project.remotes", strconv.FormatInt(project, 10), detail)
 	})

@@ -364,6 +364,11 @@
          "role": {
           "field": "role"
          }
+        },
+        "confirm": {
+         "title": "builtin.teams.section.teams.detail.section.assignments.action.set.confirm.title",
+         "message": "builtin.teams.section.teams.detail.section.assignments.action.set.confirm.message",
+         "button": "builtin.teams.section.teams.detail.section.assignments.action.set.confirm.button"
         }
        }
       ],
@@ -638,6 +643,11 @@
          "role": {
           "field": "role"
          }
+        },
+        "confirm": {
+         "title": "builtin.teams.section.projects.detail.section.members.action.add.confirm.title",
+         "message": "builtin.teams.section.projects.detail.section.members.action.add.confirm.message",
+         "button": "builtin.teams.section.projects.detail.section.members.action.add.confirm.button"
         }
        }
       ],
@@ -685,6 +695,11 @@
          "role": {
           "const": "admin"
          }
+        },
+        "confirm": {
+         "title": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-none.confirm.title",
+         "message": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-none.confirm.message",
+         "button": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-none.confirm.button"
         }
        },
        {
@@ -715,6 +730,11 @@
          "role": {
           "const": "admin"
          }
+        },
+        "confirm": {
+         "title": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-reader.confirm.title",
+         "message": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-reader.confirm.message",
+         "button": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-reader.confirm.button"
         }
        },
        {
@@ -751,6 +771,11 @@
          "role": {
           "const": "admin"
          }
+        },
+        "confirm": {
+         "title": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-developer.confirm.title",
+         "message": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-developer.confirm.message",
+         "button": "builtin.teams.section.projects.detail.section.members.action.to-admin-from-developer.confirm.button"
         }
        },
        {

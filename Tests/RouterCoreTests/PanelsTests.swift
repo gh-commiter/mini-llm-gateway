@@ -871,6 +871,7 @@ private let teamsAnswers: [(String, Int, String)] = [
         #expect(try m.request(assigns.rowActions![0], row: a, parent: web, values: ["role": .string("admin")]).get()
                 == CoreRequest(method: "PUT", path: "/teams/4/assignments", body: Data(#"{"project":1,"role":"admin","user":2}"#.utf8)))
         #expect(try m.request(assigns.rowActions![1], row: a, parent: web).get() == CoreRequest(method: "DELETE", path: "/teams/4/assignments", query: "project=1&user=2"))
+        #expect(m.confirmation(assigns.actions![0])?.message.contains("Manage lets a person read every person's private notes") == true)
         #expect(m.confirmation(assigns.rowActions![0], row: a)?.title == "Change the role of ana?" && m.confirmation(assigns.rowActions![1], row: a)?.destructive == true)
     }
 
@@ -899,11 +900,17 @@ private let teamsAnswers: [(String, Int, String)] = [
         #expect(m.rowActions(members, bor).map(\.id) == ["to-reader-from-none", "to-developer-from-none", "to-admin-from-none"])  // no direct role: nothing to remove
         #expect(m.rowActions(members, eva).map(\.id) == ["to-reader-from-admin", "to-developer-from-admin", "remove-admin"])
         let lower = m.rowActions(members, ana)[0], raise = m.rowActions(members, ana)[1], remove = m.rowActions(members, ana)[2]
-        #expect(m.confirmation(lower, row: ana)?.title == "Lower the role of ana?" && m.confirmation(raise, row: ana) == nil)
-        #expect(m.confirmation(lower, row: ana)?.message.contains("not stopped") == true && m.confirmation(remove, row: ana)?.message.contains("loses access") == true)
+        #expect(m.confirmation(lower, row: ana)?.title == "Lower the role of ana?")
+        // raising to admin is security relevant: it asks first, says why, and is not a destructive (red) confirmation
+        let toAdmin = m.confirmation(raise, row: ana)
+        #expect(toAdmin?.destructive == false && toAdmin?.message.contains("private notes") == true && toAdmin?.message.contains("manage the notes of the team") == true)
+        #expect(m.rowActions(members, bor).allSatisfy { ($0.id == "to-admin-from-none") == (m.confirmation($0, row: bor) != nil) })  // only the admin one asks
+        #expect(m.confirmation(lower, row: ana)?.message.contains("not stopped") == true && m.confirmation(remove, row: ana)?.message.contains("If no team gives this person a role either") == true)
         #expect(try m.request(raise, row: ana, parent: p).get() == CoreRequest(method: "PUT", path: "/projects/1/members/2", body: Data(#"{"role":"admin"}"#.utf8)))
         #expect(try m.request(lower, row: ana, parent: p).get().body == Data(#"{"role":"reader"}"#.utf8))
         #expect(try m.request(remove, row: ana, parent: p).get() == CoreRequest(method: "DELETE", path: "/projects/1/members/2"))
+        // giving a role (any, so also admin) and giving one through a team ask first
+        #expect(m.confirmation(members.actions![0])?.message.contains("Manage lets a person read every person's private notes") == true)
         #expect(try m.request(members.actions![0], parent: p, values: ["user": .int(3), "role": .string("developer")]).get()
                 == CoreRequest(method: "PUT", path: "/projects/1/members/3", body: Data(#"{"role":"developer"}"#.utf8)))
         // git identities and dependencies

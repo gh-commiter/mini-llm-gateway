@@ -118,3 +118,119 @@ func TestTeamsAndProjectsPanelAnswers(t *testing.T) {
 		t.Fatalf("member remotes took addRemote: %d %s", r.Status, r.Body)
 	}
 }
+
+// The counts of the owner's lists come from aggregate queries; they must equal what the detailed lists say.
+func TestAdminCountsEqualTheDetailedLists(t *testing.T) {
+	f := newFixture(t)
+	admin := Context{Kind: KindAdmin}
+	do := func(method, path, body string) {
+		t.Helper()
+		if r := f.api.Handle(bg, admin, Request{Method: method, Path: path, Body: []byte(body)}); r.Status != 200 {
+			t.Fatalf("%s %s: %d %s", method, path, r.Status, r.Body)
+		}
+	}
+	for i, name := range []string{"acme", "web", "empty"} {
+		var created struct{ Team TeamJSON }
+		r := f.api.Handle(bg, admin, Request{Method: "POST", Path: "/teams", Body: []byte(fmt.Sprintf(`{"name":%q}`, name))})
+		json.Unmarshal(r.Body, &created)
+		id := created.Team.ID
+		if i < 2 {
+			do("PUT", fmt.Sprintf("/teams/%d/projects/%d", id, []int64{f.pid["fakture"], f.pid["eureko"]}[i]), "")
+			do("PUT", fmt.Sprintf("/teams/%d/members/%d", id, f.uid["ana"]), "")
+			do("PUT", fmt.Sprintf("/teams/%d/members/%d", id, f.uid["cene"]), "")
+			do("PUT", fmt.Sprintf("/teams/%d/assignments", id), fmt.Sprintf(`{"project":%d,"user":%d,"role":"reader"}`, []int64{f.pid["fakture"], f.pid["eureko"]}[i], f.uid["cene"]))
+		}
+	}
+	counts, err := f.st.AdminCounts(bg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts, _ := f.st.AdminListTeams(bg)
+	for _, tm := range ts {
+		ms, _ := f.st.ListTeamMembers(bg, tm.ID)
+		ps, _ := f.st.ListTeamProjects(bg, tm.ID)
+		if counts.MembersOfTeam[tm.ID] != len(ms) || counts.ProjectsOfTeam[tm.ID] != len(ps) {
+			t.Errorf("team %s: counts %d/%d, lists %d/%d", tm.Name, counts.MembersOfTeam[tm.ID], counts.ProjectsOfTeam[tm.ID], len(ms), len(ps))
+		}
+		for _, p := range ps {
+			if counts.TeamOfProject[p.ID] != tm.Name {
+				t.Errorf("project %d: team %q, want %q", p.ID, counts.TeamOfProject[p.ID], tm.Name)
+			}
+		}
+	}
+	ps, _ := f.st.AdminListProjects(bg)
+	for _, p := range ps {
+		ms, _ := f.st.ListMembers(bg, p.ID)
+		if counts.MembersOfProject[p.ID] != len(ms) {
+			t.Errorf("project %s: %d people, list says %d", p.Slug, counts.MembersOfProject[p.ID], len(ms))
+		}
+	}
+	// the handler: one aggregate call (four queries) plus the plain list, not a query per team, project or person
+	if counts.MembersOfTeam[ts[0].ID] != 2 || len(counts.MembersOfProject) < 2 {
+		t.Fatalf("%+v", counts)
+	}
+}
+
+func TestPanelRouteEdgeCases(t *testing.T) {
+	f := newFixture(t)
+	admin := Context{Kind: KindAdmin}
+	call := func(method, path, query, body string, want int) []byte {
+		t.Helper()
+		r := f.api.Handle(bg, admin, Request{Method: method, Path: path, RawQuery: query, Body: []byte(body)})
+		if r.Status != want {
+			t.Fatalf("%s %s?%s %s: %d %s, want %d", method, path, query, body, r.Status, r.Body, want)
+		}
+		return r.Body
+	}
+	var created struct{ Team TeamJSON }
+	json.Unmarshal(call("POST", "/teams", "", `{"name":"acme"}`, 200), &created)
+	team, fk := created.Team.ID, f.pid["fakture"]
+	call("PUT", fmt.Sprintf("/teams/%d/projects/%d", team, fk), "", "", 200)
+	call("PUT", fmt.Sprintf("/teams/%d/members/%d", team, f.uid["ana"]), "", "", 200)
+	call("PUT", fmt.Sprintf("/teams/%d/assignments", team), "", fmt.Sprintf(`{"project":%d,"user":%d,"role":"reader"}`, fk, f.uid["ana"]), 200)
+	// both a body and a query: refused, nothing deleted
+	both := fmt.Sprintf(`{"project":%d,"user":%d}`, fk, f.uid["ana"])
+	call("DELETE", fmt.Sprintf("/teams/%d/assignments", team), fmt.Sprintf("project=%d&user=%d", fk, f.uid["ana"]), both, 400)
+	var as struct{ Assignments []adminAssignmentJSON }
+	json.Unmarshal(call("GET", fmt.Sprintf("/teams/%d/assignments", team), "", "", 200), &as)
+	if len(as.Assignments) != 1 {
+		t.Fatal("the assignment was deleted by a refused request")
+	}
+	call("DELETE", fmt.Sprintf("/teams/%d/assignments", team), "", both, 200) // a body alone still works
+	// remotes: an empty single value is refused; an unchanged list writes no audit row
+	remotes := fmt.Sprintf("/projects/%d/remotes", fk)
+	audits := func() (n int) {
+		evs, _ := f.st.AuditEvents(bg, 0, 500)
+		for _, e := range evs {
+			if e.Action == "project.remotes" {
+				n++
+			}
+		}
+		return
+	}
+	call("POST", remotes, "", `{"addRemote":""}`, 400)
+	call("POST", remotes, "", `{"removeRemote":"  "}`, 400)
+	call("POST", remotes, "", `{}`, 400)
+	if audits() != 0 {
+		t.Fatal("a refused call wrote an audit row")
+	}
+	call("POST", remotes, "", `{"addRemote":"git@host.example:a/b.git"}`, 200)
+	call("POST", remotes, "", `{"addRemote":"git@host.example:a/b.git"}`, 200) // the same again: nothing changes
+	if audits() != 1 {
+		t.Fatalf("%d audit rows, want 1 (the second add changed nothing)", audits())
+	}
+	// where a role comes from also comes as pairs
+	call("PUT", fmt.Sprintf("/teams/%d/assignments", team), "", fmt.Sprintf(`{"project":%d,"user":%d,"role":"reader"}`, fk, f.uid["ana"]), 200)
+	var members struct {
+		Members []struct {
+			Name  string
+			Teams []struct{ Team, Role string }
+		}
+	}
+	json.Unmarshal(call("GET", fmt.Sprintf("/projects/%d/members", fk), "", "", 200), &members)
+	for _, m := range members.Members {
+		if m.Name == "ana" && (len(m.Teams) != 1 || m.Teams[0].Team != "acme" || m.Teams[0].Role != "reader") {
+			t.Errorf("ana: %+v", m)
+		}
+	}
+}

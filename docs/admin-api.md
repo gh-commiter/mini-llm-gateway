@@ -215,7 +215,7 @@ continue), in the same transaction.
 | `PATCH /projects/{id}` | `{"archived": bool}` | `{"ok": true}`; archived: nobody writes |
 | `GET /projects/{id}/remotes` | – | `{"remotes": [identity], "entries": [{"remote": identity}]}`: the registered git identities (`host/path`), also as rows |
 | `POST /projects/{id}/remotes` | `{"add": [url], "remove": [url]}`; the owner route also takes one value as `{"addRemote": url}` or `{"removeRemote": url}` (a form sends one value) | `{"remotes": [...], "added": [...], "removed": [...]}`; one transaction, audit `project.remotes`; at most 8 per project, the same identity may belong to several projects; an archived project: 403 `archived` |
-| `GET /projects/{id}/members` | – | `{"members": [{"user", "name", "role", "origins", "directRole", "fromTeams"}]}`; `directRole` is the role given directly (`none` when there is none) and `fromTeams` the teams that give one (`acme (reader), web (developer)`), so a role and where it comes from can be shown flat |
+| `GET /projects/{id}/members` | – | `{"members": [{"user", "name", "role", "origins", "directRole", "fromTeams"}]}`; `directRole` is the role given directly (`none` when there is none) and `fromTeams` the teams that give one as display text (`acme (reader), web (developer)`; `teams` has the same as `[{team, role}]`), so a role and where it comes from can be shown flat |
 | `PUT /projects/{id}/members/{user}` | `{"role": "reader"\|"developer"\|"admin"}` | `{"ok": true}`; lowering the role raises the epoch |
 | `DELETE /projects/{id}/members/{user}` | – | `{"ok": true}`; raises the epoch |
 | `GET /grants` | – | `{"grants": [{"source", "reader", "class", "id", "sourceName", "readerName"}]}` |
@@ -587,7 +587,7 @@ For temporary-folder tests, record the copy IDs before and after the run and rem
 |---|---|---|
 | `GET /teams/{id}/assignments` | – | `{assignments: [{project, user, role, id, userName, projectName}]}`, sorted by project/user |
 | `PUT /teams/{id}/assignments` | `{project, user, role}` | `{ok: true}` |
-| `DELETE /teams/{id}/assignments` | `{project, user}`, or without a body `?project=&user=` | `{ok: true}`; absent assignment is 404 |
+| `DELETE /teams/{id}/assignments` | `{project, user}`, or without a body `?project=&user=` (both together: 400) | `{ok: true}`; absent assignment is 404 |
 
 Roles are reader, developer and admin. Set requires an unarchived team, its project and its member;
 invalid assignments return 400. Member authentication never permits owner writes.

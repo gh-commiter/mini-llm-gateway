@@ -273,8 +273,8 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		var list []string
 		var b struct {
 			remotesBody
-			AddRemote    string `json:"addRemote"`    // one remote to add (a form sends one value, not a list)
-			RemoveRemote string `json:"removeRemote"` // one remote to remove
+			AddRemote    *string `json:"addRemote"`    // one remote to add (a form sends one value, not a list)
+			RemoveRemote *string `json:"removeRemote"` // one remote to remove
 		}
 		var err error
 		if method == "GET" {
@@ -283,11 +283,14 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 			if !dec(&b) {
 				return fail(400, "bad JSON body (add, remove, addRemote, removeRemote)")
 			}
-			if b.AddRemote != "" {
-				b.Add = append(b.Add, b.AddRemote)
+			if (b.AddRemote != nil && strings.TrimSpace(*b.AddRemote) == "") || (b.RemoveRemote != nil && strings.TrimSpace(*b.RemoveRemote) == "") {
+				return fail(400, "addRemote and removeRemote take one remote, not an empty value")
 			}
-			if b.RemoveRemote != "" {
-				b.Remove = append(b.Remove, b.RemoveRemote)
+			if b.AddRemote != nil {
+				b.Add = append(b.Add, *b.AddRemote)
+			}
+			if b.RemoveRemote != nil {
+				b.Remove = append(b.Remove, *b.RemoveRemote)
 			}
 			list, err = st.AdminChangeProjectRemotes(ctx, id, b.Add, b.Remove)
 		}
@@ -312,16 +315,18 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		}
 		list := []map[string]any{}
 		for _, m := range ms {
-			direct, via := "none", []string{}
+			direct, via, teams := "none", []string{}, []map[string]any{}
 			for _, o := range m.Origins {
 				if o.Kind == "direct" {
 					direct = string(o.Role)
 				} else {
 					via = append(via, fmt.Sprintf("%s (%s)", o.Name, o.Role))
+					teams = append(teams, map[string]any{"team": o.Name, "role": o.Role})
 				}
 			}
-			// directRole and fromTeams say where the role comes from, flat, for a panel (origins stays for the CLI)
-			list = append(list, map[string]any{"user": m.UserID, "name": m.Name, "role": m.Role, "origins": m.Origins, "directRole": direct, "fromTeams": strings.Join(via, ", ")})
+			// directRole and fromTeams say where the role comes from, flat, for a panel (origins stays for the CLI); `teams` is the
+			// same as pairs: fromTeams is only a display text (a panel cell shows text, not a list)
+			list = append(list, map[string]any{"user": m.UserID, "name": m.Name, "role": m.Role, "origins": m.Origins, "directRole": direct, "fromTeams": strings.Join(via, ", "), "teams": teams})
 		}
 		return 200, map[string]any{"members": list}, true
 	case "PUT projects/{}/members/{}", "DELETE projects/{}/members/{}":
