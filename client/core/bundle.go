@@ -1051,7 +1051,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		}
 		users[foldName(name)] = a.id
 	}
-	projects := map[string]int64{bundleSegment: segmentID(team)} // a dry run on a new team has team -1: no row, nothing is read
+	projects := map[string]int64{bundleSegment: segmentID(team)} // a dry run on a new team has team -1: id 0, never read
 	if !dry {
 		if e := ensureSegment(tx, team); e != nil {
 			return e
@@ -1158,6 +1158,10 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	for _, v := range notes {
 		pid := projects[v.meta.Project]
 		key := receiptKey(source, v.meta.Project, v.id)
+		if v.meta.Project == bundleSegment && pid == 0 { // the team does not exist yet: nothing to read
+			line("create", key)
+			continue
+		}
 		r, e := receipt(tx, pid, key)
 		if e != nil {
 			return e

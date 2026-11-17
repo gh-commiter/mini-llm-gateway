@@ -699,3 +699,46 @@ func TestSegmentRestoreRequiresTriggers(t *testing.T) {
 		t.Fatal("restore accepted a backup without the triggers:", err)
 	}
 }
+
+// checkSegments also refuses a database in which a segment id has a member, grant, remote or team assignment
+// (made here with the guard trigger absent in the test's own file).
+func TestSegmentCheckRefusesReferences(t *testing.T) {
+	f := newSeg(t)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		if _, e := tx.Exec(`DROP TRIGGER segment_no_grant_source`); e != nil {
+			return e
+		}
+		_, e := tx.Exec(`INSERT INTO grants(source_id,reader_id,class) VALUES(?,?,'data')`, f.seg, f.pid["fakture"])
+		return e
+	}))
+	if err := f.read(ctx, checkSegments); err == nil {
+		t.Fatal("a grant on a segment passed the check")
+	}
+	bak := filepath.Join(t.TempDir(), "g.db")
+	f.ok(f.Backup(ctx, bak))
+	if err := Restore(t.TempDir(), bak); err == nil {
+		t.Fatal("restore accepted a segment in a grant")
+	}
+}
+
+// A dry run for a team that does not exist yet reports create lines and never uses a segment id.
+func TestSegmentDryRunNewTeam(t *testing.T) {
+	if segmentID(-1) != 0 || segmentID(0) != 0 {
+		t.Fatal("segmentID of a non-real team")
+	}
+	source, _ := bundleFixture(t)
+	var team int64
+	source.ok(source.DB().QueryRow(`SELECT id FROM teams WHERE name='Team'`).Scan(&team))
+	source.ok(source.SetTeamAssignment(ctx, team, source.pid["fakture"], source.uid["ana"], Admin))
+	_, _, e := source.CreateNote(ctx, source.p("ana"), segmentID(team), "dr1", NoteInput{Class: Data, Title: "team rule", Body: "b"})
+	source.ok(e)
+	file := filepath.Join(t.TempDir(), "t.zip")
+	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: file}))
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	rep, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc", DryRun: true})
+	source.ok(e)
+	if !strings.Contains(strings.Join(rep.Lines, "\n"), "create src:testsrc:@team:") || countTable(t, target, "notes") != 0 {
+		t.Fatal(rep)
+	}
+}
