@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.17
 
 ### New
 - The settings page of `minigw serve` (Windows, Linux, Docker) draws the same three admin panels as the Mac app: Users and devices, Teams and projects and Knowledge base. Same rules as the Mac renderer (registered routes only, one plain path segment per value, confirmations before destructive or access-changing actions, plain-text rendering of every text, English or Slovenian by the browser's language). It is covered by a script test over the same fixtures as the Go validator and the Swift model.
@@ -13,6 +13,25 @@
 
 ### Known problems
 - The panels on the settings page have only been tried through tests, not in a real browser. A detail page opens in place of the panel with a Back button. The Mac app does not use this page.
+- In the Teams and projects pane the "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI: the format has no cell that lists pairs of a team and a role. The structured list is in the answer (`teams`).
+- The Teams and projects pane has only been tried through tests, not in a real window. Team notes (the team's own notes segment) are not shown there, only in the Knowledge base pane.
+- The Knowledge base pane has only been tried through tests, not in a real window. Notes and questions are read, not edited; a replacement shows both texts, not a line difference.
+- Labels are data, never permissions: a member sees them only on sessions and usage already visible to them, and a label filter never widens whose events are read. A call made by hand gets labels only when the caller sets them (or the branch fills the task); classifying unlabelled calls is not done yet.
+- A role of the form `<phase>.<activity>` set by older scripts is not read as labels.
+- The three admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base) are new and have only been tried through tests, not yet looked at in a real window. Windows and Linux have no panel renderer yet (the settings page there is unchanged).
+- A project linked to a subfolder of another project's folder gets no automatic dependency; the owner sets it with `gw project depends add`.
+- Team notes have no `private` class, and only a project admin of the team writes them; there is no owner shortcut into them (the owner reviews submissions and exports bundles).
+- The hooks ask after a commit or a compaction, not at the end of a session: Claude Code gives a hook no way to talk to the model then. A failed hand-in is not retried. Checked by tests of both clients and of the plugin script, but not yet tried in a real Claude Code session (neither on a Mac nor on Windows).
+- Project git identity, team path labels and entry kinds are new and not yet in daily use. `minigw project link` without a slug needs `git` on the computer; on Windows it has only been built, not tried.
+- A replacement of a `faq` entry keeps the kind `faq`, and an import never changes the kind of an existing note: to change a kind, remove the entry and hand it in again.
+- `minigw gw import`: an `INDEX.md` inside a bundle has no size limit of its own (only the 100 MiB total). Import only bundles you made yourself.
+- `minigw kb export` on Windows: the protection of each exported file is still set by path after the file is created through the opened folder; not tested on Windows yet.
+- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.16
 
