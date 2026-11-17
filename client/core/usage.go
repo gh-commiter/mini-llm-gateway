@@ -329,6 +329,9 @@ func (s *Store) Usage(ctx context.Context, p Principal, project int64, days int)
 		gaps := false // lost-event records are for project admins (their project's period) and the owner
 		f := UsageFilter{User: p.UserID}
 		if project != 0 {
+			if isSegment(project) {
+				return ErrNotFound
+			}
 			a, err := loadAccess(tx, p.UserID, project)
 			if err != nil {
 				return err

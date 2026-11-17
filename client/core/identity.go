@@ -189,6 +189,9 @@ func applyRemotes(tx *sql.Tx, project int64, add, remove []string) (current []st
 
 // ProjectRemotes lists the identities of a project; any member (a grant alone is not enough).
 func (s *Store) ProjectRemotes(ctx context.Context, p Principal, project int64) (out []string, err error) {
+	if isSegment(project) {
+		return nil, ErrNotFound
+	}
 	lim := s.rate(p.UserID, false)
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		a, e := memberAccess(tx, p, project)
@@ -209,6 +212,9 @@ func (s *Store) ProjectRemotes(ctx context.Context, p Principal, project int64) 
 
 // ChangeProjectRemotes is the project admin's write (team-derived admin counts). Archived: ErrArchived.
 func (s *Store) ChangeProjectRemotes(ctx context.Context, p Principal, project int64, add, remove []string) (out []string, err error) {
+	if isSegment(project) {
+		return nil, ErrNotFound
+	}
 	lim := s.rate(p.UserID, true)
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		a, e := memberAccess(tx, p, project)
@@ -239,7 +245,7 @@ func (s *Store) ChangeProjectRemotes(ctx context.Context, p Principal, project i
 // AdminProjectRemotes and AdminChangeProjectRemotes are the owner's views of the same list.
 func (s *Store) AdminProjectRemotes(ctx context.Context, project int64) (out []string, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
-		if e := exists(tx, "projects", project); e != nil {
+		if e := existsProject(tx, project); e != nil {
 			return e
 		}
 		var e error
@@ -250,7 +256,7 @@ func (s *Store) AdminProjectRemotes(ctx context.Context, project int64) (out []s
 }
 func (s *Store) AdminChangeProjectRemotes(ctx context.Context, project int64, add, remove []string) (out []string, err error) {
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		if e := exists(tx, "projects", project); e != nil {
+		if e := existsProject(tx, project); e != nil {
 			return e
 		}
 		if e := archivedErr(tx, project); e != nil {

@@ -77,11 +77,16 @@ var devTransitions = map[[2]Class]bool{
 type access struct {
 	Role   Role
 	Grants map[Class]bool
+	// NoPrivate: the project is a team segment, which never holds private notes.
+	NoPrivate bool
 }
 
 func (a access) visible() bool { return a.Role != "" || len(a.Grants) > 0 }
 
 func (a access) perms(c Class) perm {
+	if a.NoPrivate && c == Private {
+		return 0
+	}
 	p := matrix[a.Role][c]
 	if a.Grants[c] {
 		p |= grantPerm(c)
@@ -103,6 +108,9 @@ func (a access) can(p perm, c Class, own bool) bool {
 
 // canMove: may the caller change a note of class from to class to (both writes already allowed as a plain change)?
 func (a access) canMove(from, to Class, own bool) bool {
+	if a.NoPrivate && to == Private {
+		return false
+	}
 	if from == to || a.Role == Admin {
 		return true
 	}
@@ -111,6 +119,9 @@ func (a access) canMove(from, to Class, own bool) bool {
 
 // loadAccess reads the role and the grants of user in project from the current state.
 func loadAccess(tx *sql.Tx, user, project int64) (a access, err error) {
+	if isSegment(project) {
+		return loadSegmentAccess(tx, user, project)
+	}
 	err = tx.QueryRow(`SELECT role FROM memberships WHERE project_id=? AND user_id=?`, project, user).Scan(&a.Role)
 	if err == sql.ErrNoRows {
 		err = nil
@@ -134,6 +145,23 @@ func loadAccess(tx *sql.Tx, user, project int64) (a access, err error) {
 		a.Grants[c] = true
 	}
 	return a, rows.Err()
+}
+
+// loadSegmentAccess is the whole access rule of a team segment (memberships and grants are never read): nothing
+// unless the team is active and the user is on its roster; then read of structure and data, and admin when the user
+// is admin of at least one of the team's projects. Never private.
+func loadSegmentAccess(tx *sql.Tx, user, segment int64) (a access, err error) {
+	a.NoPrivate = true
+	team := segment - segmentBase
+	var n int
+	if err = tx.QueryRow(`SELECT count(*) FROM teams t JOIN team_members m ON m.team_id=t.id WHERE t.id=? AND t.archived=0 AND m.user_id=?`, team, user).Scan(&n); err != nil || n == 0 {
+		return
+	}
+	a.Role, a.Grants = Reader, map[Class]bool{Structure: true, Data: true}
+	if err = tx.QueryRow(`SELECT count(*) FROM team_projects tp JOIN memberships m ON m.project_id=tp.project_id WHERE tp.team_id=? AND m.user_id=? AND m.role='admin'`, team, user).Scan(&n); err == nil && n > 0 {
+		a.Role = Admin
+	}
+	return
 }
 
 // Principal is built by the gateway for one request from the proven device.

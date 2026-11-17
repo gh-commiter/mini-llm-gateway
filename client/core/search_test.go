@@ -237,7 +237,7 @@ func TestSearchIndexedScale(t *testing.T) {
 	}))
 	f.ok(f.RebuildSearch(ctx))
 	filter, args := where(f.uid["ana"], []readable{{project: project, all: []Class{Structure}}})
-	args = append(args, searchScope(f.uid["ana"], []readable{{project: project, all: []Class{Structure}}})+` AND {title body} : ("comet")`)
+	args = append(args, searchScope(f.uid["ana"], []readable{{project: project, all: []Class{Structure}}})+` AND {title body} : ("comet")`, project, project)
 	rows, e := f.DB().Query("EXPLAIN QUERY PLAN "+searchSQL(filter), args...)
 	f.ok(e)
 	var plan []string

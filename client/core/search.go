@@ -52,6 +52,8 @@ type SearchHit struct {
 	Updated time.Time `json:"updated"`
 	// EntryKind is finding or faq.
 	EntryKind string `json:"entryKind"`
+	// From names where a hit comes from when it is not the project asked: "team:<name>" for the team's notes.
+	From string `json:"from,omitempty"`
 }
 type SearchPage struct {
 	Hits []SearchHit `json:"hits"`
@@ -91,15 +93,16 @@ func searchScope(user int64, rs []readable) string {
 
 // Both MATCH and SQL constrain visibility. No corpus-dependent rank or counts;
 // bodies are loaded only for visible hits.
+// The home project's hits come first, then the others, each by recency (there is no corpus rank).
 func searchSQL(filter string) string {
 	return `WITH visible AS MATERIALIZED (
  SELECT n.id,n.project_id,n.class,n.title,n.updated FROM notes n WHERE ` + filter + `),
  hits AS MATERIALIZED (SELECT v.* FROM visible v JOIN note_search ON note_search.rowid=v.id
- WHERE note_search MATCH ? ORDER BY v.updated DESC,v.id LIMIT 20)
+ WHERE note_search MATCH ? ORDER BY v.project_id<>?,v.updated DESC,v.id LIMIT 20)
  SELECT h.id,h.project_id,h.class,h.title,substr(n.body,1,160),h.updated,n.entry_kind
- FROM hits h JOIN notes n ON n.id=h.id ORDER BY h.updated DESC,h.id`
+ FROM hits h JOIN notes n ON n.id=h.id ORDER BY h.project_id<>?,h.updated DESC,h.id`
 }
-func searchNotes(ctx context.Context, tx *sql.Tx, user int64, rs []readable, text string) (SearchPage, error) {
+func searchNotes(ctx context.Context, tx *sql.Tx, user, home int64, rs []readable, text string) (SearchPage, error) {
 	out := SearchPage{Hits: []SearchHit{}}
 	query, err := searchQuery(text)
 	if err != nil {
@@ -109,12 +112,13 @@ func searchNotes(ctx context.Context, tx *sql.Tx, user int64, rs []readable, tex
 	if filter == "0" {
 		return out, nil
 	}
-	args = append(args, searchScope(user, rs)+" AND {title body} : ("+query+")")
+	args = append(args, searchScope(user, rs)+" AND {title body} : ("+query+")", home, home)
 	rows, err := tx.QueryContext(ctx, searchSQL(filter), args...)
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
+	var found []SearchHit
 	for rows.Next() {
 		var h SearchHit
 		var updated int64
@@ -122,6 +126,28 @@ func searchNotes(ctx context.Context, tx *sql.Tx, user int64, rs []readable, tex
 			return SearchPage{}, err
 		}
 		h.Updated = fromMs(updated)
+		found = append(found, h)
+	}
+	if err = rows.Err(); err != nil {
+		return out, err
+	}
+	rows.Close()
+	labels := map[int64]string{} // at most one lookup per source
+	for i := range found {
+		p := found[i].Project
+		if !isSegment(p) {
+			continue
+		}
+		if _, ok := labels[p]; !ok {
+			var name string
+			if err = tx.QueryRow(`SELECT name FROM teams WHERE id=?`, p-segmentBase).Scan(&name); err != nil {
+				return SearchPage{}, err
+			}
+			labels[p] = "team:" + name
+		}
+		found[i].From = labels[p]
+	}
+	for _, h := range found {
 		candidate := append(out.Hits, h)
 		b, _ := json.Marshal(SearchPage{Hits: candidate})
 		if len(b) > 8191 { // Reserve the CLI's trailing newline.
@@ -129,7 +155,7 @@ func searchNotes(ctx context.Context, tx *sql.Tx, user int64, rs []readable, tex
 		}
 		out.Hits = candidate
 	}
-	return out, rows.Err()
+	return out, nil
 }
 func (s *Store) SearchNotes(ctx context.Context, p Principal, project int64, text string) (out SearchPage, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
@@ -143,7 +169,11 @@ func (s *Store) SearchNotes(ctx context.Context, p Principal, project int64, tex
 		if lim != nil {
 			return lim
 		}
-		out, e = searchNotes(ctx, tx, p.UserID, []readable{a.readable(project, false)}, text)
+		rs, e := noteSources(tx, p.UserID, project, a)
+		if e != nil {
+			return e
+		}
+		out, e = searchNotes(ctx, tx, p.UserID, project, rs, text)
 		return e
 	})
 	if err != nil {
@@ -156,14 +186,14 @@ func (s *Store) RunSearchNotes(ctx context.Context, c RunCap, approved bool, tex
 	defer cancel()
 	lim := s.rate(c.UserID, false)
 	err = s.read(ctx, func(tx *sql.Tx) error {
-		rs, e := s.runScope(tx, c, approved)
+		rs, e := s.runScope(tx, c, approved, true)
 		if e != nil {
 			return e
 		}
 		if lim != nil {
 			return lim
 		}
-		out, e = searchNotes(ctx, tx, c.UserID, rs, text)
+		out, e = searchNotes(ctx, tx, c.UserID, c.ProjectID, rs, text)
 		return e
 	})
 	if err != nil {

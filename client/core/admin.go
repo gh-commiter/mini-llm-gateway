@@ -281,6 +281,9 @@ func (s *Store) CreateProject(ctx context.Context, slug, name string) (p Project
 // SetProjectArchived archives or unarchives (no epoch change: reads go on, only writes stop).
 func (s *Store) SetProjectArchived(ctx context.Context, id int64, archived bool) error {
 	return s.adminWrite(ctx, "project.archive", strconv.FormatInt(id, 10), map[string]any{"archived": archived}, func(tx *sql.Tx) (string, error) {
+		if isSegment(id) {
+			return "", ErrNotFound
+		}
 		r, err := tx.Exec(`UPDATE projects SET archived=? WHERE id=?`, archived, id)
 		return "", countOne(r, err)
 	})
@@ -288,7 +291,7 @@ func (s *Store) SetProjectArchived(ctx context.Context, id int64, archived bool)
 
 func (s *Store) AdminListProjects(ctx context.Context) (out []Project, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.Query(`SELECT id,slug,name,archived FROM projects ORDER BY id`)
+		rows, err := tx.Query(`SELECT id,slug,name,archived FROM projects WHERE id<=? ORDER BY id`, segmentBase)
 		if err != nil {
 			return err
 		}
@@ -311,7 +314,7 @@ func (s *Store) SetMember(ctx context.Context, projectID, userID int64, role Rol
 		return ErrInvalid{"role"}
 	}
 	return s.adminWrite(ctx, "member.set", strconv.FormatInt(projectID, 10), map[string]any{"user": userID, "role": role}, func(tx *sql.Tx) (string, error) {
-		if err := exists(tx, "projects", projectID); err != nil {
+		if err := existsProject(tx, projectID); err != nil {
 			return "", err
 		}
 		if err := exists(tx, "users", userID); err != nil {
@@ -377,10 +380,10 @@ func (s *Store) AddGrant(ctx context.Context, source, reader int64, class Class)
 		return ErrInvalid{"grant to the same project"}
 	}
 	return s.adminWrite(ctx, "grant.add", strconv.FormatInt(source, 10), map[string]any{"reader": reader, "class": class}, func(tx *sql.Tx) (string, error) {
-		if err := exists(tx, "projects", source); err != nil {
+		if err := existsProject(tx, source); err != nil {
 			return "", err
 		}
-		if err := exists(tx, "projects", reader); err != nil {
+		if err := existsProject(tx, reader); err != nil {
 			return "", err
 		}
 		_, err := tx.Exec(`INSERT OR IGNORE INTO grants(source_id,reader_id,class) VALUES(?,?,?)`, source, reader, class)

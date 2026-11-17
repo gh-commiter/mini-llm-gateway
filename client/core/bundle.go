@@ -954,6 +954,9 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 				return e
 			}
 			team, _ = r.LastInsertId()
+			if e = ensureSegment(tx, team); e != nil {
+				return e
+			}
 		}
 	} else {
 		line("skip", "team "+m.Team)

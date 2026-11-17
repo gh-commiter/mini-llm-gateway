@@ -43,8 +43,10 @@ func (s *Store) CreateTeam(ctx context.Context, name string) (t Team, err error)
 			return "", teamUnique(e)
 		}
 		t = Team{Name: name}
-		t.ID, e = r.LastInsertId()
-		return "", e
+		if t.ID, e = r.LastInsertId(); e != nil {
+			return "", e
+		}
+		return "", ensureSegment(tx, t.ID)
 	})
 	return
 }
@@ -213,10 +215,16 @@ func (s *Store) changeTeamEntry(ctx context.Context, id, target int64, project, 
 			if archived {
 				return "", ErrInvalid{"team archived"}
 			}
-			if e := exists(tx, entity, target); e != nil {
+			var e error
+			if project {
+				e = existsProject(tx, target)
+			} else {
+				e = exists(tx, entity, target)
+			}
+			if e != nil {
 				return "", e
 			}
-			_, e := tx.Exec(`INSERT INTO `+table+`(team_id,`+column+`) VALUES(?,?) ON CONFLICT(team_id,`+column+`) DO NOTHING`, id, target)
+			_, e = tx.Exec(`INSERT INTO `+table+`(team_id,`+column+`) VALUES(?,?) ON CONFLICT(team_id,`+column+`) DO NOTHING`, id, target)
 			return "", teamUnique(e)
 		}
 		if e := deleteTeamOrigins(tx, id, column, target); e != nil {

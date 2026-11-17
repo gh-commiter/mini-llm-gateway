@@ -308,6 +308,9 @@ func validateAs(ctx context.Context, path, shown, gateway string) (state, error)
 			return state{}, err
 		}
 		err = checkMemberships(tx)
+		if err == nil && v >= 15 {
+			err = checkSegments(tx)
+		}
 		tx.Rollback()
 		if err != nil {
 			return state{}, fmt.Errorf("%s: %w", shown, err)

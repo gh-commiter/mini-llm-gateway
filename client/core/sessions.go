@@ -76,6 +76,9 @@ func (s *Store) Sessions(ctx context.Context, p Principal, project int64, f Sess
 		if err := checkPrincipal(tx, p); err != nil {
 			return err
 		}
+		if isSegment(project) {
+			return ErrNotFound
+		}
 		a, err := loadAccess(tx, p.UserID, project)
 		if err != nil {
 			return err

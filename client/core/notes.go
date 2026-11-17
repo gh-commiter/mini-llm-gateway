@@ -273,7 +273,11 @@ func (s *Store) GetNote(ctx context.Context, p Principal, project, id int64) (n 
 		if err != nil {
 			return err
 		}
-		if _, err = visibleNote(tx, p.UserID, id, []readable{a.readable(project, false)}); err != nil {
+		rs, err := noteSources(tx, p.UserID, project, a)
+		if err != nil {
+			return err
+		}
+		if _, err = visibleNote(tx, p.UserID, id, rs); err != nil {
 			return err
 		}
 		if lim != nil {
@@ -611,7 +615,7 @@ func (s *Store) GetProject(ctx context.Context, p Principal, idOrSlug string) (p
 		if err != nil {
 			return err
 		}
-		if !a.visible() {
+		if isSegment(pr.ID) || !a.visible() {
 			return ErrNotFound
 		}
 		if lim != nil {
@@ -656,9 +660,11 @@ type RunCap struct {
 
 // runScope authorizes a capability read: epoch unchanged, principal valid now, user a member of the run's
 // project. The readable sets are the run project's own structure and data notes (never private) and the notes
-// reachable through grants whose reader is the run's project; nothing from the user's other memberships.
-func (s *Store) runScope(tx *sql.Tx, c RunCap, approved bool) ([]readable, error) {
-	if !approved {
+// reachable through grants whose reader is the run's project; nothing from the user's other memberships. With
+// extended (search and read by id, not the list) the run's project team segment is added when the run's user is
+// on that team's roster.
+func (s *Store) runScope(tx *sql.Tx, c RunCap, approved, extended bool) ([]readable, error) {
+	if !approved || isSegment(c.ProjectID) {
 		return nil, noAccess("device not approved")
 	}
 	if c.Epoch != s.epoch.Load() {
@@ -692,7 +698,18 @@ func (s *Store) runScope(tx *sql.Tx, c RunCap, approved bool) ([]readable, error
 			rs = append(rs, readable{project: src, all: []Class{cl}})
 		}
 	}
-	return rs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if extended { // search and read also cover the team segment, by the user's own right in it
+		more, err := extraSources(tx, c.UserID, c.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		rs = append(rs, more...)
+	}
+	return rs, nil
 }
 
 // RunListNotes lists what the run may read, run project and granted sources together.
@@ -702,7 +719,7 @@ func (s *Store) RunListNotes(ctx context.Context, c RunCap, approved bool, class
 		return
 	}
 	err = s.read(ctx, func(tx *sql.Tx) error {
-		rs, err := s.runScope(tx, c, approved)
+		rs, err := s.runScope(tx, c, approved, false)
 		if err != nil {
 			return err
 		}
@@ -719,7 +736,7 @@ func (s *Store) RunListNotes(ctx context.Context, c RunCap, approved bool, class
 func (s *Store) RunGetNote(ctx context.Context, c RunCap, approved bool, id int64) (n Note, err error) {
 	lim := s.rate(c.UserID, false)
 	err = s.read(ctx, func(tx *sql.Tx) error {
-		rs, err := s.runScope(tx, c, approved)
+		rs, err := s.runScope(tx, c, approved, true)
 		if err != nil {
 			return err
 		}
