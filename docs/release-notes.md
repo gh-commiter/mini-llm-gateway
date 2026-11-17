@@ -1,5 +1,13 @@
 # Release notes
 
+## Unreleased
+
+### New
+- The settings page of `minigw serve` (Windows, Linux, Docker) draws the same three admin panels as the Mac app: Users and devices, Teams and projects and Knowledge base. Same rules as the Mac renderer (registered routes only, one plain path segment per value, confirmations before destructive or access-changing actions, plain-text rendering of every text, English or Slovenian by the browser's language). It is covered by a script test over the same fixtures as the Go validator and the Swift model.
+
+### Known problems
+- The panels on the settings page have only been tried through tests, not in a real browser. A detail page opens in place of the panel with a Back button. The Mac app does not use this page.
+
 ## 0.7.16
 
 ### New

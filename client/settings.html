@@ -93,6 +93,8 @@ a.btn { text-decoration: none; text-align: center; display: inline-block; }
 .switch input:disabled + span { opacity: .4; cursor: default; }
 .filter { display: flex; gap: 8px; align-items: center; }
 .filter input { width: 180px; text-align: left; }
+.ptext { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.hbar h3 { margin: 0 4px; }
 #msg { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--panel); color: var(--err);
   padding: 6px 12px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.2); display: none; }
 .usage-grid { display:grid; grid-template-columns:minmax(0,3fr) minmax(190px,2fr); gap:12px; }
@@ -140,6 +142,13 @@ const S = {
   period:["Period","Obdobje"], usageDays:["%s days","%s dni"], dailyModels:["Daily by model · UTC","Dnevno po modelih · UTC"],
   topModels:["Top models","Največ uporabljeni modeli"], usageModel:["Model","Model"], usageProvider:["Provider","Ponudnik"],
   usageOther:["Other","Drugi"], usageEmpty:["No events in this period.","V tem obdobju ni dogodkov."],
+  pUnavailable:["The project database is not available.","Projektna zbirka ni na voljo."], pUpdate:["The panels need a newer Mini Gateway: update it.","Plošče potrebujejo novejši Mini Gateway: posodobite ga."],
+  pNewer:["This panel needs a newer Mini Gateway.","Ta plošča potrebuje novejši Mini Gateway."], pCannot:["This panel cannot be shown.","Te plošče ni mogoče prikazati."],
+  pFault:["The gateway reported an error; the details are in its log.","Gateway je javil napako; podrobnosti so v njegovem dnevniku."],
+  pPart:["This part of the panel cannot be shown","Tega dela plošče ni mogoče prikazati"], pNotSent:["The request was not sent","Zahteve nismo poslali"],
+  pShort:["The text is shortened here.","Besedilo je tukaj skrajšano."], pRequired:["Required","Obvezno"], pTooLong:["At most %s bytes","Največ %s bajtov"],
+  pNone:["None","Nobena"], pOk:["OK","V redu"], cancel:["Cancel","Prekliči"], pLoading:["Loading…","Nalaganje …"], pOpen:["Open","Odpri"], pActions:["Actions…","Dejanja …"],
+  pMore:["Load More","Naloži več"], pBack:["Back","Nazaj"], pPanels:["Panels","Plošče"],
   usageError:["Could not load usage: %s","Porabe ni mogoče naložiti: %s"],
   unknownCost:["%s requests without a known cost","%s zahtev brez znanega stroška"],
   failedHint:["Summed agent minutes are concurrent work time, not clock time. Only requests that ended in an error count.","Seštete minute agentov so čas dela, ki teče hkrati, ne ura na zidu. Štejejo le zahteve, ki so se končale z napako."],
@@ -742,9 +751,806 @@ function usagePane() {
   return [card(...ICON.usage, t("usage"), t("dailyModels")), el("label", {}, t("period"), " ", period), tabs, body];
 }
 
+// --- paneli iz opisov: logika ---
+// Panels (format 1, docs/plans/plugin-panels-design.md) on the web page: the SAME rules as the Swift model
+// (Sources/RouterCore/Panels.swift, PanelModel.swift) and the Go validator (client/coreapi/panels.go). The shared fixtures
+// client/testdata/panels*.json drive the tests of all three. A description is data: this code never builds HTML from it.
+const PL = {multiline: 20000, bytes: 65536, sections: 12, columns: 10, actions: 12, fields: 10, label: 120, message: 600, refs: 5, refEntries: 1000,
+  options: 20, bodyKeys: 10, queryParams: 8, maxLength: 4096, filter: 5};
+const PANEL_ROUTES = {builtin: [
+  "GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices",
+  "GET kb/submissions", "GET kb/submissions/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject",
+  "GET kb/notes", "GET kb/notes/{}", "GET kb/faq", "GET projects", "GET teams",
+  "POST teams", "PATCH teams/{}", "GET teams/{}/members", "PUT teams/{}/members/{}", "DELETE teams/{}/members/{}",
+  "GET teams/{}/projects", "PUT teams/{}/projects/{}", "DELETE teams/{}/projects/{}", "GET teams/{}/assignments",
+  "PUT teams/{}/assignments", "DELETE teams/{}/assignments", "POST projects", "PATCH projects/{}", "GET projects/{}/members",
+  "PUT projects/{}/members/{}", "DELETE projects/{}/members/{}", "GET projects/{}/remotes", "POST projects/{}/remotes",
+  "GET projects/{}/depends", "PUT projects/{}/depends/{}", "DELETE projects/{}/depends/{}", "GET grants", "POST grants", "DELETE grants"]};
+const PANEL_SYMBOLS = ["person.2", "person.3", "folder", "book", "tray", "gearshape", "doc.text", "key", "list.bullet"];
+class PanelRefusal extends Error {}
+const prefuse = m => { throw new PanelRefusal(m); };
+const pmatch = (s, re) => re.test(s);
+const pIsID = s => pmatch(s, /^[a-z][a-z0-9-]{0,31}$/);
+const pIsName = s => pmatch(s, /^[A-Za-z][A-Za-z0-9_]{0,63}$/);
+const pHasControl = s => /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(s);
+const pLen = s => [...s].length;
+const pBytes = s => new TextEncoder().encode(s).length;
+const pOwn = (o, k) => o !== null && typeof o === "object" && Object.hasOwn(o, k);
+const pGet = (o, k) => (pOwn(o, k) ? o[k] : undefined);
+
+// scalarText: the text a scalar contributes to a path, a query or a label; null for null, objects, arrays and fractions.
+function pScalarText(v) {
+  if (typeof v === "string") return v;
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "number" && Number.isInteger(v) && Math.abs(v) < 9e15) return String(v);
+  return null;
+}
+const pIsScalar = v => typeof v === "string" || typeof v === "number" || typeof v === "boolean";
+const pScalarOK = v => pIsScalar(v) && (typeof v !== "string" || pLen(v) <= PL.label);
+
+// ---- decoding (the types Swift's Decodable enforces; unknown keys are ignored) ----
+const pObj = v => v !== null && typeof v === "object" && !Array.isArray(v);
+const dObj = (v, w) => (pObj(v) ? v : prefuse(w + " is not an object"));
+const dStr = (v, w) => (typeof v === "string" ? v : prefuse(w + " is not text"));
+const dBool = (v, w) => (typeof v === "boolean" ? v : prefuse(w + " is not a boolean"));
+const dInt = (v, w) => (Number.isInteger(v) ? v : prefuse(w + " is not an integer"));
+const dArr = (v, w, f) => (Array.isArray(v) ? v.map((x, i) => f(x, w + "[" + i + "]")) : prefuse(w + " is not a list"));
+const dMap = (v, w, f) => { dObj(v, w); const o = {}; for (const k of Object.keys(v)) o[k] = f(v[k], w + "." + k); return o; };
+const opt = (o, k, f, w) => (o[k] === undefined || o[k] === null ? undefined : f(o[k], w + "." + k));
+const anyJSON = (o, k, w) => (Object.hasOwn(o, k) ? o[k] : prefuse(w + "." + k + " is missing"));
+const dRef = (o, w) => (o = dObj(o, w), {path: dStr(o.path, w), items: dStr(o.items, w), key: dStr(o.key, w), label: dStr(o.label, w)});
+const dColumn = (o, w) => (o = dObj(o, w), {field: dStr(o.field, w), kind: dStr(o.kind, w), label: dStr(o.label, w),
+  yes: opt(o, "yes", dStr, w), no: opt(o, "no", dStr, w), values: opt(o, "values", (v, x) => dMap(v, x, dStr), w), ref: opt(o, "ref", dStr, w)});
+const dWhen = (o, w) => (o = dObj(o, w), {field: dStr(o.field, w), equals: anyJSON(o, "equals", w)});
+const dField = (o, w) => (o = dObj(o, w), {id: dStr(o.id, w), type: dStr(o.type, w), label: dStr(o.label, w), required: opt(o, "required", dBool, w),
+  maxLength: opt(o, "maxLength", dInt, w),
+  default: opt(o, "default", (v, x) => (v = dObj(v, x), {const: v.const === null ? undefined : v.const, row: opt(v, "row", dStr, x)}), w),
+  options: opt(o, "options", (v, x) => dArr(v, x, (p, y) => (p = dObj(p, y), {value: dStr(p.value, y), label: dStr(p.label, y)})), w), ref: opt(o, "ref", dStr, w)});
+const dAction = (o, w) => (o = dObj(o, w), {id: dStr(o.id, w), label: dStr(o.label, w), method: dStr(o.method, w), path: dStr(o.path, w), query: opt(o, "query", dStr, w),
+  body: opt(o, "body", (v, x) => dMap(v, x, (b, y) => (b = dObj(b, y), {field: opt(b, "field", dStr, y), row: opt(b, "row", dStr, y), const: b.const === null ? undefined : b.const})), w),
+  fields: opt(o, "fields", (v, x) => dArr(v, x, dField), w), when: opt(o, "when", dWhen, w),
+  confirm: opt(o, "confirm", (v, x) => (v = dObj(v, x), {title: dStr(v.title, x), message: dStr(v.message, x), button: dStr(v.button, x), destructive: opt(v, "destructive", dBool, x)}), w),
+  destructive: opt(o, "destructive", dBool, w)});
+function dSection(o, w) {
+  o = dObj(o, w);
+  return {kind: dStr(o.kind, w), id: dStr(o.id, w), title: opt(o, "title", dStr, w), body: opt(o, "body", dStr, w), key: opt(o, "key", dStr, w), empty: opt(o, "empty", dStr, w),
+    source: opt(o, "source", (v, x) => (v = dObj(v, x), {path: dStr(v.path, x), items: opt(v, "items", dStr, x)}), w),
+    columns: opt(o, "columns", (v, x) => dArr(v, x, dColumn), w), filter: opt(o, "filter", (v, x) => dArr(v, x, dStr), w),
+    hide: opt(o, "hide", (v, x) => (v = dObj(v, x), {field: dStr(v.field, x), equals: anyJSON(v, "equals", x), toggle: dStr(v.toggle, x)}), w),
+    paging: opt(o, "paging", (v, x) => (v = dObj(v, x), {next: dStr(v.next, x), param: dStr(v.param, x)}), w),
+    actions: opt(o, "actions", (v, x) => dArr(v, x, dAction), w), rowActions: opt(o, "rowActions", (v, x) => dArr(v, x, dAction), w),
+    detail: opt(o, "detail", (v, x) => (v = dObj(v, x), {title: dStr(v.title, x), sections: dArr(v.sections, x + ".sections", dSection)}), w),
+    scope: opt(o, "scope", (v, x) => (v = dObj(v, x), {ref: dStr(v.ref, x), param: dStr(v.param, x), label: dStr(v.label, x)}), w), when: opt(o, "when", dWhen, w)};
+}
+const pSupportedSection = s => s.kind === "list" || s.kind === "text" || s.kind === "record";
+const pSupportedColumn = c => ["text", "multiline", "bool", "enum", "ref", "time"].includes(c.kind);
+const pSupportedField = f => ["text", "toggle", "choice", "ref"].includes(f.type);
+const pSupportedAction = a => (a.fields || []).every(pSupportedField);
+const pNeedsConfirmation = a => a.method === "DELETE" || a.destructive === true || a.confirm !== undefined;
+
+// ---- path and query templates ----
+const pPlaceholder = s => {
+  const m = /^\{(row|field|parent)\.([A-Za-z][A-Za-z0-9_]{0,63})\}$/.exec(s);
+  return m ? [m[1], m[2]] : null;
+};
+// nil when a segment is neither a plain name ([A-Za-z0-9_-]) nor exactly one placeholder, or the path is not "/a/b".
+function pTemplateParse(p) {
+  if (pBytes(p) > 200 || !p.startsWith("/") || p.endsWith("/")) return null;
+  const out = [];
+  for (const s of p.slice(1).split("/")) {
+    const ph = pPlaceholder(s);
+    if (ph) out.push({ref: ph});
+    else if (/^[A-Za-z0-9_-]{1,64}$/.test(s)) out.push({literal: s});
+    else return null;
+  }
+  return out;
+}
+const PCHARS = /[A-Za-z0-9\-._~]/;
+function pPercent(v) {
+  let out = "";
+  for (const b of new TextEncoder().encode(v)) out += b < 128 && PCHARS.test(String.fromCharCode(b)) ? String.fromCharCode(b) : "%" + b.toString(16).toUpperCase().padStart(2, "0");
+  return out;
+}
+// A value that may become part of a path or a query: empty, ".", anything with "..", "/", "\", "?", "#" or a control character is refused.
+function pEncode(v) {
+  if (v === "" || pLen(v) > 256 || v === "." || v.includes("..") || pHasControl(v) || /[\/\\?#]/.test(v)) return null;
+  return pPercent(v);
+}
+// A paging cursor is a query VALUE, not a path segment: any text without control characters, percent-encoded.
+function pEncodeQuery(v) { return v === "" || pLen(v) > 512 || pHasControl(v) ? null : pPercent(v); }
+const pValueOf = (vals, [kind, name]) => pGet(pGet(vals, kind) || {}, name);
+function pResolvePath(p, vals) {
+  const segs = pTemplateParse(p);
+  if (!segs) return null;
+  let out = "";
+  for (const s of segs) {
+    if (s.literal !== undefined) out += "/" + s.literal;
+    else {
+      const text = pScalarText(pValueOf(vals, s.ref)), e = text === null ? null : pEncode(text);
+      if (e === null) return null;
+      out += "/" + e;
+    }
+  }
+  return out;
+}
+function pResolveQuery(q, vals) {
+  const out = [];
+  for (const part of q.split("&")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) return null;
+    const value = part.slice(eq + 1), ph = pPlaceholder(value);
+    if (ph) {
+      const text = pScalarText(pValueOf(vals, ph)), e = text === null ? null : pEncode(text);
+      if (e === null) return null;
+      out.push(part.slice(0, eq) + "=" + e);
+    } else out.push(part);
+  }
+  return out.join("&");
+}
+const pRouteOf = (method, p) => { const s = pTemplateParse(p); return s ? method + " " + s.map(x => (x.literal !== undefined ? x.literal : "{}")).join("/") : null; };
+// Does a concrete (escaped) path with its method match one of the registered patterns, segment for segment?
+function pRouteAllows(method, escapedPath, patterns) {
+  if (!escapedPath.startsWith("/")) return false;
+  const segs = [];
+  for (const r of escapedPath.slice(1).split("/")) {
+    let d;
+    try { d = decodeURIComponent(r); } catch (e) { return false; }
+    if (d === "" || d === "." || d === ".." || d.includes("/") || d.includes("\\") || pHasControl(d)) return false;
+    segs.push(d);
+  }
+  return patterns.some(pat => {
+    if (!pat.startsWith(method + " ")) return false;
+    const pp = pat.slice(method.length + 1).split("/");
+    return pp.length === segs.length && pp.every((x, i) => x === "{}" || x === segs[i]);
+  });
+}
+
+// ---- the validator (the same rules as client/coreapi/panels.go) ----
+function pKey(d, name, k) {
+  if (typeof k !== "string" || !/^[a-z0-9._-]{1,120}$/.test(k) || !k.startsWith(d.id + ".") || k.includes("..") || k.endsWith(".")) {
+    prefuse(name + ": " + (typeof k === "string" ? k.slice(0, 60) : "nothing") + " is not a string key of panel " + d.id);
+  }
+}
+function pCheckPath(d, routes, where, method, p, sc) {
+  const segs = pTemplateParse(p);
+  if (!segs) prefuse(where + ": not a path of whole segments");
+  const pat = [];
+  for (const s of segs) {
+    if (s.literal !== undefined) { pat.push(s.literal); continue; }
+    const [kind, name] = s.ref;
+    if (!((kind === "row" && sc.row) || (kind === "parent" && sc.parent) || (kind === "field" && sc.fields.has(name)))) prefuse(where + ": placeholder " + kind + "." + name + " is not available here");
+    pat.push("{}");
+  }
+  if (d.provider !== "builtin" && !p.startsWith("/plugins/" + d.provider + "/")) prefuse(where + ": the routes of provider " + d.provider + " live under /plugins/" + d.provider + "/");
+  if (!routes.includes(method + " " + pat.join("/"))) prefuse(where + ": route " + method + " " + pat.join("/") + " is not registered by provider " + d.provider);
+}
+function pCheckQuery(q, sc) {
+  if (q === undefined || q === "") return;
+  const parts = q.split("&");
+  if (parts.length > PL.queryParams) prefuse("query: too many parameters");
+  for (const p of parts) {
+    const eq = p.indexOf("=");
+    if (eq < 0 || !/^[a-z][a-z0-9_]{0,31}$/.test(p.slice(0, eq))) prefuse("query: " + p + " is not name=value");
+    const v = p.slice(eq + 1), ph = pPlaceholder(v);
+    if (ph) {
+      const [kind, name] = ph;
+      if (!((kind === "row" && sc.row) || (kind === "parent" && sc.parent) || (kind === "field" && sc.fields.has(name)))) prefuse("query: placeholder " + v + " is not available here");
+    } else if (!/^[A-Za-z0-9_.-]{0,64}$/.test(v)) prefuse("query: value " + v + " is neither plain nor exactly one placeholder");
+  }
+}
+function pValidate(d, routes) {
+  const key = (name, k) => pKey(d, name, k);
+  const column = c => {
+    if (!pIsName(c.field)) prefuse("column: bad field " + c.field);
+    key("column label", c.label);
+    if (!pSupportedColumn(c)) return;
+    const extras = (yesNo, values, ref) => {
+      if (((c.yes !== undefined || c.no !== undefined) !== yesNo) || ((c.values !== undefined) !== values) || ((c.ref !== undefined) !== ref)) prefuse("column " + c.field + ": wrong extra keys");
+    };
+    if (c.kind === "bool") { extras(true, false, false); key("yes", c.yes); key("no", c.no); }
+    else if (c.kind === "enum") {
+      extras(false, true, false);
+      const n = Object.keys(c.values).length;
+      if (n === 0 || n > PL.options) prefuse("column " + c.field + ": enum values");
+      for (const [k, l] of Object.entries(c.values)) { if (k === "" || pBytes(k) > 64) prefuse("column " + c.field + ": bad enum key"); key("value " + k, l); }
+    } else if (c.kind === "ref") { extras(false, false, true); if (!pOwn(d.refs, c.ref)) prefuse("column " + c.field + ": ref is not declared"); }
+    else extras(false, false, false);
+  };
+  const field = (f, sc) => {
+    if (!pIsName(f.id)) prefuse("field: bad id " + f.id);
+    key("field label", f.label);
+    if (!pSupportedField(f)) return;
+    if (f.maxLength !== undefined && !(f.maxLength >= 0 && f.maxLength <= PL.maxLength)) prefuse("field " + f.id + ": maxLength");
+    if (f.default !== undefined) {
+      const hasC = f.default.const !== undefined, hasR = f.default.row !== undefined;
+      if (hasC === hasR) prefuse("field " + f.id + ": default needs exactly one of const, row");
+      if (hasR && !(sc.row && pIsName(f.default.row))) prefuse("field " + f.id + ": default row");
+      if (hasC && !pScalarOK(f.default.const)) prefuse("field " + f.id + ": default const");
+    }
+    if (!((f.maxLength === undefined || f.type === "text") && ((f.options !== undefined) === (f.type === "choice")) && ((f.ref !== undefined) === (f.type === "ref")))) prefuse("field " + f.id + ": wrong extra keys");
+    if (f.type === "choice") {
+      if (f.options.length === 0 || f.options.length > PL.options) prefuse("field " + f.id + ": options");
+      for (const x of f.options) { if (x.value === "" || pBytes(x.value) > 64) prefuse("field " + f.id + ": option value"); key("option", x.label); }
+    }
+    if (f.type === "ref" && !pOwn(d.refs, f.ref)) prefuse("field " + f.id + ": ref is not declared");
+  };
+  const action = (a, outer) => {
+    if (!pIsID(a.id)) prefuse("action: bad id " + a.id);
+    key("action label", a.label);
+    if (!["POST", "PUT", "PATCH", "DELETE"].includes(a.method)) prefuse("action " + a.id + ": method " + a.method);
+    const fields = a.fields || [];
+    if (fields.length > PL.fields) prefuse("action " + a.id + ": too many fields");
+    if (!pSupportedAction(a)) return;
+    const sc = {row: outer.row, parent: outer.parent, fields: new Set()};
+    for (const f of fields) { field(f, outer); if (sc.fields.has(f.id)) prefuse("action " + a.id + ": field " + f.id + " repeated"); sc.fields.add(f.id); }
+    pCheckPath(d, routes, "action " + a.id + " path", a.method, a.path, sc);
+    pCheckQuery(a.query, sc);
+    const body = a.body || {}, nk = Object.keys(body).length;
+    if (nk > PL.bodyKeys || (a.method === "DELETE" && nk > 0)) prefuse("action " + a.id + ": body");
+    for (const [k, b] of Object.entries(body)) {
+      let n = 0;
+      if (b.field !== undefined) { n++; if (!sc.fields.has(b.field)) prefuse("action " + a.id + ": body " + k + " has no form field " + b.field); }
+      if (b.row !== undefined) { n++; if (!(sc.row && pIsName(b.row))) prefuse("action " + a.id + ": body " + k + " row"); }
+      if (b.const !== undefined) { n++; if (!pScalarOK(b.const)) prefuse("action " + a.id + ": body " + k + " const"); }
+      if (!pIsName(k) || n !== 1) prefuse("action " + a.id + ": body " + k + " needs exactly one of field, row, const");
+    }
+    if (a.when !== undefined && !(sc.row && pIsName(a.when.field) && pScalarOK(a.when.equals))) prefuse("action " + a.id + ": when");
+    if ((a.method === "DELETE" || a.destructive === true) && a.confirm === undefined) prefuse("action " + a.id + ": a destructive action needs a confirmation");
+    if (a.confirm !== undefined) { key("confirm.title", a.confirm.title); key("confirm.message", a.confirm.message); key("confirm.button", a.confirm.button); }
+  };
+  const list = (s, nested) => {
+    if (s.body !== undefined || s.when !== undefined || s.source === undefined || s.title === undefined || s.key === undefined) prefuse("list " + s.id + ": needs title, source and key, and has no body or when");
+    if (s.scope !== undefined) {
+      if (!pOwn(d.refs, s.scope.ref) || !/^[a-z][a-z0-9_]{0,31}$/.test(s.scope.param)) prefuse("list " + s.id + ": scope with an undeclared ref or a bad parameter name");
+      if (s.paging !== undefined && s.paging.param === s.scope.param) prefuse("list " + s.id + ": scope and paging use the same parameter");
+      key("scope.label", s.scope.label);
+    }
+    key("title", s.title);
+    if (s.empty !== undefined) key("empty", s.empty);
+    if (s.source.items === undefined || !pIsName(s.source.items) || !pIsName(s.key)) prefuse("list " + s.id + ": bad items or key");
+    pCheckPath(d, routes, "list " + s.id + " source", "GET", s.source.path, {row: false, parent: nested, fields: new Set()});
+    const cols = s.columns || [];
+    if (cols.length === 0 || cols.length > PL.columns) prefuse("list " + s.id + ": columns 1 to " + PL.columns);
+    cols.forEach(column);
+    const filter = s.filter || [];
+    if (filter.length > PL.filter || !filter.every(pIsName)) prefuse("list " + s.id + ": bad filter");
+    if (s.hide !== undefined) { if (!pIsName(s.hide.field) || !pScalarOK(s.hide.equals)) prefuse("list " + s.id + ": bad hide"); key("hide.toggle", s.hide.toggle); }
+    if (s.paging !== undefined && !(pIsName(s.paging.next) && pIsName(s.paging.param))) prefuse("list " + s.id + ": bad paging");
+    if ((s.actions || []).length > PL.actions || (s.rowActions || []).length > PL.actions) prefuse("list " + s.id + ": too many actions");
+    for (const a of s.actions || []) action(a, {row: false, parent: nested});
+    for (const a of s.rowActions || []) action(a, {row: true, parent: nested});
+    if (s.detail !== undefined) {
+      if (nested) prefuse("list " + s.id + ": detail pages nest only one level");
+      if (!pIsName(s.detail.title)) prefuse("list " + s.id + ": bad detail title");
+      sections(s.detail.sections, true);
+    }
+  };
+  const record = (s, nested) => {
+    if (s.body !== undefined || s.source === undefined || s.source.items !== undefined || s.key !== undefined || s.filter !== undefined || s.hide !== undefined || s.paging !== undefined ||
+        s.empty !== undefined || s.actions !== undefined || s.rowActions !== undefined || s.detail !== undefined || s.scope !== undefined) prefuse("record " + s.id + ": only title, source (a path), columns and when");
+    if (s.title !== undefined) key("title", s.title);
+    pCheckPath(d, routes, "record " + s.id + " source", "GET", s.source.path, {row: false, parent: nested, fields: new Set()});
+    const cols = s.columns || [];
+    if (cols.length === 0 || cols.length > PL.columns) prefuse("record " + s.id + ": columns 1 to " + PL.columns);
+    cols.forEach(column);
+    if (s.when !== undefined && !(nested && pIsName(s.when.field) && pScalarOK(s.when.equals))) prefuse("record " + s.id + ": when is for detail pages, with a field and a scalar");
+  };
+  const sections = (ss, nested) => {
+    if (ss.length === 0 || ss.length > PL.sections) prefuse("sections: 1 to " + PL.sections);
+    const seen = new Set();
+    for (const s of ss) {
+      if (!pIsID(s.id) || seen.has(s.id)) prefuse("section: bad or repeated id " + s.id);
+      seen.add(s.id);
+      if (s.kind === "text") {
+        if (s.body === undefined || s.title !== undefined || s.source !== undefined || s.key !== undefined || s.columns !== undefined || s.filter !== undefined || s.hide !== undefined ||
+            s.paging !== undefined || s.empty !== undefined || s.actions !== undefined || s.rowActions !== undefined || s.detail !== undefined || s.scope !== undefined || s.when !== undefined) prefuse("a text section has only id and body");
+        key("body", s.body);
+      } else if (s.kind === "list") list(s, nested);
+      else if (s.kind === "record") record(s, nested);
+      // an unknown kind in a known format: a visible placeholder
+    }
+  };
+  if (!pIsID(d.provider)) prefuse("provider " + d.provider + " is not valid");
+  if (!d.id.startsWith(d.provider + ".") || !pIsID(d.id.slice(d.provider.length + 1))) prefuse("id " + d.id + " must be " + d.provider + ".<name>");
+  key("title", d.title); key("about", d.about);
+  if (!PANEL_SYMBOLS.includes(d.symbol)) prefuse("symbol " + d.symbol + " is not in the list");
+  if (Object.keys(d.refs).length > PL.refs) prefuse("more than " + PL.refs + " refs");
+  for (const [name, r] of Object.entries(d.refs)) {
+    if (!pIsID(name) || !pIsName(r.items) || !pIsName(r.key) || !pIsName(r.label)) prefuse("ref " + name + ": bad name, items, key or label");
+    pCheckPath(d, routes, "ref " + name, "GET", r.path, {row: false, parent: false, fields: new Set()});
+  }
+  sections(d.sections, false);
+}
+// panelParse: {state: "ready", panel} | {state: "needsNewer", format} | {state: "refused", reason}. "provider" is the id the REGISTRY
+// (the answer of GET /panels) names, never the provider field inside the description: that one must equal it.
+function panelParse(raw, provider, routes) {
+  try {
+    if (!pObj(raw) || !Number.isInteger(raw.format)) return {state: "refused", reason: "not a JSON object with a format"};
+    if (raw.format > 1) return {state: "needsNewer", format: raw.format};
+    if (raw.format !== 1) return {state: "refused", reason: "format " + raw.format + " is not supported"};
+    const d = {format: 1, id: dStr(raw.id, "id"), provider: dStr(raw.provider, "provider"), title: dStr(raw.title, "title"), about: dStr(raw.about, "about"), symbol: dStr(raw.symbol, "symbol"),
+      refs: dMap(raw.refs, "refs", dRef), sections: dArr(raw.sections, "sections", dSection)};
+    if (d.provider !== provider) return {state: "refused", reason: "the description says provider " + d.provider + ", the registry says " + provider};
+    const rs = routes || PANEL_ROUTES[provider];
+    if (!rs) return {state: "refused", reason: "provider " + provider + " is not known here"};
+    pValidate(d, rs);
+    return {state: "ready", panel: d};
+  } catch (e) {
+    if (e instanceof PanelRefusal) return {state: "refused", reason: e.message};
+    throw e;
+  }
+}
+// The locale for GET /panels/strings: the browser's own ("sl_SI" from "sl-SI"), or just the language ("sl"); never a made-up region.
+function panelLocale(preferred) {
+  const m = /^([A-Za-z]{2})(?:[-_]([A-Za-z]{2}))?(?:[-_]|$)/.exec(preferred || "");
+  if (!m) return "C";
+  return m[1].toLowerCase() + (m[2] ? "_" + m[2].toUpperCase() : "");
+}
+function panelStringsParse(j) {
+  if (!pObj(j) || j.format !== 1 || typeof j.locale !== "string" || !pObj(j.strings)) return null;
+  const keys = Object.keys(j.strings);
+  if (keys.length > 2000 || !keys.every(k => typeof j.strings[k] === "string")) return null;
+  return {locale: j.locale, table: j.strings};
+}
+const panelText = (strings, key) => (key === undefined || key === null ? "" : pOwn(strings.table, key) ? strings.table[key] : key);
+
+// ---- errors of a call ----
+function panelError(status, bodyText) {
+  if (status >= 200 && status < 300) return null;
+  let e; try { const j = JSON.parse(bodyText); e = pObj(j) && pObj(j.error) ? j.error : undefined; } catch (x) { /* not JSON */ }
+  if (status === 503 && e && e.type === "core_unavailable") return {kind: "unavailable"};
+  if (status >= 500) return {kind: "serverFault", status};  // 5xx: its text may hold internals; only the status is shown
+  if (e && typeof e.message === "string" && e.message !== "") return {kind: "server", message: e.message};
+  return {kind: "http", status};
+}
+const pListKey = (path, parent) => path + "\u0001" + parent;
+const pStable = v => (Array.isArray(v) ? v.map(pStable) : pObj(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k, pStable(v[k])])) : v);
+
+// GET /panels: every description validated by this side again; one that fails stays in the list as "cannot be shown".
+async function panelCatalogLoad(send, locale) {
+  const out = {entries: [], error: null, strings: {locale: "C", table: {}}, stringsError: null};
+  const sr = await send({method: "GET", path: "/panels/strings", query: "lang=" + locale});
+  const se = panelError(sr.status, sr.body);
+  if (se) out.stringsError = se;
+  else { let j = null; try { j = JSON.parse(sr.body); } catch (e) { /* below */ } const t = panelStringsParse(j); if (t) out.strings = t; else out.stringsError = {kind: "refused", why: "GET /panels/strings: not the expected answer"}; }
+  const r = await send({method: "GET", path: "/panels"});
+  const e = panelError(r.status, r.body);
+  if (e) { out.error = r.status === 404 ? {kind: "notFound"} : e; return out; }
+  let top = null; try { top = JSON.parse(r.body); } catch (x) { /* below */ }
+  if (!pObj(top) || !Number.isInteger(top.format) || !Array.isArray(top.panels)) { out.error = {kind: "refused", why: "GET /panels: not the expected answer"}; return out; }
+  if (top.format > 1) { out.error = {kind: "needsNewer"}; return out; }
+  const seen = new Set();
+  top.panels.forEach((p, i) => {
+    if (!pObj(p) || typeof p.provider !== "string" || !pObj(p.description)) return;
+    const parse = panelParse(p.description, p.provider);
+    const raw = p.description, str = k => (typeof raw[k] === "string" ? raw[k].slice(0, PL.label) : undefined);
+    const entry = parse.state === "ready" ? {id: parse.panel.id, provider: p.provider, parse, title: parse.panel.title, about: parse.panel.about, symbol: parse.panel.symbol}
+      : {id: typeof raw.id === "string" ? raw.id.slice(0, 64) : "invalid-" + i, provider: p.provider, parse, title: str("title"), about: undefined, symbol: ""};
+    if (!seen.has(entry.id)) { seen.add(entry.id); out.entries.push(entry); }
+  });
+  return out;
+}
+
+// ---- the model of one panel ----
+function newListData() { return {rows: [], next: null, error: null, loading: false, search: "", showHidden: false}; }
+class PanelModel {
+  constructor(panel, strings, routes, send) {
+    this.panel = panel; this.strings = strings; this.routes = routes; this.send = send;
+    this.refs = {}; this.refError = null; this.lists = new Map(); this.actionError = new Map(); this.records = new Map(); this.selected = new Map();
+    this.sending = new Set(); this.opened = new Map(); this.loading = false; this.redraw = () => {};
+  }
+  text(key) { return panelText(this.strings, key); }
+  allowed(method, template) { const r = pRouteOf(method, template); return r !== null && this.routes.includes(r); }
+  async load() {
+    this.loading = true; this.redraw();
+    try {
+      await this.loadRefs();
+      for (const s of this.panel.sections) {
+        if (s.kind === "list") await this.loadList(s, s.id, null, false);
+        if (s.kind === "record") await this.loadRecord(s, s.id, null);
+      }
+      for (const [, o] of [...this.opened]) await this.loadDetail(o[0], o[1]);
+    } finally { this.loading = false; this.redraw(); }
+  }
+  async loadRefs() {
+    this.refError = null;
+    for (const name of Object.keys(this.panel.refs).sort()) {
+      const r = this.panel.refs[name];
+      if (!this.allowed("GET", r.path)) { this.refError = {kind: "refused", why: "route GET " + r.path + " is not registered"}; continue; }
+      const a = await this.send({method: "GET", path: r.path});
+      const e = panelError(a.status, a.body);
+      if (e) { this.refError = e; this.refs[name] = []; continue; }
+      const items = PanelModel.items(a.body, r.items);
+      if (items === null) { this.refError = {kind: "refused", why: "the answer of " + r.path + " has no " + r.items}; this.refs[name] = []; continue; }
+      if (items.length > PL.refEntries) { this.refError = {kind: "refused", why: "more than " + PL.refEntries + " entries in " + r.path}; this.refs[name] = []; continue; }
+      this.refs[name] = items.flatMap(o => {
+        const k = o[r.key];
+        if (pScalarText(k) === null) return [];
+        const lab = pScalarText(o[r.label]);
+        return [{key: k, label: lab !== null ? lab : pScalarText(k), id: pScalarText(k)}];
+      });
+    }
+    this.redraw();
+  }
+  static items(bodyText, key) {
+    let top; try { top = JSON.parse(bodyText); } catch (e) { return null; }
+    if (!pObj(top) || !pOwn(top, key) || !Array.isArray(top[key])) return null;
+    return top[key].filter(pObj);
+  }
+  data(path, parent) { return this.lists.get(pListKey(path, parent ? parent.id : "")) || newListData(); }
+  record(path, parent) { return this.records.get(pListKey(path, parent ? parent.id : "")) || {values: null, error: null, loading: false}; }
+  async loadList(s, path, parent, more) {
+    const key = pListKey(path, parent ? parent.id : "");
+    let d = {...(this.lists.get(key) || newListData())};
+    if (more && d.loading) return;  // two quick "Load more" clicks would send one cursor twice
+    const source = s.source;
+    if (!source) return;
+    const set = () => { this.lists.set(key, d); this.redraw(); };
+    const p = this.allowed("GET", source.path) ? pResolvePath(source.path, {parent: parent ? parent.values : {}}) : null;
+    if (p === null) { d.error = {kind: "refused", why: "the path of " + s.id + " cannot be built"}; set(); return; }
+    const req = {method: "GET", path: p, query: ""};
+    const query = [];
+    if (s.scope) {  // the picker's value is a query parameter; nothing is requested until one is chosen
+      const opts = this.refs[s.scope.ref] || [];
+      if (!this.selected.has(key) || !opts.some(o => o.key === this.selected.get(key))) { if (opts.length) this.selected.set(key, opts[0].key); else this.selected.delete(key); }
+      const v = this.selected.has(key) ? pScalarText(this.selected.get(key)) : null;
+      if (v === null) { d.rows = []; d.next = null; d.error = null; set(); return; }
+      const e = pEncodeQuery(v);
+      if (e === null) { d.error = {kind: "refused", why: "the choice cannot be sent"}; set(); return; }
+      query.push(s.scope.param + "=" + e);
+    }
+    if (more) {
+      if (!s.paging || d.next === null) return;
+      const e = pEncodeQuery(d.next);
+      if (e === null) { d.error = {kind: "refused", why: "the paging cursor cannot be sent"}; set(); return; }
+      query.push(s.paging.param + "=" + e);
+    }
+    req.query = query.join("&");
+    const sent = this.selected.get(key);
+    d.loading = true; set();
+    const a = await this.send(req);
+    if (s.scope && this.selected.get(key) !== sent) return;  // the picker moved meanwhile: this answer is for another choice
+    d = {...d}; d.loading = false;
+    const err = panelError(a.status, a.body);
+    if (err) { d.error = err; set(); return; }
+    const items = source.items === undefined ? null : PanelModel.items(a.body, source.items);
+    if (items === null) { d.error = {kind: "refused", why: "the answer has no list of rows"}; set(); return; }
+    d.error = null;
+    const k = s.key || "";
+    const ids = items.map(o => pScalarText(o[k]));
+    const all = (more ? d.rows.map(r => r.id) : []).concat(ids.filter(x => x !== null));
+    if (ids.includes(null) || new Set(all).size !== all.length) {  // a row without a key, or two with the same: never guessed
+      d.error = {kind: "cannotShow", why: "the rows of " + s.id + " have no unique " + k}; d.rows = []; d.next = null; set(); return;
+    }
+    const rows = items.map((o, i) => ({id: ids[i], values: o}));
+    d.rows = more ? d.rows.concat(rows) : rows;
+    d.next = null;
+    if (s.paging) {
+      let top = null; try { top = JSON.parse(a.body); } catch (e) { /* none */ }
+      const n = pObj(top) ? pScalarText(pGet(top, s.paging.next)) : null;
+      if (n !== null && n !== "" && n !== "0") d.next = n;
+    }
+    set();
+  }
+  loadMore(s, path, parent) { return this.loadList(s, path, parent || null, true); }
+  async select(key, s, path, parent) { this.selected.set(pListKey(path, parent ? parent.id : ""), key); await this.loadList(s, path, parent || null, false); }
+  recordVisible(s, parent) { return s.when === undefined ? true : (parent ? pGet(parent.values, s.when.field) : undefined) === s.when.equals; }
+  async loadRecord(s, path, parent) {
+    const key = pListKey(path, parent ? parent.id : "");
+    if (!this.recordVisible(s, parent)) { this.records.set(key, {values: null, error: null, loading: false}); this.redraw(); return; }  // not requested at all
+    let d = {values: null, error: null, loading: false};
+    const source = s.source;
+    const p = source && this.allowed("GET", source.path) ? pResolvePath(source.path, {parent: parent ? parent.values : {}}) : null;
+    if (p === null) { d.error = {kind: "refused", why: "the path of " + s.id + " cannot be built"}; this.records.set(key, d); this.redraw(); return; }
+    d.loading = true; this.records.set(key, d); this.redraw();
+    const a = await this.send({method: "GET", path: p, query: ""});
+    d = {values: null, error: null, loading: false};
+    const err = panelError(a.status, a.body);
+    if (err) d.error = err;
+    else { let o = null; try { o = JSON.parse(a.body); } catch (e) { /* below */ } if (pObj(o)) d.values = o; else d.error = {kind: "refused", why: "the answer is not one object"}; }
+    this.records.set(key, d); this.redraw();
+  }
+  async openDetail(s, row) { this.opened.set(pListKey(s.id, row.id), [s, row]); await this.loadDetail(s, row); }
+  closeDetail(s, row) { this.opened.delete(pListKey(s.id, row.id)); }
+  async loadDetail(s, row) {
+    for (const c of s.detail ? s.detail.sections : []) {
+      if (c.kind === "list") await this.loadList(c, s.id + "/" + c.id, row, false);
+      if (c.kind === "record") await this.loadRecord(c, s.id + "/" + c.id, row);
+    }
+  }
+  setSearch(text, path, parent) { this.mutate(path, parent, d => { d.search = text; }); }
+  setShowHidden(on, path, parent) { this.mutate(path, parent, d => { d.showHidden = on; }); }
+  mutate(path, parent, f) { const k = pListKey(path, parent ? parent.id : ""), d = {...(this.lists.get(k) || newListData())}; f(d); this.lists.set(k, d); this.redraw(); }
+  visibleRows(s, path, parent) {
+    const d = this.data(path, parent), q = d.search.trim();
+    return d.rows.filter(row => {
+      if (s.hide && !d.showHidden && pGet(row.values, s.hide.field) === s.hide.equals) return false;
+      if (q === "") return true;
+      return (s.filter || []).some(f => { const t = pScalarText(pGet(row.values, f)); return t !== null && t.toLowerCase().includes(q.toLowerCase()); });
+    });
+  }
+  cell(c, row) {
+    const v = pGet(row.values, c.field), raw = pScalarText(v) ?? "";
+    if (c.kind === "bool") return typeof v === "boolean" ? (c.yes !== undefined && v ? this.text(c.yes) : c.no !== undefined && !v ? this.text(c.no) : raw) : raw;
+    if (c.kind === "enum") return c.values && pOwn(c.values, raw) ? this.text(c.values[raw]) : raw;
+    if (c.kind === "ref") { const o = (this.refs[c.ref] || []).find(x => x.id === raw); return o ? o.label : raw; }
+    if (c.kind === "time") { const d = new Date(raw); return raw !== "" && !isNaN(d) ? d.toLocaleString() : raw; }
+    if (c.kind === "multiline") return [...raw].slice(0, PL.multiline).join("");
+    return raw;
+  }
+  cellIsTruncated(c, row) { return c.kind === "multiline" && pLen(pScalarText(pGet(row.values, c.field)) ?? "") > PL.multiline; }
+  rowActions(s, row) { return (s.rowActions || []).filter(a => pSupportedAction(a) && (a.when === undefined || pGet(row.values, a.when.field) === a.when.equals)); }
+  actions(s) { return (s.actions || []).filter(pSupportedAction); }
+  unsupportedCount(s) { return (s.columns || []).filter(c => !pSupportedColumn(c)).length + (s.actions || []).concat(s.rowActions || []).filter(a => !pSupportedAction(a)).length; }
+  defaults(a, row) {
+    const out = {};
+    for (const f of a.fields || []) {
+      if (f.default && f.default.const !== undefined) out[f.id] = f.default.const;
+      else if (f.default && f.default.row !== undefined && row && pOwn(row.values, f.default.row)) out[f.id] = row.values[f.default.row];
+      else if (f.type === "toggle") out[f.id] = false;
+    }
+    return out;
+  }
+  problems(a, values) {
+    const out = {};
+    for (const f of a.fields || []) {
+      const v = pGet(values, f.id);
+      if (f.required === true) {
+        if (f.type === "text") { if (!(typeof v === "string" && v.trim() !== "")) out[f.id] = {required: true}; }
+        else if (v === undefined || v === null) out[f.id] = {required: true};
+      }
+      if (f.type === "text" && typeof v === "string" && f.maxLength !== undefined && f.maxLength > 0 && pBytes(v) > f.maxLength) out[f.id] = {tooLong: f.maxLength};  // bytes, as the core counts them
+    }
+    return out;
+  }
+  // The exact request of an action, or why it cannot be sent: {request} | {error}.
+  request(a, row, parent, values) {
+    row = row || null; parent = parent || null; values = values || {};
+    const refused = why => ({error: {kind: "refused", why}});
+    if (!pSupportedAction(a) || !this.allowed(a.method, a.path)) return refused("the route " + a.method + " " + a.path + " is not registered");
+    if (Object.keys(this.problems(a, values)).length) return refused("the form is not complete");
+    const vals = {row: row ? row.values : {}, parent: parent ? parent.values : {}, field: values};
+    const path = pResolvePath(a.path, vals);
+    if (path === null) return refused("a value cannot be part of the path");
+    const req = {method: a.method, path, query: "", body: ""};
+    if (a.query) { const q = pResolveQuery(a.query, vals); if (q === null) return refused("a value cannot be part of the query"); req.query = q; }
+    const body = {};
+    for (const [k, b] of Object.entries(a.body || {})) {
+      if (b.field !== undefined) { const x = pGet(values, b.field); if (x === undefined || x === null) return refused("no value for " + b.field); body[k] = x; }
+      else if (b.row !== undefined) { const x = row ? pGet(row.values, b.row) : undefined; if (x === undefined) return refused("the row has no " + b.row); body[k] = x; }
+      else if (b.const !== undefined) body[k] = b.const;
+    }
+    if (Object.keys(body).length === 0 && a.body !== undefined && a.method !== "DELETE") req.body = "{}";  // "body": {} sends an empty JSON object
+    if (Object.keys(body).length) req.body = JSON.stringify(pStable(body));
+    return {request: req};
+  }
+  confirmation(a, row) {
+    if (!pNeedsConfirmation(a) || a.confirm === undefined) return null;
+    const fill = key => this.text(key).replace(/\{([A-Za-z][A-Za-z0-9_]{0,63})\}/g, (_, name) => (row && pScalarText(pGet(row.values, name))) || "");  // one pass
+    return {title: fill(a.confirm.title), message: fill(a.confirm.message), button: fill(a.confirm.button),
+      destructive: a.method === "DELETE" || a.destructive === true || a.confirm.destructive === true};
+  }
+  // Sends an action and reloads the whole panel after success. An action that needs a confirmation is refused unless confirmed.
+  async perform(a, path, row, parent, values, confirmed) {
+    const key = pListKey(path, parent ? parent.id : "");
+    if (this.sending.has(key)) return false;
+    this.sending.add(key);
+    try {
+      this.actionError.delete(key);
+      if (pNeedsConfirmation(a) && !confirmed) { this.actionError.set(key, {kind: "refused", why: "the action needs a confirmation"}); this.redraw(); return false; }
+      const r = this.request(a, row, parent, values);
+      if (r.error) { this.actionError.set(key, r.error); this.redraw(); return false; }
+      const resp = await this.send(r.request);
+      const e = panelError(resp.status, resp.body);
+      if (e) { this.actionError.set(key, e); this.redraw(); return false; }
+      await this.load();
+      return true;
+    } finally { this.sending.delete(key); this.redraw(); }
+  }
+}
+// The transport of the page: only GET /panels, GET /panels/strings and the routes the provider registered pass, before anything is sent.
+function panelTransport(fetchRaw, routes) {
+  return async req => {
+    const own = req.method === "GET" && (req.path === "/panels" || req.path === "/panels/strings");
+    if (!own && !pRouteAllows(req.method, req.path, routes)) return {status: 404, body: '{"type":"error","error":{"type":"not_found_error","message":"Not found"}}'};
+    return fetchRaw(req);
+  };
+}
+// --- /paneli iz opisov: logika ---
+// --- paneli iz opisov: prikaz ---
+// The view of a panel. Every string of a description, of a string table and of an answer reaches the DOM through textContent
+// (pe below) or an input's value, never as markup and never into an attribute: serve_settings_panels_test.go checks this section
+// for the forbidden sinks.
+const pe = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+const PGLYPH = {"person.2": "👥", "person.3": "👥", folder: "📁", book: "📖", tray: "📥", gearshape: "⚙", "doc.text": "📄", key: "🔑", "list.bullet": "☰"};
+function panelErrorText(e) {
+  switch (e.kind) {
+    case "unavailable": return t("pUnavailable");
+    case "notFound": return t("pUpdate");
+    case "needsNewer": return t("pNewer");
+    case "server": return e.message;
+    case "http": return "HTTP " + e.status;
+    case "serverFault": return t("pFault") + " (HTTP " + e.status + ")";
+    case "cannotShow": return t("pPart") + ": " + e.why;
+    default: return t("pNotSent") + ": " + e.why;
+  }
+}
+const pnote = (text, err) => pe("div", "note" + (err ? " err" : ""), text);
+const pbutton = (text, onclick, primary) => { const b = pe("button", "btn" + (primary ? " primary" : ""), text); b.addEventListener("click", onclick); return b; };
+const pswitch = (checked, onchange) => {
+  const i = pe("input"); i.type = "checkbox"; i.checked = !!checked;
+  i.addEventListener("change", () => onchange(i.checked));
+  const l = pe("label", "switch"); l.append(i, pe("span")); return l;
+};
+const grp = (...rows) => { const g = pe("div", "group"); g.append(...rows); return g; };
+const prow = (...kids) => { const r = pe("div", "row"); r.append(...kids); return r; };
+
+// panelView: draws one model into host; every change of the model draws again.
+function panelView(model, host) {
+  const view = {form: null, detail: null, search: new Map()};
+  const render = () => {
+    const focused = [...view.search].find(([, e]) => e === document.activeElement);
+    host.replaceChildren(...build());
+    if (focused && view.search.get(focused[0])) { const e = view.search.get(focused[0]); e.focus(); if (e.setSelectionRange) e.setSelectionRange(e.value.length, e.value.length); }
+  };
+  const act = (a, path, row, parent) => {
+    if ((a.fields || []).length) { view.form = {a, path, row, parent, values: model.defaults(a, row)}; render(); return; }
+    run(a, path, row, parent, {});
+  };
+  const run = async (a, path, row, parent, values) => {
+    const c = model.confirmation(a, row);
+    if (c && !confirm(c.title + "\n\n" + c.message)) return false;  // plain text in the browser's own dialog
+    const ok = await model.perform(a, path, row, parent, values, true);
+    if (ok) view.form = null;
+    render();
+    return ok;
+  };
+  const sectionsOf = (sections, prefix, parent) => sections.flatMap(s => {
+    if (s.kind === "text") return [grp(prow(pe("span", "label ptext", model.text(s.body))))];
+    if (s.kind === "list") return list(s, prefix + s.id, parent);
+    if (s.kind === "record") return record(s, prefix + s.id, parent);
+    return [grp(prow(pe("span", "label", t("pPart"))))];
+  });
+  const cellNode = (c, row, sub) => {
+    if (!pSupportedColumn(c)) return pe("div", "sub", t("pPart"));
+    const text = model.cell(c, row);
+    if (c.kind === "multiline") {
+      const d = pe("div", "label");
+      d.append(pe("div", "sub", model.text(c.label)), pe("div", "ptext", text));
+      if (model.cellIsTruncated(c, row)) d.append(pe("div", "warn", t("pShort")));
+      return d;
+    }
+    return sub ? pe("div", "sub ptext", model.text(c.label) + ": " + text) : pe("div", "ptext", text);
+  };
+  const form = (path, parent) => {
+    const f = view.form;
+    if (!f || f.path !== path || (f.parent ? f.parent.id : "") !== (parent ? parent.id : "")) return [];
+    const problems = model.problems(f.a, f.values);
+    const g = pe("div", "group");
+    g.append(prow(pe("span", "label", model.text(f.a.label))));
+    for (const fld of f.a.fields) {
+      const label = pe("span", "label", model.text(fld.label));
+      let input;
+      if (fld.type === "toggle") input = pswitch(f.values[fld.id] === true, v => { f.values[fld.id] = v; });
+      else if (fld.type === "text") {
+        input = pe("input", "left"); input.type = "text"; input.value = typeof f.values[fld.id] === "string" ? f.values[fld.id] : "";
+        input.addEventListener("input", () => { f.values[fld.id] = input.value; });
+        input.addEventListener("change", () => render());
+      } else {
+        input = pe("select");
+        const none = pe("option", "", t("pNone")); none.value = ""; input.append(none);
+        const opts = fld.type === "choice" ? fld.options.map(o => ({id: o.value, key: o.value, label: model.text(o.label)})) : (model.refs[fld.ref] || []);
+        for (const o of opts) { const op = pe("option", "", o.label); op.value = o.id; input.append(op); }
+        input.value = pScalarText(f.values[fld.id] === undefined ? null : f.values[fld.id]) ?? "";
+        input.addEventListener("change", () => { const o = opts.find(x => x.id === input.value); if (o) f.values[fld.id] = o.key; else delete f.values[fld.id]; render(); });
+      }
+      const r = prow(label, input);
+      g.append(r);
+      const p = problems[fld.id];
+      if (p && (f.values[fld.id] !== undefined || !p.required)) g.append(pnote(p.required ? t("pRequired") : t("pTooLong", p.tooLong), true));
+    }
+    const err = model.actionError.get(pListKey(path, parent ? parent.id : ""));
+    if (err) g.append(pnote(panelErrorText(err), true));
+    const bar = pe("div", "buttons");
+    bar.append(pbutton(t("cancel"), () => { view.form = null; render(); }),
+      (() => { const ok = pbutton(t("pOk"), () => run(f.a, f.path, f.row, f.parent, f.values), true); ok.disabled = Object.keys(problems).length > 0 || model.sending.has(pListKey(path, parent ? parent.id : "")); return ok; })());
+    g.append(prow(bar));
+    return [g];
+  };
+  const list = (s, path, parent) => {
+    const d = model.data(path, parent), rows = model.visibleRows(s, path, parent), out = [];
+    const h = pe("h3"); h.append(pe("span", "", model.text(s.title)));
+    const acts = model.actions(s);
+    if (acts.length) { const b = pe("div", "buttons"); for (const a of acts) b.append(pbutton(model.text(a.label), () => act(a, path, null, parent))); h.append(b); }
+    out.push(h);
+    out.push(...form(path, parent));
+    const g = pe("div", "group");
+    if (s.scope) {
+      const sel = pe("select"), cur = pScalarText(model.selected.get(pListKey(path, parent ? parent.id : "")) ?? null);
+      for (const o of model.refs[s.scope.ref] || []) { const op = pe("option", "", o.label); op.value = o.id; sel.append(op); }
+      sel.value = cur ?? "";
+      sel.addEventListener("change", () => { const o = (model.refs[s.scope.ref] || []).find(x => x.id === sel.value); if (o) model.select(o.key, s, path, parent); });
+      g.append(prow(pe("span", "label", model.text(s.scope.label)), sel));
+    }
+    if (s.hide) g.append(prow(pe("span", "label", model.text(s.hide.toggle)), pswitch(d.showHidden, v => model.setShowHidden(v, path, parent))));
+    if ((s.filter || []).length) {
+      const i = pe("input", "left wide"); i.type = "text"; i.placeholder = t("search"); i.value = d.search;
+      i.addEventListener("input", () => model.setSearch(i.value, path, parent));
+      view.search.set(pListKey(path, parent ? parent.id : ""), i);
+      g.append(prow(i));
+    }
+    if (d.error) g.append(prow(pnote(panelErrorText(d.error), true)));
+    const ae = model.actionError.get(pListKey(path, parent ? parent.id : ""));
+    if (ae && !view.form) g.append(prow(pnote(panelErrorText(ae), true)));
+    if (d.loading && d.rows.length === 0) g.append(prow(pnote(t("pLoading"))));
+    for (const row of rows) {
+      const left = pe("div", "label");
+      (s.columns || []).forEach((c, i) => left.append(cellNode(c, row, i > 0)));
+      const r = prow(left);
+      const ra = model.rowActions(s, row);
+      if (s.detail) r.append(pbutton(t("pOpen"), async () => { view.detail = {s, row}; render(); await model.openDetail(s, row); }));
+      if (ra.length) {
+        const sel = pe("select"), first = pe("option", "", t("pActions")); first.value = ""; sel.append(first);
+        ra.forEach((a, i) => { const op = pe("option", "", model.text(a.label)); op.value = String(i); sel.append(op); });
+        sel.addEventListener("change", () => { const a = ra[Number(sel.value)]; sel.value = ""; if (a) act(a, path, row, parent); });
+        r.append(sel);
+      }
+      g.append(r);
+    }
+    if (rows.length === 0 && !d.loading && !d.error && s.empty !== undefined) g.append(prow(pe("span", "label ptext", model.text(s.empty))));
+    if (d.next !== null) g.append(prow(pbutton(t("pMore"), () => model.loadMore(s, path, parent))));
+    if (model.unsupportedCount(s) > 0) g.append(prow(pe("span", "label warn", t("pPart"))));
+    out.push(g);
+    return out;
+  };
+  const record = (s, path, parent) => {
+    if (!model.recordVisible(s, parent)) return [];
+    const d = model.record(path, parent), out = [];
+    if (s.title !== undefined) out.push((() => { const h = pe("h3"); h.append(pe("span", "", model.text(s.title))); return h; })());
+    const g = pe("div", "group");
+    if (d.error) g.append(prow(pnote(panelErrorText(d.error), true)));
+    if (d.loading && d.values === null) g.append(prow(pnote(t("pLoading"))));
+    if (d.values) {
+      const row = {id: "", values: d.values};
+      for (const c of s.columns || []) {
+        if (c.kind === "multiline" || !pSupportedColumn(c)) g.append(prow(cellNode(c, row, false)));
+        else g.append(prow(pe("span", "label", model.text(c.label)), pe("span", "value ptext", model.cell(c, row))));
+      }
+    }
+    out.push(g);
+    return out;
+  };
+  const build = () => {
+    const out = [];
+    if (view.detail) {
+      const {s, row} = view.detail, title = pScalarText(pGet(row.values, s.detail.title) ?? null) ?? row.id;
+      const back = pbutton(t("pBack"), () => { model.closeDetail(s, row); view.detail = null; view.form = null; render(); });
+      const bar = pe("div", "hbar"); bar.append(back, pe("h3", "", title));
+      out.push(bar, ...sectionsOf(s.detail.sections, s.id + "/", row));
+      return out;
+    }
+    if (model.refError) out.push(pnote(panelErrorText(model.refError), true));
+    out.push(...sectionsOf(model.panel.sections, "", null));
+    const bar = pe("div", "hbar");
+    bar.append(pbutton(t("refresh"), () => model.load()));
+    if (model.loading) bar.append(pnote(t("pLoading")));
+    out.push(bar);
+    return out;
+  };
+  model.redraw = render;
+  render();
+  return view;
+}
+// --- /paneli iz opisov: prikaz ---
 // --- panoji ---
 
 const pages = {
+  panel: id => panelPage(id),
   usage: () => usagePane(),
   codex: () => agentPane("codex"),
   grok: () => agentPane("grok"),
@@ -1129,12 +1935,43 @@ const openHistory = new Set(); // naprave z odprto zgodovino (ostane ob osvežit
 let openSession = "";
 // Ikone stranske vrstice (kot na Macu: barvna ploščica z znakom).
 const ICON = {usage: ["#176ac6", "▥"], general: ["#8e8e93", "⚙"], devices: ["#007aff", devicesGlyph], sessions: ["#34c759", "◷"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
+// The panels (Users and devices, Teams and projects, Knowledge base …): descriptions from GET /panels, texts from GET /panels/strings.
+const PANELS = {entries: [], strings: {locale: "C", table: {}}, error: null, loaded: false};
+async function panelFetch(req) {
+  try {
+    const r = await fetch("/minigw/admin/v1" + req.path + (req.query ? "?" + req.query : ""), {method: req.method, credentials: "omit", keepalive: true,
+      headers: {"X-Minigw-Session": SESSION, "Content-Type": "application/json"}, body: req.body ? req.body : undefined});
+    if (r.status === 401) return {status: 401, body: JSON.stringify({error: {message: t("signin")}})};
+    return {status: r.status, body: await r.text()};
+  } catch (e) { return {status: 503, body: '{"error":{"type":"core_unavailable","message":"offline"}}'}; }
+}
+async function ensurePanels(force) {
+  if (PANELS.loaded && !force && !PANELS.error) return;
+  const r = await panelCatalogLoad(panelFetch, panelLocale(navigator.language));
+  Object.assign(PANELS, r, {loaded: true});
+}
+const PCOLOR = "#5856d6";
+const panelTitle = e => panelText(PANELS.strings, e.title) || e.id;
+async function panelPage(id) {
+  await ensurePanels(true);
+  const e = PANELS.entries.find(x => x.id === id);
+  if (!e) return [card(PCOLOR, "▢", t("pPanels"), ""), PANELS.error ? note(panelErrorText(PANELS.error)) : null];
+  const head = card(PCOLOR, PGLYPH[e.symbol] || "▢", panelTitle(e), panelText(PANELS.strings, e.about));
+  if (e.parse.state === "needsNewer") return [head, note(t("pNewer"))];
+  if (e.parse.state === "refused") return [head, note(t("pCannot")), note(e.parse.reason)];
+  const routes = PANEL_ROUTES[e.provider], host = pe("div");
+  const model = new PanelModel(e.parse.panel, PANELS.strings, routes, panelTransport(panelFetch, routes));
+  panelView(model, host);
+  model.load();
+  return [head, host];
+}
 const gwIcon = g => /openrouter\.ai/.test(g.baseURL) ? ["#af52de", "◈"] : ["#007aff", "▤"];
 let search = "";
 const PRESETS = {litellm: ["LiteLLM", "http://localhost:4000", true], openrouter: ["OpenRouter", "https://openrouter.ai/api", false], other: [null, "https://", false]};
 
 async function nav() {
   try { gateways = (await api("GET", "/providers")).providers; } catch (e) { gateways = []; }
+  try { await ensurePanels(); } catch (e) { PANELS.error = {kind: "refused", why: e.message}; }
   const item = (page, label, [color, glyph], arg) => el("button", {class: "item" + (current === page && currentArg === (arg || "") ? " sel" : ""),
     onclick: () => show(page, arg)}, el("span", {class: "ico", style: "background:" + color}, glyphNode(glyph)), label);
   const sel = current === "gateway" ? currentArg : "";
@@ -1149,6 +1986,7 @@ async function nav() {
     ["devices", t("devices"), ICON.devices],
     ["sessions", t("sessions"), ICON.sessions],
     ["usage", t("usage"), ICON.usage],
+    ...(PANELS.entries.length ? PANELS.entries.map(e => ["panel", panelTitle(e), [PCOLOR, PGLYPH[e.symbol] || "▢"], e.id]) : PANELS.error ? [["panel", t("pPanels"), [PCOLOR, "▢"], ""]] : []),
   ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
   const find = el("input", {type: "text", class: "left search", placeholder: t("search"), value: search});
   find.addEventListener("input", () => { search = find.value; nav().then(() => { const f = document.querySelector("nav .search"); f.focus(); f.setSelectionRange(search.length, search.length); }); });
