@@ -237,7 +237,7 @@ Both clients support identical commands:
 
 ```text
 minigw kb submit <project>|--team <team> [--class structure|data|private] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->
-minigw kb submissions [<project>] [--json]
+minigw kb submissions [<project>|--team <team>] [--json]
 minigw kb faq [<project>|--team <team>] [--json]
 minigw kb hooks on|off|status [<project>]
 minigw gw kb review [<project>|--team <team>]

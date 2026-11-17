@@ -28,6 +28,7 @@ type cliTeam struct {
 		Name     string `json:"name"`
 		Archived bool   `json:"archived"`
 	} `json:"projects"`
+	Notes *int `json:"notes"` // the team's own notes (a roster member's view only)
 }
 
 func teamLine(t cliTeam) string {
@@ -204,6 +205,9 @@ func (e *projectEnv) team(args []string) error {
 				line += "  (archived)"
 			}
 			e.say(clean(line))
+		}
+		if t.Notes != nil {
+			e.say(clean(fmt.Sprintf("team notes: %d  (read them: minigw note list --team %s)", *t.Notes, t.Name)))
 		}
 	}
 	return nil

@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"minigw/core"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -213,7 +216,7 @@ func TestKBTeamFlagEndToEnd(t *testing.T) {
 		t.Fatal(out)
 	}
 	e, o, _ := c.env("ana", dir, "")
-	if err = e.kb([]string{"search", "--team", "acme", "migrate"}); err != nil || !strings.Contains(o.String(), "Deploy order") || !strings.Contains(o.String(), "from team:acme") {
+	if err = e.kb([]string{"search", "--team", "acme", "migrate"}); err != nil || !strings.Contains(o.String(), "Deploy order  team acme") || strings.Contains(o.String(), "from") {
 		t.Fatal(o.String(), err)
 	}
 	o.Reset()
@@ -241,5 +244,84 @@ func TestKBTeamFlagEndToEnd(t *testing.T) {
 		if strings.Contains(listing, "@team") || strings.Contains(listing, "1099511627") {
 			t.Fatalf("%v shows a segment: %v %s", args, lerr, listing)
 		}
+	}
+}
+
+// No line-producing function of the Go client prints the hidden id of a team's own notes as a project: every output
+// below is made from a gateway answer that carries that id, and must show the team name instead.
+func TestNoHiddenIDInOutput(t *testing.T) {
+	const seg = int64(1)<<40 + 7
+	bigNumber := regexp.MustCompile(`\d{13,}`)
+	clean := func(what, out string) {
+		t.Helper()
+		if bigNumber.MatchString(out) || strings.Contains(out, "@team-") {
+			t.Fatalf("%s prints a hidden id: %q", what, out)
+		}
+	}
+	hit := core.SearchHit{ID: 3, Title: "t", Project: seg, Class: core.Structure, Team: "acme", From: "team:acme"}
+	clean("searchLine", searchLine(hit))
+	hit.Team = "" // an older gateway sends no name: still no id
+	clean("searchLine without a name", searchLine(hit))
+	sub := core.Submission{ID: 1, Project: seg, State: "pending", Class: core.Data, Title: "t"}
+	clean("submissionLine", submissionLine(sub, map[int64]string{7: "acme"}))
+	clean("submissionLine without a name", submissionLine(sub, nil))
+	if !strings.Contains(submissionLine(sub, map[int64]string{7: "acme"}), "team acme") {
+		t.Fatal("team name missing")
+	}
+	// The commands, against answers that carry the hidden id.
+	var out bytes.Buffer
+	e := &projectEnv{out: &out, connect: func() (connection, string) { return connection{}, "" }, do: func(_ connection, m, p string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+		switch {
+		case strings.HasPrefix(p, "/minigw/v1/teams/"):
+			return 200, []byte(fmt.Sprintf(`{"id":7,"name":"acme","segment":%d}`, seg)), nil
+		case strings.HasSuffix(p, "/notes"):
+			return 200, []byte(fmt.Sprintf(`{"notes":[{"id":5,"project":%d,"team":"acme","class":"data","title":"T","author":"a","updated":"2026-11-17T10:00:00Z","revision":1}]}`, seg)), nil
+		case strings.Contains(p, "/notes/"):
+			return 200, []byte(fmt.Sprintf(`{"id":5,"project":%d,"team":"acme","class":"data","title":"T","body":"b","author":"a","updated":"2026-11-17T10:00:00Z","revision":1}`, seg)), nil
+		case strings.HasSuffix(p, "/kb/faq"):
+			return 200, []byte(`{"entries":[]}`), nil
+		case strings.Contains(p, "/kb/submissions"):
+			return 200, []byte(fmt.Sprintf(`{"submissions":[{"id":8,"project":%d,"class":"data","title":"P","state":"pending"}]}`, seg)), nil
+		case strings.Contains(p, "/kb/search"):
+			return 200, []byte(fmt.Sprintf(`{"hits":[{"id":5,"title":"T","project":%d,"class":"data","snippet":"s","updated":"2026-11-17T10:00:00Z","team":"acme"}]}`, seg)), nil
+		}
+		t.Fatal("unexpected", m, p)
+		return 599, nil, nil
+	}}
+	for _, args := range [][]string{{"note", "list", "--team", "acme"}, {"note", "read", "5", "--team", "acme"}, {"kb", "faq", "--team", "acme"}, {"kb", "submissions", "--team", "acme"}, {"kb", "search", "--team", "acme", "x"}} {
+		out.Reset()
+		var err error
+		if args[0] == "note" {
+			err = e.note(args[1:])
+		} else {
+			err = e.kb(args[1:])
+		}
+		if err != nil {
+			t.Fatal(args, err)
+		}
+		clean(strings.Join(args, " "), out.String())
+	}
+	// MCP: the model sees the team name; note_read still takes the id it was given.
+	out.Reset()
+	var asked []string
+	e.in = strings.NewReader(mcpInput(t,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"kb_search","arguments":{"query":"x"}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"note_read","arguments":{"id":5}}}`))
+	inner := e.do
+	e.do = func(c connection, m, p string, h map[string]string, b []byte) (int, []byte, http.Header) {
+		if strings.Contains(p, "/notes/") || strings.Contains(p, "/kb/search") {
+			asked = append(asked, p)
+		}
+		if p == "/minigw/v1/projects/demo" {
+			return 200, []byte(`{"id":1}`), nil
+		}
+		return inner(c, m, p, h, b)
+	}
+	if err := e.kbMCP([]string{"--project", "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	clean("kb mcp", out.String())
+	if !strings.Contains(out.String(), "acme") || len(asked) != 2 || !strings.HasSuffix(asked[1], "/notes/5") {
+		t.Fatal(out.String(), asked)
 	}
 }

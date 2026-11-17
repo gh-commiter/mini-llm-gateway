@@ -765,6 +765,28 @@
       "out": "1  A/B\n",
       "status": 200,
       "path": "/minigw/v1/teams/1"
+    },
+    {
+      "name": "show with team notes",
+      "args": [
+        "show",
+        "1"
+      ],
+      "body": "{\"id\":1,\"name\":\"Engineering\",\"members\":[],\"projects\":[],\"notes\":3}",
+      "out": "1  Engineering\nteam notes: 3  (read them: minigw note list --team Engineering)\n",
+      "status": 200,
+      "path": "/minigw/v1/teams/1"
+    },
+    {
+      "name": "show with no team notes",
+      "args": [
+        "show",
+        "1"
+      ],
+      "body": "{\"id\":1,\"name\":\"Engineering\",\"members\":[],\"projects\":[],\"notes\":0}",
+      "out": "1  Engineering\nteam notes: 0  (read them: minigw note list --team Engineering)\n",
+      "status": 200,
+      "path": "/minigw/v1/teams/1"
     }
   ],
   "projects": [

@@ -55,6 +55,8 @@ type SearchHit struct {
 	// From names where a hit comes from when it is not the project asked: "team:<name>" for the team's notes,
 	// "project:<slug>" for a project the asked one depends on.
 	From string `json:"from,omitempty"`
+	// Team names the team of a hit that lives in a team's own notes (Project is then a hidden id to be shown as the team).
+	Team string `json:"team,omitempty"`
 }
 type SearchPage struct {
 	Hits []SearchHit `json:"hits"`
@@ -143,6 +145,20 @@ func searchNotes(ctx context.Context, tx *sql.Tx, user, home int64, rs []readabl
 		if p == home && !isSegment(p) {
 			continue
 		}
+		if isSegment(p) {
+			if _, ok := labels[p]; !ok {
+				var name string
+				if err = tx.QueryRow(`SELECT name FROM teams WHERE id=?`, p-segmentBase).Scan(&name); err != nil {
+					return SearchPage{}, err
+				}
+				labels[p] = name
+			}
+			found[i].Team = labels[p]
+			if p != home { // from names a source other than the one asked
+				found[i].From = "team:" + labels[p]
+			}
+			continue
+		}
 		if _, ok := labels[p]; !ok && !isSegment(p) { // a project that the home project depends on: its slug, else no label
 			var slug string
 			switch err = tx.QueryRow(`SELECT p.slug FROM project_depends d JOIN projects p ON p.id=d.depends_on WHERE d.project_id=? AND d.depends_on=?`, home, p).Scan(&slug); err {
@@ -158,14 +174,6 @@ func searchNotes(ctx context.Context, tx *sql.Tx, user, home int64, rs []readabl
 			found[i].From = labels[p]
 			continue
 		}
-		if _, ok := labels[p]; !ok {
-			var name string
-			if err = tx.QueryRow(`SELECT name FROM teams WHERE id=?`, p-segmentBase).Scan(&name); err != nil {
-				return SearchPage{}, err
-			}
-			labels[p] = "team:" + name
-		}
-		found[i].From = labels[p]
 	}
 	for _, h := range found {
 		candidate := append(out.Hits, h)

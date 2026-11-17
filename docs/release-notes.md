@@ -5,6 +5,11 @@
 ### New
 - Project dependencies: the owner records that a project depends on another (`minigw gw project depends add <project> <other>`, `remove`, `list`), across teams, at most 16 per project. A person's search of a project, and `note read` of a hit, then also cover the projects it depends on, each only as far as that person could read it directly (membership or grant): a dependency is a search hint and gives no permission. Such a hit ends with `from project:<slug>`. `minigw project depends [<project>]` lists the dependencies you can read. Team bundles carry the relation between projects that are both in the bundle (`gw import --dry-run` lists what it would add and skips names the gateway does not have).
 
+- `minigw kb submissions --team <team>` lists your own submissions to a team's notes, and `minigw kb submissions` without an argument now also lists those of the teams you are on (labelled `team <name>`). `minigw team show <team>` says how many team notes exist and how to read them (`minigw note list --team <team>`); nothing for a team you are not on.
+
+### Fixed
+- A hit, note or submission from a team's own notes no longer prints a hidden number as its project: the line says `team <name>` (the `from team:<name>` ending stays only for a hit that comes from another source than the one asked), and the MCP tools show the team name, not the id. `note_read` still takes the note id it was given.
+
 ### Changed
 - The project database schema is now 16 (a snapshot is taken before the migration). An older gateway cannot open it.
 - Only one level is followed: a dependency of a dependency is not searched. A cycle is allowed and harmless.

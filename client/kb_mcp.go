@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"minigw/core"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -126,6 +127,9 @@ func (e *projectEnv) kbMCP(args []string) error {
 		if name == "note_read" && v["class"] != "structure" && v["class"] != "data" {
 			return nil, errors.New("not found or not visible")
 		}
+		if name == "note_read" {
+			mcpTeamNotID(v)
+		}
 		if name == "kb_search" {
 			hits, ok := v["hits"].([]any)
 			if !ok {
@@ -138,6 +142,7 @@ func (e *projectEnv) kbMCP(args []string) error {
 					return nil, errors.New("invalid gateway response")
 				}
 				if d["class"] == "structure" || d["class"] == "data" {
+					mcpTeamNotID(d)
 					visible = append(visible, d)
 				}
 			}
@@ -345,6 +350,18 @@ func mcpLoop(in io.Reader, out io.Writer, call mcpCall) error {
 		}
 		if e := send(id, result, code, message); e != nil {
 			return e
+		}
+	}
+}
+
+// mcpTeamNotID drops the hidden id of a team's own notes from a result: a model sees the team name (the "team" field),
+// never an id it could mistake for a project. note_read still takes the note id it was given.
+func mcpTeamNotID(d map[string]any) {
+	if n, ok := d["project"].(json.Number); ok {
+		if id, err := n.Int64(); err == nil {
+			if _, seg := core.SegmentTeam(id); seg {
+				delete(d, "project")
+			}
 		}
 	}
 }

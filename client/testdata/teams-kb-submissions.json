@@ -280,13 +280,75 @@
           "match": "GET /minigw/v1/projects?archived=1",
           "status": 200,
           "body": "[]"
+        },
+        {
+          "match": "GET /minigw/v1/teams",
+          "status": 200,
+          "body": "[{\"id\":1,\"name\":\"acme\",\"archived\":false,\"path\":\"\",\"segment\":1099511627777},{\"id\":2,\"name\":\"zeta\",\"archived\":false,\"path\":\"\",\"segment\":1099511627778}]"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1099511627777/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":8,\"project\":1099511627777,\"user\":2,\"class\":\"data\",\"title\":\"Plan\",\"state\":\"pending\"}]}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1099511627778/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[]}"
         }
       ],
-      "out": "no submissions\n",
+      "out": "submission 8  team acme  pending  data  Plan\n",
       "requests": [
         [
           "GET",
           "/minigw/v1/projects?archived=1",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/teams",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1099511627777/kb/submissions?after=0",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1099511627778/kb/submissions?after=0",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "submissions",
+        "--team",
+        "acme"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/teams/acme",
+          "status": 200,
+          "body": "{\"id\":1,\"name\":\"acme\",\"archived\":false,\"path\":\"\",\"segment\":1099511627777,\"members\":[],\"projects\":[]}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1099511627777/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":8,\"project\":1099511627777,\"user\":2,\"class\":\"data\",\"title\":\"Plan\",\"state\":\"pending\"}]}"
+        }
+      ],
+      "out": "submission 8  team acme  pending  data  Plan\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/teams/acme",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1099511627777/kb/submissions?after=0",
           ""
         ]
       ]
@@ -701,10 +763,10 @@
         {
           "match": "GET /minigw/v1/projects/1099511627777/kb/search?q=deploy",
           "status": 200,
-          "body": "{\"hits\":[{\"id\":12,\"title\":\"Deploy order\",\"project\":1099511627777,\"class\":\"structure\",\"snippet\":\"Migrate first.\",\"updated\":\"2026-11-17T10:00:00Z\",\"from\":\"team:acme\"}]}"
+          "body": "{\"hits\":[{\"id\":12,\"title\":\"Deploy order\",\"project\":1099511627777,\"class\":\"structure\",\"snippet\":\"Migrate first.\",\"updated\":\"2026-11-17T10:00:00Z\",\"team\":\"acme\"}]}"
         }
       ],
-      "out": "12  Deploy order  project 1099511627777  structure  2026-11-17 10:00  from team:acme\nMigrate first.\n",
+      "out": "12  Deploy order  team acme  structure  2026-11-17 10:00\nMigrate first.\n",
       "requests": [
         [
           "GET",
@@ -734,10 +796,10 @@
         {
           "match": "GET /minigw/v1/projects/1/kb/search?q=reset",
           "status": 200,
-          "body": "{\"hits\":[{\"id\":9,\"title\":\"How do I reset?\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Press the button.\",\"updated\":\"2026-11-17T10:00:00Z\",\"entryKind\":\"faq\"},{\"id\":12,\"title\":\"Reset order\",\"project\":1099511627777,\"class\":\"data\",\"snippet\":\"Team rule.\",\"updated\":\"2026-11-17T09:00:00Z\",\"entryKind\":\"faq\",\"from\":\"team:acme\"}]}"
+          "body": "{\"hits\":[{\"id\":9,\"title\":\"How do I reset?\",\"project\":1,\"class\":\"structure\",\"snippet\":\"Press the button.\",\"updated\":\"2026-11-17T10:00:00Z\",\"entryKind\":\"faq\"},{\"id\":12,\"title\":\"Reset order\",\"project\":1099511627777,\"class\":\"data\",\"snippet\":\"Team rule.\",\"updated\":\"2026-11-17T09:00:00Z\",\"entryKind\":\"faq\",\"team\":\"acme\",\"from\":\"team:acme\"}]}"
         }
       ],
-      "out": "9  How do I reset?  project 1  structure  2026-11-17 10:00  (faq)\nPress the button.\n12  Reset order  project 1099511627777  data  2026-11-17 09:00  (faq)  from team:acme\nTeam rule.\n",
+      "out": "9  How do I reset?  project 1  structure  2026-11-17 10:00  (faq)\nPress the button.\n12  Reset order  team acme  data  2026-11-17 09:00  (faq)  from team:acme\nTeam rule.\n",
       "requests": [
         [
           "GET",
