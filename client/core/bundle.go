@@ -1203,8 +1203,12 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 					return e
 				}
 			}
-			var have, archived, count int
-			if e := tx.QueryRow(`SELECT (SELECT count(*) FROM project_depends WHERE project_id=?1 AND depends_on=?2), (SELECT count(*) FROM projects WHERE id IN(?1,?2) AND archived=1), (SELECT count(*) FROM project_depends WHERE project_id=?1)`, a, b).Scan(&have, &archived, &count); e != nil {
+			var have, archived int
+			if e := tx.QueryRow(`SELECT (SELECT count(*) FROM project_depends WHERE project_id=?1 AND depends_on=?2), (SELECT count(*) FROM projects WHERE id IN(?1,?2) AND archived=1)`, a, b).Scan(&have, &archived); e != nil {
+				return e
+			}
+			count, e := dependsCount(tx, a, 0, 0) // both kinds: one cap
+			if e != nil {
 				return e
 			}
 			switch {

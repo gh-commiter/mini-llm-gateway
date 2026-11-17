@@ -87,8 +87,10 @@ extension ProjectEnv {
         let r = request(c, "GET", "\(Self.apiProjects)/\(project)/depends")
         guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
         guard let list = JSONValue.parse(r.data)?.dict["depends"]?.array else { throw Self.malformed }
+        let teams = JSONValue.parse(r.data)?.dict["teams"]?.array ?? []  // only the teams the caller is on: the gateway hides the others
         for d in list { say(ProjectText.clean("depends on " + (d.dict["slug"]?.string ?? ""))) }
-        if list.isEmpty { say("no dependencies") }
+        for t in teams { say(ProjectText.clean("depends on team " + (t.dict["name"]?.string ?? ""))) }
+        if list.isEmpty && teams.isEmpty { say("no dependencies") }
     }
 
     /// minigw project remote list [<slug>] | add <url>|--here [<slug>] | remove <url> [<slug>]

@@ -204,6 +204,9 @@ func TestTeamDependsRoutes(t *testing.T) {
 	if strings.Contains(string(call(member("dev-cene"), "GET", fmt.Sprintf("/minigw/v1/projects/%d/depends", eu), "", 200).Body), "acme") {
 		t.Fatal("a name outside the roster was listed")
 	}
+	// On the roster but without a role in eureko: the project is not visible to her, so neither is its list.
+	call(admin, "PUT", fmt.Sprintf("/teams/%d/members/%d", team.Team.ID, f.uid["fani"]), "", 200)
+	call(member("dev-fani"), "GET", fmt.Sprintf("/minigw/v1/projects/%d/depends", eu), "", 404)
 	// No member route changes it.
 	for _, m := range []string{"PUT", "POST", "DELETE", "PATCH"} {
 		call(member("dev-fani"), m, fmt.Sprintf("/minigw/v1/projects/%d/depends/teams/%d", eu, team.Team.ID), "", 404)

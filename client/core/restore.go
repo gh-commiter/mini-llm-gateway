@@ -392,20 +392,24 @@ func checkSchemaObjects(ctx context.Context, db *sql.DB, version int) error {
 	if err != nil {
 		return err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT type, name FROM sqlite_master`)
+	rows, err := db.QueryContext(ctx, `SELECT type, name, coalesce(sql,'') FROM sqlite_master`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	seen := map[string]bool{}
 	for rows.Next() {
-		var typ, name string
-		if err := rows.Scan(&typ, &name); err != nil {
+		var typ, name, def string
+		if err := rows.Scan(&typ, &name, &def); err != nil {
 			return err
 		}
 		seen[typ+" "+name] = true
-		if !want[typ+" "+name] && !strings.HasPrefix(name, "sqlite_autoindex_") {
+		w, ok := want[typ+" "+name]
+		if !ok && !strings.HasPrefix(name, "sqlite_autoindex_") {
 			return fmt.Errorf("unexpected %s %q in a core database of schema %d", typ, name, version)
+		}
+		if typ == "trigger" && ok && strings.Join(strings.Fields(def), " ") != w { // the name alone proves nothing: the body is what fires
+			return fmt.Errorf("trigger %q differs from the one this program creates in a core database of schema %d", name, version)
 		}
 	}
 	for k := range want { // triggers guard permissions: a backup must not lack them
@@ -417,7 +421,7 @@ func checkSchemaObjects(ctx context.Context, db *sql.DB, version int) error {
 }
 
 // expectedObjects runs the first version migrations on an empty in-memory database and lists what they made.
-func expectedObjects(ctx context.Context, version int) (map[string]bool, error) {
+func expectedObjects(ctx context.Context, version int) (map[string]string, error) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		return nil, err
@@ -434,18 +438,18 @@ func expectedObjects(ctx context.Context, version int) (map[string]bool, error) 
 			return nil, err
 		}
 	}
-	rows, err := tx.Query(`SELECT type, name FROM sqlite_master`)
+	rows, err := tx.Query(`SELECT type, name, coalesce(sql,'') FROM sqlite_master`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	want := map[string]bool{"table sqlite_sequence": true}
+	want := map[string]string{"table sqlite_sequence": ""}
 	for rows.Next() {
-		var typ, name string
-		if err := rows.Scan(&typ, &name); err != nil {
+		var typ, name, def string
+		if err := rows.Scan(&typ, &name, &def); err != nil {
 			return nil, err
 		}
-		want[typ+" "+name] = true
+		want[typ+" "+name] = strings.Join(strings.Fields(def), " ")
 	}
 	return want, rows.Err()
 }

@@ -5191,6 +5191,46 @@
    }
   },
   {
+   "name": "project depends with teams",
+   "args": [
+    "project",
+    "depends",
+    "shop"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/shop",
+     "status": 200,
+     "body": "{\"id\":3,\"slug\":\"shop\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/depends",
+     "status": 200,
+     "body": "{\"depends\":[{\"id\":4,\"slug\":\"web\",\"name\":\"Web\"}],\"teams\":[{\"id\":1,\"name\":\"Engineering\",\"archived\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "depends on web\ndepends on team Engineering\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/shop",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/depends",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
    "name": "project depends none",
    "args": [
     "project",

@@ -33,6 +33,13 @@ CREATE TRIGGER segment_no_team_depends_upd BEFORE UPDATE OF project_id ON projec
 	return err
 }
 
+// dependsCount is THE count behind the cap of maxDepends (project and team dependencies together, everywhere: the owner's routes and the
+// bundle import), without the row being added again (other or team; 0 = none), which is a no-op.
+func dependsCount(tx *sql.Tx, project, other, team int64) (n int, err error) {
+	err = tx.QueryRow(`SELECT (SELECT count(*) FROM project_depends WHERE project_id=?1 AND depends_on<>?2)+(SELECT count(*) FROM project_team_depends WHERE project_id=?1 AND team_id<>?3)`, project, other, team).Scan(&n)
+	return
+}
+
 func (s *Store) AddDepends(ctx context.Context, project, other int64) error {
 	if project == other {
 		return ErrRefusal{"a project cannot depend on itself"}
@@ -46,14 +53,14 @@ func (s *Store) AddDepends(ctx context.Context, project, other int64) error {
 				return "", e
 			}
 		}
-		var n int
-		if e := tx.QueryRow(`SELECT (SELECT count(*) FROM project_depends WHERE project_id=?1 AND depends_on<>?2)+(SELECT count(*) FROM project_team_depends WHERE project_id=?1)`, project, other).Scan(&n); e != nil {
+		n, e := dependsCount(tx, project, other, 0)
+		if e != nil {
 			return "", e
 		}
 		if n >= maxDepends {
 			return "", ErrRefusal{"a project can have at most 16 dependencies (projects and teams together)"}
 		}
-		_, e := tx.Exec(`INSERT OR IGNORE INTO project_depends(project_id,depends_on) VALUES(?,?)`, project, other)
+		_, e = tx.Exec(`INSERT OR IGNORE INTO project_depends(project_id,depends_on) VALUES(?,?)`, project, other)
 		return "", e
 	})
 }
@@ -154,14 +161,14 @@ func (s *Store) AddTeamDepends(ctx context.Context, project, team int64) error {
 		if own > 0 {
 			return "", ErrRefusal{"team " + name + " already holds this project: its notes are searched anyway"}
 		}
-		var n int
-		if e := tx.QueryRow(`SELECT (SELECT count(*) FROM project_depends WHERE project_id=?1)+(SELECT count(*) FROM project_team_depends WHERE project_id=?1 AND team_id<>?2)`, project, team).Scan(&n); e != nil {
+		n, e := dependsCount(tx, project, 0, team)
+		if e != nil {
 			return "", e
 		}
 		if n >= maxDepends {
 			return "", ErrRefusal{"a project can have at most 16 dependencies (projects and teams together)"}
 		}
-		_, e := tx.Exec(`INSERT OR IGNORE INTO project_team_depends(project_id,team_id) VALUES(?,?)`, project, team)
+		_, e = tx.Exec(`INSERT OR IGNORE INTO project_team_depends(project_id,team_id) VALUES(?,?)`, project, team)
 		return "", e
 	})
 }

@@ -1105,14 +1105,20 @@ func (e *projectEnv) depends(pos []string) error {
 	if st != 200 {
 		return gatewayError(st, data, h)
 	}
-	var r struct{ Depends []struct{ Slug string } }
+	var r struct {
+		Depends []struct{ Slug string }
+		Teams   []struct{ Name string } // only the teams the caller is on: the gateway hides the others
+	}
 	if err := json.Unmarshal(data, &r); err != nil {
 		return err
 	}
 	for _, d := range r.Depends {
 		e.say(clean("depends on " + d.Slug))
 	}
-	if len(r.Depends) == 0 {
+	for _, t := range r.Teams {
+		e.say(clean("depends on team " + t.Name))
+	}
+	if len(r.Depends)+len(r.Teams) == 0 {
 		e.say("no dependencies")
 	}
 	return nil

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -164,5 +165,164 @@ func TestTeamDependsRestoreNeedsTheTriggers(t *testing.T) {
 	db.Close()
 	if err := Restore(t.TempDir(), bak); err == nil || !strings.Contains(err.Error(), "missing trigger") {
 		t.Fatal(err)
+	}
+}
+
+// One cap for both kinds, also in a bundle import (dry run and real): a project with 16 team dependencies gets no project dependency.
+func TestTeamDependsCountInBundleImportCap(t *testing.T) {
+	source := newFx(t)
+	team, e := source.CreateTeam(ctx, "Team")
+	source.ok(e)
+	for _, s := range []string{"cap-a", "cap-b", "cap-c"} {
+		source.project(s)
+		source.ok(source.AddTeamProject(ctx, team.ID, source.pid[s]))
+	}
+	file := filepath.Join(t.TempDir(), "cap.zip")
+	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: file}))
+	b, e := readBundle(file)
+	source.ok(e)
+	for i := range b.manifest.Projects {
+		if b.manifest.Projects[i].Slug == "cap-a" {
+			b.manifest.Projects[i].DependsOn = []string{"cap-b", "cap-c"}
+		}
+	}
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "s"})
+	source.ok(e)
+	ps, e := target.AdminListProjects(ctx)
+	source.ok(e)
+	var a int64
+	for _, p := range ps {
+		if p.Slug == "cap-a" {
+			a = p.ID
+		}
+	}
+	for i := 0; i < 16; i++ {
+		tm, e := target.CreateTeam(ctx, fmt.Sprint("dep-team-", i))
+		source.ok(e)
+		source.ok(target.AddTeamDepends(ctx, a, tm.ID))
+	}
+	more := rewriteZip(t, b, nil)
+	for _, dry := range []bool{true, false} {
+		rep, e := target.ImportBundle(ctx, BundleImport{Path: more, Source: "s", DryRun: dry})
+		source.ok(e)
+		capped := 0
+		for _, l := range rep.Lines {
+			if strings.Contains(l, "create depends") {
+				t.Fatalf("dry=%v: a project dependency was added above the cap: %v", dry, rep.Lines)
+			}
+			if strings.Contains(l, "depends cap-a") && strings.Contains(l, "at most 16") {
+				capped++
+			}
+		}
+		if capped != 2 {
+			t.Fatalf("dry=%v: %v", dry, rep.Lines)
+		}
+	}
+	if n, _, e := target.AdminListDepends(ctx, a); e != nil || len(n) != 0 {
+		t.Fatal(n, e)
+	}
+}
+
+// Held checks of AddTeamDepends, the member list, checkSegments and the update trigger.
+func TestTeamDependsArchivedProjectRefused(t *testing.T) {
+	f, _ := teamDepFx(t)
+	eu := f.pid["eureko"]
+	f.ok(f.RemoveTeamDepends(ctx, eu, f.acme))
+	f.ok(f.SetProjectArchived(ctx, eu, true))
+	is(t, f.AddTeamDepends(ctx, eu, f.acme), ErrArchived)
+}
+
+func TestTeamDependsMemberListNeedsAProjectRole(t *testing.T) {
+	f, _ := teamDepFx(t)
+	// fani is on acme's roster but has no role in eureko: the list answers like for any project she cannot see.
+	if _, e := f.ListTeamDepends(ctx, f.p("fani"), f.pid["eureko"]); e == nil {
+		t.Fatal("a user without a role in the project got its team dependencies")
+	}
+}
+
+func TestTeamDependsCheckSegmentsRefusesAnUnknownTeam(t *testing.T) {
+	f, _ := teamDepFx(t)
+	// a restored file may come from a connection without foreign keys: write the row the way such a file would hold it
+	bak := filepath.Join(t.TempDir(), "d.db")
+	f.ok(f.Backup(ctx, bak))
+	db, err := sql.Open("sqlite", "file:"+bak)
+	f.ok(err)
+	defer db.Close()
+	if err := func() error {
+		tx, e := db.Begin()
+		if e != nil {
+			return e
+		}
+		defer tx.Rollback()
+		return checkSegments(tx)
+	}(); err != nil {
+		t.Fatal("the control: a consistent backup failed the check", err)
+	}
+	if _, err = db.Exec(`INSERT INTO project_team_depends(project_id,team_id) VALUES(?,?)`, f.pid["fakture"], 9999); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	f.ok(err)
+	defer tx.Rollback()
+	if checkSegments(tx) == nil {
+		t.Fatal("a dependency on a team that does not exist passed the check")
+	}
+}
+
+func TestTeamDependsUpdateTriggerRefuses(t *testing.T) {
+	f, _ := teamDepFx(t)
+	err := f.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`UPDATE project_team_depends SET project_id=? WHERE team_id=?`, f.seg, f.acme)
+		return e
+	})
+	if err == nil || !strings.Contains(err.Error(), "segment with a dependency") {
+		t.Fatal(err)
+	}
+}
+
+func TestBundleRefusesATeamDependsField(t *testing.T) {
+	source, _ := bundleFixture(t)
+	file := filepath.Join(t.TempDir(), "d.zip")
+	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: file}))
+	b, e := readBundle(file)
+	source.ok(e)
+	evil := rewriteZip(t, b, func(files map[string][]byte) {
+		files["manifest.json"] = bytes.Replace(files["manifest.json"], []byte(`"slug":`), []byte(`"team_depends":["x"],"slug":`), 1)
+	})
+	if _, err := readBundle(evil); err == nil || !strings.Contains(err.Error(), "team_depends") {
+		t.Fatal(err)
+	}
+}
+
+// A backup whose guard trigger keeps its name but not its body is refused.
+func TestRestoreComparesTriggerBodies(t *testing.T) {
+	for _, trig := range []string{"segment_no_team_depends", "segment_no_depends", "segment_no_depends_upd", "segment_no_team_depends_upd"} {
+		s := openT(t, t.TempDir())
+		bak := filepath.Join(t.TempDir(), "d.db")
+		if err := s.Backup(ctx, bak); err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+		db, _ := sql.Open("sqlite", "file:"+bak)
+		table := "project_depends"
+		if strings.Contains(trig, "team_depends") {
+			table = "project_team_depends"
+		}
+		ev := "INSERT"
+		if strings.HasSuffix(trig, "_upd") {
+			ev = "UPDATE OF project_id"
+		}
+		for _, q := range []string{`DROP TRIGGER ` + trig, `CREATE TRIGGER ` + trig + ` BEFORE ` + ev + ` ON ` + table + ` WHEN 0 BEGIN SELECT 1; END`} {
+			if _, err := db.Exec(q); err != nil {
+				t.Fatal(trig, err)
+			}
+		}
+		db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+		db.Close()
+		if err := Restore(t.TempDir(), bak); err == nil || !strings.Contains(err.Error(), "differs") {
+			t.Fatal(trig, err)
+		}
 	}
 }
