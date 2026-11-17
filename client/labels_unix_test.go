@@ -24,7 +24,7 @@ func TestMinigwLabelsNeverChangeTheRun(t *testing.T) {
 	os.WriteFile(storePath(), []byte(`{"url":"http://127.0.0.1:1","token":"t","device":"dev"}`), 0o600)
 	run := func(env []string, args ...string) (stderr string, code int, claudeArgs string) {
 		os.Remove(log)
-		cmd := minigwCmd(dir, log, append([]string{"HOME=" + home, "XDG_CONFIG_HOME=" + home, "APPDATA=" + home, "USERPROFILE=" + home, "MINIGW_TEST_CLAUDE_EXIT=7"}, env...), args...)
+		cmd := minigwCmd(dir, log, append([]string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "APPDATA=" + home, "USERPROFILE=" + home, "MINIGW_TEST_CLAUDE_EXIT=7"}, env...), args...)
 		var se strings.Builder
 		cmd.Stderr = &se
 		err := cmd.Run()
