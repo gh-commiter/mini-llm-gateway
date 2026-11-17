@@ -24,7 +24,7 @@ private func tempDir(_ name: String) throws -> URL {
     let mine = FolderLock(id: id, dir: locks.path), other = FolderLock(id: id, dir: locks.path)
     let p = { (n: String) in root.appendingPathComponent(n).path }
     let stop = NSLock(), state = NSLock()
-    nonisolated(unsafe) var stopped = false, swaps = 0, leaks = 0, bad = 0
+    nonisolated(unsafe) var stopped = false, swaps = 0, leaks = 0, bad = 0, busy = 0
     let swapper = Thread {
         while !stop.withLock({ stopped }) {
             let did = other.with(exclusive: true) {
@@ -43,7 +43,9 @@ private func tempDir(_ name: String) throws -> URL {
                     WebDAV.handle(method: m, path: path, headers: ["depth": "1"], body: Data(), root: root, prefix: "/s")
                 }
                 state.withLock {
-                    if let r, String(decoding: r.body, as: UTF8.self).contains("CANARY") { leaks += 1 } else if (r?.status ?? 503) >= 300 { bad += 1 }
+                    if let r {
+                        if String(decoding: r.body, as: UTF8.self).contains("CANARY") { leaks += 1 } else if r.status >= 300 { bad += 1 }
+                    } else { busy += 1 }  // the lock was not free within its wait (the swapper held it): a legitimate answer, not a failure
                 }
             }
         }
@@ -51,7 +53,8 @@ private func tempDir(_ name: String) throws -> URL {
     stop.withLock { stopped = true }
     while !swapper.isFinished { usleep(1000) }
     #expect(leaks == 0, "reads returned the canary outside the shared folder")
-    #expect(bad == 0)
+    #expect(bad == 0, "a read that held the lock got an error status")
+    #expect(busy <= 4 * 300 * 2 / 10, "most reads must get the lock (busy \(busy))")
     #expect(swaps > 0, "the folder was never swapped during the reads")
 }
 
