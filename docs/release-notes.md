@@ -1,5 +1,19 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Team notes: a team now has notes of its own (its "general segment"). Every member of the team reads them; a member who is admin of at least one of the team's projects writes them (`structure` and `data` only, never `private`). Use `--team <team>` instead of a project on `minigw kb submit|import|export|search|faq` and on `minigw note list|read|push|edit|rm`. The owner reviews a submission to a team with `minigw gw kb review --team <team>`.
+- A search of a project also covers its team's notes, as far as you may read them. A hit from the team ends with `from team:<name>`, and `minigw note read <id>` opens it. Your own project's hits come first. Inside an agent run, search and `note read` also cover the team notes when the person who started the run is on the team; `note list` stays the run's own project.
+- `minigw gw export` and `import` carry the team's notes (files `@team/<id>.md`); `--project @team` exports only them. `minigw team show --json` and the team API show `segment`, the id the notes routes take for the team's notes.
+
+### Changed
+- The project database schema is now 15 (a snapshot is taken before the migration). An older gateway cannot open it, and it refuses a bundle that carries team notes.
+- Search hits list the hits of the project asked first, then the others, each by recency (a run's hits from granted projects follow its own project's).
+
+### Known problems
+- Team notes have no `private` class, and only a project admin of the team writes them; there is no owner shortcut into them (the owner reviews submissions and exports bundles).
+
 ## 0.7.13
 
 ### New

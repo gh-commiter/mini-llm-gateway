@@ -288,9 +288,9 @@ uniqueness as for users. Project display names are not unique; projects have sep
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /teams` | – | `{teams: [{id, name, archived, path}]}` including archived teams |
-| `POST /teams` | `{name}` | `{team: {id, name, archived, path}}` |
-| `GET /teams/{id}` | – | `{id, name, archived, path, members: [{user, name}], projects: [Project]}` |
+| `GET /teams` | – | `{teams: [{id, name, archived, path, segment}]}` including archived teams; `segment` is the id of the team's own notes |
+| `POST /teams` | `{name}` | `{team: {id, name, archived, path, segment}}` |
+| `GET /teams/{id}` | – | `{id, name, archived, path, segment, members: [{user, name}], projects: [Project]}` |
 | `PATCH /teams/{id}` | `{name}`, `{archived: bool}` or `{path: string}` (one of them) | `{ok: true}`; archive instead of hard delete. `path` is a free-text label (folded to lower case, at most 128 bytes, no control characters, no leading or trailing `/`; `""` clears); a label never gives access |
 | `GET /teams/{id}/members` | – | `{members: [{user, name}]}` |
 | `PUT /teams/{id}/members/{user}` | – | `{ok: true}` |

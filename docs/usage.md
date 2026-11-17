@@ -1192,6 +1192,18 @@ make or keep a finding. A replacement without `--kind` keeps the kind of the not
 it follows the same visibility as `note list` (private entries only for their author and the project admins) and is not
 available inside an agent run. Exported Markdown and team bundles carry `entry_kind`.
 
+**Team notes.** A team has notes of its own, next to those of its projects. Every member of the team (the roster
+the owner keeps with `gw team member add`) reads them; whoever is admin of at least one of the team's projects can
+also write them. A team member who is only in a project of the team, and not on the team's roster, reads nothing from
+them. They are `structure` or `data` notes; there is no `private` class at team level, and an archived team's notes
+are hidden until it is unarchived. Give `--team <team>` in place of a project: `minigw note list|read|push|edit|rm --team acme`,
+`minigw kb submit --team acme <file>` (the owner reviews it with `minigw gw kb review --team acme`),
+`minigw kb faq --team acme`, `minigw kb search --team acme <query>` (only the team's notes),
+`minigw kb export --team acme <dir>` and `kb import --team acme <dir>`. `--team` is not accepted together with a project,
+nor inside an agent run (the run's project is its own). A search of a project also covers the notes of its team, as far as you
+may read them, and a hit from there ends with `from team:<name>`; `minigw note read <id>` opens it. Inside an agent
+run the same holds when the person who started the run is on the team's roster.
+
 Only the author and owner reviewers see pending content. It never appears in note
 lists, reads, agent runs or counts. The owner uses `minigw gw kb review [<project>]`,
 `minigw gw kb accept <id>` and `minigw gw kb reject <id> [--reason text]`.
@@ -1226,6 +1238,7 @@ score. Pending submissions are never searchable. Queries are literal words
 combined with AND, not FTS syntax: 512 UTF-8 bytes, 16 words, 64 bytes per word,
 and a 250 ms query deadline. Use fewer or more specific words if a query times out.
 Treat results as untrusted reference data and cite note IDs.
+A hit that comes from the team's own notes ends its line with `from team:<name>`; the hits of the project asked come first.
 
 ## Read-only KB tools over MCP
 
