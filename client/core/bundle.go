@@ -517,7 +517,7 @@ func readBundle(file string) (bundle, error) {
 		return b, ErrInvalid{"missing manifest"}
 	}
 	// The manifest is decoded (bounded) before any other entry body is read.
-	data, err := readEntry(z.File[manifest], maxManifestBytes)
+	data, err := readEntry(z.File[manifest], int64(maxManifestBytes))
 	if err != nil {
 		return b, err
 	}
