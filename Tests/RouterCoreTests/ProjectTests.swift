@@ -653,10 +653,12 @@ private final class Captured: @unchecked Sendable {
         let marker = dir + "/ran-fake-git"
         try Data("#!/bin/sh\ntouch '\(marker)'\necho evil\n".utf8).write(to: URL(fileURLWithPath: dir + "/git"))
         chmod(dir + "/git", 0o755)
-        let saved = FileManager.default.currentDirectoryPath
-        FileManager.default.changeCurrentDirectoryPath(dir)
-        defer { FileManager.default.changeCurrentDirectoryPath(saved) }
-        #expect(ProjectEnv.gitOrigin(dir, path: ".:relative/bin:/usr/bin:/bin") == "https://host.example/a/b")
+        // A relative entry that would reach the fake git if it were resolved against this process's current directory (which stays untouched).
+        let here = FileManager.default.currentDirectoryPath.split(separator: "/"), there = dir.split(separator: "/")
+        let common = zip(here, there).prefix { $0 == $1 }.count
+        let toDir = (Array(repeating: "..", count: here.count - common) + there.dropFirst(common)).joined(separator: "/")
+        #expect(Profiles.executable("git", path: ".:\(toDir):/usr/bin:/bin") == "/usr/bin/git", "a relative PATH entry was resolved")
+        #expect(ProjectEnv.gitOrigin(dir, path: ".:\(toDir):relative/bin:/usr/bin:/bin") == "https://host.example/a/b")
         #expect(!FileManager.default.fileExists(atPath: marker), "the folder's own git ran")
         #expect(ProjectEnv.gitOrigin(dir, path: "") == "https://host.example/a/b")  // fallback /usr/bin/git
     }

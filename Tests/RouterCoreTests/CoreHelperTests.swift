@@ -233,8 +233,12 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
 
     @Test func helperMissingIsA503AndNothingCrashes() async throws {
         let h = try await helper(URL(fileURLWithPath: "/nonexistent/minigw-core")); h.start(); defer { h.stop() }
-        try await Task.sleep(nanoseconds: 400_000_000)
-        #expect(h.isReady == false && h.pid == nil && h.restarts >= 2)  // keeps trying with a backoff
+        // keeps trying with a backoff (0.05, 0.1, 0.2 s here: the third spawn is due 0.15 s after start); wait for it, with a deadline
+        var tries = 0
+        while h.restarts < 2 && tries < 1000 { try await Task.sleep(for: .milliseconds(10)); tries += 1 }
+        #expect(h.restarts >= 2, "restarts: \(h.restarts) after 10 s")
+        #expect(h.isReady == false)
+        #expect(h.pid == nil)
         let r = await h.call(context: .admin, request: CoreRequest(method: "GET", path: "/users"))
         #expect(r == .unavailable)
         let router = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]), core: h)
@@ -264,7 +268,8 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
 
     @Test func versionMismatchRefusesForGoodWithoutARestartLoop() async throws {
         let h = try await helper(versions: 2...3); h.start(); defer { h.stop() }
-        try await Task.sleep(nanoseconds: 1_200_000_000)
+        var tries = 0
+        while h.fatalError == nil && tries < 1000 { try await Task.sleep(for: .milliseconds(10)); tries += 1 }
         guard case .versionMismatch(let why)? = h.fatalError else { Issue.record("fatal: \(String(describing: h.fatalError))"); return }
         #expect(why.contains("supports protocol 1..1") && h.restarts == 0 && h.isReady == false)  // one start, no loop
         let r = await h.call(context: .admin, request: CoreRequest(method: "GET", path: "/users"))

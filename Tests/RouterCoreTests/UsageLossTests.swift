@@ -127,7 +127,7 @@ private func gaps(_ h: CoreHelper) async -> [(count: Int, from: String, to: Stri
         j.settle(sent: false)  // ... and the app never saw the 200
         let sender = UsageSender(core: h, limit: 100, retry: .milliseconds(20), journal: UsageGapJournal(file: file))  // the next start sends it again
         #expect(await sender.flush())
-        try await Task.sleep(for: .milliseconds(300))
+        for _ in 0..<200 where FileManager.default.fileExists(atPath: file.path) { try await Task.sleep(for: .milliseconds(30)) }  // the OK removes the file
         let total = (await gaps(h)).reduce(0) { $0 + $1.count }
         #expect(total == 3, "counted \(total), want 3 once")
         #expect(!FileManager.default.fileExists(atPath: file.path))  // removed on the OK

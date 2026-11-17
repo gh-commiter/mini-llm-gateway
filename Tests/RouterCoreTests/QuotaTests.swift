@@ -247,9 +247,8 @@ private func inputs(probe: Bool = false, exe: String? = "/fake/claude", enabled:
         let dir = tempDir("fake")
         let exe = try fakeClaude(dir, body: "cat <<'EOF'\n\(usageEnvelope)\nEOF")
         let parent = tempDir("parent").appendingPathComponent("quota-tmp")
-        setenv("ANTHROPIC_API_KEY", "sk-must-not-reach-the-probe", 1); setenv("MINIGW_PROBE_TEST", "1", 1)
-        defer { unsetenv("ANTHROPIC_API_KEY"); unsetenv("MINIGW_PROBE_TEST") }
-        let out = try await ClaudeUsageProbe.run(exe: exe, parent: parent)
+        let environment = ProcessInfo.processInfo.environment.merging(["ANTHROPIC_API_KEY": "sk-must-not-reach-the-probe", "MINIGW_PROBE_TEST": "1"]) { $1 }
+        let out = try await ClaudeUsageProbe.run(exe: exe, parent: parent, limit: 30, drain: 2, environment: environment)
         #expect(String(decoding: out, as: UTF8.self).contains("Current week (all models)"))
         let args = try String(contentsOf: dir.appendingPathComponent("args.txt"), encoding: .utf8).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         #expect(args.starts(with: ["-p", "/usage", "--model", "haiku"]) && args.contains("--no-session-persistence") && args.contains("--strict-mcp-config"))
