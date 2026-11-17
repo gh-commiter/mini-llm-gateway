@@ -1141,6 +1141,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		if err := s.update(func(c *serveConfig) error { c.Token = token; return nil }); err != nil {
 			return fail(500, err.Error())
 		}
+		s.remoteAuth.revoke()
 		s.settings.clear() // nov žeton konča tudi seje strani z nastavitvami
 		g := s.apiGeneral(false)
 		g.Connect = "" // novo vrstico da le GET general

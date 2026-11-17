@@ -59,6 +59,7 @@ runs; otherwise they go to serve.json.
   minigw gw claude|codex|grok apikey [remove]           use an API key instead of the login (billed through the
                                                         provider's API); remove: back to the login
   minigw gw settings                                    the settings in this terminal (minigw-tui; also over SSH)
+  minigw gw settings password                           set/reset remote password (hidden input or stdin)
   minigw gw settings link                               a one-time link (60 s) to the settings page
   minigw gw api GET|POST|PATCH|DELETE <path>            one admin API request (docs/admin-api.md): the JSON body
                                                         on stdin, the JSON answer on stdout (used by minigw-tui)
@@ -344,6 +345,12 @@ func routerCommand(args []string, in io.Reader) {
 	}
 	if len(pos) == 3 && pos[0] == "core" && pos[1] == "restore" { // the gateway must be stopped: no admin client
 		coreRestore(*cfgPath, pos[2], *yes, in)
+		return
+	}
+	if len(pos) >= 2 && pos[0] == "settings" && pos[1] == "password" {
+		if err := remotePasswordCommand(*cfgPath, pos[2:], in); err != nil {
+			fail(err.Error())
+		}
 		return
 	}
 	a := openAdmin(*cfgPath)

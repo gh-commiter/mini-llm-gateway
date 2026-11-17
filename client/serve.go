@@ -565,6 +565,7 @@ type server struct {
 	startRefused            sync.Map // M2: mapa → razlog; mapa se je od zapisa spremenila, ko je prehod bil ustavljen
 	runRefused              sync.Map // A1, A7: mapa → razlog; zavrnjena ob zadnjem zagonu agenta (prava pot, istovetnost)
 	settings                settingsState
+	remoteAuth              *remoteAuth
 	pick                    atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
 	picking                 atomic.Bool              // eno okno naenkrat
 	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
