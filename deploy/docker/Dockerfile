@@ -8,11 +8,13 @@ ARG SOURCE=release
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS fetch-release
 ARG VERSION
 ARG TARGETARCH
+# RELEASE_BASE: only the build test (scripts/compose-e2e.sh) changes it, to a fixture server; the checks below stay the same
+ARG RELEASE_BASE=https://github.com/gh-commiter/mini-llm-gateway/releases/download
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl openssh-client \
  && rm -rf /var/lib/apt/lists/*
 RUN set -eu; \
     [ -n "$VERSION" ] || { echo "set MINIGW_VERSION" >&2; exit 1; }; \
-    base="https://github.com/gh-commiter/mini-llm-gateway/releases/download/v${VERSION}"; \
+    base="${RELEASE_BASE}/v${VERSION}"; \
     asset="minigw-linux-${TARGETARCH}"; \
     cd /tmp; \
     curl -fsSL -o "$asset" "$base/$asset"; \
