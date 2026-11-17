@@ -96,7 +96,8 @@ func checkSegments(tx *sql.Tx) error {
  + (SELECT count(*) FROM projects p WHERE p.id>?1 AND NOT EXISTS(SELECT 1 FROM teams t WHERE ?1+t.id=p.id))
  + (SELECT count(*) FROM memberships WHERE project_id>?1) + (SELECT count(*) FROM direct_memberships WHERE project_id>?1)
  + (SELECT count(*) FROM team_assignments WHERE project_id>?1) + (SELECT count(*) FROM team_projects WHERE project_id>?1)
- + (SELECT count(*) FROM project_remotes WHERE project_id>?1) + (SELECT count(*) FROM grants WHERE source_id>?1 OR reader_id>?1)`, segmentBase).Scan(&n)
+ + (SELECT count(*) FROM project_remotes WHERE project_id>?1) + (SELECT count(*) FROM grants WHERE source_id>?1 OR reader_id>?1)
+ + (SELECT count(*) FROM project_depends WHERE project_id>?1 OR depends_on>?1)`, segmentBase).Scan(&n)
 	if err != nil {
 		return err
 	}

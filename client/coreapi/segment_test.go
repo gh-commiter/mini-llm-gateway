@@ -153,3 +153,11 @@ func TestDependsRoutes(t *testing.T) {
 	call(admin, "DELETE", fmt.Sprintf("/projects/%d/depends/%d", fk, eu), 200)
 	call(admin, "DELETE", fmt.Sprintf("/projects/%d/depends/%d", fk, eu), 404)
 }
+
+func TestDependsxIsA404(t *testing.T) {
+	f := newFixture(t)
+	r := f.api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/projects/3/dependsx"})
+	if r.Status != 404 && r.Status != 400 {
+		t.Fatal(r.Status, r.Body)
+	}
+}

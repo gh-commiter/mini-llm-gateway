@@ -546,6 +546,7 @@ func preflightManifest(data []byte) error {
 	d := json.NewDecoder(bytes.NewReader(data))
 	limits := manifestLimits()
 	var value func(int, int) error
+	nested := ""
 	value = func(depth, limit int) error {
 		t, err := d.Token()
 		if err != nil {
@@ -560,6 +561,13 @@ func preflightManifest(data []byte) error {
 				}
 				name := key.(string)
 				n := -1
+				if depth == 2 && (name == "depends_on" || name == "remotes") { // nested per-project lists
+					nested = name
+					n = maxDepends
+					if name == "remotes" {
+						n = maxRemotes
+					}
+				}
 				if depth == 0 {
 					if !manifestFields[name] {
 						return ErrInvalid{"bundle manifest: unknown field " + strconv.Quote(name)}
@@ -578,6 +586,9 @@ func preflightManifest(data []byte) error {
 			for d.More() {
 				count++
 				if limit >= 0 && count > limit {
+					if depth == 3 { // a nested per-project list: the same refusal as validateBundle gives
+						return ErrInvalid{"project " + nested + ": too many entries"}
+					}
 					return ErrTooLarge
 				}
 				if err := value(depth+1, -1); err != nil {
@@ -1177,6 +1188,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 			}
 		}
 	}
+	added := map[int64]int{}       // what this import adds per project (a dry run writes nothing, so the cap needs its own count)
 	for _, p := range m.Projects { // owner-managed relation: only between projects that exist here, never creating one
 		for _, d := range p.DependsOn {
 			a, b := projects[p.Slug], projects[d]
@@ -1199,9 +1211,12 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 				line("skip", "depends "+p.Slug+" "+d)
 			case archived > 0:
 				line("skip", "depends "+p.Slug+" "+d+": archived project")
-			case count >= maxDepends:
+			case count+added[a] >= maxDepends:
 				line("skip", "depends "+p.Slug+" "+d+": at most 16")
 			default:
+				if dry {
+					added[a]++ // a real import counts the rows it has written
+				}
 				line("create", "depends "+p.Slug+" "+d)
 				if e := exec(`INSERT OR IGNORE INTO project_depends(project_id,depends_on) VALUES(?,?)`, a, b); e != nil {
 					return e

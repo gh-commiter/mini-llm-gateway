@@ -316,3 +316,130 @@ func TestDependsBundle(t *testing.T) {
 		}
 	}
 }
+
+func TestSegmentCheckRefusesDependsRows(t *testing.T) {
+	f := newSeg(t)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		if _, e := tx.Exec(`DROP TRIGGER segment_no_depends`); e != nil {
+			return e
+		}
+		_, e := tx.Exec(`INSERT INTO project_depends(project_id,depends_on) VALUES(?,?)`, f.pid["fakture"], f.seg)
+		return e
+	}))
+	if err := f.read(ctx, checkSegments); err == nil {
+		t.Fatal("a dependency on a segment passed the check")
+	}
+}
+
+// The cap in a dry run: the same lines as the real import.
+func TestDependsBundleCapDryRunMatchesImport(t *testing.T) {
+	source := newFx(t)
+	team, e := source.CreateTeam(ctx, "Team")
+	source.ok(e)
+	var slugs []string
+	for i := 0; i < 20; i++ {
+		slug := fmt.Sprint("cap-p", i)
+		source.project(slug)
+		source.ok(source.AddTeamProject(ctx, team.ID, source.pid[slug]))
+		slugs = append(slugs, slug)
+	}
+	for i := 1; i <= 10; i++ {
+		source.ok(source.AddDepends(ctx, source.pid[slugs[0]], source.pid[slugs[i]]))
+	}
+	file := filepath.Join(t.TempDir(), "cap.zip")
+	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: file}))
+	b, e := readBundle(file)
+	source.ok(e)
+	for i := range b.manifest.Projects { // the bundle names 10 further dependencies for cap-p0
+		if b.manifest.Projects[i].Slug == "cap-p0" {
+			b.manifest.Projects[i].DependsOn = slugs[10:19] // 9
+			b.manifest.Projects[i].DependsOn = append(b.manifest.Projects[i].DependsOn, slugs[19])
+		}
+	}
+	// the target already has cap-p0 with 10 other dependencies: build it from the first export
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "s"})
+	source.ok(e)
+	more := rewriteZip(t, b, nil)
+	lines := func(dry bool) []string {
+		rep, e := target.ImportBundle(ctx, BundleImport{Path: more, Source: "s", DryRun: dry})
+		source.ok(e)
+		var out []string
+		for _, l := range rep.Lines {
+			if strings.Contains(l, "depends") {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	dry, real := lines(true), lines(false)
+	if strings.Join(dry, "\n") != strings.Join(real, "\n") {
+		t.Fatalf("dry run differs:\n%v\n%v", dry, real)
+	}
+	capped := 0
+	for _, l := range real {
+		if strings.Contains(l, "at most 16") {
+			capped++
+		}
+	}
+	if capped != 3 { // 10 present (cap-p1..10), 6 created (11..16) = 16, the other 3 are skipped
+		t.Fatal(capped, real)
+	}
+}
+
+func TestBundlePreflightNestedLimits(t *testing.T) {
+	for _, key := range []string{"depends_on", "remotes"} {
+		n := maxDepends + 1
+		if key == "remotes" {
+			n = maxRemotes + 1
+		}
+		items := make([]string, n)
+		for i := range items {
+			items[i] = `"x"`
+		}
+		data := `{"format":1,"projects":[{"slug":"a-b","name":"n","` + key + `":[` + strings.Join(items, ",") + `]}]}`
+		if err := preflightManifest([]byte(data)); err == nil {
+			t.Fatal(key, "oversized nested array passed the preflight")
+		}
+	}
+	ok := `{"format":1,"projects":[{"slug":"a-b","name":"n","depends_on":["x"],"remotes":["y"]}]}`
+	if err := preflightManifest([]byte(ok)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A dependency does not carry the dependency's team notes along: only a roster member of that team reads them.
+func TestDependsDoesNotBringTheDependencysSegment(t *testing.T) {
+	f := newSeg(t)
+	// import (project of team zeta) has the segment f.zseg; ana depends-reads import as a reader but is not on zeta's roster.
+	keySeq++
+	f.clock = f.clock.Add(time.Second)
+	zn, _, e := f.CreateNote(ctx, f.p("dana"), f.zseg, fmt.Sprint("z", keySeq), NoteInput{Class: Data, Title: "needle zeta team", Body: "x"})
+	f.ok(e)
+	f.ok(f.SetMember(ctx, f.pid["import"], f.uid["ana"], Reader))
+	f.ok(f.AddDepends(ctx, f.pid["fakture"], f.pid["import"]))
+	for _, h := range f.hits("ana", f.pid["fakture"], "needle") {
+		if h.Project == f.zseg {
+			t.Fatal("a team's notes came along through a dependency", h)
+		}
+	}
+	_, e = f.GetNote(ctx, f.p("ana"), f.pid["fakture"], zn.ID)
+	is(t, e, ErrNotFound)
+}
+
+// The caller's own private note in a dependency is never read through the dependency (the rule is: never private).
+func TestDependsPrivateNoteByIDRefused(t *testing.T) {
+	f := newFx(t)
+	fk, imp := f.pid["fakture"], f.pid["import"]
+	f.ok(f.SetMember(ctx, imp, f.uid["ana"], Developer))
+	f.ok(f.AddDepends(ctx, fk, imp))
+	keySeq++
+	mine, _, e := f.CreateNote(ctx, f.p("ana"), imp, fmt.Sprint("pv", keySeq), NoteInput{Class: Private, Title: "needle private", Body: "x"})
+	f.ok(e)
+	_, e = f.GetNote(ctx, f.p("ana"), fk, mine.ID)
+	is(t, e, ErrNotFound)
+	if _, e = f.GetNote(ctx, f.p("ana"), imp, mine.ID); e != nil { // through its own project she may
+		t.Fatal(e)
+	}
+}
