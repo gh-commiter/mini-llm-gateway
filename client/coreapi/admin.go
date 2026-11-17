@@ -110,6 +110,8 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 			return fail(404, "not found")
 		case errors.As(err, &inv):
 			return fail(400, inv.Error())
+		case errors.Is(err, core.ErrArchived):
+			return fail(403, "the project is archived")
 		}
 		a.o.Log("admin core error: %v", err)
 		return fail(500, "internal error: "+err.Error())
@@ -231,6 +233,26 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 			return failErr(err)
 		}
 		return 200, map[string]any{"ok": true}, true
+	case "GET projects/{}/remotes", "POST projects/{}/remotes":
+		id, good := num(seg[1])
+		if !good {
+			return fail(400, "bad project id")
+		}
+		var list []string
+		var err error
+		if method == "GET" {
+			list, err = st.AdminProjectRemotes(ctx, id)
+		} else {
+			var b remotesBody
+			if !dec(&b) {
+				return fail(400, "bad JSON body (add, remove)")
+			}
+			list, err = st.AdminChangeProjectRemotes(ctx, id, b.Add, b.Remove)
+		}
+		if err != nil {
+			return failErr(err)
+		}
+		return 200, map[string]any{"remotes": list}, true
 	case "GET projects/{}/members":
 		id, good := num(seg[1])
 		if !good {

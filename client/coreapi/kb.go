@@ -40,11 +40,12 @@ func (a *API) submissionRoute(ctx context.Context, st *core.Store, p core.Princi
 			Body     string     `json:"body"`
 			Replaces int64      `json:"replaces"`
 			Revision int64      `json:"revision"`
+			Kind     string     `json:"entryKind"`
 		}
 		if e := payload(r, &b); e != nil {
 			return a.errResponse(e)
 		}
-		v, replay, e := st.Submit(ctx, p, project, r.Header.Get("Idempotency-Key"), core.SubmissionInput{NoteInput: core.NoteInput{Class: b.Class, Title: b.Title, Body: b.Body}, Replaces: b.Replaces, Revision: b.Revision})
+		v, replay, e := st.Submit(ctx, p, project, r.Header.Get("Idempotency-Key"), core.SubmissionInput{NoteInput: core.NoteInput{Class: b.Class, Title: b.Title, Body: b.Body, EntryKind: b.Kind}, Replaces: b.Replaces, Revision: b.Revision})
 		if e != nil {
 			return a.errResponse(e)
 		}

@@ -56,10 +56,14 @@ type NoteJSON struct {
 	Created          time.Time        `json:"created"`
 	Updated          time.Time        `json:"updated"`
 	Revision         int64            `json:"revision"`
+	EntryKind        string           `json:"entryKind"`
 }
 
 func toNote(n core.Note, withBody bool) NoteJSON {
-	j := NoteJSON{ID: n.ID, Project: n.ProjectID, Class: n.Class, Title: n.Title, Author: n.Author, Created: n.Created, Updated: n.Updated, Revision: n.Revision}
+	j := NoteJSON{ID: n.ID, Project: n.ProjectID, Class: n.Class, Title: n.Title, Author: n.Author, Created: n.Created, Updated: n.Updated, Revision: n.Revision, EntryKind: n.EntryKind}
+	if j.EntryKind == "" { // an old idempotency receipt
+		j.EntryKind = core.KindFinding
+	}
 	if withBody {
 		j.Body = &n.Body
 		j.Provenance = &n.Provenance
@@ -186,6 +190,8 @@ type noteBody struct {
 	Title    string     `json:"title"`
 	Body     string     `json:"body"`
 	Revision *int64     `json:"revision"`
+	// EntryKind is accepted and ignored: the kind is set by a reviewed submission or an import, never by a push or an edit.
+	EntryKind string `json:"entryKind"`
 }
 
 // payload parses the body of a write: nil = parsed.
@@ -216,7 +222,13 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 	notFound := a.errResponse(core.ErrNotFound)
 	switch {
 	case len(seg) == 0 && r.Method == "GET":
-		ps, err := st.ListProjects(ctx, p, q.Get("archived") == "1")
+		var ps []core.Project
+		var err error
+		if prefix := q.Get("path"); prefix != "" {
+			ps, err = st.ListProjectsByPath(ctx, p, prefix, q.Get("archived") == "1")
+		} else {
+			ps, err = st.ListProjects(ctx, p, q.Get("archived") == "1")
+		}
 		if err != nil {
 			return a.errResponse(err)
 		}
@@ -225,6 +237,47 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			list = append(list, toProject(x))
 		}
 		return resp(200, list)
+	case len(seg) == 1 && seg[0] == "by-remote" && r.Method == "POST":
+		var b struct {
+			Remote string `json:"remote"`
+		}
+		if err := payload(r, &b); err != nil {
+			return a.errResponse(err)
+		}
+		identity, ps, err := st.ProjectsByRemote(ctx, p, b.Remote)
+		if err != nil {
+			return a.errResponse(err)
+		}
+		return resp(200, map[string]any{"identity": identity, "projects": teamProjects(ps)})
+	case len(seg) == 2 && seg[1] == "remotes" && (r.Method == "GET" || r.Method == "POST"):
+		pid, ok := posID(seg[0])
+		if !ok {
+			return a.errResponse(core.ErrInvalid{What: "project id"})
+		}
+		var list []string
+		var err error
+		if r.Method == "GET" {
+			list, err = st.ProjectRemotes(ctx, p, pid)
+		} else {
+			var b remotesBody
+			if err = payload(r, &b); err == nil {
+				list, err = st.ChangeProjectRemotes(ctx, p, pid, b.Add, b.Remove)
+			}
+		}
+		if err != nil {
+			return a.errResponse(err)
+		}
+		return resp(200, map[string]any{"remotes": list})
+	case len(seg) == 3 && seg[1] == "kb" && seg[2] == "faq" && r.Method == "GET":
+		pid, ok := posID(seg[0])
+		if !ok {
+			return a.errResponse(core.ErrInvalid{What: "project id"})
+		}
+		pg, err := st.ListFAQ(ctx, p, pid, q.Get("after"))
+		if err != nil {
+			return a.errResponse(err)
+		}
+		return resp(200, faqJSON(pg))
 	case len(seg) == 1 && r.Method == "GET":
 		pr, err := st.GetProject(ctx, p, seg[0])
 		if err != nil {
@@ -455,4 +508,26 @@ func costString(n *int64) *string {
 	}
 	s := fmt.Sprintf("%d.%09d", *n/1000000000, *n%1000000000)
 	return &s
+}
+
+// remotesBody is the body of POST .../remotes: raw URLs to add and to remove.
+type remotesBody struct {
+	Add    []string `json:"add"`
+	Remove []string `json:"remove"`
+}
+
+type faqEntryJSON struct {
+	ID      int64      `json:"id"`
+	Title   string     `json:"title"`
+	Class   core.Class `json:"class"`
+	Answer  string     `json:"answer"`
+	Updated time.Time  `json:"updated"`
+}
+
+func faqJSON(pg core.FAQPage) map[string]any {
+	out := []faqEntryJSON{}
+	for _, e := range pg.Entries {
+		out = append(out, faqEntryJSON{e.ID, e.Title, e.Class, e.Answer, e.Updated})
+	}
+	return map[string]any{"entries": out, "next": pg.Next}
 }

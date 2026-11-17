@@ -15,6 +15,7 @@ type TeamJSON struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	Archived bool   `json:"archived"`
+	Path     string `json:"path"`
 }
 
 type TeamMemberJSON struct {
@@ -28,7 +29,7 @@ type TeamDetailJSON struct {
 	Projects []ProjectJSON    `json:"projects"`
 }
 
-func toTeam(t core.Team) TeamJSON { return TeamJSON{t.ID, t.Name, t.Archived} }
+func toTeam(t core.Team) TeamJSON { return TeamJSON{t.ID, t.Name, t.Archived, t.Path} }
 func teamMembers(ms []core.TeamMember) []TeamMemberJSON {
 	out := []TeamMemberJSON{}
 	for _, m := range ms {
@@ -130,13 +131,23 @@ func (a *API) adminTeams(ctx context.Context, st *core.Store, method string, seg
 			var b struct {
 				Name     *string
 				Archived *bool
+				Path     *string
 			}
-			if decodeStrict(body, &b) != nil || (b.Name == nil) == (b.Archived == nil) {
-				return fail(400, "bad JSON body (name or archived)")
+			bad := decodeStrict(body, &b) != nil
+			n := 0
+			for _, set := range []bool{b.Name != nil, b.Archived != nil, b.Path != nil} {
+				if set {
+					n++
+				}
+			}
+			if bad || n != 1 {
+				return fail(400, "bad JSON body (name, archived or path)")
 			}
 			var err error
 			if b.Name != nil {
 				err = st.RenameTeam(ctx, id, *b.Name)
+			} else if b.Path != nil {
+				err = st.SetTeamPath(ctx, id, *b.Path)
 			} else {
 				err = st.SetTeamArchived(ctx, id, *b.Archived)
 			}

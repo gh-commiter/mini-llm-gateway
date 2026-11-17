@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -367,7 +368,7 @@ type FAQEntry struct {
 	Title   string
 	Class   Class
 	Answer  string
-	Updated int64 // unix ms
+	Updated time.Time
 }
 
 // FAQPage is a page of FAQ entries; Next is "" for the last page.
@@ -410,9 +411,11 @@ func (s *Store) ListFAQ(ctx context.Context, p Principal, project int64, after s
 		more := false
 		for rows.Next() {
 			var f FAQEntry
-			if e = rows.Scan(&f.ID, &f.Class, &f.Title, &f.Answer, &f.Updated); e != nil {
+			var updated int64
+			if e = rows.Scan(&f.ID, &f.Class, &f.Title, &f.Answer, &updated); e != nil {
 				return e
 			}
+			f.Updated = fromMs(updated)
 			if len(pg.Entries) == 50 || (len(pg.Entries) > 0 && size+len(f.Title)+len(f.Answer)+256 > maxFAQPageBytes) {
 				more = true
 				break
@@ -425,7 +428,7 @@ func (s *Store) ListFAQ(ctx context.Context, p Principal, project int64, after s
 		}
 		if more {
 			last := pg.Entries[len(pg.Entries)-1]
-			pg.Next = encodeCursor(cursor{U: p.UserID, P: project, T: last.Updated, I: last.ID})
+			pg.Next = encodeCursor(cursor{U: p.UserID, P: project, T: ms(last.Updated), I: last.ID})
 		}
 		return nil
 	})
