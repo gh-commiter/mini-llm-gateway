@@ -503,9 +503,96 @@ func TestSegmentNeverInAListing(t *testing.T) {
 	}
 }
 
-func TestSegmentCreateTeamAndBundleImportHaveRows(t *testing.T) {
+func TestSegmentRowOfCreateTeam(t *testing.T) {
 	f := newSeg(t)
 	if err := f.read(ctx, checkSegments); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSegmentBundleRoundTrip(t *testing.T) {
+	source, _ := bundleFixture(t)
+	var team int64
+	source.ok(source.DB().QueryRow(`SELECT id FROM teams WHERE name='Team'`).Scan(&team))
+	source.ok(source.SetTeamAssignment(ctx, team, source.pid["fakture"], source.uid["ana"], Admin))
+	seg := segmentID(team)
+	n, _, e := source.CreateNote(ctx, source.p("ana"), seg, "bs1", NoteInput{Class: Data, Title: "team rule", Body: "migrate first"})
+	source.ok(e)
+	file := filepath.Join(t.TempDir(), "with-team.zip")
+	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Path: file, WithPrivate: true}))
+	b, e := readBundle(file)
+	source.ok(e)
+	found := 0
+	for _, bn := range b.manifest.Notes {
+		if bn.Project == bundleSegment {
+			found++
+			if bn.File != "@team/"+fmt.Sprint(n.ID)+".md" {
+				t.Fatal(bn)
+			}
+		}
+	}
+	if found != 1 || !strings.HasPrefix(string(b.files["INDEX.md"]), "# Team\n\n- [team rule](@team/") {
+		t.Fatal(found, string(b.files["INDEX.md"]))
+	}
+	only := filepath.Join(t.TempDir(), "only-team.zip")
+	source.ok(source.ExportBundle(ctx, BundleExport{Team: "Team", Projects: []string{bundleSegment}, Path: only}))
+	ob, e := readBundle(only)
+	source.ok(e)
+	if len(ob.manifest.Projects) != 0 || len(ob.manifest.Notes) != 1 {
+		t.Fatal(ob.manifest)
+	}
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	dry, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc", DryRun: true})
+	source.ok(e)
+	if !strings.Contains(strings.Join(dry.Lines, "\n"), "create src:testsrc:@team:") || countTable(t, target, "notes") != 0 {
+		t.Fatal(dry)
+	}
+	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
+	source.ok(e)
+	var tt, pid int64
+	source.ok(target.DB().QueryRow(`SELECT id FROM teams WHERE name='Team'`).Scan(&tt))
+	source.ok(target.DB().QueryRow(`SELECT project_id FROM notes WHERE title='team rule'`).Scan(&pid))
+	if pid != segmentID(tt) {
+		t.Fatal("note landed in", pid, "not the segment of", tt)
+	}
+	if e = target.read(ctx, checkSegments); e != nil {
+		t.Fatal(e)
+	}
+	var key string
+	source.ok(target.DB().QueryRow(`SELECT key FROM note_imports WHERE project_id=?`, pid).Scan(&key))
+	if !strings.HasPrefix(key, "src:testsrc:@team:") {
+		t.Fatal(key)
+	}
+	before := countTable(t, target, "notes")
+	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
+	source.ok(e)
+	if countTable(t, target, "notes") != before {
+		t.Fatal("not a no-op")
+	}
+	// A segment note of class private is refused.
+	bad := rewriteZip(t, b, func(files map[string][]byte) {
+		for name, data := range files {
+			if strings.HasPrefix(name, "@team/") {
+				files[name] = []byte(strings.Replace(string(data), `class: "data"`, `class: "private"`, 1))
+			}
+		}
+	})
+	t2 := openT(t, t.TempDir())
+	defer t2.Close()
+	rep, e := t2.ImportBundle(ctx, BundleImport{Path: bad, Source: "testsrc"})
+	if e == nil || !strings.Contains(strings.Join(rep.Lines, "\n"), "cannot be private") || countTable(t, t2, "notes") != 0 || countTable(t, t2, "teams") != 0 {
+		t.Fatal(rep, e)
+	}
+	// A note file of an unknown "project" is still refused.
+	b2, e := readBundle(file)
+	source.ok(e)
+	for i := range b2.manifest.Notes {
+		if b2.manifest.Notes[i].Project == bundleSegment {
+			b2.manifest.Notes[i].Project = "@team2"
+		}
+	}
+	if _, e = t2.ImportBundle(ctx, BundleImport{Path: rewriteZip(t, b2, nil), Source: "testsrc"}); e == nil || countTable(t, t2, "notes") != 0 {
+		t.Fatal("unknown project accepted", e)
 	}
 }

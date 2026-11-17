@@ -90,6 +90,9 @@ var (
 
 const maxSourceMeta = 64 << 10
 
+// bundleSegment is the "project" name of a team's own notes in a bundle (files @team/<id>.md); it cannot be a slug.
+const bundleSegment = "@team"
+
 func bundleKey(origin, slug string, id int64) string {
 	return "gw:" + origin + ":" + slug + ":" + i64(id)
 }
@@ -171,7 +174,7 @@ func (s *Store) ExportBundle(ctx context.Context, in BundleExport) error {
 			}
 		}
 		for slug := range wanted {
-			found := false
+			found := slug == bundleSegment
 			for _, p := range m.Projects {
 				if p.Slug == slug {
 					found = true
@@ -256,14 +259,26 @@ func (s *Store) ExportBundle(ctx context.Context, in BundleExport) error {
 		}
 		var index strings.Builder
 		index.WriteString("# " + m.Team + "\n\n")
+		// The team's own notes come first (never private, whatever WithPrivate says), then the projects.
+		type source struct {
+			slug    string
+			pid     int64
+			private bool
+		}
+		var sources []source
+		if len(wanted) == 0 || wanted[bundleSegment] {
+			sources = append(sources, source{bundleSegment, segmentID(team), false})
+		}
 		for _, p := range m.Projects {
-			var pid int64
 			for id, slug := range projects {
 				if slug == p.Slug {
-					pid = id
+					sources = append(sources, source{p.Slug, id, in.WithPrivate})
 				}
 			}
-			rows, err = tx.Query(`SELECT `+noteCols+` FROM notes n JOIN users u ON u.id=n.author_id WHERE project_id=? AND (class<>'private' OR ?) ORDER BY n.id`, pid, in.WithPrivate)
+		}
+		for _, p := range sources {
+			pid := p.pid
+			rows, err = tx.Query(`SELECT `+noteCols+` FROM notes n JOIN users u ON u.id=n.author_id WHERE project_id=? AND (class<>'private' OR ?) ORDER BY n.id`, pid, p.private)
 			if err != nil {
 				return err
 			}
@@ -285,9 +300,9 @@ func (s *Store) ExportBundle(ctx context.Context, in BundleExport) error {
 				if err = noteProvenance(tx, &n); err != nil {
 					return err
 				}
-				file := p.Slug + "/" + i64(n.ID) + ".md"
-				b.files[file] = Markdown(n, bundleKey(m.OriginGateway, p.Slug, n.ID))
-				m.Notes = append(m.Notes, BundleNote{file, p.Slug, n.Provenance})
+				file := p.slug + "/" + i64(n.ID) + ".md"
+				b.files[file] = Markdown(n, bundleKey(m.OriginGateway, p.slug, n.ID))
+				m.Notes = append(m.Notes, BundleNote{file, p.slug, n.Provenance})
 				users[n.Author] = true
 				fmt.Fprintf(&index, "- [%s](%s)\n", strings.ReplaceAll(n.Title, "\n", " "), file)
 			}
@@ -799,7 +814,7 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 	var notes []bundleNoteInput
 	for _, v := range m.Notes {
 		data, ok := b.files[v.File]
-		if !ok || seen[v.File] || !projects[v.Project] || path.Ext(v.File) != ".md" {
+		if !ok || seen[v.File] || !(projects[v.Project] || v.Project == bundleSegment) || path.Ext(v.File) != ".md" {
 			return nil, ErrInvalid{"note file"}
 		}
 		seen[v.File] = true
@@ -817,6 +832,9 @@ func validateBundle(b bundle) ([]bundleNoteInput, error) {
 		}
 		if err = checkSize(in); err != nil {
 			return nil, err
+		}
+		if v.Project == bundleSegment && in.Class == Private {
+			return nil, ErrInvalid{"a team's notes cannot be private"}
 		}
 		key := bundleKey(m.OriginGateway, v.Project, id)
 		if f["import_key"] != key || keys[key] || !users[foldName(f["author"])] || f["hash"] != contentHash(in.Title, in.Body) || v.Provenance.ContentHash != f["hash"] || v.Provenance.SourceKind != f["kind"] {
@@ -1033,7 +1051,12 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		}
 		users[foldName(name)] = a.id
 	}
-	projects := map[string]int64{}
+	projects := map[string]int64{bundleSegment: segmentID(team)} // a dry run on a new team has team -1: no row, nothing is read
+	if !dry {
+		if e := ensureSegment(tx, team); e != nil {
+			return e
+		}
+	}
 	high := max(s.st.ProjectHigh, dbInt(tx, "project_high"))
 	for _, p := range m.Projects {
 		var id int64
