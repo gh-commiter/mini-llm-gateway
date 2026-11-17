@@ -24,6 +24,9 @@ jobs:
           go-version-file: client/go.mod
           cache-dependency-path: client/go.sum
       - run: swift build
+      # Tests that need a socket outside loopback run the package's own build of mg-test-net on the runner (TestNet.locate): fail here, clearly, if it is not built.
+      - name: mg-test-net is built
+        run: test -x "$(swift build --show-bin-path)/mg-test-net" || { echo "::error::mg-test-net was not built next to the test products"; exit 1; }
       # A hang must name itself: after 20 minutes the test process is sampled (stacks of every thread) and the tests that started but never finished are listed.
       - name: swift test
         run: |

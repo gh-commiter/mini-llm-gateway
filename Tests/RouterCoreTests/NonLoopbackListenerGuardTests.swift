@@ -38,4 +38,9 @@ import Testing
             #expect(!e.why.isEmpty && all[e.file]?.contains(e.text) == true, "stale allow-list entry \(e.file) \(e.text): remove it")
         }
     }
+
+    /// The CI fallback relies on this: `swift build` puts the utility next to the test bundle, in either build system's layout.
+    @Test func theBuiltUtilityIsFoundNextToTheTestBundle() {
+        #expect(TestNet.builtNextToTests() != nil, "mg-test-net not next to the test bundle (\(TestNet.testImageDirectory() ?? "unknown")): build the package first")
+    }
 }

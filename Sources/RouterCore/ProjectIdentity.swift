@@ -15,7 +15,7 @@ extension ProjectEnv {
 
     /// The folder's raw remote.origin.url from the repository's own config (no insteadOf rewrite, no hooks). Git missing, no origin
     /// or an untrusted checkout all give "".
-    static func gitOrigin(_ dir: String, path: String = ProcessInfo.processInfo.environment["PATH"] ?? "") -> String {
+    static func gitOrigin(_ dir: String, path: String = ProcessInfo.processInfo.environment["PATH"] ?? "", timeout: TimeInterval = 10) -> String {
         let p = Process()
         // git comes only from an absolute PATH entry: the folder is untrusted, a "." or relative entry must not run its own ./git
         p.executableURL = URL(fileURLWithPath: Profiles.executable("git", path: path) ?? "/usr/bin/git")
@@ -32,7 +32,7 @@ extension ProjectEnv {
         let done = DispatchSemaphore(value: 0)
         p.terminationHandler = { _ in done.signal() }
         do { try p.run() } catch { return "" }
-        if done.wait(timeout: .now() + 10) == .timedOut { p.terminate(); return "" }
+        if done.wait(timeout: .now() + timeout) == .timedOut { p.terminate(); return "" }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         guard p.terminationStatus == 0 else { return "" }
         return ProjectText.trim(String(decoding: data, as: UTF8.self))

@@ -657,10 +657,17 @@ private final class Captured: @unchecked Sendable {
         let here = FileManager.default.currentDirectoryPath.split(separator: "/"), there = dir.split(separator: "/")
         let common = zip(here, there).prefix { $0 == $1 }.count
         let toDir = (Array(repeating: "..", count: here.count - common) + there.dropFirst(common)).joined(separator: "/")
-        #expect(Profiles.executable("git", path: ".:\(toDir):/usr/bin:/bin") == "/usr/bin/git", "a relative PATH entry was resolved")
-        #expect(ProjectEnv.gitOrigin(dir, path: ".:\(toDir):relative/bin:/usr/bin:/bin") == "https://host.example/a/b")
+        // The git that this machine has on its absolute PATH entries (the Xcode shim /usr/bin/git on a runner, Homebrew's on others): nothing here assumes a path
+        let realGit = try #require(Profiles.executable("git", path: ProcessInfo.processInfo.environment["PATH"] ?? ""), "no git on an absolute PATH entry")
+        let realDir = (realGit as NSString).deletingLastPathComponent
+        let path = ".:\(toDir):relative/bin:" + realDir
+        #expect(Profiles.executable("git", path: path) == realGit, "a relative PATH entry was resolved")
+        // 120 s: a cold git shim on a loaded runner was seen to need more than the default 10 s; what is asserted is which git runs, not how fast
+        #expect(ProjectEnv.gitOrigin(dir, path: path, timeout: 120) == "https://host.example/a/b")
         #expect(!FileManager.default.fileExists(atPath: marker), "the folder's own git ran")
-        #expect(ProjectEnv.gitOrigin(dir, path: "") == "https://host.example/a/b")  // fallback /usr/bin/git
+        // only relative entries: no git at all is looked up from them (the fallback is the system's), and the folder's own git still never runs
+        _ = ProjectEnv.gitOrigin(dir, path: ".:\(toDir):relative/bin", timeout: 120)
+        #expect(!FileManager.default.fileExists(atPath: marker), "the folder's own git ran for a PATH of relative entries")
     }
 
     @Test func kindAndFaqArguments() throws {
