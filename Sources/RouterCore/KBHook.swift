@@ -133,19 +133,27 @@ extension ProjectEnv {
             let done = DispatchSemaphore(value: 0)
             p.terminationHandler = { _ in done.signal() }
             do { try p.run() } catch { return nil }
-            let box = HookBox()  // read while it runs: a long listing would fill the pipe and stall git
-            let reader = DispatchGroup()
-            reader.enter()
-            let out = pipe.fileHandleForReading
-            DispatchQueue.global().async {
-                while case let d = out.availableData, !d.isEmpty { box.append(d) }
-                reader.leave()
+            // Read on this thread, without blocking: while git runs (a long listing would fill the pipe and stall it) and once more after it has exited (then
+            // everything it wrote is in the pipe). Never wait for EOF: a process started at the same moment (another run's child) can hold the write end, and
+            // such waits on pool threads stop the whole process (3 of them on a 3-core runner). No helper thread either: a global queue can be starved too.
+            let fd = pipe.fileHandleForReading.fileDescriptor
+            _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+            var data = Data(), buf = [UInt8](repeating: 0, count: 64 << 10), exited = false
+            func drain() -> Bool {  // true at EOF
+                while true {
+                    let n = read(fd, &buf, buf.count)
+                    if n > 0 { data.append(contentsOf: buf[0..<n]) } else if n == 0 { return true } else if errno != EINTR { return false }
+                }
             }
-            if done.wait(timeout: deadline) == .timedOut { p.terminate(); _ = reader.wait(timeout: .now() + 1); return nil }
-            // git has exited, so everything it wrote is in the pipe and read within moments. EOF can come much later: a process started at the same moment
-            // (another run's child) may hold the write end. Never wait for it: on a pool thread such waits stop the whole process (3 of them on a 3-core runner).
-            _ = reader.wait(timeout: .now() + 0.5)
-            return p.terminationStatus == 0 ? box.snapshot : nil
+            while true {
+                var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                _ = poll(&pfd, 1, 20)
+                if drain() { break }
+                if done.wait(timeout: .now()) == .success { exited = true; _ = drain(); break }
+                if DispatchTime.now() > deadline { p.terminate(); return nil }
+            }
+            if !exited && done.wait(timeout: deadline) == .timedOut { p.terminate(); return nil }
+            return p.terminationStatus == 0 ? data : nil
         }
         var head = ""
         if let h = run(["rev-parse", "HEAD"]) { head = ProjectText.trim(String(decoding: h, as: UTF8.self)) }
@@ -164,13 +172,6 @@ extension ProjectEnv {
             } else { sum.update(data: Data("\(name)\0gone\0".utf8)) }
         }
         return (head, sum.finalize().map { String(format: "%02x", $0) }.joined())
-    }
-
-    final class HookBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var data = Data()
-        func append(_ d: Data) { lock.withLock { data.append(d) } }
-        var snapshot: Data { lock.withLock { data } }
     }
 
     func hookGit(_ dir: String) -> (head: String, status: String) { gitState?(dir) ?? Self.hookGitState(dir, timeout: gitTimeout ?? 2) }
