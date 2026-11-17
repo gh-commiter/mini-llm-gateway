@@ -19,8 +19,13 @@ struct FakeSecrets: SecretStore {
 
 /// Upstream stub: zabeleži zahtevo in vrne SSE.
 final class StubUpstream: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var lastRequest: URLRequest?
-    nonisolated(unsafe) static var lastBody = Data()
+    // Vzporedni testi: vsak gostitelj upstreama ima svojo zadnjo zahtevo (#139).
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var requests: [String: (request: URLRequest, body: Data)] = [:]
+
+    static func last(host: String) -> (request: URLRequest, body: Data)? {
+        lock.withLock { requests[host] }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -36,15 +41,15 @@ final class StubUpstream: URLProtocol, @unchecked Sendable {
             client?.urlProtocolDidFinishLoading(self)
             return
         }
-        Self.lastRequest = request
+        var body = Data()
         if let s = request.httpBodyStream {
             s.open()
             var buf = [UInt8](repeating: 0, count: 4096)
-            var d = Data()
-            while s.hasBytesAvailable { let n = s.read(&buf, maxLength: buf.count); if n <= 0 { break }; d.append(buf, count: n) }
+            while s.hasBytesAvailable { let n = s.read(&buf, maxLength: buf.count); if n <= 0 { break }; body.append(buf, count: n) }
             s.close()
-            Self.lastBody = d
         }
+        let req = request
+        Self.lock.withLock { Self.requests[req.url?.host ?? ""] = (request: req, body: body) }
         let resp = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
                                    headerFields: ["Content-Type": "text/event-stream"])!
         client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
@@ -290,7 +295,7 @@ func discoveryReady(_ r: Router) async {
         let w2 = FakeWriter()  // usmerjanje po objavljenem ID-ju in po imenu pri upstreamu
         await r.handle(request("POST", "/v1/messages", headers: ["x-api-key": "tok"], body: #"{"model":"claude-lite/model","messages":[]}"#), writer: w2)
         #expect(w2.status == 200)
-        let sent = try? JSONSerialization.jsonObject(with: StubUpstream.lastBody) as? [String: Any]
+        let sent = try? JSONSerialization.jsonObject(with: StubUpstream.last(host: "lite.local")?.body ?? Data()) as? [String: Any]
         #expect(sent?["model"] as? String == "lite/model")
     }
 
@@ -333,20 +338,25 @@ func discoveryReady(_ r: Router) async {
     @Test func passthroughRewritesModelAndAuthAndStreams() async throws {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [StubUpstream.self]
+        // Lasten gostitelj: up.example piše tudi ProviderToolsTests (#139).
+        var c = RouterConfig()
+        c.providers = [ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://passthrough.example/api/",
+                                      aliases: "or-qwen = qwen/qwen3-coder")]
+        let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: ["openrouter": "or-key"]), session: URLSession(configuration: cfg))
         let w = FakeWriter()
-        await makeRouter(session: URLSession(configuration: cfg)).handle(
+        await r.handle(
             request("POST", "/v1/messages?beta=true",
                     headers: ["Authorization": "Bearer tok", "anthropic-version": "2023-06-01", "anthropic-beta": "b1", "x-secret": "no"],
                     body: #"{"model":"or-qwen","stream":true,"tools":[{"name":"t"}],"messages":[]}"#),
             writer: w)
 
-        let up = try #require(StubUpstream.lastRequest)
-        #expect(up.url?.absoluteString == "https://up.example/api/v1/messages?beta=true")
+        let up = try #require(StubUpstream.last(host: "passthrough.example")?.request)
+        #expect(up.url?.absoluteString == "https://passthrough.example/api/v1/messages?beta=true")
         #expect(up.value(forHTTPHeaderField: "authorization") == "Bearer or-key")
         #expect(up.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
         #expect(up.value(forHTTPHeaderField: "anthropic-beta") == "b1")
         #expect(up.value(forHTTPHeaderField: "x-secret") == nil)
-        let sent = try #require(JSONSerialization.jsonObject(with: StubUpstream.lastBody) as? [String: Any])
+        let sent = try #require(JSONSerialization.jsonObject(with: StubUpstream.last(host: "passthrough.example")?.body ?? Data()) as? [String: Any])
         #expect(sent["model"] as? String == "qwen/qwen3-coder")
         #expect((sent["tools"] as? [Any])?.count == 1)
 

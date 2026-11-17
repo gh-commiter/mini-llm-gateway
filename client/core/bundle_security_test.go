@@ -103,10 +103,48 @@ func TestManifestCollectionsBoundedBeforeDecode(t *testing.T) {
 	defer func() { maxBundleProjects = old }()
 	maxBundleProjects = 1
 	// Invalid element types must not reach typed decoding and allocate the collection.
-	for _, key := range []string{"projects", "PROJECTS"} {
-		if err := preflightManifest([]byte(`{"` + key + `":[0,0]}`)); !errors.Is(err, ErrTooLarge) {
-			t.Fatal(err)
+	if err := preflightManifest([]byte(`{"projects":[0,0]}`)); !errors.Is(err, ErrTooLarge) {
+		t.Fatal(err)
+	}
+	// The decoder folds case, so "PROJECTS" would decode as projects; the preflight now
+	// refuses any name that is not spelled exactly as in the struct.
+	err := preflightManifest([]byte(`{"PROJECTS":[0,0]}`))
+	if err == nil || !strings.Contains(err.Error(), `unknown field "PROJECTS"`) {
+		t.Fatal(err)
+	}
+}
+
+func TestManifestFieldNamesMustBeExact(t *testing.T) {
+	oldUsers, oldProjects := maxBundleUsers, maxBundleProjects
+	defer func() { maxBundleUsers, maxBundleProjects = oldUsers, oldProjects }()
+	maxBundleUsers, maxBundleProjects = 1, 1
+	// The decoder folds Unicode case, so it would read these as users/projects; the
+	// preflight must refuse them before the collection can be allocated.
+	for _, tc := range []struct{ key, value string }{
+		{"uſers", `["a","b"]`},
+		{"projectſ", `[{},{}]`},
+	} {
+		err := preflightManifest([]byte(`{"` + tc.key + `":` + tc.value + `}`))
+		if err == nil || !strings.Contains(err.Error(), `unknown field "`+tc.key+`"`) {
+			t.Fatalf("%q: %v", tc.key, err)
 		}
+	}
+}
+
+func TestManifestLimitsNameRealFields(t *testing.T) {
+	for key := range manifestLimits() {
+		if !manifestFields[key] {
+			t.Fatalf("limit for unknown manifest field %q", key)
+		}
+	}
+}
+
+func TestBundleNormalManifestImports(t *testing.T) {
+	_, file := bundleFixture(t)
+	s := openT(t, t.TempDir())
+	defer s.Close()
+	if _, err := s.ImportBundle(ctx, BundleImport{Path: file, Source: "remote"}); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -11,7 +11,9 @@ import (
 	"io"
 	"os"
 	"path"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -460,10 +462,31 @@ func checkManifestLimits(m BundleManifest) error {
 	return nil
 }
 
+// manifestFields are the exact top-level names the manifest decoder accepts. The decoder
+// folds Unicode case, so it would also read "uſers" as users; the collection limit must
+// not be dodged that way.
+var manifestFields = func() map[string]bool {
+	fields := map[string]bool{}
+	t := reflect.TypeOf(BundleManifest{})
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			fields[name] = true
+		}
+	}
+	return fields
+}()
+
+// manifestLimits is the limit of each bounded top-level collection; read at call time so
+// tests can use small values.
+func manifestLimits() map[string]int {
+	return map[string]int{"projects": maxBundleProjects, "users": maxBundleUsers, "members": maxBundleUsers, "memberships": maxBundleMemberships, "assignments": maxBundleMemberships, "grants": maxBundleGrants, "notes": maxNotes}
+}
+
 // Count collection elements before decoding them into retained Go objects.
 func preflightManifest(data []byte) error {
 	d := json.NewDecoder(bytes.NewReader(data))
-	limits := map[string]int{"projects": maxBundleProjects, "users": maxBundleUsers, "members": maxBundleUsers, "memberships": maxBundleMemberships, "assignments": maxBundleMemberships, "grants": maxBundleGrants, "notes": maxNotes}
+	limits := manifestLimits()
 	var value func(int, int) error
 	value = func(depth, limit int) error {
 		t, err := d.Token()
@@ -477,9 +500,13 @@ func preflightManifest(data []byte) error {
 				if err != nil {
 					return err
 				}
+				name := key.(string)
 				n := -1
 				if depth == 0 {
-					if v, ok := limits[strings.ToLower(key.(string))]; ok {
+					if !manifestFields[name] {
+						return ErrInvalid{"bundle manifest: unknown field " + strconv.Quote(name)}
+					}
+					if v, ok := limits[name]; ok {
 						n = v
 					}
 				}

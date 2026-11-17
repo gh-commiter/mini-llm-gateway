@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Security
+- Bundle import: a manifest field name that matches a known field only after Unicode case folding (such as `uſers` for `users`) is refused before decoding, so the collection limits cannot be dodged; names must be spelled exactly.
+
 ## 0.7.10
 
 ### New
