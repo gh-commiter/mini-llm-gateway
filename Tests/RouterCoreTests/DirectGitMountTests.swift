@@ -90,6 +90,14 @@ private func sh(_ cmd: String, cwd: String, timeout: Double = 90) -> (status: In
     return (p.terminationStatus, String(decoding: data, as: UTF8.self))
 }
 
+/// For failure messages when a mount dies: the system's mount table for this mount point and the webdavfs processes (a dead agent = the OS dropped the mount).
+private func webdavState(_ mp: URL) -> String {
+    let table = sh("mount | grep -F '\(mp.path)' || echo 'not in the mount table'", cwd: "/", timeout: 10).out
+    let procs = sh("ps -axo pid,etime,command | grep -i '[w]ebdavfs' || echo 'no webdavfs process'", cwd: "/", timeout: 10).out
+    let load = sh("uptime", cwd: "/", timeout: 10).out
+    return "mount table: \(table.trimmingCharacters(in: .whitespacesAndNewlines)); webdavfs: \(procs.trimmingCharacters(in: .whitespacesAndNewlines)); \(load.trimmingCharacters(in: .whitespacesAndNewlines))"
+}
+
 /// webdavfs keeps the data of a write the client refused and retries it, so a plain umount can wait for ever: force it, and never wait longer than 20 s.
 private func forceUnmount(_ mp: URL) {
     for (exe, args) in [("/sbin/umount", ["-f", mp.path]), ("/usr/sbin/diskutil", ["unmount", "force", mp.path])] {
@@ -123,7 +131,7 @@ private func forceUnmount(_ mp: URL) {
     for cmd in ["echo more >> a.txt && git add a.txt && git commit -qm agent", "git branch feature", "git tag v1", "git checkout -q -b topic", "echo again >> a.txt && git stash -q",
                 "git checkout -q - && git merge -q --no-edit x", "git log --oneline | wc -l | grep -q 2", "git gc -q", "git repack -a -d -q && git prune --expire=now && git count-objects -v | grep -q '^count: 0'", "git gc --aggressive -q"] {
         let r = sh(cmd, cwd: mp.path)
-        #expect(r.status == 0, "\(cmd): \(r) | mounted \(ShareHub.isMounted(mp)); \(server.summary)")
+        #expect(r.status == 0, "\(cmd): \(r) | mounted \(ShareHub.isMounted(mp)); \(server.summary)\(r.status == 0 ? "" : " | " + webdavState(mp))")
     }
     // the commit is in the client's own repository, which git itself finds sound
     let log = sh("git log --oneline", cwd: client.path)

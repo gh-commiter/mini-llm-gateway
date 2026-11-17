@@ -57,6 +57,7 @@ public struct AdminClient: Sendable {
         }
         func recv() -> Data? {
             var buf = [UInt8](repeating: 0, count: 64 << 10)
+            errno = 0  // a read that returns 0 (peer closed) leaves errno alone: do not report an old value in `why`
             let n = Sock.retry { read(fd, &buf, buf.count) }
             return n > 0 ? Data(buf[0..<n]) : nil
         }

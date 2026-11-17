@@ -30,6 +30,13 @@ private final class PFx: @unchecked Sendable {
         #expect(await h.waitReady())
     }
 
+    /// For failure messages: a 503 core_unavailable means the helper was not answering. pid nil = not running; exit = wait status of the last helper
+    /// (9 = killed by SIGKILL from outside, 11/6 = crashed, 0 = quit by itself); restarts > 0 = the supervisor started it again during this test.
+    var diag: String {
+        let st = h.lastExit.map { $0 & 0x7f == 0 ? "exit code \(($0 >> 8) & 0xff)" : "signal \($0 & 0x7f)" } ?? "none"
+        return "helper pid \(h.pid.map(String.init) ?? "nil") ready \(h.isReady) restarts \(h.restarts) last exit \(st) last failure '\(h.lastFailure)' fatal \(String(describing: h.fatalError)) binary \(FileManager.default.isExecutableFile(atPath: h.binaryPath) ? "present" : "MISSING")"
+    }
+
     deinit { h.stop(); try? FileManager.default.removeItem(at: base) }
 
     func script(_ name: String, _ body: String) throws -> String {
@@ -285,11 +292,11 @@ echo "codex answer" > "$out"
         ]
         f.write("plan.txt", plan.joined(separator: "\n") + "\n")
         let w = await f.ask(project: f.pid["eureko"])
-        #expect(w.status == 200, "\(w.text)")
+        #expect(w.status == 200, "\(w.text) | \(f.diag)")
         func code(_ i: Int) -> String? { f.read("res-\(i).code") }
         let want = [1: "200", 2: "200", 3: "200", 4: "404", 5: "404", 6: "404", 7: "404", 8: "200", 9: "200", 10: "404", 11: "404", 12: "404", 13: "404",
                     14: "404", 15: "404", 16: "404", 17: "404", 18: "401", 19: "401"]
-        let helperState = "helper ready \(f.h.isReady) restarts \(f.h.restarts) last failure \(f.h.lastFailure)"  // a 503 core_unavailable = the helper was down: say so
+        let helperState = f.diag
         for (i, c) in want { #expect(code(i) == c, "step \(i): \(code(i) ?? "-") \(f.read("res-\(i).body") ?? "") want \(c) | \(helperState)") }
         let list = noteIDs(f.read("res-1.body"))
         #expect(list == [n["own"]!, n["fs"]!])  // own project's data and the grant's structure; never private, never the other project's

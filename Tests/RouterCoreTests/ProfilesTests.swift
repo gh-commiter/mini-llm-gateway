@@ -57,6 +57,9 @@ private final class FakeGateway: @unchecked Sendable {
     private var seen: [String] = []
     var port: UInt16 { listener.port?.rawValue ?? 0 }
     var log: [String] { lock.withLock { seen } }
+    private var seenPaths: [String] = []
+    /// method and path of the last requests that were not /v1/models: for failure messages (a stray client of another test shows up here)
+    var lastPaths: String { lock.withLock { Set(seenPaths.suffix(50)).sorted().joined(separator: " ") } }
 
     init(models: String, redirect: String? = nil) throws {
         let p = NWParameters.tcp
@@ -82,7 +85,7 @@ private final class FakeGateway: @unchecked Sendable {
             }
             if r.path == "/v1/models" { body = Data(#"{"data":[\#(models)]}"#.utf8) } else {
                 let m = (try? JSONSerialization.jsonObject(with: r.body) as? [String: Any])?["model"] as? String ?? ""
-                self.lock.withLock { self.seen.append("\(r.header("authorization") ?? "")|\(m)|\(r.header("x-claude-mini-share") ?? "")|\(r.header("connection") ?? "")") }
+                self.lock.withLock { self.seenPaths.append(r.method + " " + r.path); self.seen.append("\(r.header("authorization") ?? "")|\(m)|\(r.header("x-claude-mini-share") ?? "")|\(r.header("connection") ?? "")") }
             }
             c.send(content: HTTPResponse.head(status: 200, headers: [("Content-Type", "application/json")], contentLength: body.count) + body,
                    completion: .contentProcessed { _ in c.cancel() })
@@ -121,7 +124,7 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     for _ in 0..<2 { #expect(try await send(m.localURL, "POST", "/v1/messages", secret: m.secret, body: #"{"model":"claude-cli-opus@win"}"#) == (200, #"{"ok":true}"#)) }
     #expect(try await send(m.localURL, "POST", "/v1/messages/count_tokens", secret: m.secret, body: #"{"model":"claude-siri-ai"}"#).0 == 200)
     #expect(g2.log.suffix(2) == ["Bearer tok-win|claude-cli-opus|1|close", "Bearer tok-win|claude-cli-opus|1|close"])
-    #expect(g1.log == ["Bearer tok-mini|claude-siri-ai|1|close"])
+    #expect(g1.log == ["Bearer tok-mini|claude-siri-ai|1|close"], "\(g1.log.count) requests, paths: \(g1.lastPaths)")
     #expect(shares.n == 1)
     let (st5, e5) = try await send(m.localURL, "POST", "/v1/messages", secret: m.secret, body: #"{"model":"x@off"}"#)
     #expect(st5 == 502 && e5.contains("gateway off is not reachable (minigw status)"), "\(e5)")
