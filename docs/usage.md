@@ -1389,6 +1389,15 @@ Each automatic run leaves one audit row (the link and the counts, never a title 
 account:** the automatic push contacts only an upstream you added with `upstream add` and only for a link you set to `--auto`. On the Mac the app's
 timer asks the core's upstream lane every few seconds (`POST /upstream-auto`, at most one link per request), because the helper cannot call out by itself.
 
+**Publish mode.** By default a push sends proposals: the upstream's reviewers accept them (`--mode submit`). A link made with `--mode publish`
+writes the notes on the upstream directly (the device's user there needs the developer role in the project): the first push creates the note
+there, later pushes update that same note. Before updating, the gateway reads the note there: if its revision is not the one it left (somebody
+changed it on the upstream, or deleted it) the change is **not** written. The note is a conflict: it is listed in `upstream status` (and in the
+push report) as `CONFLICT: note N (changed there)` and is skipped until you decide with `minigw gw upstream resolve <project> <note> --theirs`
+(keep the upstream's version; our change is forgotten for it) or `--ours` (our version is sent as a submission for the upstream's reviewers,
+never as an overwrite). The mode cannot be changed once the link has sent notes: unlink and link again (what was sent stays there). Deleting a
+note here or making it private is not propagated in either mode; `status` lists it.
+
 A repeated push sends only what changed: every note is remembered by its content (class, kind, title, text). A changed note is sent
 as a **replacement** of the note the upstream accepted before; if that note is still pending there, or cannot be read by the bound
 user, it goes as a new submission that names the earlier one. Notes deleted here, and changes of class to private, are not

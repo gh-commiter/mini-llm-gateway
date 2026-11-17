@@ -96,7 +96,7 @@ ALTER TABLE upstream_links ADD COLUMN last_fail INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_links ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_links ADD COLUMN next_attempt INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_sent ADD COLUMN remote_rev INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE upstream_sent ADD COLUMN conflict INTEGER NOT NULL DEFAULT 0 CHECK(conflict IN(0,1));
+ALTER TABLE upstream_sent ADD COLUMN conflict INTEGER NOT NULL DEFAULT 0 CHECK(conflict IN(0,1,2)); -- 1: changed on the upstream since our last write, 2: the owner chose "ours": send it as a submission
 ALTER TABLE upstream_sent ADD COLUMN conflict_rev INTEGER NOT NULL DEFAULT 0;`)
 	return err
 }
@@ -199,13 +199,23 @@ type NotPropagated struct {
 
 const maxNotPropagated = 50
 
+// UpstreamConflict: Gone = the upstream note no longer exists; RemoteRev is the revision seen there. State 2 (resolved "ours") is not
+// listed: it is waiting to be sent.
+type UpstreamConflict struct {
+	Note      int64 `json:"note"`
+	RemoteRev int64 `json:"remoteRev"`
+	Gone      bool  `json:"gone,omitempty"`
+}
+
 // UpstreamLinkInfo is a link with what a status shows.
 type UpstreamLinkInfo struct {
 	UpstreamLink
 	NotPropagated []NotPropagated `json:"notPropagated,omitempty"`
-	Label         string          `json:"label"`   // the project's short name, or "team <name>"
-	Pending       int             `json:"pending"` // notes that a push would send now (new or changed)
-	Total         int             `json:"total"`   // published notes the link covers
+	// Conflicts: publish mode notes that changed (or were deleted) on the upstream since our last write; they are not overwritten.
+	Conflicts []UpstreamConflict `json:"conflicts,omitempty"`
+	Label     string             `json:"label"`   // the project's short name, or "team <name>"
+	Pending   int                `json:"pending"` // notes that a push would send now (new or changed)
+	Total     int                `json:"total"`   // published notes the link covers
 }
 
 func parseClasses(csv string, withPrivate bool) ([]Class, error) {
@@ -256,9 +266,6 @@ func (s *Store) LinkUpstreamWith(ctx context.Context, sp LinkSpec) error {
 	project, team, upstream, remote, classes, withPrivate := sp.Project, sp.Team, sp.Upstream, sp.Remote, sp.Classes, sp.WithPrivate
 	if sp.Mode != "" && sp.Mode != "submit" && sp.Mode != "publish" {
 		return ErrRefusal{"mode: submit or publish"}
-	}
-	if sp.Mode == "publish" {
-		return ErrRefusal{"mode publish is not available yet"} // replaced when publish is implemented (part 2 of step B)
 	}
 	if classes == "" {
 		classes = "structure,data"
@@ -322,6 +329,19 @@ func (s *Store) LinkUpstreamWith(ctx context.Context, sp LinkSpec) error {
 		if withPrivate {
 			p = 1
 		}
+		if sp.Mode != "" {
+			var cur string
+			var n int
+			switch e := tx.QueryRow(`SELECT mode,(SELECT count(*) FROM upstream_sent WHERE project_id=?1 AND upstream=?2) FROM upstream_links WHERE project_id=?1 AND upstream=?2`, local, upstream).Scan(&cur, &n); e {
+			case nil:
+				if cur != sp.Mode && n > 0 { // the receipts of one mode mean nothing in the other (a submission is not a note)
+					return "", ErrRefusal{"the link already sent notes in mode " + cur + ": unlink it and link it again to change the mode (what was sent stays on the upstream)"}
+				}
+			case sql.ErrNoRows:
+			default:
+				return "", e
+			}
+		}
 		var au any
 		if sp.Auto != nil {
 			au = 0
@@ -369,16 +389,17 @@ func (s *Store) UnlinkUpstream(ctx context.Context, project, team int64, upstrea
 
 // UpstreamNote is one local published note as a push sees it, with what was sent of it before.
 type UpstreamNote struct {
-	ID        int64
-	Class     Class
-	Title     string
-	Body      string
-	EntryKind string
-	Revision  int64
-	Author    string
-	Hash      string
-	Sent      *UpstreamSent
-	Unchanged bool // sent before with this very content: nothing to send
+	ID         int64
+	Class      Class
+	Title      string
+	Body       string
+	EntryKind  string
+	Revision   int64
+	Author     string
+	Hash       string
+	Sent       *UpstreamSent
+	Unchanged  bool // sent before with this very content: nothing to send
+	Conflicted bool // publish mode: the upstream note changed there since our last write; waits for `upstream resolve`
 }
 
 type UpstreamSent struct {
@@ -387,6 +408,10 @@ type UpstreamSent struct {
 	RemoteSub  int64
 	RemoteNote int64
 	Sent       time.Time
+	// publish mode: the revision of the upstream note after our last write, and a conflict (1: it changed there since; 2: "ours" was chosen)
+	RemoteRev   int64
+	Conflict    int
+	ConflictRev int64
 }
 
 func upstreamHash(n Note) string {
@@ -483,7 +508,7 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 			u := UpstreamNote{ID: n.ID, Class: n.Class, Title: n.Title, Body: n.Body, EntryKind: n.EntryKind, Revision: n.Revision, Author: n.Author, Hash: upstreamHash(n)}
 			var sent UpstreamSent
 			var at int64
-			switch e := tx.QueryRow(`SELECT hash,revision,remote_sub,remote_note,sent FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID).Scan(&sent.Hash, &sent.Revision, &sent.RemoteSub, &sent.RemoteNote, &at); e {
+			switch e := tx.QueryRow(`SELECT hash,revision,remote_sub,remote_note,sent,remote_rev,conflict,conflict_rev FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID).Scan(&sent.Hash, &sent.Revision, &sent.RemoteSub, &sent.RemoteNote, &at, &sent.RemoteRev, &sent.Conflict, &sent.ConflictRev); e {
 			case nil:
 				sent.Sent = fromMs(at)
 				u.Sent = &sent
@@ -491,7 +516,9 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 			default:
 				return out, e
 			}
-			if u.Sent != nil && u.Sent.Hash == u.Hash {
+			if u.Sent != nil && u.Sent.Conflict == 1 { // changed on the upstream: waits for the owner (resolve), is not "to send"
+				u.Conflicted, u.Body = true, ""
+			} else if u.Sent != nil && u.Sent.Hash == u.Hash && u.Sent.Conflict == 0 {
 				u.Unchanged, u.Body = true, ""
 			} else {
 				if limit > 0 && out.Pending >= limit {
@@ -570,6 +597,20 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 				}
 			}
 			nr.Close()
+			cr, e := tx.Query(`SELECT note_id, conflict_rev FROM upstream_sent WHERE project_id=? AND upstream=? AND conflict=1 ORDER BY note_id LIMIT ?`, l.Project, l.Upstream, maxNotPropagated)
+			if e != nil {
+				return e
+			}
+			for cr.Next() {
+				var c UpstreamConflict
+				if e = cr.Scan(&c.Note, &c.RemoteRev); e != nil {
+					cr.Close()
+					return e
+				}
+				c.Gone = c.RemoteRev == 0
+				info.Conflicts = append(info.Conflicts, c)
+			}
+			cr.Close()
 			out = append(out, info)
 		}
 		return nil
@@ -607,10 +648,91 @@ func (s *Store) upstreamPlan(ctx context.Context, project int64, upstream string
 
 func (s *Store) upstreamRecordSent(ctx context.Context, project int64, upstream string, n UpstreamNote, sub, remoteNote int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
+		// a submission leaves no baseline of the upstream note (remote_rev 0) and no conflict: a later publish update compares again
 		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent`,
+ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=0, conflict=0, conflict_rev=0`,
 			project, upstream, n.ID, n.Hash, n.Revision, sub, remoteNote, ms(s.now()))
 		return e
+	})
+}
+
+// upstreamRecordPublished: a note written on the upstream directly (publish mode): its id and the revision it has after our write, the
+// baseline the next update compares with.
+func (s *Store) upstreamRecordPublished(ctx context.Context, project int64, upstream string, n UpstreamNote, remoteNote, remoteRev int64) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev) VALUES(?,?,?,?,?,0,?,?,?)
+ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=0, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=excluded.remote_rev, conflict=0, conflict_rev=0`,
+			project, upstream, n.ID, n.Hash, n.Revision, remoteNote, ms(s.now()), remoteRev)
+		return e
+	})
+}
+
+// upstreamRecordConflict: the upstream note changed (or is gone: rev 0) since our last write; it is not overwritten.
+func (s *Store) upstreamRecordConflict(ctx context.Context, project int64, upstream string, note, rev int64) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`UPDATE upstream_sent SET conflict=1, conflict_rev=? WHERE project_id=? AND upstream=? AND note_id=?`, rev, project, upstream, note)
+		return e
+	})
+}
+
+// ResolveUpstream settles the conflicts of one note on every upstream that has one. "theirs": our change is forgotten for the revision on
+// the upstream (the receipt takes the note as it is here now and the upstream's revision as the baseline); "ours": the next push sends our
+// version as a SUBMISSION for the upstream's reviewers (never an overwrite).
+func (s *Store) ResolveUpstream(ctx context.Context, project, team, note int64, ours bool) error {
+	local := project
+	if team > 0 {
+		local = segmentID(team)
+	}
+	return s.adminWrite(ctx, "upstream.resolve", "", map[string]any{"project": local, "note": note, "ours": ours}, func(tx *sql.Tx) (string, error) {
+		rows, e := tx.Query(`SELECT upstream, conflict_rev FROM upstream_sent WHERE project_id=? AND note_id=? AND conflict=1 ORDER BY upstream`, local, note)
+		if e != nil {
+			return "", e
+		}
+		type c struct {
+			up  string
+			rev int64
+		}
+		var cs []c
+		for rows.Next() {
+			var x c
+			if e = rows.Scan(&x.up, &x.rev); e != nil {
+				rows.Close()
+				return "", e
+			}
+			cs = append(cs, x)
+		}
+		rows.Close()
+		if len(cs) == 0 {
+			return "", ErrRefusal{"no conflict on this note"}
+		}
+		var n Note
+		gone := false
+		if !ours {
+			switch e := tx.QueryRow(`SELECT class,title,body,entry_kind FROM notes WHERE id=? AND project_id=?`, note, local).Scan(&n.Class, &n.Title, &n.Body, &n.EntryKind); e {
+			case nil:
+			case sql.ErrNoRows:
+				gone = true
+			default:
+				return "", e
+			}
+		}
+		for _, x := range cs {
+			switch {
+			case ours:
+				_, e = tx.Exec(`UPDATE upstream_sent SET conflict=2 WHERE project_id=? AND upstream=? AND note_id=?`, local, x.up, note)
+			case gone: // gone here too: nothing left to settle
+				_, e = tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, local, x.up, note)
+			default:
+				_, e = tx.Exec(`UPDATE upstream_sent SET hash=?, remote_rev=?, conflict=0, conflict_rev=0 WHERE project_id=? AND upstream=? AND note_id=?`, upstreamHash(n), x.rev, local, x.up, note)
+			}
+			if e != nil {
+				return "", e
+			}
+		}
+		if ours {
+			return "", s.markUpstreamDirty(tx, local) // an auto link sends it soon
+		}
+		return "", nil
 	})
 }
 

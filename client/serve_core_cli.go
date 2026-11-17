@@ -95,6 +95,7 @@ type coreOpts struct {
 	remoteProject, remoteTeam string
 	class, deviceName, mode   string
 	auto, manual              bool
+	theirs, ours              bool
 	withPrivate, dryRun       bool
 	pause                     func(time.Duration) // between the calls of a long upstream push (nil: time.Sleep)
 }

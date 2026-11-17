@@ -20,7 +20,7 @@ public struct AdminOpts {
     /// upstream commands: the link and push options, and what the token is read with (the command reads it only after its arguments are
     /// right: raw text from stdin or the terminal, checked by AdminCommands.secretLine)
     public var remoteProject = "", remoteTeam = "", classes = "", deviceName = "", mode = ""
-    public var withPrivate = false, dryRun = false, auto = false, manual = false
+    public var withPrivate = false, dryRun = false, auto = false, manual = false, theirs = false, ours = false
     public var tokenInput: (() throws -> String)?
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
                 provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "", by: String = "", phase: String = "", activity: String = "", task: String = "") {

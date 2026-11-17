@@ -15,6 +15,8 @@ const upstreamHelp = `
   minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
   minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
   minigw gw upstream unlink <project> <name> | --team <team> <name>
+  minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
+  minigw gw upstream resolve --team <team> <note> --theirs|--ours
   minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
   minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)`
 
@@ -41,6 +43,11 @@ type upLink struct {
 	NotPropagated []struct {
 		Note int64
 		Why  string
+	}
+	Conflicts []struct {
+		Note      int64
+		RemoteRev int64
+		Gone      bool
 	}
 }
 
@@ -146,9 +153,32 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			if s := upstreamNotPropagated(l); s != "" {
 				say(clean("  " + s))
 			}
+			if s := upstreamConflicts(l); s != "" {
+				say(clean("  " + s))
+			}
 		}
 		if len(r.Links) == 0 {
 			say("no upstream links (minigw gw upstream link <project> <name>)")
+		}
+	case pos[1] == "resolve" && (len(pos) == 4 && team == "" || len(pos) == 3 && team != ""):
+		if u.theirs == u.ours {
+			fail("resolve: choose --theirs or --ours")
+		}
+		note, err := strconv.ParseInt(pos[len(pos)-1], 10, 64)
+		if err != nil || note <= 0 {
+			fail("resolve: the note is its number")
+		}
+		body := map[string]any{"note": note, "ours": u.ours}
+		if team != "" {
+			body["team"] = teamID(a, team)
+		} else {
+			body["project"] = projectID(a, pos[2])
+		}
+		a.do("POST", "/upstream-resolve", body, nil)
+		if u.ours {
+			say(fmt.Sprintf("note %d: our version goes to the upstream as a submission at the next push", note))
+		} else {
+			say(fmt.Sprintf("note %d: the upstream's version stays, our change is forgotten for it", note))
 		}
 	case pos[1] == "push" && len(pos) <= 3:
 		body := map[string]any{"dryRun": u.dryRun}
@@ -215,6 +245,7 @@ type upPush struct {
 	Lines                   []string
 	Created, Skipped        int
 	Replaced, Refused       int
+	Conflicts               int
 	Stopped                 string
 	DryRun                  bool
 	More                    bool
@@ -234,7 +265,11 @@ func upstreamPrint(pushes []upPush) {
 		if p.DryRun {
 			verb = "would be "
 		}
-		say(fmt.Sprintf("  %screated %d, replaced %d, skipped %d, refused %d", verb, p.Created, p.Replaced, p.Skipped, p.Refused))
+		tail := ""
+		if p.Conflicts > 0 {
+			tail = fmt.Sprintf(", conflicts %d", p.Conflicts)
+		}
+		say(fmt.Sprintf("  %screated %d, replaced %d, skipped %d, refused %d%s", verb, p.Created, p.Replaced, p.Skipped, p.Refused, tail))
 		if p.Stopped != "" {
 			say(clean("  stopped: " + p.Stopped))
 		}
@@ -294,4 +329,20 @@ func upstreamNotPropagated(l upLink) string {
 		return ""
 	}
 	return "not propagated: " + strings.Join(parts, "; ") + " (the copy stays on the upstream until you remove it there)"
+}
+
+// upstreamConflicts: publish notes that changed on the upstream and were not overwritten.
+func upstreamConflicts(l upLink) string {
+	var parts []string
+	for _, c := range l.Conflicts {
+		what := "changed there"
+		if c.Gone {
+			what = "deleted there"
+		}
+		parts = append(parts, fmt.Sprintf("note %d (%s)", c.Note, what))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "CONFLICT: " + strings.Join(parts, ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
 }

@@ -27,6 +27,14 @@
   {
    "method": "GET",
    "pattern": "^/minigw/v1/projects/[0-9]{1,18}/notes/[0-9]{1,18}$"
+  },
+  {
+   "method": "POST",
+   "pattern": "^/minigw/v1/projects/[0-9]{1,18}/notes$"
+  },
+  {
+   "method": "PUT",
+   "pattern": "^/minigw/v1/projects/[0-9]{1,18}/notes/[0-9]{1,18}$"
   }
  ],
  "refused": [
@@ -41,10 +49,6 @@
   {
    "method": "POST",
    "path": "/minigw/v1/projects"
-  },
-  {
-   "method": "POST",
-   "path": "/minigw/v1/projects/7/notes"
   },
   {
    "method": "POST",
@@ -145,6 +149,22 @@
   {
    "method": "GET",
    "path": "/v1/models/x"
+  },
+  {
+   "method": "PUT",
+   "path": "/minigw/v1/projects/7/notes"
+  },
+  {
+   "method": "POST",
+   "path": "/minigw/v1/projects/7/notes/5"
+  },
+  {
+   "method": "PUT",
+   "path": "/minigw/v1/projects/7/notes/5/x"
+  },
+  {
+   "method": "PUT",
+   "path": "/minigw/v1/projects/shop/notes/5"
   }
  ]
 }

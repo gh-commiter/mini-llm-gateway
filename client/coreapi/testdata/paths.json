@@ -19,6 +19,7 @@
   {"kind":"admin","method":"PUT","path":"/upstreams/hub/links/3","want":true},
   {"kind":"admin","method":"POST","path":"/upstream-push","want":true},
   {"kind":"admin","method":"POST","path":"/upstream-auto","want":true},
+  {"kind":"admin","method":"POST","path":"/upstream-resolve","want":true},
   {"kind":"admin","method":"GET","path":"/upstreamsx","want":false},
   {"kind":"admin","method":"GET","path":"/projects/3/dependsx","want":true},
   {"kind":"admin","method":"PUT","path":"/projects/3/depends/4","want":true},

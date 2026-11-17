@@ -46,6 +46,8 @@ type admCase struct {
 		DryRun        bool   `json:"dryRun,omitempty"`
 		Auto          bool   `json:"auto,omitempty"`
 		Manual        bool   `json:"manual,omitempty"`
+		Theirs        bool   `json:"theirs,omitempty"`
+		Ours          bool   `json:"ours,omitempty"`
 		Mode          string `json:"mode,omitempty"`
 	} `json:"opts"`
 	Stdin     string    `json:"stdin,omitempty"` // what the command reads (the upstream's token)
@@ -106,7 +108,7 @@ func runAdminCase(c *admCase) *admWant {
 	}}
 	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
 		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, team: c.Opts.Team, by: c.Opts.By, phase: c.Opts.Phase, activity: c.Opts.Activity, task: c.Opts.Task,
-		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, deviceName: c.Opts.DeviceName, auto: c.Opts.Auto, manual: c.Opts.Manual, mode: c.Opts.Mode, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun}
+		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, deviceName: c.Opts.DeviceName, auto: c.Opts.Auto, manual: c.Opts.Manual, theirs: c.Opts.Theirs, ours: c.Opts.Ours, mode: c.Opts.Mode, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun}
 	if c.Opts.Days != "" {
 		o.days = c.Opts.Days
 	}

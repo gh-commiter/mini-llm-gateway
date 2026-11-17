@@ -671,3 +671,140 @@ func TestUpstreamAutoPushBetweenTwoGateways(t *testing.T) {
 		t.Fatalf("%d audit rows, %s", rows, detail)
 	}
 }
+
+func (f *upFx) remoteNote(title string) (id, rev int64, body string) {
+	f.t.Helper()
+	f.must(f.remote.core.DB().QueryRow(`SELECT id, revision, body FROM notes WHERE title=?`, title).Scan(&id, &rev, &body))
+	return
+}
+
+// Publish mode between two real gateways: notes are written on the upstream directly and updated in place, a note that changed there is
+// never overwritten (a conflict, shown until the owner resolves it), and both resolutions do what they say.
+func TestUpstreamPublishModeBetweenTwoGateways(t *testing.T) {
+	f := newUpFx(t, core.Developer)
+	f.add("hub")
+	f.allow()
+	p, project, notes := f.seed()
+	c := f.local.core
+	edit := func(title, body string) {
+		t.Helper()
+		n := notes[title]
+		cur, err := c.GetNote(t0, p, project, n.ID)
+		f.must(err)
+		_, err = c.UpdateNote(t0, p, project, n.ID, cur.Revision, core.NoteInput{Class: n.Class, Title: title, Body: body})
+		f.must(err)
+	}
+	if out, err := f.cmd(coreOpts{mode: "publish"}, "link", "shop", "hub"); err != nil {
+		t.Fatal(out, err)
+	}
+	out, err := f.cmd(coreOpts{}, "push", "shop")
+	if err != nil || !strings.Contains(out, "create "+fmt.Sprint(notes["Invoice numbering"].ID)) || !strings.Contains(out, "created 2") {
+		t.Fatalf("%q %v", out, err)
+	}
+	if n, _ := f.remoteSubmissions(); n != 0 {
+		t.Fatalf("publish mode made %d submissions", n)
+	}
+	id, rev, body := f.remoteNote("Invoice numbering")
+	if !strings.HasPrefix(body, "text of Invoice numbering") {
+		t.Fatalf("%q", body)
+	}
+	// a second push with nothing changed sends nothing; a changed note updates the SAME note there
+	if out, _ = f.cmd(coreOpts{}, "push", "shop"); !strings.Contains(out, "created 0, replaced 0, skipped 2") {
+		t.Fatal(out)
+	}
+	edit("Invoice numbering", "second text")
+	if out, _ = f.cmd(coreOpts{}, "push", "shop"); !strings.Contains(out, "replaced 1") {
+		t.Fatal(out)
+	}
+	id2, rev2, body2 := f.remoteNote("Invoice numbering")
+	var count int
+	f.must(f.remote.core.DB().QueryRow(`SELECT count(*) FROM notes`).Scan(&count))
+	if id2 != id || rev2 <= rev || !strings.HasPrefix(body2, "second text") || count != 2 {
+		t.Fatalf("id %d/%d rev %d/%d body %q notes %d", id, id2, rev, rev2, body2, count)
+	}
+	// somebody changes the note on the upstream; our edit must not overwrite it
+	rp, err := f.remote.core.Principal(t0, f.localDev, true)
+	f.must(err)
+	rproj := f.projectID("shop")
+	_, err = f.remote.core.UpdateNote(t0, rp, rproj, id, rev2, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "THEIR text"})
+	f.must(err)
+	edit("Invoice numbering", "third text")
+	for i := 0; i < 2; i++ { // the second push does not try again
+		out, err = f.cmd(coreOpts{}, "push", "shop")
+		if err != nil || (i == 0 && !strings.Contains(out, "conflict ")) || !strings.Contains(out, "conflicts 1") {
+			t.Fatalf("push %d: %q %v", i, out, err)
+		}
+		if _, _, b := f.remoteNote("Invoice numbering"); b != "THEIR text" {
+			t.Fatalf("overwritten: %q", b)
+		}
+	}
+	if out, _ = f.cmd(coreOpts{}, "status", "shop"); !strings.Contains(out, "CONFLICT: note "+fmt.Sprint(notes["Invoice numbering"].ID)+" (changed there)") {
+		t.Fatal(out)
+	}
+	// resolve with nothing to resolve, or without a choice
+	if _, err = f.cmd(coreOpts{ours: true}, "resolve", "shop", fmt.Sprint(notes["Reset steps"].ID)); err == nil {
+		t.Fatal("resolved a note without a conflict")
+	}
+	// theirs: our change is forgotten for this revision; a later edit goes through as an update again
+	nid := fmt.Sprint(notes["Invoice numbering"].ID)
+	if out, err = f.cmd(coreOpts{theirs: true}, "resolve", "shop", nid); err != nil {
+		t.Fatal(out, err)
+	}
+	if out, _ = f.cmd(coreOpts{}, "status", "shop"); strings.Contains(out, "CONFLICT") {
+		t.Fatal(out)
+	}
+	if out, _ = f.cmd(coreOpts{}, "push", "shop"); !strings.Contains(out, "replaced 0") || !strings.Contains(out, "skipped 2") {
+		t.Fatal(out)
+	}
+	if _, _, b := f.remoteNote("Invoice numbering"); b != "THEIR text" {
+		t.Fatalf("theirs overwritten: %q", b)
+	}
+	edit("Invoice numbering", "fourth text")
+	if out, _ = f.cmd(coreOpts{}, "push", "shop"); !strings.Contains(out, "replaced 1") {
+		t.Fatal(out)
+	}
+	if _, _, b := f.remoteNote("Invoice numbering"); !strings.HasPrefix(b, "fourth text") {
+		t.Fatalf("%q", b)
+	}
+	// ours: the upstream changes again, we choose ours: our version arrives as a SUBMISSION, the note there is not touched
+	_, rev3, _ := f.remoteNote("Invoice numbering")
+	_, err = f.remote.core.UpdateNote(t0, rp, rproj, id, rev3, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "THEIR second"})
+	f.must(err)
+	edit("Invoice numbering", "fifth text")
+	if out, _ = f.cmd(coreOpts{}, "push", "shop"); !strings.Contains(out, "conflicts 1") {
+		t.Fatal(out)
+	}
+	if out, err = f.cmd(coreOpts{ours: true}, "resolve", "shop", nid); err != nil {
+		t.Fatal(out, err)
+	}
+	out, err = f.cmd(coreOpts{}, "push", "shop")
+	if err != nil || !strings.Contains(out, "resolved as ours") {
+		t.Fatalf("%q %v", out, err)
+	}
+	if n, titles := f.remoteSubmissions(); n != 1 || titles != "Invoice numbering" {
+		t.Fatalf("%d %s", n, titles)
+	}
+	if _, _, b := f.remoteNote("Invoice numbering"); b != "THEIR second" {
+		t.Fatalf("ours overwrote: %q", b)
+	}
+	if out, _ = f.cmd(coreOpts{}, "status", "shop"); strings.Contains(out, "CONFLICT") {
+		t.Fatal(out)
+	}
+	// the mode cannot be switched once notes were sent in the other one; the link keeps its mode
+	if _, err = f.cmd(coreOpts{mode: "submit"}, "link", "shop", "hub"); err == nil {
+		t.Fatal("mode switched after sending")
+	}
+	if out, _ = f.cmd(coreOpts{}, "status", "shop"); !strings.Contains(out, "auto") && !strings.Contains(out, "publish") {
+		t.Fatal(out)
+	}
+	// a note deleted on the upstream is a conflict, not recreated
+	rid, rrev, _ := f.remoteNote("Reset steps")
+	f.must(f.remote.core.DeleteNote(t0, rp, rproj, rid, rrev))
+	edit("Reset steps", "changed after their delete")
+	if out, _ = f.cmd(coreOpts{}, "push", "shop"); !strings.Contains(out, "deleted on the upstream, not recreated") {
+		t.Fatal(out)
+	}
+	if out, _ = f.cmd(coreOpts{}, "status", "shop"); !strings.Contains(out, "(deleted there)") {
+		t.Fatal(out)
+	}
+}

@@ -31,7 +31,7 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
             cmd.pause = { _ in }
             let o = c["opts"] as! [String: Any]
             var opts = AdminOpts(team: o["team"] as? String ?? "")
-            opts.deviceName = o["deviceName"] as? String ?? ""; opts.mode = o["mode"] as? String ?? ""; opts.auto = o["auto"] as? Bool ?? false; opts.manual = o["manual"] as? Bool ?? false; opts.remoteProject = o["remoteProject"] as? String ?? ""; opts.remoteTeam = o["remoteTeam"] as? String ?? ""; opts.classes = o["class"] as? String ?? ""
+            opts.deviceName = o["deviceName"] as? String ?? ""; opts.mode = o["mode"] as? String ?? ""; opts.auto = o["auto"] as? Bool ?? false; opts.manual = o["manual"] as? Bool ?? false; opts.theirs = o["theirs"] as? Bool ?? false; opts.ours = o["ours"] as? Bool ?? false; opts.remoteProject = o["remoteProject"] as? String ?? ""; opts.remoteTeam = o["remoteTeam"] as? String ?? ""; opts.classes = o["class"] as? String ?? ""
             opts.withPrivate = o["withPrivate"] as? Bool ?? false; opts.dryRun = o["dryRun"] as? Bool ?? false
             let stdin = c["stdin"] as? String ?? ""
             opts.tokenInput = { stdin }
@@ -880,6 +880,55 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         let st = obj(await adm(h, "GET", "/upstreams"))
         let link = (st["links"] as? [[String: Any]])?.first
         #expect(link?["auto"] as? Bool == true && link?["dirtySince"] != nil && link?["mode"] as? String == "submit")
+    }
+
+    /// Publish mode on the Mac: a note is written on the upstream through the admitted POST /notes, updated in place through PUT, and a note
+    /// that moved there is a conflict that the owner settles through /upstream-resolve (no member can reach that route).
+    @Test func publishModeWritesNotesAndConflictsAreSettledByTheOwner() async throws {
+        let secrets = MemorySecrets(), t = fakeUpstream()
+        nonisolated(unsafe) var theirRevision = 1
+        let base = t.handler
+        t.handler = { c in
+            switch (c.method, c.path) {
+            case ("POST", "/minigw/v1/projects/7/notes"): return UpstreamAnswer(status: 201, body: Data(#"{"id":55,"revision":1}"#.utf8))
+            case ("GET", "/minigw/v1/projects/7/notes/55"): return UpstreamAnswer(status: 200, body: Data(#"{"id":55,"revision":\#(theirRevision)}"#.utf8))
+            case ("PUT", "/minigw/v1/projects/7/notes/55"): return UpstreamAnswer(status: 200, body: Data(#"{"id":55,"revision":\#(theirRevision + 1)}"#.utf8))
+            default: return base(c)
+            }
+        }
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let (h, _) = try await start(callouts: UpstreamHost(secrets: secrets, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac"))
+        defer { h.stop() }
+        _ = await adm(h, "PUT", "/upstreams/hub", #"{"address":"hub.example","token":"tok#\#(Noise.base64url(Noise.newKey().publicKey.rawRepresentation))"}"#)
+        _ = await adm(h, "PUT", "/bindings/dev-A", #"{"user":1}"#)
+        _ = await adm(h, "POST", "/projects", #"{"slug":"shop","name":"Shop"}"#)
+        _ = await adm(h, "PUT", "/projects/1/members/1", #"{"role":"developer"}"#)
+        let member = CoreContext(kind: .member, device: "dev-A", approved: true)
+        let made = await h.call(context: member, request: CoreRequest(method: "POST", path: "/minigw/v1/projects/1/notes", header: ["Idempotency-Key": ["k"]], body: Data(#"{"class":"data","title":"N","body":"t"}"#.utf8)))
+        let noteID = obj(made)["id"] as? Int ?? 1
+        #expect((await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop","mode":"publish"}"#)).status == 200)
+        let first = obj(await adm(h, "POST", "/upstream-push", #"{"project":1}"#))
+        #expect((first["pushes"] as? [[String: Any]])?.first?["created"] as? Int == 1, "\(first)")
+        #expect(t.calls.contains { $0.method == "POST" && $0.path == "/minigw/v1/projects/7/notes" })
+        #expect(!t.calls.contains { $0.path.hasSuffix("/kb/submissions") && $0.method == "POST" })  // a note, not a submission
+        // the mode cannot be switched after notes were sent
+        #expect((await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop","mode":"submit"}"#)).status == 400)
+        // our edit goes to the same note; when it moved there it is a conflict and nothing is written
+        theirRevision = 4
+        let cur = obj(await h.call(context: member, request: CoreRequest(method: "GET", path: "/minigw/v1/projects/1/notes/\(noteID)")))
+        _ = await h.call(context: member, request: CoreRequest(method: "PUT", path: "/minigw/v1/projects/1/notes/\(noteID)", body: Data(#"{"revision":\#(cur["revision"] as? Int ?? 1),"class":"data","title":"N","body":"edited"}"#.utf8)))
+        let before = t.calls.filter { $0.method == "PUT" }.count
+        let second = obj(await adm(h, "POST", "/upstream-push", #"{"project":1}"#))
+        #expect((second["pushes"] as? [[String: Any]])?.first?["conflicts"] as? Int == 1, "\(second)")
+        #expect(t.calls.filter { $0.method == "PUT" }.count == before)
+        let st = obj(await adm(h, "GET", "/upstreams"))
+        #expect(((st["links"] as? [[String: Any]])?.first?["conflicts"] as? [[String: Any]])?.count == 1)
+        // only the owner settles it
+        #expect((await h.call(context: member, request: CoreRequest(method: "POST", path: "/upstream-resolve", body: Data(#"{"project":1,"note":\#(noteID),"ours":true}"#.utf8)))).status != 200)
+        #expect((await adm(h, "POST", "/upstream-resolve", #"{"project":1,"note":\#(noteID),"ours":true}"#)).status == 200)
+        #expect((await adm(h, "POST", "/upstream-resolve", #"{"project":1,"note":\#(noteID),"ours":true}"#)).status == 400)  // nothing left to settle
+        let third = obj(await adm(h, "POST", "/upstream-push", #"{"project":1}"#))
+        #expect(t.calls.contains { $0.method == "POST" && $0.path == "/minigw/v1/projects/7/kb/submissions" }, "\(third)")  // ours: a submission
     }
 
     @Test func withoutAnAppThatAnswersCalloutsTheRoutesSay501() async throws {

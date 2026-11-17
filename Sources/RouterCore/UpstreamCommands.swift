@@ -11,6 +11,8 @@ extension AdminCommands {
           minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
           minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
           minigw gw upstream unlink <project> <name> | --team <team> <name>
+          minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
+          minigw gw upstream resolve --team <team> <note> --theirs|--ours
           minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
           minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
         """
@@ -85,8 +87,16 @@ extension AdminCommands {
                 if let s = Self.upstreamSyncLine(d, zone) { say(clean("  " + s)) }
                 if let e = d["lastError"]?.string, !e.isEmpty { say(clean("  last refusal: " + e)) }
                 if let s = Self.upstreamNotPropagated(d) { say(clean("  " + s)) }
+                if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
             }
             if links.isEmpty { say("no upstream links (minigw gw upstream link <project> <name>)") }
+        case ("resolve", 4) where team.isEmpty, ("resolve", 3) where !team.isEmpty:
+            if o.theirs == o.ours { throw fail("resolve: choose --theirs or --ours") }
+            guard let note = Int64(pos[pos.count - 1]), note > 0 else { throw fail("resolve: the note is its number") }
+            let body: [String: Any] = ["note": note, "ours": o.ours, team.isEmpty ? "project" : "team": team.isEmpty ? try projectID(pos[2]) : try teamID(team)]
+            try request("POST", "/upstream-resolve", body)
+            if o.ours { say("note \(note): our version goes to the upstream as a submission at the next push") }
+            else { say("note \(note): the upstream's version stays, our change is forgotten for it") }
         case ("push", 2...3):
             var body: [String: Any] = ["dryRun": o.dryRun]
             if !team.isEmpty && pos.count == 2 { body["team"] = try teamID(team) }
@@ -107,7 +117,7 @@ extension AdminCommands {
                         say(clean("\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? ""))"))
                         for l in d["lines"]?.array ?? [] { say(clean("  " + (l.string ?? ""))) }
                         let verb = d["dryRun"]?.bool == true ? "would be " : ""
-                        say("  \(verb)created \(d["created"]?.int ?? 0), replaced \(d["replaced"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), refused \(d["refused"]?.int ?? 0)")
+                        say("  \(verb)created \(d["created"]?.int ?? 0), replaced \(d["replaced"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), refused \(d["refused"]?.int ?? 0)" + ((d["conflicts"]?.int ?? 0) > 0 ? ", conflicts \(d["conflicts"]?.int ?? 0)" : ""))
                         if let s = d["stopped"]?.string, !s.isEmpty { say(clean("  stopped: " + s)) }
                     }
                     for p in r["pushes"]?.array ?? [] {
@@ -150,6 +160,12 @@ extension AdminCommands {
         if (d["failCount"]?.int ?? 0) > 1, !parts.isEmpty, d["lastFail"]?.string != nil { parts[parts.count - 1] += " (\(d["failCount"]?.int ?? 0) in a row)" }
         at("next attempt", "nextAttempt")
         return parts.isEmpty ? nil : "sync: " + parts.joined(separator: "; ")
+    }
+
+    /// Publish notes that changed on the upstream and were not overwritten (as Go's upstreamConflicts).
+    static func upstreamConflicts(_ d: JDict) -> String? {
+        let parts = (d["conflicts"]?.array ?? []).map { c in "note \(c.dict["note"]?.int ?? 0) (" + (c.dict["gone"]?.bool == true ? "deleted there" : "changed there") + ")" }
+        return parts.isEmpty ? nil : "CONFLICT: " + parts.joined(separator: ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
     }
 
     /// Sent notes that were deleted or made private here (as Go's upstreamNotPropagated).

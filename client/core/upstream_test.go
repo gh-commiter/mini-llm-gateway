@@ -754,6 +754,29 @@ func TestUpstreamRequestsMatchTheSharedFixture(t *testing.T) {
 		return 201, `{"id":9}`, 0
 	}), fk, 0, "", 0, false, noSleep)
 	f.ok(e)
+	// publish mode: a note is created, then updated in place
+	pf, pnotes := upFx(t)
+	pk := pf.pid["fakture"]
+	pf.ok(pf.LinkUpstreamWith(ctx, LinkSpec{Project: pk, Upstream: "hub", Remote: "shop", Mode: "publish"}))
+	pub := func(c upCall) (int, string, time.Duration) {
+		switch {
+		case c.path == "/minigw/v1/projects/shop":
+			return 200, `{"id":7,"slug":"shop"}`, 0
+		case c.method == "POST":
+			return 201, `{"id":55,"revision":1}`, 0
+		case c.method == "PUT":
+			return 200, `{"id":55,"revision":2}`, 0
+		}
+		return 200, `{"id":55,"revision":1}`, 0
+	}
+	_, e = pf.PushUpstream(ctx, rec(pub), pk, 0, "", 0, false, noSleep)
+	pf.ok(e)
+	pn := pnotes["Structure one"]
+	pf.clock = pf.clock.Add(time.Second)
+	_, e = pf.UpdateNote(ctx, pf.p("ana"), pk, pn.ID, pn.Revision, NoteInput{Class: Structure, Title: "Structure one", Body: "again"})
+	pf.ok(e)
+	_, e = pf.PushUpstream(ctx, rec(pub), pk, 0, "", 0, false, noSleep)
+	pf.ok(e)
 	g := newSeg(t)
 	g.ok(g.AddUpstream(ctx, "hub", "hub.example"))
 	g.put("fani", Structure, "Team rollout")
@@ -767,6 +790,14 @@ func TestUpstreamRequestsMatchTheSharedFixture(t *testing.T) {
 	g.ok(e)
 	if len(seen) < 6 {
 		t.Fatalf("only %d requests seen", len(seen))
+	}
+	var posted, put bool
+	for _, c := range seen {
+		posted = posted || (c.method == "POST" && strings.HasSuffix(c.path, "/notes"))
+		put = put || c.method == "PUT"
+	}
+	if !posted || !put {
+		t.Fatalf("publish mode sent no note create (%v) or update (%v)", posted, put)
 	}
 	for _, c := range seen {
 		if !admitted(c.method, c.path) {

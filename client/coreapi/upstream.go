@@ -296,3 +296,24 @@ func (a *API) adminUpstreamAuto(ctx context.Context, st *core.Store, method stri
 	}
 	return 200, run, true
 }
+
+// adminUpstreamResolve settles a publish-mode conflict of one note (POST {project or team, note, ours}).
+func (a *API) adminUpstreamResolve(ctx context.Context, st *core.Store, method string, body []byte, failErr func(error) (int, any, bool)) (int, any, bool) {
+	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
+	if method != "POST" {
+		return fail(404, "not found")
+	}
+	var b struct {
+		Project int64 `json:"project"`
+		Team    int64 `json:"team"`
+		Note    int64 `json:"note"`
+		Ours    bool  `json:"ours"`
+	}
+	if decodeStrict(body, &b) != nil || b.Note <= 0 || (b.Project > 0) == (b.Team > 0) {
+		return fail(400, "bad JSON body (project or team, note, ours)")
+	}
+	if err := st.ResolveUpstream(ctx, b.Project, b.Team, b.Note, b.Ours); err != nil {
+		return failErr(err)
+	}
+	return 200, map[string]any{"ok": true}, true
+}

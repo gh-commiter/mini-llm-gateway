@@ -38,6 +38,12 @@ func TestUpstreamRoutesAreTheOwnersOnly(t *testing.T) {
 			}
 		}
 	}
+	// resolving a conflict is the owner's alone too (it needs no host: it only settles what the database says)
+	for _, mp := range []string{"/minigw/v1/upstream-resolve", "/minigw/v1/projects/1/upstream-resolve"} {
+		if r := f.api.Handle(bg, member("dev-fani"), Request{Method: "POST", Path: mp, Body: []byte(`{"project":1,"note":1,"ours":true}`)}); r.Status != 404 {
+			t.Errorf("member %s: %d %s", mp, r.Status, r.Body)
+		}
+	}
 	// with a host: the owner adds, links and removes; a link names a project that exists
 	api := New(Options{Store: func() *core.Store { return f.st }, Upstream: noHost{}})
 	for _, c := range []struct {
@@ -51,6 +57,13 @@ func TestUpstreamRoutesAreTheOwnersOnly(t *testing.T) {
 		{"PUT", "/upstreams/hub/links/999999", `{"remote":"shop"}`, 404},          // a project nobody named
 		{"PUT", "/upstreams/hub/links/1", `{"remote":"shop","x":1}`, 400},
 		{"PUT", "/upstreams/hub/links/1", `{"remote":"shop"}`, 200},
+		{"PUT", "/upstreams/hub/links/1", `{"remote":"shop","mode":"publish","auto":true}`, 200},
+		{"PUT", "/upstreams/hub/links/1", `{"remote":"shop","mode":"overwrite"}`, 400},
+		{"PUT", "/upstreams/hub/links/1", `{"remote":"shop","auto":"yes"}`, 400},
+		{"POST", "/upstream-resolve", `{"project":1,"note":5,"ours":true}`, 400}, // no conflict on that note
+		{"POST", "/upstream-resolve", `{"project":1,"team":2,"note":5}`, 400},
+		{"POST", "/upstream-resolve", `{"note":5}`, 400},
+		{"GET", "/upstream-resolve", ``, 404},
 		{"GET", "/upstreams", ``, 200},
 		{"DELETE", "/upstreams/hub", ``, 200},
 		{"DELETE", "/upstreams/hub", ``, 404},
