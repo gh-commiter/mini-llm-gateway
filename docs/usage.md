@@ -594,6 +594,10 @@ Omit `--project` to include every project in that team; repeat it for a subset. 
 names, direct memberships, team assignments and grants between included projects, together with published
 notes and provenance. It excludes devices, bindings, tokens, keys, usage, audit history, sessions and pending
 submissions. Note bodies cannot define access or accounts.
+It also carries the team's path label, the registered git identities of each project and the kind of each note.
+On import the identities are added to those already registered (at most 8 per project); the path label is set only
+when the team is new or has no label (otherwise the dry run says `skip team path`). A bundle made by 0.7.11 imports
+unchanged; an older gateway refuses a bundle that carries a team path or identities.
 
 `--source <name>` is required on import: it names where this bundle comes from, on this gateway, and the
 owner chooses it (1–64 characters, using team-name validation). The first import under a source records the
@@ -750,9 +754,27 @@ What differs on the Mac app:
 ```
 minigw project list                     your projects: your role, and what a grant gives you
 minigw project link fakture             link this folder (and everything under it) to the project
+minigw project link                     no slug: find the project by this folder's git remote
 minigw project show                     which link applies here and why
 minigw project unlink
+minigw project remote list|add|remove   the git remotes registered for a project
+minigw project list --path eureko       only the projects of your teams whose path label starts with "eureko"
 ```
+
+- **Link by git remote.** A project admin (or the owner) registers the git remotes of a project:
+  `minigw project remote add --here` in a checkout, or `minigw project remote add <url> [<slug>]`
+  (`list` shows them, `remove <url>` removes one; at most 8 per project). The gateway keeps only
+  the identity `host/path` (lower case, without credentials, port and `.git`): `git@GitLab.example.com:Eureko/Shared.git`
+  and `https://tok:x@gitlab.example.com:8443/eureko/shared` are the same. Then `minigw project link` without a slug reads
+  this folder's `origin` (the value in the repository's own git config, without `insteadOf` rewriting), removes any
+  user name and password from it on your computer, and links the project if exactly one of your projects
+  (direct member, not archived) is registered for it. Zero or several matches are refused with the projects named;
+  then link by slug. The gateway never sees folder paths and never stores the URL you typed. The same identity may be
+  registered for several projects (a monorepo); then only people in one of them link without a slug.
+- **Team path label.** The owner may give a team a free-text label such as `eureko/backend`:
+  `minigw gw team path <team> <label>` (`-` clears it). `minigw project list --path eureko` lists your visible projects
+  that belong to a team of yours whose label is `eureko` or starts with `eureko/`. A label groups and filters only;
+  it never gives anyone access.
 
 - **Link.** The link is stored on your computer, not in the repository: per gateway, with the real path of the
   folder. A clone, a git worktree, a copied or a moved folder has no link until you link it. Inside a linked folder
@@ -1155,11 +1177,20 @@ known authors/projects/times, with `UNKNOWN` device and source. Older revisions
 cannot be reconstructed. Import, session summary and gateway synthesis are reserved
 source names; ingestion and service writes are deferred.
 
-Use `minigw kb submit <project> [--class structure|data|private] [--title t]
+Use `minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t]
 [--key k] <file|->` to propose a note. Input and title defaults match note push.
 For a replacement add `--replaces <note-id> --revision <n>`. Existing project write
 permissions apply; readers cannot submit. `minigw kb submissions [<project>]
 [--json]` lists your submissions, across readable projects when omitted.
+
+**Entry kinds.** An entry is a `finding` (the default) or a `faq`: the title is the question (at most 256 bytes)
+and the text a short answer (at most 2 KiB). The kind is chosen with `kb submit --kind`, travels with the
+review (the owner accepts a faq as a faq) and cannot be changed after publication; `note push` and `note edit` always
+make or keep a finding. A replacement without `--kind` keeps the kind of the note it replaces. A faq shows
+`  (faq)` at the end of its first line in `kb search`, `kb submissions` and `gw kb review`; findings print as before.
+`minigw kb faq [<project>] [--json]` lists the published questions of a project, newest first, each with its answer;
+it follows the same visibility as `note list` (private entries only for their author and the project admins) and is not
+available inside an agent run. Exported Markdown and team bundles carry `entry_kind`.
 
 Only the author and owner reviewers see pending content. It never appears in note
 lists, reads, agent runs or counts. The owner uses `minigw gw kb review [<project>]`,
@@ -1189,7 +1220,7 @@ private notes are excluded. Other memberships do not widen a run's search.
 `note list` and `note read` remain available. No note bodies are injected into run context.
 
 Search returns up to 20 authorized hits, newest revision first, within 8 KiB of
-JSON. Each hit has ID, title, project ID, class, revision time and a plain-text
+JSON. Each hit has ID, title, project ID, class, kind (`finding` or `faq`), revision time and a plain-text
 preview of the first 160 body characters. There is no total count or relevance
 score. Pending submissions are never searchable. Queries are literal words
 combined with AND, not FTS syntax: 512 UTF-8 bytes, 16 words, 64 bytes per word,

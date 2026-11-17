@@ -26,8 +26,9 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw share list` | Show shared folders and their saved modes |
 | `minigw team list [--archived] [--json]` | Your teams; directory membership gives no project access |
 | `minigw team show <team> [--json]` | Your teammates and attached projects you can already read |
-| `minigw project list [--archived] [--json]` | The gateway projects you can see, with your role and grants (see [usage.md](usage.md#projects-and-notes)) |
-| `minigw project link <slug>` / `unlink` / `show` | Link this folder tree to a project you are a direct member of, remove the link, or show which link applies here |
+| `minigw project list [--archived] [--path <prefix>] [--json]` | The gateway projects you can see, with your role and grants (see [usage.md](usage.md#projects-and-notes)); `--path`: only those of your teams whose path label equals the prefix or starts with `prefix/` |
+| `minigw project link [<slug>]` / `unlink` / `show` | Link this folder tree to a project you are a direct member of, remove the link, or show which link applies here. Without a slug the project is found by this folder's git remote (exactly one of your projects must be registered for it) |
+| `minigw project remote list [<slug>]` \| `add <url>\|--here [<slug>]` \| `remove <url> [<slug>]` | The git remotes registered for a project (default: the linked one); changing them needs the project admin role |
 | `minigw note list [--class c] [--limit n] [--after cursor] [--json]` / `read <id> [--json]` | Notes of the linked project (also inside an agent run, on the run's own project) |
 | `minigw kb export <project> <dir>` | Copy published readable notes, including readable private notes, to Markdown plus INDEX.md on this computer; gateway running, no agent runs |
 | `minigw kb import <project> <dir\|file.md> [--class c] [--submit]` | Create or update by stable ID/path; unchanged content skips, local edits are preserved; normal member permissions and write limits |
@@ -136,6 +137,8 @@ only on the gateway computer.
 | `minigw gw bind list` \| `<device id> <user>` \| `remove <device id>` | Which user a device belongs to; binding a device that is not on the device list warns (`minigw gw devices allow <device id>` fixes it) |
 | `minigw gw project list` \| `add <slug> <name>` \| `archive <project>` \| `unarchive <project>` | The projects (`<project>`: slug or number) |
 | `minigw gw team add <name>` \| `list` \| `rename <team> <name>` \| `archive <team>` | Owner-managed directory; `<team>` is a name or number |
+| `minigw gw team path <team> <label>` | Free-text path label of a team (`-` clears it); used by `minigw project list --path`, grants no access |
+| `minigw gw project remote list <project>` \| `add <project> <url>` \| `remove <project> <url>` | The git remotes registered for a project (owner) |
 | `minigw gw team member add\|remove <team> <user>` | Change directory membership without changing project roles |
 | `minigw gw team project add\|remove <team> <project>` | Group a project under at most one team without changing permissions |
 | `minigw gw member <project> list` \| `set <user> <role>` \| `remove <user>` | Members of a project; role: reader, developer, admin |
@@ -233,8 +236,9 @@ matching assignments; direct access survives. Narrowing effective access invalid
 Both clients support identical commands:
 
 ```text
-minigw kb submit <project> [--class structure|data|private] [--title t] [--key k] [--replaces id --revision n] <file|->
+minigw kb submit <project> [--class structure|data|private] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->
 minigw kb submissions [<project>] [--json]
+minigw kb faq [<project>] [--json]
 minigw gw kb review [<project>]
 minigw gw kb accept <id>
 minigw gw kb reject <id> [--reason text]
@@ -244,6 +248,11 @@ Submission input matches note push; it requires existing project write access.
 Review is owner-only. Pending entries are visible only to their author and the
 owner. Acceptance publishes a new note or replacement revision. Note push still
 publishes immediately. `minigw note read <id> --json` includes provenance.
+
+`--kind faq` marks the entry as a question (the title, at most 256 bytes) with a short
+answer (the text, at most 2 KiB); the default is `finding`. `minigw kb faq` lists the
+published questions with their answers (not inside an agent run). A faq shows `  (faq)` at
+the end of the first line in `kb search`, `kb submissions` and `gw kb review`.
 
 ## KB lexical search
 

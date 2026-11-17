@@ -23,9 +23,11 @@ What the adapter vouches for in the `Context`:
 - **member**: `device` is the device key proven in this tunnel (empty = none); `approved` = that device is in the approved list **now**
   (not the model routes' loopback or "allow any device" exceptions); `agentPeer` = the caller is a process of one of the gateway's agents.
   Routes: `GET /minigw/v1/projects[?archived=1]`, `GET /minigw/v1/projects/{id-or-slug}`, `POST …/{id-or-slug}/link-check`,
-  `…/projects/{id}/notes[/{note}]` (GET, POST, PUT, DELETE), `GET /minigw/v1/usage?project=&days=`. Shapes: docs/admin-api.md.
+  `POST …/projects/by-remote`, `…/projects/{id}/remotes` (GET, POST), `GET …/projects/{id}/kb/faq`,
+  `…/projects/{id}/notes[/{note}]` (GET, POST, PUT, DELETE), `GET /minigw/v1/usage?project=&days=`. Shapes: docs/admin-api.md. All of them
+  already match the `/minigw/v1/projects` prefix: no allow-list entry is needed.
 - **admin**: the owner has been authenticated (loopback, Host, `MGW-Admin` proof, agent peers refused). `path` is the escaped path **below**
-  the admin prefix. Core routes: users, bindings, projects, members, grants, audit, `core/backup`, `usage/events`.
+  the admin prefix. Core routes: users, bindings, projects (also `projects/{id}/remotes`), members, grants, audit, `core/backup`, `usage/events`.
   `coreapi.IsAdminPath(method, path)` says whether a path is the core's.
 - **run**: the run port's token and peer checks passed; `run` is the capability, `approved` the device's approval now. Routes:
   `GET /minigw/v1/notes[?class=&after=&limit=]` and `GET /minigw/v1/notes/{id}`; nothing else.

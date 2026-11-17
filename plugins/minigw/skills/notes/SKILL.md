@@ -27,3 +27,9 @@ visible to its author and owner; called agents cannot submit. These commands nee
 Beta 4 support; never fall back to publishing if submission is unavailable.
 `note read --json` includes authenticated provenance. Never put customer names,
 policy numbers, amounts or raw records into any KB class, including private.
+
+Entry kinds: `minigw kb submit --kind faq` proposes a question and a short answer (the title is the
+question, at most 256 bytes; the text is the answer, at most 2 KiB); the default `--kind finding` is
+an ordinary note. Accepted entries keep their kind; `kb search` marks a faq with `(faq)` at the end of
+the first line. `minigw kb faq [<project>]` lists the published questions with their answers (not inside
+an agent run). Use a faq only for a question people really ask, and never put customer data in it.

@@ -213,6 +213,8 @@ continue), in the same transaction.
 | `GET /projects` | – | `{"projects": [{"id", "slug", "name", "archived", "granted": []}]}` |
 | `POST /projects` | `{"slug", "name"}` | `{"project"}`; slug `[a-z0-9][a-z0-9-]{1,62}`, not only digits; the id is never reused |
 | `PATCH /projects/{id}` | `{"archived": bool}` | `{"ok": true}`; archived: nobody writes |
+| `GET /projects/{id}/remotes` | – | `{"remotes": [identity]}`: the registered git identities (`host/path`) |
+| `POST /projects/{id}/remotes` | `{"add": [url], "remove": [url]}` | `{"remotes": [...], "added": [...], "removed": [...]}`; one transaction, audit `project.remotes`; at most 8 per project, the same identity may belong to several projects; an archived project: 403 `archived` |
 | `GET /projects/{id}/members` | – | `{"members": [{"user", "name", "role"}]}` |
 | `PUT /projects/{id}/members/{user}` | `{"role": "reader"\|"developer"\|"admin"}` | `{"ok": true}`; lowering the role raises the epoch |
 | `DELETE /projects/{id}/members/{user}` | – | `{"ok": true}`; raises the epoch |
@@ -286,10 +288,10 @@ uniqueness as for users. Project display names are not unique; projects have sep
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /teams` | – | `{teams: [{id, name, archived}]}` including archived teams |
-| `POST /teams` | `{name}` | `{team: {id, name, archived}}` |
-| `GET /teams/{id}` | – | `{id, name, archived, members: [{user, name}], projects: [Project]}` |
-| `PATCH /teams/{id}` | `{name}` or `{archived: bool}` | `{ok: true}`; archive instead of hard delete |
+| `GET /teams` | – | `{teams: [{id, name, archived, path}]}` including archived teams |
+| `POST /teams` | `{name}` | `{team: {id, name, archived, path}}` |
+| `GET /teams/{id}` | – | `{id, name, archived, path, members: [{user, name}], projects: [Project]}` |
+| `PATCH /teams/{id}` | `{name}`, `{archived: bool}` or `{path: string}` (one of them) | `{ok: true}`; archive instead of hard delete. `path` is a free-text label (folded to lower case, at most 128 bytes, no control characters, no leading or trailing `/`; `""` clears); a label never gives access |
 | `GET /teams/{id}/members` | – | `{members: [{user, name}]}` |
 | `PUT /teams/{id}/members/{user}` | – | `{ok: true}` |
 | `DELETE /teams/{id}/members/{user}` | – | `{ok: true}` |
@@ -301,7 +303,7 @@ Every successful mutation writes an audit event. Team membership alone does not 
 memberships, grants or note access. Archiving preserves attachments and readable details but deletes team assignments and blocks new
 attachments; removals remain available. Move a project by removing its old attachment first.
 
-Member routes use `/minigw/v1`: `GET /teams[?archived=1]` returns an array of the caller's teams;
+Member routes use `/minigw/v1`: `GET /teams[?archived=1]` returns an array of the caller's teams (each with its `path`);
 `GET /teams/{id-or-name}` returns the detail shape above. Numeric references select IDs. Only team members
 see its name and member names. Attached projects are filtered by existing project membership and explicit
 grants. Missing and invisible teams both return the existing 404; an unbound device or inactive user gets
@@ -330,6 +332,11 @@ body), 403 `forbidden`, 403 `archived`, 409 `revision_mismatch` (with `revision`
 | `POST /projects/{id}/notes` | 201; header `Idempotency-Key` (1-64 bytes); body `{"class", "title", "body"}`; a repeat of the same key and payload within 24 h reauthorizes the current note before answering the first result; deleted or reclassified notes return 404, including after a class is changed back (header `Idempotent-Replay: true`) |
 | `PUT /projects/{id}/notes/{note}` | 200; body `{"revision", "class", "title", "body"}` |
 | `DELETE /projects/{id}/notes/{note}?revision=N` | 204 |
+| `GET /projects?path=<prefix>` | the projects the caller sees that belong to a non-archived team the caller is a member of whose path label equals the prefix or starts with `prefix/`; no permission is inherited from a label |
+| `POST /projects/by-remote` | body `{"remote": url}` (credentials already removed by the client); 200 `{"identity", "projects": [Project]}`: only the caller's direct-member, non-archived projects registered for that identity; 400 `invalid` for a local path, `file://` or a missing host; for `minigw project link` without a slug |
+| `GET /projects/{id}/remotes` | `{"remotes": [identity]}`; any direct member (403 for a grant alone, 404 when the project is not visible) |
+| `POST /projects/{id}/remotes` | body `{"add": [url], "remove": [url]}`; project admin only (effective role, team-derived counts): 403 for reader and developer, 404 for a non-member, 403 `archived`; `{"remotes", "added", "removed"}` |
+| `GET /projects/{id}/kb/faq[?after=cursor]` | `{"entries": [{id, title, class, answer, updated}], "next": ""}`, newest first, at most 50 per page and 64 KiB; the visibility of the note list (private only for its author and the admins); pending submissions never; not on the run port |
 
 Request bodies are limited to 512 KiB before they are parsed (413 `too_large`); title 256 bytes and body 64 KiB,
 10 000 notes and 100 MiB per project; 60 writes and 600 reads a minute per user.
@@ -549,7 +556,7 @@ Member routes require an approved authenticated device bound to an active user:
 
 | Method | Path | Result |
 |---|---|---|
-| POST | `/minigw/v1/projects/{id}/kb/submissions` | Submit `{class,title,body,replaces,revision}`; required `Idempotency-Key`; 201 |
+| POST | `/minigw/v1/projects/{id}/kb/submissions` | Submit `{class,title,body,replaces,revision,entryKind?}`; `entryKind` is `finding` (default) or `faq` (title at most 256 bytes, body at most 2 KiB; a replacement without it keeps the replaced note's kind); required `Idempotency-Key`; 201 |
 | GET | `/minigw/v1/projects/{id}/kb/submissions?after=0` | Own metadata, `{submissions,next}` |
 | GET | `/minigw/v1/projects/{id}/kb/submissions/{id}` | Own submission with body |
 
@@ -573,6 +580,7 @@ archive status, note limits and replacement revision. Pending entries are separa
 from notes and excluded from note counts and run reads. Pending limits: 100 / 5 MiB
 per user, 500 / 20 MiB per project. Reasons are at most 1024 bytes; reasons and
 submission titles reject control characters. Existing request/note/rate limits apply.
+Notes, submissions and search hits carry `entryKind` (`finding` or `faq`); `note push` and `note edit` ignore an `entryKind` in their body.
 Note read JSON gains `provenance` with actorKind, user, device, project, sourceKind,
 sourceReference, contentHash, authored, received, reviewer and reviewed.
 Legacy device/source are explicitly `UNKNOWN`. Schema 11 uses snapshot-first
@@ -587,7 +595,7 @@ or customer-data detection is implemented.
 | GET | `/minigw/v1/kb/search?q=words` | Run port only; scope exclusively from the capability |
 | POST | Admin `/kb/search/rebuild` | Owner-only transactional rebuild; `{"rebuilt":true}` |
 
-Search returns `{"hits":[{"id":1,"title":"Title","project":1,"class":"structure","snippet":"Preview","updated":"2026-11-16T10:00:00Z"}]}`.
+Search returns `{"hits":[{"id":1,"title":"Title","project":1,"class":"structure","snippet":"Preview","updated":"2026-11-16T10:00:00Z","entryKind":"finding"}]}`.
 No total count or corpus score is returned. Hits are ordered by revision time
 descending then note ID, capped at 20 and 8192 JSON bytes. The snippet is the
 first 160 Unicode characters of the body. Authorization precedes body retrieval,

@@ -1,5 +1,15 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Git identity of a project: a project admin or the owner registers the git remotes of a project (`minigw project remote add --here`, `minigw gw project remote add <project> <url>`). `minigw project link` without a slug then finds the project from this folder's `origin`. Credentials in the URL are removed on your computer before anything is sent, and the gateway keeps only `host/path` in lower case.
+- Team path label: the owner can give a team a free-text path such as `eureko/backend` (`minigw gw team path <team> <label>`), and `minigw project list --path eureko` lists your projects of the teams whose label starts with it. A label never gives access.
+- Knowledge entries have a kind, `finding` (the default) or `faq` (a question and a short answer): `minigw kb submit --kind faq`, `minigw kb faq` lists the published questions, and search, submissions, review, Markdown copies and team bundles show the kind.
+
+### Changed
+- The project database schema is now 14 (a snapshot is taken before the migration). An older gateway cannot open a schema 14 database, and it refuses a team bundle that carries the new fields (`team_path`, `remotes`).
+
 ## 0.7.11
 
 ### Security
