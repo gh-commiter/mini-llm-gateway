@@ -1,14 +1,26 @@
 # Release notes
 
-## Unreleased
+## 0.7.12
 
 ### New
 - Git identity of a project: a project admin or the owner registers the git remotes of a project (`minigw project remote add --here`, `minigw gw project remote add <project> <url>`). `minigw project link` without a slug then finds the project from this folder's `origin`. Credentials in the URL are removed on your computer before anything is sent, and the gateway keeps only `host/path` in lower case.
-- Team path label: the owner can give a team a free-text path such as `eureko/backend` (`minigw gw team path <team> <label>`), and `minigw project list --path eureko` lists your projects of the teams whose label starts with it. A label never gives access.
+- Team path label: the owner can give a team a free-text path such as `acme/backend` (`minigw gw team path <team> <label>`), and `minigw project list --path acme` lists your projects of the teams whose label starts with it. A label never gives access.
 - Knowledge entries have a kind, `finding` (the default) or `faq` (a question and a short answer): `minigw kb submit --kind faq`, `minigw kb faq` lists the published questions, and search, submissions, review, Markdown copies and team bundles show the kind.
 
 ### Changed
 - The project database schema is now 14 (a snapshot is taken before the migration). An older gateway cannot open a schema 14 database, and it refuses a team bundle that carries the new fields (`team_path`, `remotes`).
+
+### Known problems
+- Project git identity, team path labels and entry kinds are new and not yet in daily use. `minigw project link` without a slug needs `git` on the computer; on Windows it has only been built, not tried.
+- A replacement of a `faq` entry keeps the kind `faq`, and an import never changes the kind of an existing note: to change a kind, remove the entry and hand it in again.
+- `minigw gw import`: an `INDEX.md` inside a bundle has no size limit of its own (only the 100 MiB total). Import only bundles you made yourself.
+- `minigw kb export` on Windows: the protection of each exported file is still set by path after the file is created through the opened folder; not tested on Windows yet.
+- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.11
 

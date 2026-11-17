@@ -758,22 +758,22 @@ minigw project link                     no slug: find the project by this folder
 minigw project show                     which link applies here and why
 minigw project unlink
 minigw project remote list|add|remove   the git remotes registered for a project
-minigw project list --path eureko       only the projects of your teams whose path label starts with "eureko"
+minigw project list --path acme       only the projects of your teams whose path label starts with "acme"
 ```
 
 - **Link by git remote.** A project admin (or the owner) registers the git remotes of a project:
   `minigw project remote add --here` in a checkout, or `minigw project remote add <url> [<slug>]`
   (`list` shows them, `remove <url or identity as listed>` removes one; at most 8 per project). The gateway keeps only
-  the identity `host/path` (lower case, without credentials, port and `.git`): `git@GitLab.example.com:Eureko/Shared.git`
-  and `https://tok:x@gitlab.example.com:8443/eureko/shared` are the same. Then `minigw project link` without a slug reads
+  the identity `host/path` (lower case, without credentials, port and `.git`): `git@GitLab.example.com:Acme/Shared.git`
+  and `https://tok:x@gitlab.example.com:8443/acme/shared` are the same. Then `minigw project link` without a slug reads
   this folder's `origin` (the value in the repository's own git config, without `insteadOf` rewriting), removes any
   user name and password from it on your computer, and links the project if exactly one of your projects
   (direct member, not archived) is registered for it. Zero or several matches are refused with the projects named;
   then link by slug. The gateway never sees folder paths and never stores the URL you typed. The same identity may be
   registered for several projects (a monorepo); then only people in one of them link without a slug.
-- **Team path label.** The owner may give a team a free-text label such as `eureko/backend`:
-  `minigw gw team path <team> <label>` (`-` clears it). `minigw project list --path eureko` lists your visible projects
-  that belong to a team of yours whose label is `eureko` or starts with `eureko/`. A label groups and filters only;
+- **Team path label.** The owner may give a team a free-text label such as `acme/backend`:
+  `minigw gw team path <team> <label>` (`-` clears it). `minigw project list --path acme` lists your visible projects
+  that belong to a team of yours whose label is `acme` or starts with `acme/`. A label groups and filters only;
   it never gives anyone access.
 
 - **Link.** The link is stored on your computer, not in the repository: per gateway, with the real path of the

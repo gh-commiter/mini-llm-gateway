@@ -1,15 +1,15 @@
 [
  {
-  "raw": "git@GitLab.example.com:Eureko/Modules/Shared.git",
-  "identity": "gitlab.example.com/eureko/modules/shared"
+  "raw": "git@GitLab.example.com:Acme/Modules/Shared.git",
+  "identity": "gitlab.example.com/acme/modules/shared"
  },
  {
-  "raw": "https://tok:x@gitlab.example.com:8443/eureko/modules/shared",
-  "identity": "gitlab.example.com/eureko/modules/shared"
+  "raw": "https://tok:x@gitlab.example.com:8443/acme/modules/shared",
+  "identity": "gitlab.example.com/acme/modules/shared"
  },
  {
-  "raw": "https://gitlab.example.com/eureko/modules/shared.git/",
-  "identity": "gitlab.example.com/eureko/modules/shared"
+  "raw": "https://gitlab.example.com/acme/modules/shared.git/",
+  "identity": "gitlab.example.com/acme/modules/shared"
  },
  {
   "raw": "ssh://git@Host.Example:22/Team/Repo.git",
