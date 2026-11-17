@@ -277,13 +277,13 @@ enum ClaudeUsageProbe {
     /// (POSIX_SPAWN_CLOEXEC_DEFAULT: only the two pipes it is given). A thread of its own supervises it, so no cooperative thread ever waits. On the
     /// limit, or when a descendant keeps the output open after claude has ended, the group and every holder of the pipes are killed, so the result is
     /// bounded by limit + drain whatever the tree does.
-    static func run(exe: String, parent: URL, limit: Double, drain: Double = 2) async throws -> Data {
+    static func run(exe: String, parent: URL, limit: Double, drain: Double = 2, environment: [String: String] = ProcessInfo.processInfo.environment) async throws -> Data {
         let fm = FileManager.default
         try fm.createDirectory(at: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let dir = parent.appendingPathComponent("probe-" + UUID().uuidString.prefix(8), isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? fm.removeItem(at: dir) }
-        guard let child = Native.spawnGroup(exe, args, dir: dir, env: env(ProcessInfo.processInfo.environment, tmp: dir.path)) else {
+        guard let child = Native.spawnGroup(exe, args, dir: dir, env: env(environment, tmp: dir.path)) else {
             throw QuotaError("claude /usage failed: cannot start " + exe)
         }
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data, Error>) in
