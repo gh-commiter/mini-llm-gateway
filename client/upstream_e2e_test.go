@@ -173,7 +173,7 @@ func TestUpstreamEndToEnd(t *testing.T) {
 	}
 	var body, state string
 	f.must(f.remote.core.DB().QueryRow(`SELECT body,state FROM kb_submissions ORDER BY id LIMIT 1`).Scan(&body, &state))
-	if state != "pending" || !strings.Contains(body, "text of Invoice numbering") || !strings.Contains(body, "local note "+fmt.Sprint(notes["Invoice numbering"].ID)) || !strings.Contains(body, "author ana") {
+	if state != "pending" || !strings.Contains(body, "text of Invoice numbering") || !strings.Contains(body, "minigw upstream ref ") || !strings.Contains(body, "author ana") {
 		t.Fatalf("%s %q", state, body)
 	}
 	// the submission arrived with the rights of the bound user there, as that user
@@ -384,7 +384,7 @@ func TestUpstreamRedirectIsNotFollowed(t *testing.T) {
 	}()
 	tok := "tok#" + base64url(key.PublicKey().Bytes())
 	h := upstreamHost{local}
-	if _, err := h.Connect("evil", ln.Addr().String(), tok); err != nil {
+	if _, err := h.Connect("evil", ln.Addr().String(), tok, "test device"); err != nil {
 		t.Fatal(err)
 	}
 	f := &upFx{t: t, local: local, keys: keys, adm: &adminClient{off: local}}

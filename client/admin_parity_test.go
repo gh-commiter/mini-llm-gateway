@@ -38,6 +38,7 @@ type admCase struct {
 		Activity    string `json:"activity,omitempty"`
 		Task        string `json:"task,omitempty"`
 		// upstream commands
+		DeviceName    string `json:"deviceName,omitempty"`
 		RemoteProject string `json:"remoteProject,omitempty"`
 		RemoteTeam    string `json:"remoteTeam,omitempty"`
 		Class         string `json:"class,omitempty"`
@@ -102,7 +103,7 @@ func runAdminCase(c *admCase) *admWant {
 	}}
 	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
 		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, team: c.Opts.Team, by: c.Opts.By, phase: c.Opts.Phase, activity: c.Opts.Activity, task: c.Opts.Task,
-		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun}
+		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, deviceName: c.Opts.DeviceName, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun}
 	if c.Opts.Days != "" {
 		o.days = c.Opts.Days
 	}

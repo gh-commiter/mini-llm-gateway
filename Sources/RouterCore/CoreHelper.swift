@@ -162,6 +162,9 @@ public final class CoreHelper: @unchecked Sendable {
     private var nextID: UInt64 = 0
     private var thread: Thread?
     private let io = DispatchQueue(label: "dev.trojar.minigateway.core.io")  // one request at a time
+    /// The upstream routes have a connection and a queue of their own (the helper's lane): they wait for the network and the Keychain, and a
+    /// slow upstream must never hold up a member read, a KB read or a device revocation on the first connection.
+    private let laneIO = DispatchQueue(label: "dev.trojar.minigateway.core.upstream")
     public private(set) var spawnTimes: [Date] = []
     public private(set) var lastExit: Int32?
     public private(set) var lastFailure = ""
@@ -202,7 +205,7 @@ public final class CoreHelper: @unchecked Sendable {
         cond.lock()
         stopping = true
         ready = false
-        if let c = conn { shutdown(c.fd, SHUT_RDWR) }
+        if let c = conn { shutdown(c.fd, SHUT_RDWR); if let l = c.laneFd { shutdown(l, SHUT_RDWR) } }
         let deadline = Date().addingTimeInterval(2)
         while thread != nil && !finished && cond.wait(until: deadline) {}
         if let c = conn { kill(c.pid, SIGTERM) }
@@ -231,9 +234,15 @@ public final class CoreHelper: @unchecked Sendable {
     }
 
     private func send(_ context: CoreContext, _ request: CoreRequest, needReady: Bool) async -> CoreResponse {
-        await withCheckedContinuation { cont in
-            io.async { cont.resume(returning: self.exchange(context, request, needReady: needReady)) }
+        let lane = Self.isUpstreamRoute(context, request)
+        return await withCheckedContinuation { cont in
+            (lane ? laneIO : io).async { cont.resume(returning: self.exchange(context, request, needReady: needReady, lane: lane)) }
         }
+    }
+
+    /// The owner's upstream routes (client/coreapi/upstream.go): the only requests that may wait for the app.
+    static func isUpstreamRoute(_ context: CoreContext, _ request: CoreRequest) -> Bool {
+        context.kind == .admin && (request.path == "/upstream-push" || request.path == "/upstreams" || request.path.hasPrefix("/upstreams/"))
     }
 
     /// An internal call (POST /internal/<name>, docs/core-adapter.md).
@@ -248,23 +257,24 @@ public final class CoreHelper: @unchecked Sendable {
         return o["epoch"] as? Int
     }
 
-    private func exchange(_ cx: CoreContext, _ rq: CoreRequest, needReady: Bool) -> CoreResponse {
+    private func exchange(_ cx: CoreContext, _ rq: CoreRequest, needReady: Bool, lane: Bool = false) -> CoreResponse {
         cond.lock()
         guard fatal == nil, let c = conn, ready || !needReady else { cond.unlock(); return .unavailable }
         nextID += 1
         let id = nextID
         cond.unlock()
+        let fd = lane ? (c.laneFd ?? c.fd) : c.fd  // without a lane (no callouts) the first connection answers: the helper says 501
         do {
-            setTimeout(c.fd, requestTimeout)
-            try sendFrame(c.fd, ["v": Self.protocolVersion, "id": id, "context": cx.json, "request": rq.json])
-            var f = try recvFrame(c.fd)
+            setTimeout(fd, requestTimeout)
+            try sendFrame(fd, ["v": Self.protocolVersion, "id": id, "context": cx.json, "request": rq.json])
+            var f = try recvFrame(fd)
             while let q = f["callout"] as? [String: Any] {  // the helper asks the app for something while it handles this request
                 guard let handler = callouts, f["v"] as? Int == Self.protocolVersion, (f["id"] as? NSNumber)?.uint64Value == id else {
                     throw CoreError.unavailable("the helper asked for something this app does not do")
                 }
-                try sendFrame(c.fd, ["v": Self.protocolVersion, "id": id, "callout_result": handler.callout(q)])
-                setTimeout(c.fd, requestTimeout)
-                f = try recvFrame(c.fd)
+                try sendFrame(fd, ["v": Self.protocolVersion, "id": id, "callout_result": handler.callout(q)])
+                setTimeout(fd, requestTimeout)
+                f = try recvFrame(fd)
             }
             guard f["v"] as? Int == Self.protocolVersion, (f["id"] as? NSNumber)?.uint64Value == id,
                   (f["error"] as? String ?? "").isEmpty, let r = (f["response"] as? [String: Any]).flatMap(CoreResponse.init(json:)) else {
@@ -328,9 +338,10 @@ public final class CoreHelper: @unchecked Sendable {
             var up = false
             do {
                 guard let binary, FileManager.default.isExecutableFile(atPath: binary.path) else { throw CoreError.unavailable("minigw-core not found") }
-                let p = try CoreProcess.spawn(binary: binary, store: store)
+                let p = try CoreProcess.spawn(binary: binary, store: store, lane: callouts != nil)
                 do {
-                    _ = try handshake(fd: p.fd, secret: p.secret, versions: versions, callouts: callouts != nil)
+                    _ = try handshake(fd: p.fd, secret: p.secret, versions: versions)  // the first connection never gets callouts
+                    if let l = p.laneFd { _ = try handshake(fd: l, secret: p.secret, versions: versions, callouts: true) }
                     cond.lock(); conn = p; cond.unlock()
                     let sem = DispatchSemaphore(value: 0)
                     nonisolated(unsafe) var prepared = false
@@ -350,7 +361,7 @@ public final class CoreHelper: @unchecked Sendable {
                 } catch { kill(p.pid, SIGKILL) }
                 var status: Int32 = 0
                 waitpid(p.pid, &status, 0)  // blocks until exit: crash, kill or EOF after stop()
-                cond.lock(); conn = nil; ready = false; lastExit = status; close(p.fd); cond.broadcast(); cond.unlock()
+                cond.lock(); conn = nil; ready = false; lastExit = status; close(p.fd); if let l = p.laneFd { close(l) }; cond.broadcast(); cond.unlock()
             } catch {
                 cond.lock(); lastFailure = "\(error)"; cond.unlock()
             }
@@ -370,11 +381,12 @@ public final class CoreHelper: @unchecked Sendable {
 struct CoreProcess {
     let pid: pid_t
     let fd: Int32
+    let laneFd: Int32?  // the second connection (fd 5 of the helper, -lane): the upstream routes
     let secret: Data
 
     /// posix_spawn with CLOEXEC_DEFAULT: the child gets exactly fd 0 and 1 (/dev/null), 2 (our stderr), 3 (socketpair end),
     /// 4 (secret pipe). Nothing else is inherited; the secret is not in argv or the environment (only TMPDIR is passed).
-    static func spawn(binary: URL, store: URL, secret: Data? = nil) throws -> CoreProcess {
+    static func spawn(binary: URL, store: URL, secret: Data? = nil, lane: Bool = false) throws -> CoreProcess {
         let secret = secret ?? Data(SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) })
         var sv: [Int32] = [0, 0], pp: [Int32] = [0, 0]
         guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sv) == 0, pipe(&pp) == 0 else { throw CoreError.unavailable("socketpair/pipe failed") }
@@ -385,6 +397,14 @@ struct CoreProcess {
         var one: Int32 = 1
         setsockopt(sv[0], SOL_SOCKET, SO_NOSIGPIPE, &one, 4)
         defer { close(theirSock); close(theirPipe) }
+        var lv: [Int32] = [-1, -1], theirLane: Int32 = -1
+        if lane {
+            guard socketpair(AF_UNIX, SOCK_STREAM, 0, &lv) == 0 else { close(sv[0]); close(pp[1]); throw CoreError.unavailable("socketpair failed") }
+            theirLane = fcntl(lv[1], F_DUPFD_CLOEXEC, 10); close(lv[1])
+            _ = fcntl(lv[0], F_SETFD, FD_CLOEXEC)
+            setsockopt(lv[0], SOL_SOCKET, SO_NOSIGPIPE, &one, 4)
+        }
+        defer { if theirLane >= 0 { close(theirLane) } }
 
         var fa: posix_spawn_file_actions_t? = nil
         posix_spawn_file_actions_init(&fa); defer { posix_spawn_file_actions_destroy(&fa) }
@@ -393,22 +413,23 @@ struct CoreProcess {
         posix_spawn_file_actions_adddup2(&fa, 2, 2)
         posix_spawn_file_actions_adddup2(&fa, theirSock, 3)
         posix_spawn_file_actions_adddup2(&fa, theirPipe, 4)
+        if lane { posix_spawn_file_actions_adddup2(&fa, theirLane, 5) }
         var at: posix_spawnattr_t? = nil
         posix_spawnattr_init(&at); defer { posix_spawnattr_destroy(&at) }
         posix_spawnattr_setflags(&at, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
 
-        let argv = [binary.path, "-store", store.path]
+        let argv = [binary.path, "-store", store.path] + (lane ? ["-lane"] : [])
         let cargs: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
         defer { cargs.forEach { free($0) } }
         let env: [UnsafeMutablePointer<CChar>?] = (ProcessInfo.processInfo.environment["TMPDIR"].map { ["TMPDIR=" + $0] } ?? []).map { strdup($0) } + [nil]
         defer { env.forEach { free($0) } }
         var pid: pid_t = 0
         let rc = posix_spawn(&pid, binary.path, &fa, &at, cargs, env)
-        guard rc == 0 else { close(sv[0]); close(pp[1]); throw CoreError.unavailable("cannot start helper: \(String(cString: strerror(rc)))") }
+        guard rc == 0 else { close(sv[0]); close(pp[1]); if lane { close(lv[0]) }; throw CoreError.unavailable("cannot start helper: \(String(cString: strerror(rc)))") }
         let w = secret.withUnsafeBytes { write(pp[1], $0.baseAddress, secret.count) }
         close(pp[1])
-        guard w == secret.count else { kill(pid, SIGKILL); waitpid(pid, nil, 0); close(sv[0]); throw CoreError.unavailable("secret delivery failed") }
-        return CoreProcess(pid: pid, fd: sv[0], secret: secret)
+        guard w == secret.count else { kill(pid, SIGKILL); waitpid(pid, nil, 0); close(sv[0]); if lane { close(lv[0]) }; throw CoreError.unavailable("secret delivery failed") }
+        return CoreProcess(pid: pid, fd: sv[0], laneFd: lane ? lv[0] : nil, secret: secret)
     }
 }
 

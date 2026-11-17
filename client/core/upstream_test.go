@@ -169,7 +169,8 @@ func TestUpstreamPushCreateSkipReplace(t *testing.T) {
 		if c.method == "POST" {
 			titles += c.body["title"].(string) + "|"
 			body := c.body["body"].(string)
-			if !strings.Contains(body, "<!-- sent by gateway "+f.GatewayID()+": local note") || !strings.Contains(body, "author ana") {
+			// minimal: an opaque reference and the author's display name; never the gateway id, the note id, the revision or a host name
+			if !strings.Contains(body, "<!-- minigw upstream ref ") || !strings.Contains(body, ", author ana -->") || strings.Contains(body, f.GatewayID()) || strings.Contains(body, "revision") || strings.Contains(body, "local note") {
 				t.Errorf("trailer: %q", body)
 			}
 			if c.body["replaces"].(float64) != 0 || len(c.key) < 10 || len(c.key) > 64 {
@@ -513,7 +514,7 @@ func pushManyNotes(t *testing.T, cursor bool) {
 	// a dry run reports all 2500 in one call
 	res, e := f.PushUpstream(ctx, okUp(), fk, 0, "", 0, true, noSleep)
 	f.ok(e)
-	if res[0].More || res[0].Created != total || len(res[0].Lines) != total {
+	if res[0].More || res[0].Created != total || len(res[0].Lines) != maxReportLines+1 { // the report is bounded, the totals are not
 		t.Fatalf("dry run: more=%v created=%d lines=%d", res[0].More, res[0].Created, len(res[0].Lines))
 	}
 	// the upstream refuses the first note for good (it stays unsent) and takes the rest
@@ -562,5 +563,92 @@ func pushManyNotes(t *testing.T, cursor bool) {
 	}
 	if _, e = f.PushUpstream(ctx, up, fk, 0, "hub", -1, false, noSleep); e == nil {
 		t.Fatal("a negative continuation was accepted")
+	}
+}
+
+// The report of a big link is bounded: totals count everything, the lines stop at maxReportLines with "... and K more". A dry run is never
+// continued (no more), also not when its time budget ends.
+func TestUpstreamBigReportsAreBounded(t *testing.T) {
+	f := newFx(t)
+	f.ok(f.AddUpstream(ctx, "hub", "hub.example"))
+	fk := f.pid["fakture"]
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		for i := 1; i <= 450; i++ {
+			if _, e := tx.Exec(`INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated,revision,imported,entry_kind) VALUES(?,?,?,?,?,?,?,?,1,0,'finding')`,
+				fk, "data", fmt.Sprintf("n%04d", i), "body", 4, f.uid["ana"], 1, 1); e != nil {
+				return e
+			}
+		}
+		return nil
+	}))
+	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
+	res, e := f.PushUpstream(ctx, okUp(), fk, 0, "", 0, true, noSleep)
+	f.ok(e)
+	r := res[0]
+	if r.Created != 450 || r.More || len(r.Lines) != maxReportLines+1 || r.Lines[maxReportLines] != "... and 250 more" {
+		t.Fatalf("created %d more %v lines %d last %q", r.Created, r.More, len(r.Lines), r.Lines[len(r.Lines)-1])
+	}
+	// a dry run whose budget is used up says where it stopped; it does not ask to be continued
+	dctx, cancel := context.WithCancel(ctx)
+	budget := &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
+		cancel() // the budget of the call ends while it talks to the upstream
+		return 200, `{"id":7,"slug":"shop"}`, 0
+	}}
+	res, e = f.PushUpstream(dctx, budget, fk, 0, "", 0, true, noSleep)
+	f.ok(e)
+	if res[0].More || res[0].Next != 0 || res[0].Stopped == "" {
+		t.Fatalf("%+v", res[0])
+	}
+	// the sends per run are bounded by maxPushNotes, counted in notes SENT: the unchanged ones passed over do not count
+	old := maxPushNotes
+	maxPushNotes = 100
+	defer func() { maxPushNotes = old }()
+	calls := 0
+	var after int64
+	for {
+		calls++
+		res, e = f.PushUpstream(ctx, okUp(), fk, 0, "hub", after, false, noSleep)
+		f.ok(e)
+		if res[0].Created > 100 {
+			t.Fatalf("%d sent in one run", res[0].Created)
+		}
+		if !res[0].More {
+			break
+		}
+		after = res[0].Next
+		if calls > 10 {
+			t.Fatal("no end")
+		}
+	}
+	if calls != 5 {
+		t.Fatalf("%d calls", calls)
+	}
+}
+
+// Archived projects and teams: not linked, and nothing is sent for one that was archived after it was linked.
+func TestUpstreamArchivedIsRefused(t *testing.T) {
+	f, _ := upFx(t)
+	fk := f.pid["fakture"]
+	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
+	f.ok(f.SetProjectArchived(ctx, fk, true))
+	up := okUp()
+	res, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
+	f.ok(e)
+	if res[0].Stopped == "" || !strings.Contains(res[0].Stopped, "archived") || len(up.calls) != 0 {
+		t.Fatalf("%+v %v", res[0], up.calls)
+	}
+	var ref ErrRefusal
+	if e = f.LinkUpstream(ctx, f.pid["import"], 0, "hub", "x", "", false); e != nil {
+		t.Fatal(e)
+	}
+	f.ok(f.SetProjectArchived(ctx, f.pid["import"], true))
+	if e = f.LinkUpstream(ctx, f.pid["import"], 0, "hub", "x", "", false); !errors.As(e, &ref) || !strings.Contains(ref.Msg, "archived") {
+		t.Fatal(e)
+	}
+	g := newSeg(t)
+	g.ok(g.AddUpstream(ctx, "hub", "hub.example"))
+	g.ok(g.SetTeamArchived(ctx, g.acme, true))
+	if e = g.LinkUpstream(ctx, 0, g.acme, "hub", "x", "", false); !errors.As(e, &ref) || !strings.Contains(ref.Msg, "archived") {
+		t.Fatal(e)
 	}
 }

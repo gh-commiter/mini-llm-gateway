@@ -122,6 +122,9 @@ func (g serveGateway) enabled(upstream string) bool {
 // Shramba ključev (store_windows.go, store_other.go); testi jo zamenjajo.
 var keyGet, keySet, keyDel = osKeyGet, osKeySet, osKeyDel
 
+// keyNames: the names of the stored gateway secrets (only to find the "upstream:<name>" ones when minigw is uninstalled).
+var keyNames = osKeyNames
+
 var validGatewayName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`)
 
 // checkGatewayURL: https; http le do localhost ali zasebnega IP in le z --insecure. Brez uporabnika, poizvedbe in /v1.

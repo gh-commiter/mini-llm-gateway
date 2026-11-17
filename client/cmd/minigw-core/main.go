@@ -36,6 +36,7 @@ import (
 const (
 	connFD   = 3
 	secretFD = 4
+	laneFD   = 5 // optional second connection (-lane): the upstream routes, which may wait for the app, so that they never hold up the first
 
 	exitRefused = 1
 	exitUsage   = 2
@@ -47,6 +48,7 @@ func main() {
 		os.Exit(restoreMain(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	store := flag.String("store", "", "folder of the core store (private, given by the app)")
+	lane := flag.Bool("lane", false, "a second connection on fd 5 serves the upstream routes (they may wait for the app)")
 	flag.Parse()
 	log.SetFlags(0)
 	log.SetPrefix("minigw-core: ")
@@ -72,6 +74,20 @@ func main() {
 		log.Printf("refusing: %v", err)
 		os.Exit(exitRefused)
 	}
+	var laneConn net.Conn
+	if *lane {
+		lf := os.NewFile(laneFD, "lane")
+		laneConn, err = net.FileConn(lf)
+		lf.Close()
+		if err != nil {
+			log.Printf("no connection on fd %d: %v", laneFD, err)
+			os.Exit(exitRefused)
+		}
+		if err := peerIsParent(laneConn, os.Getppid()); err != nil {
+			log.Printf("refusing the second connection: %v", err)
+			os.Exit(exitRefused)
+		}
+	}
 	go watchParent(os.Getppid(), 200*time.Millisecond, func() { os.Exit(exitOrphan) })
 
 	st, openErr := core.Open(*store, core.Options{})
@@ -81,7 +97,6 @@ func main() {
 	}
 	host := &coreapi.CalloutHost{} // the app does the upstream work (network, credential store) for the helper: callouts
 	api := coreapi.New(coreapi.Options{
-		Upstream: host,
 		// one call of the helper has 30 seconds: a push ends with "more" well before and the caller asks again
 		UpstreamBudget: 10 * time.Second,
 		Store:          func() *core.Store { return st },
@@ -97,7 +112,18 @@ func main() {
 	if openErr == nil { // as in minigw serve: no recorder and no spool file while the core is not open (nothing is written next to protected data)
 		api.StartRecorder() // usage events (the app sends them): stored in the core; spooled (bounded) in the store folder if a write fails
 	}
-	err = serve(context.Background(), conn, secret, api, host, requestTimeout)
+	mainHost := host
+	if laneConn != nil {
+		// The upstream routes may wait for the app (the network, the Keychain) and have their own connection: a slow upstream can never
+		// hold up a member read or a device revocation on the first one. Only this connection gets callouts.
+		mainHost = nil
+		go func() {
+			if err := serve(context.Background(), laneConn, secret, api, host, requestTimeout); err != nil {
+				log.Printf("upstream connection ended: %v", err)
+			}
+		}()
+	}
+	err = serve(context.Background(), conn, secret, api, mainHost, requestTimeout)
 	api.StopRecorder() // drain the queue while the core is still open
 	if st != nil {
 		st.Close()

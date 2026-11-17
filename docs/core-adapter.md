@@ -94,7 +94,18 @@ and back `{"v":1,"id":N,"callout_result":{status,body,retryAfter,error,device,wh
 `info` (the public device ID), `forget` and `do` (one request to the upstream as that device). The app says `"callouts":true` in its hello
 when it can answer them (`CoreHelper.callouts`); for any other peer the upstream routes answer 501, and a protocol version bump is not
 needed. The app runs the handler on its helper queue (a plain thread), never on the cooperative pool. A request has 30 seconds, so a push
-runs with a budget of 10 seconds and ends with `more` (and the wait the upstream asked for); the CLI asks again.
+runs with a budget of 10 seconds and ends with `more` (and the wait the upstream asked for, and `next`, the last note done); the CLI
+asks again. A `do` callout carries the remaining budget (`budgetMs`): the app's request has a hard TOTAL deadline of at most that long (not
+an idle timeout), and the helper waits a little longer for the answer. A `callout_result` that arrives after the helper stopped waiting is
+recognised by its kind and dropped, never read as a request.
+
+**The lane.** A callout waits for the network and the Keychain, and a connection serves one request at a time. So the upstream routes
+(`/upstreams...`, `/upstream-push`) have a connection of their own: the app starts the helper with `-lane` and a second socketpair on fd
+5, handshakes both with the same secret, says `callouts` only on the second, and sends the upstream routes there (their own queue,
+`CoreHelper.laneIO`). A slow upstream can then never hold up a member read, a KB read or a device revocation on the first connection. The
+host of a connection is passed to the API with the request (`coreapi.WithUpstream`), so an upstream route that arrives on the first
+connection answers 501 and never uses the lane's host. Chosen over letting the helper serve several requests on one connection because
+the one-at-a-time invariant of the first connection stays whole.
 
 ## Stays in the adapter (the Mac app's list)
 

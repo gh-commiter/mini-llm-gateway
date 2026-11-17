@@ -302,6 +302,7 @@ func routerCommand(args []string, in io.Reader) {
 	evActivity := fs.String("activity", "", "usage, usage-events, project-sessions: only this activity")
 	upRemoteProject := fs.String("remote-project", "", "upstream link: the project's short name on the upstream (default: the same)")
 	upRemoteTeam := fs.String("remote-team", "", "upstream link --team: the team's name on the upstream (default: the same)")
+	upDeviceName := fs.String("device-name", "", "upstream add: how this gateway is named on the upstream's device list (default: gateway <id>)")
 	upClass := fs.String("class", "", "upstream link: classes to send, comma-separated (default structure,data)")
 	upWithPrivate := fs.Bool("with-private", false, "upstream link: also send private notes (needs private in --class)")
 	upDryRun := fs.Bool("dry-run", false, "upstream push: only ask the upstream what exists; write nothing")
@@ -832,7 +833,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota", "upstream":
-		coreCommand(a, pos, coreOpts{in: in, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, withPrivate: *upWithPrivate, dryRun: *upDryRun, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask})
+		coreCommand(a, pos, coreOpts{in: in, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

@@ -119,6 +119,7 @@ func serve(ctx context.Context, c net.Conn, secret []byte, api *coreapi.API, hos
 	}
 	if host != nil {
 		host.Attach(c, callouts)
+		ctx = coreapi.WithUpstream(ctx, host) // this connection's host, for the requests that arrive on it only
 	}
 	for {
 		id, cx, rq, err := coreapi.ReadRequest(c)

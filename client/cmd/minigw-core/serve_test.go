@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -230,7 +232,7 @@ func TestUpstreamCalloutsThroughTheHelper(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { st.Close() })
-		return coreapi.New(coreapi.Options{Store: func() *core.Store { return st }, Upstream: host, UpstreamBudget: 5 * time.Second})
+		return coreapi.New(coreapi.Options{Store: func() *core.Store { return st }, UpstreamBudget: 5 * time.Second})
 	}
 	admin := coreapi.Context{Kind: coreapi.KindAdmin}
 	put := coreapi.Request{Method: "PUT", Path: "/upstreams/hub", Body: []byte(`{"address":"hub.example","token":"SECRET-TOKEN#KEY"}`)}
@@ -277,5 +279,91 @@ func TestUpstreamCalloutsThroughTheHelper(t *testing.T) {
 	}
 	if r, err = cl.Do(context.Background(), admin, coreapi.Request{Method: "GET", Path: "/upstreams"}); err != nil || r.Status != 200 || strings.Contains(string(r.Body), "SECRET") || !strings.Contains(string(r.Body), "hub.example:8765") {
 		t.Fatalf("%v %s", err, r.Body)
+	}
+}
+
+// An upstream call that waits for the app does not hold up the other connection: the lane (second connection) has the callouts, the first
+// has none, and both are served at once by the same API.
+func TestTheUpstreamLaneNeverHoldsUpTheFirstConnection(t *testing.T) {
+	host := &coreapi.CalloutHost{}
+	st, err := core.Open(t.TempDir(), core.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	api := coreapi.New(coreapi.Options{Store: func() *core.Store { return st }, UpstreamBudget: 5 * time.Second})
+	laneApp, laneSrv := net.Pipe()
+	mainApp, mainSrv := net.Pipe()
+	t.Cleanup(func() { laneApp.Close(); mainApp.Close() })
+	go serve(context.Background(), laneSrv, testSecret, api, host, 10*time.Second)
+	go serve(context.Background(), mainSrv, testSecret, api, nil, 10*time.Second)
+	if r := clientHandshakeWith(t, laneApp, testSecret, 1, 1, true); r.Type != "ready" {
+		t.Fatal(r)
+	}
+	if r := clientHandshakeWith(t, mainApp, testSecret, 1, 1, true); r.Type != "ready" {
+		t.Fatal(r)
+	}
+	release := make(chan struct{})
+	inCallout := make(chan struct{})
+	lane := coreapi.NewClient(laneApp)
+	var once sync.Once
+	lane.OnCallout = func(q coreapi.CalloutRequest) coreapi.CalloutResult {
+		once.Do(func() { close(inCallout) })
+		<-release // the app is slow (an upstream that trickles)
+		return coreapi.CalloutResult{Device: "DEV", Where: "test"}
+	}
+	admin := coreapi.Context{Kind: coreapi.KindAdmin}
+	done := make(chan coreapi.Response, 1)
+	go func() {
+		r, _ := lane.Do(context.Background(), admin, coreapi.Request{Method: "PUT", Path: "/upstreams/hub", Body: []byte(`{"address":"hub.example","token":"t#k"}`)})
+		done <- r
+	}()
+	<-inCallout
+	// while that waits, the first connection answers at its normal speed: a member read and a revocation
+	first := coreapi.NewClient(mainApp)
+	start := time.Now()
+	r, err := first.Do(context.Background(), coreapi.Context{Kind: coreapi.KindInternal}, coreapi.Request{Method: "POST", Path: "/internal/epoch", Body: []byte(`{}`)})
+	if err != nil || r.Status != 200 {
+		t.Fatalf("epoch: %v %+v", err, r)
+	}
+	r, err = first.Do(context.Background(), coreapi.Context{Kind: coreapi.KindInternal}, coreapi.Request{Method: "POST", Path: "/internal/device-revoked", Body: []byte(`{"device":"dev-X"}`)})
+	if err != nil || r.Status != 200 {
+		t.Fatalf("revoke: %v %+v", err, r)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("the first connection was held up", time.Since(start))
+	}
+	select {
+	case <-done:
+		t.Fatal("the upstream call ended before the app answered")
+	default:
+	}
+	// the first connection has no callouts: an upstream route on it answers 501, it never waits
+	if r, err = first.Do(context.Background(), admin, coreapi.Request{Method: "GET", Path: "/upstreams"}); err != nil || r.Status != 501 {
+		t.Fatalf("%v %+v", err, r)
+	}
+	close(release)
+	select {
+	case r := <-done:
+		if r.Status != 200 {
+			t.Fatalf("%d %s", r.Status, r.Body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the upstream call did not end")
+	}
+}
+
+// The answer to a callout that the helper stopped waiting for is dropped; it is never taken for a request.
+func TestALateCalloutAnswerIsDropped(t *testing.T) {
+	var buf bytes.Buffer
+	if err := coreapi.WriteCalloutResult(&buf, 7, coreapi.CalloutResult{Status: 200}); err != nil {
+		t.Fatal(err)
+	}
+	if err := coreapi.WriteRequest(&buf, 8, coreapi.Context{Kind: coreapi.KindInternal}, coreapi.Request{Method: "POST", Path: "/internal/epoch"}); err != nil {
+		t.Fatal(err)
+	}
+	id, cx, rq, err := coreapi.ReadRequest(&buf)
+	if err != nil || id != 8 || cx.Kind != coreapi.KindInternal || rq.Path != "/internal/epoch" {
+		t.Fatalf("%d %+v %+v %v", id, cx, rq, err)
 	}
 }

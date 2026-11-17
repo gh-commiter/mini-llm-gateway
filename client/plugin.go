@@ -583,6 +583,21 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 			return nil
 		}})
 	}
+	// The secrets of upstream gateways (upstream:<name>): they are not in the serve config, so they are found by name.
+	var ups []string
+	for _, n := range keyNames(filepath.Dir(cfg)) {
+		if strings.HasPrefix(n, "upstream:") {
+			ups = append(ups, n)
+		}
+	}
+	if len(ups) > 0 {
+		steps = append(steps, uninstallStep{"upstream gateway credentials (" + strings.Join(ups, ", ") + ")", func() error {
+			for _, n := range ups {
+				keyDel(filepath.Dir(cfg), n)
+			}
+			return nil
+		}})
+	}
 	for _, d := range dirs {
 		steps = append(steps, uninstallStep{"settings folder " + d, func() error { return os.RemoveAll(d) }})
 	}

@@ -6,7 +6,7 @@ import Foundation
 
 extension AdminCommands {
     public static let upstreamHelp = """
-        minigw gw upstream add <name> <address>              another gateway to send knowledge to (host[:port]); its Copy Token on stdin
+        minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin
           minigw gw upstream list | remove <name>
           minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]
           minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes
@@ -31,7 +31,9 @@ extension AdminCommands {
         switch (pos[1], pos.count) {
         case ("add", 4) where team.isEmpty:
             let tok = try Self.secretLine(try o.tokenInput?() ?? "", what: "Copy Token of the upstream")
-            let r = try request("PUT", "/upstreams/" + esc(pos[2]), ["address": pos[3], "token": tok])
+            var req: [String: Any] = ["address": pos[3], "token": tok]
+            if !o.deviceName.isEmpty { req["deviceName"] = o.deviceName }
+            let r = try request("PUT", "/upstreams/" + esc(pos[2]), req)
             say(clean("upstream \(r["name"]?.string ?? ""): \(r["address"]?.string ?? "")"))
             say(clean("device \(r["device"]?.string ?? ""): the upstream's owner must allow this device and bind it to a user there, and give that user a role in the project"))
             say(clean("credentials stored in " + (r["where"]?.string ?? "")))

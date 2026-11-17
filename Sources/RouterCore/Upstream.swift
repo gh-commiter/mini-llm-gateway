@@ -22,8 +22,9 @@ public struct UpstreamAnswer: Sendable, Equatable {
 /// One request to an upstream: a request of a CLOSED set (UpstreamRequest.check), nothing else. Blocks the calling thread until it ends: never
 /// call it from the cooperative pool (CoreHelper calls it on its own queue). Tests give a fake.
 public protocol UpstreamTransport: Sendable {
+    /// timeout: a hard TOTAL deadline for the whole request (not an idle timeout): a server that sends a byte now and then gets no more time.
     func send(address: String, routerKey: Data, device: (key: Curve25519.Signing.PrivateKey, name: String), token: String,
-              method: String, path: String, idempotencyKey: String?, body: Data?) -> UpstreamAnswer
+              method: String, path: String, idempotencyKey: String?, body: Data?, timeout: TimeInterval) -> UpstreamAnswer
 }
 
 /// What the helper may ask the app to send. The helper is the untrusted party here (it exists to keep a core that a hostile note or bundle
@@ -78,6 +79,12 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
 
     struct Secret: Codable {
         var token: String, key: String, device: String, address: String
+        var name: String?  // how this gateway is named on the upstream's device list
+    }
+
+    /// The same rule as the core's ValidDeviceName: printable ASCII, 1 to 64 characters, no space at either end.
+    static func validDeviceName(_ s: String) -> Bool {
+        (1...64).contains(s.utf8.count) && s.unicodeScalars.allSatisfy { $0.value >= 0x20 && $0.value <= 0x7e } && s == s.trimmingCharacters(in: .whitespaces)
     }
 
     static func account(_ upstream: String) -> String { "upstream:" + upstream }
@@ -93,7 +100,8 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
     }
 
     /// The token line is the upstream's "Copy Token" (<token>#<gateway key>). A token or an address of this same gateway is refused.
-    func connect(_ upstream: String, address: String, line: String) -> [String: Any] {
+    func connect(_ upstream: String, address: String, line: String, deviceName: String) -> [String: Any] {
+        guard Self.validDeviceName(deviceName) else { return ["error": "device name: printable ASCII, 1 to 64 characters"] }
         let parts = line.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
         guard let address = UpstreamAddress.normalize(address) else { return ["error": "upstream address: give host or host:port of a gateway (no scheme, user or path), for example mini.local:8765"] }
         guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else {
@@ -110,7 +118,7 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
             }
         }
         let dev = Curve25519.Signing.PrivateKey()
-        let s = Secret(token: parts[0], key: parts[1], device: Noise.base64url(dev.rawRepresentation), address: address)
+        let s = Secret(token: parts[0], key: parts[1], device: Noise.base64url(dev.rawRepresentation), address: address, name: deviceName)
         guard let data = try? JSONEncoder().encode(s) else { return ["error": "cannot store the credentials"] }
         secrets.set(Self.account(upstream), String(decoding: data, as: UTF8.self))
         guard load(upstream) != nil else { return ["error": "cannot store the credentials in the Keychain: unlock the login keychain and try again"] }
@@ -131,8 +139,10 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
         guard let idem = UpstreamRequest.check(method: method, path: path, headers: q["header"] as? [String: String] ?? [:], body: body) else {
             return ["error": "this request is not one the upstream push makes"]
         }
-        let a = transport.send(address: s.address, routerKey: key, device: (k, name), token: s.token, method: method, path: path,
-                               idempotencyKey: idem.isEmpty ? nil : idem, body: body)
+        // The helper tells how long this call may take; the app's own hard deadline is never longer (and never more than 15 s).
+        let budget = min(15, max(0.5, Double(q["budgetMs"] as? Int ?? 10_000) / 1000))
+        let a = transport.send(address: s.address, routerKey: key, device: (k, s.name ?? "minigw gateway"), token: s.token, method: method, path: path,
+                               idempotencyKey: idem.isEmpty ? nil : idem, body: body, timeout: budget)
         if a.body.count > Self.maxAnswer { return ["error": "an answer of the upstream is too large"] }
         var r: [String: Any] = ["status": a.status]
         if !a.body.isEmpty { r["body"] = a.body.base64EncodedString() }
@@ -144,9 +154,11 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
     public func callout(_ q: [String: Any]) -> [String: Any] {
         guard let op = q["op"] as? String, let up = q["upstream"] as? String, !up.isEmpty else { return ["error": "bad callout"] }
         switch op {
-        case "connect": return connect(up, address: q["address"] as? String ?? "", line: q["token"] as? String ?? "")
+        case "connect": return connect(up, address: q["address"] as? String ?? "", line: q["token"] as? String ?? "", deviceName: q["deviceName"] as? String ?? "")
         case "info": return info(up)
-        case "forget": secrets.delete(Self.account(up)); return [:]
+        case "forget":
+            secrets.delete(Self.account(up))
+            return secrets.get(Self.account(up)) == nil ? [:] : ["error": "the Keychain item could not be removed (is the login keychain locked?)"]
         case "do": return `do`(up, q)
         default: return ["error": "unknown callout"]
         }
@@ -157,11 +169,12 @@ public final class UpstreamHost: CoreCalloutHandler, @unchecked Sendable {
 /// there is NO listener, so nothing else on this computer can borrow the gateway's device key. One request per connection, written by hand
 /// (HTTP/1.1, Connection: close); the answer is read to at most `cap` bytes of body, and a redirect is just an answer (nothing follows it).
 public struct NoiseHTTPTransport: UpstreamTransport {
-    public var timeout: TimeInterval
+    public var timeout: TimeInterval  // the most any request may take; the caller's own deadline can only make it shorter
     public init(timeout: TimeInterval = 10) { self.timeout = timeout }  // a call of the helper has 30 seconds
 
     public func send(address: String, routerKey: Data, device: (key: Curve25519.Signing.PrivateKey, name: String), token: String,
-                     method: String, path: String, idempotencyKey: String?, body: Data?) -> UpstreamAnswer {
+                     method: String, path: String, idempotencyKey: String?, body: Data?, timeout asked: TimeInterval) -> UpstreamAnswer {
+        let timeout = min(timeout, asked)
         guard let i = address.lastIndex(of: ":"), let port = NWEndpoint.Port(String(address[address.index(after: i)...])), routerKey.count == 32 else { return UpstreamAnswer(status: 0) }
         let host = String(address[..<i]).trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         var head = "\(method) \(path) HTTP/1.1\r\nHost: upstream\r\nAuthorization: Bearer \(token)\r\nX-Minigw-Client: macOS, minigw gateway\r\nConnection: close\r\n"
@@ -309,13 +322,17 @@ public enum UpstreamAddress {
         }
         guard !host.isEmpty, port.allSatisfy({ $0.isASCII && $0.isNumber }), let p = Int(port), (1...65535).contains(p) else { return nil }
         var v4 = in_addr(), v6 = in6_addr()
+        // Go accepts only the plain dotted quad (no leading zeros: "010.0.0.1" is octal to some resolvers); inet_pton on the Mac is looser
+        if host.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
+           host.range(of: "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$", options: .regularExpression) == nil { return nil }
         if inet_pton(AF_INET, host, &v4) == 1 {
             let b = withUnsafeBytes(of: &v4) { Array($0) }
             if b == [0, 0, 0, 0] || (b[0] == 169 && b[1] == 254) || (224...239).contains(b[0]) { return nil }
         } else if inet_pton(AF_INET6, host, &v6) == 1 {
             let b = withUnsafeBytes(of: &v6) { Array($0) }
             if b.allSatisfy({ $0 == 0 }) || (b[0] == 0xfe && b[1] & 0xc0 == 0x80) || b[0] == 0xff { return nil }
-        } else if host.range(of: "^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$", options: .regularExpression) == nil { return nil }
+        } else if host.range(of: "^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$", options: .regularExpression) == nil
+                    || host.range(of: "^(0[xX][0-9a-fA-F]+|[0-9]+)(\\.(0[xX][0-9a-fA-F]+|[0-9]+))*$", options: .regularExpression) != nil { return nil }  // an address in disguise
         let h = host.lowercased()
         return h.contains(":") ? "[\(h)]:\(p)" : "\(h):\(p)"
     }

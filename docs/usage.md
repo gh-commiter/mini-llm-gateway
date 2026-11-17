@@ -1343,7 +1343,7 @@ owner decides what it may do with the existing means.
 1. On the upstream, copy its token (Mini Gateway, Settings, General, Copy Token). Locally, as the owner:
 
    ```text
-   minigw gw upstream add hub mini.example:8765      # the token line on stdin (or typed, not echoed): never an argument
+   minigw gw upstream add hub mini.example:8765 [--device-name <text>]   # the token line on stdin (or typed, not echoed): never an argument
    ```
 
    The command prints the **device ID** of this gateway, where the credentials are kept (the credential store, like a provider key;
@@ -1366,6 +1366,15 @@ owner decides what it may do with the existing means.
    `private` notes go only when the link says `--with-private` (and names the class). `push --dry-run` only asks the upstream what
    exists and writes nothing, there or here. The author's name of a note travels as text in the submission (a line at its end, with
    the gateway, the local note and its revision); the submission itself belongs to the bound user.
+
+**What leaves the gateway with a push**, exactly: for each note its title, class, kind (finding or faq) and body; one line at the end of the
+body with an opaque reference (a hash of this gateway, the link and the note: stable for the note, it says nothing about this gateway) and
+the local author's display name, and, for a replacement, the number of the earlier submission; and, in the encrypted handshake, the device
+name of this gateway and the device ID (a public key), the upstream's Copy Token as the credential. The device name is `gateway <8 characters
+of an id>` unless the owner chooses one with `--device-name` (printable ASCII, up to 64 characters); it is never the computer's name. No
+note id, revision, gateway id, user name of the owner, path, session or usage data goes. An upstream on the same computer (a loopback address
+with another port than this gateway's own) is allowed: it is another gateway. Names that are numbers in disguise (`2852039166`,
+`0x7f000001`) are refused as addresses. An archived project or team cannot be linked, and nothing is sent for one that was archived later.
 
 A repeated push sends only what changed: every note is remembered by its content (class, kind, title, text). A changed note is sent
 as a **replacement** of the note the upstream accepted before; if that note is still pending there, or cannot be read by the bound

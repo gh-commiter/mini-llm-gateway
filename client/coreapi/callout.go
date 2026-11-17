@@ -32,14 +32,17 @@ const (
 )
 
 type CalloutRequest struct {
-	Op       string            `json:"op"`
-	Upstream string            `json:"upstream"`
-	Address  string            `json:"address,omitempty"`
-	Token    string            `json:"token,omitempty"`
-	Method   string            `json:"method,omitempty"`
-	Path     string            `json:"path,omitempty"`
-	Header   map[string]string `json:"header,omitempty"`
-	Body     []byte            `json:"body,omitempty"`
+	Op       string `json:"op"`
+	Upstream string `json:"upstream"`
+	Address  string `json:"address,omitempty"`
+	Token    string `json:"token,omitempty"`
+	// DeviceName (connect): how the device is named on the upstream's list. BudgetMs (do): the most the app may take, a hard total deadline.
+	DeviceName string            `json:"deviceName,omitempty"`
+	BudgetMs   int               `json:"budgetMs,omitempty"`
+	Method     string            `json:"method,omitempty"`
+	Path       string            `json:"path,omitempty"`
+	Header     map[string]string `json:"header,omitempty"`
+	Body       []byte            `json:"body,omitempty"`
 }
 
 type CalloutResult struct {
@@ -96,15 +99,19 @@ func (h *CalloutHost) Available() bool {
 	return h.enabled && h.conn != nil
 }
 
-func (h *CalloutHost) call(req CalloutRequest) (CalloutResult, error) {
+// call sends one callout and waits for its answer for at most `wait` (the app is told the same budget and gives up by itself first).
+func (h *CalloutHost) call(req CalloutRequest, wait time.Duration) (CalloutResult, error) {
 	h.mu.Lock()
 	conn, id := h.conn, h.id
 	h.mu.Unlock()
 	if conn == nil {
 		return CalloutResult{}, errors.New("no app to do this")
 	}
+	if wait <= 0 || wait > calloutTimeout {
+		wait = calloutTimeout
+	}
 	if c, ok := conn.(net.Conn); ok {
-		c.SetDeadline(time.Now().Add(calloutTimeout))
+		c.SetDeadline(time.Now().Add(wait))
 		defer c.SetDeadline(time.Time{})
 	}
 	if err := writeFrame(conn, wireCallout{V: ProtocolVersion, ID: id, Callout: &req}); err != nil {
@@ -123,8 +130,19 @@ func (h *CalloutHost) call(req CalloutRequest) (CalloutResult, error) {
 	return *f.Result, nil
 }
 
-func (h *CalloutHost) Do(_ context.Context, upstream, method, path string, header map[string]string, body []byte) (int, []byte, time.Duration, error) {
-	r, err := h.call(CalloutRequest{Op: CalloutDo, Upstream: upstream, Method: method, Path: path, Header: header, Body: body})
+func (h *CalloutHost) Do(ctx context.Context, upstream, method, path string, header map[string]string, body []byte) (int, []byte, time.Duration, error) {
+	budget := 20 * time.Second // a call without a deadline of its own
+	if dl, ok := ctx.Deadline(); ok {
+		budget = time.Until(dl) - time.Second
+	}
+	if budget < 500*time.Millisecond || ctx.Err() != nil {
+		return 0, nil, 0, errors.New("the time budget of this call is used")
+	}
+	if budget > 15*time.Second {
+		budget = 15 * time.Second
+	}
+	// the app gives up after `budget` by itself (a hard total deadline); the helper waits a little longer for its answer
+	r, err := h.call(CalloutRequest{Op: CalloutDo, Upstream: upstream, Method: method, Path: path, Header: header, Body: body, BudgetMs: int(budget / time.Millisecond)}, budget+2*time.Second)
 	if err != nil {
 		return 0, nil, 0, err
 	}
@@ -134,8 +152,8 @@ func (h *CalloutHost) Do(_ context.Context, upstream, method, path string, heade
 	return r.Status, r.Body, time.Duration(r.RetryAfter) * time.Second, nil
 }
 
-func (h *CalloutHost) Connect(name, address, token string) (UpstreamInfo, error) {
-	r, err := h.call(CalloutRequest{Op: CalloutConnect, Upstream: name, Address: address, Token: token})
+func (h *CalloutHost) Connect(name, address, token, deviceName string) (UpstreamInfo, error) {
+	r, err := h.call(CalloutRequest{Op: CalloutConnect, Upstream: name, Address: address, Token: token, DeviceName: deviceName}, 10*time.Second)
 	if err != nil {
 		return UpstreamInfo{}, err
 	}
@@ -146,13 +164,22 @@ func (h *CalloutHost) Connect(name, address, token string) (UpstreamInfo, error)
 }
 
 func (h *CalloutHost) Info(name string) UpstreamInfo {
-	r, err := h.call(CalloutRequest{Op: CalloutInfo, Upstream: name})
+	r, err := h.call(CalloutRequest{Op: CalloutInfo, Upstream: name}, 5*time.Second)
 	if err != nil || r.Error != "" {
 		return UpstreamInfo{}
 	}
 	return UpstreamInfo{Device: r.Device}
 }
 
-func (h *CalloutHost) Forget(name string) { h.call(CalloutRequest{Op: CalloutForget, Upstream: name}) }
+func (h *CalloutHost) Forget(name string) error {
+	r, err := h.call(CalloutRequest{Op: CalloutForget, Upstream: name}, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	if r.Error != "" {
+		return errors.New(r.Error)
+	}
+	return nil
+}
 
 var _ core.UpstreamTransport = (*CalloutHost)(nil)

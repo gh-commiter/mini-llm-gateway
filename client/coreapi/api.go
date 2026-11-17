@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"minigw/core"
@@ -82,8 +83,9 @@ type Options struct {
 
 // API is the core's request handler.
 type API struct {
-	o   Options
-	rec *Recorder
+	o    Options
+	rec  *Recorder
+	upMu sync.Mutex // adding and removing an upstream (its secret and its row) one at a time
 }
 
 // New makes an API. Start the usage recorder with StartRecorder when the process runs long (not for tests of routes).

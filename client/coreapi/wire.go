@@ -72,14 +72,22 @@ func WriteRequest(w io.Writer, id uint64, c Context, r Request) error {
 }
 
 func ReadRequest(rd io.Reader) (id uint64, c Context, r Request, err error) {
-	var f wireRequest
-	if err = readFrame(rd, &f); err != nil {
-		return
+	for {
+		var f struct {
+			wireRequest
+			Result *CalloutResult `json:"callout_result"`
+		}
+		if err = readFrame(rd, &f); err != nil {
+			return
+		}
+		if f.V != ProtocolVersion {
+			return 0, Context{}, Request{}, fmt.Errorf("%w: %d", ErrVersion, f.V)
+		}
+		if f.Result != nil { // the answer to a callout that the helper stopped waiting for: it is dropped, never taken for a request
+			continue
+		}
+		return f.ID, f.Context, f.Request, nil
 	}
-	if f.V != ProtocolVersion {
-		return 0, Context{}, Request{}, fmt.Errorf("%w: %d", ErrVersion, f.V)
-	}
-	return f.ID, f.Context, f.Request, nil
 }
 
 func WriteResponse(w io.Writer, id uint64, r Response, protoErr string) error {

@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +24,7 @@ import (
 type upstreamHost struct{ s *server }
 
 type upstreamSecret struct {
+	Name   string `json:"name,omitempty"` // how this gateway is named on the upstream's device list
 	Token  string `json:"token"`
 	Key    string `json:"key"`    // the upstream's public key (pinned)
 	Device string `json:"device"` // this gateway's device key for it (Ed25519 seed)
@@ -47,24 +47,15 @@ func (h upstreamHost) deviceOf(sec upstreamSecret) (*device, string) {
 		return nil, ""
 	}
 	k := ed25519.NewKeyFromSeed(seed)
-	return &device{key: k, name: "minigw gateway " + hostName()}, base64url(k.Public().(ed25519.PublicKey))
-}
-
-func hostName() string {
-	n, _ := os.Hostname()
+	n := sec.Name
 	if n == "" {
-		return "gateway"
+		n = "minigw gateway"
 	}
-	return strings.Map(func(r rune) rune {
-		if r < 0x21 || r > 0x7e {
-			return -1
-		}
-		return r
-	}, n)
+	return &device{key: k, name: n}, base64url(k.Public().(ed25519.PublicKey))
 }
 
 // Connect: the token line is the upstream's "Copy Token" (<token>#<gateway key>). A token of this same gateway is refused.
-func (h upstreamHost) Connect(name, address, line string) (coreapi.UpstreamInfo, error) {
+func (h upstreamHost) Connect(name, address, line, deviceName string) (coreapi.UpstreamInfo, error) {
 	tok, key, ok := newToken(strings.TrimSpace(line), nil)
 	if !ok || key == nil {
 		return coreapi.UpstreamInfo{}, errors.New("the token line must be the upstream's whole Copy Token (<token>#<key>)")
@@ -81,7 +72,7 @@ func (h upstreamHost) Connect(name, address, line string) (coreapi.UpstreamInfo,
 			return coreapi.UpstreamInfo{}, errors.New("this address is this same gateway: an upstream must be another gateway")
 		}
 	}
-	sec := upstreamSecret{Token: tok, Key: *key, Device: newDeviceKey()}
+	sec := upstreamSecret{Name: deviceName, Token: tok, Key: *key, Device: newDeviceKey()}
 	data, _ := json.Marshal(sec)
 	where, err := keySet(h.s.cfgDir, upstreamKeyName(name), string(data))
 	if err != nil {
@@ -102,7 +93,13 @@ func (h upstreamHost) Info(name string) coreapi.UpstreamInfo {
 
 func (h upstreamHost) Available() bool { return true }
 
-func (h upstreamHost) Forget(name string) { keyDel(h.s.cfgDir, upstreamKeyName(name)) }
+func (h upstreamHost) Forget(name string) error {
+	keyDel(h.s.cfgDir, upstreamKeyName(name))
+	if v, _ := keyGet(h.s.cfgDir, upstreamKeyName(name)); v != "" {
+		return errors.New("still in " + storeName)
+	}
+	return nil
+}
 
 // Do: one request to the upstream over a fresh encrypted connection made in memory. Redirects are never followed, an answer is read up to
 // 8 MiB, and nothing in it is trusted by this function.

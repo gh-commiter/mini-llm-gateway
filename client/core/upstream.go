@@ -18,13 +18,31 @@ import (
 // and the receipts of what was sent. Step A: by hand, submit mode.
 const (
 	maxUpstreams     = 16
-	maxUpstreamLinks = 8    // per project or team
-	maxPushNotes     = 1000 // per link and run; the rest goes on the next run
+	maxUpstreamLinks = 8 // per project or team
 )
+
+// maxPushNotes: the notes SENT (new or changed, not the unchanged ones passed over) per link and run; the rest goes on the next run.
+// A variable so that a test can lower it.
+var maxPushNotes = 1000
+
+var numericHost = regexp.MustCompile(`^(0[xX][0-9a-fA-F]+|[0-9]+)(\.(0[xX][0-9a-fA-F]+|[0-9]+))*$`)
 
 var upstreamNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
 func ValidUpstreamName(s string) bool { return upstreamNameRe.MatchString(s) }
+
+// ValidDeviceName: how this gateway names its device on an upstream: printable ASCII (it goes into an HTTP header), 1 to 64 characters.
+func ValidDeviceName(s string) bool {
+	if len(s) < 1 || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r > 0x7e {
+			return false
+		}
+	}
+	return strings.TrimSpace(s) == s
+}
 
 // NormalizeUpstreamAddress: host[:port] of a gateway (the encrypted client protocol of `minigw connect`, default port 8765). No scheme,
 // no user, no path; not an unspecified or link-local address (cloud metadata and the like).
@@ -51,8 +69,8 @@ func NormalizeUpstreamAddress(s string) (string, error) {
 		if ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
 			return "", ErrRefusal{"upstream address: " + host + " is not an address of a gateway"}
 		}
-	} else if !regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$`).MatchString(host) {
-		return "", bad
+	} else if !regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$`).MatchString(host) || numericHost.MatchString(host) {
+		return "", bad // not a name: "2852039166", "0x7f000001", "127.1", "010.0.0.1" are addresses in disguise
 	}
 	return net.JoinHostPort(strings.ToLower(host), port), nil
 }
@@ -202,12 +220,26 @@ func (s *Store) LinkUpstream(ctx context.Context, project, team int64, upstream,
 		local := project
 		if team > 0 {
 			var archived bool
-			if e := tx.QueryRow(`SELECT archived FROM teams WHERE id=?`, team).Scan(&archived); e != nil {
+			var tname string
+			if e := tx.QueryRow(`SELECT archived,name FROM teams WHERE id=?`, team).Scan(&archived, &tname); e != nil {
 				return "", notFound(e)
 			}
+			if archived {
+				return "", ErrRefusal{"team " + tname + " is archived: unarchive it first, then link it"}
+			}
 			local = segmentID(team)
-		} else if e := existsProject(tx, project); e != nil {
-			return "", e
+		} else {
+			if e := existsProject(tx, project); e != nil {
+				return "", e
+			}
+			var archived bool
+			var slug string
+			if e := tx.QueryRow(`SELECT archived,slug FROM projects WHERE id=?`, project).Scan(&archived, &slug); e != nil {
+				return "", e
+			}
+			if archived {
+				return "", ErrRefusal{"project " + slug + " is archived: unarchive it first, then link it"}
+			}
 		}
 		if remote == "" || len(remote) > 128 || strings.ContainsAny(remote, "/\\\r\n") {
 			return "", ErrRefusal{"the name of the project (or team) on the upstream is empty or not a name"}
@@ -437,7 +469,7 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 }
 
 // upstreamPlan reads one link and its notes in one transaction.
-func (s *Store) upstreamPlan(ctx context.Context, project int64, upstream string, after int64, limit int) (l UpstreamLink, label, address string, scan upstreamScan, err error) {
+func (s *Store) upstreamPlan(ctx context.Context, project int64, upstream string, after int64, limit int) (l UpstreamLink, label, address string, archived bool, scan upstreamScan, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		var e error
 		if l, e = scanLink(tx.QueryRow(`SELECT `+linkCols+` FROM upstream_links WHERE project_id=? AND upstream=?`, project, upstream)); e != nil {
@@ -447,6 +479,14 @@ func (s *Store) upstreamPlan(ctx context.Context, project int64, upstream string
 			return notFound(e)
 		}
 		if label, e = linkLabel(tx, project); e != nil {
+			return e
+		}
+		if t, ok := SegmentTeam(project); ok {
+			e = tx.QueryRow(`SELECT archived FROM teams WHERE id=?`, t).Scan(&archived)
+		} else {
+			e = tx.QueryRow(`SELECT archived FROM projects WHERE id=?`, project).Scan(&archived)
+		}
+		if e != nil {
 			return e
 		}
 		scan, e = upstreamNotes(tx, l, after, limit)

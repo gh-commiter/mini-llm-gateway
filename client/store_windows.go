@@ -188,6 +188,15 @@ func osKeySet(_, name, key string) (string, error) {
 
 func osKeyDel(_, name string) { credDelete("minigw/gateway/" + name) }
 
+// osKeyNames: the gateway secrets of the Credential Manager (minigw/gateway/<name>).
+func osKeyNames(string) []string {
+	var out []string
+	for _, t := range credTargets(credNS + "minigw/gateway/*") {
+		out = append(out, strings.TrimPrefix(strings.TrimPrefix(t, credNS), "minigw/gateway/"))
+	}
+	return out
+}
+
 // readHidden: vrstica s konzole brez odmeva (ENABLE_ECHO_INPUT izklopljen).
 func readHidden(f *os.File) (string, error) {
 	k := syscall.NewLazyDLL("kernel32.dll")

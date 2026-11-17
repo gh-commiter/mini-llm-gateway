@@ -10,7 +10,7 @@ import (
 )
 
 const upstreamHelp = `
-  minigw gw upstream add <name> <address>              another gateway to send knowledge to (host[:port]); its Copy Token on stdin
+  minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin
   minigw gw upstream list | remove <name>
   minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]
   minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes
@@ -47,7 +47,11 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			fail(err.Error())
 		}
 		var r struct{ Name, Address, Device, Where, Probe string }
-		a.do("PUT", "/upstreams/"+url.PathEscape(pos[2]), map[string]any{"address": pos[3], "token": tok}, &r)
+		req := map[string]any{"address": pos[3], "token": tok}
+		if u.deviceName != "" {
+			req["deviceName"] = u.deviceName
+		}
+		a.do("PUT", "/upstreams/"+url.PathEscape(pos[2]), req, &r)
 		say(clean(fmt.Sprintf("upstream %s: %s", r.Name, r.Address)))
 		say(clean("device " + r.Device + ": the upstream's owner must allow this device and bind it to a user there, and give that user a role in the project"))
 		say(clean("credentials stored in " + r.Where))

@@ -181,6 +181,24 @@ func writeKeys(cfgDir string, m map[string]string) error {
 	return writeFileAtomic(keyFile(cfgDir), data)
 }
 
+// osKeyNames: every stored secret name: the file, and what secret-tool lists for the service.
+func osKeyNames(cfgDir string) []string {
+	var out []string
+	m, _ := fileKeys(cfgDir)
+	for n := range m {
+		out = append(out, n)
+	}
+	if tool := secretTool(); tool != "" {
+		o, _ := command(tool, "search", "--all", "service", "minigw").Output()
+		for _, l := range strings.Split(string(o), "\n") {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(l), "attribute.gateway = "); ok {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
 func osKeyDel(cfgDir, name string) {
 	if tool := secretTool(); tool != "" {
 		command(tool, "clear", "service", "minigw", "gateway", name).Run()

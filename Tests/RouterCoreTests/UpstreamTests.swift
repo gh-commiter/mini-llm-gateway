@@ -31,7 +31,7 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
             cmd.pause = { _ in }
             let o = c["opts"] as! [String: Any]
             var opts = AdminOpts(team: o["team"] as? String ?? "")
-            opts.remoteProject = o["remoteProject"] as? String ?? ""; opts.remoteTeam = o["remoteTeam"] as? String ?? ""; opts.classes = o["class"] as? String ?? ""
+            opts.deviceName = o["deviceName"] as? String ?? ""; opts.remoteProject = o["remoteProject"] as? String ?? ""; opts.remoteTeam = o["remoteTeam"] as? String ?? ""; opts.classes = o["class"] as? String ?? ""
             opts.withPrivate = o["withPrivate"] as? Bool ?? false; opts.dryRun = o["dryRun"] as? Bool ?? false
             let stdin = c["stdin"] as? String ?? ""
             opts.tokenInput = { stdin }
@@ -92,14 +92,14 @@ final class MemorySecrets: UpstreamSecretStore, @unchecked Sendable {
 }
 
 final class FakeTransport: UpstreamTransport, @unchecked Sendable {
-    struct Call { var address: String; var key: Data; var device: String; var token: String; var method: String; var path: String; var idempotencyKey: String?; var body: Data? }
+    struct Call { var address: String; var key: Data; var device: String; var deviceName: String; var token: String; var method: String; var path: String; var idempotencyKey: String?; var body: Data?; var timeout: TimeInterval }
     private let lock = NSLock()
     private var _calls: [Call] = []
     var handler: @Sendable (Call) -> UpstreamAnswer = { _ in UpstreamAnswer(status: 200, body: Data("{}".utf8)) }
     var calls: [Call] { lock.lock(); defer { lock.unlock() }; return _calls }
     func send(address: String, routerKey: Data, device: (key: Curve25519.Signing.PrivateKey, name: String), token: String, method: String, path: String,
-              idempotencyKey: String?, body: Data?) -> UpstreamAnswer {
-        let c = Call(address: address, key: routerKey, device: Noise.base64url(device.key.publicKey.rawRepresentation), token: token, method: method, path: path, idempotencyKey: idempotencyKey, body: body)
+              idempotencyKey: String?, body: Data?, timeout: TimeInterval) -> UpstreamAnswer {
+        let c = Call(address: address, key: routerKey, device: Noise.base64url(device.key.publicKey.rawRepresentation), deviceName: device.name, token: token, method: method, path: path, idempotencyKey: idempotencyKey, body: body, timeout: timeout)
         lock.lock(); _calls.append(c); lock.unlock()
         return handler(c)
     }
@@ -116,7 +116,7 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
     @Test func connectKeepsTheSecretInTheStoreAndAnswersOnlyThePublicDeviceId() throws {
         let s = MemorySecrets()
         let h = host(s)
-        let r = h.callout(["op": "connect", "upstream": "hub", "address": "hub.example:8765", "token": line()])
+        let r = h.callout(["op": "connect", "deviceName": "gw test", "upstream": "hub", "address": "hub.example:8765", "token": line()])
         #expect(r["error"] == nil && r["where"] as? String == "the Keychain")
         let device = try #require(r["device"] as? String)
         #expect(device.count == 43)
@@ -136,13 +136,13 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
         let s = MemorySecrets()
         let h = host(s)
         for (address, token, why) in [("hub.example:8765", line(ownKey), "token"), ("127.0.0.1:8765", line(), "address"), ("localhost:8765", line(), "address"), ("[::1]:8765", line(), "address")] {
-            let r = h.callout(["op": "connect", "upstream": "me", "address": address, "token": token])
+            let r = h.callout(["op": "connect", "deviceName": "gw test", "upstream": "me", "address": address, "token": token])
             #expect((r["error"] as? String)?.contains("this same gateway") == true, "\(why) \(address)")
         }
         // another port on this computer is another gateway
-        #expect(h.callout(["op": "connect", "upstream": "other", "address": "127.0.0.1:9000", "token": line()])["error"] == nil)
+        #expect(h.callout(["op": "connect", "deviceName": "gw test", "upstream": "other", "address": "127.0.0.1:9000", "token": line()])["error"] == nil)
         for bad in ["just-a-token", "#", "tok#", "#key", "tok#short"] {
-            #expect(h.callout(["op": "connect", "upstream": "bad", "address": "hub.example:8765", "token": bad])["error"] != nil, Comment(rawValue: bad))
+            #expect(h.callout(["op": "connect", "deviceName": "gw test", "upstream": "bad", "address": "hub.example:8765", "token": bad])["error"] != nil, Comment(rawValue: bad))
         }
         #expect(s.all.keys.sorted() == ["upstream:other"])
     }
@@ -151,7 +151,7 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
         let s = MemorySecrets(), t = FakeTransport()
         let h = host(s, t)
         let key = Noise.newKey().publicKey.rawRepresentation
-        let device = try #require(h.callout(["op": "connect", "upstream": "hub", "address": "hub.example:9000", "token": line(key)])["device"] as? String)
+        let device = try #require(h.callout(["op": "connect", "deviceName": "gw test", "upstream": "hub", "address": "hub.example:9000", "token": line(key)])["device"] as? String)
         t.handler = { _ in UpstreamAnswer(status: 201, body: Data(#"{"id":5}"#.utf8), retryAfter: 3) }
         let r = h.callout(["op": "do", "upstream": "hub", "method": "POST", "path": "/minigw/v1/projects/7/kb/submissions", "header": ["Idempotency-Key": "k"], "body": Data("{}".utf8).base64EncodedString()])
         #expect(r["status"] as? Int == 201 && r["retryAfter"] as? Int == 3)
@@ -174,7 +174,7 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
         let s = MemorySecrets()
         let own = Noise.newKey().publicKey.rawRepresentation
         let h = UpstreamHost(secrets: s, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac")
-        _ = h.callout(["op": "connect", "upstream": "hub", "address": "hub.example:8765", "token": "SECRET-TOKEN#" + Noise.base64url(Noise.newKey().publicKey.rawRepresentation)])
+        _ = h.callout(["op": "connect", "deviceName": "gw test", "upstream": "hub", "address": "hub.example:8765", "token": "SECRET-TOKEN#" + Noise.base64url(Noise.newKey().publicKey.rawRepresentation)])
         return h
     }
 
@@ -206,6 +206,36 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
         #expect(t.calls.count == 6 && t.calls.allSatisfy { $0.idempotencyKey == "up-0123abc" && $0.token == "SECRET-TOKEN" && $0.address == "hub.example:8765" })
     }
 
+    @Test func theDeviceNameIsTheOwnersChoiceAndTheBudgetIsTheHelpers() throws {
+        let t = FakeTransport(), s = MemorySecrets()
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let h = UpstreamHost(secrets: s, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "my-secret-hostname")
+        let line = "t#" + Noise.base64url(Noise.newKey().publicKey.rawRepresentation)
+        for bad in ["", String(repeating: "n", count: 65), "tab\there", "caf\u{e9}", " lead", "trail "] {
+            #expect(h.callout(["op": "connect", "upstream": "x", "deviceName": bad, "address": "hub.example:8765", "token": line])["error"] != nil, Comment(rawValue: bad.debugDescription))
+        }
+        #expect(s.all.isEmpty)
+        #expect(h.callout(["op": "connect", "upstream": "hub", "deviceName": "Uros laptop", "address": "hub.example:8765", "token": line])["error"] == nil)
+        _ = h.callout(["op": "do", "upstream": "hub", "method": "GET", "path": "/minigw/v1/projects", "budgetMs": 4000])
+        _ = h.callout(["op": "do", "upstream": "hub", "method": "GET", "path": "/minigw/v1/projects", "budgetMs": 600_000])
+        _ = h.callout(["op": "do", "upstream": "hub", "method": "GET", "path": "/minigw/v1/projects"])
+        let c = t.calls
+        #expect(c.map(\.deviceName) == ["Uros laptop", "Uros laptop", "Uros laptop"])  // never the computer's name
+        #expect(c.map(\.timeout) == [4, 15, 10])
+        #expect(!(s.all["upstream:hub"] ?? "").contains("my-secret-hostname"))
+    }
+
+    @Test func aKeychainItemThatCannotBeRemovedIsReported() {
+        final class Stuck: UpstreamSecretStore, @unchecked Sendable {
+            func get(_ a: String) -> String? { #"{"token":"t","key":"k","device":"d","address":"a:1"}"# }
+            func set(_ a: String, _ v: String) {}
+            func delete(_ a: String) {}  // a locked keychain: the item stays
+        }
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let h = UpstreamHost(secrets: Stuck(), ownKey: { own }, ownPort: { 8765 }, transport: FakeTransport(), computerName: "mac")
+        #expect((h.callout(["op": "forget", "upstream": "hub"])["error"] as? String)?.contains("could not be removed") == true)
+    }
+
     @Test func anUnknownCalloutKindIsRefused() {
         let h = host(FakeTransport())
         for op in ["frobnicate", "exec", "fetch", "", "DO"] { #expect(h.callout(["op": op, "upstream": "hub", "method": "GET", "path": "/minigw/v1/x"])["error"] != nil, Comment(rawValue: op)) }
@@ -222,7 +252,7 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
         let h = UpstreamHost(secrets: s, ownKey: { own }, ownPort: { 8765 }, transport: FakeTransport(), computerName: "mac")
         let line = "t#" + Noise.base64url(Noise.newKey().publicKey.rawRepresentation)
         for bad in ["evil.example/x", "user@evil.example", "https://evil.example", "0.0.0" + ".0:1"] {
-            #expect(h.callout(["op": "connect", "upstream": "x", "address": bad, "token": line])["error"] != nil, Comment(rawValue: bad))
+            #expect(h.callout(["op": "connect", "deviceName": "gw test", "upstream": "x", "address": bad, "token": line])["error"] != nil, Comment(rawValue: bad))
         }
         #expect(s.all.isEmpty)
     }
@@ -266,9 +296,10 @@ final class ScriptedNoiseServer: @unchecked Sendable {
     var devices: [Noise.Device] { lock.withLock { _devices } }
     var accepted: Int { lock.withLock { _accepted } }
     let reply: @Sendable (String) -> Data
+    let trickle: TimeInterval  // > 0: the answer comes one byte in a frame, one frame per this many seconds (for as long as it lasts)
 
-    init(reply: @escaping @Sendable (String) -> Data) {
-        self.reply = reply
+    init(trickle: TimeInterval = 0, reply: @escaping @Sendable (String) -> Data) {
+        self.reply = reply; self.trickle = trickle
         fd = socket(AF_INET, SOCK_STREAM, 0)
         var one: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
@@ -293,6 +324,8 @@ final class ScriptedNoiseServer: @unchecked Sendable {
 
     private func serve(_ c: Int32) {
         defer { close(c) }
+        var one: Int32 = 1
+        setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))  // a client that gave up must not kill the test process
         var buf = [UInt8](repeating: 0, count: 65536), hs = Data()
         while hs.count < 4 + Noise.handshakeLength {
             let k = read(c, &buf, min(buf.count, 4 + Noise.handshakeLength - hs.count))
@@ -312,6 +345,14 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         }
         let head = String(decoding: plain, as: UTF8.self)
         lock.withLock { _heads.append(head) }
+        if trickle > 0 {
+            for b in reply(head) {
+                let one = Noise.frames(Data([b]), session.send)
+                if one.withUnsafeBytes({ write(c, $0.baseAddress, $0.count) }) <= 0 { return }
+                Thread.sleep(forTimeInterval: trickle)
+            }
+            return
+        }
         let out = Noise.frames(reply(head), session.send)
         _ = out.withUnsafeBytes { write(c, $0.baseAddress, $0.count) }
     }
@@ -321,7 +362,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
     func send(_ srv: ScriptedNoiseServer, key: Data? = nil, device: Curve25519.Signing.PrivateKey = Curve25519.Signing.PrivateKey(), method: String = "GET",
               path: String = "/minigw/v1/projects/shop", idem: String? = nil, body: Data? = nil, timeout: TimeInterval = 10) -> UpstreamAnswer {
         NoiseHTTPTransport(timeout: timeout).send(address: "127.0.0.1:\(srv.port)", routerKey: key ?? srv.key.publicKey.rawRepresentation, device: (device, "minigw gateway test"),
-                                                 token: "TOKEN-1", method: method, path: path, idempotencyKey: idem, body: body)
+                                                 token: "TOKEN-1", method: method, path: path, idempotencyKey: idem, body: body, timeout: timeout)
     }
 
     @Test func requestAndAnswerOverTheEncryptedConnectionAsTheGatewaysDevice() throws {
@@ -353,7 +394,17 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         let dead = ScriptedNoiseServer { _ in Data() }
         let port = dead.port; dead.stop()
         #expect(NoiseHTTPTransport(timeout: 3).send(address: "127.0.0.1:\(port)", routerKey: Noise.newKey().publicKey.rawRepresentation, device: (Curve25519.Signing.PrivateKey(), "x"),
-                                                    token: "t", method: "GET", path: "/minigw/v1/x", idempotencyKey: nil, body: nil).status == 0)
+                                                    token: "t", method: "GET", path: "/minigw/v1/x", idempotencyKey: nil, body: nil, timeout: 3).status == 0)
+    }
+
+    @Test func aServerThatTricklesIsStoppedAtTheTotalDeadline() {
+        // one byte every 0.2 s, an answer that would take minutes: an idle timeout would never fire, the total deadline does
+        let srv = ScriptedNoiseServer(trickle: 0.2) { _ in Data(("HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n" + String(repeating: "x", count: 100000)).utf8) }
+        defer { srv.stop() }
+        let start = Date()
+        let a = send(srv, timeout: 1.5)
+        #expect(a.status == 0)
+        #expect(Date().timeIntervalSince(start) < 3, "waited \(Date().timeIntervalSince(start)) s")
     }
 
     @Test func theHostHasNoListenerToBorrow() throws {
@@ -465,6 +516,42 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         let r = obj(await adm(h, "POST", "/upstream-push", #"{"project":1}"#))
         let p = (r["pushes"] as? [[String: Any]])?.first
         #expect(p?["more"] as? Bool == true && p?["wait"] as? Int == 90 && p?["refused"] as? Int == 0, "\(r)")
+    }
+
+    /// F4: a slow upstream must not hold up the rest of the core. The upstream routes have their own connection to the helper (the lane), so a
+    /// member read, a KB read and a device revocation are served at their normal speed while a push waits for the network.
+    @Test func aSlowUpstreamNeverHoldsUpMemberReadsOrARevocation() async throws {
+        let secrets = MemorySecrets(), t = fakeUpstream()
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let ok = t.handler
+        t.handler = { c in
+            if c.method == "POST" { entered.signal(); _ = release.wait(timeout: .now() + 20) }  // the upstream is slow
+            return ok(c)
+        }
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let (h, _) = try await start(callouts: UpstreamHost(secrets: secrets, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac"))
+        defer { h.stop() }
+        _ = await adm(h, "PUT", "/upstreams/hub", #"{"address":"hub.example","token":"tok#\#(Noise.base64url(Noise.newKey().publicKey.rawRepresentation))"}"#)
+        _ = await adm(h, "PUT", "/bindings/dev-A", #"{"user":1}"#)
+        _ = await adm(h, "POST", "/projects", #"{"slug":"shop","name":"Shop"}"#)
+        _ = await adm(h, "PUT", "/projects/1/members/1", #"{"role":"developer"}"#)
+        let member = CoreContext(kind: .member, device: "dev-A", approved: true)
+        _ = await h.call(context: member, request: CoreRequest(method: "POST", path: "/minigw/v1/projects/1/notes", header: ["Idempotency-Key": ["k"]], body: Data(#"{"class":"data","title":"N","body":"t"}"#.utf8)))
+        _ = await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop"}"#)
+        let push = Task { await self.adm(h, "POST", "/upstream-push", #"{"project":1}"#) }
+        var inCallout = false  // wait without blocking a thread of the cooperative pool: the push below needs it
+        for _ in 0..<300 where !inCallout { inCallout = entered.wait(timeout: .now()) == .success; if !inCallout { try await Task.sleep(for: .milliseconds(50)) } }
+        #expect(inCallout)  // the push is now waiting for the upstream, inside a callout
+        let start = Date()
+        let read = await h.call(context: member, request: CoreRequest(method: "GET", path: "/minigw/v1/projects/1/notes"))
+        let search = await h.call(context: member, request: CoreRequest(method: "GET", path: "/minigw/v1/projects/1/kb/search", query: "q=t"))
+        let revoked = await h.revoke("dev-X")
+        let epoch = await h.epoch()
+        #expect(read.status == 200 && search.status == 200 && revoked == .done && epoch != nil)
+        #expect(Date().timeIntervalSince(start) < 3, "held up for \(Date().timeIntervalSince(start)) s")
+        release.signal()
+        let r = await push.value
+        #expect(r.status == 200)
     }
 
     @Test func withoutAnAppThatAnswersCalloutsTheRoutesSay501() async throws {

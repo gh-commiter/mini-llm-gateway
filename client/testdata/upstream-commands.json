@@ -31,6 +31,38 @@
    }
   },
   {
+   "name": "add with a device name",
+   "args": [
+    "upstream",
+    "add",
+    "hub",
+    "hub.example"
+   ],
+   "opts": {
+    "deviceName": "Uros laptop"
+   },
+   "stdin": "tok#key\n",
+   "responses": [
+    {
+     "match": "PUT /upstreams/hub",
+     "status": 200,
+     "body": "{\"name\": \"hub\", \"address\": \"hub.example:8765\", \"device\": \"DEVICEID43\", \"where\": \"a private file (mode 0600)\", \"probe\": \"connected: the device is allowed and bound to a user there\"}"
+    }
+   ],
+   "want": {
+    "out": "upstream hub: hub.example:8765\ndevice DEVICEID43: the upstream's owner must allow this device and bind it to a user there, and give that user a role in the project\ncredentials stored in a private file (mode 0600)\nconnected: the device is allowed and bound to a user there\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "PUT",
+      "/upstreams/hub",
+      "{\"address\":\"hub.example\",\"deviceName\":\"Uros laptop\",\"token\":\"tok#key\"}"
+     ]
+    ]
+   }
+  },
+  {
    "name": "add device not allowed yet",
    "args": [
     "upstream",
@@ -119,7 +151,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address>              another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
     "exit": 1,
     "requests": []
    }
@@ -725,7 +757,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address>              another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
     "exit": 1,
     "requests": []
    }
@@ -740,7 +772,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address>              another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
     "exit": 1,
     "requests": []
    }

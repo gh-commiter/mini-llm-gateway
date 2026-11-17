@@ -42,6 +42,7 @@ type UpstreamPush struct {
 	// (after Wait seconds). The notes done so far are remembered, so the next run goes on where this one ended.
 	More bool `json:"more,omitempty"`
 	Wait int  `json:"wait,omitempty"`
+	more int  // lines left out of Lines (see maxReportLines)
 	// Next: with More, the id of the last local note this run has dealt with; the next call names it as `after` (with Project or Team and
 	// Upstream) and goes on with the notes above it, so the run always gets further, whatever happened to a note that was refused.
 	Next    int64 `json:"next,omitempty"`
@@ -208,25 +209,43 @@ func (p *pusher) submissionKey(project int64, n UpstreamNote, supersedes int64) 
 	return "up-" + hex.EncodeToString(h[:16])
 }
 
-// trailer: the origin of the text as display only: the local author's name, the gateway, the local note and revision. It is part of the
-// submission's text, so the reviewers see where it came from; it carries no identity (that is the bound device).
-func (p *pusher) trailer(n UpstreamNote, supersedes int64) string {
-	author := strings.ReplaceAll(upText(n.Author, 64), "-", "‐") // never "-->"
-	t := fmt.Sprintf("\n\n<!-- sent by gateway %s: local note %d, revision %d, author %s", p.s.GatewayID(), n.ID, n.Revision, author)
+// trailer: where the text came from, as display only, and as little as possible: an opaque reference (stable for this note on this
+// link, so that reviewers see two submissions are the same note; it says nothing about this gateway) and the local author's name. No
+// gateway id, note id or revision leaves with it. It carries no identity: that is the bound device.
+func (p *pusher) trailer(project int64, n UpstreamNote, supersedes int64) string {
+	author := strings.ReplaceAll(upText(n.Author, 64), "-", "\u2010") // never "-->"
+	h := sha256.Sum256([]byte(fmt.Sprint(p.s.GatewayID(), "|", p.up, "|", project, "|", n.ID)))
+	t := "\n\n<!-- minigw upstream ref " + hex.EncodeToString(h[:6]) + ", author " + author
 	if supersedes > 0 {
 		t += fmt.Sprintf("; supersedes submission %d", supersedes)
 	}
 	return t + " -->\n"
 }
 
+// maxReportLines: the lines of one report; the totals count everything, the rest of the lines is "... and K more".
+const maxReportLines = 200
+
 func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, after int64, dry bool, sleep func(time.Duration) bool) (UpstreamPush, error) {
+	res, err := s.pushLinkRun(ctx, tr, l, label, after, dry, sleep)
+	if res.more > 0 {
+		res.Lines = append(res.Lines, fmt.Sprintf("... and %d more", res.more))
+	}
+	return res, err
+}
+
+func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, after int64, dry bool, sleep func(time.Duration) bool) (UpstreamPush, error) {
 	limit := maxPushNotes // notes to SEND per run; a dry run sends nothing and reports them all
 	if dry {
 		limit = 0
 	}
-	l, _, _, scan, err := s.upstreamPlan(ctx, l.Project, l.Upstream, after, limit)
+	l, _, _, archived, scan, err := s.upstreamPlan(ctx, l.Project, l.Upstream, after, limit)
 	if err != nil {
 		return UpstreamPush{}, err
+	}
+	if archived { // linked before it was archived: nothing is sent for an archived project or team
+		_, isT := SegmentTeam(l.Project)
+		return UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, DryRun: dry, Project: l.Project, Team: isT,
+			Stopped: label + " is archived: nothing is sent until it is unarchived"}, nil
 	}
 	notes := scan.Notes
 	wctx := context.WithoutCancel(ctx) // a receipt is written even when the time budget of the call is used up meanwhile
@@ -234,6 +253,10 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 	res := UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, DryRun: dry, Project: l.Project, Team: isTeam}
 	lastDone := after
 	more := func(why string, wait int) (UpstreamPush, error) {
+		if dry { // a dry run is one report, never continued: it says where it had to stop
+			res.Stopped = why
+			return res, nil
+		}
 		res.More, res.Wait, res.Stopped, res.Next = true, wait, why, lastDone
 		return res, nil
 	}
@@ -259,7 +282,11 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 		if detail != "" {
 			l += ": " + detail
 		}
-		res.Lines = append(res.Lines, l)
+		if len(res.Lines) < maxReportLines {
+			res.Lines = append(res.Lines, l)
+		} else {
+			res.more++
+		}
 	}
 	base := fmt.Sprintf("/minigw/v1/projects/%d/kb/submissions", remote)
 	for i, n := range notes {
@@ -313,7 +340,7 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 			line("would "+action, n, detail)
 			continue
 		}
-		fields := map[string]any{"class": n.Class, "title": n.Title, "body": n.Body + p.trailer(n, supersedes), "replaces": replaces, "revision": revision}
+		fields := map[string]any{"class": n.Class, "title": n.Title, "body": n.Body + p.trailer(l.Project, n, supersedes), "replaces": replaces, "revision": revision}
 		if n.EntryKind == "faq" {
 			fields["entryKind"] = "faq"
 		}

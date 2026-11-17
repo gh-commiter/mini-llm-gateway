@@ -93,7 +93,7 @@ type coreOpts struct {
 	// upstream (upstream_cmd.go): the token comes from in; the rest are the link and push options
 	in                        io.Reader
 	remoteProject, remoteTeam string
-	class                     string
+	class, deviceName         string
 	withPrivate, dryRun       bool
 	pause                     func(time.Duration) // between the calls of a long upstream push (nil: time.Sleep)
 }
