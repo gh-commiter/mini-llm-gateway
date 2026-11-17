@@ -55,8 +55,11 @@ func agentAskArgs(args []string) (model string, words []string, bad string) {
 			return model, append(words, args[i+1:]...), ""
 		case a == "-p" || a == "--print", a == "--minigw-ro", strings.HasPrefix(a, "--minigw-work="), strings.HasPrefix(a, "--minigw-role="),
 			strings.HasPrefix(a, "--minigw-phase="), strings.HasPrefix(a, "--minigw-activity="), strings.HasPrefix(a, "--minigw-task="):
-		case (a == "--minigw-role" || a == "--minigw-phase" || a == "--minigw-activity" || a == "--minigw-task") && i+1 < len(args):
+		case a == "--minigw-role" && i+1 < len(args):
 			i++
+		case (a == "--minigw-phase" || a == "--minigw-activity" || a == "--minigw-task") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-"):
+			i++
+		case a == "--minigw-phase" || a == "--minigw-activity" || a == "--minigw-task": // no value: the flag alone goes
 		case a == "--model" && i+1 < len(args):
 			model, i = args[i+1], i+1
 		case strings.HasPrefix(a, "--model="):

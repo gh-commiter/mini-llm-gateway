@@ -15,12 +15,12 @@ public struct RunLabels: Equatable, Sendable {
     }
     /// phase and activity: lower case, ^[a-z0-9._-]{1,32}$ ("" if not).
     public static func safeWord(_ s: String) -> String {
-        let v = s.trimmingCharacters(in: .whitespaces).lowercased()
+        let v = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return ok(v, max: 32, extra: "") ? v : ""
     }
     /// task: ^[A-Za-z0-9._#/-]{1,64}$ ("" if not).
     public static func safeTask(_ s: String) -> String {
-        let v = s.trimmingCharacters(in: .whitespaces)
+        let v = s.trimmingCharacters(in: .whitespacesAndNewlines)
         return ok(v, max: 64, extra: "#/") ? v : ""
     }
 
@@ -35,7 +35,8 @@ public struct RunLabels: Equatable, Sendable {
                 let flag = "--minigw-" + n
                 if args[i] == flag {
                     matched = true
-                    if i + 1 < args.count { vals[n] = args[i + 1]; i += 1 } else { warn("--minigw-\(n) has no value: ignored") }
+                    if i + 1 < args.count && !args[i + 1].hasPrefix("-") { vals[n] = args[i + 1]; i += 1 }  // a following option is not the value: it stays
+                    else { warn("--minigw-\(n) has no value: ignored") }
                 } else if args[i].hasPrefix(flag + "=") {
                     matched = true
                     vals[n] = String(args[i].dropFirst(flag.count + 1))
@@ -85,7 +86,6 @@ public struct RunLabels: Equatable, Sendable {
     /// The current branch from the repository's HEAD file ("" for a detached HEAD, no repository or anything unexpected); a worktree's
     /// .git file is followed one step. Files only: no git process, no code of the checkout runs.
     public static func gitBranch(_ start: String) -> String {
-        func small(_ p: String) -> String { FileManager.default.contents(atPath: p).map { String(decoding: $0.prefix(4096), as: UTF8.self) } ?? "" }
         var dir = start
         while true {
             let g = dir + "/.git"
@@ -98,6 +98,7 @@ public struct RunLabels: Equatable, Sendable {
                     gitDir = String(text.dropFirst("gitdir:".count)).trimmingCharacters(in: .whitespaces)
                     if !gitDir.hasPrefix("/") { gitDir = dir + "/" + gitDir }
                 } else if (st.st_mode & S_IFMT) != S_IFDIR { return "" }
+                // Only <gitDir>/HEAD is ever read from there, as a small regular file (never a FIFO, a link or a directory).
                 let head = small(gitDir + "/HEAD").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard head.hasPrefix("ref: refs/heads/") else { return "" }
                 return String(head.dropFirst("ref: refs/heads/".count))
@@ -106,5 +107,18 @@ public struct RunLabels: Equatable, Sendable {
             if up.isEmpty || up == dir { return "" }
             dir = up
         }
+    }
+
+    /// A small file of a repository: opened once without following a link and without waiting for a FIFO, checked on the descriptor
+    /// (a regular file of at most 4096 bytes), else "".
+    static func small(_ path: String) -> String {
+        let fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)
+        guard fd >= 0 else { return "" }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_size <= 4096 else { return "" }
+        var buf = [UInt8](repeating: 0, count: 4096)
+        let n = read(fd, &buf, buf.count)
+        return n > 0 ? String(decoding: buf[0..<n], as: UTF8.self) : ""
     }
 }

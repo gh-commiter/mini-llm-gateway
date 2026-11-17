@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {"name": "flags and env", "args": ["-p", "--minigw-phase", "Plan", "--minigw-activity=bugfix", "--minigw-task", "#149", "hello"], "env": {}, "phase": "plan", "activity": "bugfix", "task": "#149", "taskSource": "given", "rest": ["-p", "hello"], "warnings": 0},
+    {"name": "environment only", "args": ["x"], "env": {"MINIGW_PHASE": "act", "MINIGW_ACTIVITY": "Triage", "MINIGW_TASK": "feature/x"}, "phase": "act", "activity": "triage", "task": "feature/x", "taskSource": "given", "rest": ["x"], "warnings": 0},
+    {"name": "a newline around a value is trimmed", "args": [], "env": {"MINIGW_PHASE": "do\n", "MINIGW_TASK": " #7\n"}, "phase": "do", "activity": "", "task": "#7", "taskSource": "given", "rest": [], "warnings": 0},
+    {"name": "a flag without a value keeps the next option", "args": ["--minigw-phase", "--model", "claude-x", "-p", "hi"], "env": {}, "phase": "", "activity": "", "task": "", "taskSource": "", "rest": ["--model", "claude-x", "-p", "hi"], "warnings": 1},
+    {"name": "a task flag before -p", "args": ["--minigw-task", "-p", "hi"], "env": {}, "phase": "", "activity": "", "task": "", "taskSource": "", "rest": ["-p", "hi"], "warnings": 1},
+    {"name": "a flag as the last argument", "args": ["a", "--minigw-activity"], "env": {}, "phase": "", "activity": "", "task": "", "taskSource": "", "rest": ["a"], "warnings": 1},
+    {"name": "an unsafe value is dropped", "args": ["--minigw-phase", "not a token!", "-p", "x"], "env": {}, "phase": "", "activity": "", "task": "", "taskSource": "", "rest": ["-p", "x"], "warnings": 1},
+    {"name": "an unusual safe word is kept", "args": ["--minigw-phase=remediate", "--minigw-task=-x"], "env": {}, "phase": "remediate", "activity": "", "task": "-x", "taskSource": "given", "rest": [], "warnings": 0}
+  ]
+}

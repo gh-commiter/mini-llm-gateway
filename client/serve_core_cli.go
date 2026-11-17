@@ -314,7 +314,7 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		}
 		var raw json.RawMessage
 		a.do("GET", "/usage/events?"+q.Encode(), nil, &raw)
-		if o.json {
+		if o.json && by == nil {
 			os.Stdout.Write(append(raw, '\n'))
 			break
 		}
@@ -331,7 +331,11 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 					projects[p.ID] = p.Slug
 				}
 			}
-			fmt.Print(usageByText(rows, gaps, by, projects))
+			if o.json { // the same groups and numbers as the table
+				fmt.Println(usageByJSON(rows, gaps, by, projects, usageTruncated(raw)))
+				break
+			}
+			fmt.Print(usageByText(rows, gaps, by, projects, usageTruncated(raw)))
 		} else if o.csv {
 			fmt.Print(usageReportCSV(rows))
 		} else {

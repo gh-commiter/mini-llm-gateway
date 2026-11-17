@@ -134,6 +134,10 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 	if f.Limit < 1 || f.Limit > 500 {
 		return page, ErrInvalid{"limit"}
 	}
+	impossible := false
+	if f.Phase, f.Activity, f.Task, impossible = normalizeLabelFilters(f.Phase, f.Activity, f.Task); impossible {
+		return page, nil // a label that cannot exist matches nothing
+	}
 	var cursor sessionCursor
 	if f.After != "" {
 		b, e := base64.RawURLEncoding.DecodeString(f.After)

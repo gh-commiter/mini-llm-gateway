@@ -142,7 +142,11 @@ func UsageJSON(rep core.UsageReport) map[string]any {
 	for _, g := range rep.Gaps {
 		gaps = append(gaps, UsageGapJSON{g.Count, g.From, g.To})
 	}
-	return map[string]any{"days": rows, "gaps": gaps, "timezone": "UTC"}
+	out := map[string]any{"days": rows, "gaps": gaps, "timezone": "UTC"}
+	if rep.Truncated { // a report split by label returned only the newest rows
+		out["truncated"] = true
+	}
+	return out
 }
 
 // member serves the member routes. Failures of the device or the principal are the 403 no_project_access; when the

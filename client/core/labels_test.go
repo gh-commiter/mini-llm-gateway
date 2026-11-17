@@ -1,6 +1,7 @@
 package core
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -121,5 +122,59 @@ func TestLabelsUsageAndSessions(t *testing.T) {
 	f.ok(e)
 	if len(pg.Sessions) != 0 {
 		t.Fatal(pg.Sessions)
+	}
+}
+
+func TestLabelFiltersAreNormalizedAndNeverAnError(t *testing.T) {
+	f := newFx(t)
+	now := f.now()
+	fk := f.pid["fakture"]
+	f.labelled("n1", f.uid["ana"], fk, "m", "do", "bugfix", "Feature/X", "given", now)
+	count := func(r UsageReport, e error) int64 {
+		f.ok(e)
+		ev, _, _, _ := rowsOf(r)
+		return ev
+	}
+	for _, q := range []UsageFilter{{Phase: "Do"}, {Activity: "BugFix"}, {Phase: " DO "}, {Task: "Feature/X"}} {
+		if n := count(f.AdminUsage(ctx, 7, q)); n != 1 {
+			t.Errorf("%+v: %d events", q, n)
+		}
+	}
+	for _, q := range []UsageFilter{{Phase: "not a token!"}, {Task: "feature/x"}, {Activity: "x;y"}} { // matches nothing, no error
+		if n := count(f.AdminUsage(ctx, 7, q)); n != 0 {
+			t.Errorf("%+v: %d events", q, n)
+		}
+	}
+	pg, e := f.Sessions(ctx, f.p("ana"), fk, SessionFilter{Days: 7, Phase: "DO"})
+	f.ok(e)
+	if len(pg.Sessions) != 1 {
+		t.Fatal(pg.Sessions)
+	}
+	pg, e = f.Sessions(ctx, f.p("ana"), fk, SessionFilter{Days: 7, Phase: "bad phase"})
+	f.ok(e)
+	if len(pg.Sessions) != 0 {
+		t.Fatal(pg.Sessions)
+	}
+}
+
+func TestLabelReportRowCap(t *testing.T) {
+	f := newFx(t)
+	now := f.now()
+	fk := f.pid["fakture"]
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`WITH RECURSIVE seq(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x<?)
+ INSERT INTO usage_events(id,start,end,user_id,device_id,project_id,provider,model,outcome,token_source,task,task_source)
+ SELECT 'cap'||x, ?, ?, ?, 'd', ?, 'p', 'm', 'ok', 'unknown', 'task-'||x, 'given' FROM seq`, maxLabelRows+10, ms(now), ms(now), f.uid["ana"], fk)
+		return e
+	}))
+	rep, e := f.AdminUsage(ctx, 7, UsageFilter{Labels: true})
+	f.ok(e)
+	if len(rep.Rows) != maxLabelRows || !rep.Truncated {
+		t.Fatal(len(rep.Rows), rep.Truncated)
+	}
+	rep, e = f.AdminUsage(ctx, 7, UsageFilter{}) // an unlabelled report is as before: one row
+	f.ok(e)
+	if len(rep.Rows) != 1 || rep.Truncated {
+		t.Fatal(len(rep.Rows), rep.Truncated)
 	}
 }

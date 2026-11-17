@@ -5,6 +5,7 @@ package main
 // unusual value that is a safe token is sent as given, and a value that is not one is dropped with one warning line.
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,7 @@ func takeLabels(args []string, env func(string) string, warn func(string)) (l ru
 			switch {
 			case args[i] == flag:
 				name, matched = n, true
-				if i+1 < len(args) {
+				if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") { // a following option is not the value: it stays
 					val, hasVal = args[i+1], true
 					i++
 				}
@@ -120,8 +121,7 @@ func gitBranch(dir string) string {
 		if err == nil && fi.Mode()&os.ModeSymlink == 0 {
 			gitDir := g
 			if fi.Mode().IsRegular() {
-				b := readGitSmall(g)
-				rel, ok := strings.CutPrefix(strings.TrimSpace(b), "gitdir:")
+				rel, ok := strings.CutPrefix(strings.TrimSpace(readGitSmall(g)), "gitdir:")
 				if !ok {
 					return ""
 				}
@@ -132,6 +132,7 @@ func gitBranch(dir string) string {
 			} else if !fi.IsDir() {
 				return ""
 			}
+			// Only <gitDir>/HEAD is ever read from there, as a small regular file (never a FIFO, a link or a directory).
 			ref, ok := strings.CutPrefix(strings.TrimSpace(readGitSmall(filepath.Join(gitDir, "HEAD"))), "ref: refs/heads/")
 			if !ok {
 				return ""
@@ -144,13 +145,18 @@ func gitBranch(dir string) string {
 	}
 }
 
+// readGitSmall reads a small file of a repository: opened once without following a link and without waiting for a FIFO
+// (openMarker, as the knowledge-base import does), checked on the descriptor (a regular file of at most 4096 bytes),
+// else "".
 func readGitSmall(path string) string {
-	f, err := os.Open(path)
+	f, err := openMarker(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	buf := make([]byte, 4096)
-	n, _ := f.Read(buf)
-	return string(buf[:n])
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() || fi.Size() > 4096 {
+		return ""
+	}
+	b, _ := io.ReadAll(io.LimitReader(f, 4096))
+	return string(b)
 }

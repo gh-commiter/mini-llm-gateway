@@ -59,3 +59,19 @@ func migrate17(tx *sql.Tx) error {
 	}
 	return nil
 }
+
+// normalizeLabelFilters applies to filter values the normalization stored values got (phase and activity lower case): an
+// empty value is no filter; a value that is not a safe token can match nothing (impossible), it is not an error.
+func normalizeLabelFilters(phase, activity, task string) (p, a, t string, impossible bool) {
+	norm := func(v string, safe func(string) string) string {
+		if v == "" {
+			return ""
+		}
+		if s := safe(v); s != "" {
+			return s
+		}
+		impossible = true
+		return ""
+	}
+	return norm(phase, SafeWordLabel), norm(activity, SafeWordLabel), norm(task, SafeTaskLabel), impossible
+}

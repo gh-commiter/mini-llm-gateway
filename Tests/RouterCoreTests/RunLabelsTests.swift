@@ -53,11 +53,62 @@ import Testing
 
     @Test func aValueIsOneTokenOrNothingNeverReparsed() {
         nonisolated(unsafe) var warns = 0
-        for v in ["x --minigw-work=direct", "x; rm", "$(id)", "--minigw-ro", "x --minigw-tools=edit"] {
+        for v in ["x --minigw-work=direct", "x; rm", "$(id)", "x --minigw-tools=edit"] {
             let r = RunLabels.take(["--minigw-task", v, "--minigw-phase=" + v, "-p", "hi"], env: [:]) { _ in warns += 1 }
             #expect(r.rest == ["-p", "hi"] && (r.labels.task.isEmpty || r.labels.task == v) && !r.labels.phase.contains(" ") && !r.labels.phase.contains(";"))
             #expect(!r.rest.contains { $0.contains("--minigw-") })
         }
         #expect(warns > 0)
     }
+
+    /// The shared cases (client/testdata/labels.json) are asserted by the Go client too (labels_test.go).
+    @Test func sharedCases() throws {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let f = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("client/testdata/labels.json"))) as! [String: Any]
+        for c in f["cases"] as! [[String: Any]] {
+            nonisolated(unsafe) var warns = 0
+            let r = RunLabels.take(c["args"] as! [String], env: c["env"] as! [String: String]) { _ in warns += 1 }
+            let want = RunLabels(phase: c["phase"] as! String, activity: c["activity"] as! String, task: c["task"] as! String, taskSource: c["taskSource"] as! String)
+            #expect(r.labels == want && r.rest == (c["rest"] as! [String]) && warns == (c["warnings"] as! Int), "\(c["name"] as! String)")
+        }
+    }
+
+    /// A FIFO, a link to a FIFO, a huge file or a directory in place of HEAD (also behind a gitdir: file) is "no branch", at once.
+    @Test func oddFilesNeverBlockTheBranchRead() throws {
+        let fm = FileManager.default
+        let dir = NSTemporaryDirectory() + "labels-odd-" + UUID().uuidString
+        func repo(_ name: String) throws -> String {
+            let r = dir + "/" + name
+            try fm.createDirectory(atPath: r + "/.git", withIntermediateDirectories: true)
+            return r
+        }
+        func within(_ what: String, _ path: String) {
+            nonisolated(unsafe) var got: String?
+            let done = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async { got = RunLabels.gitBranch(path); done.signal() }
+            if done.wait(timeout: .now() + 2) == .timedOut { Issue.record("\(what): blocked"); return }
+            #expect(got == "", "\(what)")
+        }
+        var r = try repo("fifo")
+        #expect(mkfifo(r + "/.git/HEAD", 0o600) == 0)
+        within("FIFO as HEAD", r)
+        r = try repo("gitdir")
+        let target = dir + "/target"
+        try fm.createDirectory(atPath: target, withIntermediateDirectories: true)
+        #expect(mkfifo(target + "/HEAD", 0o600) == 0)
+        try fm.removeItem(atPath: r + "/.git")
+        try ("gitdir: " + target + "\n").write(toFile: r + "/.git", atomically: true, encoding: .utf8)
+        within("FIFO as the gitdir target's HEAD", r)
+        r = try repo("link")
+        #expect(mkfifo(dir + "/f", 0o600) == 0)
+        try fm.createSymbolicLink(atPath: r + "/.git/HEAD", withDestinationPath: dir + "/f")
+        within("a link to a FIFO", r)
+        r = try repo("huge")
+        try ("ref: refs/heads/" + String(repeating: "x", count: 6000)).write(toFile: r + "/.git/HEAD", atomically: true, encoding: .utf8)
+        within("a huge file", r)
+        r = try repo("dirhead")
+        try fm.createDirectory(atPath: r + "/.git/HEAD", withIntermediateDirectories: true)
+        within("a directory named HEAD", r)
+    }
 }
+

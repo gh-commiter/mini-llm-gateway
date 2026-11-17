@@ -40,7 +40,7 @@ func TestTakeLabels(t *testing.T) {
 func TestLabelValuesAreNeverReparsed(t *testing.T) {
 	warns := 0
 	warn := func(string) { warns++ }
-	for _, v := range []string{"x --minigw-work=direct", "x; rm", "$(id)", "a\nb", "--minigw-ro", "x --minigw-tools=edit"} {
+	for _, v := range []string{"x --minigw-work=direct", "x; rm", "$(id)", "a\nb", "x --minigw-tools=edit"} {
 		args := []string{"--minigw-task", v, "--minigw-phase=" + v, "-p", "hi"}
 		l, rest := takeLabels(args, envOf(nil), warn)
 		if l.task != "" && l.task != v || strings.ContainsAny(l.phase+l.activity, " ;$") || !reflect.DeepEqual(rest, []string{"-p", "hi"}) {
@@ -118,5 +118,30 @@ func TestAgentAskSkipsLabelFlags(t *testing.T) {
 	m, words, bad := agentAskArgs([]string{"-p", "--minigw-phase", "check", "--minigw-task=#1", "--model", "m", "q"})
 	if m != "m" || bad != "" || !reflect.DeepEqual(words, []string{"q"}) {
 		t.Fatal(m, words, bad)
+	}
+}
+
+// The shared cases (testdata/labels.json) are asserted by the Swift client too (RunLabelsTests.swift).
+func TestTakeLabelsSharedCases(t *testing.T) {
+	var fx struct {
+		Cases []struct {
+			Name                              string
+			Args                              []string
+			Env                               map[string]string
+			Phase, Activity, Task, TaskSource string
+			Rest                              []string
+			Warnings                          int
+		}
+	}
+	readFixture(t, "labels.json", &fx)
+	for _, c := range fx.Cases {
+		warns := 0
+		l, rest := takeLabels(c.Args, envOf(c.Env), func(string) { warns++ })
+		if rest == nil {
+			rest = []string{}
+		}
+		if l != (runLabels{c.Phase, c.Activity, c.Task, c.TaskSource}) || !reflect.DeepEqual(rest, c.Rest) || warns != c.Warnings {
+			t.Errorf("%s: %+v %v %d warnings", c.Name, l, rest, warns)
+		}
 	}
 }

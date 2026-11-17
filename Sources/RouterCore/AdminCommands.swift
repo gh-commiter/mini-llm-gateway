@@ -236,14 +236,15 @@ public final class AdminCommands {
             let r = call("GET", "/usage/events" + ProjectText.query(q), nil)
             guard r.status != 0 else { throw fail("lost the connection to Mini Gateway") }
             if r.status >= 300 { throw fail(clean(JSONValue.parse(r.data)?.dict["error"]?.dict["message"]?.string ?? "")) }
-            if o.json { say(String(decoding: r.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)); break }
+            if o.json && by.isEmpty { say(String(decoding: r.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)); break }
             guard let (rows, gaps) = UsageReport.rows(r.data) else { throw fail("the usage answer is not understood") }
             if !by.isEmpty {
                 var projects: [Int64: String] = [:]
                 if by.contains("project") {
                     for p in try request("GET", "/projects")["projects"]?.array ?? [] { projects[p.dict["id"]?.int ?? 0] = p.dict["slug"]?.string ?? "" }
                 }
-                out(UsageReport.byText(rows, gaps, by, projects))
+                let truncated = (JSONValue.parse(r.data)?.dict["truncated"]?.bool) == true
+                out(o.json ? UsageReport.byJSON(rows, gaps, by, projects, truncated: truncated) + "\n" : UsageReport.byText(rows, gaps, by, projects, truncated: truncated))
             } else {
                 out(o.csv ? UsageReport.csv(rows) : UsageReport.text(rows, gaps, sortFailed: o.sort == "failed"))
             }

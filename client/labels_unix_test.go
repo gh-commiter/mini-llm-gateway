@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // The whole command: whatever the labels are, claude gets exactly the user's arguments (no --minigw-* label flag), its
@@ -80,4 +82,61 @@ func TestMinigwLabelsNeverChangeTheRun(t *testing.T) {
 			t.Errorf("%s: warnings %d, want %d: %q", c.name, n, c.warning, stderr)
 		}
 	}
+	// A label flag without a value does not swallow the next option: claude still gets --model claude-x.
+	stderr, code, got := run(nil, "--minigw-phase", "--model", "claude-x", "-p", "hi")
+	if code != 7 || !strings.Contains(got, " --model claude-x -p hi") || strings.Contains(got, "--minigw-") || strings.Count(strings.TrimSpace(stderr), "\n") != 0 || !strings.Contains(stderr, "has no value") {
+		t.Errorf("flag without a value: exit %d, claude got %q, stderr %q", code, got, stderr)
+	}
+}
+
+// The branch is read from a small regular file only: a FIFO, a link to a FIFO, a huge file or a directory in place of HEAD
+// (also behind a gitdir: file) is "no branch", at once, and never blocks the run.
+func TestGitBranchNeverBlocksOnOddFiles(t *testing.T) {
+	within := func(name string, f func() string) {
+		t.Helper()
+		done := make(chan string, 1)
+		go func() { done <- f() }()
+		select {
+		case got := <-done:
+			if got != "" {
+				t.Errorf("%s: branch %q, want none", name, got)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: blocked", name)
+		}
+	}
+	mk := func(t *testing.T) (repo string) {
+		repo = filepath.Join(t.TempDir(), "repo")
+		os.MkdirAll(filepath.Join(repo, ".git"), 0o755)
+		return
+	}
+	fifo := func(p string) {
+		if err := syscall.Mkfifo(p, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := mk(t)
+	fifo(filepath.Join(r, ".git", "HEAD"))
+	within("FIFO as HEAD", func() string { return gitBranch(r) })
+	r = mk(t)
+	other := filepath.Join(t.TempDir(), "target")
+	os.MkdirAll(other, 0o755)
+	fifo(filepath.Join(other, "HEAD"))
+	os.RemoveAll(filepath.Join(r, ".git"))
+	os.WriteFile(filepath.Join(r, ".git"), []byte("gitdir: "+other+"\n"), 0o644)
+	within("FIFO as the gitdir target's HEAD", func() string { return gitBranch(r) })
+	r = mk(t)
+	fifoPath := filepath.Join(t.TempDir(), "f")
+	fifo(fifoPath)
+	os.Symlink(fifoPath, filepath.Join(r, ".git", "HEAD"))
+	within("a link to a FIFO", func() string { return gitBranch(r) })
+	r = mk(t)
+	os.WriteFile(filepath.Join(r, ".git", "HEAD"), []byte("ref: refs/heads/"+strings.Repeat("x", 6000)), 0o644)
+	within("a huge file", func() string { return gitBranch(r) })
+	r = mk(t)
+	os.MkdirAll(filepath.Join(r, ".git", "HEAD"), 0o755)
+	within("a directory named HEAD", func() string { return gitBranch(r) })
+	r = mk(t)
+	os.Symlink("/etc/hostname", filepath.Join(r, ".git", "HEAD"))
+	within("a link to a file", func() string { return gitBranch(r) })
 }

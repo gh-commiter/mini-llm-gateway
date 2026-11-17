@@ -315,7 +315,12 @@ type UsageGap struct {
 type UsageReport struct {
 	Rows []UsageRow
 	Gaps []UsageGap
+	// Truncated: a report split by label returned only the newest maxLabelRows rows.
+	Truncated bool
 }
+
+// maxLabelRows bounds a report split by label (a task such as a branch name can have many values).
+const maxLabelRows = 5000
 
 type UsageFilter struct {
 	User, Project int64
@@ -397,6 +402,10 @@ func (s *Store) AdminUsage(ctx context.Context, days int, f UsageFilter) (rep Us
 }
 
 func (s *Store) usageRows(tx *sql.Tx, days int, f UsageFilter, withFolded, withGaps bool) (UsageReport, error) {
+	var impossible bool
+	if f.Phase, f.Activity, f.Task, impossible = normalizeLabelFilters(f.Phase, f.Activity, f.Task); impossible {
+		return UsageReport{}, nil // a label that cannot exist matches nothing
+	}
 	now := s.now().UTC()
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(days - 1))
 	where, args := []string{"e.start>=?"}, []any{ms(from)}
@@ -554,6 +563,9 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 		}
 		return a.Phase+"\x00"+a.Activity+"\x00"+a.Task < b.Phase+"\x00"+b.Activity+"\x00"+b.Task
 	})
+	if f.Labels && len(rep.Rows) > maxLabelRows { // newest first: the oldest rows are the ones left out
+		rep.Rows, rep.Truncated = rep.Rows[:maxLabelRows], true
+	}
 	if !withGaps {
 		return rep, nil
 	}
