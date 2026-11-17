@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -882,9 +883,9 @@ func stripUserinfo(raw string) string {
 func gitOrigin(dir string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := commandContext(ctx, "git", "config", "--local", "--get", "remote.origin.url")
+	cmd := commandContext(ctx, "git", append(slices.Clone(gitNoExecPins), "config", "--local", "--get", "remote.origin.url")...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), gitNoExecEnv...)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

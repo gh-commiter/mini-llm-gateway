@@ -19,10 +19,11 @@ extension ProjectEnv {
         let p = Process()
         // git comes only from an absolute PATH entry: the folder is untrusted, a "." or relative entry must not run its own ./git
         p.executableURL = URL(fileURLWithPath: Profiles.executable("git", path: path) ?? "/usr/bin/git")
-        p.arguments = ["config", "--local", "--get", "remote.origin.url"]
+        p.arguments = Worktree.noExecPins + ["config", "--local", "--get", "remote.origin.url"]
         p.currentDirectoryURL = URL(fileURLWithPath: dir)
         var env = ProcessInfo.processInfo.environment
         env["GIT_TERMINAL_PROMPT"] = "0"
+        env.merge(Worktree.noExecEnv) { $1 }
         p.environment = env
         let pipe = Pipe()
         p.standardOutput = pipe

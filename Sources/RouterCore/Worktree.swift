@@ -32,10 +32,17 @@ public enum Worktree {
 
     /// Pripete nastavitve varnega gita (`safe`). #71: tudi pager, zunanji diff, ssh in pomočnik za poverilnice iz
     /// nastavitev repozitorija (agent v peskovniku sam dela commite in lahko piše .git/config).
-    static let guardrails = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
-                             "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
-                             "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false",
+    /// Issue 144: what the config of a repository the caller does not control must never be able to choose: a program (fsmonitor, pager,
+    /// external diff, ssh, credential helper, the command that lists an alternate's refs on a local fetch) or a transport
+    /// (GIT_ALLOW_PROTOCOL beats a repository's protocol.<name>.allow; url.<x>.insteadOf can otherwise turn a bundle path into an ext::
+    /// command). Every git call takes them, safe or not (as Go gitNoExecPins and gitNoExecEnv).
+    static let noExecPins = ["-c", "core.fsmonitor=false", "-c", "submodule.recurse=false", "-c", "core.alternateRefsCommand=",
                              "-c", "core.pager=cat", "-c", "diff.external=", "-c", "core.sshCommand=", "-c", "credential.helper="]
+    static let noExecEnv = ["GIT_ALLOW_PROTOCOL": "file", "GIT_EXTERNAL_DIFF": "", "GIT_PAGER": "cat"]
+
+    static let guardrails = ["-c", "core.hooksPath=/dev/null"] + noExecPins + [
+                             "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
+                             "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"]
 
     /// `safe`: no system and no user configuration (the git watch asserts these with the Go watch: client/testdata/git-watch.json, pins).
     static let safeEnv = ["GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"]
@@ -49,12 +56,13 @@ public enum Worktree {
     static func run(_ args: [String], cwd: String? = nil, env extra: [String: String] = [:], safe: Bool = true, hooks: Bool = true,
                     input: Data? = nil, sandbox: String? = nil, timeout: TimeInterval? = nil, trim: Bool = true,
                     stderr: Bool = false) -> (status: Int32, out: String) {
-        let gitArgs = (safe ? guardrails : hooks ? [] : ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]) + args
+        let gitArgs = (safe ? guardrails : (hooks ? [] : ["-c", "core.hooksPath=/dev/null"]) + noExecPins) + args
         let exe = sandbox == nil ? git : "/usr/bin/sandbox-exec"
         var env = ProcessInfo.processInfo.environment
         for k in env.keys where k.hasPrefix("GIT_") { env[k] = nil }
         if safe { env.merge(safeEnv) { $1 } }
         env["GIT_TERMINAL_PROMPT"] = "0"
+        env.merge(noExecEnv) { $1 }
         env.merge(extra) { $1 }
         env["xcrun_db"] = nil; env["xcrun_nocache"] = "1"  // tudi če bi git klical shim xcrun: brez predpomnilnika
         // posix_spawn s POSIX_SPAWN_CLOEXEC_DEFAULT: git ne podeduje odprtih datotek routerja (vtičnice odjemalcev),
