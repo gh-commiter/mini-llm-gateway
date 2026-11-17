@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Docker Compose: in container mode a provider can be given by a Compose service name without a dot (`http://litellm:4000`, with `--insecure`). The name must resolve to a private address when the provider is added and at every connection (a name that later resolves to a public address is not followed); outside a container such a name is still refused.
+- Docker Compose: the build and the deployment test (`scripts/compose-e2e.sh`) cover linux/amd64 as well as linux/arm64, and the test checks that the image build fails for a binary that does not match `SHA256SUMS`, a bad signature, a changed `SHA256SUMS`, a missing release and a signed version that is not the one asked for.
+
 ## 0.7.22
 
 ### Fixed
