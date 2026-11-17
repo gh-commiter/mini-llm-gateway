@@ -209,8 +209,8 @@ private final class Served: @unchecked Sendable {
 
 @Suite(.serialized) struct QuotaHTTPLimits {
     /// The cut is proven by what was kept and by the server seeing the connection go: at most the limit (one chunk more if
-    /// the reader takes chunks) out of a body of three chunks. `AsyncBytes` takes one async hop per byte, so the cap under
-    /// test is small: the cost is the cap, and a cap whose pass depends on a wall clock measures the machine, not the cut.
+    /// the reader takes chunks) out of a body of three chunks. The cap is small so the test is quick; a cap whose pass
+    /// depends on a wall clock measures the machine, not the cut.
     @Test func aBodyLargerThanTheLimitIsCutNotBuffered() async throws {
         let limit = 16 << 10, chunk = 16 << 10
         let served = Served()
@@ -235,6 +235,26 @@ private final class Served: @unchecked Sendable {
         #expect(sawClose && served.closed && served.bytes >= limit, "the server did not see the client close the connection (wrote \(served.bytes))")
         // A hang guard only: the byte count and the server's close above are the proof, not this number.
         #expect(Date().timeIntervalSince(t0) < 120, "took \(Date().timeIntervalSince(t0)) s")
+    }
+
+    /// The production default (1 MB) on a body of 3 MB: the answer is bounded by the limit, taken in chunks rather than one async step per
+    /// byte. The clock is only a hang guard, not the proof (on a busy machine the byte loop this replaces took about a minute).
+    @Test func theProductionLimitCutsAThreeMegabyteBody() async throws {
+        let limit = 1 << 20, chunk = 64 << 10, body = 3 << 20
+        let server = SocketServer { c in
+            _ = SocketServer.raw(c, Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n".utf8))
+            let piece = Data(repeating: 0x61, count: chunk)
+            for _ in 0..<(body / chunk) {
+                if !SocketServer.raw(c, piece) { break }  // the client cut the transfer
+            }
+        }
+        defer { server.stop() }
+        let t0 = Date()
+        let r = await QuotaHTTP.get(URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/x")!))  // the production limit and deadline
+        let got = try #require(r)
+        #expect(got.status == 200 && got.data.count >= limit && got.data.count <= limit + (64 << 10),
+                "\(got.data.count) bytes of a \(body)-byte body")
+        #expect(Date().timeIntervalSince(t0) < 120, "the hang guard: took \(Date().timeIntervalSince(t0)) s")
     }
 
     @Test func aSlowBodyHitsTheDeadlineForTheWholeTransfer() async throws {
