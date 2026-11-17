@@ -5,6 +5,583 @@
    "provider": "builtin",
    "description": {
     "format": 1,
+    "id": "builtin.kb",
+    "provider": "builtin",
+    "title": "builtin.kb.title",
+    "about": "builtin.kb.about",
+    "symbol": "book",
+    "refs": {
+     "projects": {
+      "path": "/projects",
+      "items": "projects",
+      "key": "id",
+      "label": "name"
+     },
+     "teams": {
+      "path": "/teams",
+      "items": "teams",
+      "key": "segment",
+      "label": "name"
+     }
+    },
+    "sections": [
+     {
+      "kind": "text",
+      "id": "intro",
+      "body": "builtin.kb.section.intro.body"
+     },
+     {
+      "kind": "list",
+      "id": "queue",
+      "title": "builtin.kb.section.queue.title",
+      "source": {
+       "path": "/kb/submissions",
+       "items": "submissions"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "title",
+        "kind": "text",
+        "label": "builtin.kb.section.queue.column.title"
+       },
+       {
+        "field": "scopeName",
+        "kind": "text",
+        "label": "builtin.kb.section.queue.column.scopename"
+       },
+       {
+        "field": "scopeKind",
+        "kind": "enum",
+        "label": "builtin.kb.section.queue.column.scopekind",
+        "values": {
+         "project": "builtin.kb.section.queue.column.scopekind.value.project",
+         "team": "builtin.kb.section.queue.column.scopekind.value.team"
+        }
+       },
+       {
+        "field": "class",
+        "kind": "enum",
+        "label": "builtin.kb.section.queue.column.class",
+        "values": {
+         "structure": "builtin.kb.section.queue.column.class.value.structure",
+         "data": "builtin.kb.section.queue.column.class.value.data",
+         "private": "builtin.kb.section.queue.column.class.value.private"
+        }
+       },
+       {
+        "field": "entryKind",
+        "kind": "enum",
+        "label": "builtin.kb.section.queue.column.entrykind",
+        "values": {
+         "finding": "builtin.kb.section.queue.column.entrykind.value.finding",
+         "faq": "builtin.kb.section.queue.column.entrykind.value.faq"
+        }
+       },
+       {
+        "field": "authorName",
+        "kind": "text",
+        "label": "builtin.kb.section.queue.column.authorname"
+       },
+       {
+        "field": "received",
+        "kind": "time",
+        "label": "builtin.kb.section.queue.column.received"
+       }
+      ],
+      "filter": [
+       "title",
+       "scopeName",
+       "authorName"
+      ],
+      "paging": {
+       "next": "next",
+       "param": "after"
+      },
+      "empty": "builtin.kb.section.queue.empty",
+      "rowActions": [
+       {
+        "id": "accept",
+        "label": "builtin.kb.section.queue.action.accept",
+        "method": "POST",
+        "path": "/kb/submissions/{row.id}/accept",
+        "body": {}
+       },
+       {
+        "id": "reject",
+        "label": "builtin.kb.section.queue.action.reject",
+        "method": "POST",
+        "path": "/kb/submissions/{row.id}/reject",
+        "destructive": true,
+        "fields": [
+         {
+          "id": "reason",
+          "type": "text",
+          "maxLength": 1024,
+          "default": {
+           "const": ""
+          },
+          "label": "builtin.kb.section.queue.action.reject.field.reason"
+         }
+        ],
+        "body": {
+         "reason": {
+          "field": "reason"
+         }
+        },
+        "confirm": {
+         "title": "builtin.kb.section.queue.action.reject.confirm.title",
+         "message": "builtin.kb.section.queue.action.reject.confirm.message",
+         "button": "builtin.kb.section.queue.action.reject.confirm.button",
+         "destructive": true
+        }
+       }
+      ],
+      "detail": {
+       "title": "title",
+       "sections": [
+        {
+         "kind": "record",
+         "id": "submission",
+         "title": "builtin.kb.section.queue.detail.section.submission.title",
+         "source": {
+          "path": "/kb/submissions/{parent.id}"
+         },
+         "columns": [
+          {
+           "field": "title",
+           "kind": "text",
+           "label": "builtin.kb.section.queue.detail.section.submission.column.title"
+          },
+          {
+           "field": "scopeName",
+           "kind": "text",
+           "label": "builtin.kb.section.queue.detail.section.submission.column.scopename"
+          },
+          {
+           "field": "scopeKind",
+           "kind": "enum",
+           "label": "builtin.kb.section.queue.detail.section.submission.column.scopekind",
+           "values": {
+            "project": "builtin.kb.section.queue.detail.section.submission.column.scopekind.value.project",
+            "team": "builtin.kb.section.queue.detail.section.submission.column.scopekind.value.team"
+           }
+          },
+          {
+           "field": "class",
+           "kind": "enum",
+           "label": "builtin.kb.section.queue.detail.section.submission.column.class",
+           "values": {
+            "structure": "builtin.kb.section.queue.detail.section.submission.column.class.value.structure",
+            "data": "builtin.kb.section.queue.detail.section.submission.column.class.value.data",
+            "private": "builtin.kb.section.queue.detail.section.submission.column.class.value.private"
+           }
+          },
+          {
+           "field": "entryKind",
+           "kind": "enum",
+           "label": "builtin.kb.section.queue.detail.section.submission.column.entrykind",
+           "values": {
+            "finding": "builtin.kb.section.queue.detail.section.submission.column.entrykind.value.finding",
+            "faq": "builtin.kb.section.queue.detail.section.submission.column.entrykind.value.faq"
+           }
+          },
+          {
+           "field": "authorName",
+           "kind": "text",
+           "label": "builtin.kb.section.queue.detail.section.submission.column.authorname"
+          },
+          {
+           "field": "received",
+           "kind": "time",
+           "label": "builtin.kb.section.queue.detail.section.submission.column.received"
+          },
+          {
+           "field": "body",
+           "kind": "multiline",
+           "label": "builtin.kb.section.queue.detail.section.submission.column.body"
+          }
+         ]
+        },
+        {
+         "kind": "record",
+         "id": "replaced",
+         "title": "builtin.kb.section.queue.detail.section.replaced.title",
+         "when": {
+          "field": "isReplacement",
+          "equals": true
+         },
+         "source": {
+          "path": "/kb/notes/{parent.replaces}"
+         },
+         "columns": [
+          {
+           "field": "title",
+           "kind": "text",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.title"
+          },
+          {
+           "field": "class",
+           "kind": "enum",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.class",
+           "values": {
+            "structure": "builtin.kb.section.queue.detail.section.replaced.column.class.value.structure",
+            "data": "builtin.kb.section.queue.detail.section.replaced.column.class.value.data",
+            "private": "builtin.kb.section.queue.detail.section.replaced.column.class.value.private"
+           }
+          },
+          {
+           "field": "updated",
+           "kind": "time",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.updated"
+          },
+          {
+           "field": "body",
+           "kind": "multiline",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.body"
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "kind": "list",
+      "id": "notes-project",
+      "title": "builtin.kb.section.notes-project.title",
+      "scope": {
+       "ref": "projects",
+       "param": "project",
+       "label": "builtin.kb.section.notes-project.scope"
+      },
+      "source": {
+       "path": "/kb/notes",
+       "items": "notes"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "title",
+        "kind": "text",
+        "label": "builtin.kb.section.notes-project.column.title"
+       },
+       {
+        "field": "class",
+        "kind": "enum",
+        "label": "builtin.kb.section.notes-project.column.class",
+        "values": {
+         "structure": "builtin.kb.section.notes-project.column.class.value.structure",
+         "data": "builtin.kb.section.notes-project.column.class.value.data",
+         "private": "builtin.kb.section.notes-project.column.class.value.private"
+        }
+       },
+       {
+        "field": "entryKind",
+        "kind": "enum",
+        "label": "builtin.kb.section.notes-project.column.entrykind",
+        "values": {
+         "finding": "builtin.kb.section.notes-project.column.entrykind.value.finding",
+         "faq": "builtin.kb.section.notes-project.column.entrykind.value.faq"
+        }
+       },
+       {
+        "field": "author",
+        "kind": "text",
+        "label": "builtin.kb.section.notes-project.column.author"
+       },
+       {
+        "field": "updated",
+        "kind": "time",
+        "label": "builtin.kb.section.notes-project.column.updated"
+       }
+      ],
+      "filter": [
+       "title",
+       "author"
+      ],
+      "paging": {
+       "next": "next",
+       "param": "after"
+      },
+      "empty": "builtin.kb.section.notes-project.empty",
+      "detail": {
+       "title": "title",
+       "sections": [
+        {
+         "kind": "record",
+         "id": "note",
+         "title": "builtin.kb.section.notes-project.detail.section.note.title",
+         "source": {
+          "path": "/kb/notes/{parent.id}"
+         },
+         "columns": [
+          {
+           "field": "title",
+           "kind": "text",
+           "label": "builtin.kb.section.notes-project.detail.section.note.column.title"
+          },
+          {
+           "field": "class",
+           "kind": "enum",
+           "label": "builtin.kb.section.notes-project.detail.section.note.column.class",
+           "values": {
+            "structure": "builtin.kb.section.notes-project.detail.section.note.column.class.value.structure",
+            "data": "builtin.kb.section.notes-project.detail.section.note.column.class.value.data",
+            "private": "builtin.kb.section.notes-project.detail.section.note.column.class.value.private"
+           }
+          },
+          {
+           "field": "entryKind",
+           "kind": "enum",
+           "label": "builtin.kb.section.notes-project.detail.section.note.column.entrykind",
+           "values": {
+            "finding": "builtin.kb.section.notes-project.detail.section.note.column.entrykind.value.finding",
+            "faq": "builtin.kb.section.notes-project.detail.section.note.column.entrykind.value.faq"
+           }
+          },
+          {
+           "field": "author",
+           "kind": "text",
+           "label": "builtin.kb.section.notes-project.detail.section.note.column.author"
+          },
+          {
+           "field": "updated",
+           "kind": "time",
+           "label": "builtin.kb.section.notes-project.detail.section.note.column.updated"
+          },
+          {
+           "field": "body",
+           "kind": "multiline",
+           "label": "builtin.kb.section.notes-project.detail.section.note.column.body"
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "kind": "list",
+      "id": "notes-team",
+      "title": "builtin.kb.section.notes-team.title",
+      "scope": {
+       "ref": "teams",
+       "param": "project",
+       "label": "builtin.kb.section.notes-team.scope"
+      },
+      "source": {
+       "path": "/kb/notes",
+       "items": "notes"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "title",
+        "kind": "text",
+        "label": "builtin.kb.section.notes-team.column.title"
+       },
+       {
+        "field": "class",
+        "kind": "enum",
+        "label": "builtin.kb.section.notes-team.column.class",
+        "values": {
+         "structure": "builtin.kb.section.notes-team.column.class.value.structure",
+         "data": "builtin.kb.section.notes-team.column.class.value.data",
+         "private": "builtin.kb.section.notes-team.column.class.value.private"
+        }
+       },
+       {
+        "field": "entryKind",
+        "kind": "enum",
+        "label": "builtin.kb.section.notes-team.column.entrykind",
+        "values": {
+         "finding": "builtin.kb.section.notes-team.column.entrykind.value.finding",
+         "faq": "builtin.kb.section.notes-team.column.entrykind.value.faq"
+        }
+       },
+       {
+        "field": "author",
+        "kind": "text",
+        "label": "builtin.kb.section.notes-team.column.author"
+       },
+       {
+        "field": "updated",
+        "kind": "time",
+        "label": "builtin.kb.section.notes-team.column.updated"
+       }
+      ],
+      "filter": [
+       "title",
+       "author"
+      ],
+      "paging": {
+       "next": "next",
+       "param": "after"
+      },
+      "empty": "builtin.kb.section.notes-team.empty",
+      "detail": {
+       "title": "title",
+       "sections": [
+        {
+         "kind": "record",
+         "id": "note",
+         "title": "builtin.kb.section.notes-team.detail.section.note.title",
+         "source": {
+          "path": "/kb/notes/{parent.id}"
+         },
+         "columns": [
+          {
+           "field": "title",
+           "kind": "text",
+           "label": "builtin.kb.section.notes-team.detail.section.note.column.title"
+          },
+          {
+           "field": "class",
+           "kind": "enum",
+           "label": "builtin.kb.section.notes-team.detail.section.note.column.class",
+           "values": {
+            "structure": "builtin.kb.section.notes-team.detail.section.note.column.class.value.structure",
+            "data": "builtin.kb.section.notes-team.detail.section.note.column.class.value.data",
+            "private": "builtin.kb.section.notes-team.detail.section.note.column.class.value.private"
+           }
+          },
+          {
+           "field": "entryKind",
+           "kind": "enum",
+           "label": "builtin.kb.section.notes-team.detail.section.note.column.entrykind",
+           "values": {
+            "finding": "builtin.kb.section.notes-team.detail.section.note.column.entrykind.value.finding",
+            "faq": "builtin.kb.section.notes-team.detail.section.note.column.entrykind.value.faq"
+           }
+          },
+          {
+           "field": "author",
+           "kind": "text",
+           "label": "builtin.kb.section.notes-team.detail.section.note.column.author"
+          },
+          {
+           "field": "updated",
+           "kind": "time",
+           "label": "builtin.kb.section.notes-team.detail.section.note.column.updated"
+          },
+          {
+           "field": "body",
+           "kind": "multiline",
+           "label": "builtin.kb.section.notes-team.detail.section.note.column.body"
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "kind": "list",
+      "id": "faq-project",
+      "title": "builtin.kb.section.faq-project.title",
+      "scope": {
+       "ref": "projects",
+       "param": "project",
+       "label": "builtin.kb.section.faq-project.scope"
+      },
+      "source": {
+       "path": "/kb/faq",
+       "items": "entries"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "title",
+        "kind": "text",
+        "label": "builtin.kb.section.faq-project.column.title"
+       },
+       {
+        "field": "answer",
+        "kind": "multiline",
+        "label": "builtin.kb.section.faq-project.column.answer"
+       },
+       {
+        "field": "class",
+        "kind": "enum",
+        "label": "builtin.kb.section.faq-project.column.class",
+        "values": {
+         "structure": "builtin.kb.section.faq-project.column.class.value.structure",
+         "data": "builtin.kb.section.faq-project.column.class.value.data",
+         "private": "builtin.kb.section.faq-project.column.class.value.private"
+        }
+       },
+       {
+        "field": "updated",
+        "kind": "time",
+        "label": "builtin.kb.section.faq-project.column.updated"
+       }
+      ],
+      "filter": [
+       "title",
+       "answer"
+      ],
+      "paging": {
+       "next": "next",
+       "param": "after"
+      },
+      "empty": "builtin.kb.section.faq-project.empty"
+     },
+     {
+      "kind": "list",
+      "id": "faq-team",
+      "title": "builtin.kb.section.faq-team.title",
+      "scope": {
+       "ref": "teams",
+       "param": "project",
+       "label": "builtin.kb.section.faq-team.scope"
+      },
+      "source": {
+       "path": "/kb/faq",
+       "items": "entries"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "title",
+        "kind": "text",
+        "label": "builtin.kb.section.faq-team.column.title"
+       },
+       {
+        "field": "answer",
+        "kind": "multiline",
+        "label": "builtin.kb.section.faq-team.column.answer"
+       },
+       {
+        "field": "class",
+        "kind": "enum",
+        "label": "builtin.kb.section.faq-team.column.class",
+        "values": {
+         "structure": "builtin.kb.section.faq-team.column.class.value.structure",
+         "data": "builtin.kb.section.faq-team.column.class.value.data",
+         "private": "builtin.kb.section.faq-team.column.class.value.private"
+        }
+       },
+       {
+        "field": "updated",
+        "kind": "time",
+        "label": "builtin.kb.section.faq-team.column.updated"
+       }
+      ],
+      "filter": [
+       "title",
+       "answer"
+      ],
+      "paging": {
+       "next": "next",
+       "param": "after"
+      },
+      "empty": "builtin.kb.section.faq-team.empty"
+     }
+    ]
+   }
+  },
+  {
+   "provider": "builtin",
+   "description": {
+    "format": 1,
     "id": "builtin.users",
     "provider": "builtin",
     "title": "builtin.users.title",

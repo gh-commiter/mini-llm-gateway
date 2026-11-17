@@ -240,6 +240,12 @@ is down.
 
 - Each description comes under `provider`, the id the registry knows (`builtin` is reserved for the gateway's own code).
   A renderer takes the routes of THAT id and refuses a description whose own `provider` field differs.
+- **Elements** (format 1): list, text and `record` (one object of an answer as label and value pairs: `source` is a path,
+  `columns` as in a list; inside a detail page it may carry `when`, a field of the opened row that must equal a value, and
+  is not requested otherwise). A list may carry `scope`: a picker over a `refs` entry whose chosen key is sent to the list's
+  source as the query parameter `param` (the first entry is chosen at the start; nothing is requested while there is none).
+  A `multiline` value is shown wrapped in the page's own scroll, never in an inner scroll area, cut at 20000 characters with
+  a visible note. An action with `"body": {}` sends the empty JSON object `{}`.
 - A text field's `maxLength` is in UTF-8 bytes, as the core counts a user name (128), not in characters.
 - A description is data, never code: no scripts, HTML, Markdown, links or images. Every text position holds a key
   (`[a-z0-9._-]`, at most 120 characters, inside the panel's namespace `<provider>.<panel>.`); the validator refuses
@@ -262,7 +268,9 @@ is down.
   that does not match. The renderer validates again and also refuses a value that contains `/`, `..`, `?`, `#` or a
   control character, or is empty, for a placeholder.
 - The built-in provider (`builtin`) registers `GET users`, `POST users`, `PATCH users/{}`, `GET bindings`, `PUT bindings/{}`,
-  `DELETE bindings/{}` and the gateway's `GET devices`. Its one panel, `builtin.users` ("Users and devices"), never sends
+  `DELETE bindings/{}`, the gateway's `GET devices`, and for the knowledge base `GET kb/submissions`, `GET kb/submissions/{}`,
+  `POST kb/submissions/{}/accept`, `POST kb/submissions/{}/reject`, `GET kb/notes`, `GET kb/notes/{}`, `GET kb/faq`, `GET projects`
+  and `GET teams`. Its panel `builtin.kb` ("Knowledge base") is described under the Mac Settings window in gateway.md. Its panel `builtin.users` ("Users and devices"), never sends
   `owner`; a user name is at most 128 bytes, the server's own limit, and the server stays the authority.
 - Design and format: `docs/plans/plugin-panels-design.md`. The Go and Swift sides decode the same fixtures
   (`client/testdata/panels*.json`).
@@ -611,6 +619,17 @@ Owner routes use the existing owner admin authentication and base URL:
 | GET | `/kb/submissions/{id}` | Submission with body |
 | POST | `/kb/submissions/{id}/accept` | Publish; JSON `{}` |
 | POST | `/kb/submissions/{id}/reject` | Reject; JSON `{"reason":"text"}` |
+| GET | `/kb/notes?project={id}&class=&kind=&after=&limit=` | The notes of a project or of a team's own notes, every class (`private` too), 50 per page by default, `{notes, next}` (`next` absent on the last page) |
+| GET | `/kb/notes/{id}` | One note with body and provenance, any class |
+| GET | `/kb/faq?project={id}&after=` | The `faq` notes of a project or a team, newest first, `{entries: [{id, title, class, answer, updated}], next}` |
+
+The three owner read routes (admin channel only: they are not member routes and the run port does not serve them)
+let the owner read what a project or a team holds, **including `private` notes**; the owner could already read all of it
+through backup and audit. `project` is a project id or a team's `segment` (from `GET /teams`); a team's own notes show the
+team's name in `team` and `project` 0, never the hidden id. Pending submissions are not notes and never appear. A bad or
+missing `project` answers 400, an unknown one 404. The review answers (`GET /kb/submissions`, `/kb/submissions/{id}`) carry,
+besides the stored fields, `authorName`, `scopeKind` (`project` or `team`), `scopeName` (the project's or the team's name),
+`received` and `isReplacement`, so a panel needs no joins.
 
 Pages contain at most 100 rows; follow nonzero `next` as `after`. Same-outcome
 review retries do not publish twice; reversing a review is refused. Submission

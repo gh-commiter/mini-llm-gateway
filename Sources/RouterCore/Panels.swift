@@ -104,10 +104,13 @@ public struct PanelSection: Decodable, Equatable, Sendable {
     public let actions: [PanelAction]?
     public let rowActions: [PanelAction]?
     public let detail: PanelDetail?
-    public var supported: Bool { kind == "list" || kind == "text" }
+    public let scope: PanelScope?   // list: a picker whose value is sent as a query parameter
+    public let when: PanelWhen?     // record in a detail page: shown only while the opened row's field equals the value
+    public var supported: Bool { kind == "list" || kind == "text" || kind == "record" }
 }
 
-public struct PanelSource: Decodable, Equatable, Sendable { public let path: String; public let items: String }
+public struct PanelSource: Decodable, Equatable, Sendable { public let path: String; public let items: String? }
+public struct PanelScope: Decodable, Equatable, Sendable { public let ref: String; public let param: String; public let label: String }
 
 public struct PanelColumn: Decodable, Equatable, Sendable {
     public let field: String
@@ -164,7 +167,9 @@ public struct PanelOption: Decodable, Equatable, Sendable { public let value: St
 /// The routes a provider registered, "METHOD pattern" with {} for one path segment (as adminDo's switch). The renderer
 /// knows the built-in provider itself; the fixture client/testdata/panels-registry.json is asserted against it.
 public enum PanelRoutes {
-    public static let builtin = ["GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices"]
+    public static let builtin = ["GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices",
+                                 "GET kb/submissions", "GET kb/submissions/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject",
+                                 "GET kb/notes", "GET kb/notes/{}", "GET kb/faq", "GET projects", "GET teams"]
     public static func registered(for provider: String) -> [String]? { provider == "builtin" ? builtin : nil }
 
     /// Does a concrete (escaped) path with its method match one of the registered patterns, segment for segment? A segment
@@ -192,7 +197,7 @@ public enum PanelParse: Equatable, Sendable {
 }
 
 public enum PanelLimits {
-    public static let bytes = 64 << 10, sections = 12, columns = 10, actions = 12, fields = 10, label = 120, message = 600
+    public static let multiline = 20_000, bytes = 64 << 10, sections = 12, columns = 10, actions = 12, fields = 10, label = 120, message = 600
     public static let refs = 5, refEntries = 1000, options = 20, bodyKeys = 10, queryParams = 8, maxLength = 4096, filter = 5
 }
 
@@ -266,19 +271,24 @@ public enum PanelValidator {
                 switch s.kind {
                 case "text":
                     guard s.body != nil, s.title == nil, s.source == nil, s.key == nil, s.columns == nil, s.filter == nil, s.hide == nil, s.paging == nil,
-                          s.empty == nil, s.actions == nil, s.rowActions == nil, s.detail == nil else { throw Refusal("a text section has only id and body") }
+                          s.empty == nil, s.actions == nil, s.rowActions == nil, s.detail == nil, s.scope == nil, s.when == nil else { throw Refusal("a text section has only id and body") }
                     try str("body", s.body, PanelLimits.message)
                 case "list": try list(s, nested: nested)
+                case "record": try record(s, nested: nested)
                 default: continue  // an unknown kind in a known format: the renderer shows a visible placeholder
                 }
             }
         }
 
         func list(_ s: PanelSection, nested: Bool) throws {
-            guard s.body == nil, let source = s.source, s.title != nil, let key = s.key else { throw Refusal("list \(s.id): needs title, source and key, and has no body") }
+            guard s.body == nil, s.when == nil, let source = s.source, s.title != nil, let key = s.key else { throw Refusal("list \(s.id): needs title, source and key, and has no body or when") }
+            if let sc = s.scope {
+                guard d.refs[sc.ref] != nil, m(sc.param, #"^[a-z][a-z0-9_]{0,31}\z"#) else { throw Refusal("list \(s.id): scope with an undeclared ref or a bad parameter name") }
+                try str("scope.label", sc.label)
+            }
             try str("title", s.title)
             if let e = s.empty { try str("empty", e) }
-            guard isName(source.items), isName(key) else { throw Refusal("list \(s.id): bad items or key") }
+            guard let items = source.items, isName(items), isName(key) else { throw Refusal("list \(s.id): bad items or key") }
             _ = try path("list \(s.id) source", "GET", source.path, Scope(parent: nested))
             let cols = s.columns ?? []
             guard !cols.isEmpty, cols.count <= PanelLimits.columns else { throw Refusal("list \(s.id): columns 1 to \(PanelLimits.columns)") }
@@ -295,6 +305,18 @@ public enum PanelValidator {
                 guard isName(det.title) else { throw Refusal("list \(s.id): bad detail title") }
                 try sections(det.sections, nested: true)
             }
+        }
+
+        /// One object from the answer of `source` as label/value pairs; in a detail page `when` is checked on the opened row.
+        func record(_ s: PanelSection, nested: Bool) throws {
+            guard s.body == nil, let source = s.source, source.items == nil, s.key == nil, s.filter == nil, s.hide == nil, s.paging == nil, s.empty == nil,
+                  s.actions == nil, s.rowActions == nil, s.detail == nil, s.scope == nil else { throw Refusal("record \(s.id): only title, source (a path), columns and when") }
+            if let t = s.title { try str("title", t) }
+            _ = try path("record \(s.id) source", "GET", source.path, Scope(parent: nested))
+            let cols = s.columns ?? []
+            guard !cols.isEmpty, cols.count <= PanelLimits.columns else { throw Refusal("record \(s.id): columns 1 to \(PanelLimits.columns)") }
+            for c in cols { try column(c) }
+            if let w = s.when { guard nested, isName(w.field), scalar(w.equals) else { throw Refusal("record \(s.id): when is for detail pages, with a field and a scalar") } }
         }
 
         func column(_ c: PanelColumn) throws {

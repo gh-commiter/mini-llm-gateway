@@ -495,6 +495,173 @@
     "/sections/1/columns/0/Field": "name"
    },
    "swift": "accept"
+  },
+  {
+   "name": "a record with an items key",
+   "set": {
+    "/sections/1/detail/sections/2/source/items": "orders"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a record with row actions",
+   "set": {
+    "/sections/1/detail/sections/2/rowActions": []
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a record with a key",
+   "set": {
+    "/sections/1/detail/sections/2/key": "id"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a record without columns",
+   "set": {
+    "/sections/1/detail/sections/2/columns": []
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a record with an unregistered route",
+   "set": {
+    "/sections/1/detail/sections/2/source/path": "/plugins/acme/secret/{parent.id}"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a record route of another provider",
+   "set": {
+    "/sections/1/detail/sections/2/source/path": "/users"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a record when outside a detail page",
+   "set": {
+    "/sections/0": {
+     "kind": "record",
+     "id": "top",
+     "source": {
+      "path": "/plugins/acme/items"
+     },
+     "when": {
+      "field": "a",
+      "equals": true
+     },
+     "columns": [
+      {
+       "field": "a",
+       "kind": "text",
+       "label": "acme.shop.x"
+      }
+     ]
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a record when with an object value",
+   "set": {
+    "/sections/1/detail/sections/2/when/equals": {
+     "a": 1
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a record with an inline title",
+   "set": {
+    "/sections/1/detail/sections/2/title": "Summary"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a record column of an undeclared ref",
+   "set": {
+    "/sections/1/detail/sections/2/columns/0": {
+     "field": "a",
+     "kind": "ref",
+     "ref": "nope",
+     "label": "acme.shop.x"
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a row placeholder in a record",
+   "set": {
+    "/sections/1/detail/sections/2/source/path": "/plugins/acme/orders/{row.id}/summary"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a when on a list",
+   "set": {
+    "/sections/1/when": {
+     "field": "a",
+     "equals": true
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a when on a text section",
+   "set": {
+    "/sections/0/when": {
+     "field": "a",
+     "equals": true
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a scope of an undeclared ref",
+   "set": {
+    "/sections/1/scope/ref": "nope"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a scope with a bad parameter name",
+   "set": {
+    "/sections/1/scope/param": "Item&x"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a scope with an inline label",
+   "set": {
+    "/sections/1/scope/label": "Item"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a scope with a foreign label key",
+   "set": {
+    "/sections/1/scope/label": "builtin.kb.title"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a scope on a text section",
+   "set": {
+    "/sections/0/scope": {
+     "ref": "items",
+     "param": "item",
+     "label": "acme.shop.x"
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a scope with an unknown key",
+   "set": {
+    "/sections/1/scope/extra": 1
+   },
+   "swift": "accept"
   }
  ]
 }

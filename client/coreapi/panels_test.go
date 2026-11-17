@@ -447,8 +447,13 @@ func TestProviderIDsAreReserved(t *testing.T) {
 	r := New(Options{}).Handle(context.Background(), Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/panels"})
 	var o struct{ Panels []struct{ Provider string } }
 	json.Unmarshal(r.Body, &o)
-	if len(o.Panels) != 1 || o.Panels[0].Provider != "builtin" {
-		t.Fatalf("%s", r.Body)
+	if len(o.Panels) != len(builtinProvider().Panels) || len(o.Panels) < 2 {
+		t.Fatalf("%d panels", len(o.Panels))
+	}
+	for _, p := range o.Panels {
+		if p.Provider != "builtin" {
+			t.Fatalf("a panel under %q", p.Provider)
+		}
 	}
 }
 
