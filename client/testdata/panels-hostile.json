@@ -676,6 +676,64 @@
     "/sections/1/scope/param": "after"
    },
    "swift": "refuse"
+  },
+  {
+   "name": "a ref named __proto__ (refused: not a valid id)",
+   "set": {
+    "/refs": {
+     "__proto__": {
+      "path": "/plugins/acme/items",
+      "items": "items",
+      "key": "sku",
+      "label": "title"
+     },
+     "items": {
+      "path": "/plugins/acme/items",
+      "items": "items",
+      "key": "sku",
+      "label": "title"
+     }
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a body key __proto__ (refused: not a plain name)",
+   "set": {
+    "/sections/1/actions/0/body": {
+     "__proto__": {
+      "field": "name"
+     }
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "an enum value key __proto__ (kept as an own key, accepted on every side)",
+   "set": {
+    "/sections/1/columns/3/values": {
+     "__proto__": "acme.shop.section.orders.column.state.value.new"
+    }
+   },
+   "swift": "accept",
+   "goAccepts": true
+  },
+  {
+   "name": "a column field __proto__ (refused: not a plain name)",
+   "set": {
+    "/sections/1/columns/0/field": "__proto__"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a filter field constructor is a plain name (accepted)",
+   "set": {
+    "/sections/1/filter": [
+     "constructor"
+    ]
+   },
+   "swift": "accept",
+   "goAccepts": true
   }
  ]
 }

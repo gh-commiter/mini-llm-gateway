@@ -108,7 +108,10 @@ async function main() {
     for (const [ptr, n] of Object.entries(c.pad || {})) edit(doc, ptr, () => "x".repeat(n));
     const r = panelParse(doc, "acme", f1.routes);
     if (c.swift === "refuse") assert.notEqual(r.state, "ready", "accepted: " + c.name);
-    else if (c.swift === "accept") assert.equal(r.state, "ready", "refused (this side ignores unknown keys): " + c.name + " " + r.reason);
+    else if (c.swift === "accept") {
+      assert.equal(r.state, "ready", "refused (this side ignores unknown keys): " + c.name + " " + r.reason);
+      if (c.name.startsWith("an enum value key __proto__")) assert.ok(Object.hasOwn(r.panel.sections[1].columns[3].values, "__proto__") && Object.getPrototypeOf(r.panel.sections[1].columns[3].values) === Object.prototype);
+    }
     else {  // placeholder: a known format with an unknown element
       assert.equal(r.state, "ready", "refused: " + c.name + " " + r.reason);
       const orders = r.panel.sections[1], m = new PanelModel(r.panel, {table: {}}, f1.routes, async () => ({status: 404, body: "{}"}));
@@ -133,6 +136,42 @@ async function main() {
     const conf = model.confirmation(a, row);
     assert.equal(conf === null ? "none" : conf.destructive ? "destructive" : "plain", c.confirm, JSON.stringify(c));
   }
+
+  // 4b. a row value in a confirmation is short plain text (the same table as the Swift model)
+  for (const c of json("panels-requests.json").confirmations) {
+    const model = modelOf(c.panel, fake({}));
+    const sec = model.panel.sections.find(x => x.id === c.section), a = sec.rowActions.find(x => x.id === c.action);
+    assert.equal(model.confirmation(a, {id: "", values: c.row}).title, c.title, JSON.stringify(c.row.title).slice(0, 80));
+  }
+
+  // 4c. names that exist on every object are no keys of ours: provider, symbol, ref, glyph lookups; one broken panel never aborts the catalog
+  for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+    assert.equal(pGet(PANEL_ROUTES, name), undefined, name);
+    assert.equal(panelGlyph(name), "▢", name);
+    assert.equal(panelParse({...descriptionOf("builtin.users"), provider: name}, name).state, "refused");
+    assert.equal(panelParse({...descriptionOf("builtin.users"), symbol: name}, "builtin").state, "refused");
+    const r = await panelCatalogLoad(failing(200, JSON.stringify({format: 1, panels: [{provider: name, description: {...descriptionOf("builtin.users"), provider: name}}, {provider: "builtin", description: {...descriptionOf("builtin.users"), symbol: name, id: "builtin.other"}},
+      {provider: "builtin", description: descriptionOf("builtin.kb")}]})), "C");
+    assert.deepEqual(r.entries.map(e => e.parse.state), ["refused", "refused", "ready"], name);
+  }
+  assert.equal(panelGlyph("book"), "📖");
+  const realParse = panelParse;
+  panelParse = (raw, provider, routes) => { if (raw.id === "builtin.users") throw new TypeError("boom"); return realParse(raw, provider, routes); };  // a bug must not abort the list
+  const broken = await panelCatalogLoad(sends("C"), "C");
+  panelParse = realParse;
+  assert.deepEqual(broken.entries.map(e => e.parse.state), ["refused", "ready", "ready"]);
+  assert.ok(broken.entries[0].parse.reason.startsWith("internal error"));
+  // display cuts are by code points: a title of 119 letters and two emoji keeps 120 code points and no lone surrogate
+  const longTitle = "a".repeat(119) + "😀😀";
+  const cutEntry = (await panelCatalogLoad(failing(200, JSON.stringify({format: 1, panels: [{provider: "builtin", description: {id: "x".repeat(63) + "😀😀", title: longTitle, provider: "builtin", format: 1}}]})), "C")).entries[0];
+  assert.equal(cutEntry.parse.state, "refused");
+  assert.equal([...cutEntry.title].length, 120);
+  assert.equal([...cutEntry.id].length, 64);
+  assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(cutEntry.title + cutEntry.id));
+  // a call that gets no answer at all is its own state
+  assert.deepEqual(panelError(0, ""), {kind: "network"});
+  assert.equal((await panelCatalogLoad(async () => ({status: 0, body: ""}), "C")).error.kind, "network");
+  assert.deepEqual(panelError(503, '{"error":{"type":"core_unavailable"}}'), {kind: "unavailable"});
 
   // 5. templates, transport and the model's behaviour (ports of the Swift tests)
   assert.deepEqual(pTemplateParse("/users/{row.id}"), [{literal: "users"}, {ref: ["row", "id"]}]);

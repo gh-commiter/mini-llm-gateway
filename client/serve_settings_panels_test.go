@@ -47,10 +47,19 @@ func TestSettingsPanelRendererHasNoForbiddenSinks(t *testing.T) {
 				t.Errorf("%s uses %s", name, bad)
 			}
 		}
+		// crude: a property reached by a computed name (["inner"+"HTML"]), a write to .style., Object.assign on a node
+		for _, re := range []string{`[\w)\]]\[[^\]\n]*["'][^\]\n]*\+[^\]\n]*\]`, `\.style\.`, `Object\.assign\(`, `\[\s*["'](inner|outer)`} {
+			if m := regexp.MustCompile(re).FindString(code); m != "" && name == "renderer" {
+				t.Errorf("%s: %s", name, m)
+			}
+		}
 		// no assignment of an attribute-like property (href, src, style, title, an on* handler): data never reaches one
 		if m := regexp.MustCompile(`\.(href|src|style|title|cssText|on[a-z]+)\s*=[^=]`).FindString(code); m != "" {
 			t.Errorf("%s assigns %s", name, m)
 		}
+	}
+	if !strings.Contains(loader, `redirect: "error"`) || !strings.Contains(loader, "status: 0") || strings.Contains(loader, "core_unavailable") {
+		t.Error("panelFetch: redirect must be refused, and a failed call is its own state (status 0), not a made-up 503")
 	}
 	if strings.Contains(renderer, "fetch(") || strings.Contains(renderer, "XMLHttpRequest") || strings.Contains(renderer, "WebSocket") {
 		t.Error("the renderer makes a network call itself: only the transport it is given may")
@@ -119,5 +128,48 @@ func TestSettingsSessionReachesThePanels(t *testing.T) {
 	// a foreign Host is refused before the session is looked at
 	if st, _, _ := settingsCall(t, "http://"+host, "evil.example:"+strings.Split(host, ":")[1], "GET", adminPrefix+"/panels", session[1], ""); st != 403 {
 		t.Errorf("GET /panels with a foreign Host: %d", st)
+	}
+}
+
+// The page may demand Trusted Types for scripts only because it has no string-to-HTML sink at all (old panes included). The
+// inventory: every sink Trusted Types guards is searched for, and none is found; setAttribute is called with a literal name
+// everywhere except the two helpers that draw the usage chart from literal attribute objects.
+func TestSettingsPageHasNoStringToHTMLSink(t *testing.T) {
+	for _, sink := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "srcdoc", "eval(", "new Function", "createContextualFragment", "DOMParser",
+		"createElement(\"script\")", "importScripts", "setTimeout(\"", "setInterval(\"", "setTimeout('", "setInterval('", "setAttribute(\"on", "setAttribute('on", "unsafe-inline", "unsafe-eval"} {
+		// the one comment that explains the el() helper names the word; code lines are what counts
+		for _, line := range strings.Split(settingsPage, "\n") {
+			code := line
+			if i := strings.Index(code, "//"); i >= 0 && !strings.Contains(code[:i], "\"") && !strings.Contains(code[:i], "'") {
+				code = code[:i]
+			}
+			if strings.Contains(code, sink) {
+				t.Errorf("sink %q in: %s", sink, strings.TrimSpace(line))
+			}
+		}
+	}
+	dynamic := 0
+	for _, m := range regexp.MustCompile(`setAttribute\(([^,)]+),`).FindAllStringSubmatch(settingsPage, -1) {
+		if !strings.HasPrefix(m[1], "\"") {
+			dynamic++
+		}
+	}
+	if dynamic != 2 { // usageSVG and the devices glyph: both loop over attribute objects written as literals in this file
+		t.Errorf("%d setAttribute calls with a computed name, want the 2 known helpers", dynamic)
+	}
+}
+
+func TestSettingsPageDemandsTrustedTypes(t *testing.T) {
+	_, _, base := liveServer(t, nil)
+	host := strings.TrimPrefix(base, "http://")
+	_, _, h := settingsCall(t, base, host, "GET", "/minigw/settings", "", "")
+	csp := h.Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'none'", "require-trusted-types-for 'script'", "frame-ancestors 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP lacks %s: %s", want, csp)
+		}
+	}
+	if strings.Contains(csp, "unsafe") {
+		t.Errorf("CSP: %s", csp)
 	}
 }

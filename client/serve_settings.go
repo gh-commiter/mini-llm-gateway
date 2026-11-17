@@ -137,7 +137,7 @@ func (s *server) settingsHTTP(w http.ResponseWriter, r *req) int {
 	case "GET /minigw/settings": // statična, brez skrivnosti
 		nonce := randomToken()
 		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'nonce-"+nonce+
-			"'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+			"'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'")
 		page := strings.NewReplacer("{{NONCE}}", nonce, "{{PICKER}}", strconv.FormatBool(s.pick.Load() != nil)).Replace(settingsPage)
 		return writeStatus(w, 200, "text/html; charset=utf-8", []byte(page))
 	case "POST /minigw/settings/login":

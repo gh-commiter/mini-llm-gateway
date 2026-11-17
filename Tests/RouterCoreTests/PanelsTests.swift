@@ -959,6 +959,18 @@ private let teamsAnswers: [(String, Int, String)] = [
 
 /// The shared table of exact requests (client/testdata/panels-requests.json): the web renderer's script test reads the same file.
 @MainActor @Suite struct PanelRequestFixtureTests {
+    @Test(.enabled(if: haveFixtures)) func aRowValueInAConfirmationIsShortPlainText() throws {
+        let cases = try object("panels-requests.json")["confirmations"] as! [[String: Any]]
+        #expect(cases.count >= 7)
+        for c in cases {
+            guard case .ready(let d) = PanelValidator.parse(data(try description(c["panel"] as! String)), provider: "builtin") else { throw Err.bad }
+            let m = PanelModel(panel: d, strings: try strings("C"), routes: PanelRoutes.builtin, send: { _ in .unavailable })
+            let a = d.sections.first { $0.id == c["section"] as! String }!.rowActions!.first { $0.id == c["action"] as! String }!
+            let values = try JSONDecoder().decode([String: PanelJSON].self, from: data(c["row"] as! [String: Any]))
+            #expect(m.confirmation(a, row: PanelRow(id: "", values: values))?.title == c["title"] as? String, "\(c["row"]!)")
+        }
+    }
+
     @Test(.enabled(if: haveFixtures)) func everyCaseOfTheSharedTableHasTheSameRequestAndConfirmation() throws {
         let cases = try object("panels-requests.json")["cases"] as! [[String: Any]]
         #expect(cases.count >= 60)

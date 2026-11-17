@@ -403,6 +403,24 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
         return .success(req)
     }
 
+    /// A row value that is put into a text (a confirmation): control, format, line and paragraph separator characters become a space and
+    /// the value is cut at 80 code points, never inside a grapheme, so a value cannot add lines or a long fake sentence to a dialog.
+    static func plainValue(_ v: String) -> String {
+        var out = "", n = 0
+        for ch in v {
+            let cps = ch.unicodeScalars.count
+            if n + cps > 80 { break }
+            for sc in ch.unicodeScalars {
+                switch sc.properties.generalCategory {
+                case .control, .format, .lineSeparator, .paragraphSeparator: out.unicodeScalars.append(" ")
+                default: out.unicodeScalars.append(sc)
+                }
+            }
+            n += cps
+        }
+        return out
+    }
+
     /// The confirmation of an action; `{field}` takes the row's value as plain text. nil when the action needs none.
     public func confirmation(_ a: PanelAction, row: PanelRow? = nil) -> PanelConfirmText? {
         guard a.needsConfirmation, let c = a.confirm else { return nil }
@@ -411,7 +429,7 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
             let re = try! Regex(#"\{([A-Za-z][A-Za-z0-9_]{0,63})\}"#)
             for m in t.matches(of: re).reversed() {  // one pass: a value that looks like a placeholder is not filled again
                 guard let name = m.output[1].substring.map(String.init) else { continue }
-                t.replaceSubrange(m.range, with: row?.values[name]?.scalarText ?? "")
+                t.replaceSubrange(m.range, with: Self.plainValue(row?.values[name]?.scalarText ?? ""))
             }
             return t
         }

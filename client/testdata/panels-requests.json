@@ -1224,5 +1224,84 @@
    },
    "confirm": "destructive"
   }
+ ],
+ "confirmations": [
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "acme\n\n(This only hides the account; nothing is deleted.)"
+   },
+   "title": "Reject acme  (This only hides the account; nothing is deleted.)?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "title": "Reject xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "a‮b c d\u0007e​f"
+   },
+   "title": "Reject a b c d e f?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaé"
+   },
+   "title": "Reject aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀😀"
+   },
+   "title": "Reject aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "a\r\nb"
+   },
+   "title": "Reject a  b?"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "reject",
+   "row": {
+    "id": 5,
+    "title": "short"
+   },
+   "title": "Reject short?"
+  }
  ]
 }

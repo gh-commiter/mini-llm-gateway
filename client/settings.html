@@ -148,7 +148,7 @@ const S = {
   pPart:["This part of the panel cannot be shown","Tega dela plošče ni mogoče prikazati"], pNotSent:["The request was not sent","Zahteve nismo poslali"],
   pShort:["The text is shortened here.","Besedilo je tukaj skrajšano."], pRequired:["Required","Obvezno"], pTooLong:["At most %s bytes","Največ %s bajtov"],
   pNone:["None","Nobena"], pOk:["OK","V redu"], cancel:["Cancel","Prekliči"], pLoading:["Loading…","Nalaganje …"], pOpen:["Open","Odpri"], pActions:["Actions…","Dejanja …"],
-  pMore:["Load More","Naloži več"], pBack:["Back","Nazaj"], pPanels:["Panels","Plošče"],
+  pMore:["Load More","Naloži več"], pBack:["Back","Nazaj"], pPanels:["Panels","Plošče"], pOffline:["The gateway cannot be reached.","Gateway ni dosegljiv."],
   usageError:["Could not load usage: %s","Porabe ni mogoče naložiti: %s"],
   unknownCost:["%s requests without a known cost","%s zahtev brez znanega stroška"],
   failedHint:["Summed agent minutes are concurrent work time, not clock time. Only requests that ended in an error count.","Seštete minute agentov so čas dela, ki teče hkrati, ne ura na zidu. Štejejo le zahteve, ki so se končale z napako."],
@@ -774,6 +774,20 @@ const pIsID = s => pmatch(s, /^[a-z][a-z0-9-]{0,31}$/);
 const pIsName = s => pmatch(s, /^[A-Za-z][A-Za-z0-9_]{0,63}$/);
 const pHasControl = s => /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(s);
 const pLen = s => [...s].length;
+const pCut = (s, n) => [...s].slice(0, n).join("");  // by code points, never inside a surrogate pair
+// A row value that is put into a text (a confirmation): control, format, line and paragraph separator characters become a space and the
+// value is cut at 80 code points, never inside a grapheme, so a value cannot add lines or a long fake sentence to a dialog.
+const PSEG = typeof Intl !== "undefined" && Intl.Segmenter ? new Intl.Segmenter(undefined, {granularity: "grapheme"}) : null;
+function pPlainValue(v) {
+  let out = "", n = 0;
+  for (const g of PSEG ? [...PSEG.segment(v)].map(x => x.segment) : [...v]) {
+    const cps = [...g].length;
+    if (n + cps > 80) break;
+    out += g.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ");
+    n += cps;
+  }
+  return out;
+}
 const pBytes = s => new TextEncoder().encode(s).length;
 const pOwn = (o, k) => o !== null && typeof o === "object" && Object.hasOwn(o, k);
 const pGet = (o, k) => (pOwn(o, k) ? o[k] : undefined);
@@ -795,7 +809,7 @@ const dStr = (v, w) => (typeof v === "string" ? v : prefuse(w + " is not text"))
 const dBool = (v, w) => (typeof v === "boolean" ? v : prefuse(w + " is not a boolean"));
 const dInt = (v, w) => (Number.isInteger(v) ? v : prefuse(w + " is not an integer"));
 const dArr = (v, w, f) => (Array.isArray(v) ? v.map((x, i) => f(x, w + "[" + i + "]")) : prefuse(w + " is not a list"));
-const dMap = (v, w, f) => { dObj(v, w); const o = {}; for (const k of Object.keys(v)) o[k] = f(v[k], w + "." + k); return o; };
+const dMap = (v, w, f) => { dObj(v, w); return Object.fromEntries(Object.keys(v).map(k => [k, f(v[k], w + "." + k)])); };  // own keys only: "__proto__" stays a key
 const opt = (o, k, f, w) => (o[k] === undefined || o[k] === null ? undefined : f(o[k], w + "." + k));
 const anyJSON = (o, k, w) => (Object.hasOwn(o, k) ? o[k] : prefuse(w + "." + k + " is missing"));
 const dRef = (o, w) => (o = dObj(o, w), {path: dStr(o.path, w), items: dStr(o.items, w), key: dStr(o.key, w), label: dStr(o.label, w)});
@@ -908,7 +922,7 @@ function pRouteAllows(method, escapedPath, patterns) {
 // ---- the validator (the same rules as client/coreapi/panels.go) ----
 function pKey(d, name, k) {
   if (typeof k !== "string" || !/^[a-z0-9._-]{1,120}$/.test(k) || !k.startsWith(d.id + ".") || k.includes("..") || k.endsWith(".")) {
-    prefuse(name + ": " + (typeof k === "string" ? k.slice(0, 60) : "nothing") + " is not a string key of panel " + d.id);
+    prefuse(name + ": " + (typeof k === "string" ? pCut(k, 60) : "nothing") + " is not a string key of panel " + d.id);
   }
 }
 function pCheckPath(d, routes, where, method, p, sc) {
@@ -1071,13 +1085,12 @@ function panelParse(raw, provider, routes) {
     const d = {format: 1, id: dStr(raw.id, "id"), provider: dStr(raw.provider, "provider"), title: dStr(raw.title, "title"), about: dStr(raw.about, "about"), symbol: dStr(raw.symbol, "symbol"),
       refs: dMap(raw.refs, "refs", dRef), sections: dArr(raw.sections, "sections", dSection)};
     if (d.provider !== provider) return {state: "refused", reason: "the description says provider " + d.provider + ", the registry says " + provider};
-    const rs = routes || PANEL_ROUTES[provider];
+    const rs = routes || pGet(PANEL_ROUTES, provider);
     if (!rs) return {state: "refused", reason: "provider " + provider + " is not known here"};
     pValidate(d, rs);
     return {state: "ready", panel: d};
   } catch (e) {
-    if (e instanceof PanelRefusal) return {state: "refused", reason: e.message};
-    throw e;
+    return {state: "refused", reason: e instanceof PanelRefusal ? e.message : "internal error: " + pCut(String(e && e.message), 120)};
   }
 }
 // The locale for GET /panels/strings: the browser's own ("sl_SI" from "sl-SI"), or just the language ("sl"); never a made-up region.
@@ -1092,11 +1105,13 @@ function panelStringsParse(j) {
   if (keys.length > 2000 || !keys.every(k => typeof j.strings[k] === "string")) return null;
   return {locale: j.locale, table: j.strings};
 }
+const panelGlyph = sym => pGet(PGLYPH, sym) || "▢";
 const panelText = (strings, key) => (key === undefined || key === null ? "" : pOwn(strings.table, key) ? strings.table[key] : key);
 
 // ---- errors of a call ----
 function panelError(status, bodyText) {
   if (status >= 200 && status < 300) return null;
+  if (status === 0) return {kind: "network"};  // no answer at all: the gateway cannot be reached
   let e; try { const j = JSON.parse(bodyText); e = pObj(j) && pObj(j.error) ? j.error : undefined; } catch (x) { /* not JSON */ }
   if (status === 503 && e && e.type === "core_unavailable") return {kind: "unavailable"};
   if (status >= 500) return {kind: "serverFault", status};  // 5xx: its text may hold internals; only the status is shown
@@ -1122,10 +1137,11 @@ async function panelCatalogLoad(send, locale) {
   const seen = new Set();
   top.panels.forEach((p, i) => {
     if (!pObj(p) || typeof p.provider !== "string" || !pObj(p.description)) return;
-    const parse = panelParse(p.description, p.provider);
-    const raw = p.description, str = k => (typeof raw[k] === "string" ? raw[k].slice(0, PL.label) : undefined);
+    let parse;
+    try { parse = panelParse(p.description, p.provider); } catch (e) { parse = {state: "refused", reason: "internal error: " + pCut(String(e && e.message), 120)}; }
+    const raw = p.description, str = k => (typeof raw[k] === "string" ? pCut(raw[k], PL.label) : undefined);
     const entry = parse.state === "ready" ? {id: parse.panel.id, provider: p.provider, parse, title: parse.panel.title, about: parse.panel.about, symbol: parse.panel.symbol}
-      : {id: typeof raw.id === "string" ? raw.id.slice(0, 64) : "invalid-" + i, provider: p.provider, parse, title: str("title"), about: undefined, symbol: ""};
+      : {id: typeof raw.id === "string" ? pCut(raw.id, 64) : "invalid-" + i, provider: p.provider, parse, title: str("title"), about: undefined, symbol: ""};
     if (!seen.has(entry.id)) { seen.add(entry.id); out.entries.push(entry); }
   });
   return out;
@@ -1136,7 +1152,7 @@ function newListData() { return {rows: [], next: null, error: null, loading: fal
 class PanelModel {
   constructor(panel, strings, routes, send) {
     this.panel = panel; this.strings = strings; this.routes = routes; this.send = send;
-    this.refs = {}; this.refError = null; this.lists = new Map(); this.actionError = new Map(); this.records = new Map(); this.selected = new Map();
+    this.refs = Object.create(null); this.refError = null; this.lists = new Map(); this.actionError = new Map(); this.records = new Map(); this.selected = new Map();
     this.sending = new Set(); this.opened = new Map(); this.loading = false; this.redraw = () => {};
   }
   text(key) { return panelText(this.strings, key); }
@@ -1164,9 +1180,9 @@ class PanelModel {
       if (items === null) { this.refError = {kind: "refused", why: "the answer of " + r.path + " has no " + r.items}; this.refs[name] = []; continue; }
       if (items.length > PL.refEntries) { this.refError = {kind: "refused", why: "more than " + PL.refEntries + " entries in " + r.path}; this.refs[name] = []; continue; }
       this.refs[name] = items.flatMap(o => {
-        const k = o[r.key];
+        const k = pGet(o, r.key);
         if (pScalarText(k) === null) return [];
-        const lab = pScalarText(o[r.label]);
+        const lab = pScalarText(pGet(o, r.label));
         return [{key: k, label: lab !== null ? lab : pScalarText(k), id: pScalarText(k)}];
       });
     }
@@ -1217,7 +1233,7 @@ class PanelModel {
     if (items === null) { d.error = {kind: "refused", why: "the answer has no list of rows"}; set(); return; }
     d.error = null;
     const k = s.key || "";
-    const ids = items.map(o => pScalarText(o[k]));
+    const ids = items.map(o => pScalarText(pGet(o, k)));
     const all = (more ? d.rows.map(r => r.id) : []).concat(ids.filter(x => x !== null));
     if (ids.includes(null) || new Set(all).size !== all.length) {  // a row without a key, or two with the same: never guessed
       d.error = {kind: "cannotShow", why: "the rows of " + s.id + " have no unique " + k}; d.rows = []; d.next = null; set(); return;
@@ -1326,7 +1342,7 @@ class PanelModel {
   }
   confirmation(a, row) {
     if (!pNeedsConfirmation(a) || a.confirm === undefined) return null;
-    const fill = key => this.text(key).replace(/\{([A-Za-z][A-Za-z0-9_]{0,63})\}/g, (_, name) => (row && pScalarText(pGet(row.values, name))) || "");  // one pass
+    const fill = key => this.text(key).replace(/\{([A-Za-z][A-Za-z0-9_]{0,63})\}/g, (_, name) => pPlainValue((row && pScalarText(pGet(row.values, name))) || ""));  // one pass, values as plain short text
     return {title: fill(a.confirm.title), message: fill(a.confirm.message), button: fill(a.confirm.button),
       destructive: a.method === "DELETE" || a.destructive === true || a.confirm.destructive === true};
   }
@@ -1371,6 +1387,7 @@ const PGLYPH = {"person.2": "👥", "person.3": "👥", folder: "📁", book: "�
 function panelErrorText(e) {
   switch (e.kind) {
     case "unavailable": return t("pUnavailable");
+    case "network": return t("pOffline");
     case "notFound": return t("pUpdate");
     case "needsNewer": return t("pNewer");
     case "server": return e.message;
@@ -1436,9 +1453,9 @@ function panelView(model, host) {
     for (const fld of f.a.fields) {
       const label = pe("span", "label", model.text(fld.label));
       let input;
-      if (fld.type === "toggle") input = pswitch(f.values[fld.id] === true, v => { f.values[fld.id] = v; });
+      if (fld.type === "toggle") input = pswitch(pGet(f.values, fld.id) === true, v => { f.values[fld.id] = v; });
       else if (fld.type === "text") {
-        input = pe("input", "left"); input.type = "text"; input.value = typeof f.values[fld.id] === "string" ? f.values[fld.id] : "";
+        input = pe("input", "left"); input.type = "text"; input.value = typeof pGet(f.values, fld.id) === "string" ? pGet(f.values, fld.id) : "";
         input.addEventListener("input", () => { f.values[fld.id] = input.value; });
         input.addEventListener("change", () => render());
       } else {
@@ -1446,13 +1463,13 @@ function panelView(model, host) {
         const none = pe("option", "", t("pNone")); none.value = ""; input.append(none);
         const opts = fld.type === "choice" ? fld.options.map(o => ({id: o.value, key: o.value, label: model.text(o.label)})) : (model.refs[fld.ref] || []);
         for (const o of opts) { const op = pe("option", "", o.label); op.value = o.id; input.append(op); }
-        input.value = pScalarText(f.values[fld.id] === undefined ? null : f.values[fld.id]) ?? "";
+        input.value = pScalarText(pGet(f.values, fld.id) === undefined ? null : pGet(f.values, fld.id)) ?? "";
         input.addEventListener("change", () => { const o = opts.find(x => x.id === input.value); if (o) f.values[fld.id] = o.key; else delete f.values[fld.id]; render(); });
       }
       const r = prow(label, input);
       g.append(r);
-      const p = problems[fld.id];
-      if (p && (f.values[fld.id] !== undefined || !p.required)) g.append(pnote(p.required ? t("pRequired") : t("pTooLong", p.tooLong), true));
+      const p = pGet(problems, fld.id);
+      if (p && (pGet(f.values, fld.id) !== undefined || !p.required)) g.append(pnote(p.required ? t("pRequired") : t("pTooLong", p.tooLong), true));
     }
     const err = model.actionError.get(pListKey(path, parent ? parent.id : ""));
     if (err) g.append(pnote(panelErrorText(err), true));
@@ -1939,11 +1956,11 @@ const ICON = {usage: ["#176ac6", "▥"], general: ["#8e8e93", "⚙"], devices: [
 const PANELS = {entries: [], strings: {locale: "C", table: {}}, error: null, loaded: false};
 async function panelFetch(req) {
   try {
-    const r = await fetch("/minigw/admin/v1" + req.path + (req.query ? "?" + req.query : ""), {method: req.method, credentials: "omit", keepalive: true,
+    const r = await fetch("/minigw/admin/v1" + req.path + (req.query ? "?" + req.query : ""), {method: req.method, credentials: "omit", keepalive: true, redirect: "error",  // a redirect must not carry the session header elsewhere
       headers: {"X-Minigw-Session": SESSION, "Content-Type": "application/json"}, body: req.body ? req.body : undefined});
     if (r.status === 401) return {status: 401, body: JSON.stringify({error: {message: t("signin")}})};
     return {status: r.status, body: await r.text()};
-  } catch (e) { return {status: 503, body: '{"error":{"type":"core_unavailable","message":"offline"}}'}; }
+  } catch (e) { return {status: 0, body: ""}; }  // its own state, not a made-up service error
 }
 async function ensurePanels(force) {
   if (PANELS.loaded && !force && !PANELS.error) return;
@@ -1956,10 +1973,10 @@ async function panelPage(id) {
   await ensurePanels(true);
   const e = PANELS.entries.find(x => x.id === id);
   if (!e) return [card(PCOLOR, "▢", t("pPanels"), ""), PANELS.error ? note(panelErrorText(PANELS.error)) : null];
-  const head = card(PCOLOR, PGLYPH[e.symbol] || "▢", panelTitle(e), panelText(PANELS.strings, e.about));
+  const head = card(PCOLOR, panelGlyph(e.symbol), panelTitle(e), panelText(PANELS.strings, e.about));
   if (e.parse.state === "needsNewer") return [head, note(t("pNewer"))];
   if (e.parse.state === "refused") return [head, note(t("pCannot")), note(e.parse.reason)];
-  const routes = PANEL_ROUTES[e.provider], host = pe("div");
+  const routes = pGet(PANEL_ROUTES, e.provider), host = pe("div");
   const model = new PanelModel(e.parse.panel, PANELS.strings, routes, panelTransport(panelFetch, routes));
   panelView(model, host);
   model.load();
@@ -1986,7 +2003,7 @@ async function nav() {
     ["devices", t("devices"), ICON.devices],
     ["sessions", t("sessions"), ICON.sessions],
     ["usage", t("usage"), ICON.usage],
-    ...(PANELS.entries.length ? PANELS.entries.map(e => ["panel", panelTitle(e), [PCOLOR, PGLYPH[e.symbol] || "▢"], e.id]) : PANELS.error ? [["panel", t("pPanels"), [PCOLOR, "▢"], ""]] : []),
+    ...(PANELS.entries.length ? PANELS.entries.map(e => ["panel", panelTitle(e), [PCOLOR, panelGlyph(e.symbol)], e.id]) : PANELS.error ? [["panel", t("pPanels"), [PCOLOR, "▢"], ""]] : []),
   ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
   const find = el("input", {type: "text", class: "left search", placeholder: t("search"), value: search});
   find.addEventListener("input", () => { search = find.value; nav().then(() => { const f = document.querySelector("nav .search"); f.focus(); f.setSelectionRange(search.length, search.length); }); });
