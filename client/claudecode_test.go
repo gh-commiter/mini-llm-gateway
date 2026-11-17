@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -181,6 +182,13 @@ func fakeClaudeMain() {
 		os.Exit(0)
 	}
 	os.WriteFile(os.Getenv("MINIGW_TEST_CLAUDE_LOG"), []byte(strings.Join(os.Args[1:], " ")), 0o600)
+	if h := os.Getenv("ANTHROPIC_CUSTOM_HEADERS"); h != "" { // what the gateway would receive with every request
+		os.WriteFile(os.Getenv("MINIGW_TEST_CLAUDE_LOG")+".headers", []byte(h), 0o600)
+	}
+	if code := os.Getenv("MINIGW_TEST_CLAUDE_EXIT"); code != "" {
+		n, _ := strconv.Atoi(code)
+		os.Exit(n)
+	}
 	if s := os.Getenv("MINIGW_TEST_CLAUDE_SIGNAL"); s != "" { // L-b: claude se konča s signalom (TERM) ali se ustavi (STOP)
 		p, _ := os.FindProcess(os.Getpid())
 		if s == "STOP" && fakeStop != nil {

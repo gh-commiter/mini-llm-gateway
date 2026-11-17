@@ -790,3 +790,82 @@ func TestEventTokensFallbackAndAgentZero(t *testing.T) {
 		}
 	}
 }
+
+// The gateway stores the labels a request carries, drops what is not a safe token (a modified client), never refuses,
+// and a nested call carries the labels of the run that asked.
+func TestEventLabelsFromHeaders(t *testing.T) {
+	f := newCoreFx(t, nil)
+	mk := func(h map[string]string, run *agentRun) *req {
+		hr := httptest.NewRequest("POST", "/v1/messages", nil)
+		for k, v := range h {
+			hr.Header.Set(k, v)
+		}
+		if run != nil {
+			hr = hr.WithContext(context.WithValue(hr.Context(), agentRunKey{}, run))
+		}
+		return &req{Request: hr, conn: &serveConn{device: &serveDevice{ID: devID(f.dev["ana"])}}, provider: "openrouter"}
+	}
+	finish := func(r *req) {
+		f.s.dispatched(r)
+		uw := &usageWriter{in: 1, out: 1}
+		uw.metrics.feed([]byte(`{"usage":{"input_tokens":1,"output_tokens":1}}`))
+		f.s.endEvent(r, 200, uw)
+	}
+	good := mk(map[string]string{"x-claude-mini-phase": "Plan", "x-claude-mini-activity": "bugfix", "x-claude-mini-task": "feature/149", "x-claude-mini-task-source": "branch"}, nil)
+	f.s.admitEvent(good, "m")
+	finish(good)
+	bad := mk(map[string]string{"x-claude-mini-phase": "plan; drop table", "x-claude-mini-activity": strings.Repeat("a", 40), "x-claude-mini-task": "bad task", "x-claude-mini-task-source": "classified"}, nil)
+	f.s.admitEvent(bad, "m")
+	finish(bad)
+	nested := mk(nil, &agentRun{evID: good.event.ID, evUser: good.event.UserID, phase: "plan", activity: "bugfix", task: "feature/149", taskSource: "branch"})
+	f.s.admitEvent(nested, "m")
+	finish(nested)
+	f.s.api.FlushRecorder()
+	get := func(id string) (a [7]string) {
+		f.ok(f.s.core.DB().QueryRow(`SELECT outcome,phase,activity,task,phase_source,activity_source,task_source FROM usage_events WHERE id=?`, id).Scan(&a[0], &a[1], &a[2], &a[3], &a[4], &a[5], &a[6]))
+		return
+	}
+	if g := get(good.event.ID); g != [7]string{"ok", "plan", "bugfix", "feature/149", "given", "given", "branch"} {
+		t.Fatal(g)
+	}
+	if g := get(bad.event.ID); g != [7]string{"ok"} { // the request went on; no label survived (the source "classified" is reserved)
+		t.Fatal(g)
+	}
+	if g := get(nested.event.ID); g != [7]string{"ok", "plan", "bugfix", "feature/149", "given", "given", "branch"} {
+		t.Fatal(g)
+	}
+}
+
+// The labels and the other client headers stay in the gateway's records: the upstream request is built from an allow-list
+// (content-type, authorization, anthropic-version, anthropic-beta), so no x-claude-mini-* header reaches a model provider.
+func TestClientHeadersNeverReachTheUpstream(t *testing.T) {
+	keys := fakeKeys(t)
+	keys["gw"] = gwKey
+	var got http.Header
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"type":"message","content":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer up.Close()
+	f := newCoreFx(t, nil)
+	hr := httptest.NewRequest("POST", "/v1/messages", nil)
+	for k, v := range map[string]string{"x-claude-mini-phase": "check", "x-claude-mini-activity": "bugfix", "x-claude-mini-task": "feature/secret-branch",
+		"x-claude-mini-task-source": "branch", "x-claude-mini-role": "security", "x-claude-mini-session": "sid", "x-claude-mini-cwd": "/home/me/project", "anthropic-version": "2023-06-01"} {
+		hr.Header.Set(k, v)
+	}
+	r := &req{Request: hr, conn: &serveConn{device: &serveDevice{ID: devID(f.dev["ana"])}}, rid: "r", body: []byte(`{"model":"m"}`), provider: "gw"}
+	f.s.admitEvent(r, "m")
+	uw := &usageWriter{ResponseWriter: httptest.NewRecorder()}
+	if st := f.s.passthrough(uw, r, serveGateway{Name: "gw", BaseURL: up.URL, Insecure: true}, gwModel{id: "m"}); st != 200 {
+		t.Fatal(st)
+	}
+	if got == nil || got.Get("anthropic-version") != "2023-06-01" {
+		t.Fatalf("the upstream was not reached as expected: %v", got)
+	}
+	for k, v := range got {
+		if strings.HasPrefix(strings.ToLower(k), "x-claude-mini-") || strings.Contains(strings.Join(v, ","), "secret-branch") {
+			t.Errorf("header %s: %v reached the provider", k, v)
+		}
+	}
+}

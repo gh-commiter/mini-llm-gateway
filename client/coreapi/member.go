@@ -103,6 +103,13 @@ type UsageRowJSON struct {
 	UnknownDuration      int64   `json:"unknownDurationEvents"`
 	CacheReadTokens      int64   `json:"cacheReadTokens"`
 	CacheWriteTokens     int64   `json:"cacheWriteTokens"`
+	// Labels (only in a report asked with labels=1; data, never permissions) and where each came from.
+	Phase          string `json:"phase,omitempty"`
+	Activity       string `json:"activity,omitempty"`
+	Task           string `json:"task,omitempty"`
+	PhaseSource    string `json:"phaseSource,omitempty"`
+	ActivitySource string `json:"activitySource,omitempty"`
+	TaskSource     string `json:"taskSource,omitempty"`
 }
 
 type UsageGapJSON struct {
@@ -130,12 +137,16 @@ func UsageJSON(rep core.UsageReport) map[string]any {
 				total = nil
 			}
 		}
-		rows = append(rows, UsageRowJSON{costString(total), r.EstimatedEvents, r.SubscriptionEvents, r.UnknownBillingEvents, r.Provider, costString(r.ReportedCost), costString(r.EstimatedCost), r.UnknownCost, r.Day, r.Model, r.UserID, r.UserName, r.ProjectID, r.Events, r.TokensIn, r.TokensOut, r.UnknownTokens, r.Nested, r.Failed, r.ErrorEvents, r.CancelledEvents, r.InterruptedEvents, r.DurationMs, r.FailedDurationMs, r.UnknownDuration, r.CacheReadTokens, r.CacheWriteTokens})
+		rows = append(rows, UsageRowJSON{costString(total), r.EstimatedEvents, r.SubscriptionEvents, r.UnknownBillingEvents, r.Provider, costString(r.ReportedCost), costString(r.EstimatedCost), r.UnknownCost, r.Day, r.Model, r.UserID, r.UserName, r.ProjectID, r.Events, r.TokensIn, r.TokensOut, r.UnknownTokens, r.Nested, r.Failed, r.ErrorEvents, r.CancelledEvents, r.InterruptedEvents, r.DurationMs, r.FailedDurationMs, r.UnknownDuration, r.CacheReadTokens, r.CacheWriteTokens, r.Phase, r.Activity, r.Task, r.PhaseSource, r.ActivitySource, r.TaskSource})
 	}
 	for _, g := range rep.Gaps {
 		gaps = append(gaps, UsageGapJSON{g.Count, g.From, g.To})
 	}
-	return map[string]any{"days": rows, "gaps": gaps, "timezone": "UTC"}
+	out := map[string]any{"days": rows, "gaps": gaps, "timezone": "UTC"}
+	if rep.Truncated { // a report split by label returned only the newest rows
+		out["truncated"] = true
+	}
+	return out
 }
 
 // member serves the member routes. Failures of the device or the principal are the 403 no_project_access; when the
@@ -450,7 +461,7 @@ func (a *API) usageRoute(ctx context.Context, st *core.Store, p core.Principal, 
 		}
 		project = pr.ID
 	}
-	rep, err := st.Usage(ctx, p, project, days)
+	rep, err := st.Usage(ctx, p, project, days, labelQuery(q))
 	if err != nil {
 		return a.errResponse(err)
 	}
@@ -569,4 +580,9 @@ func dependsJSON(ps []core.Project) []map[string]any {
 		out = append(out, map[string]any{"id": p.ID, "slug": p.Slug, "name": p.Name})
 	}
 	return out
+}
+
+// labelQuery reads the label parameters of the usage routes: phase, activity, task (filters) and labels=1 (rows split by label).
+func labelQuery(q url.Values) core.LabelQuery {
+	return core.LabelQuery{Phase: q.Get("phase"), Activity: q.Get("activity"), Task: q.Get("task"), Labels: q.Get("labels") == "1"}
 }

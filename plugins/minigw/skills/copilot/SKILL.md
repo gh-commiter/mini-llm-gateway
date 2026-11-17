@@ -10,6 +10,8 @@ Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need mi
 If the arguments start with `--ro` (or the user asks Copilot only to look, analyse or answer), share the folder read-only:
 put `--minigw-ro` right after `--model claude-copilot` and drop `--ro` from the task.
 
+Labels for the usage reports (optional; the task never fails without them; they need minigw 0.7.16 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, leave them out, an older minigw would pass them on to claude): when you know them, put `--minigw-activity <feature|bugfix|security|refactor|docs|test|release|research|ops>` and `--minigw-phase <plan|do|check|act>` right after `--model <model>`; leave them out when unknown.
+
 `--profile <p>` (or the user names a gateway): use `--model claude-copilot@<p>`, or put `--minigw-profile <p>` right after `--model claude-copilot`. `minigw profiles` lists the gateways.
 
 Run the task with Bash (timeout 600000 ms, or in the background for long work):

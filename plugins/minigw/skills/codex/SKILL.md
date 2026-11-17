@@ -9,6 +9,8 @@ Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need mi
 
 If the arguments start with `--ro` (or the user asks Codex only to look, analyse or answer without changing files), share the folder read-only: put `--minigw-ro` right after `--model claude-codex-gpt-6.1-sol` and drop `--ro` from the task. Otherwise Codex may edit files.
 
+Labels for the usage reports (optional; the task never fails without them; they need minigw 0.7.16 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, leave them out, an older minigw would pass them on to claude): put `--minigw-phase do` right after `--model <model>` (this task is work being done) and, when you know it, `--minigw-activity <feature|bugfix|security|refactor|docs|test|release|research|ops>` (and `--minigw-task <ref>`, e.g. an issue number). Leave out what you do not know.
+
 `--profile <p>` (or the user names a gateway): use `--model claude-codex-gpt-6.1-sol@<p>`, or put `--minigw-profile <p>` right after `--model claude-codex-gpt-6.1-sol`. `minigw profiles` lists the gateways.
 
 Run the task with Bash (timeout 600000 ms, or in the background for long work):

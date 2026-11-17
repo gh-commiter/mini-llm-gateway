@@ -227,7 +227,7 @@ func routerCommand(_ argv: [String]) {
 
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider", "sort", "reason", "team"]
+    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider", "sort", "reason", "team", "by", "phase", "activity", "task"]
     var i = 0
     while i < argv.count {
         let a = argv[i]
@@ -498,7 +498,7 @@ func routerCommand(_ argv: [String]) {
             try cmd.run(pos, AdminOpts(days: flags["days"] ?? "7", user: flags["user"] ?? "", project: flags["project"] ?? "",
                                        model: flags["model"] ?? "", claudeProbe: flags["claude-probe"] ?? "",
                                        provider: flags["provider"] ?? "", device: flags["device"] ?? "", folder: flags["folder"] ?? "", sort: flags["sort"] ?? "",
-                                       json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true", explain: flags["explain"] == "true", reason: flags["reason"] ?? "", team: flags["team"] ?? ""))
+                                       json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true", explain: flags["explain"] == "true", reason: flags["reason"] ?? "", team: flags["team"] ?? "", by: flags["by"] ?? "", phase: flags["phase"] ?? "", activity: flags["activity"] ?? "", task: flags["task"] ?? ""))
         } catch let e as AdminCLIError { fail(e.message, code: e.code) } catch { fail("\(error)") }
 
     default:

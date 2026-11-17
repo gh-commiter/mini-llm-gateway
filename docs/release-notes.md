@@ -1,15 +1,38 @@
 # Release notes
 
-## Unreleased
+## 0.7.16
 
 ### New
 - Mac Settings: a **Teams and projects** pane (a panel): teams (add, rename, path label, archive, people, projects, roles through the team), projects (add, archive, people with the role and where it comes from, set or remove a direct role, git identities, dependencies) and grants between projects. Every access-changing action asks first and says what happens to running agent runs. The admin API answers carry the extra fields it needs (counts, names, `directRole` and `fromTeams`, `memberCount`), `DELETE /teams/{id}/assignments` also takes `?project=&user=`, and the owner's remotes route takes `addRemote` and `removeRemote`. No format change.
 - Mac Settings: a **Knowledge base** pane (a panel, like Users and devices): review the pending submissions of projects and teams with **Accept** and **Reject…** (with a reason), open one to read its text and, for a replacement, the note it replaces, and read the notes and the questions and answers of a project or a team. The admin API gains three read routes for it, `GET /kb/notes`, `GET /kb/notes/{id}` and `GET /kb/faq` (owner only, admin channel only), and the review answers carry the author's and the project's or team's name. The owner reads every class there, `private` notes included. The panel format gained a `record` element, a list `scope` picker, a `when` for a record in a detail page and an empty JSON body (`"body": {}`).
+- Usage by phase, activity and task: a run can carry three optional labels, `--minigw-phase` (suggested: plan, do, check, act), `--minigw-activity` (feature, bugfix, security, refactor, docs, test, release, research, ops) and `--minigw-task` (an issue number, a branch), or `MINIGW_PHASE`, `MINIGW_ACTIVITY`, `MINIGW_TASK`. A label never refuses or delays a run: a missing one is stored empty, an unusual value is kept as given when it is a short safe word, and a value that is not one is dropped with one warning line. In a folder linked to a project and inside a git repository, an empty task is filled with the current branch name (marked `branch`; read from the repository's files, no git command runs). Each label records where it came from (`given`, `branch`).
+- `minigw gw usage --by phase|activity|task|project|model` (one or two, comma separated, for example `--by project,phase`) shows requests, share, failures, tokens, cached tokens, cost and failed agent minutes per group; usage without a label is its own row, `(unlabelled)`, with its share. `--phase`, `--activity` and `--task` filter `gw usage`, `gw usage-events`, `gw project-sessions` and `minigw project sessions`; sessions show the labels of their first request. The table shows the top 50 groups and one `(other)` row; `--json` with `--by` gives the same groups and numbers (without `--by` it is the API answer). A report split by label returns at most the newest 5000 rows and says when it was cut. Filter values are matched like stored ones (`--phase Do` finds `do`); a value that is not a safe word matches nothing.
+- The plugin skills for models (ask, codex, review, copilot) tell Claude to set the phase and activity when it knows them (review: check; codex: do) with `--minigw-phase` and `--minigw-activity` (these skills need a client that knows the flags; an older one is told to leave them out).
+
+### Changed
+- The project database schema is now 17 (a snapshot is taken before the migration). An older gateway cannot open it. Old usage rows have no labels. Daily totals older than 400 days (folded) carry none and show as unlabelled.
+- `minigw gw project-sessions` and `minigw project sessions` on the Mac no longer send an empty `after=` on the first page (as on Windows and Linux).
 
 ### Known problems
 - In the Teams and projects pane the "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI: the format has no cell that lists pairs of a team and a role. The structured list is in the answer (`teams`).
 - The Teams and projects pane has only been tried through tests, not in a real window. Team notes (the team's own notes segment) are not shown there, only in the Knowledge base pane.
 - The Knowledge base pane has only been tried through tests, not in a real window. Notes and questions are read, not edited; a replacement shows both texts, not a line difference.
+- Labels are data, never permissions: a member sees them only on sessions and usage already visible to them, and a label filter never widens whose events are read. A call made by hand gets labels only when the caller sets them (or the branch fills the task); classifying unlabelled calls is not done yet.
+- A role of the form `<phase>.<activity>` set by older scripts is not read as labels.
+- The three admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base) are new and have only been tried through tests, not yet looked at in a real window. Windows and Linux have no panel renderer yet (the settings page there is unchanged).
+- A project linked to a subfolder of another project's folder gets no automatic dependency; the owner sets it with `gw project depends add`.
+- Team notes have no `private` class, and only a project admin of the team writes them; there is no owner shortcut into them (the owner reviews submissions and exports bundles).
+- The hooks ask after a commit or a compaction, not at the end of a session: Claude Code gives a hook no way to talk to the model then. A failed hand-in is not retried. Checked by tests of both clients and of the plugin script, but not yet tried in a real Claude Code session (neither on a Mac nor on Windows).
+- Project git identity, team path labels and entry kinds are new and not yet in daily use. `minigw project link` without a slug needs `git` on the computer; on Windows it has only been built, not tried.
+- A replacement of a `faq` entry keeps the kind `faq`, and an import never changes the kind of an existing note: to change a kind, remove the entry and hand it in again.
+- `minigw gw import`: an `INDEX.md` inside a bundle has no size limit of its own (only the 100 MiB total). Import only bundles you made yourself.
+- `minigw kb export` on Windows: the protection of each exported file is still set by path after the file is created through the opened folder; not tested on Windows yet.
+- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- Docker Compose: tried only on arm64; a provider address without a dot such as `http://litellm:4000` is refused, use a network alias with a dot.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.15
 

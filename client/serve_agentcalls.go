@@ -41,8 +41,10 @@ type agentRun struct {
 	ask                bool          // »May ask other models«
 	evID               string        // 0.6.0: usage event of the request that started this run (parent of its nested calls)
 	evUser             int64         // and the user it was attributed to (frozen)
-	proj               *projectCtx   // 0.6.0: notes capability (nil = the run has no project); a nested run inherits the root's
-	addr               string        // 127.0.0.1:port vrat izvajanja
+	phase, activity    string        // labels of the request that started this run: its nested calls carry them
+	task, taskSource   string
+	proj               *projectCtx // 0.6.0: notes capability (nil = the run has no project); a nested run inherits the root's
+	addr               string      // 127.0.0.1:port vrat izvajanja
 }
 
 // asks: izvajanje sme vprašati druge modele (nil = ne).
@@ -133,6 +135,7 @@ func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, m
 		authFile: authFile, ownDir: ownDir, slots: make(chan struct{}, maxNested), ask: ask, addr: ln.Addr().String(), proj: r.project}
 	if r.event != nil {
 		run.evID, run.evUser = r.event.ID, r.event.UserID
+		run.phase, run.activity, run.task, run.taskSource = r.event.Phase, r.event.Activity, r.event.Task, r.event.TaskSource
 	}
 	if p := runOf(r); p != nil {
 		run.chain = append(slices.Clone(p.chain), kind)

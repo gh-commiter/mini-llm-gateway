@@ -55,14 +55,22 @@ type SessionRow struct {
 	UnknownCost   int64         `json:"eventsWithoutCost"`
 	Outcome       string        `json:"outcome"`
 	Incomplete    bool          `json:"incomplete"`
+	// Labels of the session's first request (data, never permissions).
+	Phase          string `json:"phase,omitempty"`
+	Activity       string `json:"activity,omitempty"`
+	Task           string `json:"task,omitempty"`
+	PhaseSource    string `json:"phaseSource,omitempty"`
+	ActivitySource string `json:"activitySource,omitempty"`
+	TaskSource     string `json:"taskSource,omitempty"`
 }
 type SessionPage struct {
 	Sessions []SessionRow `json:"sessions"`
 	Next     string       `json:"next,omitempty"`
 }
 type SessionFilter struct {
-	Days, Limit          int
-	Model, Device, After string
+	Days, Limit           int
+	Model, Device, After  string
+	Phase, Activity, Task string // only sessions whose first request carries this label
 }
 type sessionCursor struct {
 	Start int64
@@ -107,6 +115,7 @@ func (s *Store) AdminSessions(ctx context.Context, project int64, f SessionFilte
 
 type sessionEvent struct {
 	id, parent, device, model, outcome, name, source string
+	labels                                           [6]string
 	user, start                                      int64
 	end, in, out, read, write, cost                  sql.NullInt64
 }
@@ -125,6 +134,10 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 	if f.Limit < 1 || f.Limit > 500 {
 		return page, ErrInvalid{"limit"}
 	}
+	impossible := false
+	if f.Phase, f.Activity, f.Task, impossible = normalizeLabelFilters(f.Phase, f.Activity, f.Task); impossible {
+		return page, nil // a label that cannot exist matches nothing
+	}
 	var cursor sessionCursor
 	if f.After != "" {
 		b, e := base64.RawURLEncoding.DecodeString(f.After)
@@ -133,7 +146,7 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 		}
 	}
 	// Edges are resolved only within authorized rows and frozen attribution.
-	q := `SELECT e.id,COALESCE(e.parent_id,''),e.device_id,e.model,e.outcome,COALESCE(u.name,''),e.cost_source,COALESCE(e.user_id,0),e.start,e.end,e.tokens_in,e.tokens_out,e.cache_read_tokens,e.cache_write_tokens,e.cost_usd_nanos FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.project_id=?`
+	q := `SELECT e.id,COALESCE(e.parent_id,''),e.device_id,e.model,e.outcome,COALESCE(u.name,''),e.cost_source,COALESCE(e.user_id,0),e.start,e.end,e.tokens_in,e.tokens_out,e.cache_read_tokens,e.cache_write_tokens,e.cost_usd_nanos,e.phase,e.activity,e.task,e.phase_source,e.activity_source,e.task_source FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.project_id=?`
 	args := []any{project}
 	if user != 0 {
 		q += ` AND e.user_id=?`
@@ -147,7 +160,7 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 	events := map[string]*sessionEvent{}
 	for rows.Next() {
 		e := new(sessionEvent)
-		if err = rows.Scan(&e.id, &e.parent, &e.device, &e.model, &e.outcome, &e.name, &e.source, &e.user, &e.start, &e.end, &e.in, &e.out, &e.read, &e.write, &e.cost); err != nil {
+		if err = rows.Scan(&e.id, &e.parent, &e.device, &e.model, &e.outcome, &e.name, &e.source, &e.user, &e.start, &e.end, &e.in, &e.out, &e.read, &e.write, &e.cost, &e.labels[0], &e.labels[1], &e.labels[2], &e.labels[3], &e.labels[4], &e.labels[5]); err != nil {
 			rows.Close()
 			return page, err
 		}
@@ -203,10 +216,13 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 		if root.start < from || f.Device != "" && root.device != f.Device {
 			continue
 		}
+		if f.Phase != "" && root.labels[0] != f.Phase || f.Activity != "" && root.labels[1] != f.Activity || f.Task != "" && root.labels[2] != f.Task {
+			continue
+		}
 		if f.After != "" && (root.start > cursor.Start || root.start == cursor.Start && id >= cursor.ID) {
 			continue
 		}
-		r := SessionRow{ID: id, ProjectID: project, UserID: root.user, UserName: root.name, DeviceID: root.device, DeviceName: root.device, Start: fromMs(root.start), Outcome: "ok", Incomplete: root.parent != "", Models: []string{}}
+		r := SessionRow{ID: id, ProjectID: project, UserID: root.user, UserName: root.name, DeviceID: root.device, DeviceName: root.device, Start: fromMs(root.start), Outcome: "ok", Incomplete: root.parent != "", Models: []string{}, Phase: root.labels[0], Activity: root.labels[1], Task: root.labels[2], PhaseSource: root.labels[3], ActivitySource: root.labels[4], TaskSource: root.labels[5]}
 		open, match, interrupted := false, f.Model == "", false
 		models := map[string]bool{}
 		var cost, reported, estimated SessionMetric

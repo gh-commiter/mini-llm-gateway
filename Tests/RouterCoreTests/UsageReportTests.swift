@@ -30,7 +30,8 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
                 try cmd.run(c["args"] as! [String], AdminOpts(days: o["days"] as? String ?? "7", model: o["model"] as? String ?? "",
                                                               provider: o["provider"] as? String ?? "", device: o["device"] as? String ?? "",
                                                               folder: o["folder"] as? String ?? "", sort: o["sort"] as? String ?? "", json: o["json"] as? Bool ?? false,
-                                                              csv: o["csv"] as? Bool ?? false))
+                                                              csv: o["csv"] as? Bool ?? false, by: o["by"] as? String ?? "", phase: o["phase"] as? String ?? "",
+                                                              activity: o["activity"] as? String ?? "", task: o["task"] as? String ?? ""))
             } catch let e as AdminCLIError { exit = e.code; errText = "minigw: " + e.message + "\n" }
             let want = c["want"] as! [String: Any]
             #expect(outText == want["out"] as! String, "\(name): stdout")

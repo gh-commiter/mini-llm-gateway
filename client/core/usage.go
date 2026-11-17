@@ -56,6 +56,13 @@ type UsageEvent struct {
 	TokensIn           int64          `json:"tokensIn"`
 	TokensOut          int64          `json:"tokensOut"`
 	TokenSource        string         `json:"tokenSource"` // reported, estimated, unknown
+	// Labels of the run (see labels.go); data for reports, never permissions.
+	Phase          string `json:"phase,omitempty"`
+	Activity       string `json:"activity,omitempty"`
+	Task           string `json:"task,omitempty"`
+	PhaseSource    string `json:"phaseSource,omitempty"`
+	ActivitySource string `json:"activitySource,omitempty"`
+	TaskSource     string `json:"taskSource,omitempty"`
 }
 
 func migrate3(tx *sql.Tx) error {
@@ -280,6 +287,8 @@ type UsageRow struct {
 	ReportedCost, EstimatedCost                               *int64
 	UnknownCost                                               int64
 	Day                                                       string
+	Phase, Activity, Task                                     string // only in a labelled report (UsageFilter.Labels)
+	PhaseSource, ActivitySource, TaskSource                   string
 	Model                                                     string
 	UserID                                                    int64 // 0 = none
 	UserName                                                  string
@@ -306,18 +315,43 @@ type UsageGap struct {
 type UsageReport struct {
 	Rows []UsageRow
 	Gaps []UsageGap
+	// Truncated: a report split by label returned only the newest maxLabelRows rows.
+	Truncated bool
 }
+
+// maxLabelRows bounds a report split by label (a task such as a branch name can have many values).
+const maxLabelRows = 5000
 
 type UsageFilter struct {
 	User, Project int64
 	Model         string
 	Provider      string
+	// Phase, Activity, Task select events by label (data, never a permission: the other filters, user and project,
+	// are decided by the caller's rights before this). Labels splits the rows by label for a report grouped by them;
+	// folded totals carry no labels and appear as unlabelled rows (none when a label filter is set).
+	Phase, Activity, Task string
+	Labels                bool
 }
 
 // Usage is what a member may see (section 2): project given: an admin sees all events of the project, a developer
 // the own ones, anyone else (reader, grant only, no role) gets ErrNotFound as for an invisible resource; no project:
 // the caller's own events over all projects.
-func (s *Store) Usage(ctx context.Context, p Principal, project int64, days int) (rep UsageReport, err error) {
+// LabelQuery selects by label and splits rows by label (see UsageFilter); it never widens whose events are read.
+type LabelQuery struct {
+	Phase, Activity, Task string
+	Labels                bool
+}
+
+func (l LabelQuery) apply(f UsageFilter) UsageFilter {
+	f.Phase, f.Activity, f.Task, f.Labels = l.Phase, l.Activity, l.Task, l.Labels
+	return f
+}
+
+func (s *Store) Usage(ctx context.Context, p Principal, project int64, days int, lq ...LabelQuery) (rep UsageReport, err error) {
+	var q LabelQuery
+	if len(lq) > 0 {
+		q = lq[0]
+	}
 	lim := s.rate(p.UserID, false) // a read like any other: counted now, answered after the checks (L5)
 	if days < 1 || days > usageRetentionDays {
 		return rep, ErrInvalid{"days"}
@@ -348,7 +382,7 @@ func (s *Store) Usage(ctx context.Context, p Principal, project int64, days int)
 		if lim != nil {
 			return lim
 		}
-		rep, err = s.usageRows(tx, days, f, false, gaps)
+		rep, err = s.usageRows(tx, days, q.apply(f), false, gaps)
 		return err
 	})
 	return
@@ -368,6 +402,10 @@ func (s *Store) AdminUsage(ctx context.Context, days int, f UsageFilter) (rep Us
 }
 
 func (s *Store) usageRows(tx *sql.Tx, days int, f UsageFilter, withFolded, withGaps bool) (UsageReport, error) {
+	var impossible bool
+	if f.Phase, f.Activity, f.Task, impossible = normalizeLabelFilters(f.Phase, f.Activity, f.Task); impossible {
+		return UsageReport{}, nil // a label that cannot exist matches nothing
+	}
 	now := s.now().UTC()
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(days - 1))
 	where, args := []string{"e.start>=?"}, []any{ms(from)}
@@ -383,10 +421,19 @@ func (s *Store) usageRows(tx *sql.Tx, days int, f UsageFilter, withFolded, withG
 	if f.Provider != "" {
 		where, args = append(where, "lower(e.provider)=lower(?)"), append(args, f.Provider)
 	}
-	q := `SELECT strftime('%Y-%m-%d', e.start/1000, 'unixepoch') d, lower(e.provider), e.model, COALESCE(e.user_id,0), COALESCE(u.name,''), COALESCE(e.project_id,0), count(*),
+	for _, l := range []struct{ col, val string }{{"phase", f.Phase}, {"activity", f.Activity}, {"task", f.Task}} {
+		if l.val != "" {
+			where, args = append(where, "e."+l.col+"=?"), append(args, l.val)
+		}
+	}
+	labelCols, labelGroup := `'','','','','',''`, ""
+	if f.Labels {
+		labelCols, labelGroup = `e.phase,e.activity,e.task,e.phase_source,e.activity_source,e.task_source`, `, e.phase, e.activity, e.task, e.phase_source, e.activity_source, e.task_source`
+	}
+	q := `SELECT strftime('%Y-%m-%d', e.start/1000, 'unixepoch') d, lower(e.provider), e.model, COALESCE(e.user_id,0), COALESCE(u.name,''), COALESCE(e.project_id,0), ` + labelCols + `, count(*),
   COALESCE(sum(e.tokens_in),0), COALESCE(sum(e.tokens_out),0), COALESCE(sum(e.cache_read_tokens),0), COALESCE(sum(e.cache_write_tokens),0), sum(e.tokens_in IS NULL AND e.tokens_out IS NULL), sum(e.parent_id IS NOT NULL),
   sum(e.outcome IN('error','cancelled','interrupted')), sum(CASE WHEN e.cost_source='reported' THEN e.cost_usd_nanos END), sum(CASE WHEN e.cost_source='estimated' THEN e.cost_usd_nanos END), sum(e.cost_usd_nanos IS NULL), sum(e.cost_source='estimated'), sum(e.billing_mode='subscription'), sum(e.billing_mode='unknown'), COALESCE(sum(e.duration_ms),0), COALESCE(sum(CASE WHEN e.outcome='error' THEN e.duration_ms END),0), sum(e.duration_ms IS NULL), sum(e.outcome='error'), sum(e.outcome='cancelled'), sum(e.outcome='interrupted')
-FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(where, " AND ") + ` GROUP BY d, lower(e.provider), e.model, e.user_id, e.project_id ORDER BY d DESC, e.model, e.user_id`
+FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(where, " AND ") + ` GROUP BY d, lower(e.provider), e.model, e.user_id, e.project_id` + labelGroup + ` ORDER BY d DESC, e.model, e.user_id`
 	rows, err := tx.Query(q, args...)
 	if err != nil {
 		return UsageReport{}, err
@@ -394,7 +441,7 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 	var rep UsageReport
 	for rows.Next() {
 		var r UsageRow
-		if err := rows.Scan(&r.Day, &r.Provider, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut, &r.CacheReadTokens, &r.CacheWriteTokens, &r.UnknownTokens, &r.Nested, &r.Failed, &r.ReportedCost, &r.EstimatedCost, &r.UnknownCost, &r.EstimatedEvents, &r.SubscriptionEvents, &r.UnknownBillingEvents, &r.DurationMs, &r.FailedDurationMs, &r.UnknownDuration, &r.ErrorEvents, &r.CancelledEvents, &r.InterruptedEvents); err != nil {
+		if err := rows.Scan(&r.Day, &r.Provider, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Phase, &r.Activity, &r.Task, &r.PhaseSource, &r.ActivitySource, &r.TaskSource, &r.Events, &r.TokensIn, &r.TokensOut, &r.CacheReadTokens, &r.CacheWriteTokens, &r.UnknownTokens, &r.Nested, &r.Failed, &r.ReportedCost, &r.EstimatedCost, &r.UnknownCost, &r.EstimatedEvents, &r.SubscriptionEvents, &r.UnknownBillingEvents, &r.DurationMs, &r.FailedDurationMs, &r.UnknownDuration, &r.ErrorEvents, &r.CancelledEvents, &r.InterruptedEvents); err != nil {
 			rows.Close()
 			return rep, err
 		}
@@ -405,7 +452,7 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 		return rep, err
 	}
 	rows.Close()
-	if withFolded {
+	if withFolded && f.Phase == "" && f.Activity == "" && f.Task == "" {
 		fw, fa := []string{"d.day>=?"}, []any{from.Format("2006-01-02")}
 		if f.User != 0 {
 			fw, fa = append(fw, "d.user_id=?"), append(fa, f.User)
@@ -441,6 +488,7 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 	type key struct {
 		day, provider, model string
 		user, project        int64
+		labels               [6]string
 	}
 	merged := map[key]UsageRow{}
 	addCost := func(a, b *int64) (*int64, error) {
@@ -457,7 +505,7 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 		return &n, nil
 	}
 	for _, r := range rep.Rows {
-		k := key{r.Day, r.Provider, r.Model, r.UserID, r.ProjectID}
+		k := key{r.Day, r.Provider, r.Model, r.UserID, r.ProjectID, [6]string{r.Phase, r.Activity, r.Task, r.PhaseSource, r.ActivitySource, r.TaskSource}}
 		if a, ok := merged[k]; ok {
 			a.Events += r.Events
 			a.TokensIn += r.TokensIn
@@ -510,8 +558,14 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 		if a.UserID != b.UserID {
 			return a.UserID < b.UserID
 		}
-		return a.ProjectID < b.ProjectID
+		if a.ProjectID != b.ProjectID {
+			return a.ProjectID < b.ProjectID
+		}
+		return a.Phase+"\x00"+a.Activity+"\x00"+a.Task < b.Phase+"\x00"+b.Activity+"\x00"+b.Task
 	})
+	if f.Labels && len(rep.Rows) > maxLabelRows { // newest first: the oldest rows are the ones left out
+		rep.Rows, rep.Truncated = rep.Rows[:maxLabelRows], true
+	}
 	if !withGaps {
 		return rep, nil
 	}

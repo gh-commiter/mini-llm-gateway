@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,11 +15,15 @@ import (
 	"unicode/utf8"
 )
 
-const usageReportHelp = `minigw gw usage [--days N] [--provider P] [--model M] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
+const usageReportHelp = `minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
+  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels; at most 50 groups and an (other) row); unlabelled usage is its own row; --json gives these groups, not the raw rows
   minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)`
 
 type usageEventRow struct {
 	Day, Provider, Model                                         string
+	Project                                                      int64
+	Phase, Activity, Task                                        string // only in a report asked with labels=1
+	PhaseSource, ActivitySource, TaskSource                      string
 	Events, TokensIn, TokensOut, FailedEvents, EventsWithoutCost int64
 	CacheReadTokens, CacheWriteTokens                            int64
 	EstimatedCostUsd                                             *string
@@ -323,4 +328,254 @@ func usageReportCSV(rows []usageEventRow) string {
 		out += fmt.Sprintf("%s,%s,%s,%d,%d,%d,%d,%s,%s,%d,%d,%d,%d,%d,%d,%d\n", csvCell(k[0], true), csvCell(k[1], true), csvCell(k[2], true), s.events, s.failed, s.in, s.out, cost, estimated, s.unknown, s.errors, s.durationMs, s.failedMs, s.unknownMs, s.cachedIn, s.cachedOut)
 	}
 	return out
+}
+
+// usageByDims are the dimensions of minigw gw usage --by.
+var usageByDims = []string{"phase", "activity", "task", "project", "model"}
+
+// parseUsageBy checks --by: one or two different dimensions, comma separated.
+func parseUsageBy(v string) ([]string, bool) {
+	parts := strings.Split(v, ",")
+	if len(parts) < 1 || len(parts) > 2 {
+		return nil, false
+	}
+	for i, d := range parts {
+		if !slices.Contains(usageByDims, d) || i == 1 && d == parts[0] {
+			return nil, false
+		}
+	}
+	return parts, true
+}
+
+// byLabels: does --by need the rows split by label (labels=1)?
+func byLabels(by []string) bool {
+	return slices.Contains(by, "phase") || slices.Contains(by, "activity") || slices.Contains(by, "task")
+}
+
+const unlabelled = "(unlabelled)"
+
+// maxByGroups: the table and the grouped JSON show this many groups; the rest is one "(other)" row, so shares add up.
+const maxByGroups = 50
+
+// usageByValue is the value of one dimension of a row, with the source of a task's label: the display text adds
+// " (branch)" to a task taken from the branch; raw is the value alone ("(unlabelled)" for no label).
+func usageByValue(r usageEventRow, dim string, projects map[int64]string) (display, raw, source string) {
+	v := ""
+	switch dim {
+	case "phase":
+		v = r.Phase
+	case "activity":
+		v = r.Activity
+	case "task":
+		v, source = r.Task, r.TaskSource
+	case "model":
+		return r.Model, r.Model, ""
+	case "project":
+		switch {
+		case r.Project == 0:
+			v = "(no project)"
+		case projects[r.Project] != "":
+			v = projects[r.Project]
+		default:
+			v = strconv.FormatInt(r.Project, 10)
+		}
+		return v, v, ""
+	}
+	if v == "" {
+		return unlabelled, unlabelled, ""
+	}
+	if source == "branch" {
+		return v + " (branch)", v, source
+	}
+	return v, v, source
+}
+
+type byGroup struct {
+	vals, raw, src [2]string
+	sum            usageSum
+}
+
+// usageByGroups: the rows summed per one or two dimensions, ordered by the first dimension's cost (the unlabelled one
+// last), at most maxByGroups groups and one "(other)" group for the rest; with the total of all rows.
+func usageByGroups(rows []usageEventRow, by []string, projects map[int64]string) (groups []byGroup, total usageSum) {
+	byKey := map[[2]string]*byGroup{}
+	for _, r := range rows {
+		var g byGroup
+		for i, d := range by {
+			g.vals[i], g.raw[i], g.src[i] = usageByValue(r, d, projects)
+		}
+		k := g.vals
+		if byKey[k] == nil {
+			byKey[k] = &g
+		}
+		byKey[k].sum.add(r)
+		total.add(r)
+	}
+	keys := make([][2]string, 0, len(byKey))
+	first := map[string]*usageSum{} // the totals of the first dimension: they order the groups
+	for k, g := range byKey {
+		keys = append(keys, k)
+		if first[k[0]] == nil {
+			first[k[0]] = &usageSum{}
+		}
+		first[k[0]].events += g.sum.events
+		first[k[0]].nanos += g.sum.nanos
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a[0] != b[0] {
+			x, y := first[a[0]], first[b[0]]
+			switch {
+			case (a[0] == unlabelled) != (b[0] == unlabelled): // the unlabelled row is last, never hidden
+				return b[0] == unlabelled
+			case x.nanos != y.nanos:
+				return x.nanos > y.nanos
+			case x.events != y.events:
+				return x.events > y.events
+			}
+			return a[0] < b[0]
+		}
+		x, y := byKey[a].sum, byKey[b].sum
+		if x.nanos != y.nanos {
+			return x.nanos > y.nanos
+		}
+		if x.events != y.events {
+			return x.events > y.events
+		}
+		return a[1] < b[1]
+	})
+	var other *byGroup
+	for i, k := range keys {
+		if i < maxByGroups {
+			groups = append(groups, *byKey[k])
+			continue
+		}
+		if other == nil {
+			other = &byGroup{vals: [2]string{"(other)", ""}, raw: [2]string{"(other)", ""}}
+			if len(by) > 1 {
+				other.vals[1], other.raw[1] = "", ""
+			}
+		}
+		other.sum.merge(byKey[k].sum)
+	}
+	if other != nil {
+		groups = append(groups, *other)
+	}
+	return groups, total
+}
+
+// merge adds another sum (the groups folded into "(other)").
+func (s *usageSum) merge(o usageSum) {
+	s.events, s.failed, s.in, s.out, s.unknown, s.nanos = s.events+o.events, s.failed+o.failed, s.in+o.in, s.out+o.out, s.unknown+o.unknown, s.nanos+o.nanos
+	s.cachedIn, s.cachedOut = s.cachedIn+o.cachedIn, s.cachedOut+o.cachedOut
+	s.errors, s.durationMs, s.failedMs, s.unknownMs = s.errors+o.errors, s.durationMs+o.durationMs, s.failedMs+o.failedMs, s.unknownMs+o.unknownMs
+	s.known = s.known || o.known
+	s.estimated, s.reported = s.estimated+o.estimated, s.reported+o.reported
+	s.estimateKnown, s.reportedKnown = s.estimateKnown || o.estimateKnown, s.reportedKnown || o.reportedKnown
+}
+
+func usagePercent(events, all int64) int64 {
+	if all == 0 {
+		return 0
+	}
+	return (events*100 + all/2) / all
+}
+
+// usageByText: the usage numbers per one or two dimensions, a share column (the row's requests of all requests) and a
+// total line; truncated says the API cut the report.
+func usageByText(rows []usageEventRow, gaps []usageEventGap, by []string, projects map[int64]string, truncated bool) string {
+	if len(rows) == 0 {
+		return "no events\n"
+	}
+	groups, total := usageByGroups(rows, by, projects)
+	withFailedTime, withCache := total.failedMs > 0, total.cachedIn > 0
+	head, right := append([]string{}, by...), make([]bool, len(by))
+	head, right = append(head, "requests", "share", "failed"), append(right, true, true, true)
+	if withFailedTime {
+		head, right = append(head, "failed min"), append(right, true)
+	}
+	head, right = append(head, "tokens in"), append(right, true)
+	if withCache {
+		head, right = append(head, "cached in"), append(right, true)
+	}
+	head, right = append(head, "tokens out", "cost USD"), append(right, true, false)
+	var table [][]string
+	for _, g := range groups {
+		s := g.sum
+		row := []string{oneLine(g.vals[0])}
+		if len(by) > 1 {
+			row = append(row, oneLine(g.vals[1]))
+		}
+		row = append(row, strconv.FormatInt(s.events, 10), fmt.Sprintf("%d%%", usagePercent(s.events, total.events)), strconv.FormatInt(s.failed, 10))
+		if withFailedTime {
+			ft := "-"
+			if s.failedMs > 0 {
+				ft = minutes(s.failedMs)
+			}
+			row = append(row, ft)
+		}
+		row = append(row, human(s.in))
+		if withCache {
+			row = append(row, human(s.cachedIn))
+		}
+		table = append(table, append(row, human(s.out), s.cost()))
+	}
+	totalIn := human(total.in) + " tokens in, "
+	if withCache {
+		totalIn += human(total.cachedIn) + " cached in, "
+	}
+	out := usageTable(head, table, right) + fmt.Sprintf("\ntotal: %d requests (%d failed), %s%s tokens out, cost USD %s%s\n", total.events, total.failed, totalIn, human(total.out), total.cost(), total.failedSummary())
+	if truncated {
+		out += "the report was cut: only the newest 5000 rows were returned; narrow it with --days or a filter\n"
+	}
+	for _, g := range gaps {
+		out += fmt.Sprintf("%d events lost between %s and %s (UTC)\n", g.Count, g.From.UTC().Format("2006-01-02 15:04"), g.To.UTC().Format("2006-01-02 15:04"))
+	}
+	return out
+}
+
+// usageByJSON: the same groups and numbers as the table, as JSON (keys sorted); costs are decimal USD strings or null.
+func usageByJSON(rows []usageEventRow, gaps []usageEventGap, by []string, projects map[int64]string, truncated bool) string {
+	groups, total := usageByGroups(rows, by, projects)
+	nanos := func(known bool, n int64) any {
+		if !known {
+			return nil
+		}
+		return fmt.Sprintf("%d.%09d", n/1_000_000_000, n%1_000_000_000)
+	}
+	numbers := func(s usageSum) map[string]any {
+		return map[string]any{"requests": s.events, "share": usagePercent(s.events, total.events), "failed": s.failed, "errors": s.errors, "tokensIn": s.in, "tokensOut": s.out,
+			"cacheReadTokens": s.cachedIn, "failedDurationMs": s.failedMs, "eventsWithoutCost": s.unknown,
+			"reportedCostUsd": nanos(s.reportedKnown, s.reported), "estimatedCostUsd": nanos(s.estimateKnown, s.estimated)}
+	}
+	var gs []map[string]any
+	for _, g := range groups {
+		m := numbers(g.sum)
+		for i, d := range by {
+			m[d] = g.raw[i]
+			if g.src[i] != "" {
+				m[d+"Source"] = g.src[i]
+			}
+		}
+		gs = append(gs, m)
+	}
+	gl := []map[string]any{}
+	for _, g := range gaps {
+		gl = append(gl, map[string]any{"count": g.Count, "from": g.From.UTC().Format(time.RFC3339), "to": g.To.UTC().Format(time.RFC3339)})
+	}
+	if gs == nil {
+		gs = []map[string]any{}
+	}
+	out := map[string]any{"by": by, "groups": gs, "total": numbers(total), "gaps": gl, "timezone": "UTC"}
+	if truncated {
+		out["truncated"] = true
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+// usageTruncated: did the API cut a report split by label?
+func usageTruncated(data []byte) bool {
+	var r struct{ Truncated bool }
+	return json.Unmarshal(data, &r) == nil && r.Truncated
 }

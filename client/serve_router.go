@@ -294,6 +294,10 @@ func routerCommand(args []string, in io.Reader) {
 	legacy := fs.Bool("legacy", false, "usage: the counters per folder and device")
 	reason := fs.String("reason", "", "submission rejection reason")
 	evTeam := fs.String("team", "", "kb review: only the notes of this team")
+	evBy := fs.String("by", "", "usage: group by phase, activity, task, project or model (one or two, comma separated)")
+	evPhase := fs.String("phase", "", "usage, usage-events, project-sessions: only this phase")
+	evActivity := fs.String("activity", "", "usage, usage-events, project-sessions: only this activity")
+	evTask := fs.String("task", "", "usage, usage-events, project-sessions: only this task")
 	explain := fs.Bool("explain", false, "member list: show membership origins")
 	history := fs.Bool("history", false, "quota: recorded probes, without fetching")
 	claudeProbe := fs.String("claude-probe", "", "quota: on or off (the Claude quota probe)")
@@ -523,7 +527,7 @@ func routerCommand(args []string, in io.Reader) {
 
 	case "usage":
 		if !*legacy {
-			coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, provider: *evProvider, device: *device, folder: *folder, sort: *evSort, json: *asJSON, csv: *asCSV})
+			coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, provider: *evProvider, device: *device, folder: *folder, sort: *evSort, json: *asJSON, csv: *asCSV, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask})
 			break
 		}
 		if len(pos) != 1 || *asJSON || *asCSV || *evModel != "" || *evProvider != "" || *evSort != "" || *evUser != "" || *evProject != "" {
@@ -824,7 +828,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota":
-		coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON})
+		coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

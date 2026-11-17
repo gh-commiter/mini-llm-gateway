@@ -33,7 +33,11 @@ enum SessionHistory {
             let partial = (d["eventsWithoutCost"]?.int ?? 0) > 0 && d["costUsd"]?.string != nil ? "+?" : ""
             let models = (d["models"]?.array ?? []).compactMap(\.string).joined(separator: ",")
             let duration = (d["durationMs"]?.int).map { "\($0)ms" } ?? "unknown"
-            return ProjectText.clean("\(s("id"))  \(time("start"))  \(s("userName"))  \(s("deviceName"))  \(models)  \(s("outcome"))  \(d["requests"]?.int ?? 0) requests  \(metric(d,"tokensIn")) in  \(metric(d,"tokensOut")) out  \(metric(d,"cacheReadTokens")) cache-read  \(metric(d,"cacheWriteTokens")) cache-write  USD \(s("costUsd"))\(partial) (reported \(s("reportedCostUsd")), estimated \(s("estimatedCostUsd")), \(d["eventsWithoutCost"]?.int ?? 0) unknown)  \(d["projectId"]?.int ?? 0)  end \(time("end"))  wall \(duration)") + "\n"
+            var labels = ""
+            for (name, key, src) in [("phase", "phase", ""), ("activity", "activity", ""), ("task", "task", "taskSource")] {
+                if let v = d[key]?.string, !v.isEmpty { labels += "  " + name + " " + v + (src.isEmpty ? "" : (d[src]?.string == "branch" ? " (branch)" : "")) }
+            }
+            return ProjectText.clean("\(s("id"))  \(time("start"))  \(s("userName"))  \(s("deviceName"))  \(models)  \(s("outcome"))  \(d["requests"]?.int ?? 0) requests  \(metric(d,"tokensIn")) in  \(metric(d,"tokensOut")) out  \(metric(d,"cacheReadTokens")) cache-read  \(metric(d,"cacheWriteTokens")) cache-write  USD \(s("costUsd"))\(partial) (reported \(s("reportedCostUsd")), estimated \(s("estimatedCostUsd")), \(d["eventsWithoutCost"]?.int ?? 0) unknown)  \(d["projectId"]?.int ?? 0)  end \(time("end"))  wall \(duration)\(labels)") + "\n"
         }.joined()
     }
 

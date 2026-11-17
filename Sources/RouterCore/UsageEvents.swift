@@ -33,6 +33,8 @@ struct UsageEvent: Sendable {
     var durationMs: Int64?       // dispatch to finish (not admission or queue time); nil = unknown
     var upstreamStatus = 0       // the HTTP status the upstream answered; 0 = none
     var errorKind = ""           // http, limit, timeout, unreachable, stream, exit, other: only with outcome error, never an error text
+    /// Labels of the run (phase, activity, task; taskSource given/branch): data for reports, never permissions. The core applies its own limits.
+    var phase = "", activity = "", task = "", taskSource = ""
 
     var json: [String: Any] {
         var o: [String: Any] = ["id": id, "start": Self.iso(start), "provider": provider, "model": model, "outcome": outcome,
@@ -52,6 +54,10 @@ struct UsageEvent: Sendable {
         if userId != 0 { o["userId"] = userId }
         if projectId != 0 { o["projectId"] = projectId }
         if !deviceId.isEmpty { o["deviceId"] = deviceId }
+        if !phase.isEmpty { o["phase"] = phase }
+        if !activity.isEmpty { o["activity"] = activity }
+        if !task.isEmpty { o["task"] = task }
+        if !taskSource.isEmpty { o["taskSource"] = taskSource }
         return o
     }
 }
@@ -335,9 +341,14 @@ extension Router {
             e.deviceId = d.id
             e.userId = await usageSender.user(of: d.id)
         }
+        // Labels of the run: data for reports, never a reason to refuse; the core drops what is not a safe token.
+        func label(_ name: String) -> String { String((req.header(name) ?? "").prefix(128)) }
+        e.phase = label("x-claude-mini-phase"); e.activity = label("x-claude-mini-activity")
+        e.task = label("x-claude-mini-task"); e.taskSource = label("x-claude-mini-task-source")
         if let run = AgentRun.current {  // a nested call: the caller's event is the parent; its user and project are inherited
             e.parentId = run.evID; e.userId = run.evUser
             e.projectId = run.project?.project ?? 0
+            (e.phase, e.activity, e.task, e.taskSource) = run.labels
         }
         state.admit(e)
     }
