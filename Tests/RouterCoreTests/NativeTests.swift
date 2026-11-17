@@ -320,11 +320,17 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let start2 = Date()
     let ss = await run("perl -MPOSIX -e 'POSIX::setsid(); $0 = \"\(mark)\"; sleep 600' & echo started")
     #expect(ss.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start2) < 300)
-    try await Task.sleep(for: .milliseconds(300))
-    let left = Process(), pipe = Pipe()
-    left.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep"); left.arguments = ["-f", mark]; left.standardOutput = pipe
-    try left.run(); left.waitUntilExit()
-    #expect(left.terminationStatus == 1)  // nič ne ostane
+    // the stop is asked for before the answer; wait (deadline 10 s) until pgrep finds nothing
+    var leftStatus: Int32 = 0
+    for _ in 0..<200 {
+        let left = Process(), pipe = Pipe()
+        left.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep"); left.arguments = ["-f", mark]; left.standardOutput = pipe
+        try left.run(); left.waitUntilExit()
+        leftStatus = left.terminationStatus
+        if leftStatus == 1 { break }
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    #expect(leftStatus == 1)  // nič ne ostane
 }
 
 /// #73 N2: proces v ozadju zapre cevi (tok se konča takoj), skupina pa še živi: odgovor (in z njim odstranitev začasne
@@ -355,7 +361,8 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let pids = dir.appendingPathComponent("pids")
     let script = "sleep 600 & echo $! >> '\(pids.path)'; perl -MPOSIX -e 'POSIX::setsid(); sleep 600' & echo $! >> '\(pids.path)'; sleep 600"
     let task = Task { try await Codex.run("/bin/sh", args: ["-c", script], cwd: dir, prompt: "", output: dir.appendingPathComponent("out")) }
-    try await Task.sleep(for: .seconds(1))
+    // both background pids must be written before the cancel (deadline 20 s), or the test checks nothing
+    for _ in 0..<400 where ((try? String(contentsOf: pids, encoding: .utf8)) ?? "").split(whereSeparator: \.isNewline).count < 2 { try await Task.sleep(for: .milliseconds(50)) }
     let start = Date()
     task.cancel()
     await #expect(throws: Codex.Failure.self) { try await task.value }
@@ -526,7 +533,11 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     }
     let unix = try listener(["-lU", sock]), tcp = try listener(["-lk", "127.0.0.1", String(port)])
     defer { unix.terminate(); tcp.terminate() }
-    Thread.sleep(forTimeInterval: 0.5)
+    // wait (deadline 10 s) until the listeners are up: the unix one accepts only once (no -k), so wait for its socket file, the tcp one is probed by connecting
+    for _ in 0..<100 {
+        if FileManager.default.fileExists(atPath: sock), try connect(["-z", "127.0.0.1", String(port)], sandboxed: false) == 0 { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
     #expect(try connect(["-U", sock], sandboxed: true) != 0)
     #expect(try connect(["-z", "127.0.0.1", String(port)], sandboxed: true) != 0)
     #expect(try connect(["-U", sock], sandboxed: false) == 0)  // kontrola: poslušalca sta tam
