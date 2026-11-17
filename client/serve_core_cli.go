@@ -26,6 +26,7 @@ const coreHelp = `
   minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to
   minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
   minigw gw project remote list <project> | add <project> <url> | remove <project> <url>   git remotes registered for a project
+  minigw gw project depends list <project> | add <project> <other> | remove <project> <other>   <project> depends on <other>: its members' search also covers <other> as far as they may read it
   minigw gw team add <name> | list | rename <team> <name> | archive <team>
   minigw gw team path <team> <label>                    free-text path label of a team ("-" clears it)
   minigw gw team member add|remove <team> <user>
@@ -198,6 +199,30 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 				fail("the gateway did not name the remote")
 			}
 			say(clean(fmt.Sprintf("%s %s %s project %s", verb, ids[0], prep, pos[3])))
+		case pos[1] == "depends" && (pos[2] == "list" && len(pos) == 4 || (pos[2] == "add" || pos[2] == "remove") && len(pos) == 5):
+			base := "/projects/" + id(projectID(a, pos[3]), 10) + "/depends"
+			if pos[2] == "list" {
+				var r struct{ Depends, UsedBy []coreProject }
+				a.do("GET", base, nil, &r)
+				for _, p := range r.Depends {
+					say(clean("depends on " + p.Slug))
+				}
+				for _, p := range r.UsedBy {
+					say(clean("used by " + p.Slug))
+				}
+				if len(r.Depends)+len(r.UsedBy) == 0 {
+					say("no dependencies")
+				}
+				break
+			}
+			path := base + "/" + id(projectID(a, pos[4]), 10)
+			if pos[2] == "add" {
+				a.do("PUT", path, nil, nil)
+				say(clean(pos[3] + " depends on " + pos[4]))
+			} else {
+				a.do("DELETE", path, nil, nil)
+				say(clean(pos[3] + " no longer depends on " + pos[4]))
+			}
 		default:
 			fail(strings.TrimSpace(coreHelp))
 		}

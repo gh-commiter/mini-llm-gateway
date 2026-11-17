@@ -31,6 +31,7 @@ minigw project link [<slug>]                link this folder (and its subfolders
 minigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)
 minigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin
 minigw project remote remove <url> [<slug>]
+minigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them
 minigw project unlink                       remove the link that applies here
 minigw project show                         the link that applies here, and why
 minigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]`
@@ -307,6 +308,8 @@ func (e *projectEnv) project(args []string) error {
 		return e.link(pos[0])
 	case "remote":
 		return e.remote(pos, *here)
+	case "depends":
+		return e.depends(pos)
 	case "unlink":
 		if len(pos) != 0 {
 			return errors.New("usage: minigw project unlink")
@@ -1023,5 +1026,42 @@ func (e *projectEnv) remote(pos []string, here bool) error {
 		return errors.New("the gateway did not name the remote")
 	}
 	e.say(clean(fmt.Sprintf("%s %s %s project %s", verb, ids[0], prep, slug)))
+	return nil
+}
+
+// depends: minigw project depends [<slug>]: the dependencies of a project that the caller can read.
+func (e *projectEnv) depends(pos []string) error {
+	if len(pos) > 1 {
+		return errors.New("usage: minigw project depends [<slug>]")
+	}
+	var c connection
+	var project int64
+	if len(pos) == 1 {
+		c, _ = e.connect()
+		var err error
+		if project, err = e.projectIDOf(c, pos[0]); err != nil {
+			return err
+		}
+	} else {
+		cc, link, err := e.linkedProject("")
+		if err != nil {
+			return err
+		}
+		c, project = cc, link.Project
+	}
+	st, data, h := e.do(c, "GET", fmt.Sprintf("%s/%d/depends", apiProjects, project), nil, nil)
+	if st != 200 {
+		return gatewayError(st, data, h)
+	}
+	var r struct{ Depends []struct{ Slug string } }
+	if err := json.Unmarshal(data, &r); err != nil {
+		return err
+	}
+	for _, d := range r.Depends {
+		e.say(clean("depends on " + d.Slug))
+	}
+	if len(r.Depends) == 0 {
+		e.say("no dependencies")
+	}
 	return nil
 }

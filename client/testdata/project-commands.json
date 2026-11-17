@@ -371,7 +371,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -392,7 +392,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -414,7 +414,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "unknown command minigw project frobnicate\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "error": "unknown command minigw project frobnicate\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -1571,7 +1571,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -1594,7 +1594,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -1617,7 +1617,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -1641,7 +1641,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
+    "error": "usage:\nminigw project list [--archived] [--path <prefix>] [--json]   the projects you can see (role, and what a grant gives you); --path: only those of your teams whose path label starts with the prefix\nminigw project link [<slug>]                link this folder (and its subfolders) to a project you are a member of; without a slug the project is found by this folder's git remote\nminigw project remote list [<slug>]         the git remotes registered for a project (default: the linked one)\nminigw project remote add <url>|--here [<slug>]   register a git remote (project admin); --here: this folder's origin\nminigw project remote remove <url> [<slug>]\nminigw project depends [<slug>]             the projects this project depends on that you can read (default: the linked one); a search of the project also covers them\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why\nminigw project sessions [<project>] [--days n] [--model m] [--device d] [--json]",
     "requests": [],
     "links": [
      "fakture:7@proj"
@@ -5146,6 +5146,103 @@
     "out": "",
     "err": "",
     "error": "usage: give either a project or --team <team>",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "project depends",
+   "args": [
+    "project",
+    "depends",
+    "shop"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/shop",
+     "status": 200,
+     "body": "{\"id\":3,\"slug\":\"shop\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/depends",
+     "status": 200,
+     "body": "{\"depends\":[{\"id\":4,\"slug\":\"web\",\"name\":\"Web\"}]}"
+    }
+   ],
+   "want": {
+    "out": "depends on web\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/shop",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/depends",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project depends none",
+   "args": [
+    "project",
+    "depends",
+    "shop"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/shop",
+     "status": 200,
+     "body": "{\"id\":3,\"slug\":\"shop\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/depends",
+     "status": 200,
+     "body": "{\"depends\":[]}"
+    }
+   ],
+   "want": {
+    "out": "no dependencies\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/shop",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/depends",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project depends usage",
+   "args": [
+    "project",
+    "depends",
+    "a",
+    "b"
+   ],
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage: minigw project depends [<slug>]",
     "requests": [],
     "links": []
    }

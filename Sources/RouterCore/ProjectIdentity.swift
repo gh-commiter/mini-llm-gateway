@@ -72,6 +72,24 @@ extension ProjectEnv {
         return JSONValue.parse(r.data)?.dict["id"]?.int ?? 0
     }
 
+    /// minigw project depends [<slug>]: the dependencies of a project that the caller can read.
+    func depends(_ pos: [String]) throws {
+        guard pos.count <= 1 else { throw ProjectError("usage: minigw project depends [<slug>]") }
+        let c: ProjectConn, project: Int64
+        if let ref = pos.first {
+            (c, _) = connect()
+            project = try projectIDOf(c, ref)
+        } else {
+            let linked = try linkedProject("")
+            c = linked.0; project = linked.1.project
+        }
+        let r = request(c, "GET", "\(Self.apiProjects)/\(project)/depends")
+        guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+        guard let list = JSONValue.parse(r.data)?.dict["depends"]?.array else { throw Self.malformed }
+        for d in list { say(ProjectText.clean("depends on " + (d.dict["slug"]?.string ?? ""))) }
+        if list.isEmpty { say("no dependencies") }
+    }
+
     /// minigw project remote list [<slug>] | add <url>|--here [<slug>] | remove <url> [<slug>]
     func remote(_ pos: [String], here: Bool) throws {
         let usage = ProjectError("usage:\n" + Self.projectHelp)
