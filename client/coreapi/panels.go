@@ -62,6 +62,9 @@ var panelSymbols = []string{"person.2", "person.3", "folder", "book", "tray", "g
 //go:embed panels/strings/*.json
 var builtinStringFiles embed.FS
 
+// builtinPanelOrder: the order of the built-in panels in GET /panels and so in the sidebar.
+var builtinPanelOrder = []string{"builtin.users.json", "builtin.kb.json"}
+
 func builtinProvider() PanelProvider {
 	p := PanelProvider{ID: "builtin", Routes: BuiltinRoutes, Strings: map[string]map[string]string{}}
 	sents, _ := builtinStringFiles.ReadDir("panels/strings")
@@ -71,10 +74,21 @@ func builtinProvider() PanelProvider {
 			p.Strings[strings.TrimSuffix(e.Name(), ".json")] = t
 		}
 	}
-	ents, _ := builtinPanelFiles.ReadDir("panels") // sorted by name
+	ents, _ := builtinPanelFiles.ReadDir("panels")
+	files := map[string][]byte{}
 	for _, e := range ents {
-		b, err := builtinPanelFiles.ReadFile("panels/" + e.Name())
-		if err == nil {
+		if b, err := builtinPanelFiles.ReadFile("panels/" + e.Name()); err == nil {
+			files[e.Name()] = b
+		}
+	}
+	for _, name := range builtinPanelOrder { // the order of the sidebar is given here, never by file names
+		if b, ok := files[name]; ok {
+			p.Panels = append(p.Panels, b)
+			delete(files, name)
+		}
+	}
+	for _, e := range ents { // a file that is not listed comes last (a test fails for it)
+		if b, ok := files[e.Name()]; ok {
 			p.Panels = append(p.Panels, b)
 		}
 	}

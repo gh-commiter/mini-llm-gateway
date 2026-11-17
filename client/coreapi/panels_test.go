@@ -476,3 +476,28 @@ func TestKeysBelowTheTopLevelAreExactToo(t *testing.T) {
 		}
 	}
 }
+
+func TestBuiltinPanelOrderIsExplicit(t *testing.T) {
+	ents, _ := builtinPanelFiles.ReadDir("panels")
+	if len(ents) != len(builtinPanelOrder) {
+		t.Fatalf("%d panel files, %d in the order list", len(ents), len(builtinPanelOrder))
+	}
+	var ids []string
+	for _, raw := range builtinProvider().Panels {
+		var d struct{ ID string }
+		json.Unmarshal(raw, &d)
+		ids = append(ids, d.ID)
+	}
+	if !reflect.DeepEqual(ids, []string{"builtin.users", "builtin.kb"}) {
+		t.Fatalf("order %v", ids)
+	}
+	// the answer keeps it
+	r := New(Options{}).Handle(context.Background(), Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/panels"})
+	var o struct {
+		Panels []struct{ Description struct{ ID string } }
+	}
+	json.Unmarshal(r.Body, &o)
+	if len(o.Panels) != 2 || o.Panels[0].Description.ID != "builtin.users" || o.Panels[1].Description.ID != "builtin.kb" {
+		t.Fatalf("%s", r.Body)
+	}
+}

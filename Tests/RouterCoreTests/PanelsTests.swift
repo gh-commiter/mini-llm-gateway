@@ -361,13 +361,13 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
 
     @Test(.enabled(if: haveFixtures)) func theGoAnswerLoads() async throws {
         let c = await catalog(200, String(decoding: try fixture("panels.json"), as: UTF8.self))
-        #expect(c.error == nil && c.entries.map(\.id) == ["builtin.kb", "builtin.users"])
-        let usersEntry = c.entries[1]
+        #expect(c.error == nil && c.entries.map(\.id) == ["builtin.users", "builtin.kb"])  // the order of the answer
+        let usersEntry = c.entries[0]
         #expect(usersEntry.title(c.strings) == "Users and devices" && usersEntry.sidebarSymbol == "person.2" && c.strings.locale == "C")
-        #expect(c.entries[0].title(c.strings) == "Knowledge base" && c.entries[0].sidebarSymbol == "book")
+        #expect(c.entries[1].title(c.strings) == "Knowledge base" && c.entries[1].sidebarSymbol == "book")
         for e in c.entries { guard case .ready = e.parse else { throw Err.bad } }
         let sl = await catalog(200, String(decoding: try fixture("panels.json"), as: UTF8.self), locale: "sl_SI")
-        #expect(sl.entries[1].title(sl.strings) == "Uporabniki in naprave" && sl.entries[0].title(sl.strings) == "Baza znanja" && sl.strings.locale == "sl_SI" && sl.stringsError == nil)
+        #expect(sl.entries[0].title(sl.strings) == "Uporabniki in naprave" && sl.entries[1].title(sl.strings) == "Baza znanja" && sl.strings.locale == "sl_SI" && sl.stringsError == nil)
     }
 
     @Test(.enabled(if: haveFixtures)) func aMissingKeyIsShownAsTheKeyAndTheLanguageCarriesTheRest() throws {
@@ -404,6 +404,14 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
         await c.load()
         let log = await seen.log
         #expect(log.contains("GET /panels/strings?lang=sl_SI") && c.stringsError == .server("nothing here") && c.strings.text("x.y") == "x.y")
+    }
+
+    @Test(.enabled(if: haveFixtures)) func theOrderOfTheAnswerIsTheOrderOfTheSidebar() async throws {
+        let ds = [try description("builtin.kb"), try description("builtin.users")]
+        let c = await catalog(200, answer(ds))
+        #expect(c.entries.map(\.id) == ["builtin.kb", "builtin.users"])
+        let d = [try description("builtin.users"), try description("builtin.kb")]
+        #expect(await catalog(200, answer(d)).entries.map(\.id) == ["builtin.users", "builtin.kb"])
     }
 
     @Test(.enabled(if: haveFixtures)) func aHigherFormatIsNotGuessed() async throws {
