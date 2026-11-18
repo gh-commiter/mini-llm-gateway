@@ -639,7 +639,7 @@ func TestBundleSourceBinding(t *testing.T) {
 		t.Fatal("wrote notes")
 	}
 	// A dry run names a new source and the origin it would record, and refuses a bound source.
-	report, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "two", DryRun: true})
+	report, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "two", DryRun: true, Adopt: adoptExisting(t, target, file)})
 	source.ok(e)
 	if !strings.Contains(strings.Join(report.Lines, "\n"), "source two, origin "+source.GatewayID()) {
 		t.Fatal(report)
@@ -726,7 +726,7 @@ func TestBundleUserMappingUnicode(t *testing.T) {
 	defer pre.Close()
 	u, e := pre.CreateUser(ctx, "Änne")
 	source.ok(e)
-	_, e = pre.ImportBundle(ctx, BundleImport{Path: file, Source: "u", Map: map[string]string{"ana": "Änne"}})
+	_, e = pre.ImportBundle(ctx, BundleImport{Path: file, Source: "u", Map: map[string]string{"ana": "Änne"}, Adopt: []string{"user:Änne"}})
 	source.ok(e)
 	var author int64
 	source.ok(pre.DB().QueryRow(`SELECT author_id FROM notes`).Scan(&author))
@@ -808,7 +808,7 @@ func TestBundleSkipsLocalSubmission(t *testing.T) {
 		t.Fatal(proposal)
 	}
 	for i := 0; i < 2; i++ {
-		report, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc"})
+		report, e := target.ImportBundle(ctx, BundleImport{Path: file, Source: "testsrc", Adopt: adoptExisting(t, target.Store, file)})
 		target.ok(e)
 		if !strings.Contains(strings.Join(report.Lines, "\n"), "local submission") {
 			t.Fatal(report)

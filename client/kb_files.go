@@ -364,7 +364,9 @@ func bundleRequest(args []string) (string, string, any, error) {
 	dry := fs.Bool("dry-run", false, "")
 	projects := []string{}
 	mapping := map[string]string{}
+	adopt := []string{}
 	fs.Func("project", "", func(s string) error { projects = append(projects, s); return nil })
+	fs.Func("adopt", "", func(s string) error { adopt = append(adopt, strings.Split(s, ",")...); return nil })
 	fs.Func("map", "", func(s string) error {
 		old, name, ok := strings.Cut(s, "=")
 		if !ok || old == "" || name == "" {
@@ -388,7 +390,7 @@ func bundleRequest(args []string) (string, string, any, error) {
 	var body any
 	switch pos[0] {
 	case "export":
-		if *team == "" || *source != "" || *dry || len(mapping) > 0 {
+		if *team == "" || *source != "" || *dry || len(mapping) > 0 || len(adopt) > 0 {
 			return "", "", nil, usage
 		}
 		body = core.BundleExport{Team: *team, Projects: projects, WithPrivate: *private, Path: file}
@@ -396,7 +398,7 @@ func bundleRequest(args []string) (string, string, any, error) {
 		if *source == "" || *team != "" || len(projects) > 0 || *private {
 			return "", "", nil, usage
 		}
-		body = core.BundleImport{Path: file, Source: *source, DryRun: *dry, Map: mapping}
+		body = core.BundleImport{Path: file, Source: *source, DryRun: *dry, Map: mapping, Adopt: adopt}
 	default:
 		return "", "", nil, usage
 	}

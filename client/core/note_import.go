@@ -19,6 +19,14 @@ ALTER TABLE notes ADD COLUMN imported INTEGER NOT NULL DEFAULT 0;`)
 	return err
 }
 
+// migrate21: the objects (projects, teams, users) that an import source created or that the owner adopted for it. An import merges
+// only into these; a name that matches any other local object is a conflict the owner settles with --adopt. The name is kept so that
+// a local rename (or a deleted object whose id is reused) ends the source's claim on the object.
+func migrate21(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE import_objects(source TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN('project','team','user')), id INTEGER NOT NULL, name TEXT NOT NULL, adopted INTEGER NOT NULL DEFAULT 0 CHECK(adopted IN(0,1)), PRIMARY KEY(source,kind,id)) WITHOUT ROWID`)
+	return err
+}
+
 // importReceipt is the last import of one source entry: the note (or submission) it wrote,
 // the content hash, the note revision and class it left behind.
 type importReceipt struct {
@@ -192,6 +200,14 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 				return e
 			}
 		}
+		if r.submission != 0 && pending.Replaces != 0 { // a replacement keeps the kind of the note it replaces, also when a re-import updates it
+			if e = tx.QueryRow(`SELECT entry_kind FROM notes WHERE id=?`, pending.Replaces).Scan(&in.EntryKind); e != nil {
+				return e
+			}
+			if e = checkInput(in); e != nil {
+				return e
+			}
+		}
 		pr := writerProvenance(p, project, in, s.now())
 		pr.SourceKind, pr.SourceReference = SourceImport, path.Base(strings.ReplaceAll(input.Path, "\\", "/"))
 		size := int64(len(in.Title) + len(in.Body))
@@ -222,7 +238,7 @@ func (s *Store) ImportMarkdown(ctx context.Context, p Principal, project int64, 
 				r.revision = replacement.Revision
 				out.Action = "create"
 			} else {
-				_, e := tx.Exec(`UPDATE kb_submissions SET class=?,title=?,body=?,bytes=?,provenance=?,hash=?,received=?,entry_kind=COALESCE(NULLIF(?,''),entry_kind) WHERE id=?`, in.Class, in.Title, in.Body, size, string(b), hash, ms(s.now()), in.EntryKind, r.submission)
+				_, e := tx.Exec(`UPDATE kb_submissions SET class=?,title=?,body=?,bytes=?,provenance=?,hash=?,received=?,entry_kind=COALESCE((SELECT entry_kind FROM notes WHERE id=kb_submissions.replaces),NULLIF(?,''),entry_kind) WHERE id=?`, in.Class, in.Title, in.Body, size, string(b), hash, ms(s.now()), in.EntryKind, r.submission)
 				if e != nil {
 					return e
 				}

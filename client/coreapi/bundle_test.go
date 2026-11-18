@@ -102,12 +102,12 @@ func TestBundlePathRoutes(t *testing.T) {
 	if e = foreign.ExportBundle(bg, core.BundleExport{Team: "Team", Path: file}); e != nil {
 		t.Fatal(e)
 	}
-	body, _ = json.Marshal(core.BundleImport{Path: file, Source: "remotesrc", DryRun: true})
+	body, _ = json.Marshal(core.BundleImport{Path: file, Source: "remotesrc", DryRun: true, Adopt: []string{"team:Team", "project:fakture", "user:ana"}})
 	r = f.api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "POST", Path: "/import", Body: body})
 	if r.Status != 200 || !strings.Contains(string(r.Body), "create src:remotesrc:") {
 		t.Fatal(r.Status, string(r.Body))
 	}
-	body, _ = json.Marshal(core.BundleImport{Path: file, Source: "remotesrc"})
+	body, _ = json.Marshal(core.BundleImport{Path: file, Source: "remotesrc", Adopt: []string{"team:Team", "project:fakture", "user:ana"}})
 	r = f.api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "POST", Path: "/import", Body: body})
 	if r.Status != 200 {
 		t.Fatal(r.Status, string(r.Body))
