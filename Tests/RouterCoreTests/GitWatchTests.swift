@@ -16,14 +16,19 @@ private struct Case: Decodable { let name: String; let start: GitWatch.State; le
     }
 }
 
-private func git(_ dir: String, _ args: String) -> String {
+/// Runs a shell in `dir` with the same git the product uses (Worktree.git, not the /usr/bin shim). A non-zero exit of the shell is a test issue with its output, unless `fails`
+/// says it is expected: a silent `&&` chain that stopped early hid the cause of a flake.
+private func git(_ dir: String, _ args: String, fails: Bool = false, sourceLocation: SourceLocation = #_sourceLocation) -> String {
     let p = Process(), pipe = Pipe()
     p.executableURL = URL(fileURLWithPath: "/bin/sh")
-    p.arguments = ["-c", "export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=n GIT_AUTHOR_EMAIL=a@b GIT_COMMITTER_NAME=n GIT_COMMITTER_EMAIL=a@b; cd '\(dir)' && \(args)"]
+    let gitDir = (Worktree.git as NSString).deletingLastPathComponent
+    p.arguments = ["-c", "export PATH='\(gitDir)':\"$PATH\" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=n GIT_AUTHOR_EMAIL=a@b GIT_COMMITTER_NAME=n GIT_COMMITTER_EMAIL=a@b; cd '\(dir)' && \(args)"]
     p.standardOutput = pipe; p.standardError = pipe
     try? p.run()
     let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
-    return String(decoding: d, as: UTF8.self)
+    let out = String(decoding: d, as: UTF8.self)
+    if p.terminationStatus != 0, !fails { Issue.record("shell exited \(p.terminationStatus): \(args)\n\(out)", sourceLocation: sourceLocation) }
+    return out
 }
 
 // A real repository: what an agent does through the share is reported, the staged protected path leaves the index, the work tree, the commit and MERGE_HEAD stay.
@@ -144,6 +149,28 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     for want in ["1 new commit(s)", "committed a protected path: .envrc"] { #expect(out.contains(want), "missing \(want) in \(out)") }
 }
 
+// An incomplete check never changes the owner's index: the staged paths came from a read that failed in part (a committed .envrc looked staged, 0.7.36 flake).
+@Test func gitWatchLeavesTheIndexAloneWhenTheCheckIsIncomplete() {
+    var s = GitWatch.State(), e = GitWatch.State()
+    s.refs = ["refs/heads/main": "a"]; s.index = ["a.txt": "100644 aaaa 0"]
+    e.refs = ["refs/heads/main": "b"]; e.index = ["a.txt": "100644 aaaa 0", ".envrc": "100644 bbbb 0"]; e.cached = [".envrc"]; e.incomplete = ["history not read in full"]
+    let r = GitWatch.report(start: s, end: e, commits: [], isProtected: { Sync.isProtected($0) })
+    #expect(r.reset.isEmpty)
+    #expect(r.lines.contains { $0.contains("a protected path looks staged: .envrc - NOT removed from the index") })
+    e.incomplete = []
+    #expect(GitWatch.report(start: s, end: e, commits: [], isProtected: { Sync.isProtected($0) }).reset == [".envrc"])
+}
+
+// End to end: HEAD points at a branch that does not exist (diff --cached then lists the whole index, .envrc included) and the tip commit is corrupt (rev-list fails).
+@Test func gitWatchKeepsACommittedPathInTheIndexWhenTheHistoryCannotBeRead() throws {
+    let (root, state) = try watched("inc1"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    let w = try #require(GitWatch.begin(root.path, stateDir: state))
+    _ = git(root.path, "echo 'echo hi' > .envrc && git add .envrc && git commit -qm envrc && git symbolic-ref HEAD refs/heads/ghost && h=$(git rev-parse main) && f=.git/objects/$(echo $h | cut -c1-2)/$(echo $h | cut -c3-) && chmod u+w $f && echo junk > $f")
+    let out = w.finish().joined(separator: "\n")
+    #expect(out.contains("history not read in full") && out.contains("NOT removed from the index"), "\(out)")
+    #expect(git(root.path, "git ls-files -s .envrc").contains(".envrc"), "the watcher took a path out of the index: \(out)")
+}
+
 @Test func gitWatchSaysWhenALimitWasReached() throws {
     var (root, state) = try watched("lim1"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     var w = try #require(GitWatch.begin(root.path, stateDir: state))
@@ -206,7 +233,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     _ = git(root.path, "echo 'echo hi' > .envrc && git add .envrc")
     let out = w.finish(under: lock, wait: 0.2).joined(separator: "\n")
     release.signal()
-    for want in ["INCOMPLETE", "requests of the agent were still running", "staged a protected path: .envrc", "NOT removed from the index"] { #expect(out.contains(want), "missing \(want) in \(out)") }
+    for want in ["INCOMPLETE", "requests of the agent were still running", "a protected path looks staged: .envrc", "NOT removed from the index"] { #expect(out.contains(want), "missing \(want) in \(out)") }
     #expect(!git(root.path, "git ls-files -s .envrc").isEmpty, "the index was restored without the lock")
     #expect(FileManager.default.fileExists(atPath: file), "the baseline is gone")
 }

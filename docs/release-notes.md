@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- After an agent's work, when minigw could not read git completely, it no longer removes a protected path from the index: it warns that the path looks staged and was not removed.
+
 ## 0.7.36
 
 Fixes from a second review of the changes made in 0.7.32.
