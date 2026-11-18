@@ -98,7 +98,7 @@ rm $T/win/roaming/minigw/serve.json; out=$(winrun newer)
 [[ $out == *"is not the current release 0.99.0 (or could not be verified); update it: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi"* ]] || fail "10d: no MSI line for an untrusted client-only install"
 print "ok 10: Windows shims point at the installed minigw; client-only MSI gets the MSI hint"
 
-docker run --rm -v $T:/t:ro debian:stable-slim sh -c '
+docker run --rm -v $T:/t:ro debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 sh -c '
 set -u
 apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl >/dev/null 2>&1
 fail() { echo "FAIL: $*"; exit 1; }
