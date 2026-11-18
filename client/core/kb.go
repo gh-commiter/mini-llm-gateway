@@ -225,9 +225,12 @@ func (s *Store) Submit(ctx context.Context, p Principal, project int64, key stri
 		}
 		chk := in.NoteInput
 		if in.Replaces > 0 { // a replacement keeps the kind of the replaced note: its limits apply
-			if e := tx.QueryRow(`SELECT entry_kind FROM notes WHERE id=?`, in.Replaces).Scan(&chk.EntryKind); e != nil && e != sql.ErrNoRows {
+			// Only of a note the caller may change: any other id answers as a missing one (no kind oracle across projects).
+			_, n, e := writeAccess(tx, p, project, in.Replaces)
+			if e != nil {
 				return e
 			}
+			chk.EntryKind = n.EntryKind
 		}
 		if err := checkInput(chk); err != nil {
 			return err

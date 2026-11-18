@@ -1,6 +1,8 @@
 package core
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -265,5 +267,26 @@ func TestReviewPendingCount(t *testing.T) {
 				t.Fatal(u, p.Pending)
 			}
 		}
+	}
+}
+
+// A replacement's kind limits are checked only for a note the caller may change: another project's faq, another
+// project's finding and a missing id give the same answer (no oracle for which ids exist or are faqs).
+func TestSubmitReplacesNoKindOracle(t *testing.T) {
+	f := newFx(t)
+	other := f.pid["eureko"]
+	faq, _, e := f.Submit(ctx, f.p("cene"), other, "q", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Q?", Body: "A", EntryKind: KindFAQ}})
+	f.ok(e)
+	faq, e = f.ReviewSubmission(ctx, faq.ID, true, "")
+	f.ok(e)
+	finding := f.mk("cene", "eureko", Structure)
+	long := strings.Repeat("x", maxFAQBody+1)
+	var answers []string
+	for i, id := range []int64{faq.NoteID, finding.ID, 999999} {
+		_, _, e := f.Submit(ctx, f.p("ana"), f.pid["fakture"], fmt.Sprint("o", i), SubmissionInput{NoteInput: NoteInput{Class: Data, Title: "t", Body: long}, Replaces: id, Revision: 1})
+		answers = append(answers, fmt.Sprint(e))
+	}
+	if answers[0] != answers[1] || answers[1] != answers[2] || !strings.Contains(answers[0], ErrNotFound.Error()) {
+		t.Fatal(answers)
 	}
 }
