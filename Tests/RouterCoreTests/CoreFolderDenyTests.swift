@@ -116,6 +116,25 @@ func requireCodex() throws -> String {
     #expect(inside.contains("\"\(f.base.path)\"=\"write\"") && inside.contains("\"\(f.core.path)\"=\"none\""))
 }
 
+/// A read-only run on a mount under the denied data folder reads its own folder (read, never write); the rest of the data folder stays none.
+@Test func codexReadOnlyRunReadsItsMountInsideTheDataFolder() throws {
+    let f = try Fixture(); defer { f.cleanup() }
+    let out = f.base.appendingPathComponent("o.txt")
+    let mount = f.app.appendingPathComponent("mounts/uuid-1", isDirectory: true), other = f.app.appendingPathComponent("mounts/uuid-2").path
+    let extra = f.base.appendingPathComponent("extra").path
+    let secret = mount.path + "/.omc/private"
+    let all = Codex.args(cwd: mount, extraDirs: [extra], agent: true, output: out, write: false, deny: f.denied + [secret]).joined(separator: " ")
+    #expect(all.contains("\"\(mount.path)\"=\"read\"") && all.contains("\"\(extra)\"=\"read\""))
+    #expect(all.contains("\"\(f.app.path)\"=\"none\"") && all.contains("\"\(f.core.path)\"=\"none\"") && all.contains("\"\(secret)\"=\"none\""))
+    #expect(!all.contains(other) && !all.contains("=\"write\""))
+    // a deny that is the folder itself wins over the read grant
+    let same = Codex.args(cwd: mount, extraDirs: [], agent: true, output: out, write: false, deny: f.denied + [mount.path]).joined(separator: " ")
+    #expect(same.contains("\"\(mount.path)\"=\"none\"") && !same.contains("\"\(mount.path)\"=\"read\""))
+    // the writing run is as before: write, no read entry for the folder
+    let w = Codex.args(cwd: mount, extraDirs: [], agent: true, output: out, write: true, deny: f.denied).joined(separator: " ")
+    #expect(w.contains("\"\(mount.path)\"=\"write\""))
+}
+
 /// The `-c` pairs of Codex.args that make the profile, for `codex sandbox` (same engine as `codex exec`'s commands).
 private func profileConfig(_ a: [String]) -> [String] {
     var o: [String] = []

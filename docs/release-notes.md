@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- A read-only Codex run on a mounted folder (`minigw --minigw-ro`, direct mode) could not read that folder.
+
 ## 0.7.26
 
 ### New

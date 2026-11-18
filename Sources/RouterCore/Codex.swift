@@ -90,7 +90,7 @@ public enum Codex {
         var a = ["exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", cwd.path, "-o", output.path]
         if let model { a += ["-m", model] }
         let writes = agent && write
-        a += treeProfile(writable: writes ? [cwd.path] + extraDirs + (tmp.map { [$0] } ?? []) : [], gits: writes ? gits : [], deny: deny,
+        a += treeProfile(writable: writes ? [cwd.path] + extraDirs + (tmp.map { [$0] } ?? []) : [], readable: writes ? [] : [cwd.path] + extraDirs, gits: writes ? gits : [], deny: deny,
                          network: writes && network, path: path, directGit: writes && directGit ? cwd.path : nil)
         if !agent { a.append("--ephemeral") }  // naslovi, povzetki: brez zapisa seje
         a += untrustedProjects(cwd)
@@ -130,9 +130,12 @@ public enum Codex {
     /// (git harnessa jih bere zunaj peskovnika). Ukazi agenta: PATH z ovojem, brez GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR
     /// vrhnjega klona (harness Codex jih obdrži, Worktree.claudeEnv).
     /// L1: iskanje repozitorija ne nad klonom; `deny`: mape brez dostopa (L3: podatki aplikacije, kot Go mapa nastavitev).
-    static func treeProfile(writable: [String], gits: [String], deny: [String] = [], network: Bool, path: String, directGit: String? = nil) -> [String] {
+    /// `readable`: the folders of a read-only run (session folder, allowed folders): `read` over a denied PARENT (the mount lives under the app's data folder);
+    /// a deny entry that is the folder itself stays `none`, entries below it are more specific and stay `none` too.
+    static func treeProfile(writable: [String], readable: [String] = [], gits: [String], deny: [String] = [], network: Bool, path: String, directGit: String? = nil) -> [String] {
         var fs = ["/": "read"]  // #67: nič v /tmp (vse pod Scratch; TMPDIR ukazov je .build/tmp klona)
         for d in deny { fs[d] = "none" }
+        for d in readable where !deny.contains(d) { fs[d] = "read" }
         for d in writable { fs[d] = "write" }
         if gits.isEmpty { for d in writable { for n in [".git", ".codex"] { fs[d + "/" + n] = "read" } } }  // brez klona: kot workspace-write
         // #113: nested repositories of the writable folders (found at launch): their .git is read-only as the top-level one; in the direct-mode folder git's own data stays writable
