@@ -13,12 +13,14 @@ Fixes from a pass over the upgrade from 0.7.0 and the first week of team use.
 ### Fixed
 - A new client against an older gateway now says `this gateway is 0.7.5; kb needs 0.7.10 or newer: update the gateway` for the kb and team commands, instead of "not found or not visible" (the `gw upstream` and labels commands talk to the gateway on the same computer and are not covered).
 - The core database keeps, besides its newest three snapshots, the oldest snapshot of the lowest schema for 30 days, so that after an upgrade over many schemas and a few later steps there is still a way back to the version you came from.
-- After an agent's work, when minigw could not read git completely, it no longer removes a protected path from the index: it warns that the path looks staged and was not removed.
+- After an agent's work, when a read of git failed or was cut short, minigw no longer removes a protected path from the index (a failed read could make a committed file look staged, and removing it staged its deletion): it warns that the path looks staged and prints the `git restore --staged` line to run by hand. When only the limit of new commits was reached, the path is removed as before.
 
 ### Known problems
 - Going back to 0.7.0 after this version: 0.7.0 refuses the newer database (models work, projects and notes answer 503). The way back is 0.7.0's `minigw gw core restore <snapshot>` with the `core-8-...db` snapshot that the upgrade wrote next to the database; it is kept for 30 days from this version on. A gateway that came through the earlier betas may no longer have it.
 - The refusal of a submission with hidden characters was tried with the Go client; the Mac client passes the gateway's message through and was not tried.
 - The "update the gateway" hint covers the kb and team commands, not `gw upstream` and `gw labels` (those talk to the gateway on the same computer).
+- The extra snapshot that is kept for 30 days is the oldest one of the lowest schema present: restoring an even older database changes which one that is, and a clock change can end the 30 days early.
+- An emoji joined with a zero-width joiner is shown and accepted when both sides are pictographs, at most seven joiners in a row; a joiner or a variation selector anywhere else is still a hidden character.
 - Why one read of git failed once in a test run (the case the index fix is for) is not known.
 - A note that came from another gateway is recognised by the line the sending gateway adds at its end. Someone who may edit that note can change the line, and the note is then pushed onward as a new one; `upstream status` counts the recognised ones as foreign. There is no loop on its own: each further copy needs another edit.
 - The hidden characters that a review refuses do not include the no-break space and the other special spaces.
