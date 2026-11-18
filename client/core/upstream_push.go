@@ -398,6 +398,11 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		if ctx.Err() != nil { // the time budget of this call is used: the next call goes on (nothing is lost, the receipts are written)
 			return more("time budget of this call used: push again", 0)
 		}
+		if n.Foreign {
+			res.Skipped++
+			line("skip", n, "arrived from another gateway, never pushed onward")
+			continue
+		}
 		if n.Unchanged {
 			res.Skipped++
 			line("skip", n, "unchanged since the last push")

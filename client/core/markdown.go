@@ -112,7 +112,7 @@ func markdownInput(in MarkdownInput) (NoteInput, string, error) {
 	if k := f["import_key"]; strings.HasPrefix(k, "gw:") {
 		key = k
 	}
-	note := NoteInput{Class: c, Title: title, Body: body, EntryKind: f["entry_kind"]}
+	note := NoteInput{Class: c, Title: title, Body: lineEndings(body), EntryKind: f["entry_kind"]}
 	if err = checkInput(note); err == nil {
 		err = checkSize(note)
 	}

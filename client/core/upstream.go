@@ -271,6 +271,8 @@ type UpstreamLinkInfo struct {
 	Label     string             `json:"label"`   // the project's short name, or "team <name>"
 	Pending   int                `json:"pending"` // notes that a push would send now (new or changed)
 	Total     int                `json:"total"`   // published notes the link covers
+	// Foreign: published notes that arrived from another gateway (they end with its trailer): never pushed onward, not in Total.
+	Foreign int `json:"foreign,omitempty"`
 	// Step C: reading the upstream's notes into the mirror (nothing of it is shown to members yet).
 	Read         bool       `json:"read"`
 	ReadClasses  []Class    `json:"readClasses,omitempty"`
@@ -704,6 +706,7 @@ type UpstreamNote struct {
 	Sent       *UpstreamSent
 	Unchanged  bool // sent before with this very content: nothing to send
 	Conflicted bool // publish mode: the upstream note changed there since our last write; waits for `upstream resolve`
+	Foreign    bool // arrived from another gateway (see fromGateway): never sent onward, nothing to send
 }
 
 type UpstreamSent struct {
@@ -766,7 +769,8 @@ const linkCols = `project_id,upstream,remote,remote_team,classes,with_private,la
 type upstreamScan struct {
 	Notes    []UpstreamNote // in id order, from the first note after the cursor: the ones to send (Body set) and the unchanged ones (Unchanged, no Body)
 	Pending  int            // of Notes: how many are to send
-	Total    int            // of Notes
+	Total    int            // of Notes, without the Foreign ones
+	Foreign  int            // of Notes: arrived from another gateway, never sent
 	Overflow bool           // more notes to send follow the last of Notes (limit reached)
 }
 
@@ -810,6 +814,12 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 		for _, n := range page {
 			after = n.ID
 			u := UpstreamNote{ID: n.ID, Class: n.Class, Title: n.Title, Body: n.Body, EntryKind: n.EntryKind, Revision: n.Revision, Author: n.Author, Hash: upstreamHash(n)}
+			if fromGateway(n.Body) {
+				u.Foreign, u.Body = true, ""
+				out.Foreign++
+				out.Notes = append(out.Notes, u)
+				continue
+			}
 			var sent UpstreamSent
 			var at int64
 			switch e := tx.QueryRow(`SELECT hash,revision,remote_sub,remote_note,sent,remote_rev,conflict,conflict_rev FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID).Scan(&sent.Hash, &sent.Revision, &sent.RemoteSub, &sent.RemoteNote, &at, &sent.RemoteRev, &sent.Conflict, &sent.ConflictRev); e {
@@ -839,6 +849,15 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 		}
 	}
 }
+
+// fromGateway: the note arrived from another gateway: its text ends with the trailer every push writes (create, update and submission
+// alike, so an accepted submission too). Such a note is never pushed onward, by an automatic or a manual push, in either mode: not back
+// to the gateway it came from (that would copy it back and forth for ever) and not to any other upstream (a relay its origin never chose).
+// Only a write without the trailer at the end (a member who takes the text over and removes that line) makes it local work again; its
+// copy elsewhere then ends with OUR trailer, so no copy can travel more hops than people made edits. The text is the signal because it is
+// all both sides have: the receiving gateway records no "this user is a gateway" (a device's "gateway, minigw" description is what the
+// device says of itself). A member who ends a note with a trailer by hand only keeps a note they may change or delete anyway from going.
+func fromGateway(body string) bool { return trailerAtEnd.MatchString(body) }
 
 // UpstreamLinks lists the links of one project or team segment (local = 0: all) with how many notes would go.
 func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []UpstreamLinkInfo, err error) {
@@ -878,7 +897,7 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 			if e != nil {
 				return e
 			}
-			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending}
+			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign}
 			if e := readInfo(tx, ms(s.now()), &info); e != nil {
 				return e
 			}

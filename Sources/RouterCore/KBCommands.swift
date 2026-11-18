@@ -192,6 +192,7 @@ extension ProjectEnv {
         let hash = full["reviewHash"]?.string ?? ""
         say(ProjectText.clean("writer \(full["authorName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? String(full["user"]?.int ?? 0))  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)"))
         if !hash.isEmpty { say(ProjectText.clean("version " + hash)) }  // on its own line, to copy whole into kb accept --version
+        if let n = full["hidden"]?.int, n > 0 { say("contains hidden characters: \(n) removed from the text shown; it cannot be accepted (reject it and ask for the text without them)") }
         if let body = full["body"]?.string { say(ProjectText.clean(body)) }
     }
 

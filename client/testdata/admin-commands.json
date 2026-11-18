@@ -3766,6 +3766,60 @@
    }
   },
   {
+   "name": "kb review says what hidden characters were removed",
+   "args": [
+    "kb",
+    "review"
+   ],
+   "opts": {
+    "team": "acme"
+   },
+   "responses": [
+    {
+     "match": "GET /teams",
+     "status": 200,
+     "body": "{\"teams\":[{\"id\":2,\"name\":\"zeta\",\"archived\":false,\"path\":\"\"},{\"id\":1,\"name\":\"acme\",\"archived\":false,\"path\":\"\"}]}"
+    },
+    {
+     "match": "GET /kb/submissions?project=1099511627777&after=0",
+     "status": 200,
+     "body": "{\"submissions\":[{\"id\":9,\"project\":1099511627777,\"user\":2,\"class\":\"data\",\"title\":\"How do I reset?\",\"state\":\"pending\",\"entryKind\":\"faq\"}],\"next\":0}"
+    },
+    {
+     "match": "GET /kb/submissions/9",
+     "status": 200,
+     "body": "{\"id\":9,\"project\":1099511627777,\"user\":2,\"authorName\":\"Ana\",\"class\":\"data\",\"title\":\"How do I reset?\",\"entryKind\":\"faq\",\"state\":\"pending\",\"reviewHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"hidden\":2,\"reviewCheck\":\"hidden\",\"body\":\"Press the button.\"}"
+    }
+   ],
+   "want": {
+    "out": "submission 9  team acme  pending  data  How do I reset?  (faq)\nwriter Ana  device   replaces 0  revision 0\nversion aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ncontains hidden characters: 2 removed from the text shown; it cannot be accepted (reject it and ask for the text without them)\nPress the button.\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/teams",
+      ""
+     ],
+     [
+      "GET",
+      "/kb/submissions?project=1099511627777&after=0",
+      ""
+     ],
+     [
+      "GET",
+      "/kb/submissions/9",
+      ""
+     ],
+     [
+      "GET",
+      "/teams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
    "name": "project depends list",
    "args": [
     "project",

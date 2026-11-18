@@ -50,7 +50,7 @@ func TestMarkdownClientGateway(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if !strings.HasPrefix(string(data), "---\nid: ") || !strings.HasSuffix(string(data), "body\r\n---\n\x00") {
+			if !strings.HasPrefix(string(data), "---\nid: ") || !strings.HasSuffix(string(data), "body\n---\n\x00") { // stored with LF line endings
 				t.Fatalf("%q", data)
 			}
 		}

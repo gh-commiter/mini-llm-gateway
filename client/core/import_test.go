@@ -22,7 +22,7 @@ func TestMarkdownImportDurable(t *testing.T) {
 	f.ok(e)
 	n, e := f.GetNote(ctx, p, pid, first.NoteID)
 	f.ok(e)
-	if n.Body != input.Markdown || n.Title != "note" || n.Provenance.SourceKind != SourceImport || n.Provenance.SourceReference != "note.md" {
+	if n.Body != "raw\n---\nbody\x00" || n.Title != "note" || n.Provenance.SourceKind != SourceImport || n.Provenance.SourceReference != "note.md" {
 		t.Fatal(n)
 	}
 	f.clock = f.clock.Add(48 * time.Hour)
