@@ -168,7 +168,7 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 	q += ` AND start>=?
   UNION
   SELECT p.id FROM scoped s JOIN usage_events c ON c.id=s.id JOIN usage_events p ON p.id=c.parent_id` + scope + `)
-SELECT e.id,COALESCE(e.parent_id,''),e.device_id,e.model,e.outcome,COALESCE(u.name,''),e.cost_source,COALESCE(e.user_id,0),e.start,e.end,e.tokens_in,e.tokens_out,e.cache_read_tokens,e.cache_write_tokens,e.cost_usd_nanos,e.phase,e.activity,e.task,e.phase_source,e.activity_source,e.task_source FROM usage_events e JOIN scoped s ON s.id=e.id LEFT JOIN users u ON u.id=e.user_id`
+SELECT e.id,COALESCE(e.parent_id,''),e.device_id,e.model,e.outcome,COALESCE(u.name,''),e.cost_source,COALESCE(e.user_id,0),e.start,e.end,e.tokens_in,e.tokens_out,e.cache_read_tokens,e.cache_write_tokens,e.cost_usd_nanos,e.phase,e.activity,e.task,e.phase_source,e.activity_source,e.task_source,COALESCE(e.phase_score,0),COALESCE(e.activity_score,0) FROM usage_events e JOIN scoped s ON s.id=e.id LEFT JOIN users u ON u.id=e.user_id`
 	args = append(args, from-86400000, project)
 	if user != 0 {
 		args = append(args, user)
