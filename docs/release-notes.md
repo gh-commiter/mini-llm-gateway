@@ -2,8 +2,15 @@
 
 ## Unreleased
 
+### Security
+- Restoring a backup hides every reading link's upstream mirror from members until a pull completes after the restore (as a mirror with no recent pull is hidden); nothing is deleted. `status` and the panel show "restored: waiting for a pull". If the hub had revoked this gateway after the backup, the next pull is refused and purges the mirror as usual.
+
 ### Fixed
 - `minigw status` on the Mac now prints the `Secrets:` line the Windows and Linux client has had since 0.7.26 (`Secrets:   macOS Keychain`; never a value). A shared list of the status line labels, asserted by both clients' tests, keeps the two from drifting apart again.
+- Mac: a long upgrade of the project database (a very large database or a slow disk) is waited for. The helper says "upgrading the database (schema A to B)" before the long step, the app shows it where it shows "starting" and no longer stops the helper after 5 seconds. A snapshot is written under a temporary name and renamed when complete, so a helper stopped in the middle leaves no snapshot that counts; the next start removes such leftover files.
+- `minigw gw upstream remove` and the same action in the panels: when the secret store cannot delete the stored credentials, the answer now says so (the link is removed, the credentials could not be, with the store and the item name, never a value) instead of reporting them gone.
+- Mac: a settings change no longer starts a second label worker beside the old one. The old worker is stopped first, and the hourly cap and the one-sample-at-a-time rule belong to the app, so they hold across settings changes.
+- Settings page of `minigw serve`: opening the Foundry Local pane on a computer without Foundry Local no longer logs a console error. The models route answers 200 with `installed: false` and the pane says "Foundry Local is not installed on this computer"; a real failure is still an error.
 
 ### Known problems
 - A model of a provider (LiteLLM, OpenRouter, xAI) with `--minigw-tools` reads your folder with the tools of your own Claude Code on your computer: nothing is synced for it, so the root `.gitignore` does not limit what it can read (the line "syncing ... for agent models" is about agent models only). Use `--minigw-tools none`, or run it in a folder without secrets.

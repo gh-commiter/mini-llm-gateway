@@ -29,6 +29,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return nil
 	}
 	snap := ""
+	if cur > 0 && s.opts.OnUpgrade != nil {
+		s.opts.OnUpgrade(cur, len(migrations))
+	}
 	if cur > 0 { // nothing to protect in a new file
 		if snap, err = s.snapshot(ctx, cur); err != nil {
 			return fmt.Errorf("snapshot before migration: %w", err)
@@ -65,6 +68,20 @@ func (s *Store) Migrated() *Migration { return s.migrated }
 
 var snapRe = regexp.MustCompile(`^core-(\d+)-(\d{8}T\d{6}\.\d{3}Z)\.db$`)
 
+const partialSuffix = ".partial"
+
+var partialRe = regexp.MustCompile(`^core-\d+-\d{8}T\d{6}\.\d{3}Z\.db\.partial(-wal|-shm|-journal)?$`)
+
+// removeStalePartials removes the unfinished snapshot copies of a killed earlier start: only files of exactly the name this code gives them.
+func removeStalePartials(dir string) {
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		if e.Type().IsRegular() && partialRe.MatchString(e.Name()) {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
 // snapshotName is core-<schema>-<UTC time>.db.
 func snapshotName(schema int) string {
 	return fmt.Sprintf("core-%d-%s.db", schema, time.Now().UTC().Format("20060102T150405.000Z"))
@@ -74,7 +91,13 @@ func snapshotName(schema int) string {
 // identical to an existing snapshot of the same schema (a failed start repeated) is not kept: that one is returned.
 func (s *Store) snapshot(ctx context.Context, schema int) (string, error) {
 	p := filepath.Join(s.dir, snapshotName(schema))
-	if err := s.copyTo(ctx, p, false); err != nil {
+	// The copy is written under a name that is not a snapshot's and renamed when complete: a helper killed in the middle (a very large
+	// database, a slow disk) leaves a file that never counts as one of the kept snapshots; removeStalePartials removes it at the next Open.
+	if err := s.copyTo(ctx, p+partialSuffix, false); err != nil {
+		return "", err
+	}
+	if err := os.Rename(p+partialSuffix, p); err != nil {
+		os.Remove(p + partialSuffix)
 		return "", err
 	}
 	if old := sameSnapshot(s.dir, p, schema); old != "" {

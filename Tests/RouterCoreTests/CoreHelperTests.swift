@@ -56,6 +56,22 @@ actor HelperBuild {  // internal: ProjectRunTests builds the same helper
     }
 }
 
+/// The helper built with -tags slowupgrade: it announces an upgrade and waits for <store>/.release-upgrade before it opens the store.
+actor SlowHelperBuild {
+    static let shared = SlowHelperBuild()
+    private var task: Task<URL, Error>?
+    func binary() async throws -> URL {
+        if let task { return try await task.value }
+        let t = Task { () -> URL in
+            let out = tempDir("slowbin").appendingPathComponent("minigw-core")
+            _ = try await run(["go", "build", "-tags", "slowupgrade", "-o", out.path, "./cmd/minigw-core"], in: clientDir, env: ["CGO_ENABLED": "0"])
+            return out
+        }
+        task = t
+        return try await t.value
+    }
+}
+
 actor MemoryMarks: CoreRevocationMarks {
     var items: [String] = []
     func list() -> [String] { items }
@@ -274,6 +290,27 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
         #expect(why.contains("supports protocol 1..1") && h.restarts == 0 && h.isReady == false)  // one start, no loop
         let r = await h.call(context: .admin, request: CoreRequest(method: "GET", path: "/users"))
         #expect(r == .unavailable)
+    }
+
+    /// An upgrade that takes longer than the hello limit is waited for (the app used to kill the helper after 5 s and retry in a loop): the
+    /// helper says it is upgrading, the app shows that where it shows "starting", and the same process comes up when the upgrade is done.
+    @Test func aSlowUpgradeIsWaitedForNotKilled() async throws {
+        let store = tempDir("store").appendingPathComponent("core")
+        try CoreHelper.prepareStoreFolder(store)
+        let bin = try await SlowHelperBuild.shared.binary()
+        let h = CoreHelper(binary: bin, store: store, ownerName: "tester", marks: MemoryMarks(), versions: 1...1, backoff: [0.05], requestTimeout: 10,
+                           helloTimeout: 0.5, upgradeTimeout: 120)
+        h.start(); defer { h.stop() }
+        var said = ""
+        for _ in 0..<1500 where said.isEmpty { said = h.startingDetail; if said.isEmpty { try? await Task.sleep(nanoseconds: 20_000_000) } }
+        #expect(said == "upgrading the database (schema 8 to 99)")
+        try? await Task.sleep(nanoseconds: 1_500_000_000)  // three times the hello limit: it must still be waiting, not killed and restarted
+        #expect(h.restarts == 0 && h.isStarting && !h.isReady)
+        let line = await CoreStatus.line(for: h)
+        #expect(line.hasPrefix("projects: starting (upgrading the database (schema 8 to 99)"), "\(line)")
+        FileManager.default.createFile(atPath: store.appendingPathComponent(".release-upgrade").path, contents: Data())
+        #expect(await h.waitReady(timeout: 30))
+        #expect(h.restarts == 0 && h.startingDetail.isEmpty)
     }
 
     @Test func deviceRemovedWhileTheHelperIsDownIsReconciledAtTheNextStart() async throws {

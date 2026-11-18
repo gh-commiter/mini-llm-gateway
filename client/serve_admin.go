@@ -1029,6 +1029,9 @@ func (s *server) adminDoCtx(ctx context.Context, method, uri string, body []byte
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
+		if resolveFoundry(s.conf().Foundry.Executable) == "" { // not installed is a normal state, not a failure: 5xx stays for real failures
+			return 200, map[string]any{"installed": false, "models": []map[string]any{}}
+		}
 		models, err := s.foundryModels(ctx)
 		if err != nil {
 			return fail(503, err.Error())
@@ -1038,7 +1041,7 @@ func (s *server) adminDoCtx(ctx context.Context, method, uri string, body []byte
 		for _, m := range models {
 			out = append(out, map[string]any{"name": m.Name, "vision": m.Vision, "enabled": fc.modelEnabled(m.Name)})
 		}
-		return 200, map[string]any{"models": out}
+		return 200, map[string]any{"installed": true, "models": out}
 	case "GET general":
 		return 200, s.apiGeneral(false)
 	case "PATCH general":

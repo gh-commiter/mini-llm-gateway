@@ -456,7 +456,7 @@ func TestAgentLoginAPI(t *testing.T) {
 	og, os2, od := keyGet, keySet, keyDel
 	keyGet = func(_, n string) (string, string) { return keys[n], "" }
 	keySet = func(_, n, v string) (string, error) { keys[n] = v; return "", nil }
-	keyDel = func(_, n string) { delete(keys, n) }
+	keyDel = func(_, n string) error { delete(keys, n); return nil }
 	defer func() { keyGet, keySet, keyDel = og, os2, od }()
 	s, _, base := liveServer(t, nil)
 	tok := "sk-ant-oat01-secret-value-0123456789"
