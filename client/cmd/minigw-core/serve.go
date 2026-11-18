@@ -24,6 +24,10 @@ import (
 //	app    auth     {type, mac}                        label "cli"
 //	helper ready    {type}                             coreapi frames follow
 //
+// Before it reads the hello, the helper opens the store. An upgrade of an older database can take long, so the helper first sends
+//
+//	helper state    {type, code:"upgrading", detail}   once, before the long step; the app then waits for hello_ok with its own, generous limit
+//
 // mac = hex(HMAC-SHA256(secret, label|version|first nonce|second nonce)); the secret itself is never sent. On a version
 // without overlap the helper answers {type:"error", code:"version_mismatch", server_min, server_max} and closes.
 const (
@@ -44,6 +48,7 @@ type msg struct {
 	Code      string `json:"code,omitempty"`
 	ServerMin int    `json:"server_min,omitempty"`
 	ServerMax int    `json:"server_max,omitempty"`
+	Detail    string `json:"detail,omitempty"`   // state: what the helper is doing (shown by the app where it shows "starting")
 	Callouts  bool   `json:"callouts,omitempty"` // hello: the app can do upstream work for the helper (callouts, coreapi/callout.go)
 }
 

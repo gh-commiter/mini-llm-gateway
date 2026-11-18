@@ -44,6 +44,9 @@ var (
 type Options struct {
 	ProtectDir  func(dir string) error
 	ProtectFile func(path string) error
+	// OnUpgrade is called before the snapshot and the migrations of an older database (from, to: schema versions), so the caller can
+	// tell that the next, possibly long, step is an upgrade (the Mac helper reports it to the app, which then waits for it).
+	OnUpgrade func(from, to int)
 }
 
 // Store is an open core database. Reads use DB(); every write goes through write().
@@ -109,6 +112,7 @@ func Open(dir string, opts Options) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	removeStalePartials(dir) // under the lock: no other process is writing one
 	if err := recoverRestore(dir); err != nil {
 		lock.Close()
 		return nil, err

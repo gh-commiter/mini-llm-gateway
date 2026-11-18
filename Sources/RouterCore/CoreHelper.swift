@@ -154,6 +154,10 @@ public final class CoreHelper: @unchecked Sendable {
 
     let store: URL  // the folder in use (RouterConfig.coreLinkProblem checks this one before every agent run)
     private let binary: URL?, versions: ClosedRange<Int>, backoff: [Double], requestTimeout: Double
+    /// How long the app waits for the helper's hello reply (5 s), and how long once the helper has said it is upgrading the database (the
+    /// helper opens, snapshots and migrates the store before it answers): a long upgrade must not be killed and retried in a loop.
+    private let helloTimeout: Double, upgradeTimeout: Double
+    private var startingNote = ""  // what the helper said it is doing before its hello reply ("upgrading the database (schema 8 to 24)"); "" otherwise
     private let ownerName: String, marks: CoreRevocationMarks
     private let cond = NSCondition()
     private var conn: CoreProcess?            // set after the handshake
@@ -179,7 +183,9 @@ public final class CoreHelper: @unchecked Sendable {
 
     public init(binary: URL?, store: URL, ownerName: String = NSUserName(), marks: CoreRevocationMarks,
                 versions: ClosedRange<Int> = CoreHelper.protocolVersion...CoreHelper.protocolVersion,
-                backoff: [Double] = [0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 5], requestTimeout: Double = 35) {
+                backoff: [Double] = [0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 5], requestTimeout: Double = 35,
+                helloTimeout: Double = 5, upgradeTimeout: Double = 3600) {
+        self.helloTimeout = helloTimeout; self.upgradeTimeout = upgradeTimeout
         self.binary = binary; self.store = store; self.ownerName = ownerName; self.marks = marks
         self.versions = versions; self.backoff = backoff; self.requestTimeout = requestTimeout
     }
@@ -189,6 +195,8 @@ public final class CoreHelper: @unchecked Sendable {
     public var isReady: Bool { cond.lock(); defer { cond.unlock() }; return ready }
     /// The helper process is up but not ready yet (it opens and migrates the database, then the owner and the marks): starting, not stopped.
     public var isStarting: Bool { cond.lock(); defer { cond.unlock() }; return spawned && !ready && fatal == nil }
+    /// What the starting helper reports it is doing (an upgrade of the database); "" when it says nothing.
+    public var startingDetail: String { cond.lock(); defer { cond.unlock() }; return spawned && !ready ? startingNote : "" }
     public var restarts: Int { cond.lock(); defer { cond.unlock() }; return max(0, spawnTimes.count - 1) }
     /// A refusal that no restart can fix (protocol version, unauthentic helper); nil while all is well.
     public var fatalError: CoreError? { cond.lock(); defer { cond.unlock() }; return fatal }
@@ -394,10 +402,13 @@ public final class CoreHelper: @unchecked Sendable {
             do {
                 guard let binary, FileManager.default.isExecutableFile(atPath: binary.path) else { throw CoreError.unavailable("minigw-core not found") }
                 let p = try CoreProcess.spawn(binary: binary, store: store, lane: callouts != nil)
-                cond.lock(); laneBroken = nil; spawned = true; cond.unlock()  // a new helper has a new lane
+                cond.lock(); laneBroken = nil; spawned = true; startingNote = ""; cond.unlock()  // a new helper has a new lane
                 do {
-                    _ = try handshake(fd: p.fd, secret: p.secret, versions: versions)  // the first connection never gets callouts
-                    if let l = p.laneFd { _ = try handshake(fd: l, secret: p.secret, versions: versions, callouts: true) }
+                    // the first connection never gets callouts; the helper may first report an upgrade, which is waited for
+                    _ = try handshake(fd: p.fd, secret: p.secret, versions: versions, helloTimeout: helloTimeout, upgradeTimeout: upgradeTimeout) { note in
+                        self.cond.lock(); self.startingNote = note; self.cond.unlock()
+                    }
+                    if let l = p.laneFd { _ = try handshake(fd: l, secret: p.secret, versions: versions, callouts: true, helloTimeout: helloTimeout, upgradeTimeout: upgradeTimeout) }
                     cond.lock(); conn = p; cond.unlock()
                     let sem = DispatchSemaphore(value: 0)
                     nonisolated(unsafe) var prepared = false
@@ -417,7 +428,7 @@ public final class CoreHelper: @unchecked Sendable {
                 } catch { kill(p.pid, SIGKILL) }
                 var status: Int32 = 0
                 waitpid(p.pid, &status, 0)  // blocks until exit: crash, kill or EOF after stop()
-                cond.lock(); conn = nil; ready = false; spawned = false; lastExit = status; close(p.fd); if let l = p.laneFd { close(l) }; cond.broadcast(); cond.unlock()
+                cond.lock(); conn = nil; ready = false; spawned = false; startingNote = ""; lastExit = status; close(p.fd); if let l = p.laneFd { close(l) }; cond.broadcast(); cond.unlock()
             } catch {
                 cond.lock(); lastFailure = "\(error)"; cond.unlock()
             }
@@ -543,13 +554,20 @@ private func recvFrame(_ fd: Int32, max: Int = CoreHelper.maxFrame) throws -> [S
 
 /// The client side of the handshake in client/cmd/minigw-core/serve.go: the app checks the helper's MAC before it sends
 /// anything derived from the secret.
-private func handshake(fd: Int32, secret: Data, versions: ClosedRange<Int>, callouts: Bool = false) throws -> Int {
+private func handshake(fd: Int32, secret: Data, versions: ClosedRange<Int>, callouts: Bool = false, helloTimeout: Double = 5,
+                       upgradeTimeout: Double = 3600, onState: (String) -> Void = { _ in }) throws -> Int {
     let cn = hex((0..<16).map { _ in UInt8.random(in: 0...255) })
-    setTimeout(fd, 5)
+    setTimeout(fd, helloTimeout)
     var hello: [String: Any] = ["type": "hello", "min": versions.lowerBound, "max": versions.upperBound, "nonce": cn]
     if callouts { hello["callouts"] = true }
     try sendFrame(fd, hello)
-    let r = try recvFrame(fd, max: 1 << 10)
+    var r = try recvFrame(fd, max: 1 << 10)
+    while r["type"] as? String == "state" {  // the helper is upgrading the database before it answers: wait for it, with its own limit
+        onState(String((r["detail"] as? String ?? "upgrading the database").prefix(200)))
+        setTimeout(fd, upgradeTimeout)
+        r = try recvFrame(fd, max: 1 << 10)
+    }
+    setTimeout(fd, helloTimeout)
     if r["type"] as? String == "error" {
         if r["code"] as? String == "version_mismatch" {
             throw CoreError.versionMismatch("helper supports protocol \(r["server_min"] ?? "?")..\(r["server_max"] ?? "?"), app needs \(versions.lowerBound)..\(versions.upperBound)")

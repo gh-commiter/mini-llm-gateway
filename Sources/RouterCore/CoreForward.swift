@@ -85,7 +85,9 @@ extension Router {
     func coreAdmin(_ req: HTTPRequest, below: String, rid: String, writer: ResponseWriter) async -> Int {
         let r = await core?.call(context: .admin, request: CoreRequest(method: req.method, path: below, query: req.query ?? "", body: req.body)) ?? .unavailable
         if r == .unavailable {  // the helper itself is down: the gateway's own admin error shape (the helper's 503 is passed as is)
-            let why = (core?.isStarting ?? false) ? "the project helper (minigw-core) is starting: the project database is being opened or migrated, try again in a few seconds"
+            let note = core?.startingDetail ?? ""
+            let why = (core?.isStarting ?? false) ? (note.isEmpty ? "the project helper (minigw-core) is starting: the project database is being opened or migrated, try again in a few seconds"
+                                                                  : "the project helper (minigw-core) is starting: " + note + "; this can take a few minutes")
                                                   : "the project helper (minigw-core) is not running"
             return await adminError(503, "The project database is not available: " + why, rid: rid, writer: writer)
         }

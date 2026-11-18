@@ -23,6 +23,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -42,6 +43,9 @@ const (
 	exitUsage   = 2
 	exitOrphan  = 3
 )
+
+// slowOpen is nil in every shipped build; the test build (slowupgrade_test_build.go) sets it to stand in for a long upgrade.
+var slowOpen func(store string, announce func(from, to int))
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "restore" { // `minigw gw core restore` on the Mac: offline, no socket, no helper
@@ -90,7 +94,15 @@ func main() {
 	}
 	go watchParent(os.Getppid(), 200*time.Millisecond, func() { os.Exit(exitOrphan) })
 
-	st, openErr := core.Open(*store, core.Options{})
+	announce := func(from, to int) { // before the snapshot and the migrations: the app then waits for the long step
+		detail := fmt.Sprintf("upgrading the database (schema %d to %d)", from, to)
+		log.Print(detail)
+		writeMsg(conn, msg{Type: "state", Code: "upgrading", Detail: detail})
+	}
+	if slowOpen != nil { // only in the test build (-tags slowupgrade)
+		slowOpen(*store, announce)
+	}
+	st, openErr := core.Open(*store, core.Options{OnUpgrade: announce})
 	if openErr != nil {
 		log.Printf("WARNING: the core store cannot be used, every request answers 503 core_unavailable: %v", openErr)
 		st = nil
