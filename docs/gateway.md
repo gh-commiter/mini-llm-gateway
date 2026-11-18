@@ -704,6 +704,8 @@ sandboxes (Claude CLI sandbox rules, the Codex permission profile) let it write 
 2. Files the platform provides, read-only: `$CREDENTIALS_DIRECTORY` (systemd) or `$MINIGW_SECRETS_DIR` (for example Docker or Compose secrets at `/run/secrets`); the file name is the secret's name with `:` written as `_` (`agent:claude` is `agent_claude`). A name the platform does not provide is kept in the file of step 3 (`secrets: platform files <dir> (read-only; others in file <path>)`).
 3. The last resort: `gateway-keys.json` next to `serve.json`, mode 0600 (Windows: the protection of the config folder) (`secrets: file <path> (no credential store for this session)`, or `(container mode)`, or `(forced by MINIGW_SECRETS=file)`).
 
+The remote settings password record (`remote-settings.password.json`, only when a password was set) is not in that store: it stays a file in the config folder on every system, a known problem. `minigw gw status` says where with one more line, `remote settings password: file <path>`, when the file exists (the admin API's `GET /status` carries it as `remotePassword`); it never prints what is in it. The Mac has no remote settings, so no such line.
+
 A store that fails after it was chosen is an error (a locked keyring is "the Secret Service cannot be read"), never a quiet move to a weaker place. Nothing moved in this step: the gateway token and the gateway key are still in `serve.json`; the next step moves them into the store, and `minigw status` on a client shows where its tokens and device key are (`Secrets:`).
 
 ## Where things are stored

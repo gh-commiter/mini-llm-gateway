@@ -87,6 +87,8 @@ func (s *server) ensureOwner(st *core.Store) error {
 func (s *server) newAPI() *coreapi.API {
 	return coreapi.New(coreapi.Options{
 		LabelsChanged: s.labels.configure,
+		// the Go gateway runs model labels with Foundry Local only (apple-fm is the Mac app's); a PUT of the other is refused
+		LabelBackends: []string{"foundry:"},
 		Store:         func() *core.Store { return s.core },
 		Unavailable: func() string {
 			if s.coreErr != nil {

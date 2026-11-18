@@ -483,7 +483,8 @@ names the task.
 **Model labels (beta: Windows gateway with Foundry Local, Mac with Apple Foundation Models).** The owner can enable Foundry Local, choose an installed model,
 then use the owner admin API `PUT /usage/labels/settings` with `{"backend":"foundry:<model>","enabled":true}`.
 The Model labels pane edits the same settings; the Windows/Linux gateway has no native panel renderer yet.
-Nothing runs by default. The Linux worker reports an unavailable backend in `lastError`; the Mac is described below.
+Nothing runs by default. The settings route of this gateway accepts only `foundry:<model>` (the panel's "Supported backends" line says so) and refuses `apple-fm`,
+which is the Mac app's. The Linux worker reports an unavailable backend in `lastError`; the Mac is described below.
 Only root `/v1/messages` events are considered. The first user message, with system reminders stripped, plus the task/branch
 label if present, is capped to 2000 Unicode code points and sent directly to the selected Foundry Local model on this computer.
 No remote provider is used. The classifier never chooses a task. Its input is kept only in memory, never in the database,
@@ -511,7 +512,10 @@ leave the user's call and its labels alone; `lastError` contains only an error c
 
 With `shadow` enabled (the default), every fourth root call carrying explicit labels is compared with the model;
 `shadowRate` changes that interval. That sampled call only updates agreement counters for its explicit labels, never labels.
-The owner can read the counters at `GET /usage/labels/agreement`; unknown decisions count as disagreements.
+The owner can read the counters at `GET /usage/labels/agreement` and in the Model Labels panel (kind, the agreement of the model,
+agree %, number of checks and the day range of the last 30 days); unknown decisions count as disagreements. Agreement is not calibrated
+accuracy: the explicit labels are a biased sample (scripted runs) and a model that does not decide counts as wrong. The panel says so, and
+it is there to choose the threshold, not to prove the labels right.
 A decision using the model records one internal usage event (`gateway`, `ops`, `usage-labels`), with estimated tokens and
 no user, so it consumes no user's quota and never classifies itself. Cache hits create no model usage event.
 
@@ -529,6 +533,24 @@ once, then left unknown. The worker stops when the app quits: no helper call sta
 the same answer; it says how steady the small model is, not how often it is right (that is what the shadow counters, compared with explicit
 labels, are for). **Privacy limit:** the gateway never stores, logs or reports the classified text, but the on-device model runtime and the
 operating system (their own logs, crash dumps, Apple's diagnostics) are outside the gateway's control.
+
+**Check the model against your own labels: `minigw gw labels eval --file <examples.jsonl> [--show-errors]`.** A local owner command for the
+gateway computer (the model is there). The file holds hand-labelled examples, one JSON object per line: `{"text": "...", "phase": "do",
+"activity": "bugfix"}` (`phase` is plan, do, check or act, `activity` one of the configured list; a line needs at least one of them; an
+unknown key is refused; blank lines are skipped). Limits: the file at most 1 MiB, at most 500 lines, each text capped to 2000 Unicode code
+points as the worker caps it. Each example goes through the same decision the worker makes (the configured backend, three samples for the
+phase and for the activity, a user's own requests keep priority exactly as for the worker: no sample starts while one runs, a sample that
+one ends is tried again, up to three times). The command prints, for the phase and for the activity, how many examples the model decided
+(coverage) and how many of those it got right (accuracy) when all three samples agree and when two of three do (the threshold `0.67`),
+and the most frequent mistakes (hand label -> model). It needs a backend chosen, not the feature turned on, so you can measure before you
+trust. **It stores nothing:** no label, no agreement counter and no text. The only record is the worker's own accounting rule, ONE
+internal usage event for the whole run (no user, device `gateway`, activity `ops`, task `usage-labels`, source `internal`, estimated
+tokens), so the model time shows in the reports. The example text is held in memory for the run, never logged and never in an answer: the
+gateway returns numbers and the position of each miss, and the command shows a miss's text, from its own copy of the file, only with
+`--show-errors` and only on this terminal. One evaluation runs at a time (a second is refused with a clear text); a run stops after 30
+minutes, the examples not reached are counted as not run. The route is `POST /usage/labels/eval` of the owner's admin API
+(see [admin-api.md](admin-api.md)); a member, an agent run or the remote settings page cannot reach it. Like the agreement, the numbers are
+agreement with your labels on those examples, not calibrated accuracy.
 
 `MINIGW_SHARE=0` turns folder sharing off; `MINIGW_SHARE=1` shares a folder that is not shared automatically, for
 one run.

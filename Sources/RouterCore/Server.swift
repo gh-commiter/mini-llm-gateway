@@ -103,6 +103,20 @@ public final class RouterServer: @unchecked Sendable {
         return !authorized(h)
     }
 
+    /// An admin request (any peer, loopback too) is judged from its head, before one byte of its body is buffered: a body over the admin limit
+    /// is refused (413), and so is a request without the MGW-Admin proof of its own connection (401). nil = nothing to say yet (not an admin
+    /// path, or its head is not complete); adminHTTP still makes every other check. Without this a local caller with no credentials could have
+    /// the app buffer up to HTTPParser.maxBody per request.
+    static func adminPreflight(_ plain: Data, hash: Data?, router: Router) -> ParseResult? {
+        guard case .request(var h) = HTTPParser.parse(plain, headOnly: true), h.path.hasPrefix(Router.adminPrefix + "/") || h.path == Router.adminPrefix, router.admin != nil else { return nil }
+        h.noiseHash = hash
+        guard router.adminProofOK(h) else {
+            return .error(401, "The admin API takes MGW-Admin over an encrypted connection (minigw gw), never the secret itself")
+        }
+        if (Int(h.header("content-length") ?? "") ?? 0) > Router.adminMaxBody { return .error(413, "Request body too large") }
+        return nil
+    }
+
     static func isLoopback(_ ip: String) -> Bool {
         ip == "::1" || ip.hasPrefix("127.") || ip.hasPrefix("::ffff:127.")
     }
@@ -185,6 +199,7 @@ public final class RouterServer: @unchecked Sendable {
         if case .needMore = parsed, Self.bodyNeedsToken(plain, peer: peer, authorized: router.authorized) {
             parsed = .error(401, "Invalid or missing token")
         }
+        if case .needMore = parsed, let early = Self.adminPreflight(plain, hash: session?.hash, router: router) { parsed = early }
         if case .needMore = parsed {} else { pending.remove(ObjectIdentifier(conn)) }
         switch parsed {
         case .needMore:

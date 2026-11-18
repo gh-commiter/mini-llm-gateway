@@ -53,7 +53,8 @@
   "POST upstream-push",
   "POST upstream-resolve",
   "GET usage/labels/settings",
-  "PUT usage/labels/settings"
+  "PUT usage/labels/settings",
+  "GET usage/labels/agreement"
  ],
  "builtinSecret": [
   "PUT upstreams/{}"

@@ -210,19 +210,21 @@ func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 
 func TestLabelAgreement(t *testing.T) {
 	f := newFx(t)
+	day1 := f.now().UTC().Format("2006-01-02")
 	f.ok(f.RecordAgreement(ctx, "phase", "1000", true))
 	f.ok(f.RecordAgreement(ctx, "phase", "1000", true))
 	f.ok(f.RecordAgreement(ctx, "phase", "1000", false))
 	f.ok(f.RecordAgreement(ctx, "activity", "unknown", false))
 	f.clock = f.clock.AddDate(0, 0, 40)
+	day2 := f.now().UTC().Format("2006-01-02")
 	f.ok(f.RecordAgreement(ctx, "phase", "667", true))
 	rows, err := f.Agreement(ctx, 30)
 	f.ok(err)
-	if len(rows) != 1 || rows[0] != (AgreementRow{"phase", "667", 1, 1}) { // 40 days ago is outside the 30 days
+	if len(rows) != 1 || rows[0] != (AgreementRow{"phase", "667", 1, 1, "phase/667", "100 %", "1", day2}) { // 40 days ago is outside the 30 days
 		t.Fatalf("%+v", rows)
 	}
 	rows, _ = f.Agreement(ctx, 60)
-	if len(rows) != 3 || rows[0] != (AgreementRow{"activity", "unknown", 0, 1}) || rows[1] != (AgreementRow{"phase", "1000", 2, 3}) {
+	if len(rows) != 3 || rows[0] != (AgreementRow{"activity", "unknown", 0, 1, "activity/unknown", "0 %", "1", day1}) || rows[1] != (AgreementRow{"phase", "1000", 2, 3, "phase/1000", "67 %", "3", day1}) {
 		t.Fatalf("%+v", rows)
 	}
 	for _, c := range [][3]string{{"task", "1000", ""}, {"phase", "500", ""}, {"", "", ""}} {

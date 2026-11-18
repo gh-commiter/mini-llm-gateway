@@ -92,7 +92,7 @@ func (a *API) labelBackendRefusal(backend *string) string {
 	if len(a.o.LabelBackends) == 0 {
 		return "backend: this system has no on-device model for labels"
 	}
-	return "backend: not available on this system; choose " + strings.Join(a.o.LabelBackends, " or ")
+	return "backend: not available on this system; choose " + a.labelBackendNames(" or ")
 }
 
 // labelBackendsText: the backends this gateway supports, for the panel.
@@ -103,7 +103,12 @@ func (a *API) labelBackendsText() string {
 	case len(a.o.LabelBackends) == 0:
 		return "none"
 	}
-	return strings.ReplaceAll(strings.Join(a.o.LabelBackends, ", "), "foundry:", "foundry:<model>")
+	return a.labelBackendNames(", ")
+}
+
+// labelBackendNames: the supported backends for a message ("foundry:" is a prefix: any model).
+func (a *API) labelBackendNames(sep string) string {
+	return strings.ReplaceAll(strings.Join(a.o.LabelBackends, sep), "foundry:", "foundry:<model>")
 }
 
 // labelBackendProblem: a stored backend this gateway cannot run (written by an older version or a restore); "" = fine.

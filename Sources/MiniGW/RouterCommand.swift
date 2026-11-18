@@ -68,11 +68,11 @@ private struct AdminConnection {
         return a
     }
 
-    func raw(_ method: String, _ path: String, _ body: Data?, proof: Bool = false) -> (Int, Data?) {
+    func raw(_ method: String, _ path: String, _ body: Data?, proof: Bool = false, timeout: Int = 60) -> (Int, Data?) {
         let c = AdminClient(port: port, routerKey: key)
-        guard proof else { return c.request(method, path, body) }
+        guard proof else { return c.request(method, path, body, timeout: timeout) }
         let s = secret
-        return c.request(method, path, body, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: s, hash: h) })
+        return c.request(method, path, body, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: s, hash: h) }, timeout: timeout)
     }
 
     /// Napaka API konča ukaz z njenim sporočilom.
@@ -476,9 +476,10 @@ func routerCommand(_ argv: [String]) {
         let argv = [tui, "--minigw", me].map { strdup($0) } + [nil]
         execv(tui, argv)
         fail("cannot start \(tui): \(String(cString: strerror(errno)))")
-    case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage", "usage-events", "project-sessions", "quota", "upstream":  // 0.6.0: the owner's commands of the project database
+    case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage", "usage-events", "project-sessions", "quota", "upstream", "labels":  // 0.6.0: the owner's commands of the project database
         let cmd = AdminCommands(call: { method, path, body in
-            let (status, data) = a.raw(method, Router.adminPrefix + path, body, proof: true)
+            // labels eval runs up to 500 examples (six samples each); the gateway stops it after 30 minutes
+            let (status, data) = a.raw(method, Router.adminPrefix + path, body, proof: true, timeout: path == "/usage/labels/eval" ? 2400 : 60)
             return (status, data ?? Data())
         }, out: { try? out.write(contentsOf: Data($0.utf8)) })
         do {
@@ -488,6 +489,7 @@ func routerCommand(_ argv: [String]) {
                                        json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true", explain: flags["explain"] == "true", reason: flags["reason"] ?? "", team: flags["team"] ?? "", by: flags["by"] ?? "", phase: flags["phase"] ?? "", activity: flags["activity"] ?? "", task: flags["task"] ?? "", labelSource: flags["label-source"] ?? "")
             opts.remoteProject = flags["remote-project"] ?? ""; opts.remoteTeam = flags["remote-team"] ?? ""; opts.classes = flags["class"] ?? ""; opts.deviceName = flags["device-name"] ?? ""; opts.mode = flags["mode"] ?? ""; opts.auto = flags["auto"] == "true"; opts.manual = flags["manual"] == "true"; opts.theirs = flags["theirs"] == "true"; opts.ours = flags["ours"] == "true"
             opts.upstream = flags["upstream"] ?? ""
+            opts.file = flags["file"] ?? ""; opts.showErrors = flags["show-errors"] == "true"
             opts.withPrivate = flags["with-private"] == "true"; opts.dryRun = flags["dry-run"] == "true"; opts.version = flags["version"] ?? ""
             opts.read = flags["read"] == "true"; opts.noRead = flags["no-read"] == "true"; opts.acceptReach = flags["accept-reach"] == "true"; opts.readClass = flags["read-class"] ?? ""; opts.readSources = flags["read-sources"] ?? ""
             opts.tokenInput = { readKey("Copy Token of the upstream") }  // stdin or the terminal, not echoed, never an argument

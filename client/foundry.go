@@ -155,8 +155,9 @@ type foundryState struct {
 	priority     sync.Mutex
 	foreground   int
 	sampleCancel context.CancelCauseFunc
-	discover     sync.Mutex // F1: iskanje in zagon (klici CLI) brez mu, da /foundry ne čaka
-	retryAt      time.Time  // F6: po neuspelem iskanju ali zagonu 30 s brez novega poskusa
+	sampleSlot   chan struct{} // one label sample at a time (the worker and eval share it): sampleCancel is one slot
+	discover     sync.Mutex    // F1: iskanje in zagon (klici CLI) brez mu, da /foundry ne čaka
+	retryAt      time.Time     // F6: po neuspelem iskanju ali zagonu 30 s brez novega poskusa
 	mu           sync.Mutex
 	base         string // http://127.0.0.1:<vrata>
 	checked      time.Time
@@ -687,10 +688,22 @@ func (st *foundryState) beginForeground() func() {
 
 // Reserve each sample only while Foundry is idle; foreground arrival revokes it.
 func (st *foundryState) labelSample(ctx context.Context) (context.Context, func(), error) {
+	st.priority.Lock()
+	if st.sampleSlot == nil {
+		st.sampleSlot = make(chan struct{}, 1)
+	}
+	slot := st.sampleSlot
+	st.priority.Unlock()
+	select {
+	case slot <- struct{}{}:
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
 	for {
 		st.priority.Lock()
 		if err := ctx.Err(); err != nil {
 			st.priority.Unlock()
+			<-slot
 			return nil, nil, err
 		}
 		if st.foreground == 0 {
@@ -701,11 +714,12 @@ func (st *foundryState) labelSample(ctx context.Context) (context.Context, func(
 			sample, cancel := context.WithCancelCause(ctx)
 			st.sampleCancel = cancel
 			st.priority.Unlock()
-			return sample, func() { st.priority.Lock(); st.sampleCancel = nil; cancel(nil); st.priority.Unlock() }, nil
+			return sample, func() { st.priority.Lock(); st.sampleCancel = nil; cancel(nil); st.priority.Unlock(); <-slot }, nil
 		}
 		st.priority.Unlock()
 		select {
 		case <-ctx.Done():
+			<-slot
 			return nil, nil, ctx.Err()
 		case <-time.After(5 * time.Millisecond):
 		}

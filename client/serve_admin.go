@@ -141,7 +141,12 @@ type apiStatus struct {
 	Copilot string `json:"copilot,omitempty"`
 	// Secrets (step 2 of the secrets plan): where secrets are kept, one line, never a value (secretstore.go).
 	Secrets string `json:"secrets,omitempty"`
+	// RemotePassword: where the remote settings password record is kept ("file <path>"), only when one exists; never its content.
+	// It stays a file even where the other secrets are in the credential store (a known problem).
+	RemotePassword string `json:"remotePassword,omitempty"`
 }
+
+func statOK(p string) bool { _, err := os.Stat(p); return err == nil }
 
 // adminSecret: 32 naključnih bajtov (base64url) v admin.secret (0600) v mapi nastavitev, ki je agentom prepovedana.
 func adminSecret(cfgDir string) (string, error) {
@@ -221,7 +226,7 @@ func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
 	if !readBody(w, r, 1<<20) {
 		return writeError(w, r.rid, 413, "Request body too large or too slow")
 	}
-	status, obj := s.adminDo(r.Method, strings.TrimPrefix(r.URL.RequestURI(), adminPrefix), r.body)
+	status, obj := s.adminDoCtx(r.Context(), r.Method, strings.TrimPrefix(r.URL.RequestURI(), adminPrefix), r.body)
 	return writeJSON(w, r.rid, status, obj)
 }
 
@@ -338,6 +343,11 @@ func decodeStrict(body []byte, v any) error {
 
 // adminDo: metoda, pot pod /minigw/admin/v1 (z ?poizvedbo) in telo → status in JSON.
 func (s *server) adminDo(method, uri string, body []byte) (int, any) {
+	return s.adminDoCtx(context.Background(), method, uri, body)
+}
+
+// adminDoCtx: ctx ends the one long route (labels eval) when the caller goes away; the others do not wait on it.
+func (s *server) adminDoCtx(ctx context.Context, method, uri string, body []byte) (int, any) {
 	fail := func(status int, msg string) (int, any) { return status, errorBody(status, msg) }
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -353,6 +363,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 	}
 	if seg[0] == "quota" && !coreapi.IsAdminPath(method, u.EscapedPath()) { // the quota settings and report are the gateway's (probes run CLIs and provider HTTP here)
 		return s.quotaAdmin(method, seg, body)
+	}
+	if method == "POST" && len(seg) == 3 && seg[0] == "usage" && seg[1] == "labels" && seg[2] == "eval" { // the gateway's own (the model is here): not a coreapi route, not on the remote settings listener
+		return s.labelsEval(ctx, body)
 	}
 	if coreapi.IsAdminPath(method, u.EscapedPath()) { // 0.6.0 core: the routes of coreapi
 		r := s.api.Handle(context.Background(), coreapi.Context{Kind: coreapi.KindAdmin},
@@ -386,6 +399,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			AgentSandbox: agentSandboxInfo(), Core: s.coreStatus(c)}
 		if c.Copilot.Enabled {
 			_, st.Copilot = copilotLogin()
+		}
+		if p := filepath.Join(s.cfgDir, "remote-settings.password.json"); statOK(p) {
+			st.RemotePassword = "file " + p
 		}
 		if d := installDir(runtime.GOOS); d != "" { // le če je minigw tam res nameščen
 			if _, err := os.Stat(filepath.Join(d, map[bool]string{true: "minigw.exe", false: "minigw"}[runtime.GOOS == "windows"])); err == nil {

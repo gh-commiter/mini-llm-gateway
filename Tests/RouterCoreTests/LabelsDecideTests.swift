@@ -591,3 +591,224 @@ private final class Gate: @unchecked Sendable {
         #expect(core.count("label-error") == 2)
     }
 }
+
+
+// MARK: B4: minigw gw labels eval (the Mac gateway side; the Go gateway has the same tests in client/labels_eval_test.go)
+
+private func evalBackend(_ calls: Tally = Tally()) -> Decide.Backend {
+    let scripts: [String: [String]] = [
+        "alpha/phase": ["do", "do", "do"], "alpha/activity": ["bugfix", "bugfix", "bugfix"],
+        "beta/phase": ["do", "do", "plan"], "beta/activity": ["docs", "docs", "docs"],
+        "gamma/phase": ["plan", "plan", "plan"], "gamma/activity": ["nonsense", "nonsense", "nonsense"],
+        "delta/activity": ["feature", "feature", "feature"]]
+    let seen = Replies2()
+    return { _, user, ids in
+        calls.inc()
+        let q = ids.contains("plan") ? "phase" : "activity"
+        for k in ["alpha", "beta", "gamma", "delta"] where user.contains(k) { return scripts[k + "/" + q]![seen.next(k + "/" + q) % 3] }
+        throw Decide.Failure.backend
+    }
+}
+
+private final class Replies2: @unchecked Sendable {
+    private let lock = NSLock(); private var n: [String: Int] = [:]
+    func next(_ k: String) -> Int { lock.withLock { defer { n[k, default: 0] += 1 }; return n[k, default: 0] } }
+}
+
+private let evalExamples: [LabelWorker.EvalExample] = [
+    .init(text: "alpha fix the crash", phase: "do", activity: "bugfix"), .init(text: "beta two of three", phase: "do", activity: "docs"),
+    .init(text: "gamma wrong and unsure", phase: "check", activity: "test"), .init(text: "delta only an activity", phase: "", activity: "ops")]
+
+private func evalCore() -> FakeCore {
+    let core = FakeCore(enabled: false)  // the feature stays OFF: an evaluation needs a backend, not the worker
+    core.set("activities", ["feature", "bugfix", "docs", "test", "ops"])
+    return core
+}
+
+private func evalReply(_ r: (Int, Data)) -> (Int, [String: Any]) { (r.0, (try? JSONSerialization.jsonObject(with: r.1) as? [String: Any]) ?? [:]) }
+private func message(_ o: [String: Any]) -> String { ((o["error"] as? [String: Any])?["message"] as? String) ?? "" }
+
+@Suite(.serialized) struct LabelsEval {
+    @Test func numbersAreTheSameAsGoAndNothingIsStored() async throws {
+        let core = evalCore()
+        let samples = Tally()
+        let w = worker(core, backend: evalBackend(samples))
+        let (status, o) = evalReply(await w.evaluate(evalExamples))
+        #expect(status == 200)
+        let e = try #require(o["eval"] as? [String: Any])
+        #expect(e["backend"] as? String == "apple-fm" && e["examples"] as? Int == 4 && e["run"] as? Int == 4 && e["notRun"] as? Int == 0)
+        func cell(_ k: String, _ t: String) -> [Int] { let c = ((e[k] as! [String: Any])[t] as! [String: Any]); return [c["decided"] as! Int, c["correct"] as! Int] }
+        #expect((e["phase"] as! [String: Any])["scored"] as? Int == 3 && cell("phase", "t067") == [3, 2] && cell("phase", "t10") == [2, 1])
+        #expect((e["activity"] as! [String: Any])["scored"] as? Int == 4 && cell("activity", "t067") == [3, 2] && cell("activity", "t10") == [3, 2])
+        let m = e["mistakes"] as! [String: [[String: Any]]]
+        #expect(m["phase"]?.map { "\($0["expected"]!)>\($0["got"]!)#\($0["n"]!)" } == ["check>plan#1"])
+        #expect(m["activity"]?.map { "\($0["expected"]!)>\($0["got"]!)#\($0["n"]!)" } == ["ops>feature#1"])
+        let wrong = (e["wrong"] as! [[String: Any]]).map { "\($0["kind"]!):\($0["line"]!):\($0["expected"]!)>\($0["got"]!)" }
+        #expect(wrong == ["phase:3:check>plan", "activity:3:test>", "activity:4:ops>feature"])
+        #expect(samples.value == 21)  // 3 examples x 6 samples + the activity-only one x 3
+        // stores nothing: no label, no agreement counter; the one record is the worker's own internal event, once for the run
+        #expect(core.log.allSatisfy { ["label-settings", "label-decision"].contains($0.name) })
+        #expect(core.count("label-decision") == 1)
+        let d = try #require(core.last("label-decision"))
+        #expect(d["provider"] as? String == "apple-fm" && d["failed"] as? Bool == false && d["userId"] == nil && (d["tokensIn"] as? Int ?? 0) > 0)
+    }
+
+    @Test func theLimitsAndRefusalsAreTheGoOnes() async throws {
+        let core = evalCore()
+        let w = worker(core, backend: evalBackend())
+        func ex(_ t: String, _ p: String, _ a: String) -> LabelWorker.EvalExample { .init(text: t, phase: p, activity: a) }
+        for (name, list, want) in [
+            ("empty text", [ex("  ", "do", "")], "example 1: text is empty"),
+            ("bad phase", [ex("alpha", "do", ""), ex("alpha", "doing", "")], "example 2: phase is one of plan, do, check, act"),
+            ("bad activity", [ex("alpha", "", "gardening")], "example 1: phase is one of"),
+            ("no label", [ex("alpha", "", "")], "example 1: needs a phase or an activity")] {
+            let (st, o) = evalReply(await w.evaluate(list))
+            #expect(st == 400 && message(o).contains(want), "\(name): \(st) \(message(o))")
+        }
+        // case does not matter, a text is capped like the worker caps it (2000 code points)
+        let seen = LongestUser()
+        let capped = worker(core, backend: { _, user, ids in seen.note(user); return ids.contains("plan") ? "do" : "bugfix" })
+        let (st, _) = evalReply(await capped.evaluate([ex("alpha " + String(repeating: "é", count: 5000), "DO", "Bugfix")]))
+        #expect(st == 200 && seen.longest > 3000 && seen.longest < 2000 * 2 + 100)
+        // no backend chosen / a backend this Mac cannot run / the model unavailable
+        for (c, avail, want) in [(FakeCore(enabled: false, backend: ""), true, "choose a backend"), (FakeCore(enabled: false, backend: "foundry:phi"), true, "label backend unavailable on this gateway"),
+                                 (evalCore(), false, "on-device model unavailable")] {
+            let (st, o) = evalReply(await worker(c, available: avail, backend: evalBackend()).evaluate([ex("alpha", "do", "")]))
+            #expect(st == 409 && message(o).contains(want), "\(st) \(message(o))")
+            #expect(c.log.allSatisfy { $0.name == "label-settings" })
+        }
+        // the route is not a core route: no member and no internal call reaches it
+        #expect(!CoreRoutes.isAdminPath("POST", "/usage/labels/eval") && !CoreRoutes.isMemberPath("/minigw/v1/usage/labels/eval"))
+    }
+
+    final class LongestUser: @unchecked Sendable {
+        private let lock = NSLock(); private var n = 0
+        func note(_ s: String) { lock.withLock { n = max(n, s.utf8.count) } }
+        var longest: Int { lock.withLock { n } }
+    }
+
+    @Test func oneEvaluationAtATime() async throws {
+        let core = evalCore()
+        let started = Tally()
+        let gate = Gate()
+        let w = worker(core, backend: { _, _, ids in started.inc(); await gate.wait(); return ids.contains("plan") ? "do" : "bugfix" })
+        let first = Task { await w.evaluate([.init(text: "alpha", phase: "do", activity: "")]) }
+        #expect(await until { started.value == 1 })
+        let (st, o) = evalReply(await w.evaluate(evalExamples))
+        #expect(st == 429 && message(o).contains("Another label evaluation is running"))
+        await gate.open()
+        #expect(evalReply(await first.value).0 == 200)
+        #expect(evalReply(await w.evaluate([.init(text: "alpha", phase: "do", activity: "")])).0 == 200)  // released
+    }
+
+    actor Gate {
+        private var isOpen = false
+        func open() { isOpen = true }
+        func wait() async { while !isOpen { try? await Task.sleep(for: .milliseconds(5)) } }
+    }
+
+    @Test func aUserRequestKeepsPriorityAndAnEndedSampleIsTriedAgain() async throws {
+        let core = evalCore()
+        let fg = FMForeground()
+        let samples = Tally()
+        fg.enter()
+        let w = worker(core, backend: evalBackend(samples), foreground: fg)
+        let run = Task { await w.evaluate([.init(text: "alpha", phase: "do", activity: "")]) }
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(samples.value == 0)  // no sample while a user's request runs
+        fg.leave()
+        let (st, o) = evalReply(await run.value)
+        #expect(st == 200 && ((o["eval"] as! [String: Any])["run"] as? Int) == 1 && samples.value == 3)
+        // a sample in flight is cancelled by the arrival of a user's request, and the example is tried again
+        let started = Tally(), cancelled = Tally()
+        let w2 = worker(core, backend: { _, _, _ in
+            started.inc()
+            if started.value == 1 {
+                do { try await Task.sleep(for: .seconds(60)) } catch { cancelled.inc(); throw error }
+            }
+            return "do"
+        }, foreground: fg)
+        let run2 = Task { await w2.evaluate([.init(text: "alpha", phase: "do", activity: "")]) }
+        #expect(await until { started.value == 1 })
+        fg.enter()
+        #expect(await until { cancelled.value == 1 })
+        fg.leave()
+        let (st2, o2) = evalReply(await run2.value)
+        #expect(st2 == 200 && ((o2["eval"] as! [String: Any])["notRun"] as? Int) == 0)
+        #expect(!fg.active)
+    }
+
+    @Test func aBackendThatFailsEveryTimeIsAClearNoAnswerWithoutText() async throws {
+        let core = evalCore()
+        struct Leak: Error, CustomStringConvertible { let text: String; var description: String { text } }
+        let w = worker(core, backend: { _, user, _ in throw Leak(text: user) }, budget: .milliseconds(200))
+        let (st, o) = evalReply(await w.evaluate(evalExamples))
+        #expect(st == 502 && message(o).contains("no answer for any example"))
+        #expect(core.count("label-decision") == 1 && core.last("label-decision")?["failed"] as? Bool == true)
+    }
+
+    @Test func theExampleTextIsNeverInACallAnAnswerOrTheSource() async throws {
+        let marker = "EVALMARKER-\(UUID().uuidString.prefix(8))-private"
+        let core = evalCore()
+        let w = worker(core, backend: { _, user, ids in
+            if user.contains("fail-") { throw Decide.Failure.backend }
+            return ids.contains("plan") ? "do" : "bugfix"
+        })
+        for text in ["fine \(marker)", "fail-\(marker)"] {
+            let (st, o) = evalReply(await w.evaluate([.init(text: text, phase: "do", activity: "bugfix"), .init(text: "ok", phase: "do", activity: "")]))
+            #expect(st == 200)
+            #expect(!String(decoding: (try? JSONSerialization.data(withJSONObject: o)) ?? Data(), as: UTF8.self).contains(marker))
+        }
+        let all = core.log.map { String(decoding: (try? JSONSerialization.data(withJSONObject: $0.body)) ?? Data(), as: UTF8.self) }.joined()
+        #expect(!all.contains(marker) && !all.contains("EVALMARKER"))
+        let src = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/RouterCore/LabelWorker.swift"), encoding: .utf8)
+        for word in ["print(", "NSLog(", "Logger(", "os_log", "debugPrint(", "dump("] { #expect(!src.contains(word), "\(word) in LabelWorker.swift") }
+    }
+
+    @Test func aDisconnectEndsTheEvaluationAtOnceAndFreesTheSlot() async throws {
+        let core = evalCore()
+        let started = Tally()
+        let slow = Flag2()
+        let w = worker(core, backend: { _, _, ids in
+            started.inc()
+            if slow.on { try await Task.sleep(for: .seconds(60)) }  // runs until cancelled
+            return ids.contains("plan") ? "do" : "bugfix"
+        })
+        slow.on = true
+        let run = Task { await w.evaluate(evalExamples) }
+        #expect(await until { started.value == 1 })
+        run.cancel()  // the caller went away
+        let (st, _) = evalReply(await run.value)
+        #expect(st == 502 || st == 200)
+        let n = started.value
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(started.value == n && n == 1, "a sample started after the disconnect")
+        slow.on = false
+        #expect(evalReply(await w.evaluate([.init(text: "alpha", phase: "do", activity: "")])).0 == 200)  // the slot was free at once
+    }
+
+    @Test func stopDuringAnEvaluationWaitingForAUserRequestStartsNothing() async throws {
+        let core = evalCore()
+        let fg = FMForeground()
+        let samples = Tally()
+        fg.enter()
+        let w = worker(core, backend: evalBackend(samples), foreground: fg)
+        let run = Task { await w.evaluate(evalExamples) }
+        try await Task.sleep(for: .milliseconds(150))
+        let before = core.log.count
+        w.stop()  // returns only when the evaluation has ended
+        let (st, _) = evalReply(await run.value)
+        #expect(st == 502)
+        fg.leave()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(samples.value == 0 && w.samplesStarted == 0)
+        #expect(core.log.count == before, "a helper call after stop")
+        #expect(evalReply(await w.evaluate(evalExamples)).0 == 503)  // none starts afterwards
+    }
+
+    final class Flag2: @unchecked Sendable {
+        private let lock = NSLock(); private var v = false
+        var on: Bool { get { lock.withLock { v } } set { lock.withLock { v = newValue } } }
+    }
+}
