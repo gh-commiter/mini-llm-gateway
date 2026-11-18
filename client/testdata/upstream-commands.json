@@ -151,7 +151,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run)\n  minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)\n",
     "exit": 1,
     "requests": []
    }
@@ -688,7 +688,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, manual\nteam Engineering -> hub (eng): 2 of 2 notes would go, never pushed, classes structure,data, manual\n  last refusal: the upstream says: not allowed: your role in this project does not permit it\n",
+    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, manual\n  read: off\nteam Engineering -> hub (eng): 2 of 2 notes would go, never pushed, classes structure,data, manual\n  read: off\n  last refusal: the upstream says: not allowed: your role in this project does not permit it\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -715,7 +715,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, auto\n  sync: dirty since 2026-11-17 11:00; last success 2026-11-17 10:30; last failure 2026-11-17 11:05 (3 in a row); next attempt 2026-11-17 11:13\n  last refusal: the upstream says: down\n  not propagated: deleted here: note 12, 15; now private here: note 7 (the copy stays on the upstream until you remove it there)\nweb -> hub (web): 0 of 2 notes would go, never pushed, classes structure, manual\n",
+    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, auto\n  sync: dirty since 2026-11-17 11:00; last success 2026-11-17 10:30; last failure 2026-11-17 11:05 (3 in a row); next attempt 2026-11-17 11:13\n  read: off\n  last refusal: the upstream says: down\n  not propagated: deleted here: note 12, 15; now private here: note 7 (the copy stays on the upstream until you remove it there)\nweb -> hub (web): 0 of 2 notes would go, never pushed, classes structure, manual\n  read: off\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -748,7 +748,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, manual\n",
+    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, manual\n  read: off\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -937,6 +937,555 @@
    }
   },
   {
+   "name": "link read",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "read": true,
+    "acceptReach": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub: reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"acceptReach\":true,\"classes\":\"\",\"read\":true,\"readClasses\":\"\",\"readOnly\":true,\"readSources\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link read classes and sources",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "read": true,
+    "readClass": "structure,data",
+    "readSources": "team:acme",
+    "acceptReach": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub: reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"acceptReach\":true,\"classes\":\"\",\"read\":true,\"readClasses\":\"structure,data\",\"readOnly\":true,\"readSources\":\"team:acme\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link no read",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "noRead": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub: reading is off, the mirror was deleted\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"acceptReach\":false,\"classes\":\"\",\"read\":false,\"readClasses\":\"\",\"readOnly\":true,\"readSources\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link read with push options",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "class": "structure",
+    "read": true,
+    "acceptReach": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "linked shop to hub as shop: nothing is sent until minigw gw upstream push\nreading is on; minigw gw upstream pull fills the mirror (members do not see it yet)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"acceptReach\":true,\"classes\":\"structure\",\"read\":true,\"readClasses\":\"\",\"readOnly\":false,\"readSources\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link read refused without acceptance",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "read": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 400,
+     "body": "{\"error\": {\"message\": \"reading gives the members of this project what the upstream's user may read there: look first (minigw gw upstream pull <project> --dry-run on a link without --read), then repeat with --accept-reach\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: reading gives the members of this project what the upstream's user may read there: look first (minigw gw upstream pull <project> --dry-run on a link without --read), then repeat with --accept-reach\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"acceptReach\":false,\"classes\":\"\",\"read\":true,\"readClasses\":\"\",\"readOnly\":true,\"readSources\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link read and no read",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "read": true,
+    "noRead": true,
+    "acceptReach": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: --read and --no-read together: choose one\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "pull",
+   "args": [
+    "upstream",
+    "pull",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-pull",
+     "status": 200,
+     "body": "{\"pulls\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"2 of 2 notes offered are read here (2 new or changed to fetch)\"], \"total\": 2, \"truncated\": false, \"dryRun\": false, \"project\": 3, \"team\": false, \"added\": 2, \"updated\": 0, \"removed\": 0, \"skipped\": 0, \"mirror\": 2}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  2 of 2 notes offered are read here (2 new or changed to fetch)\n  added 2, updated 0, removed 0, skipped 0, mirror 2 notes\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-pull",
+      "{\"dryRun\":false,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "pull more without progress",
+   "args": [
+    "upstream",
+    "pull",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-pull",
+     "status": 200,
+     "body": "{\"pulls\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"9 of 9 notes offered are read here (9 new or changed to fetch)\"], \"total\": 9, \"truncated\": false, \"dryRun\": false, \"project\": 3, \"team\": false, \"added\": 2, \"updated\": 0, \"removed\": 0, \"skipped\": 0, \"mirror\": 2, \"more\": true, \"next\": 40}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  9 of 9 notes offered are read here (9 new or changed to fetch)\n  added 2, updated 0, removed 0, skipped 0, mirror 2 notes\nshop -> hub (shop)\n  9 of 9 notes offered are read here (9 new or changed to fetch)\n  added 2, updated 0, removed 0, skipped 0, mirror 2 notes\n  shop -> hub: no progress: run the pull again later\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-pull",
+      "{\"dryRun\":false,\"project\":3}"
+     ],
+     [
+      "POST",
+      "/upstream-pull",
+      "{\"dryRun\":false,\"project\":3,\"upstream\":\"hub\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "pull purged",
+   "args": [
+    "upstream",
+    "pull",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-pull",
+     "status": 200,
+     "body": "{\"pulls\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [], \"total\": 0, \"truncated\": false, \"dryRun\": false, \"project\": 3, \"team\": false, \"added\": 0, \"updated\": 0, \"removed\": 0, \"skipped\": 0, \"mirror\": 0, \"purged\": true, \"stopped\": \"the upstream refuses this gateway (HTTP 403): the owner there must allow its device, bind it to a user and give that user a role\"}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  added 0, updated 0, removed 0, skipped 0, mirror 0 notes\n  the upstream withdrew the right to read: the mirror of this link was deleted\n  stopped: the upstream refuses this gateway (HTTP 403): the owner there must allow its device, bind it to a user and give that user a role\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-pull",
+      "{\"dryRun\":false,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "pull reading off",
+   "args": [
+    "upstream",
+    "pull",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-pull",
+     "status": 400,
+     "body": "{\"error\": {\"message\": \"reading is off for this link: minigw gw upstream link <project> <upstream> --read --accept-reach (look first: pull <project> --dry-run)\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: reading is off for this link: minigw gw upstream link <project> <upstream> --read --accept-reach (look first: pull <project> --dry-run)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-pull",
+      "{\"dryRun\":false,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "pull dry run",
+   "args": [
+    "upstream",
+    "pull",
+    "shop"
+   ],
+   "opts": {
+    "dryRun": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-pull",
+     "status": 200,
+     "body": "{\"pulls\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"source project:shop: 3 notes (structure faq 1, structure finding 1, data finding 1)\"], \"total\": 3, \"truncated\": false, \"dryRun\": true, \"project\": 3, \"team\": false, \"added\": 0, \"updated\": 0, \"removed\": 0, \"skipped\": 0, \"mirror\": 0}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  source project:shop: 3 notes (structure faq 1, structure finding 1, data finding 1)\n  dry run: 3 notes could be read, nothing was stored\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-pull",
+      "{\"dryRun\":true,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "pull dry run stopped",
+   "args": [
+    "upstream",
+    "pull",
+    "shop"
+   ],
+   "opts": {
+    "dryRun": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-pull",
+     "status": 200,
+     "body": "{\"pulls\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [], \"total\": 0, \"truncated\": false, \"dryRun\": true, \"project\": 3, \"team\": false, \"added\": 0, \"updated\": 0, \"removed\": 0, \"skipped\": 0, \"mirror\": 0, \"stopped\": \"the upstream does not support reading (or the project is gone there)\"}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  stopped: the upstream does not support reading (or the project is gone there)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-pull",
+      "{\"dryRun\":true,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "status reading on",
+   "args": [
+    "upstream",
+    "status"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /upstreams",
+     "status": 200,
+     "body": "{\"links\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"project\": 3, \"classes\": [\"structure\", \"data\"], \"pending\": 0, \"total\": 3, \"mode\": \"submit\", \"auto\": false, \"lastPush\": \"2026-11-17T10:30:00Z\", \"read\": true, \"readClasses\": [\"structure\", \"data\"], \"readSources\": [\"team:acme\", \"project:eureko\"], \"readAccepted\": \"2026-11-17T09:00:00Z\", \"lastPull\": \"2026-11-17T10:45:00Z\", \"lastPullOk\": \"2026-11-17T10:30:00Z\", \"lastPullAge\": 10800, \"pullError\": \"the upstream says: down\", \"mirror\": 12, \"mirrorBytes\": 3175}, {\"label\": \"web\", \"upstream\": \"hub\", \"remote\": \"web\", \"project\": 4, \"classes\": [\"structure\"], \"pending\": 0, \"total\": 0, \"mode\": \"submit\", \"auto\": false, \"read\": true, \"readClasses\": [\"structure\"], \"readAccepted\": \"2026-11-17T09:00:00Z\", \"mirror\": 0, \"mirrorBytes\": 0}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 0 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, manual\n  read: on, classes structure,data, sources team:acme,project:eureko, accepted 2026-11-17 09:00 for shop, mirror 12 notes (3.1 KiB), last pull 2026-11-17 10:30 (3 h old), last try 2026-11-17 10:45\n  last pull error: the upstream says: down\nweb -> hub (web): 0 of 0 notes would go, never pushed, classes structure, manual\n  read: on, classes structure, sources none, accepted 2026-11-17 09:00 for web, mirror 0 notes (0 B), never pulled\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/upstreams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link turns reading off",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "auto": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true,\"readOff\":true}"
+    }
+   ],
+   "want": {
+    "out": "linked shop to hub as shop: changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)\nreading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"auto\":true,\"classes\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
    "name": "usage",
    "args": [
     "upstream"
@@ -945,7 +1494,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run)\n  minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)\n",
     "exit": 1,
     "requests": []
    }
@@ -960,7 +1509,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run)\n  minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)\n",
     "exit": 1,
     "requests": []
    }
@@ -1129,7 +1678,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure,data, auto, publish\n  CONFLICT: note 12 (changed there), note 14 (deleted there): not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours\n",
+    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure,data, auto, publish\n  read: off\n  CONFLICT: note 12 (changed there), note 14 (deleted there): not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours\n",
     "err": "",
     "exit": 0,
     "requests": [

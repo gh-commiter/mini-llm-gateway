@@ -98,6 +98,9 @@ type coreOpts struct {
 	auto, manual              bool
 	theirs, ours              bool
 	withPrivate, dryRun       bool
+	read, noRead, acceptReach bool
+	readClass, readSources    string
+	pullWall                  time.Duration       // the time of one pull command (0: pullWallDefault)
 	pause                     func(time.Duration) // between the calls of a long upstream push (nil: time.Sleep)
 }
 

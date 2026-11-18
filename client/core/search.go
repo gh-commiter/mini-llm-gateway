@@ -31,7 +31,14 @@ func syncSearch(tx *sql.Tx, id int64) error {
 
 // rebuildSearch replaces every posting with one built from the notes.
 func rebuildSearch(tx *sql.Tx) error {
-	_, err := tx.Exec(`DELETE FROM note_search; ` + searchInsert)
+	if _, err := tx.Exec(`DELETE FROM note_search; ` + searchInsert); err != nil {
+		return err
+	}
+	var mirror int // the index of the upstream mirror has its own copy of the text: rebuilt from the mirror rows too (a backup of schema 24 or later)
+	if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='upstream_mirror_search'`).Scan(&mirror); err != nil || mirror == 0 {
+		return err
+	}
+	_, err := tx.Exec(`DELETE FROM upstream_mirror_search; INSERT INTO upstream_mirror_search(rowid,title,body) SELECT id,title,body FROM upstream_mirror`)
 	return err
 }
 func (s *Store) RebuildSearch(ctx context.Context) error {

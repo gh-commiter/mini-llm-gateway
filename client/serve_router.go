@@ -315,6 +315,11 @@ func routerCommand(args []string, in io.Reader) {
 	upClass := fs.String("class", "", "upstream link: classes to send, comma-separated (default structure,data)")
 	upWithPrivate := fs.Bool("with-private", false, "upstream link: also the private notes of ALL members of the project (needs private in --class)")
 	upDryRun := fs.Bool("dry-run", false, "upstream push: only ask the upstream what exists; write nothing")
+	upRead := fs.Bool("read", false, "upstream link: read the upstream's notes into a local mirror (needs --accept-reach)")
+	upNoRead := fs.Bool("no-read", false, "upstream link: stop reading; the mirror is deleted")
+	upReadClass := fs.String("read-class", "", "upstream link --read: classes to read, structure or structure,data (default structure; private is never read)")
+	upReadSources := fs.String("read-sources", "", "upstream link --read: more sources to read, as pull --dry-run names them (project:<slug>, team:<name>), comma-separated")
+	upAcceptReach := fs.Bool("accept-reach", false, "upstream link --read: you have seen what the upstream's user may read (pull --dry-run) and accept it for this link")
 	evTask := fs.String("task", "", "usage, usage-events, project-sessions: only this task")
 	explain := fs.Bool("explain", false, "member list: show membership origins")
 	history := fs.Bool("history", false, "quota: recorded probes, without fetching")
@@ -858,7 +863,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota", "upstream":
-		coreCommand(a, pos, coreOpts{in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, version: *version, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
+		coreCommand(a, pos, coreOpts{in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, read: *upRead, noRead: *upNoRead, readClass: *upReadClass, readSources: *upReadSources, acceptReach: *upAcceptReach, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, version: *version, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

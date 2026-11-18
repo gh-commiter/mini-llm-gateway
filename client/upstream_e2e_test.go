@@ -820,3 +820,27 @@ func seenHash(st *core.Store, id int64) string {
 	v, _ := st.GetSubmission(t0, core.Principal{}, 0, id, true)
 	return v.ReviewHash
 }
+
+// M2: a hub that offers new notes on every run (the cursor always moves forward) cannot keep `pull` asking for ever: at most maxPullRuns runs
+// and pullWall of time per command, then "more remains".
+func TestPullCommandStopsAfterItsRunsAndItsTime(t *testing.T) {
+	for name, c := range map[string]struct {
+		wall time.Duration
+		want int
+	}{"runs": {0, maxPullRuns}, "time": {time.Nanosecond, 1}} {
+		calls := 0
+		a := &adminClient{fake: func(method, path string, b []byte) (int, []byte) {
+			if path == "/projects" {
+				return 200, []byte(`{"projects":[{"ID":3,"Slug":"shop","Name":"Shop"}]}`)
+			}
+			calls++
+			return 200, []byte(fmt.Sprintf(`{"pulls":[{"label":"shop","upstream":"hub","remote":"shop","project":3,"lines":[],"more":true,"next":%d}]}`, calls*200))
+		}}
+		out, _, _ := captured(func() {
+			coreCommand(a, []string{"upstream", "pull", "shop"}, coreOpts{pause: func(time.Duration) {}, pullWall: c.wall})
+		})
+		if calls != c.want || !strings.Contains(out, "more remains: run the pull again") {
+			t.Fatalf("%s: %d calls: %s", name, calls, out)
+		}
+	}
+}

@@ -103,6 +103,8 @@ type pusher struct {
 	secret []byte        // this gateway's key for what it sends (Store.upstreamKey)
 	more   bool          // set when a limit could not be waited out
 	wait   time.Duration // for how long
+	status int           // the HTTP status of the last call (0: no usable answer)
+	big    bool          // the last call's answer was over maxUpstreamAnswer
 }
 
 type upAnswer struct {
@@ -116,9 +118,11 @@ type upAnswer struct {
 func (p *pusher) call(method, path string, hdr map[string]string, body []byte) (a upAnswer) {
 	for i := 0; ; i++ {
 		st, data, retry, err := p.tr.Do(p.ctx, p.up, method, path, hdr, body)
+		p.status, p.big = 0, err == nil && len(data) > maxUpstreamAnswer
 		if err != nil || len(data) > maxUpstreamAnswer {
 			return upAnswer{status: 0, errMsg: "no usable answer from the upstream"}
 		}
+		p.status = st
 		a = upAnswer{status: st, data: data}
 		var e struct {
 			Error struct{ Type, Message string }
@@ -142,10 +146,27 @@ func (p *pusher) call(method, path string, hdr map[string]string, body []byte) (
 	}
 }
 
+// invisibleRune is THE rule for what a person (or a reviewer reading a screen) cannot see in text that came from somewhere else: controls,
+// format characters (bidi, zero-width, the tag block), line and paragraph separators, variation selectors (also the supplement), the
+// Hangul and combining-grapheme fillers. upText and the mirror's body cleaning both use it; do not copy the list.
+func invisibleRune(r rune) bool {
+	switch {
+	case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029:
+		return true
+	case r >= 0xFE00 && r <= 0xFE0F, r >= 0xE0100 && r <= 0xE01EF, r >= 0x180B && r <= 0x180F, r >= 0xE0000 && r <= 0xE007F:
+		return true
+	}
+	switch r {
+	case 0x034F, 0x115F, 0x1160, 0x3164, 0xFFA0:
+		return true
+	}
+	return false
+}
+
 // upText: text that came from the upstream or from a person there, as one printable line of at most n bytes.
 func upText(s string, n int) string {
 	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029 {
+		if invisibleRune(r) {
 			return ' '
 		}
 		return r
@@ -194,6 +215,7 @@ func (p *pusher) resolve(l UpstreamLink) (int64, string) {
 				return t.Segment, ""
 			}
 		}
+		p.status = 404 // not a failure of the upstream: the team is not (or no longer) ours to read
 		return 0, "this gateway is not on team " + upText(l.Remote, 64) + " on the upstream (or it does not exist there)"
 	}
 	a := p.call("GET", "/minigw/v1/projects/"+url.PathEscape(l.Remote), nil, nil)
@@ -237,10 +259,12 @@ func (p *pusher) trailer(project int64, n UpstreamNote, supersedes int64) string
 // maxReportLines: the lines of one report; the totals count everything, the rest of the lines is "... and K more".
 const maxReportLines = 200
 
-// errPushRunning: another push of this link is running; a manual push answers it as a refusal, the timer just comes back later.
+// errPushRunning: another push or pull of this link is running; a manual push answers it as a refusal, the timer just comes back later.
 type errPushRunning struct{}
 
-func (errPushRunning) Error() string   { return "a push of this link is running: try again in a moment" }
+func (errPushRunning) Error() string {
+	return "a push or pull of this link is running: try again in a moment"
+}
 func (e errPushRunning) Unwrap() error { return ErrRefusal{e.Error()} }
 
 func (s *Store) linkLock(project int64, upstream string) *sync.Mutex {

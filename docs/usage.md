@@ -1476,9 +1476,38 @@ owner decides what it may do with the existing means.
    ALL members of the project, not only your own. `push --dry-run` only asks the upstream what exists and writes nothing,
    there or here. `minigw gw upstream pull [<project>|--team <team>] --dry-run` shows the other direction:
    what the upstream's device user could read of the linked project (per source: the project, its team's notes, what it depends on;
-   counts per class and kind, never private, at most 5000 notes). It stores nothing and nothing runs it by itself; a real pull comes
-   in a later version. Each note carries the name of its author in its text (a line at its end, with an opaque reference and, for
+   counts per class and kind, never private, at most 5000 notes). It stores nothing and nothing runs it by itself.
+   Reading the upstream's notes is described below ("Reading the upstream's notes"). Each note carries the name of its author in its text (a line at its end, with an opaque reference and, for
    a replacement, the number of the earlier submission); the submission itself belongs to the bound user.
+
+**Reading the upstream's notes (step C2: the mirror and the manual pull).** A link can also *read*: the gateway keeps a bounded **mirror**
+of the notes the upstream's device user may read in the linked project, in a table of its own (`upstream_mirror`), never among the local
+notes. In this version members **see nothing of it yet** (search, `note read`, FAQ and MCP come with step C3), nothing pulls by itself
+(automatic pull and a panel are step C4), and it has not been tried between two real gateways.
+
+```text
+minigw gw upstream pull <project> --dry-run      # first look: what the upstream's user could read (sources, classes, counts)
+minigw gw upstream link <project> hub --read [--read-class structure,data] [--read-sources team:acme,project:eureko] --accept-reach
+minigw gw upstream pull [<project>|--team <team>]   # fills the mirror; asks again until it is through
+minigw gw upstream status                           # read on/off, accepted reach, mirror notes and size, last pull and its age, last error
+minigw gw upstream link <project> hub --no-read      # reading off: the mirror is deleted
+```
+
+`--read` is refused without `--accept-reach`: reading means that the local project's members will (from step C3 on) find everything the
+upstream's **device user** may read in the project, by their local class rights, so bind each gateway's device on the upstream to a user
+that has the reader role only in the projects meant for that gateway. The default is the `structure` class of the linked project itself;
+`data` only with `--read-class structure,data`; the project's team notes and what it depends on only when named with `--read-sources`
+(the labels `pull --dry-run` prints). `private` notes are never read. An existing link keeps its push settings when only the reading is
+changed; changing what is read deletes the mirror (the next pull fills it again). The acceptance covers the exact **reach**: the upstream, the remote project or team, the classes and the sources (shown by `status` as "accepted ... for <remote>"; the audit row of the link names them). A link that is changed to reach another remote project or team (for example `link <project> <name> --auto`, which defaults the remote to the local name) turns reading off and deletes its mirror until you repeat `--read --accept-reach`. The mirror is deleted by `--no-read`, `unlink` and
+`upstream remove`, is not part of an export bundle and is never pushed.
+
+A pull asks the upstream for a **manifest** (ids and revisions only), fetches at most 200 new or changed notes per run (the command repeats
+until it is through, and a helper-backed gateway such as the Mac works within the time of one helper call, about 10 seconds, and
+continues where it stopped), and deletes what a **complete** manifest no longer lists (never from a manifest that was cut at 5000
+notes). When the upstream refuses the device (401/403), no longer knows the project or team, the mirror of that link is **deleted at
+once**. An upstream that is too old for the manifest (404/501, or another version) is left alone: nothing is stored. What the upstream
+sends is treated as data: a note that is not the one the manifest listed, is over 256 bytes of title or 64 KiB of body, or answers
+badly is skipped (and shown), as is a note whose text is not valid UTF-8 (it is not repaired); invisible characters (controls, bidi and zero-width characters, variation selectors, the tag block, fillers) are removed from the text. The mirror holds at most 5000 notes per link and, per gateway, what costs 64 MiB on disk: a note counts three times its title and body (its row, the search table's copy of the text and the search index), so about 21 MiB of text. A full mirror ends the pull ("mirror full") without fetching notes it cannot keep. One `pull` command makes at most 25 runs (the 5000 notes of a link) and runs for at most 10 minutes, then says "more remains: run the pull again"; when all links are pulled at once and the time of a helper call is used up, the links not done are reported as "more". A restore rebuilds the mirror's search index with the notes' index.
 
 **What leaves the gateway with a push**, exactly: for each note its title, class, kind (finding or faq) and body; one line at the end of the
 body with an opaque reference (a hash of this gateway, the link and the note: stable for the note, it says nothing about this gateway) and
