@@ -218,11 +218,49 @@ actor QuotaEngine {
 }
 
 /// The providers' endpoints: GET, no redirect (a redirect would carry the key elsewhere), the whole transfer within 10 seconds (the resource timeout
-/// covers the body, not only the first byte) and at most 1 MB: the body is streamed and the transfer is cancelled at the limit, nothing larger is buffered.
+/// covers the body, not only the first byte) and at most 1 MB: the body is taken a chunk per delegate call and the transfer is cancelled at the limit,
+/// nothing larger is buffered.
 enum QuotaHTTP {
-    private final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private typealias Answer = (status: Int, data: Data)?
+
+    /// Takes the body in the chunks URLSession delivers (one async step per byte would cost a million steps for a 1 MB answer) and cancels the
+    /// task as soon as the limit is reached, so the rest of the body is never read.
+    private final class Body: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+        private let limit: Int
+        private let lock = NSLock()
+        private var data = Data()
+        private var cut = false  // the limit was reached and the task cancelled: what was kept is the answer
+        private var continuation: CheckedContinuation<Answer, Never>?
+
+        init(_ limit: Int) { self.limit = limit }
+
         func urlSession(_ s: URLSession, task: URLSessionTask, willPerformHTTPRedirection r: HTTPURLResponse, newRequest: URLRequest,
                         completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
+
+        func urlSession(_ s: URLSession, dataTask: URLSessionDataTask, didReceive d: Data) {
+            let full: Bool = lock.withLock { () -> Bool in
+                guard !cut else { return true }
+                data.append(d.prefix(max(0, limit - data.count)))  // exactly the limit, as the byte loop kept
+                if data.count >= limit { cut = true; return true }
+                return false
+            }
+            if full { dataTask.cancel() }
+        }
+
+        func urlSession(_ s: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            let (cont, answer) = lock.withLock { () -> (CheckedContinuation<Answer, Never>?, Answer) in
+                let c = continuation
+                continuation = nil
+                guard let h = task.response as? HTTPURLResponse, cut || error == nil else { return (c, nil) }  // the deadline, or the connection broke
+                return (c, (h.statusCode, data))
+            }
+            cont?.resume(returning: answer)
+        }
+
+        func start(_ c: CheckedContinuation<Answer, Never>, _ task: URLSessionDataTask) {
+            lock.withLock { continuation = c }
+            task.resume()
+        }
     }
 
     @Sendable static func get(_ req: URLRequest) async -> (status: Int, data: Data)? { await get(req, limit: 1 << 20, deadline: 10) }
@@ -231,17 +269,10 @@ enum QuotaHTTP {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = deadline
         cfg.timeoutIntervalForResource = deadline
-        let session = URLSession(configuration: cfg, delegate: NoRedirect(), delegateQueue: nil)
+        let body = Body(limit)
+        let session = URLSession(configuration: cfg, delegate: body, delegateQueue: nil)
         defer { session.invalidateAndCancel() }  // also ends a transfer that was cut at the limit
-        guard let (bytes, resp) = try? await session.bytes(for: req), let h = resp as? HTTPURLResponse else { return nil }
-        var data = Data()
-        do {
-            for try await b in bytes {
-                data.append(b)
-                if data.count >= limit { break }
-            }
-        } catch { return nil }  // the deadline, or the connection broke
-        return (h.statusCode, data)
+        return await withCheckedContinuation { c in body.start(c, session.dataTask(with: req)) }
     }
 }
 

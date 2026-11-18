@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- The Mac gateway reads a provider's quota answer in chunks and stops at the 1 MB limit without waiting for the rest of the body, so a refresh on a busy machine no longer takes about a minute.
+
 ## 0.7.23
 
 ### Security
