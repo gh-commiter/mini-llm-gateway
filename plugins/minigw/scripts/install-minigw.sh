@@ -25,23 +25,24 @@ esac
 mkdir -p "$BIN"
 
 
-ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //'; }
-MIN=0.7.30  # najnižji minigw za ta vtičnik; skilli in kljuke rabijo kb, team, upstream (0.7.30) ...: sicer različica vtičnika
-pv=$(sed -n 's/^  "version": "\([0-9][0-9.]*\)".*/\1/p' "${0%/*}/../.claude-plugin/plugin.json" 2>/dev/null | head -1)  # bump-version.sh jo piše ob izdaji
-[ -n "$pv" ] && MIN=$pv
-# Nameščen minigw, starejši od MIN: vtičnik ga ne uporabi; ob izhodu eno vrstico, kaj uporablja in kako ga posodobiti.
-stale="" sv="" clientonly=""
-staleline() {
-  [ -n "$stale" ] || return 0
+ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //; s/[ -].*$//'; }  # »0.7.4-beta (x)« je 0.7.4
+# goodver v: strogo 2 ali 3 števila s pikami, do 20 znakov; vse drugo (»v0.7.4«, prazno) velja za prestaro, nikoli za dovolj novo.
+goodver() { [ ${#1} -ge 3 ] && [ ${#1} -le 20 ] && printf '%s\n' "$1" | grep -Eq '^[0-9]+(\.[0-9]+){1,2}$'; }
+# macOS: podpisan minigw (Developer ID, ekipa in identifikator). Preveri se PREJ, kot se kaj zažene.
+valid() { [ "$os" = darwin ] && [ -x "$1" ] && codesign --verify --strict -R="$REQ" "$1" 2>/dev/null; }
+# MIN: dodatna datoteka MIN_CLIENT (bump-version.sh jo piše ob izdaji; JSON se ne razčlenjuje); brez nje ali neveljavna: 0.7.30 in vrstica.
+MIN=0.7.30 mc=""
+{ read -r mc < "${0%/*}/MIN_CLIENT"; } 2>/dev/null
+if goodver "$mc"; then MIN=$mc; else echo "minigw plugin: MIN_CLIENT is missing or invalid; assuming the minimum client $MIN."; fi
+# Kako posodobiti nameščeni minigw (ena vrstica).
+how() {
   case $os in
-    darwin) upd="brew upgrade --cask gh-commiter/mini-gateway/minigw, or run the installer again (docs/install.md)" ;;
-    windows) upd="run the installer https://github.com/$REPO/releases/latest/download/minigw-windows-$arch.msi (docs/install.md)" ;;
-    *) upd="curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sh" ;;
+    darwin) echo "brew upgrade --cask gh-commiter/mini-gateway/minigw, or run the installer again: docs/install.md" ;;
+    windows) echo "run the installer https://github.com/$REPO/releases/latest/download/minigw-windows-$arch.msi (docs/install.md)" ;;
+    *) echo "curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sh" ;;
   esac
-  if [ -x "$EXE" ] && [ ! -L "$EXE" ]; then use="the plugin uses its own copy"; else use="the plugin cannot use it"; fi
-  echo "minigw plugin: the installed minigw ${sv:+$sv }is older than $MIN, which this plugin needs; $use. Update the installed one: $upd"
 }
-trap staleline EXIT
+stale="" clientonly=""  # stale: overjen, a prestar nameščen minigw (le ob neuspelem prenosu)
 # older a b: a < b po številskih poljih (awk; BusyBox nima sort -V)
 older() { [ -n "$1" ] && [ -n "$2" ] && awk -v a="$1" -v b="$2" 'BEGIN { n = split(a, x, "."); m = split(b, y, "."); if (m > n) n = m
   for (i = 1; i <= n; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }; exit 1 }'; }
@@ -57,6 +58,7 @@ verify_sums() {
     rm -f "$a"; [ $r -eq 0 ] && return 0 || return 1
   fi
   [ -x "$EXE" ] && [ ! -L "$EXE" ] || return 2
+  [ "$os" != darwin ] || valid "$EXE" || return 2
   v=$(ver "$EXE")
   case $v in *[!0-9.]*|"") return 2 ;; esac
   older "$v" 0.5.17 && return 2
@@ -108,8 +110,8 @@ if [ "$os" = linux ] && [ -e "$inst" ] && ! { mine "$inst" && mine "${inst%/*}" 
 fi
 [ -n "$inst" ] && [ -x "$inst" ] && iv=$(ver "$inst")
 case $iv in *[!0-9.]*) iv="" ;; esac
-if [ -n "$iv" ] && ! older "$iv" "$MIN"; then :; else [ -n "$iv" ] && stale=$inst sv=$iv; inst=""; fi
-if [ -z "$inst" ] && [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ]; then
+if goodver "$iv" && ! older "$iv" "$MIN"; then :; else [ -n "$inst" ] && [ -x "$inst" ] && stale=$inst; inst=""; fi
+if [ -z "$inst" ] && [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ] && { [ "$os" != darwin ] || valid "$EXE"; }; then
   have=$(ver "$EXE"); case $have in *[!0-9.]*) have="" ;; esac
   if older "$rel" "$have" && [ "${1:-}" != --allow-downgrade ] && [ "${MINIGW_ALLOW_DOWNGRADE:-}" != 1 ]; then
     sums="" unsigned="the latest release ($rel) is older than the installed minigw $have (run with MINIGW_ALLOW_DOWNGRADE=1 to go back)"
@@ -134,21 +136,21 @@ fetch() {
 
 if [ "$os" = darwin ]; then
   # macOS: podpisan minigw (Developer ID, ekipa in identifikator) iz minigw.zip ali že nameščen (brew).
-  valid() { [ -x "$1" ] && codesign --verify --strict -R="$REQ" "$1" 2>/dev/null; }
   # Nameščen minigw (brew, aplikacija) ima vedno prednost pred preneseno kopijo: posodablja ga brew.
   other=""
   for c in "$(command -v minigw 2>/dev/null || true)" /opt/homebrew/bin/minigw /usr/local/bin/minigw \
            "/Applications/Mini Gateway.app/Contents/Helpers/minigw"; do
     [ -n "$c" ] && [ "$c" != "$EXE" ] && valid "$c" || continue
-    cv=$(ver "$c"); case $cv in *[!0-9.]*) cv="" ;; esac
-    older "$cv" "$MIN" || { other=$c; stale=""; break; }  # prestar: prenos in vrstica ob izhodu
-    [ -n "$stale" ] || { stale=$c sv=$cv; }
+    cv=$(ver "$c")
+    goodver "$cv" && ! older "$cv" "$MIN" && { other=$c; break; }  # neznana ali prestara različica: prenos
+    [ -n "$stale" ] || stale=$c  # overjen, a prestar: le če prenos ne uspe
   done
   if [ -n "$other" ]; then
     [ "$(readlink "$EXE" 2>/dev/null)" = "$other" ] || { rm -f "$EXE"; ln -s "$other" "$EXE"; }
   elif [ -L "$EXE" ] || ! valid "$EXE" || { [ -n "$(want minigw.zip)" ] && [ "$(cat "$stamp" 2>/dev/null)" != "$(want minigw.zip)" ]; }; then
     fetch minigw.zip || valid "$EXE" || {
-      echo "minigw plugin: could not download or verify minigw from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; }
+      if [ -n "$stale" ]; then rm -f "$EXE"; ln -s "$stale" "$EXE"
+      else echo "minigw plugin: could not download or verify minigw from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; fi; }
   fi
 else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
@@ -166,17 +168,21 @@ else
       echo "minigw plugin: could not point $BIN/minigw at $inst."
     rm -f "$EXE" 2>/dev/null  # prejšnja kopija; v rabi ostane, a bin/minigw ima prednost
     EXE=$inst
-  elif [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
+  elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
     [ "$os" = windows ] && rm -f "$BIN/minigw" "$BIN/minigw.cmd"  # brez namestitve: lupini na odstranjeni minigw gresta
-    fetch "$asset" || [ -x "$EXE" ] || {
+    fetch "$asset" || [ -x "$EXE" ] || { [ "$os" = linux ] && [ -n "$stale" ] && rm -f "$EXE" && ln -s "$stale" "$EXE"; } || {
       echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; }
   fi
 fi
 
-# Prestar minigw (zadnja izdaja ali nameščen ga še ne more zamenjati): skilli s profili tega ne smejo uporabiti.
+# Izbran minigw (že overjen na macOS) je lahko prestar (brez prenosa, zadnja izdaja starejša, ali ga namestitev še ni posodobila):
+# nikoli tiho, ena vrstica iz dejanskega izida. Različica le v strogi obliki.
 cur=$(ver "$EXE")
-case $cur in *[!0-9.]*) cur="" ;; esac
-older "$cur" "$MIN" && echo "minigw plugin: minigw $cur is older than $MIN, which this plugin needs: run /minigw:gw update."
+if goodver "$cur"; then
+  older "$cur" "$MIN" && echo "minigw plugin: using the installed minigw $cur, older than $MIN which this plugin's commands need; some commands will not work until it is updated ($(how))"
+else
+  echo "minigw plugin: using the installed minigw, whose version could not be read; this plugin's commands need $MIN or newer and may not work until it is updated ($(how))"
+fi
 
 # L4 (0.5.17): posodobitev zavrnjena (podpis), obstoječa ostane: povej, zakaj.
 [ -n "$unsigned" ] && [ -z "$inst" ] && [ -x "$EXE" ] && echo "minigw plugin: not updated: $unsigned; the installed minigw stays."

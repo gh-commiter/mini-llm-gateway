@@ -591,10 +591,22 @@ func TestPluginHooksFile(t *testing.T) {
 	}
 }
 
-// runInstallScript runs install-minigw.sh as on a Mac, with fake uname, codesign (valid only inside the temp dir), curl
-// (never downloads; answers only the releases/latest redirect), plutil (no app version) and claude. installed is the
-// version of a fake client on PATH ("" = none). Returns the script's output and the plugin's bin/minigw path.
-func runInstallScript(t *testing.T, installed, latest, pluginVersion string) (string, string) {
+// installRun configures runInstallScript: a fake Mac (or Linux) with fake uname, codesign (valid inside the temp dir
+// unless the file says UNSIGNED), curl (answers the releases/latest redirect and, with sums, SHA256SUMS(.sig); nothing
+// else is ever downloaded), ssh-keygen (accepts), plutil (no app version), stat and claude.
+type installRun struct {
+	goos      string // "" = Darwin
+	installed string // what a fake client on PATH (Linux: ~/.local/bin) prints for --version; "-" = none
+	latest    string
+	min       string // MIN_CLIENT content; "" = 0.7.32, "-" = no file
+	sums      string // content of the release's SHA256SUMS; "" = offline
+	preLink   bool   // the plugin's bin/minigw already links to the installed client
+	ownCopy   string // a regular, unsigned bin/minigw that writes the marker file when it runs
+}
+
+type installResult struct{ out, exe, marker string }
+
+func runInstallScript(t *testing.T, o installRun) installResult {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("needs sh")
@@ -622,52 +634,167 @@ func runInstallScript(t *testing.T, installed, latest, pluginVersion string) (st
 		}
 		return p
 	}
-	script := write("plugin/scripts/install-minigw.sh", string(body))
-	write("plugin/.claude-plugin/plugin.json", "{\n  \"name\": \"minigw\",\n  \"version\": \""+pluginVersion+"\",\n  \"x\": 1\n}\n")
-	write("fb/uname", "#!/bin/sh\n[ \"$1\" = -s ] && echo Darwin || echo arm64\n")
-	write("fb/codesign", "#!/bin/sh\nfor a; do l=$a; done\ncase $l in "+tmp+"/*) exit 0 ;; esac\nexit 1\n")
-	write("fb/curl", "#!/bin/sh\ncase \"$*\" in *redirect_url*) echo \"https://github.com/x/releases/tag/v"+latest+"\"; exit 0 ;; esac\nexit 22\n")
+	write("plugin/scripts/install-minigw.sh", string(body))
+	script := filepath.Join(tmp, "plugin/scripts/install-minigw.sh")
+	min := o.min
+	if min == "" {
+		min = "0.7.32\n"
+	}
+	if min != "-" {
+		write("plugin/scripts/MIN_CLIENT", min)
+	}
+	osName := "Darwin"
+	if o.goos == "linux" {
+		osName = "Linux"
+	}
+	write("fb/uname", "#!/bin/sh\n[ \"$1\" = -s ] && echo "+osName+" || echo arm64\n")
+	write("fb/codesign", "#!/bin/sh\nfor a; do l=$a; done\ngrep -q UNSIGNED \"$l\" 2>/dev/null && exit 1\ncase $l in "+tmp+"/*) exit 0 ;; esac\nexit 1\n")
+	write("fb/ssh-keygen", "#!/bin/sh\nexit 0\n")
+	write("fb/stat", "#!/bin/sh\necho \"$(id -u) 755\"\n")
+	write("fb/curl", `#!/bin/sh
+case "$*" in *redirect_url*) echo "https://github.com/x/releases/tag/v`+o.latest+`"; exit 0 ;; esac
+for a; do [ "$p" = -o ] && out=$a; u=$a; p=$a; done
+[ -f `+tmp+`/sums ] || exit 22
+case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig > "$out" ;; *) exit 22 ;; esac
+`)
+	if o.sums != "" {
+		write("sums", o.sums)
+	}
 	write("fb/plutil", "#!/bin/sh\nexit 1\n")
 	write("fb/claude", "#!/bin/sh\nexit 0\n")
-	if installed != "" {
-		write("inst/minigw", "#!/bin/sh\ncase $1 in --version) echo minigw "+installed+" ;; status) exit 0 ;; esac\n")
+	home := filepath.Join(tmp, "home")
+	inst := filepath.Join(tmp, "inst", "minigw")
+	if o.goos == "linux" {
+		inst = filepath.Join(home, ".local", "bin", "minigw")
+	}
+	if o.installed != "-" {
+		write(strings.TrimPrefix(inst, tmp+"/"), "#!/bin/sh\ncase $1 in --version) echo '"+o.installed+"' ;; status) exit 0 ;; esac\n")
 	}
 	data := filepath.Join(tmp, "data")
+	exe := filepath.Join(data, "bin", "minigw")
+	marker := filepath.Join(tmp, "marker")
+	if o.preLink {
+		if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(inst, exe); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if o.ownCopy != "" {
+		write("data/bin/minigw", "#!/bin/sh\n# UNSIGNED\ntouch "+marker+"\necho '"+o.ownCopy+"'\n")
+	}
 	cmd := exec.Command(sh, script)
-	cmd.Env = []string{"HOME=" + filepath.Join(tmp, "home"), "CLAUDE_PLUGIN_DATA=" + data,
+	cmd.Env = []string{"HOME=" + home, "CLAUDE_PLUGIN_DATA=" + data,
 		"PATH=" + filepath.Join(tmp, "fb") + string(os.PathListSeparator) + filepath.Join(tmp, "inst") + string(os.PathListSeparator) + "/usr/bin:/bin"}
-	out, _ := cmd.CombinedOutput()
-	return string(out), filepath.Join(data, "bin", "minigw")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Errorf("the script must exit 0: %v\n%s", err, out)
+	}
+	return installResult{string(out), exe, marker}
 }
 
-func TestInstallScriptOldInstalledClientIsNotUsed(t *testing.T) {
-	out, exe := runInstallScript(t, "0.7.0", "0.7.32", "0.7.32")
-	if _, err := os.Lstat(exe); err == nil {
-		t.Errorf("the plugin linked the old client:\n%s", out)
-	}
-	for _, want := range []string{"installed minigw 0.7.0 is older than 0.7.32", "brew upgrade --cask"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output lacks %q:\n%s", want, out)
+func (r installResult) linked() bool { _, err := os.Readlink(r.exe); return err == nil }
+
+func (r installResult) mustSay(t *testing.T, want ...string) {
+	t.Helper()
+	for _, w := range want {
+		if !strings.Contains(r.out, w) {
+			t.Errorf("output lacks %q:\n%s", w, r.out)
 		}
 	}
 }
 
-func TestInstallScriptCurrentInstalledClientIsLinked(t *testing.T) {
-	out, exe := runInstallScript(t, "0.7.32", "0.7.32", "0.7.32")
-	if l, err := os.Readlink(exe); err != nil || !strings.HasSuffix(l, "/inst/minigw") {
-		t.Errorf("not linked (%q, %v):\n%s", l, err, out)
+func TestInstallScriptOldClientOfflineIsUsedAndSaidSo(t *testing.T) {
+	r := runInstallScript(t, installRun{installed: "minigw 0.7.0", latest: "0.7.32"})
+	if !r.linked() {
+		t.Errorf("offline, an authentic old client is better than none:\n%s", r.out)
 	}
-	if strings.Contains(out, "older") || strings.Contains(out, "available") {
-		t.Errorf("unexpected message:\n%s", out)
+	r.mustSay(t, "minigw plugin: using the installed minigw 0.7.0, older than 0.7.32 which this plugin's commands need; some commands will not work until it is updated (brew upgrade --cask")
+}
+
+func TestInstallScriptOldLinkedClientOfflineIsSaidSo(t *testing.T) {
+	r := runInstallScript(t, installRun{installed: "minigw 0.7.0", latest: "0.7.32", preLink: true})
+	r.mustSay(t, "using the installed minigw 0.7.0, older than 0.7.32")
+}
+
+func TestInstallScriptCurrentInstalledClientIsLinked(t *testing.T) {
+	r := runInstallScript(t, installRun{installed: "minigw 0.7.32", latest: "0.7.32"})
+	if l, err := os.Readlink(r.exe); err != nil || !strings.HasSuffix(l, "/inst/minigw") {
+		t.Errorf("not linked (%q, %v):\n%s", l, err, r.out)
+	}
+	if strings.Contains(r.out, "older") || strings.Contains(r.out, "available") {
+		t.Errorf("unexpected message:\n%s", r.out)
 	}
 }
 
 func TestInstallScriptMacWithoutAppHintsAtNewerRelease(t *testing.T) {
-	out, exe := runInstallScript(t, "0.7.32", "0.7.33", "0.7.32")
-	if _, err := os.Readlink(exe); err != nil {
-		t.Errorf("not linked: %v\n%s", err, out)
+	r := runInstallScript(t, installRun{installed: "minigw 0.7.32", latest: "0.7.33"})
+	if !r.linked() {
+		t.Errorf("not linked:\n%s", r.out)
 	}
-	if want := "minigw 0.7.32 is installed, 0.7.33 is available: brew upgrade --cask"; !strings.Contains(out, want) {
-		t.Errorf("output lacks %q:\n%s", want, out)
+	r.mustSay(t, "minigw 0.7.32 is installed, 0.7.33 is available: brew upgrade --cask")
+}
+
+// A version that is not strict digits and dots counts as too old (never as new enough); a -suffix is cut and the numbers compared.
+func TestInstallScriptOddVersionsDoNotPassTheMinimum(t *testing.T) {
+	for _, v := range []string{"minigw v0.7.99", "minigw 0.7.99.1.2", "minigw ", "minigw 0.7.", "garbage"} {
+		r := runInstallScript(t, installRun{installed: v, latest: "0.7.32"})
+		r.mustSay(t, "using the installed minigw")
+		if strings.Contains(r.out, "connected to Mini Gateway") && !strings.Contains(r.out, "older than") && !strings.Contains(r.out, "could not be read") {
+			t.Errorf("%q passed silently:\n%s", v, r.out)
+		}
+	}
+	r := runInstallScript(t, installRun{installed: "minigw 0.7.99-beta", latest: "0.7.99"})
+	if !r.linked() || strings.Contains(r.out, "older") || strings.Contains(r.out, "could not be read") {
+		t.Errorf("0.7.99-beta should count as 0.7.99:\n%s", r.out)
+	}
+	r = runInstallScript(t, installRun{installed: "minigw 0.7.4-beta", latest: "0.7.32"})
+	r.mustSay(t, "installed minigw 0.7.4, older than 0.7.32")
+}
+
+func TestInstallScriptMinimumFile(t *testing.T) {
+	for _, m := range []string{"-", "0.7.x\n", "{\"version\": \"0.7.32\"}\n", "0.7.32.1.2\n", "\n"} {
+		r := runInstallScript(t, installRun{installed: "minigw 0.7.31", latest: "0.7.31", min: m})
+		r.mustSay(t, "MIN_CLIENT is missing or invalid", "0.7.30")
+		if strings.Contains(r.out, "older than") {
+			t.Errorf("min %q: the literal fallback 0.7.30 accepts 0.7.31:\n%s", m, r.out)
+		}
+	}
+	r := runInstallScript(t, installRun{installed: "minigw 0.7.32", latest: "0.7.32", min: "0.7.40\n"})
+	r.mustSay(t, "older than 0.7.40")
+}
+
+// Authenticate before executing (macOS): a cached copy that fails the signature check is never run, not even for --version.
+func TestInstallScriptCachedUnsignedCopyIsNeverExecuted(t *testing.T) {
+	sums := "VERSION 0.7.5\n" + strings.Repeat("a", 64) + "  minigw.zip\n"
+	r := runInstallScript(t, installRun{installed: "-", latest: "0.7.32", sums: sums, ownCopy: "minigw 0.7.99"})
+	if _, err := os.Stat(r.marker); err == nil {
+		t.Errorf("an unsigned cached binary was executed:\n%s", r.out)
+	}
+	r = runInstallScript(t, installRun{installed: "-", latest: "0.7.32", ownCopy: "minigw 0.7.99"})
+	if _, err := os.Stat(r.marker); err == nil {
+		t.Errorf("an unsigned cached binary was executed offline:\n%s", r.out)
+	}
+}
+
+func TestInstallScriptLinuxOldClientOffline(t *testing.T) {
+	r := runInstallScript(t, installRun{goos: "linux", installed: "minigw 0.7.0", latest: "0.7.32"})
+	if !r.linked() {
+		t.Errorf("not linked:\n%s", r.out)
+	}
+	r.mustSay(t, "using the installed minigw 0.7.0, older than 0.7.32")
+}
+
+func TestPluginMinClientIsThePluginVersion(t *testing.T) {
+	if _, err := os.Stat("../plugins"); os.IsNotExist(err) {
+		t.Skip("needs the repository tree (../plugins)")
+	}
+	var m struct{ Version string }
+	if err := json.Unmarshal(srcFile(t, "../plugins/minigw/.claude-plugin/plugin.json"), &m); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimRight(string(srcFile(t, "../plugins/minigw/scripts/MIN_CLIENT")), "\n"); got != m.Version || !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+\n$`).Match(srcFile(t, "../plugins/minigw/scripts/MIN_CLIENT")) {
+		t.Errorf("scripts/MIN_CLIENT is %q, the plugin version is %q: bump-version.sh must write both", got, m.Version)
 	}
 }
