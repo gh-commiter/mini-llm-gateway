@@ -79,7 +79,7 @@ func runningMain(args []string) { runProjectCmd("running", args) }
 
 func runProjectCmd(kind string, args []string) {
 	cwd, _ := os.Getwd()
-	e := &projectEnv{state: projectStatePath(), cwd: cwd, in: os.Stdin, out: os.Stdout, err: os.Stderr, agent: runEnvironment(), do: realDo, sleep: time.Sleep}
+	e := &projectEnv{state: projectStatePath(), cwd: cwd, in: os.Stdin, out: os.Stdout, err: os.Stderr, agent: runEnvironment(), do: olderRouteHint(realDo), sleep: time.Sleep}
 	e.connect = func() (connection, string) {
 		p := requireProfile()
 		return route(p), gatewayID(p.conn)
@@ -197,6 +197,9 @@ func gatewayAnswer(st int, data []byte, h http.Header) error {
 		}
 		return errors.New("no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)")
 	case 404:
+		if b.Error.Type == "older_gateway" { // olderRouteHint: the gateway does not have this command's routes yet
+			return errors.New(oneLine(b.Error.Message))
+		}
 		return errors.New("not found or not visible")
 	case 409:
 		if b.Error.Type == "revision_mismatch" {
@@ -218,6 +221,43 @@ func gatewayAnswer(st int, data []byte, h http.Header) error {
 		return errors.New("the gateway's project store is not available")
 	}
 	return fmt.Errorf("gateway answered HTTP %d", st)
+}
+
+// olderRouteHint wraps the gateway call: a 404 on the routes of the kb (first in 0.7.10) or team (0.7.1) routes from a
+// gateway older than that becomes a sentence that names the gateway's version and the update, instead of "not found or not visible".
+// The version is asked (/health/ready) only after such a 404, once per command.
+func olderRouteHint(do func(connection, string, string, map[string]string, []byte) (int, []byte, http.Header)) func(connection, string, string, map[string]string, []byte) (int, []byte, http.Header) {
+	version := ""
+	return func(c connection, method, path string, headers map[string]string, body []byte) (int, []byte, http.Header) {
+		st, data, h := do(c, method, path, headers, body)
+		family, min := "", ""
+		switch {
+		case st != 404:
+			return st, data, h
+		case strings.HasPrefix(path, "/minigw/v1/teams"):
+			family, min = "team", "0.7.1"
+		case strings.HasPrefix(path, apiProjects+"/") && strings.Contains(path, "/kb/"):
+			family, min = "kb", "0.7.10"
+		default:
+			return st, data, h
+		}
+		if version == "" {
+			hs, hd, _ := do(c, "GET", "/health/ready", nil, nil)
+			var r struct{ Version string }
+			if hs != 200 || json.Unmarshal(hd, &r) != nil || strings.Trim(r.Version, "0123456789.") != "" {
+				return st, data, h // the version is not known: the plain answer
+			}
+			if version = r.Version; version == "" {
+				version = "0.5" // a gateway that reports none is older than 0.6.0
+			}
+		}
+		if !versionLess(version, min) {
+			return st, data, h
+		}
+		msg, _ := json.Marshal(map[string]any{"error": map[string]string{"type": "older_gateway",
+			"message": fmt.Sprintf("this gateway is %s; %s needs %s or newer: update the gateway (/minigw:gw update there)", version, family, min)}})
+		return st, msg, h
+	}
 }
 
 // olderGatewayHint: the gateway's version (/health/ready) when it is below 0.6.0, else "". A gateway that reports none is older still.

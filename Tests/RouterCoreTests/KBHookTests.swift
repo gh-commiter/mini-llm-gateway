@@ -108,6 +108,19 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         #expect(lines.last == "a\tbc")  // the tab stays in place, the invisible character goes
     }
 
+    @Test func olderGatewayNamesTheVersionForKBAndTeam() throws {
+        func send(_ version: String, _ path: String) -> String {
+            let s = ProjectEnv.olderRouteHint { _, _, p, _, _ in
+                p == "/health/ready" ? ProjectReply(status: 200, data: Data(#"{"version":"\#(version)"}"#.utf8)) : ProjectReply(status: 404, data: Data(#"{"error":{"message":"not found"}}"#.utf8))
+            }
+            let r = s(ProjectConn(url: "", token: ""), "GET", path, [:], nil)
+            return ProjectEnv.gatewayError(r.status, r.data, nil).message
+        }
+        #expect(send("0.7.5", "/minigw/v1/projects/7/kb/search?q=x") == "this gateway is 0.7.5; kb needs 0.7.10 or newer: update the gateway (/minigw:gw update there)")
+        #expect(send("0.7.0", "/minigw/v1/teams") == "this gateway is 0.7.0; team needs 0.7.1 or newer: update the gateway (/minigw:gw update there)")
+        #expect(send("0.7.10", "/minigw/v1/projects/7/kb/search?q=x") == "not found or not visible")
+    }
+
     @Test func pruneKeepsFreshAndTheNewest200() throws {
         let w = try HookWorld(stdin: Data())
         try w.link("gw1", 7, "acme-shop")

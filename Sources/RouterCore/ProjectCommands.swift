@@ -116,7 +116,9 @@ public final class ProjectEnv {
                 if m.hasPrefix("no project access:") { return ProjectError(m) }  // the gateway names the condition
                 return ProjectError("no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)")
             }
-        case 404: return ProjectError("not found or not visible")
+        case 404:
+            if type == "older_gateway" { return ProjectError(ProjectText.oneLine(message)) }  // olderRouteHint: the gateway does not have these routes yet
+            return ProjectError("not found or not visible")
         case 409:
             if type == "revision_mismatch" {
                 return ProjectError("the note has changed: its current revision is \(e["revision"]?.int ?? 0) (read it again, then retry)")
@@ -149,6 +151,32 @@ public final class ProjectEnv {
 
     func request(_ c: ProjectConn, _ method: String, _ path: String, _ headers: [String: String] = [:], _ body: Data? = nil) -> ProjectReply {
         send(c, method, path, headers, body)
+    }
+
+    /// A 404 on the kb routes (first in 0.7.10) or the team routes (0.7.1) from a gateway older than that becomes a sentence that names the
+    /// gateway's version and the update, instead of "not found or not visible". The version is asked (/health/ready) only after such a 404, once.
+    public static func olderRouteHint(_ send: @escaping Send) -> Send {
+        final class Version: @unchecked Sendable { var v = "" }
+        let known = Version()
+        return { c, method, path, headers, body in
+            let r = send(c, method, path, headers, body)
+            guard r.status == 404 else { return r }
+            let family: String, min: String
+            if path.hasPrefix("/minigw/v1/teams") { (family, min) = ("team", "0.7.1") }
+            else if path.hasPrefix("/minigw/v1/projects/") && path.contains("/kb/") { (family, min) = ("kb", "0.7.10") }
+            else { return r }
+            if known.v.isEmpty {
+                let h = send(c, "GET", "/health/ready", [:], nil)
+                guard h.status == 200, let o = JSONValue.parse(h.data)?.dict else { return r }
+                let v = o["version"]?.string ?? ""
+                guard v.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }) else { return r }
+                known.v = v.isEmpty ? "0.5" : v  // a gateway that reports none is older than 0.6.0
+            }
+            guard versionLess(known.v, min) else { return r }
+            let msg = "this gateway is \(known.v); \(family) needs \(min) or newer: update the gateway (/minigw:gw update there)"
+            let body = try? JSONSerialization.data(withJSONObject: ["error": ["type": "older_gateway", "message": msg]])
+            return ProjectReply(status: 404, data: body ?? Data(), retryAfter: r.retryAfter)
+        }
     }
 
     /// The gateway's version (/health/ready) when it is below 0.6.0, else nil. A gateway that reports none is older still.

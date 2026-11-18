@@ -6,6 +6,9 @@
 - Emoji are visible text in submissions, reviews and pulled notes (`⚠️`, `👨‍💻`, `1️⃣`, flags, skin tones); emoji tag sequences (subdivision flags) stay refused as hidden characters.
 - A submission with hidden characters is refused at once, with their line, column and code point; a leading byte order mark is dropped.
 
+### Fixed
+- A new client against an older gateway now says `this gateway is 0.7.5; kb needs 0.7.10 or newer: update the gateway` for the kb and team commands, instead of "not found or not visible" (the `gw upstream` and labels commands talk to the gateway on the same computer and are not covered).
+
 ## 0.7.36
 
 Fixes from a second review of the changes made in 0.7.32.
