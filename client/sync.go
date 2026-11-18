@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -47,7 +48,7 @@ const maxSyncFile = 64 << 20
 
 // Nikoli se ne sinhronizira (poleg .gitignore): git, izhod gradnje, smeti macOS, spori.
 var defaultIgnore = []string{".git/", "target/", ".build/", "node_modules/", "build/", "dist/", "DerivedData/",
-	".DS_Store", "._*", "*.minigw-conflict"}
+	".DS_Store", "._*", "*.minigw-conflict", "*.minigw-conflict-*"}
 
 type ignoreRule struct {
 	pattern           string
@@ -590,13 +591,34 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		}
 		local, _ := syncEntryOf(rooted, full, e.Path, state) // znova tik pred pisanjem
 		if local.SHA256 != base(e.Path) {                    // spremenjena (ali izbrisana) tudi tukaj
-			_, ok := syncResolve(e.Path+".minigw-conflict", root)
-			cfull, err := rootResolve(rooted, filepath.FromSlash(e.Path+".minigw-conflict"), false)
-			if !ok || err != nil || protectedPath(filepath.ToSlash(cfull)) || syncWrite(rooted, cfull, data, e.Mtime, e.Exec, false) != nil {
-				notes = append(notes, "conflict: "+e.Path+" changed here and on the gateway; the gateway's version could not be saved")
+			// L5: a conflict copy that is already there is never overwritten: <name>.minigw-conflict, then -2, -3 … up to 99.
+			saved, tooMany := "", true
+			for n := 1; n <= maxConflictCopies; n++ {
+				name := conflictName(e.Path, n)
+				_, ok := syncResolve(name, root)
+				cfull, err := rootResolve(rooted, filepath.FromSlash(name), false)
+				if !ok || err != nil || protectedPath(filepath.ToSlash(cfull)) {
+					tooMany = false
+					break
+				}
+				if _, err := rooted.Lstat(cfull); err == nil {
+					continue
+				}
+				tooMany = false
+				if syncWrite(rooted, cfull, data, e.Mtime, e.Exec, false) == nil {
+					saved = name
+				}
+				break
+			}
+			if saved == "" {
+				if tooMany {
+					notes = append(notes, "conflict: "+e.Path+" changed here and on the gateway; "+strconv.Itoa(maxConflictCopies)+" saved copies already exist, remove some "+e.Path+".minigw-conflict* files; not synced")
+				} else {
+					notes = append(notes, "conflict: "+e.Path+" changed here and on the gateway; the gateway's version could not be saved")
+				}
 				continue
 			}
-			notes = append(notes, "conflict: "+e.Path+" changed here and on the gateway; kept yours, the gateway's version is in "+e.Path+".minigw-conflict")
+			notes = append(notes, "conflict: "+e.Path+" changed here and on the gateway; kept yours, the gateway's version is in "+saved)
 			done = append(done, e.Path)
 			continue
 		}
@@ -614,6 +636,16 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		notes = append(notes, "not copied back (larger than 64 MB): "+p)
 	}
 	return notes, done
+}
+
+// maxConflictCopies: how many <name>.minigw-conflict[-N] copies one file may have before its sync is refused (L5).
+const maxConflictCopies = 99
+
+func conflictName(path string, n int) string {
+	if n <= 1 {
+		return path + ".minigw-conflict"
+	}
+	return path + ".minigw-conflict-" + strconv.Itoa(n)
 }
 
 func (s *shareClient) note(msg string) { fmt.Fprintln(os.Stderr, "minigw: "+oneLine(msg)) } // M2: ime datoteke z \n ne ponaredi vrstice
