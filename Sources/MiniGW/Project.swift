@@ -23,7 +23,7 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
         },
         out: { try? out.write(contentsOf: Data($0.utf8)) }, err: { try? err.write(contentsOf: Data($0.utf8)) },
         agent: runMode, runConn: agent.map { ProjectConn(url: $0.url, token: $0.token) },
-        send: { c, method, path, headers, body in
+        send: ProjectEnv.olderRouteHint { c, method, path, headers, body in
             if let a = agent {  // the run port, if need be through the sandbox's proxy
                 var status = 0, data = Data()
                 _ = agentHTTP(Connection(url: a.url, token: a.token), method, path, body: body, onHead: { status = $0 }) { if data.count < maxReply { data.append($0) } }

@@ -521,3 +521,49 @@ func TestKBReviewShowsATab(t *testing.T) {
 		t.Fatalf("%q", review)
 	}
 }
+
+// A submit with hidden characters is refused with their place, and the writer sees the whole message; an emoji text goes through.
+func TestKBSubmitHiddenRefusedEmojiAccepted(t *testing.T) {
+	c := newClientFx(t)
+	dir := t.TempDir()
+	_, err := c.run("ana", dir, "one\nab​c\n", "kb", "submit", "fakture", "--key", "h1", "--title", "T", "-")
+	if err == nil || !strings.Contains(err.Error(), "the text has 1 hidden characters (line 2 column 3: U+200B ZERO WIDTH SPACE): remove them and submit again") {
+		t.Fatal(err)
+	}
+	c.must("ana", dir, "⚠️ Pitfall\nbody\n", "kb", "submit", "fakture", "--key", "e1", "--title", "T", "-")
+}
+
+// A new client against an older gateway: the kb and team commands say which version has them instead of "not found or not visible".
+func TestOlderGatewayNamesTheVersionForKBAndTeam(t *testing.T) {
+	for _, tc := range []struct{ version, want string }{
+		{"0.7.5", "this gateway is 0.7.5; kb needs 0.7.10 or newer: update the gateway (/minigw:gw update there)"},
+		{"0.7.10", "not found or not visible"},
+	} {
+		asked := 0
+		env := &projectEnv{out: new(bytes.Buffer), connect: func() (connection, string) { return connection{}, "" },
+			do: olderRouteHint(func(_ connection, m, p string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+				switch p {
+				case "/health/ready":
+					asked++
+					return 200, []byte(`{"version":"` + tc.version + `"}`), nil
+				case apiProjects + "/shop":
+					return 200, []byte(`{"id":7}`), nil
+				}
+				return 404, []byte(`{"error":{"message":"not found"}}`), nil
+			})}
+		err := env.kb([]string{"search", "shop", "x"})
+		if err == nil || err.Error() != tc.want {
+			t.Fatalf("%s: %v", tc.version, err)
+		}
+	}
+	env := &projectEnv{out: new(bytes.Buffer), connect: func() (connection, string) { return connection{}, "" },
+		do: olderRouteHint(func(_ connection, m, p string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+			if p == "/health/ready" {
+				return 200, []byte(`{"version":"0.7.0"}`), nil
+			}
+			return 404, []byte(`{}`), nil
+		})}
+	if err := env.team([]string{"list"}); err == nil || !strings.Contains(err.Error(), "this gateway is 0.7.0; team needs 0.7.1 or newer") {
+		t.Fatal(err)
+	}
+}

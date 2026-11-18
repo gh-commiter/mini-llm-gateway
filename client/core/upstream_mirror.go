@@ -683,15 +683,7 @@ func checkMirrorNote(data []byte, want ManifestNote, label string) (mirrorRow, s
 
 // mirrorBody: what a person or an agent may read of a pulled body: newline and tab, and nothing invisible (invisibleRune).
 func mirrorBody(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' {
-			return r
-		}
-		if invisibleRune(r) {
-			return -1
-		}
-		return r
-	}, s)
+	return dropInvisible(s, -1, true)
 }
 
 // afterPull records what a real run means for the link's timer (the same bookkeeping for a pull by hand and one by the timer, so that a

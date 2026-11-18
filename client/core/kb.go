@@ -198,15 +198,47 @@ const reviewPanelLimit = 20000
 
 // hiddenIn: the stored title and body as a reviewer is shown them, and how many characters that leaves out.
 func hiddenIn(title, body string) (t, b string, n int) {
-	t = strings.Map(func(r rune) rune {
-		if invisibleRune(r) {
-			return -1
-		}
-		return r
-	}, title)
+	t = dropInvisible(title, -1, false)
 	lf := strings.ReplaceAll(body, "\r\n", "\n") // CRLF is a line ending (rows stored before lineEndings); a lone CR stays hidden
 	b = mirrorBody(lf)
 	return t, b, utf8.RuneCountInString(title) - utf8.RuneCountInString(t) + utf8.RuneCountInString(lf) - utf8.RuneCountInString(b)
+}
+
+var hiddenNames = map[rune]string{0x200B: "ZERO WIDTH SPACE", 0x200C: "ZERO WIDTH NON-JOINER", 0x200D: "ZERO WIDTH JOINER", 0x00AD: "SOFT HYPHEN",
+	0xFEFF: "ZERO WIDTH NO-BREAK SPACE", 0xFE0F: "VARIATION SELECTOR-16", 0x202E: "RIGHT-TO-LEFT OVERRIDE", 0x202D: "LEFT-TO-RIGHT OVERRIDE",
+	0x202A: "LEFT-TO-RIGHT EMBEDDING", 0x202B: "RIGHT-TO-LEFT EMBEDDING", 0x202C: "POP DIRECTIONAL FORMATTING", 0x2060: "WORD JOINER"}
+
+// hiddenRefusal: a submission is refused at once when its text or title has characters a reviewer could not see (it could never be accepted),
+// with the place of the first three so that the writer can remove them. what is "title" or "text".
+func hiddenRefusal(what, s string) error {
+	rs := []rune(s)
+	var where []string
+	n, line, col := 0, 1, 0
+	for i, r := range rs {
+		col++
+		if r == '\n' {
+			line, col = line+1, 0
+			continue
+		}
+		if r == '\t' || !invisibleAt(rs, i) {
+			continue
+		}
+		if n++; n <= 3 {
+			name := hiddenNames[r]
+			if name == "" {
+				name = "invisible"
+			}
+			where = append(where, fmt.Sprintf("line %d column %d: U+%04X %s", line, col, r, name))
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	more := ""
+	if n > 3 {
+		more = "; ..."
+	}
+	return ErrRefusal{fmt.Sprintf("the %s has %d hidden characters (%s%s): remove them and submit again", what, n, strings.Join(where, "; "), more)}
 }
 
 // reviewRead: a review read of v (stored text from the table, whatever v carries): the text shown, Hidden and ReviewCheck.
@@ -290,6 +322,12 @@ func (s *Store) Submit(ctx context.Context, p Principal, project int64, key stri
 		}
 		if err := checkSize(in.NoteInput); err != nil {
 			return err
+		}
+		if e := hiddenRefusal("title", in.Title); e != nil {
+			return e
+		}
+		if e := hiddenRefusal("text", in.Body); e != nil {
+			return e
 		}
 		if key == "" || len(key) > 64 {
 			return ErrInvalid{"idempotency key"}

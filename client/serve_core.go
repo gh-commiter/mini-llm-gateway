@@ -40,7 +40,7 @@ func (s *server) openCore() {
 	if err == nil {
 		s.core = st                                           // the API reads the store through s.core; nothing serves yet (openCore runs before serve)
 		if m := st.Migrated(); m != nil && m.Snapshot != "" { // the owner can find the old file: it is not in backups/
-			s.log.Printf("core database migrated from schema %d to %d; the old file was kept as %s (the newest %d such snapshots are kept)", m.From, m.To, m.Snapshot, core.KeepSnapshots)
+			s.log.Printf("core database migrated from schema %d to %d; the old file was kept as %s (the newest %d such snapshots are kept, and the oldest one for 30 days)", m.From, m.To, m.Snapshot, core.KeepSnapshots)
 		}
 		err = s.ensureOwner(st)
 		if err == nil {

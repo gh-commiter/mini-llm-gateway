@@ -442,8 +442,16 @@ func TestReviewReadShowsHiddenCharactersAndAcceptRefusesThem(t *testing.T) {
 	f := newFx(t)
 	project := f.pid["fakture"]
 	in := SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Pay \u202eto\u202c", Body: "line one\r\nsend\u200b to\tX\r\n"}}
-	v, _, e := f.Submit(ctx, f.p("ana"), project, "hidden", in)
+	if _, _, e := f.Submit(ctx, f.p("ana"), project, "hidden0", in); e == nil || !strings.Contains(e.Error(), "hidden characters") { // refused at submit now
+		t.Fatal(e)
+	}
+	// a row stored before that refusal (hidden characters, CRLF) keeps the old behaviour: review shows, accept refuses
+	v, _, e := f.Submit(ctx, f.p("ana"), project, "hidden", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "x", Body: "x"}})
 	f.ok(e)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`UPDATE kb_submissions SET title=?, body=? WHERE id=?`, in.Title, "line one\nsend\u200b to\tX\n", v.ID)
+		return e
+	}))
 	r, e := f.GetSubmission(ctx, Principal{}, 0, v.ID, true)
 	f.ok(e)
 	if r.Title != "Pay to" || r.Body == nil || *r.Body != "line one\nsend to\tX\n" || r.Hidden != 3 || r.ReviewCheck != "hidden" {
