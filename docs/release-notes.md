@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+### Security
+- Offline restore (`minigw gw core restore`, gateway stopped) accepted a crafted backup file that hid a trigger under the name of an automatic index, and one whose tables had lost their foreign keys, cascades or checks or whose unique index was not unique. Such a file could keep access that could not be revoked. It needed the owner to restore that file by hand: no network route restores. A restore now refuses any object that is not exactly what this program's migrations make for the backup's schema (no exemption by name), compares the definition of every table, index and the search table, refuses a backup with rows that break a foreign key, and refuses an epoch or project mark outside a sane range (a huge value overflowed the epoch and broke a later cleanup).
+- Repeated failing starts of an upgrade no longer push out the snapshot taken before the upgrade: the oldest snapshot from before an unfinished upgrade is kept besides the newest three, and a failed start on an unchanged file writes no new snapshot.
+
 ## 0.7.25
 
 ### New
