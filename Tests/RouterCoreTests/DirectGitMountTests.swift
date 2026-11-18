@@ -86,7 +86,14 @@ private func sh(_ cmd: String, cwd: String, timeout: Double = 90) -> (status: In
     while p.isRunning && Date() < deadline { usleep(20_000) }
     if p.isRunning { p.terminate() }
     p.waitUntilExit()
-    while reader.isExecuting { usleep(5_000) }
+    // The reader ends at EOF, and EOF comes only when EVERY holder of the pipe has closed it: a process the command left behind (a
+    // daemon git started, a mount helper) keeps it open after the shell is gone, and a full test run once waited here for an hour.
+    // Give it a moment, then close our end: the read fails and the thread ends with what it has.
+    let patience = Date().addingTimeInterval(5)
+    while reader.isExecuting && Date() < patience { usleep(5_000) }
+    if reader.isExecuting { try? pipe.fileHandleForReading.close() }
+    let last = Date().addingTimeInterval(5)
+    while reader.isExecuting && Date() < last { usleep(5_000) }
     return (p.terminationStatus, String(decoding: data, as: UTF8.self))
 }
 
