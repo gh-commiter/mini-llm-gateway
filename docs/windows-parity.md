@@ -1,5 +1,7 @@
 # Mac Settings and the Windows/Linux settings page
 
+For the table by feature group (teams, knowledge base, panels, upstream gateways, remote settings, Compose, agents) see [parity.md](parity.md). This page lists the settings control by control.
+
 Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swift) and its counterpart in
 `minigw serve` (the settings page `/minigw/settings`, the admin API in [admin-api.md](admin-api.md) and
 `serve.json`). Mac only: Siri AI, Apple Foundation Models, the WebDAV folder mount (direct mode), native mode,

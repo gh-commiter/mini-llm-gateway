@@ -130,7 +130,7 @@ on the host, once, not recursively from a container).
 ## Not supported yet
 
 - Agents (Claude CLI, Codex, Grok, Copilot, Foundry Local) in the container.
-- The remote settings reverse-proxy profile, `minigw serve install` and updates from inside the container (`gw` administration works).
+- `minigw serve install` and updates from inside the container (`gw` administration works).
 - Pre-built images in a registry, automatic updates, Kubernetes or Swarm, several gateways on one database.
 
 ## Remote settings from a browser (admin profile)

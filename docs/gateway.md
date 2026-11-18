@@ -205,14 +205,14 @@ The `minigw serve` settings page opens from **Settings…** in the Windows tray,
 through `ssh -L <port>:127.0.0.1:<port>` with the same port on both ends (the page checks the port). With the
 Windows tray, **Choose…** and **Browse…** open the Windows file dialog; elsewhere you type the path.
 
-The page also draws the three admin panels (Users and devices, Teams and projects, Knowledge base; see Settings above), after
+The page also draws the four admin panels (Users and devices, Teams and projects, Knowledge base, Upstream gateways; see Settings above), after
 Usage in the list, in the order the gateway gives. It fetches their descriptions (`GET /panels`) and texts
 (`GET /panels/strings?lang=` with the browser's language, `sl` or `en`, falling back to the base table) through its session and
 applies the same rules as the Mac app: only registered routes are called, a value that is not one plain path segment is never
 put in a path, destructive and access-changing actions ask first (in the browser's own dialog), a long text is cut at 20000
 characters with a note, a panel it cannot show (newer format, unknown element) says so. Every text from a description, a table
 or an answer is put on the page as plain text, never as HTML. On the Mac app the page is not used: the Settings window draws
-the panels natively. Not tried in a real browser yet: see Known problems in the release notes.
+the panels natively. Tried so far only in a headless Chromium browser on one Windows gateway (not Edge, not Firefox, not on Linux): see Known problems in the release notes.
 
 ### Remote settings listener
 

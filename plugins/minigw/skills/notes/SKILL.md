@@ -34,4 +34,10 @@ an ordinary note. Accepted entries keep their kind; `kb search` marks a faq with
 the first line. `minigw kb faq [<project>]` lists the published questions with their answers (not inside
 an agent run). Use a faq only for a question people really ask, and never put customer data in it.
 
+MCP: `minigw kb mcp [--project slug]` is a read-only stdio server (`kb_search`, `note_read`) for an MCP client; `minigw kb mcp --project <slug> --print-config` prints a credential-free configuration for Claude Code. Print it for the user to review and add themselves; do not edit their MCP settings.
+
+Markdown copies: `minigw kb export <project>|--team <team> <dir>` writes one Markdown file per readable note into a new, empty folder; `minigw kb import <project>|--team <team> <dir|file.md> [--class c] [--submit]` brings files back (`--submit`: as proposals for the owner's review). Ask before importing, and show what goes in.
+
+Teams: `minigw team list [--archived]` and `minigw team show <team>` show the user's teams and what they can already read. A team's own notes are `note list|read|push|edit|rm --team <team>` and `kb search|submit|faq --team <team>` (structure and data only; every team member reads, a project admin of the team writes).
+
 Session hooks (off by default): the plugin ships hooks that, once the user ran `minigw kb hooks on [<project>]` for a linked project (`off` stops them, `status` shows them; nothing is sent anywhere by turning them on), tell a session about the project knowledge base and, after a commit or a compaction, ask it once to hand in at most 3 short entries with `minigw kb submit --kind finding|faq`. Each submit goes through the user's normal Bash prompt unless they allow-listed minigw commands (this skill pre-allows only `minigw kb search *`), so show the entry first as above, whatever the prompt does. Search first and skip what is already there. "Nothing to hand in" is the normal and correct answer when the session learned nothing new; never invent an entry to have something to hand in. If a submit fails, say so once and do not retry.
