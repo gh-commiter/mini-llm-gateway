@@ -611,10 +611,12 @@ type installRun struct {
 	noSSH     bool   // no ssh-keygen on PATH
 	dataName  string // data folder name; "" = data
 	envOld    bool   // CLAUDE_ENV_FILE already holds the line an older plugin version appended
+	freshOwn  bool   // the release's SHA256SUMS lists the plugin's own copy (nothing to download)
+	serveNew  string // the release has this body as the client asset (and its SHA256SUMS lists it): the plugin downloads it
 	fresh     bool   // the release's SHA256SUMS (served by the fake curl) lists the installed client; nothing cached
 }
 
-type installResult struct{ out, exe, marker, data, envFile string }
+type installResult struct{ out, exe, marker, data, envFile, counts string }
 
 func runInstallScript(t *testing.T, o installRun) installResult {
 	t.Helper()
@@ -662,16 +664,22 @@ func runInstallScript(t *testing.T, o installRun) installResult {
 		write("fb/cygpath", "#!/bin/sh\ncase $1 in -u) printf '%s\\n' \"$2\" ;; -m) printf 'C:%s\\n' \"$2\" ;; esac\n")
 	}
 	write("fb/uname", "#!/bin/sh\n[ \"$1\" = -s ] && echo "+osName+" || echo arm64\n")
-	write("fb/codesign", "#!/bin/sh\nfor a; do l=$a; done\ngrep -q UNSIGNED \"$l\" 2>/dev/null && exit 1\ncase $l in "+tmp+"/*) exit 0 ;; esac\nexit 1\n")
+	realSum := "shasum -a 256"
+	if lp, err := exec.LookPath("sha256sum"); err == nil {
+		realSum = lp
+	}
+	write("fb/sha256sum", "#!/bin/sh\necho \"hash $1\" >> "+tmp+"/counts\nexec "+realSum+" \"$@\"\n")
+	write("fb/shasum", "#!/bin/sh\necho \"hash $3\" >> "+tmp+"/counts\nexec "+realSum+" \"$@\"\n")
+	write("fb/codesign", "#!/bin/sh\nfor a; do l=$a; done\necho \"codesign $l\" >> "+tmp+"/counts\ngrep -q UNSIGNED \"$l\" 2>/dev/null && exit 1\ncase $l in "+tmp+"/*) exit 0 ;; esac\nexit 1\n")
 	if !o.noSSH {
-		write("fb/ssh-keygen", "#!/bin/sh\nexit 0\n")
+		write("fb/ssh-keygen", "#!/bin/sh\necho verify >> "+tmp+"/counts\nexit 0\n")
 	}
 	write("fb/stat", "#!/bin/sh\necho \"$(id -u) 755\"\n")
 	write("fb/curl", `#!/bin/sh
 case "$*" in *redirect_url*) echo "https://github.com/x/releases/tag/v`+o.latest+`"; exit 0 ;; esac
 for a; do [ "$p" = -o ] && out=$a; u=$a; p=$a; done
 [ -f `+tmp+`/sums ] || exit 22
-case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig > "$out" ;; *) exit 22 ;; esac
+case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig > "$out" ;; */minigw-*) [ -f `+tmp+`/asset ] && cat `+tmp+`/asset > "$out" || exit 22 ;; *) exit 22 ;; esac
 `)
 	if o.sums != "" {
 		write("sums", o.sums)
@@ -720,6 +728,15 @@ case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig
 		h := sha256.Sum256([]byte(instBody))
 		write("sums", "VERSION 0.7.99\n"+hex.EncodeToString(h[:])+"  "+asset+"\n")
 	}
+	if o.freshOwn || o.serveNew != "" {
+		body := ownBody
+		if o.serveNew != "" {
+			body = o.serveNew
+			write("asset", body)
+		}
+		h := sha256.Sum256([]byte(body))
+		write("sums", "VERSION 0.7.99\n"+hex.EncodeToString(h[:])+"  "+asset+"\n")
+	}
 	if o.envOld {
 		write("envfile", "export PATH=\"$PATH\":'"+data+"/bin'\n")
 	}
@@ -759,7 +776,8 @@ case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig
 	if err != nil {
 		t.Errorf("the script must exit 0: %v\n%s", err, out)
 	}
-	return installResult{string(out), exe, marker, data, envFile}
+	cnt, _ := os.ReadFile(filepath.Join(tmp, "counts"))
+	return installResult{string(out), exe, marker, data, envFile, string(cnt)}
 }
 
 func (r installResult) linked() bool { _, err := os.Readlink(r.exe); return err == nil }
@@ -1005,5 +1023,69 @@ func TestInstallScriptWindowsKeepsTheOwnExe(t *testing.T) {
 	r := runInstallScript(t, installRun{goos: "windows", installed: "minigw 0.7.99", latest: "0.7.99", trustInst: true, ownCopy: "minigw 0.7.99", trustOwn: true})
 	if _, err := os.Stat(filepath.Join(r.data, "bin", "minigw.exe")); err != nil {
 		t.Errorf("the plugin's minigw.exe was deleted:\n%s", r.out)
+	}
+}
+
+// hashesOf counts the hash calls for one path; verifies counts the signature checks.
+func (r installResult) hashesOf(path string) int { return strings.Count(r.counts, "hash "+path+"\n") }
+func (r installResult) verifies() int            { return strings.Count(r.counts, "verify\n") }
+
+// One run verifies a sums+signature pair once and hashes a file once (a real Windows session start did each nine times).
+func TestInstallScriptChecksEachFileOnce(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		own := map[string]string{"linux": "minigw", "windows": "minigw.exe"}[goos]
+		// later session, offline: the cached sums and a current own copy, an untrusted installed client
+		r := runInstallScript(t, installRun{goos: goos, installed: "minigw 0.7.0", latest: "0.7.99", ownCopy: "minigw 0.7.99", trustOwn: true})
+		ownPath := filepath.Join(r.data, "bin", own)
+		t.Logf("%s offline: %d signature checks, %d hash calls", goos, r.verifies(), strings.Count(r.counts, "hash "))
+		if n := r.verifies(); n > 1 {
+			t.Errorf("%s offline: %d signature checks, want at most 1:\n%s", goos, n, r.counts)
+		}
+		for _, line := range strings.Split(r.counts, "\n") {
+			if strings.HasPrefix(line, "hash ") && strings.Count(r.counts, line+"\n") > 1 {
+				t.Errorf("%s offline: %q more than once:\n%s", goos, line, r.counts)
+			}
+		}
+		// online, nothing to download (the release lists the same copy)
+		r = runInstallScript(t, installRun{goos: goos, installed: "minigw 0.7.0", latest: "0.7.99", ownCopy: "minigw 0.7.99", trustOwn: true, freshOwn: true})
+		t.Logf("%s online: %d signature checks, %d hash calls", goos, r.verifies(), strings.Count(r.counts, "hash "))
+		if n := r.verifies(); n > 2 {
+			t.Errorf("%s online: %d signature checks, want at most 2:\n%s", goos, n, r.counts)
+		}
+		if n := r.hashesOf(filepath.Join(r.data, "bin", own)); n > 1 {
+			t.Errorf("%s online: own copy hashed %d times:\n%s", goos, n, r.counts)
+		}
+		_ = ownPath
+	}
+}
+
+// After the script writes a new copy, the memo must not carry the old verdict: the new bytes are hashed and trusted on their own.
+func TestInstallScriptNewCopyIsHashedAfterTheDownload(t *testing.T) {
+	body := "#!/bin/sh\ncase $1 in --version) echo 'minigw 0.7.99' ;; status) exit 0 ;; esac\n"
+	r := runInstallScript(t, installRun{goos: "linux", installed: "-", latest: "0.7.99", ownCopy: "minigw 0.7.0", serveNew: body})
+	exe := filepath.Join(r.data, "bin", "minigw")
+	if got, _ := os.ReadFile(exe); string(got) != body {
+		t.Fatalf("the release's copy was not installed:\n%s", r.out)
+	}
+	if strings.Contains(r.out, "cannot verify") {
+		t.Errorf("the freshly downloaded copy was judged by the verdict of the old bytes:\n%s", r.out)
+	}
+	if n := r.hashesOf(exe); n < 2 {
+		t.Errorf("the replaced copy was hashed %d times, want a fresh hash after the write:\n%s", n, r.counts)
+	}
+	if r.ran() { // the substituted old copy never ran
+		t.Errorf("the unverified old copy was executed:\n%s", r.out)
+	}
+}
+
+// macOS: the same file is not code-signature checked twice in one run.
+func TestInstallScriptCodesignsEachFileOnce(t *testing.T) {
+	for _, o := range []installRun{{installed: "minigw 0.7.99", latest: "0.7.99"}, {installed: "minigw 0.7.0", latest: "0.7.99"}, {installed: "-", latest: "0.7.99", ownCopy: "minigw 0.7.99"}} {
+		r := runInstallScript(t, o)
+		for _, line := range strings.Split(r.counts, "\n") {
+			if strings.HasPrefix(line, "codesign ") && strings.Count(r.counts, line+"\n") > 1 {
+				t.Errorf("%+v: %q more than once:\n%s", o, line, r.counts)
+			}
+		}
 	}
 }

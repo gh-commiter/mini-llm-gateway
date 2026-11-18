@@ -29,7 +29,11 @@ ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //; s/[ -].*$//'; 
 # goodver v: strogo 2 ali 3 števila s pikami, do 20 znakov; vse drugo (»v0.7.4«, prazno) velja za prestaro, nikoli za dovolj novo.
 goodver() { [ ${#1} -ge 3 ] && [ ${#1} -le 20 ] && printf '%s\n' "$1" | grep -Eq '^[0-9]+(\.[0-9]+){1,2}$'; }
 # macOS: podpisan minigw (Developer ID, ekipa in identifikator). Preveri se PREJ, kot se kaj zažene.
-valid() { [ "$os" = darwin ] && [ -x "$1" ] && codesign --verify --strict -R="$REQ" "$1" 2>/dev/null; }
+valid() {
+  [ "$os" = darwin ] && [ -x "$1" ] || return 1
+  [ "$1" = "$vcp" ] && return "$vcv"  # ista pot v tem zagonu: izid že znan (forget ga zbriše, ko skripta zamenja $EXE)
+  vcp=$1; codesign --verify --strict -R="$REQ" "$1" 2>/dev/null && vcv=0 || vcv=1; return "$vcv"
+}
 # MIN: dodatna datoteka MIN_CLIENT (bump-version.sh jo piše ob izdaji; JSON se ne razčlenjuje); brez nje ali neveljavna: 0.7.30 in vrstica.
 MIN=0.7.30 mc=""
 { read -r mc < "${0%/*}/MIN_CLIENT"; } 2>/dev/null
@@ -50,6 +54,23 @@ san() { printf '%s' "$1" | tr -cd '[:print:]'; }
 older() { [ -n "$1" ] && [ -n "$2" ] && awk -v a="$1" -v b="$2" 'BEGIN { n = split(a, x, "."); m = split(b, y, "."); if (m > n) n = m
   for (i = 1; i <= n; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }; exit 1 }'; }
 
+# Povzetek (memo) znotraj ENEGA zagona: podpis para vsot in SHA-256 datoteke se preverita največ enkrat (na Windowsu je vsak
+# klic dražji od sekunde). Ključ je pot; vsak zapis skripte v $EXE (prenos, povezava, premik, brisanje) pokliče forget, vsote
+# (.sums.new, SHA256SUMS) pa se po zapisu (keepsums) ali kopiji preverjenih vsot nastavijo znova: zamenjana datoteka ne podeduje izida.
+vcp="" vcv=0 m1p="" m1v="" m2p="" m2v="" vn="" vm="" SH=""
+forget() { vcp="" m1p="" m2p=""; }
+# shm <pot>: SH = SHA-256 datoteke (ne v podlupini: shrani se v spremenljivke)
+shm() {
+  if [ "$1" = "$m1p" ]; then SH=$m1v; elif [ "$1" = "$m2p" ]; then SH=$m2v
+  else SH=$(sha "$1"); if [ -z "$m1p" ]; then m1p=$1 m1v=$SH; else m2p=$1 m2v=$SH; fi; fi
+}
+# verified <vsote> <podpis>: verify_sums enkrat na par vsot v tem zagonu.
+verified() {
+  case $1 in
+    */.sums.new) [ -n "$vn" ] || { verify_sums "$1" "$2" && vn=0 || vn=1; }; return "$vn" ;;
+    *) [ -n "$vm" ] || { verify_sums "$1" "$2" && vm=0 || vm=1; }; return "$vm" ;;
+  esac
+}
 # verify_sums <sums> <sig>: najprej ssh-keygen; sicer že nameščen minigw, a le 0.5.17 ali novejši (pozna verify-sums)
 # in le z natanko pričakovanim izpisom. Starejši minigw neznan ukaz preda claude, ki lahko vrne 0 (H1 0.5.17).
 # 0 = podpisano, 1 = ni podpisano, 2 = ni s čim preveriti. IZJEMA: brez ssh-keygen preverja lastna kopija v bin/ (neoverjena).
@@ -77,8 +98,8 @@ hashof() { awk -v n="$1" 'length($1) == 64 && ($2 == n || $2 == "*" n) { print $
 # trustedby <vsote> <podpis> <datoteka>: tsums = vsote, ki so datoteko overile.
 tsums=""
 trustedby() {
-  [ -f "$1" ] && [ -f "$2" ] && command -v ssh-keygen >/dev/null 2>&1 && verify_sums "$1" "$2" &&
-    h=$(sha "$3") && [ -n "$h" ] && [ "$(hashof "$asset" < "$1")" = "$h" ] && tsums=$1
+  [ -f "$1" ] && [ -f "$2" ] && command -v ssh-keygen >/dev/null 2>&1 && verified "$1" "$2" &&
+    { shm "$3"; h=$SH; [ -n "$h" ]; } && [ "$(hashof "$asset" < "$1")" = "$h" ] && tsums=$1
 }
 # Shranjene vsote ali vsote, preverjene v tem zagonu (.sums.new): nameščen minigw, ki je ta izdaja, je overjen že v prvi seji.
 trusted() { trustedby "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig" "$1" || trustedby "$BIN/.sums.new" "$BIN/.sig.new" "$1"; }
@@ -95,14 +116,14 @@ authexe() {
   if [ "$os" = darwin ]; then valid "$EXE"; else trusted "$EXE" || { ! command -v ssh-keygen >/dev/null 2>&1 && [ -x "$EXE" ] && [ ! -L "$EXE" ]; }; fi
 }
 # keepsums: po uspešnem prenosu (ali ko je kopija v bin/ enaka vnosu) shrani preverjene vsote ob kopijo.
-keepsums() { [ -f "$BIN/.sums.new" ] && [ -f "$BIN/.sig.new" ] && mv -f "$BIN/.sums.new" "$BIN/SHA256SUMS" && mv -f "$BIN/.sig.new" "$BIN/SHA256SUMS.sig"; return 0; }
+keepsums() { [ -f "$BIN/.sums.new" ] && [ -f "$BIN/.sig.new" ] && mv -f "$BIN/.sums.new" "$BIN/SHA256SUMS" && mv -f "$BIN/.sig.new" "$BIN/SHA256SUMS.sig"; vn="" vm=""; return 0; }
 
 # Kontrolne vsote zadnje izdaje: po njih se prenesena kopija posodobi (brez omrežja ostane obstoječa). Le podpisane
 # (#8): sicer ni posodobitve (obstoječa ostane) in ne prve namestitve.
 sums="" unsigned=""
 st=$(mktemp -d) && if curl -fsSL --max-time 8 -o "$st/s" "$base/SHA256SUMS" 2>/dev/null && curl -fsSL --max-time 8 -o "$st/sig" "$base/SHA256SUMS.sig" 2>/dev/null; then
   verify_sums "$st/s" "$st/sig"; case $? in
-    0) sums=$(cat "$st/s"); cp "$st/s" "$BIN/.sums.new"; cp "$st/sig" "$BIN/.sig.new" ;;
+    0) sums=$(cat "$st/s"); cp "$st/s" "$BIN/.sums.new"; cp "$st/sig" "$BIN/.sig.new" && vn=0 ;;  # iste bajti, preverjeni zgoraj
     2) unsigned="cannot check the release signature: install OpenSSH (ssh-keygen)" ;;
     *) unsigned="the release's SHA256SUMS is not signed by Mini Gateway" ;;
   esac
@@ -164,9 +185,9 @@ fetch() {
   tmp=$(mktemp -d) || return 1
   if curl -fsSL --max-time 25 -o "$tmp/$1" "$base/$1" && [ "$(sha "$tmp/$1")" = "$w" ]; then
     if [ "$os" = darwin ]; then
-      ditto -x -k "$tmp/$1" "$tmp/x" && valid "$tmp/x/minigw" && rm -f "$EXE" && mv "$tmp/x/minigw" "$EXE"
+      ditto -x -k "$tmp/$1" "$tmp/x" && valid "$tmp/x/minigw" && rm -f "$EXE" && mv "$tmp/x/minigw" "$EXE"; fs=$?; forget; [ $fs -eq 0 ]
     else
-      chmod +x "$tmp/$1" && mv -f "$tmp/$1" "$EXE"
+      chmod +x "$tmp/$1" && mv -f "$tmp/$1" "$EXE"; fs=$?; forget; [ $fs -eq 0 ]
     fi && echo "$w" > "$stamp" && keepsums && { rm -rf "$tmp"; return 0; }
   fi
   rm -rf "$tmp"; return 1
@@ -184,12 +205,12 @@ if [ "$os" = darwin ]; then
     [ -n "$stale" ] || stale=$c  # overjen, a prestar: le če prenos ne uspe
   done
   if [ -n "$other" ]; then
-    [ "$(readlink "$EXE" 2>/dev/null)" = "$other" ] || { rm -f "$EXE"; ln -s "$other" "$EXE"; }
+    [ "$(readlink "$EXE" 2>/dev/null)" = "$other" ] || { rm -f "$EXE"; forget; ln -s "$other" "$EXE"; }
   elif [ -L "$EXE" ] || ! valid "$EXE" || { [ -n "$(want minigw.zip)" ] && [ "$(cat "$stamp" 2>/dev/null)" != "$(want minigw.zip)" ]; }; then
     fetch minigw.zip || valid "$EXE" || {
-      if [ -n "$stale" ]; then rm -f "$EXE"; ln -s "$stale" "$EXE"
+      if [ -n "$stale" ]; then rm -f "$EXE"; forget; ln -s "$stale" "$EXE"
       else
-        { [ -e "$EXE" ] || [ -L "$EXE" ]; } && mv -f "$EXE" "$BIN/minigw.rejected"  # nepodpisana kopija: ne sme ostati, kjer jo zaženejo skilli
+        { [ -e "$EXE" ] || [ -L "$EXE" ]; } && { mv -f "$EXE" "$BIN/minigw.rejected"; forget; }  # nepodpisana kopija: ne sme ostati, kjer jo zaženejo skilli
         echo "minigw plugin: could not download or verify minigw from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; fi; }
   fi
 else
@@ -198,7 +219,7 @@ else
   # ne .cmd; minigw.cmd za cmd/PowerShell), kopija vtičnika (minigw.exe) gre.
   linkinst() {  # $inst: nameščen minigw (overjen, ali edini, ki ga je mogoče uporabiti)
     if [ "$os" = linux ]; then
-      [ "$(readlink "$EXE" 2>/dev/null)" = "$inst" ] || { rm -f "$EXE"; ln -s "$inst" "$EXE"; } ||
+      [ "$(readlink "$EXE" 2>/dev/null)" = "$inst" ] || { rm -f "$EXE"; forget; ln -s "$inst" "$EXE"; } ||
         echo "minigw plugin: could not link $(san "$EXE") to $(san "$inst")."
     else
       # minigw.cmd: brez zakasnjene razširitve, pot MSI kot %LOCALAPPDATA%\… (ASCII; enako kot shimCmd v client/plugin.go)
@@ -215,9 +236,9 @@ else
   if [ -n "$inst" ]; then
     linkinst
     [ "$isums" = "$BIN/.sums.new" ] && keepsums  # overjen z vsotami tega zagona: shrani jih za brez omrežja
-  elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || ! authexe || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
+  elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || ! authexe || { [ -n "$(want "$asset")" ] && { shm "$EXE"; [ "$SH" != "$(want "$asset")" ]; }; }; then
     [ "$os" = windows ] && rm -f "$BIN/minigw" "$BIN/minigw.cmd"  # brez namestitve: lupini na odstranjeni minigw gresta
-    if [ -n "$sums" ] && [ ! -L "$EXE" ] && [ -x "$EXE" ] && [ "$(sha "$EXE")" = "$(want "$asset")" ]; then
+    if [ -n "$sums" ] && [ ! -L "$EXE" ] && [ -x "$EXE" ] && { shm "$EXE"; [ "$SH" = "$(want "$asset")" ]; }; then
       keepsums  # ista datoteka kot v podpisanih vsotah: overjena brez prenosa
     else
       fetch "$asset" || { authexe && [ -x "$EXE" ]; } || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {

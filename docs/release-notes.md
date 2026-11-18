@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- The plugin's session start on Linux and Windows no longer checks the same file several times (the release signature and the hash of `minigw` were each checked up to nine times in one start): it takes about a third of the time.
+
 ## 0.7.34
 
 Follow-up fixes for the plugin after another pass over how a new user meets it.
