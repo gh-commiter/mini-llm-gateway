@@ -49,7 +49,7 @@ older() { [ -n "$1" ] && [ -n "$2" ] && awk -v a="$1" -v b="$2" 'BEGIN { n = spl
 
 # verify_sums <sums> <sig>: najprej ssh-keygen; sicer že nameščen minigw, a le 0.5.17 ali novejši (pozna verify-sums)
 # in le z natanko pričakovanim izpisom. Starejši minigw neznan ukaz preda claude, ki lahko vrne 0 (H1 0.5.17).
-# 0 = podpisano, 1 = ni podpisano, 2 = ni s čim preveriti.
+# 0 = podpisano, 1 = ni podpisano, 2 = ni s čim preveriti. IZJEMA: brez ssh-keygen preverja lastna kopija v bin/ (neoverjena).
 verify_sums() {
   if command -v ssh-keygen >/dev/null 2>&1; then
     a=$(mktemp) || return 1
@@ -66,12 +66,27 @@ verify_sums() {
   return 1
 }
 
+# Linux in Windows: sistem nima podpisa datotek, zato velja za overjeno le datoteka, katere SHA-256 je v SHA256SUMS, ki jih je
+# vtičnik prenesel in preveril (shranjeni v bin/ ob kopiji) in katerih podpis se znova preveri s pripetim ključem ob vsaki rabi.
+# Neoverjene datoteke (nameščen minigw drugje, kopija v bin/ brez vsot) se ne zaženejo, niti za --version: veljajo za odsotne.
+trusted() {
+  [ -f "$BIN/SHA256SUMS" ] && [ -f "$BIN/SHA256SUMS.sig" ] && command -v ssh-keygen >/dev/null 2>&1 &&
+    verify_sums "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig" && h=$(sha "$1") && [ -n "$h" ] && grep -q "^$h  *$asset\$" "$BIN/SHA256SUMS"
+}
+# authexe: ali sme vtičnik zagnati $EXE. macOS: podpis Developer ID. Drugje: trusted; IZJEMA (dokumentirana): brez ssh-keygen se
+# nič ne da preveriti, zato ostane obstoječa lastna kopija v bin/ (nikoli nameščen minigw drugje), da sistem ne izgubi odjemalca.
+authexe() {
+  if [ "$os" = darwin ]; then valid "$EXE"; else trusted "$EXE" || { ! command -v ssh-keygen >/dev/null 2>&1 && [ -x "$EXE" ] && [ ! -L "$EXE" ]; }; fi
+}
+# keepsums: po uspešnem prenosu (ali ko je kopija v bin/ enaka vnosu) shrani preverjene vsote ob kopijo.
+keepsums() { [ -f "$BIN/.sums.new" ] && [ -f "$BIN/.sig.new" ] && mv -f "$BIN/.sums.new" "$BIN/SHA256SUMS" && mv -f "$BIN/.sig.new" "$BIN/SHA256SUMS.sig"; return 0; }
+
 # Kontrolne vsote zadnje izdaje: po njih se prenesena kopija posodobi (brez omrežja ostane obstoječa). Le podpisane
 # (#8): sicer ni posodobitve (obstoječa ostane) in ne prve namestitve.
 sums="" unsigned=""
 st=$(mktemp -d) && if curl -fsSL --max-time 8 -o "$st/s" "$base/SHA256SUMS" 2>/dev/null && curl -fsSL --max-time 8 -o "$st/sig" "$base/SHA256SUMS.sig" 2>/dev/null; then
   verify_sums "$st/s" "$st/sig"; case $? in
-    0) sums=$(cat "$st/s") ;;
+    0) sums=$(cat "$st/s"); cp "$st/s" "$BIN/.sums.new"; cp "$st/sig" "$BIN/.sig.new" ;;
     2) unsigned="cannot check the release signature: install OpenSSH (ssh-keygen)" ;;
     *) unsigned="the release's SHA256SUMS is not signed by Mini Gateway" ;;
   esac
@@ -108,10 +123,11 @@ above() {
 if [ "$os" = linux ] && [ -e "$inst" ] && ! { mine "$inst" && mine "${inst%/*}" && above "${inst%/*}"; }; then
   echo "minigw plugin: not using $inst: it or a folder above it is not yours or is writable by others."; inst=""
 fi
-[ -n "$inst" ] && [ -x "$inst" ] && iv=$(ver "$inst")
+instx=""; [ -n "$inst" ] && [ -x "$inst" ] && instx=1
+instok=""; [ -n "$instx" ] && trusted "$inst" && { instok=1; iv=$(ver "$inst"); }  # neoverjen: odsoten, ne zažene se
 case $iv in *[!0-9.]*) iv="" ;; esac
-if goodver "$iv" && ! older "$iv" "$MIN"; then :; else [ -n "$inst" ] && [ -x "$inst" ] && stale=$inst; inst=""; fi
-if [ -z "$inst" ] && [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ] && { [ "$os" != darwin ] || valid "$EXE"; }; then
+if [ -n "$instok" ] && goodver "$iv" && ! older "$iv" "$MIN"; then :; else [ -n "$instok" ] && stale=$inst; inst=""; fi
+if [ -z "$inst" ] && [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ] && authexe; then
   have=$(ver "$EXE"); case $have in *[!0-9.]*) have="" ;; esac
   if older "$rel" "$have" && [ "${1:-}" != --allow-downgrade ] && [ "${MINIGW_ALLOW_DOWNGRADE:-}" != 1 ]; then
     sums="" unsigned="the latest release ($rel) is older than the installed minigw $have (run with MINIGW_ALLOW_DOWNGRADE=1 to go back)"
@@ -129,7 +145,7 @@ fetch() {
       ditto -x -k "$tmp/$1" "$tmp/x" && valid "$tmp/x/minigw" && rm -f "$EXE" && mv "$tmp/x/minigw" "$EXE"
     else
       chmod +x "$tmp/$1" && mv -f "$tmp/$1" "$EXE"
-    fi && echo "$w" > "$stamp" && { rm -rf "$tmp"; return 0; }
+    fi && echo "$w" > "$stamp" && keepsums && { rm -rf "$tmp"; return 0; }
   fi
   rm -rf "$tmp"; return 1
 }
@@ -174,10 +190,18 @@ else
   }
   if [ -n "$inst" ]; then
     linkinst
-  elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
+  elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || ! authexe || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
     [ "$os" = windows ] && rm -f "$BIN/minigw" "$BIN/minigw.cmd"  # brez namestitve: lupini na odstranjeni minigw gresta
-    fetch "$asset" || [ -x "$EXE" ] || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {
-      echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; }
+    if [ -n "$sums" ] && [ ! -L "$EXE" ] && [ -x "$EXE" ] && [ "$(sha "$EXE")" = "$(want "$asset")" ]; then
+      keepsums  # ista datoteka kot v podpisanih vsotah: overjena brez prenosa
+    else
+      fetch "$asset" || { authexe && [ -x "$EXE" ]; } || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {
+        if [ -n "$instx" ] || [ -e "$EXE" ] || [ -L "$EXE" ]; then
+          rm -f "$EXE"; echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable until the network is back."
+        else
+          echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."
+        fi; exit 0; }
+    fi
   fi
 fi
 

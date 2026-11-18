@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+- On Linux and Windows the plugin now runs only a `minigw` it has verified: one whose SHA-256 is in the signed `SHA256SUMS` of a release the plugin downloaded (the signature is checked again at every session start). A `minigw` installed some other way (the Windows installer, a package, a copy) that is not in those sums is not run and not used; the first session after the update downloads the release's `minigw` once into the plugin's folder and uses that copy from then on. If it cannot be downloaded, the session start says so and the gateway skills stay off until the network is back. Without `ssh-keygen` nothing can be verified, and the copy the plugin already had stays. The Mac is unchanged: it checks the Developer ID signature before running anything.
+- When the installed `minigw` is older than the plugin needs and there is nothing newer to use (offline), the plugin keeps using the old one and says so in one line at the start of the session.
+
 ### Fixed
 - The Claude Code plugin no longer keeps an old `minigw` that is installed on the computer (Homebrew, the app, the installer): with a client older than the plugin needs it uses its own copy and the session start says which one is old and how to update it. Before, `minigw kb ...` and `minigw team ...` could run through the gateway as a question to Claude, and the hooks stayed off without a message.
 - On a Mac without the app, the session start now also tells when the installed `minigw` is older than the latest release.
