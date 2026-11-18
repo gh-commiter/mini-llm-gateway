@@ -25,7 +25,6 @@
 
 ### Fixed
 - A second sync conflict on the same file no longer overwrites the first saved copy: further copies are `<name>.minigw-conflict-2`, `-3`, ... (up to 99; after that the file is not synced and the note says so).
-
 - Automatic push: an edit made between two batches of a large link, or notes refused in an earlier batch, could be left unsent or forgotten. The link now stays marked until a full pass finds nothing left. Schema 23 restarts old push cursors once.
 - Resolving a conflict now names the upstream (`minigw gw upstream resolve ... --upstream <name>`; the panel sends it): resolving on one upstream no longer settles the same note on the others.
 - Unlinking or removing an upstream while a push of it runs now waits or is refused, and the push's audit row is always written.
