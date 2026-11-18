@@ -70,6 +70,9 @@ type BundleImport struct {
 	Source string            `json:"source"`
 	DryRun bool              `json:"dry_run"`
 	Map    map[string]string `json:"map"`
+	// Adopt lists local objects of the form project:<slug>, team:<name>, user:<name> that the bundle may merge into although this
+	// source did not create them. Without it a name that matches such an object refuses the import.
+	Adopt []string `json:"adopt,omitempty"`
 }
 type BundleReport struct {
 	Lines []string `json:"lines"`
@@ -940,8 +943,17 @@ func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (report Bundl
 		}
 		mapping[k] = name
 	}
+	adopt := map[string]bool{}
+	for _, a := range in.Adopt {
+		kind, name, ok := strings.Cut(a, ":")
+		if !ok || name == "" || (kind != "project" && kind != "team" && kind != "user") || (kind != "project" && !validName(name)) {
+			err = ErrRefusal{"--adopt takes project:<slug>, team:<name> or user:<name>, not " + a}
+			return BundleReport{[]string{bundleRefusal(err)}}, err
+		}
+		adopt[kind+":"+adoptName(kind, name)] = true
+	}
 	apply := func(tx *sql.Tx) error {
-		return s.applyBundle(tx, b.manifest, notes, mapping, in.Source, in.DryRun, &report)
+		return s.applyBundle(tx, b.manifest, notes, mapping, adopt, in.Source, in.DryRun, &report)
 	}
 	if in.DryRun {
 		err = s.read(ctx, apply)
@@ -957,7 +969,38 @@ func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (report Bundl
 	return
 }
 
-func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInput, mapping map[string]string, source string, dry bool, report *BundleReport) error {
+// adoptName is the identity of an object in an --adopt list: a slug exactly, a team or user name folded.
+func adoptName(kind, name string) string {
+	if kind == "project" {
+		return name
+	}
+	return foldName(name)
+}
+
+type bundleAccount struct {
+	name string
+	id   int64
+}
+
+func loadAccounts(tx *sql.Tx) (map[string][]bundleAccount, error) {
+	accounts := map[string][]bundleAccount{}
+	rows, e := tx.Query(`SELECT id,name FROM users`)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a bundleAccount
+		if e = rows.Scan(&a.id, &a.name); e != nil {
+			return nil, e
+		}
+		k := foldName(a.name)
+		accounts[k] = append(accounts[k], a)
+	}
+	return accounts, rows.Err()
+}
+
+func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInput, mapping map[string]string, adopt map[string]bool, source string, dry bool, report *BundleReport) error {
 	changed := false
 	line := func(action, subject string) {
 		report.Lines = append(report.Lines, action+" "+subject)
@@ -982,7 +1025,116 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	if e == nil && sourceOrigin != m.OriginGateway {
 		return ErrRefusal{"this source name was first imported from another gateway: choose another --source name"}
 	}
-	if e == sql.ErrNoRows {
+	newSource := e == sql.ErrNoRows
+	// An import merges only into objects this source created (or the owner adopted for it). Any other local object that a name in
+	// the bundle matches is a conflict, listed before anything is written.
+	type ownedRow struct {
+		name    string
+		adopted bool
+	}
+	owned := map[string]ownedRow{}
+	orows, e := tx.Query(`SELECT kind,id,name,adopted FROM import_objects WHERE source=?`, source)
+	if e != nil {
+		return e
+	}
+	for orows.Next() {
+		var kind, name string
+		var id int64
+		var ad bool
+		if e = orows.Scan(&kind, &id, &name, &ad); e != nil {
+			orows.Close()
+			return e
+		}
+		owned[kind+":"+i64(id)] = ownedRow{name, ad}
+	}
+	e = orows.Err()
+	orows.Close()
+	if e != nil {
+		return e
+	}
+	guarded := map[string]bool{} // adopted objects, by kind:id: an existing role on them is never raised
+	var conflicts, adopted []string
+	usedAdopt := map[string]bool{}
+	type adoption struct {
+		kind, name string
+		id         int64
+	}
+	var adoptions []adoption
+	accounts, e := loadAccounts(tx)
+	if e != nil {
+		return e
+	}
+	check := func(kind, name string, id int64, what string) {
+		k := kind + ":" + adoptName(kind, name)
+		if o, ok := owned[kind+":"+i64(id)]; ok && adoptName(kind, o.name) == adoptName(kind, name) {
+			if o.adopted {
+				guarded[kind+":"+i64(id)] = true
+			}
+			if adopt[k] {
+				usedAdopt[k] = true
+			}
+			return
+		}
+		if adopt[k] {
+			usedAdopt[k] = true
+			guarded[kind+":"+i64(id)] = true
+			adoptions = append(adoptions, adoption{kind, name, id})
+			adopted = append(adopted, kind+":"+name)
+			return
+		}
+		conflicts = append(conflicts, "  "+kind+":"+name+"   "+what)
+	}
+	var existingTeam int64
+	switch e = tx.QueryRow(`SELECT id FROM teams WHERE name=? COLLATE NOCASE`, m.Team).Scan(&existingTeam); e {
+	case nil:
+		check("team", m.Team, existingTeam, "exists here; adopting it merges the bundle's projects, members and access entries into this team")
+	case sql.ErrNoRows:
+	default:
+		return e
+	}
+	for _, p := range m.Projects {
+		var id int64
+		switch e = tx.QueryRow(`SELECT id FROM projects WHERE slug=?`, p.Slug).Scan(&id); e {
+		case nil:
+			check("project", p.Slug, id, "exists here; adopting it attaches it to team "+m.Team+" and imports the bundle's notes, remotes, dependencies and grants into it")
+		case sql.ErrNoRows:
+		default:
+			return e
+		}
+	}
+	for _, name := range m.Users {
+		target := name
+		if v := mapping[foldName(name)]; v != "" {
+			target = v
+		}
+		if matches := accounts[foldName(target)]; len(matches) == 1 { // several accounts are refused below
+			check("user", matches[0].name, matches[0].id, "exists here; adopting it makes it a member of team "+m.Team+" where the bundle says so and gives it the bundle's roles (an existing role is never raised)")
+		}
+	}
+	if len(conflicts) > 0 {
+		names := make([]string, 0, len(conflicts))
+		for _, c := range conflicts {
+			names = append(names, strings.Fields(c)[0])
+		}
+		return ErrRefusal{"the bundle names local objects that source " + source + " did not create; nothing was written:\n" + strings.Join(conflicts, "\n") +
+			"\nTo merge into some of them, repeat the import with --adopt and only the ones you trust (users are never adopted implicitly), e.g. --adopt " + strings.Join(names, ",") +
+			"\nUse --dry-run to see what an --adopt would do. Import only bundles you trust."}
+	}
+	for k := range adopt {
+		if !usedAdopt[k] {
+			return ErrRefusal{"--adopt " + k + " is not a local object this bundle names"}
+		}
+	}
+	for _, a := range adoptions {
+		line("merge", "adopt "+a.kind+":"+a.name)
+		if e = exec(`INSERT INTO import_objects(source,kind,id,name,adopted) VALUES(?,?,?,?,1) ON CONFLICT(source,kind,id) DO UPDATE SET name=excluded.name,adopted=1`, source, a.kind, a.id, a.name); e != nil {
+			return e
+		}
+	}
+	created := func(kind string, id int64, name string) error {
+		return exec(`INSERT OR REPLACE INTO import_objects(source,kind,id,name,adopted) VALUES(?,?,?,?,0)`, source, kind, id, name)
+	}
+	if newSource {
 		line("create", "source "+source+", origin "+m.OriginGateway)
 		if e = exec(`INSERT INTO import_sources(source,origin_gateway) VALUES(?,?)`, source, m.OriginGateway); e != nil {
 			return e
@@ -1025,6 +1177,9 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 			if e = ensureSegment(tx, team); e != nil {
 				return e
 			}
+			if e = created("team", team, m.Team); e != nil {
+				return e
+			}
 		}
 	} else {
 		line("skip", "team "+m.Team)
@@ -1041,29 +1196,6 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	}
 	// Target users are matched after Unicode NFC and case folding. Two accounts that fold to one
 	// name, and two bundle users that land on one account, cannot be told apart: refuse.
-	type account struct {
-		name string
-		id   int64
-	}
-	accounts := map[string][]account{}
-	rows, e := tx.Query(`SELECT id,name FROM users`)
-	if e != nil {
-		return e
-	}
-	for rows.Next() {
-		var a account
-		if e = rows.Scan(&a.id, &a.name); e != nil {
-			rows.Close()
-			return e
-		}
-		k := foldName(a.name)
-		accounts[k] = append(accounts[k], a)
-	}
-	e = rows.Err()
-	rows.Close()
-	if e != nil {
-		return e
-	}
 	users := map[string]int64{}
 	used := map[string]string{}
 	neg := int64(0)
@@ -1081,20 +1213,23 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 		if len(matches) > 1 {
 			return ErrRefusal{"ambiguous target users " + matches[0].name + ", " + matches[1].name + " for " + name + ": name the right one with --map"}
 		}
-		var a account
+		var a bundleAccount
 		if len(matches) == 0 {
 			line("create", "inactive user "+target)
 			if dry {
 				neg--
-				a = account{target, neg}
+				a = bundleAccount{target, neg}
 			} else {
 				r, e := tx.Exec(`INSERT INTO users(name,active,owner) VALUES(?,0,0)`, target)
 				if e != nil {
 					return e
 				}
 				a.id, _ = r.LastInsertId()
+				if e = created("user", a.id, target); e != nil {
+					return e
+				}
 			}
-			accounts[k] = []account{a}
+			accounts[k] = []bundleAccount{a}
 		} else {
 			a = matches[0]
 			line("skip", "user "+a.name)
@@ -1122,6 +1257,9 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 				return e
 			}
 			if e = exec(`INSERT INTO meta(key,value) VALUES('project_high',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, i64(high)); e != nil {
+				return e
+			}
+			if e = created("project", id, p.Slug); e != nil {
 				return e
 			}
 		} else {
@@ -1172,6 +1310,11 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 			}
 			if roleRank[old] >= roleRank[v.Role] {
 				line("skip", "role "+v.Project+" "+v.User)
+				continue
+			}
+			// An adopted object keeps its local roles: the bundle may add a role where there is none, never raise one.
+			if old != "" && (guarded["project:"+i64(pid)] || guarded["user:"+i64(uid)] || (i == 1 && guarded["team:"+i64(team)])) {
+				line("skip", "role "+v.Project+" "+v.User+": adopted object, the local role "+string(old)+" is kept")
 				continue
 			}
 			line("merge", "role "+v.Project+" "+v.User+" "+string(v.Role))
@@ -1231,6 +1374,10 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	}
 	for _, g := range m.Grants {
 		src, reader := projects[g.Source], projects[g.Reader]
+		if guarded["project:"+i64(src)] && !adopt["project:"+g.Source] {
+			line("skip", "grant "+g.Source+" "+g.Reader+" "+string(g.Class)+": "+g.Source+" was adopted earlier, name it in --adopt to add its grants")
+			continue
+		}
 		var n int
 		if e := tx.QueryRow(`SELECT count(*) FROM grants WHERE source_id=? AND reader_id=? AND class=?`, src, reader, g.Class).Scan(&n); e != nil {
 			return e
@@ -1353,7 +1500,7 @@ func (s *Store) applyBundle(tx *sql.Tx, m BundleManifest, notes []bundleNoteInpu
 	if _, err = rebuildMemberships(tx); err != nil {
 		return err
 	}
-	return Audit(tx, adminActor, "kb.import", source, map[string]any{"team": m.Team, "origin": m.OriginGateway, "exported": m.Exported})
+	return Audit(tx, adminActor, "kb.import", source, map[string]any{"team": m.Team, "origin": m.OriginGateway, "exported": m.Exported, "adopted": adopted})
 }
 
 // bundleRemotes adds the bundle's identities to a project by union (they were normalized by validateBundle).

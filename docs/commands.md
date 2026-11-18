@@ -98,7 +98,7 @@ Owner-only, on the gateway computer while it is running:
 
 ```sh
 minigw gw export --team <name> [--project slug ...] [--with-private] <file.zip>
-minigw gw import --source <name> <file.zip> [--dry-run] [--map old=new]
+minigw gw import --source <name> <file.zip> [--dry-run] [--map old=new] [--adopt project:<slug>,team:<name>,user:<name>]
 ```
 
 These copy one team's directory, access entries and published knowledge between gateways in one zip.
@@ -106,7 +106,10 @@ Private notes are opt-in. `--source` names the bundle's origin on this gateway; 
 source records the gateway it came from, and a later bundle under that source from another gateway (or from
 this one) is refused. Dry-run writes nothing; real import is atomic, keeps local edits — including class
 changes — and prevents an import from undoing them, never lowers access, and creates unknown users inactive
-with no binding. Repeat `--project` or `--map` as needed.
+with no binding. Repeat `--project` or `--map` as needed. An import merges only into objects that the same `--source`
+created before; a project, team or user that the bundle names and that exists here otherwise is a conflict: the import stops
+before writing, lists each one, and `--adopt project:<slug>,team:<name>,user:<name>` (only what you list, users always
+listed) merges into those. Adopted objects keep their local roles. Import only bundles you trust.
 See [Markdown copies and team bundles](usage.md#markdown-copies). Database backup/restore is unchanged.
 
 `minigw gw …` shows or changes the gateway **on this computer**: the Mini Gateway app on a Mac, `minigw serve` on

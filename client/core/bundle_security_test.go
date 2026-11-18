@@ -167,7 +167,8 @@ func TestBundleSourcesHaveIndependentReceipts(t *testing.T) {
 	s := openT(t, t.TempDir())
 	defer s.Close()
 	for _, source := range []string{"one", "two"} {
-		_, err := s.ImportBundle(ctx, BundleImport{Path: file, Source: source})
+		// the second source finds the objects of the first and has to adopt them
+		_, err := s.ImportBundle(ctx, BundleImport{Path: file, Source: source, Adopt: adoptExisting(t, s, file)})
 		f.ok(err)
 	}
 	if countTable(t, s, "notes") != 2 || countTable(t, s, "note_imports") != 2 {
@@ -267,7 +268,7 @@ func TestBundleUnicodeFileCollisions(t *testing.T) {
 func TestBundleDisplayAuthorHasNoOwnership(t *testing.T) {
 	f, file := bundleFixture(t)
 	target := newFx(t)
-	_, err := target.ImportBundle(ctx, BundleImport{Path: file, Source: "remote"})
+	_, err := target.ImportBundle(ctx, BundleImport{Path: file, Source: "remote", Adopt: adoptExisting(t, target.Store, file)})
 	f.ok(err)
 	var n Note
 	f.ok(target.read(ctx, func(tx *sql.Tx) error { var e error; n, e = getNote(tx, 1); return e }))

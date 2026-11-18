@@ -154,15 +154,15 @@ func TestMarkdownSharedFixtureAndBundleFlags(t *testing.T) {
 	if !ok || route != "/export" || len(export.Projects) != 2 || export.Projects[1] != "two" || !export.WithPrivate || !filepath.IsAbs(export.Path) {
 		t.Fatal(body, route)
 	}
-	_, route, body, e = bundleRequest([]string{"import", "bundle.zip", "--source", "remotesrc", "--dry-run", "--map", "ana=Ana", "--map=bor=Bor"})
+	_, route, body, e = bundleRequest([]string{"import", "bundle.zip", "--source", "remotesrc", "--dry-run", "--map", "ana=Ana", "--map=bor=Bor", "--adopt", "project:shop,user:alice", "--adopt=team:acme"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	input, ok := body.(core.BundleImport)
-	if !ok || route != "/import" || !input.DryRun || input.Source != "remotesrc" || len(input.Map) != 2 || input.Map["ana"] != "Ana" {
+	if !ok || route != "/import" || !input.DryRun || input.Source != "remotesrc" || len(input.Map) != 2 || input.Map["ana"] != "Ana" || strings.Join(input.Adopt, " ") != "project:shop user:alice team:acme" {
 		t.Fatal(body, route)
 	}
-	for _, args := range [][]string{{"export", "x.zip"}, {"export", "--team", "T", "x.zip", "--map", "a=b"}, {"export", "--team", "T", "x.zip", "--source", "s"}, {"import", "x.zip"}, {"import", "x.zip", "--with-private"}, {"import", "x.zip", "--source", "s", "--map", "a=b", "--map", "a=c"}, {"import", "x.zip", "--source", "s", "--map", "bad"}, {"import", "x.zip", "--source", "s", "--project", "one"}} {
+	for _, args := range [][]string{{"export", "x.zip"}, {"export", "--team", "T", "x.zip", "--map", "a=b"}, {"export", "--team", "T", "x.zip", "--source", "s"}, {"export", "--team", "T", "x.zip", "--adopt", "user:a"}, {"import", "x.zip"}, {"import", "x.zip", "--with-private"}, {"import", "x.zip", "--source", "s", "--map", "a=b", "--map", "a=c"}, {"import", "x.zip", "--source", "s", "--map", "bad"}, {"import", "x.zip", "--source", "s", "--project", "one"}} {
 		if _, _, _, e := bundleRequest(args); e == nil {
 			t.Fatal(args)
 		}

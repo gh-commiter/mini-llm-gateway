@@ -471,6 +471,22 @@ func TestHookRequestCommandsWork(t *testing.T) {
 	}
 }
 
+// The request puts nothing taken from the repository on a command line: no title placeholder in double quotes (the shell would
+// expand $(...) and backticks in it), in fact no --title at all; the title is the first line of the text on stdin.
+func TestHookRequestHasNoShellExpandablePlaceholder(t *testing.T) {
+	text := strings.ReplaceAll(hookRequestText, "<slug>", "acme-shop")
+	for _, bad := range []string{`"<`, `--title`, `"$`} {
+		for _, c := range regexp.MustCompile("`(minigw kb submit [^`]*)`").FindAllStringSubmatch(text, -1) {
+			if strings.Contains(c[1], bad) {
+				t.Fatalf("%q in %q", bad, c[1])
+			}
+		}
+	}
+	if strings.Contains(text, `"<`) {
+		t.Fatal("double-quoted placeholder in the request")
+	}
+}
+
 // hookStdin: the hook's JSON with the folder encoded properly (a Windows path has backslashes; pasted into a JSON
 // string unescaped it is invalid JSON and the hook rightly ignores it).
 func hookStdin(session, cwd string) string {

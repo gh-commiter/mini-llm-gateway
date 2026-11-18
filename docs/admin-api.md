@@ -695,7 +695,7 @@ admin prefix:
 | Method | Path | Body |
 |---|---|---|
 | POST | `/export` | `{"team":"Engineering","projects":["fakture"],"with_private":false,"path":"/absolute/local/team.zip"}` |
-| POST | `/import` | `{"path":"/absolute/local/team.zip","source":"engineering","dry_run":true,"map":{"ana":"Ana"}}` |
+| POST | `/import` | `{"path":"/absolute/local/team.zip","source":"engineering","dry_run":true,"map":{"ana":"Ana"},"adopt":["project:shop","user:alice"]}` |
 
 The body names a local path on the gateway computer; it never contains zip bytes. The normal 512 KiB
 request cap remains. Export refuses an existing destination. Responses contain `{"lines":[...]}`;
@@ -704,6 +704,13 @@ name of the bundle's origin on this gateway (1–64 characters, using team-name 
 under a source records the bundle's `origin_gateway`; a later import under that source from another gateway
 is refused, as is a bundle whose `origin_gateway` is this gateway. Receipts are keyed by source name,
 project slug and source note id, never by the bundle's own strings.
+
+An import merges only into projects, teams and users that the same source created (the table `import_objects`) or that the
+owner adopted for it. `adopt` (optional) lists local objects as `project:<slug>`, `team:<name>` or `user:<name>`; a name in
+the bundle that matches any other local object refuses the whole import (400, before any write) with one line per conflict
+in `error.message`; a malformed entry, or one that matches no object of the bundle, is refused too. A user is adopted
+only when listed. An adopted object keeps its roles (no raise), grants from an adopted project are added only when the project
+is listed, and the `kb.import` audit event carries `adopted` (the listed objects used). A dry run answers with the same refusal.
 
 Import validates the complete archive before decompressing note bodies: it bounds the archive size, the
 central directory, the entry count, each declared entry size and the total, the manifest size and nesting,

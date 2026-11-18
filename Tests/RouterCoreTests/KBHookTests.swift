@@ -307,6 +307,17 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         }
     }
 
+    /// The request puts nothing taken from the repository on a command line: no double-quoted placeholder, no --title.
+    @Test func theRequestHasNoShellExpandablePlaceholder() throws {
+        let text = ProjectEnv.hookRequestText
+        #expect(!text.contains("\"<") && !text.contains("--title\u{20}\""))
+        let re = try NSRegularExpression(pattern: "`(minigw kb submit [^`]*)`")
+        for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            let cmd = String(text[Range(m.range(at: 1), in: text)!])
+            #expect(!cmd.contains("--title") && !cmd.contains("\""))
+        }
+    }
+
     /// The command in the hand-in request, parsed and run through the real argument parser with the text on stdin.
     @Test func theCommandsOfTheRequestWork() throws {
         let text = ProjectEnv.hookRequestText.replacingOccurrences(of: "<slug>", with: "acme-shop")

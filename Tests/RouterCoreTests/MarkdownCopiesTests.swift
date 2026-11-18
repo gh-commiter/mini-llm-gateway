@@ -101,15 +101,16 @@ import Testing
             return (200, Data(#"{"lines":["create team Team","skip note"]}"#.utf8))
         }, out: { output += $0 })
         try cmd.bundle(["export", "--team", "Team", "--project", "one", "--project=two", "--with-private", "/tmp/team.zip"])
-        try cmd.bundle(["import", "/tmp/team.zip", "--source", "remotesrc", "--dry-run", "--map", "ana=Ana", "--map=bor=Bor"])
+        try cmd.bundle(["import", "/tmp/team.zip", "--source", "remotesrc", "--dry-run", "--map", "ana=Ana", "--map=bor=Bor", "--adopt", "project:shop,user:alice", "--adopt=team:acme"])
         #expect(routes == ["/export", "/import"])
         #expect(bodies[0]["projects"] as? [String] == ["one", "two"])
         #expect(bodies[0]["with_private"] as? Bool == true)
         #expect(bodies[1]["source"] as? String == "remotesrc")
         #expect(bodies[1]["map"] as? [String: String] == ["ana": "Ana", "bor": "Bor"])
         #expect(bodies[1]["dry_run"] as? Bool == true)
+        #expect(bodies[1]["adopt"] as? [String] == ["project:shop", "user:alice", "team:acme"])
         #expect(output.contains("create team Team"))
-        for args in [["export", "x.zip"], ["export", "--team", "T", "x.zip", "--source", "s"], ["import", "x.zip"], ["import", "x.zip", "--with-private"], ["import", "x.zip", "--source", "s", "--map", "bad"], ["import", "x.zip", "--source", "s", "--map", "a=b", "--map", "a=c"]] {
+        for args in [["export", "x.zip"], ["export", "--team", "T", "x.zip", "--source", "s"], ["export", "--team", "T", "x.zip", "--adopt", "user:a"], ["import", "x.zip"], ["import", "x.zip", "--with-private"], ["import", "x.zip", "--source", "s", "--map", "bad"], ["import", "x.zip", "--source", "s", "--map", "a=b", "--map", "a=c"]] {
             #expect(throws: AdminCLIError.self) { try cmd.bundle(args) }
         }
         #expect(routes.count == 2)

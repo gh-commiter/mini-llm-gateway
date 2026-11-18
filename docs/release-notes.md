@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+### Security
+- `minigw gw import`: a team bundle could take over local projects, users and teams that it only matched by name. If the owner imported a bundle from elsewhere without `--dry-run`, a project of this gateway that was in no team could be attached to the bundle's team, an existing user could become a team member and get the admin role on it, grants from local projects could be added, and notes written into them. An import now merges only into objects that the same `--source` created before; a name that matches any other local project, team or user stops the whole import before anything is written and lists each conflict. `--adopt project:<slug>,team:<name>,user:<name>` merges into exactly the objects you list (a user is never adopted implicitly; an adopted object keeps its local roles, grants from an adopted project need the project in the list, and the audit row names what was adopted). `--dry-run` shows the same list. Re-importing from the same source needs no flag. Bundles imported by an earlier version left no record: their objects show up as conflicts once. Still import only bundles you trust.
+- Re-importing a Markdown file that replaces a published note could change the note's kind (finding to faq, or faq to finding past the faq size limits) when the pending replacement was updated; a replacement now keeps the kind of the note it replaces.
+- The hand-in request of the hooks (and the notes skill) put a title in double quotes on the command line, so a title copied from hostile repository text with `$(...)` or backticks could run a command in the shell. The request now gives no `--title`: the first line of the text on stdin is the title.
+
 ## 0.7.25
 
 ### New

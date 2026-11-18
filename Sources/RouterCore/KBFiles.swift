@@ -191,7 +191,7 @@ extension AdminCommands {
     public func bundle(_ args: [String]) throws {
         let usage = fail(Self.help.trimmingCharacters(in: .whitespacesAndNewlines))
         guard let command = args.first, ["export", "import"].contains(command) else { throw usage }
-        var team = "", source = "", projects: [String] = [], mapping: [String: String] = [:], file = ""
+        var team = "", source = "", projects: [String] = [], mapping: [String: String] = [:], adopt: [String] = [], file = ""
         var withPrivate = false, dry = false, i = 1
         while i < args.count {
             let arg = args[i]
@@ -200,13 +200,14 @@ extension AdminCommands {
             else if arg.hasPrefix("--") {
                 let kv = String(arg.dropFirst(2)).split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
                 let name = kv[0]
-                guard ["team", "project", "map", "source"].contains(name) else { throw usage }
+                guard ["team", "project", "map", "source", "adopt"].contains(name) else { throw usage }
                 let value: String
                 if kv.count == 2 { value = kv[1] }
                 else { i += 1; guard i < args.count else { throw usage }; value = args[i] }
                 if name == "team" { team = value }
                 if name == "source" { source = value }
                 if name == "project" { projects.append(value) }
+                if name == "adopt" { adopt += value.split(separator: ",", omittingEmptySubsequences: false).map(String.init) }
                 if name == "map" {
                     let pair = value.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
                     guard pair.count == 2, !pair[0].isEmpty, !pair[1].isEmpty, mapping[pair[0]] == nil else { throw usage }
@@ -221,11 +222,11 @@ extension AdminCommands {
         let path = URL(fileURLWithPath: file).standardizedFileURL.path
         let body: [String: Any]
         if command == "export" {
-            guard !team.isEmpty, source.isEmpty, !dry, mapping.isEmpty else { throw usage }
+            guard !team.isEmpty, source.isEmpty, !dry, mapping.isEmpty, adopt.isEmpty else { throw usage }
             body = ["team": team, "projects": projects, "with_private": withPrivate, "path": path]
         } else {
             guard team.isEmpty, projects.isEmpty, !withPrivate, !source.isEmpty else { throw usage }
-            body = ["path": path, "source": source, "dry_run": dry, "map": mapping]
+            body = ["path": path, "source": source, "dry_run": dry, "map": mapping, "adopt": adopt]
         }
         let r = try request("POST", "/" + command, body)
         for line in r["lines"]?.array ?? [] { say(clean(line.string ?? "")) }

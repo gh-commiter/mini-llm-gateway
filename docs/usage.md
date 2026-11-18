@@ -607,6 +607,7 @@ computer, with the gateway running (the same commands work on Windows, Linux, an
 minigw gw export --team Engineering --project fakture --with-private ./engineering.zip
 minigw gw import --source engineering ./engineering.zip --dry-run --map ana=Ana
 minigw gw import --source engineering ./engineering.zip --map ana=Ana
+minigw gw import --source engineering ./engineering.zip --adopt project:shop,user:alice   # only after reading the conflict list
 ```
 
 Omit `--project` to include every project in that team; repeat it for a subset. Private notes require
@@ -637,8 +638,22 @@ old=new` and after Unicode normalization, so a name written with a combining acc
 account as its composed form. If two target accounts normalize to one name, or two bundle users would land
 on one target account, the import is refused and both are named. Slugs match projects and names match
 teams. Unknown users are inactive non-owners with no device
-binding. The owner must activate and bind them explicitly. Existing roles, memberships and grants are only
-retained or raised. A project already on another team refuses the whole import. Target project and note IDs
+binding. The owner must activate and bind them explicitly. A project already on another team refuses the whole import.
+
+An import merges only into objects that the same source created before (the gateway records them per source).
+A project, team or user that the bundle names and that already exists here but was not created by this source is a
+**conflict**: the import stops before it writes anything and lists each conflict, for example `project:shop` and
+`user:alice`. Import only bundles you trust: to merge into such objects anyway, repeat the import with
+`--adopt project:<slug>,team:<name>,user:<name>`, listing only the objects you mean (also `--adopt` twice). Nothing is
+adopted implicitly, and a user is never adopted just because its project or team is: each user must be listed.
+`--dry-run` shows the same list, and with `--adopt` the lines the adoption would produce (`merge adopt project:shop`, then
+the team, member and role lines). An adopted object keeps its local roles: the bundle may add a role where there is
+none, never raise one, and grants from an adopted project are added only when that project is listed in `--adopt`
+again. The adoption is remembered for the source, so a later re-import from the same source needs no flag for the
+objects; the `kb.import` audit row names every adopted object (`adopted`). An `--adopt` entry that matches no object
+the bundle names is refused. If the owner renames an object that an import created (or adopted) locally, the source no
+longer recognizes it: the bundle's old name then creates a new object, or is a conflict if that name exists here. Bundles
+imported by an earlier version left no record: their objects show up as conflicts once and need one `--adopt`. Target project and note IDs
 are allocated locally.
 
 Re-importing the same bundle is a no-op. The receipt stores the note revision and class written by the last
