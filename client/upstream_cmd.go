@@ -18,7 +18,8 @@ const upstreamHelp = `
   minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
   minigw gw upstream resolve --team <team> <note> --theirs|--ours
   minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
-  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)`
+  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
+  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)`
 
 type upLink struct {
 	Project     int64
@@ -235,9 +236,42 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 				pause(time.Duration(wait) * time.Second)
 			}
 		}
+	case pos[1] == "pull" && len(pos) <= 3:
+		if !u.dryRun {
+			fail("pull: only --dry-run exists for now (it asks the upstream what could be read and stores nothing)")
+		}
+		body := map[string]any{"dryRun": true}
+		switch {
+		case team != "" && len(pos) == 2:
+			body["team"] = teamID(a, team)
+		case team == "" && len(pos) == 3:
+			body["project"] = projectID(a, pos[2])
+		case len(pos) != 2:
+			usage()
+		}
+		var r struct{ Pulls []upPull }
+		a.do("POST", "/upstream-pull", body, &r)
+		for _, p := range r.Pulls {
+			say(clean(fmt.Sprintf("%s -> %s (%s)", p.Label, p.Upstream, p.Remote)))
+			for _, l := range p.Lines {
+				say(clean("  " + l))
+			}
+			if p.Stopped != "" {
+				say(clean("  stopped: " + p.Stopped))
+			} else {
+				say(fmt.Sprintf("  dry run: %d notes could be read, nothing was stored", p.Total))
+			}
+		}
 	default:
 		usage()
 	}
+}
+
+type upPull struct {
+	Label, Upstream, Remote string
+	Lines                   []string
+	Total                   int
+	Stopped                 string
 }
 
 type upPush struct {

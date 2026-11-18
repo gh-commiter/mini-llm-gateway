@@ -18,6 +18,10 @@
   },
   {
    "method": "GET",
+   "pattern": "^/minigw/v1/projects/[0-9]{1,18}/kb/manifest$"
+  },
+  {
+   "method": "GET",
    "pattern": "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions/[0-9]{1,18}$"
   },
   {
@@ -38,6 +42,42 @@
   }
  ],
  "refused": [
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/kb/manifest?x=1"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/kb/manifest/"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/../kb/manifest"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/../kb/manifest"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/1234567890123456789/kb/manifest"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/shop/kb/manifest"
+  },
+  {
+   "method": "POST",
+   "path": "/minigw/v1/projects/7/kb/manifest"
+  },
+  {
+   "method": "PUT",
+   "path": "/minigw/v1/projects/7/kb/manifest"
+  },
+  {
+   "method": "DELETE",
+   "path": "/minigw/v1/projects/7/kb/manifest"
+  },
   {
    "method": "GET",
    "path": "/minigw/v1/projects/7/kb/submissions"

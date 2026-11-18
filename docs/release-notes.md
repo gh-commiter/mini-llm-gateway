@@ -1,5 +1,13 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Reading an upstream, step 1 (the hub side only): an upstream gateway now answers `GET /minigw/v1/projects/{id}/kb/manifest` for a bound member with the list of published, non-private notes that member could read there (the project, its team's notes and what it depends on, each by the member's own rights): ids, revisions, class and kind only, at most 5000 entries (`truncated` says more exist), counted against the notes-list rate limit. `minigw gw upstream pull [<project>|--team <team>] --dry-run` asks the upstream for that list and prints, per source, how many notes of which class and kind this gateway could read; it stores nothing. The Mac app admits that one new request for its helper (a GET of exactly that path, no query).
+
+### Known problems
+- Nothing is pulled yet: `pull` without `--dry-run` is refused, there is no local copy of an upstream's notes and search does not include them. A hub must run this version before a local gateway's dry run can read it (an older hub answers "does not support reading"). The dry run has only been tried through tests.
+
 ## 0.7.25
 
 ### New
