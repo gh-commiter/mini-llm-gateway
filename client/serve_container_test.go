@@ -323,3 +323,18 @@ func TestServiceNameProviderBypassesEnvProxy(t *testing.T) {
 		t.Fatalf("the provider request reached the environment proxy %d times", n)
 	}
 }
+
+// L2: an http provider (private IP, .local, any host: http needs --insecure) never goes through the environment proxy,
+// in the quota client as in the provider client. The environment proxy is cached, so only the decision for http is asserted.
+func TestHttpProviderBypassesEnvProxy(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9")
+	t.Setenv("NO_PROXY", "")
+	for _, u := range []string{"http://10.1.2.3:4000/key/info", "http://litellm.local:4000/key/info", "http://gw.example.org/v1/models"} {
+		req, _ := http.NewRequest("GET", u, nil)
+		for name, tr := range map[string]*http.Transport{"quota": quotaHTTP.Transport.(*http.Transport), "provider": gwClients[0].Transport.(*http.Transport)} {
+			if p, err := tr.Proxy(req); err != nil || p != nil {
+				t.Fatalf("%s client would use proxy %v for %s: %v", name, p, u, err)
+			}
+		}
+	}
+}

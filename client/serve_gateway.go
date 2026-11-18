@@ -281,10 +281,11 @@ func (s *server) gatewayRoutes(g serveGateway) []gwModel {
 	return out
 }
 
-// noProxyServiceName: a single-label service name (container mode) is dialled directly, never through the environment
-// proxy: for http the key would go unencrypted to the proxy, and the proxy would resolve the name without gwDial's check.
+// noProxyServiceName: an http provider (private host, .local, container service name: http is allowed only with --insecure) and a
+// single-label service name (container mode) are dialled directly, never through the environment proxy: for http the key would go
+// unencrypted to the proxy, and the proxy would resolve the name without gwDial's check. https providers keep the environment proxy.
 func noProxyServiceName(r *http.Request) (*url.URL, error) {
-	if containerMode() && singleLabel(strings.ToLower(r.URL.Hostname())) {
+	if strings.EqualFold(r.URL.Scheme, "http") || containerMode() && singleLabel(strings.ToLower(r.URL.Hostname())) {
 		return nil, nil
 	}
 	return http.ProxyFromEnvironment(r)

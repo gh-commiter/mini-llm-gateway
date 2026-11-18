@@ -279,6 +279,31 @@ private final class Served: @unchecked Sendable {
         #expect(r?.status == 302 && hits.n == 0)
     }
 
+    /// L1: a provider request (the default and the proxy-free session) gets the 302 itself; the second host never sees a request.
+    @Test func aProviderRequestDoesNotFollowARedirect() async throws {
+        let hits = Hits()
+        let target = SocketServer { c in hits.add(); _ = SocketServer.raw(c, Data("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".utf8)) }
+        defer { target.stop() }
+        let server = SocketServer { c in _ = SocketServer.raw(c, Data("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:\(target.port)/y\r\nContent-Length: 0\r\n\r\n".utf8)) }
+        defer { server.stop() }
+        var r = URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/v1/messages")!)
+        r.httpMethod = "POST"; r.httpBody = Data("prompt".utf8)
+        for s in [Router.defaultSession, Router.noProxySession] {
+            let (_, resp) = try await s.data(for: r)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 302)
+        }
+        #expect(hits.n == 0)
+    }
+
+    /// L2: an http provider gets a session without any proxy; https keeps the default one.
+    @Test func anHttpProviderUsesAProxyFreeSession() {
+        let http = Router.session(Router.defaultSession, for: URL(string: "http://litellm.local:4000/v1/messages")!)
+        #expect(http === Router.noProxySession)
+        #expect((http.configuration.connectionProxyDictionary ?? ["x": 1]).isEmpty)
+        #expect(Router.session(Router.defaultSession, for: URL(string: "https://api.example.com/v1")!) === Router.defaultSession)
+        #expect(Router.defaultSession.configuration.connectionProxyDictionary == nil)
+    }
+
     final class Hits: @unchecked Sendable { private let l = NSLock(); private var c = 0; func add() { l.withLock { c += 1 } }; var n: Int { l.withLock { c } } }
 }
 
