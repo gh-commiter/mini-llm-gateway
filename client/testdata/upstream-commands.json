@@ -2212,6 +2212,33 @@
      ]
     ]
    }
+  },
+  {
+   "name": "status with notes that could not be read",
+   "args": [
+    "upstream",
+    "status"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /upstreams",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\"], \"withPrivate\": false, \"label\": \"shop\", \"pending\": 0, \"total\": 3, \"auto\": false, \"mode\": \"submit\", \"read\": false, \"skippedNotes\": 60, \"skippedList\": [\"12:gone\", \"15:invalid\"]}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure, manual\n  read: off\n  60 notes could not be read (upstream note:reason): 12:gone, 15:invalid, ... (60 in all); retried at the next pull\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/upstreams",
+      ""
+     ]
+    ]
+   }
   }
  ]
 }

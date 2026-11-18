@@ -39,8 +39,12 @@ func readInfo(tx *sql.Tx, now int64, i *UpstreamLinkInfo) error {
 	var cls, src string
 	var acc, last, ok, every, next int64
 	var timer int
-	if e := tx.QueryRow(`SELECT read,read_classes,read_sources,read_accepted,last_pull,last_pull_ok,pull_error,pull_every,pull_next,pull_fail_count,pull_timer FROM upstream_links WHERE project_id=? AND upstream=?`, i.Project, i.Upstream).Scan(&on, &cls, &src, &acc, &last, &ok, &i.PullError, &every, &next, &i.PullFailCount, &timer); e != nil {
+	var skipIDs string
+	if e := tx.QueryRow(`SELECT read,read_classes,read_sources,read_accepted,last_pull,last_pull_ok,pull_error,pull_every,pull_next,pull_fail_count,pull_timer,pull_skipped,pull_skipped_ids FROM upstream_links WHERE project_id=? AND upstream=?`, i.Project, i.Upstream).Scan(&on, &cls, &src, &acc, &last, &ok, &i.PullError, &every, &next, &i.PullFailCount, &timer, &i.SkippedNotes, &skipIDs); e != nil {
 		return e
+	}
+	if skipIDs != "" {
+		i.SkippedList = strings.Split(skipIDs, ",")
 	}
 	i.PullEvery, i.PullTimerOff = int(every), timer == 0
 	if i.PullEvery == 0 {
@@ -98,6 +102,8 @@ type pullSettings struct {
 	reach    string
 	cursor   int64
 	failed   bool // a slice of the traversal that continues here failed
+	skipped  int
+	skipIDs  []string // the definitive skips of the slices of this traversal so far
 	// the link as it is now, read together with the acceptance (under the link's lock, which a link update also takes)
 	remote             string
 	remoteTeam         int
@@ -109,8 +115,15 @@ func (s *Store) pullSettings(ctx context.Context, l UpstreamLink) (st pullSettin
 		var on int
 		var cls, src string
 		var failed int
-		if e := tx.QueryRow(`SELECT read,read_classes,read_sources,read_accepted,read_reach,pull_cursor,pull_failed,remote,remote_team FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&on, &cls, &src, &st.accepted, &st.reach, &st.cursor, &failed, &st.remote, &st.remoteTeam); e != nil {
+		var skipIDs string
+		if e := tx.QueryRow(`SELECT read,read_classes,read_sources,read_accepted,read_reach,pull_cursor,pull_failed,remote,remote_team,pull_skipped,pull_skipped_ids FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&on, &cls, &src, &st.accepted, &st.reach, &st.cursor, &failed, &st.remote, &st.remoteTeam, &st.skipped, &skipIDs); e != nil {
 			return notFound(e)
+		}
+		if st.cursor > 0 && skipIDs != "" { // a traversal that goes on keeps its skips; a new one starts empty
+			st.skipIDs = strings.Split(skipIDs, ",")
+		}
+		if st.cursor == 0 {
+			st.skipped = 0
 		}
 		st.failed, st.rawClasses, st.rawSrc = failed == 1 && st.cursor > 0, cls, src
 		st.on, st.classes, st.sources = on == 1, map[Class]bool{}, map[string]bool{}
@@ -354,6 +367,16 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 		res.Skipped++
 		skipNote = append(skipNote, "skip "+strconv.FormatInt(id, 10)+": "+why)
 	}
+	// dskip: the upstream ANSWERED about this note and the answer is definitive (not served, or it fails the checks): the note is skipped,
+	// remembered (id and kind of reason, no upstream text) and retried by the next traversal, which still completes; a failure to ask (no
+	// answer, 5xx, a limit) is not this, it fails the traversal.
+	var dskips []int64
+	var dreasons []string
+	dskip := func(id int64, class, why string) {
+		skip(id, why)
+		dskips = append(dskips, id)
+		dreasons = append(dreasons, strconv.FormatInt(id, 10)+":"+class)
+	}
 	last, gets, fails := st.cursor, 0, 0
 	early := false    // stopped by failures, with notes left: the next run goes on above the cursor
 	var failed string // a transient failure: the run is not "ok" (and the mirror is not claimed to be current)
@@ -373,7 +396,7 @@ fetch:
 		case a.status == 401 || a.status == 403:
 			return purge(refusal(a))
 		case a.status == 0 && p.big:
-			skip(id, "the answer is over the size limit")
+			dskip(id, "large", "the answer is over the size limit")
 		case a.status == 0 && rctx.Err() != nil:
 			more = true
 			break fetch
@@ -388,12 +411,20 @@ fetch:
 		case a.status == 200:
 			row, why := checkMirrorNote(a.data, want[id], labels[want[id].Source])
 			if why != "" {
-				skip(id, why)
+				class := "invalid"
+				if strings.Contains(why, "too large") {
+					class = "large"
+				}
+				dskip(id, class, why)
 			} else {
 				fetched = append(fetched, row)
 			}
 		default: // 404 (gone since the manifest), a redirect, any other refusal of this one note: it is not taken
-			skip(id, "not served ("+strconv.Itoa(a.status)+")")
+			class := "refused"
+			if a.status == 404 {
+				class = "gone"
+			}
+			dskip(id, class, "not served ("+strconv.Itoa(a.status)+")")
 		}
 		last = id
 	}
@@ -490,6 +521,15 @@ fetch:
 			}
 		}
 		res.Removed = len(gone)
+		// a skipped note whose revision moved on the upstream is not served from the old copy; one whose revision is the one we hold keeps it
+		for _, id := range dskips {
+			if h, held := have[id]; held && h.Rev != want[id].Rev {
+				if e := deleteMirrored(tx, l.Project, l.Upstream, id); e != nil {
+					return e
+				}
+				res.Removed++
+			}
+		}
 		var count int
 		var total int64
 		if e := tx.QueryRow(`SELECT count(*) FROM upstream_mirror WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&count); e != nil {
@@ -547,12 +587,17 @@ ON CONFLICT(project_id,upstream,remote_note) DO UPDATE SET source_id=excluded.so
 		if ok {
 			okAt = "?"
 		}
-		args := []any{now, cursor, pullErr, failedNext}
+		skippedAll := append(append([]string{}, st.skipIDs...), dreasons...)
+		skipTotal := st.skipped + len(dskips)
+		if len(skippedAll) > 50 {
+			skippedAll = skippedAll[:50]
+		}
+		args := []any{now, cursor, pullErr, failedNext, skipTotal, strings.Join(skippedAll, ",")}
 		if ok {
 			args = append(args, now)
 		}
 		args = append(args, l.Project, l.Upstream)
-		if _, e := tx.Exec(`UPDATE upstream_links SET last_pull=?,pull_cursor=?,pull_error=?,pull_failed=?,last_pull_ok=`+okAt+` WHERE project_id=? AND upstream=?`, args...); e != nil {
+		if _, e := tx.Exec(`UPDATE upstream_links SET last_pull=?,pull_cursor=?,pull_error=?,pull_failed=?,pull_skipped=?,pull_skipped_ids=?,last_pull_ok=`+okAt+` WHERE project_id=? AND upstream=?`, args...); e != nil {
 			return e
 		}
 		if auto { // the timer's runs are audited by afterPull, by the push's rule: one row for a run that did something, otherwise one per change of outcome
@@ -652,7 +697,7 @@ func mirrorBody(s string) string {
 // afterPull records what a real run means for the link's timer (the same bookkeeping for a pull by hand and one by the timer, so that a
 // failing upstream is backed off from either way): success schedules the next pull one interval ahead and clears the failures; "more" with
 // progress goes on in a second; waiting for the upstream's read limit comes back no sooner than the wait; a failure, and a run that made no
-// progress, set the back-off; a refusal (the mirror was purged) switches the timer off until the owner accepts the reach again. A run for
+// progress, set the back-off; a refusal (the mirror was purged) switches the timer off until the owner accepts the reach again, whoever started the pull; a pull by hand never switches the timer ON. A run for
 // a link that was changed, removed or turned off meanwhile records nothing. An automatic run writes its audit row here.
 func (s *Store) afterPull(ctx context.Context, l UpstreamLink, label string, res UpstreamPull, auto bool) error {
 	if res.outcome == "" || res.outcome == "skip" {
@@ -673,7 +718,7 @@ func (s *Store) afterPull(ctx context.Context, l UpstreamLink, label string, res
 		switch res.outcome {
 		case "ok":
 			n = 0
-			q, args = `UPDATE upstream_links SET pull_fail_count=0,pull_next=?1+CASE WHEN pull_every=0 THEN ?4 ELSE pull_every*1000 END WHERE project_id=?2 AND upstream=?3`, []any{now, l.Project, l.Upstream, int64(DefaultPullEvery) * 1000}
+			q, args = `UPDATE upstream_links SET pull_fail_count=0,pull_audit_n=0,pull_next=?1+CASE WHEN pull_every=0 THEN ?4 ELSE pull_every*1000 END WHERE project_id=?2 AND upstream=?3`, []any{now, l.Project, l.Upstream, int64(DefaultPullEvery) * 1000}
 		case "more":
 			q, args = `UPDATE upstream_links SET pull_next=? WHERE project_id=? AND upstream=?`, []any{now + 1000, l.Project, l.Upstream}
 		case "wait":

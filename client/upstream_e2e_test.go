@@ -846,3 +846,58 @@ func TestPullCommandStopsAfterItsRunsAndItsTime(t *testing.T) {
 		}
 	}
 }
+
+// Both directions between two real gateways: a note published to the hub and pulled back is ONE hit for a member (the local note, not the hub's
+// copy of it); after the note is changed on the hub and pulled, the hub's version is there too, with the "differs" line.
+func TestUpstreamPublishedNoteComesBackOnceThenDiffers(t *testing.T) {
+	f := newUpFx(t, core.Developer)
+	f.add("hub")
+	f.allow()
+	p, project, notes := f.seed()
+	c := f.local.core
+	if out, err := f.cmd(coreOpts{mode: "publish"}, "link", "shop", "hub"); err != nil {
+		t.Fatal(out, err)
+	}
+	if out, err := f.cmd(coreOpts{}, "push", "shop"); err != nil {
+		t.Fatal(out, err)
+	}
+	if out, err := f.cmd(coreOpts{read: true, acceptReach: true}, "link", "shop", "hub"); err != nil {
+		t.Fatal(out, err)
+	}
+	if out, err := f.cmd(coreOpts{}, "pull", "shop"); err != nil || !strings.Contains(out, "mirror 1 notes") {
+		t.Fatalf("%q %v", out, err)
+	}
+	hits := func() (local, hub []core.SearchHit) {
+		pg, err := c.SearchNotes(t0, p, project, "invoice")
+		f.must(err)
+		for _, h := range pg.Hits {
+			if h.Upstream != "" {
+				hub = append(hub, h)
+			} else {
+				local = append(local, h)
+			}
+		}
+		return
+	}
+	if l, h := hits(); len(l) != 1 || l[0].ID != notes["Invoice numbering"].ID || len(h) != 0 {
+		t.Fatalf("the note must show once: local %+v hub %+v", l, h)
+	}
+	// somebody changes it on the hub; the next pull brings the hub's version
+	rp, err := f.remote.core.Principal(t0, f.localDev, true)
+	f.must(err)
+	id, rev, _ := f.remoteNote("Invoice numbering")
+	_, err = f.remote.core.UpdateNote(t0, rp, f.projectID("shop"), id, rev, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "THEIR invoice text"})
+	f.must(err)
+	if out, err := f.cmd(coreOpts{}, "pull", "shop"); err != nil {
+		t.Fatal(out, err)
+	}
+	l, h := hits()
+	if len(l) != 1 || len(h) != 1 {
+		t.Fatalf("local %+v hub %+v", l, h)
+	}
+	n, err := c.GetNote(t0, p, project, h[0].ID)
+	f.must(err)
+	if !strings.Contains(n.Body, "[differs from the local note "+fmt.Sprint(notes["Invoice numbering"].ID)+":") || !strings.Contains(n.Body, "> THEIR invoice text") {
+		t.Fatalf("%q", n.Body)
+	}
+}

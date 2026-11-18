@@ -590,6 +590,8 @@
   "builtin.upstreams.section.reading.detail.readaccepted": "Reach accepted",
   "builtin.upstreams.section.reading.detail.section.reading.title": "Mirror",
   "builtin.upstreams.section.reading.detail.section.timer.title": "Automatic pull",
+  "builtin.upstreams.section.reading.detail.skippedlist": "Which (note number: reason)",
+  "builtin.upstreams.section.reading.detail.skippednotes": "Notes that could not be read",
   "builtin.upstreams.section.reading.detail.stale": "Hidden from members",
   "builtin.upstreams.section.reading.detail.stale.no": "No",
   "builtin.upstreams.section.reading.detail.stale.yes": "Yes: no complete pull for 7 days",

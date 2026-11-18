@@ -126,6 +126,7 @@ extension AdminCommands {
                 if let e = d["lastError"]?.string, !e.isEmpty { say(clean("  last refusal: " + e)) }
                 if let s = Self.upstreamNotPropagated(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
+                if let s = Self.upstreamSkipped(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamBackwards(d) { say(clean("  " + s)) }
             }
             if links.isEmpty { say("no upstream links (minigw gw upstream link <project> <name>)") }
@@ -294,6 +295,16 @@ extension AdminCommands {
     static func upstreamConflicts(_ d: JDict) -> String? {
         let parts = (d["conflicts"]?.array ?? []).map { c in "note \(c.dict["note"]?.int ?? 0) (" + (c.dict["gone"]?.bool == true ? "deleted there" : "changed there") + ")" }
         return parts.isEmpty ? nil : "CONFLICT: " + parts.joined(separator: ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
+    }
+
+    /// Notes the upstream answered about definitively in the last traversal (as Go's upstreamSkipped).
+    static func upstreamSkipped(_ d: JDict) -> String? {
+        let n = d["skippedNotes"]?.int ?? 0
+        if n == 0 { return nil }
+        let items = (d["skippedList"]?.array ?? []).compactMap { $0.string }
+        var list = items.joined(separator: ", ")
+        if n > items.count { list += ", ... (\(n) in all)" }
+        return "\(n) notes could not be read (upstream note:reason): \(list); retried at the next pull"
     }
 
     /// Published notes whose copy on the upstream has a lower revision than our push recorded (as Go's upstreamBackwards).

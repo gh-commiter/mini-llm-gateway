@@ -627,6 +627,8 @@
  "builtin.upstreams.section.reading.empty": "Še ni povezav: zgoraj najprej poveži projekt ali ekipo, nato tu vklopi branje.",
  "builtin.upstreams.section.reading.title": "Branje z nadrejenih gatewayev",
  "builtin.upstreams.section.readintro.body": "Branje je druga smer. Povezava z vklopljenim branjem hrani kopijo (zrcalo) zapiskov nadrejenega gatewaya za povezani projekt; člani lokalnega projekta jo najdejo v iskanju (kb search), pogostih vprašanjih (kb faq) in branju zapiska (note read), označeno kot hub. Branje je izklopljeno, dokler ne sprejmeš dosega: nadrejeni gateway, projekt ali ekipa tam, razredi in dodatni viri (poskusni zagon ga najprej pokaže). Prevzem poteka na 15 minut, če ne nastaviš drugače. Če nadrejeni gateway zavrne, se zrcalo izbriše in samodejni prevzem ostane izklopljen, dokler znova ne sprejmeš dosega.",
+ "builtin.upstreams.section.reading.detail.skippednotes": "Zapiski, ki jih ni bilo mogoče prebrati",
+ "builtin.upstreams.section.reading.detail.skippedlist": "Kateri (številka zapiska: razlog)",
  "builtin.users.about": "Ljudje, ki uporabljajo gateway, in njihove naprave",
  "builtin.users.section.bindings.action.bind": "Veži napravo …",
  "builtin.users.section.bindings.action.bind.field.device": "Naprava",

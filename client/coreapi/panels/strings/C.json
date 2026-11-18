@@ -627,6 +627,8 @@
  "builtin.upstreams.section.reading.empty": "No links yet: link a project or team above first, then turn reading on here.",
  "builtin.upstreams.section.reading.title": "Reading from upstream gateways",
  "builtin.upstreams.section.readintro.body": "Reading is the other direction. A link with reading on keeps a copy (a mirror) of the upstream's notes for the linked project; members of the local project find it in kb search, kb faq and note read, marked from hub, never as local notes. Reading is off until you accept its reach: the upstream, the project or team there, the classes and the extra sources (Dry Run shows it first). A link with reading on is pulled every 15 minutes unless you set another interval. If the upstream refuses, the mirror is deleted and the automatic pull stays off until you accept the reach again.",
+ "builtin.upstreams.section.reading.detail.skippednotes": "Notes that could not be read",
+ "builtin.upstreams.section.reading.detail.skippedlist": "Which (note number: reason)",
  "builtin.users.about": "People who use the gateway and their devices",
  "builtin.users.section.bindings.action.bind": "Bind Device…",
  "builtin.users.section.bindings.action.bind.field.device": "Device",

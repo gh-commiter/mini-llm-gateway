@@ -190,6 +190,8 @@ ALTER TABLE upstream_links ADD COLUMN pull_next INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_links ADD COLUMN last_pull_audit TEXT NOT NULL DEFAULT '';
 ALTER TABLE upstream_links ADD COLUMN pull_timer INTEGER NOT NULL DEFAULT 1 CHECK(pull_timer IN(0,1));
 ALTER TABLE upstream_links ADD COLUMN pull_failed INTEGER NOT NULL DEFAULT 0 CHECK(pull_failed IN(0,1)); -- a slice of the traversal in progress failed: the traversal never ends fresh
+ALTER TABLE upstream_links ADD COLUMN pull_skipped INTEGER NOT NULL DEFAULT 0; -- notes the upstream answered about definitively (not served, invalid) in the last traversal
+ALTER TABLE upstream_links ADD COLUMN pull_skipped_ids TEXT NOT NULL DEFAULT ''; -- the first 50 of them as id:reason (gone, refused, invalid, large), never upstream text
 ALTER TABLE upstream_links ADD COLUMN pull_audit_n INTEGER NOT NULL DEFAULT 0; -- audit rows written in the current failure episode (at most 5)
 ALTER TABLE upstream_sent ADD COLUMN sent_content TEXT NOT NULL DEFAULT ''; -- publish mode: hash of the content we sent (sentContentHash); '' = none recorded, revisions decide`)
 	return err
@@ -290,6 +292,10 @@ type UpstreamLinkInfo struct {
 	// RevisionBackwards: local notes this link published whose copy on the upstream has a LOWER revision than the one our push recorded
 	// (the upstream's copy was replaced by an older one: a revision number is no proof of the text, so such a copy is judged by its content).
 	RevisionBackwards []int64 `json:"revisionBackwards,omitempty"`
+	// SkippedNotes: notes of the last traversal that the upstream answered about definitively (not served, an answer that failed the checks)
+	// and that were therefore not taken: they do not make the mirror stale; SkippedList names the first 50 as "id:reason".
+	SkippedNotes int      `json:"skippedNotes,omitempty"`
+	SkippedList  []string `json:"skippedList,omitempty"`
 }
 
 func parseClasses(csv string, withPrivate bool) ([]Class, error) {
@@ -546,7 +552,7 @@ func enforceReach(tx *sql.Tx, project int64, upstream string, detail map[string]
 		return false, e
 	}
 	detail["readTurnedOff"] = map[string]any{"accepted": reach, "now": reachOf(upstream, remote, team, cls, src), "mirrorNotes": n}
-	_, e = tx.Exec(`UPDATE upstream_links SET read=0,read_classes='structure',read_sources='',read_accepted=0,read_reach='',pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0,pull_timer=1,pull_fail_count=0,pull_next=0,last_pull_audit='',pull_failed=0,pull_audit_n=0 WHERE project_id=? AND upstream=?`, project, upstream)
+	_, e = tx.Exec(`UPDATE upstream_links SET read=0,read_classes='structure',read_sources='',read_accepted=0,read_reach='',pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0,pull_timer=1,pull_fail_count=0,pull_next=0,last_pull_audit='',pull_failed=0,pull_audit_n=0,pull_skipped=0,pull_skipped_ids='' WHERE project_id=? AND upstream=?`, project, upstream)
 	return e == nil, e
 }
 
@@ -592,7 +598,7 @@ func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp L
 	if on {
 		accepted, o = ms(now), 1
 	}
-	_, e := tx.Exec(`UPDATE upstream_links SET read=?,read_classes=?,read_sources=?,read_accepted=?,read_reach=?,pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0,pull_timer=1,pull_fail_count=0,pull_next=0,last_pull_audit='',pull_failed=0,pull_audit_n=0 WHERE project_id=? AND upstream=?`, o, classes, sources, accepted, reach, project, upstream)
+	_, e := tx.Exec(`UPDATE upstream_links SET read=?,read_classes=?,read_sources=?,read_accepted=?,read_reach=?,pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0,pull_timer=1,pull_fail_count=0,pull_next=0,last_pull_audit='',pull_failed=0,pull_audit_n=0,pull_skipped=0,pull_skipped_ids='' WHERE project_id=? AND upstream=?`, o, classes, sources, accepted, reach, project, upstream)
 	return e
 }
 

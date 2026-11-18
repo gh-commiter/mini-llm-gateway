@@ -590,6 +590,8 @@
   "builtin.upstreams.section.reading.detail.readaccepted": "Doseg sprejet",
   "builtin.upstreams.section.reading.detail.section.reading.title": "Zrcalo",
   "builtin.upstreams.section.reading.detail.section.timer.title": "Samodejni prevzem",
+  "builtin.upstreams.section.reading.detail.skippedlist": "Kateri (številka zapiska: razlog)",
+  "builtin.upstreams.section.reading.detail.skippednotes": "Zapiski, ki jih ni bilo mogoče prebrati",
   "builtin.upstreams.section.reading.detail.stale": "Skrito članom",
   "builtin.upstreams.section.reading.detail.stale.no": "Ne",
   "builtin.upstreams.section.reading.detail.stale.yes": "Da: 7 dni brez popolnega prevzema",

@@ -590,7 +590,7 @@ func TestPullHostileNoteAnswers(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f, fk := readFx(t)
 			h := &hub{notes: []hubNote{structNote(1, "Bad"), structNote(2, "Fine")}}
-			// note 1 was mirrored before: it keeps its old row when the new answer is refused
+			// note 1 was mirrored before, at a revision that has since moved
 			pull(f, fk, h.up())
 			h.notes[0].rev = 1
 			f.ok(f.write(ctx, func(tx *sql.Tx) error {
@@ -609,7 +609,8 @@ func TestPullHostileNoteAnswers(t *testing.T) {
 			if res.Skipped != 1 || res.Added+res.Updated != 0 || res.Purged || !strings.Contains(strings.Join(res.Lines, "\n"), c.skip) {
 				t.Fatalf("%+v", res)
 			}
-			if got := strings.Join(mirror(f), "|"); got != "1/0/structure/finding/Bad|2/1/structure/finding/Fine" {
+			// the held copy of note 1 is at an older revision than the manifest lists: it is not served as current once the new answer is refused
+			if got := strings.Join(mirror(f), "|"); got != "2/1/structure/finding/Fine" {
 				t.Fatal(got)
 			}
 			if notesState(f) != local || countsOutside(t, f) != outside {

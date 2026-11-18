@@ -1638,6 +1638,16 @@
         "field": "lastPullAgeText",
         "kind": "text",
         "label": "builtin.upstreams.section.reading.detail.lastpullagetext"
+       },
+       {
+        "field": "skippedNotes",
+        "kind": "text",
+        "label": "builtin.upstreams.section.reading.detail.skippednotes"
+       },
+       {
+        "field": "skippedList",
+        "kind": "text",
+        "label": "builtin.upstreams.section.reading.detail.skippedlist"
        }
       ]
      },

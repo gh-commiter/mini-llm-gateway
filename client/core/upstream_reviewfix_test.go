@@ -264,3 +264,74 @@ func TestSentContentHashIsTheSameOnBothSides(t *testing.T) {
 		t.Fatal("class or kind ignored")
 	}
 }
+
+// A definitive answer about one note (not served, fails the checks) skips THAT note: it is counted and remembered (ids and reasons, no
+// upstream text), shown in status, retried by the next traversal, and the traversal still completes, so the mirror is fresh. A copy we hold
+// of a skipped note is dropped when its revision moved (stale text is not served as current) and kept when the revision is the same.
+func TestSkippedNotesDoNotMakeTheMirrorStale(t *testing.T) {
+	f, fk, h := autoPullFx(t)
+	h.notes = nil
+	for i := int64(1); i <= 6; i++ {
+		h.notes = append(h.notes, structNote(i, "Orbit note"))
+	}
+	f.autoPull(h.up()) // all six are mirrored
+	if len(mirror(f)) != 6 {
+		t.Fatal(mirror(f))
+	}
+	// 2 moves on and is not served any more, 3 moves on and answers with another note, 4 never answered fine again but keeps its revision (not asked)
+	h.notes[1].rev, h.notes[2].rev, h.notes[4].rev = 2, 2, 2
+	h.note = func(id int64, def string) (int, string, time.Duration) {
+		switch id {
+		case 2:
+			return 404, `{"error":{"message":"gone"}}`, 0
+		case 3:
+			return 200, `{"id":99,"class":"structure","title":"x","body":"y","revision":2}`, 0
+		}
+		return 200, def, 0
+	}
+	f.clock = f.clock.Add(15 * time.Minute)
+	r := f.autoPull(h.up())
+	l := linkOf(f, fk)
+	if !r.Ran || r.Pull.More || l.LastPullOK == nil || !l.LastPullOK.Equal(f.clock) || l.PullFailCount != 0 || l.Stale {
+		t.Fatalf("a skipped note made the pull fail or stale: %+v %+v", r.Pull, l)
+	}
+	if l.SkippedNotes != 2 || strings.Join(l.SkippedList, ",") != "2:gone,3:invalid" {
+		t.Fatalf("%+v", l)
+	}
+	got := strings.Join(mirror(f), ",")
+	if len(mirror(f)) != 4 || !strings.Contains(got, "1/1/") || !strings.Contains(got, "5/2/") {
+		t.Fatalf("the stale copies of 2 and 3 must be gone, the rest current: %s", got)
+	}
+	// still served, still skipped, still fresh at the next traversal; the list is bounded and counted
+	f.clock = f.clock.Add(15 * time.Minute)
+	r = f.autoPull(h.up())
+	if l = linkOf(f, fk); l.LastPullOK == nil || !l.LastPullOK.Equal(f.clock) || l.SkippedNotes != 2 {
+		t.Fatalf("%+v", l)
+	}
+	if len(f.search("ana", fk, "orbit")) == 0 {
+		t.Fatal("the good notes are not readable")
+	}
+}
+
+// The hostile hub: every note invalid. The traversal completes, nothing is taken, the mirror is fresh and empty (members see nothing from the
+// hub), no loop, one request per note, and the list in status is capped at 50 with the total.
+func TestEveryNoteInvalidCompletesWithAnEmptyFreshMirror(t *testing.T) {
+	f, fk, h := autoPullFx(t)
+	h.notes = nil
+	for i := int64(1); i <= 120; i++ {
+		h.notes = append(h.notes, structNote(i, "Orbit note"))
+	}
+	h.note = func(id int64, def string) (int, string, time.Duration) { return 200, `not json`, 0 }
+	up := h.up()
+	for i := 0; i < 5 && len(h.asked) < 120; i++ { // 200 notes per run: one run does them all
+		f.autoPull(up)
+		f.clock = f.clock.Add(time.Second)
+	}
+	l := linkOf(f, fk)
+	if len(h.asked) != 120 || len(mirror(f)) != 0 || l.LastPullOK == nil || l.SkippedNotes != 120 || len(l.SkippedList) != 50 || l.PullFailCount != 0 {
+		t.Fatalf("asked %d mirror %d %+v", len(h.asked), len(mirror(f)), l)
+	}
+	if len(f.search("ana", fk, "orbit")) != 0 {
+		t.Fatal("members see hub text")
+	}
+}

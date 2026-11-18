@@ -51,6 +51,8 @@ type upLink struct {
 	PullTimerOff  bool
 
 	RevisionBackwards []int64
+	SkippedNotes      int
+	SkippedList       []string
 
 	Read         bool
 	ReadClasses  []string
@@ -238,6 +240,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 				say(clean("  " + s))
 			}
 			if s := upstreamConflicts(l); s != "" {
+				say(clean("  " + s))
+			}
+			if s := upstreamSkipped(l); s != "" {
 				say(clean("  " + s))
 			}
 			if s := upstreamBackwards(l); s != "" {
@@ -633,4 +638,17 @@ func upstreamBackwards(l upLink) string {
 		return ""
 	}
 	return "revision went backwards on the upstream: note " + strings.Join(ids, ", ") + " (its copy there was replaced by an older one; members see it when its text differs from what we sent)"
+}
+
+// upstreamSkipped: notes the upstream answered about definitively (not served, invalid) in the last traversal: skipped, retried at the next
+// one, and they do not make the mirror stale.
+func upstreamSkipped(l upLink) string {
+	if l.SkippedNotes == 0 {
+		return ""
+	}
+	list := strings.Join(l.SkippedList, ", ")
+	if l.SkippedNotes > len(l.SkippedList) {
+		list += fmt.Sprintf(", ... (%d in all)", l.SkippedNotes)
+	}
+	return fmt.Sprintf("%d notes could not be read (upstream note:reason): %s; retried at the next pull", l.SkippedNotes, list)
 }
