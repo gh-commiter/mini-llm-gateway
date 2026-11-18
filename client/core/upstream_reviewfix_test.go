@@ -265,6 +265,14 @@ func TestSentContentHashIsTheSameOnBothSides(t *testing.T) {
 	}
 }
 
+// A note stored with CRLF (or a lone CR) before line endings were normalised hashes like the LF copy the hub serves back.
+func TestSentContentHashIgnoresLineEndingStyle(t *testing.T) {
+	crlf := sentContentHash(Structure, KindFinding, "T", "a\r\nb\rc\r\n")
+	if crlf != sentContentHash(Structure, KindFinding, "T", "a\nb\nc\n") {
+		t.Fatal("line ending style changes the hash")
+	}
+}
+
 // A definitive answer about one note (not served, fails the checks) skips THAT note: it is counted and remembered (ids and reasons, no
 // upstream text), shown in status, retried by the next traversal, and the traversal still completes, so the mirror is fresh. A copy we hold
 // of a skipped note is dropped when its revision moved (stale text is not served as current) and kept when the revision is the same.

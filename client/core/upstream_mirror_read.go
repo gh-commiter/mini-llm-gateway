@@ -65,6 +65,7 @@ func sentContentHash(class Class, kind, title, body string) string {
 	if kind != KindFAQ {
 		kind = KindFinding
 	}
+	body = lineEndings(body) // a note stored with CRLF before line endings were normalised hashes like its LF copy on the hub
 	if loc := trailerAtEnd.FindStringIndex(body); loc != nil {
 		body = body[:loc[0]]
 	}
