@@ -669,8 +669,43 @@ func caseCollisions(files map[string]syncEntry) []string {
 	return out
 }
 
+// gitignoreHidden: the top-level entries that only the root .gitignore (not the built-in list) leaves out of the sync, sorted.
+func gitignoreHidden(root string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	user, builtin := loadIgnore(root, true), parseIgnore("")
+	var names []string
+	for _, e := range entries {
+		if normName(e.Name()) != ".git" && ignored(user, e.Name(), e.IsDir()) && !ignored(builtin, e.Name(), e.IsDir()) {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// gitignoreNotice: the one line (stderr, first time in a run) that says what the root .gitignore kept out of the copy; "" when nothing.
+func gitignoreNotice(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	more := ""
+	if len(names) > 5 {
+		names, more = names[:5], ", …"
+	}
+	return "sync: not copied because .gitignore lists them: " + strings.Join(names, ", ") + more + " (use direct mode or put what the agent needs in the prompt)"
+}
+
 func (s *shareClient) syncPush(k string) bool {
 	files, skipped := syncScan(s.root, s.synced, true)
+	if !s.reported["gitignore"] {
+		s.reported["gitignore"] = true
+		if msg := gitignoreNotice(gitignoreHidden(s.root)); msg != "" {
+			s.note(msg)
+		}
+	}
 	for _, p := range caseCollisions(files) {
 		delete(files, p)
 		if !s.reported["case:"+p] {

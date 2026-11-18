@@ -224,6 +224,24 @@ public enum Sync {
         return (files, skipped)
     }
 
+    /// Top-level entries that only the root .gitignore (not the built-in list) leaves out of the sync, sorted.
+    public static func gitignoreHidden(_ root: URL) -> [String] {
+        let user = Ignore(root: root, follow: true), builtin = Ignore(gitignore: "")
+        return ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []).filter { name in
+            guard normName(name) != ".git" else { return false }
+            var isDir: ObjCBool = false
+            FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path, isDirectory: &isDir)
+            return user.ignored(name, isDir: isDir.boolValue) && !builtin.ignored(name, isDir: isDir.boolValue)
+        }.sorted()
+    }
+
+    /// The one stderr line (first time in a run) about what the root .gitignore kept out of the copy; nil when nothing.
+    public static func gitignoreNotice(_ names: [String]) -> String? {
+        guard !names.isEmpty else { return nil }
+        return "sync: not copied because .gitignore lists them: " + names.prefix(5).joined(separator: ", ") + (names.count > 5 ? ", …" : "")
+            + " (use direct mode or put what the agent needs in the prompt)"
+    }
+
     /// #1, #9: največ datotek in bajtov na kopijo (manifest odjemalca); nil = v mejah, sicer sporočilo.
     static let maxFiles = 100_000, maxBytes: Int64 = 8 << 30
     static func overQuota(_ files: [Entry]) -> String? {

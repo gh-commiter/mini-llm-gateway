@@ -4,6 +4,7 @@
 
 ### Fixed
 - `minigw gw core restore` refused a snapshot or backup made at schema 17 or older (`no such table: project_team_depends`; schema 12 also failed on the search index). Every restore check now reads only the tables that schema has; a test restores a backup of every schema from 8 on.
+- Folder sync says so when the root `.gitignore` keeps top-level entries out of the copy (one stderr line, first time in a run, up to five names), instead of leaving the agent without them silently.
 
 ## 0.7.27
 
