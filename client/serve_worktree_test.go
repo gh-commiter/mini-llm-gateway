@@ -1443,15 +1443,41 @@ var fakeNestedSkipped = fake("nested-skipped", func(p fakeParams, args []string)
 			b := make([]byte, 70000000)
 			rand.Read(b)
 			os.WriteFile(filepath.Join("lib", "big.bin"), b, 0o644)
-		case "toolarge": // mkdir many && (cd many && seq 1 100001 | xargs touch)
+		case "toolarge": // mkdir many && (cd many && seq 1 <files> | xargs touch): one more file than the hub's limit
 			os.Mkdir("many", 0o755)
-			for i := 1; i <= 100001; i++ {
+			n, _ := strconv.Atoi(p["files"])
+			for i := 1; i <= n; i++ {
 				fakeTouch(filepath.Join("many", strconv.Itoa(i)))
 			}
 		}
 	}
 	fakeClaudeDone(1)
 })
+
+// toolargeFiles: the file limit of a returned clone in testNestedSkipped (the product's is maxSyncFiles); the agent writes one more.
+const toolargeFiles = 200
+
+// waitClonesSettled: in dir (the session's clones) no live clone is left and every kept one is disarmed (no .git, also nested).
+func waitClonesSettled(t *testing.T, dir string) {
+	t.Helper()
+	settled := func() bool {
+		es, _ := os.ReadDir(dir)
+		for _, e := range es {
+			if !strings.Contains(e.Name(), "-kept-") {
+				return false
+			}
+			for _, d := range []string{"", "lib", "other"} {
+				if _, err := os.Lstat(filepath.Join(dir, e.Name(), d, ".git")); err == nil {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	for i := 0; i < 1200 && !settled(); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+}
 
 func testNestedSkipped(t *testing.T, kind, why string) {
 	unconfined := kind == "unconfined"
@@ -1471,8 +1497,9 @@ func testNestedSkipped(t *testing.T, kind, why string) {
 		gitT(t, d, "add", "f.txt")
 		gitT(t, d, "commit", "-qm", "first")
 	}
-	fake := fakeCLI(t, root, "claude", fakeNestedSkipped, fakeParams{"root": root, "kind": kind})
+	fake := fakeCLI(t, root, "claude", fakeNestedSkipped, fakeParams{"root": root, "kind": kind, "files": strconv.Itoa(toolargeFiles + 1)})
 	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake; c.AllowUnsandboxedBash = runtime.GOOS == "windows" }) // L3
+	s.hub.cloneMaxFiles = toolargeFiles                                                                                 // the clone limit, small: 100001 files took 132 s on Windows
 	s.hub.nestedBlocker = func(string) string { return "" }
 	c := startLoopback(t, s)
 	sc := &shareClient{c: c, session: "sidk", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
@@ -1521,6 +1548,9 @@ func testNestedSkipped(t *testing.T, kind, why string) {
 	if slot == nil {
 		t.Fatal("no slot")
 	}
+	// The product finishes a session's clones in the background (removeClone; keepClone's disarmKept renames the .git folders one after the other):
+	// t.TempDir's RemoveAll must not run beside it ("directory not empty", seen on a loaded Mac). Runs before the TempDir cleanup (LIFO).
+	t.Cleanup(func() { waitClonesSettled(t, tree.worktrees) })
 	libTip := gitT(t, filepath.Join(client, "lib"), "rev-parse", branch)
 	topTip := gitT(t, client, "rev-parse", branch)
 	out := run(false) // moved: nadzor teka agenta ustavi (zamenjan .git), delo vrhnjega vseeno pride
@@ -1545,7 +1575,7 @@ func testNestedSkipped(t *testing.T, kind, why string) {
 				return nil
 			})
 			t.Fatalf("too large clone:\n%s\nclone: %d files, %d bytes; limits: %d files, %d bytes; scan error: %v",
-				out, files, bytes, maxSyncFiles, maxSyncBytes, err)
+				out, files, bytes, toolargeFiles, maxSyncBytes, err)
 		}
 		sc.unregister()
 		if k, _ := filepath.Glob(filepath.Join(tree.worktrees, "*-kept-*")); len(k) != 0 {

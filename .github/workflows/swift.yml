@@ -28,32 +28,46 @@ jobs:
       - name: mg-test-net is built
         run: test -x "$(swift build --show-bin-path)/mg-test-net" || { echo "::error::mg-test-net was not built next to the test products"; exit 1; }
       # A hang must name itself: after 20 minutes the test process is sampled (stacks of every thread) and the tests that started but never finished are listed.
+      # Every 3 minutes a heartbeat line lists the tests running now (from the same log), so a run that is cancelled or lost (the 0.7.28 run was cancelled after 15 minutes,
+      # cause unknown) still says where it was; the log is uploaded by the next step even then.
       - name: swift test
         run: |
+          pending() { grep -E "Test .* (started|passed after|failed after|was cancelled|skipped)" "$RUNNER_TEMP/swift-test.log" | sed -E 's/^.*Test (.*) (started|passed after|failed after|was cancelled|skipped).*$/\1 \2/' | awk '$NF=="started"{s[$1]=1} $NF!="started"{delete s[$1]} END{for(k in s) print k}' | sort; }
           swift test > "$RUNNER_TEMP/swift-test.log" 2>&1 &
           test_pid=$!
           tail -n +1 -f "$RUNNER_TEMP/swift-test.log" &
           tail_pid=$!
+          ( while sleep 180; do echo "::notice::heartbeat ${SECONDS}s: $(grep -cE 'Test .* (passed after|failed after)' "$RUNNER_TEMP/swift-test.log") tests finished; running now: $(pending | tr '\n' ' ')"; done ) &
+          hb_pid=$!
           deadline=$((SECONDS + 1200))
           while kill -0 "$test_pid" 2>/dev/null && [ "$SECONDS" -lt "$deadline" ]; do sleep 5; done
           if kill -0 "$test_pid" 2>/dev/null; then
             echo "::error::swift test is still running after 20 minutes: sampling it"
             echo "== started, never finished"
-            grep -E "Test .* (started|passed after|failed after|was cancelled|skipped)" "$RUNNER_TEMP/swift-test.log" | sed -E 's/^.*Test (.*) (started|passed after|failed after|was cancelled|skipped).*$/\1 \2/' | awk '$NF=="started"{s[$1]=1} $NF!="started"{delete s[$1]} END{for(k in s) print k}' | sort
+            pending
             for p in $(pgrep -f 'swiftpm-testing-helper|xctest'); do
               echo "== sample of $p"
               sample "$p" 5 -file "$RUNNER_TEMP/sample-$p.txt" > /dev/null 2>&1 || true
               head -n 400 "$RUNNER_TEMP/sample-$p.txt" || true
             done
             kill "$test_pid" 2>/dev/null || true
-            kill "$tail_pid" 2>/dev/null || true
+            kill "$tail_pid" "$hb_pid" 2>/dev/null || true
             exit 1
           fi
           rc=0
           wait "$test_pid" || rc=$?
           sleep 1
-          kill "$tail_pid" 2>/dev/null || true
+          kill "$tail_pid" "$hb_pid" 2>/dev/null || true
           exit $rc
+      - name: Upload swift test log
+        if: always()  # also when the job is cancelled or times out: the partial log (and the samples of a hang) is what explains it
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: swift-test-log
+          path: |
+            ${{ runner.temp }}/swift-test.log
+            ${{ runner.temp }}/sample-*.txt
+          if-no-files-found: ignore
       # One cooperative thread instead of three (every core of a small runner): anything that blocks a pool thread (a semaphore or group wait, a blocking
       # read, a sleep inside an async test) stops these suites at once, instead of hanging a full run only now and then. Processes, pipes and the core helper.
       - name: swift test with a one-thread cooperative pool

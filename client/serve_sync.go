@@ -59,6 +59,8 @@ type shareHub struct {
 	logf      func(string, ...any) // dnevnik prehoda (worktree: zakaj veje ni)
 	// nestedBlocker (N1): zakaj agent s temi ugnezdenimi repozitoriji tu ne sme začeti ("" = sme); nil = vedno sme.
 	nestedBlocker func(agent string) string
+	// cloneMaxFiles: files a returned clone may hold (0 = maxSyncFiles); only a test sets it, to reach the limit without writing 100000 files.
+	cloneMaxFiles int
 }
 
 // #1, #9: meje kopije (manifest odjemalca) in življenjska doba neuporabljenih kopij.
