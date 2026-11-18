@@ -451,6 +451,14 @@ func stamp(ctx context.Context, path string, st state, src string) error {
 			return fmt.Errorf("the search index could not be rebuilt: %w", err)
 		}
 	}
+	if version >= 24 { // upstream_links.read, last_pull_ok and pull_error exist from schema 24
+		// The mirror in a backup may be content the hub no longer shares (it revoked this gateway after the backup): hidden from members
+		// exactly as a stale one (last_pull_ok=0), nothing deleted, until a pull completes after the restore (a refused pull purges as usual).
+		if _, err = tx.Exec(`UPDATE upstream_links SET last_pull_ok=0, pull_error='restored: waiting for a pull' WHERE read=1`); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
 	if err = Audit(tx, "core", "restore", filepath.Base(src), map[string]any{"epoch": st.Epoch}); err != nil {
 		tx.Rollback()
 		return err
