@@ -11,6 +11,9 @@ extension ProjectEnv {
         minigw kb faq [<project>|--team <team>] [--json]   the project's (or the team's) questions and answers
         minigw kb submissions [<project>|--team <team>] [--json]   your submissions (all projects and your teams' own notes if omitted)
         minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)
+        minigw kb review [<project>|--team <team>]   project admins: the pending submissions you may review (never your own), including bodies
+        minigw kb accept <id>   project admins: publish a submission of another member
+        minigw kb reject <id> [--reason text]
         """
     public static let kbAdminHelp = """
         minigw gw kb rebuild-search
@@ -66,15 +69,16 @@ extension ProjectEnv {
         if agent { throw ProjectError(Self.agentRefusal) }
         if args.first == "faq" { try kbFAQ(Array(args.dropFirst())); return }
         let usage = ProjectError("usage:\n" + Self.kbHelp)
-        guard let fl = try? GoFlags.parse([("class", .string), ("kind", .string), ("title", .string), ("key", .string), ("replaces", .int), ("revision", .int), ("json", .bool), ("team", .string)], args) else { throw usage }
+        guard let fl = try? GoFlags.parse([("class", .string), ("kind", .string), ("title", .string), ("key", .string), ("replaces", .int), ("revision", .int), ("json", .bool), ("team", .string), ("reason", .string)], args) else { throw usage }
         var pos = fl.positional
         let team = fl.string("team")
+        if pos.first == "accept" || pos.first == "reject" { try kbDecide(pos, team, fl.string("reason")); return }
         if !team.isEmpty {
-            guard pos.first == "submit" || pos.first == "submissions" else { throw usage }
+            guard pos.first == "submit" || pos.first == "submissions" || pos.first == "review" else { throw usage }
             guard pos[0] == "submit" ? pos.count == 2 : pos.count == 1 else { throw ProjectError(Self.teamProjectUsage) }
             if pos[0] == "submit" { pos = ["submit", "", pos[1]] }
         } else {
-            guard pos.count == 3 && pos[0] == "submit" || (1...2).contains(pos.count) && pos[0] == "submissions" else { throw usage }
+            guard pos.count == 3 && pos[0] == "submit" || (1...2).contains(pos.count) && (pos[0] == "submissions" || pos[0] == "review") else { throw usage }
         }
         let kind = fl.string("kind")
         if !kind.isEmpty && kind != "finding" && kind != "faq" { throw usage }
@@ -93,6 +97,7 @@ extension ProjectEnv {
             let b = try request("GET", Self.apiProjects + "/" + ProjectText.pathEscape(pos[1]))
             project = JSONValue.parse(b)?.dict["id"]?.int ?? 0
         }
+        if pos[0] == "review" { try kbReview(c, project, names); return }
         if pos[0] == "submit" {
             let body = try readInput(pos[2])
             let title = fl.string("title").isEmpty ? defaultTitle(body, pos[2]) : fl.string("title")
@@ -148,6 +153,48 @@ extension ProjectEnv {
         if fl.bool("json") { say(ProjectText.jsonText(Self.kbJSON(["submissions": raw]))); return }
         for v in all { say(Self.submissionLine(v.dict, names)) }
         if all.isEmpty { say("no submissions") }
+    }
+
+    /// The pending submissions a project admin may review (project 0: all of them), as gw kb review prints them.
+    func kbReview(_ c: ProjectConn, _ project: Int64, _ known: [Int64: String]) throws {
+        func request(_ path: String) throws -> JDict {
+            let r = send(c, "GET", path, [:], nil)
+            guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+            return JSONValue.parse(r.data)?.dict ?? JDict()
+        }
+        var names = known, teamsAsked = false, count = 0, after: Int64 = 0
+        repeat {
+            let pg = try request("\(Self.apiProjects)/\(project)/kb/review?after=\(after)")
+            for v in pg["submissions"]?.array ?? [] {
+                let full = try request("\(Self.apiProjects)/0/kb/review/\(v.dict["id"]?.int ?? 0)")
+                let pid = full["project"]?.int ?? 0
+                if pid > Self.segmentBase && (names[pid - Self.segmentBase] ?? "").isEmpty && !teamsAsked {
+                    teamsAsked = true  // the notes of a team print as "team <name>": the teams you are on, asked once
+                    let tr = send(c, "GET", "/minigw/v1/teams", [:], nil)
+                    if tr.status == 200, case .arr(let ts)? = JSONValue.parse(tr.data) {
+                        for t in ts {
+                            let id = t.dict["segment"]?.int ?? 0
+                            if id > Self.segmentBase { names[id - Self.segmentBase] = t.dict["name"]?.string ?? "" }
+                        }
+                    }
+                }
+                say(Self.submissionLine(full, names))
+                say(ProjectText.clean("writer \(full["authorName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? String(full["user"]?.int ?? 0))  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)"))
+                if let body = full["body"]?.string { say(ProjectText.clean(body)) }
+                count += 1
+            }
+            after = pg["next"]?.int ?? 0
+        } while after != 0
+        if count == 0 { say("no submissions") }
+    }
+
+    /// A project admin's kb accept|reject <id>: the gateway finds the submission's project and decides who may.
+    func kbDecide(_ pos: [String], _ team: String, _ reason: String) throws {
+        guard pos.count == 2, team.isEmpty, let id = Int64(pos[1]), id > 0 else { throw ProjectError("usage:\n" + Self.kbHelp) }
+        let (c, _) = connect()
+        let r = send(c, "POST", "\(Self.apiProjects)/0/kb/review/\(id)/\(pos[0])", [:], try JSONSerialization.data(withJSONObject: ["reason": reason]))
+        guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+        say(Self.submissionResult(JSONValue.parse(r.data)?.dict ?? JDict()))
     }
 
     func searchLine(_ d: JDict) -> String {

@@ -25,7 +25,10 @@ minigw kb search [<project>|--team <team>] <query> [--json]   a project search a
 minigw kb submit <project>|--team <team> [--class structure|data] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB); private is for projects only
 minigw kb faq [<project>|--team <team>] [--json]   the project's (or the team's) questions and answers
 minigw kb submissions [<project>|--team <team>] [--json]   your submissions (all projects and your teams' own notes if omitted)
-minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)`
+minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)
+minigw kb review [<project>|--team <team>]   project admins: the pending submissions you may review (never your own), including bodies
+minigw kb accept <id>   project admins: publish a submission of another member
+minigw kb reject <id> [--reason text]`
 const kbAdminHelp = `minigw gw kb rebuild-search
 minigw gw kb review [<project>|--team <team>]   pending submissions, including bodies
 minigw gw kb accept <id>
@@ -126,22 +129,26 @@ func (e *projectEnv) kb(args []string) error {
 	revision := fs.Int64("revision", 0, "")
 	asJSON := fs.Bool("json", false, "")
 	team := fs.String("team", "", "")
+	reason := fs.String("reason", "", "")
 	pos, err := parseFlags(fs, args)
 	usage := errors.New("usage:\n" + kbHelp)
 	if err != nil || len(pos) == 0 {
 		return usage
 	}
-	if pos[0] != "submit" && pos[0] != "submissions" {
+	if pos[0] == "accept" || pos[0] == "reject" {
+		return e.kbDecide(pos, *team, *reason)
+	}
+	if pos[0] != "submit" && pos[0] != "submissions" && pos[0] != "review" {
 		return usage
 	}
 	if *team != "" {
-		if pos[0] == "submit" && len(pos) != 2 || pos[0] == "submissions" && len(pos) != 1 {
+		if pos[0] == "submit" && len(pos) != 2 || pos[0] != "submit" && len(pos) != 1 {
 			return errors.New(teamProjectUsage)
 		}
 		if pos[0] == "submit" {
 			pos = []string{"submit", "", pos[1]}
 		}
-	} else if pos[0] == "submit" && len(pos) != 3 || pos[0] == "submissions" && len(pos) > 2 {
+	} else if pos[0] == "submit" && len(pos) != 3 || pos[0] != "submit" && len(pos) > 2 {
 		return usage
 	}
 	if *kind != "" && *kind != "finding" && *kind != "faq" {
@@ -172,6 +179,9 @@ func (e *projectEnv) kb(args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if pos[0] == "review" {
+		return e.kbReview(c, project, names)
 	}
 	base := fmt.Sprintf("%s/%d/kb/submissions", apiProjects, project)
 	if pos[0] == "submit" {
@@ -287,6 +297,95 @@ func (e *projectEnv) kb(args []string) error {
 	if len(all) == 0 {
 		e.say("no submissions")
 	}
+	return nil
+}
+
+// kbReview prints the pending submissions a project admin may review (project 0: all of them), as gw kb review does.
+func (e *projectEnv) kbReview(c connection, project int64, names map[int64]string) error {
+	teamsAsked := false
+	count := 0
+	for after := int64(0); ; {
+		st, b, h := e.do(c, "GET", fmt.Sprintf("%s/%d/kb/review?after=%d", apiProjects, project, after), nil, nil)
+		if st != 200 {
+			return gatewayError(st, b, h)
+		}
+		var pg struct {
+			Submissions []core.Submission
+			Next        int64
+		}
+		if err := json.Unmarshal(b, &pg); err != nil {
+			return err
+		}
+		for _, v := range pg.Submissions {
+			st, b, h := e.do(c, "GET", fmt.Sprintf("%s/0/kb/review/%d", apiProjects, v.ID), nil, nil)
+			if st != 200 {
+				return gatewayError(st, b, h)
+			}
+			var full struct {
+				core.Submission
+				AuthorName string
+			}
+			if err := json.Unmarshal(b, &full); err != nil {
+				return err
+			}
+			if team, seg := core.SegmentTeam(full.Project); seg && names[team] == "" && !teamsAsked {
+				teamsAsked = true // the notes of a team print as "team <name>": the teams you are on, asked once
+				if st, b, _ := e.do(c, "GET", "/minigw/v1/teams", nil, nil); st == 200 {
+					var ts []struct {
+						Name    string
+						Segment int64
+					}
+					if json.Unmarshal(b, &ts) == nil {
+						for _, t := range ts {
+							if id, ok := core.SegmentTeam(t.Segment); ok {
+								names[id] = t.Name
+							}
+						}
+					}
+				}
+			}
+			e.say(submissionLine(full.Submission, names))
+			writer := strconv.FormatInt(full.User, 10)
+			if full.AuthorName != "" {
+				writer = full.AuthorName
+			}
+			e.say(clean(fmt.Sprintf("writer %s  device %s  replaces %d  revision %d", writer, full.Provenance.Device, full.Replaces, full.Revision)))
+			if full.Body != nil {
+				e.say(clean(*full.Body))
+			}
+			count++
+		}
+		if pg.Next == 0 {
+			break
+		}
+		after = pg.Next
+	}
+	if count == 0 {
+		e.say("no submissions")
+	}
+	return nil
+}
+
+// kbDecide is a project admin's kb accept|reject <id>: the gateway finds the submission's project and decides who may.
+func (e *projectEnv) kbDecide(pos []string, team, reason string) error {
+	if len(pos) != 2 || team != "" {
+		return errors.New("usage:\n" + kbHelp)
+	}
+	id, err := strconv.ParseInt(pos[1], 10, 64)
+	if err != nil || id < 1 {
+		return errors.New("usage:\n" + kbHelp)
+	}
+	c, _ := e.connect()
+	body, _ := json.Marshal(map[string]any{"reason": reason})
+	st, b, h := e.do(c, "POST", fmt.Sprintf("%s/0/kb/review/%d/%s", apiProjects, id, pos[0]), nil, body)
+	if st != 200 {
+		return gatewayError(st, b, h)
+	}
+	var v core.Submission
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	e.say(submissionResult(v))
 	return nil
 }
 

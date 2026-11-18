@@ -35,6 +35,20 @@ import Testing
             #expect(out == c["out"] as! String)
             #expect(requests == c["requests"] as! [[String]])
         }
+        for c in f["review"] as! [[String: Any]] {  // a project admin's review: no idempotency key
+            var out = "", requests: [[String]] = []
+            let responses = c["responses"] as! [[String: Any]]
+            let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { out += $0 }, err: { _ in }, agent: false, send: { _, m, p, _, b in
+                let body = b.flatMap { try? JSONSerialization.jsonObject(with: $0) }
+                let canonical = body.flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys, .withoutEscapingSlashes]) }.map { String(decoding: $0, as: UTF8.self) } ?? ""
+                requests.append([m, p, canonical])
+                let r = responses.first { $0["match"] as? String == m + " " + p }!
+                return ProjectReply(status: r["status"] as! Int, data: Data((r["body"] as! String).utf8))
+            })
+            try env.kb(c["args"] as! [String])
+            #expect(out == c["out"] as! String)
+            #expect(requests == c["requests"] as! [[String]])
+        }
         for c in f["memberErrors"] as! [[String: Any]] {  // refused before any request
             let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { _ in }, err: { _ in }, agent: false, send: { _, m, p, _, _ in
                 Issue.record("\(c["args"] as! [String]) sent \(m) \(p)")

@@ -69,6 +69,8 @@ func (c *clientFx) run(user, cwd, stdin string, args ...string) (string, error) 
 		err = e.note(args[1:])
 	case "usage":
 		err = e.usage(args[1:])
+	case "kb":
+		err = e.kb(args[1:])
 	default:
 		err = e.project(args[1:])
 	}

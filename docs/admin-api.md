@@ -626,6 +626,10 @@ Member routes require an approved authenticated device bound to an active user:
 | POST | `/minigw/v1/projects/{id}/kb/submissions` | Submit `{class,title,body,replaces,revision,entryKind?}`; `entryKind` is `finding` (default) or `faq` (title at most 256 bytes, body at most 2 KiB; a replacement without it keeps the replaced note's kind); required `Idempotency-Key`; 201 |
 | GET | `/minigw/v1/projects/{id}/kb/submissions?after=0` | Own metadata, `{submissions,next}` |
 | GET | `/minigw/v1/projects/{id}/kb/submissions/{id}` | Own submission with body |
+| GET | `/minigw/v1/projects/{id}/kb/review?after=0` | Project admins: the pending submissions of the project (or of a team's own notes, by its `segment`) that the caller may review, never their own, `{submissions,next}`; project `0` means every project and team the caller reviews now |
+| GET | `/minigw/v1/projects/{id}/kb/review/{id}` | One submission with body and the writer's `authorName`; project `0` means the submission's own project |
+| POST | `/minigw/v1/projects/{id}/kb/review/{id}/accept` | Publish; JSON `{"reason":""}`; project `0` as above |
+| POST | `/minigw/v1/projects/{id}/kb/review/{id}/reject` | Reject; JSON `{"reason":"text"}`; project `0` as above |
 
 Owner routes use the existing owner admin authentication and base URL:
 
@@ -651,7 +655,21 @@ Pages contain at most 100 rows; follow nonzero `next` as `after`. Same-outcome
 review retries do not publish twice; reversing a review is refused. Submission
 keys retain the existing 24-hour scope. Identity/provenance claims in payloads are
 rejected. Authorization precedes body retrieval, with invisible/missing 404s.
-Project admins cannot review. Called agents cannot submit or review.
+Called agents cannot submit or review.
+
+**Review by project admins.** The `kb/review` routes are member routes (the member API and the member context; the admin
+channel never serves them). Only a member whose role in the submission's project is `admin` (directly or through a team
+assignment, as the effective membership computes it; a grant never) may use them; for a team's own notes, whoever may write
+them (an admin of one of the team's projects who is on the team's roster). Everyone else, and a submission that does not
+exist or lies elsewhere, gets the same 404 as a project they cannot see. A reviewer never reviews their own submission
+(four eyes: 400 "your own submission"); the owner still reviews anything. Accept also checks that the reviewer could write
+the note themselves (its class, and the note a replacement changes), on top of the writer's checks above. An archived
+project answers 403 `archived`; an archived team's notes are not visible (404); a deactivated user or an unbound device is
+refused at once (403 `no_project_access`). Accept and reject are audited (`kb.accepted`, `kb.rejected`) with the reviewing
+user (`user:<id>`) as the actor, and the published revision's provenance names that user as `reviewer`; the note's author
+stays the writer. `private` submissions follow the private rule: the author and the project admins. The member project
+list (`GET /minigw/v1/projects`) carries `pendingReview`, the number of submissions the caller may review, for projects
+where the caller is admin (absent when 0).
 
 Acceptance rechecks the authenticated writer binding, current project permissions,
 archive status, note limits and replacement revision. Pending entries are separate

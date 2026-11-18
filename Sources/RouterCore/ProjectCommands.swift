@@ -232,6 +232,9 @@ public final class ProjectEnv {
                 var line = ProjectText.pad(p["slug"]?.string ?? "", 24) + " " + ProjectText.pad(access, 28) + " " + ProjectText.clean(p["name"]?.string ?? "")
                 if p["archived"]?.bool == true { line += "  (archived)" }
                 if let h = here, h.state != .none, h.link.project == p["id"]?.int ?? 0 { line += "  (linked here)" }
+                let pending = p["pendingReview"]?.int ?? 0
+                if pending == 1 { line += "  (1 submission waits for review: minigw kb review \(p["slug"]?.string ?? ""))" }
+                else if pending > 1 { line += "  (\(pending) submissions wait for review: minigw kb review \(p["slug"]?.string ?? ""))" }
                 say(ProjectText.clean(line))
             }
             if list.isEmpty { say("no projects: ask the gateway owner to add you to one") }

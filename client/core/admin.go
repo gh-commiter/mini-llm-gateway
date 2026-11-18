@@ -39,6 +39,7 @@ type Project struct {
 	Role     Role // "" = no effective membership
 	Origins  []MembershipOrigin
 	Granted  []Class // classes reached through grants
+	Pending  int     // member project list: submissions an admin of the project may review (never their own); 0 for others
 }
 
 type Member struct {

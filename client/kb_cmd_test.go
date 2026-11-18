@@ -26,6 +26,12 @@ func TestKBCommandParity(t *testing.T) {
 			Responses  []cmdResp
 			Requests   [][]string
 		}
+		Review []struct {
+			Args      []string
+			Out       string
+			Responses []cmdResp
+			Requests  [][]string
+		}
 		NoteJSON, NoteJSONOut string
 		MemberErrors          []struct {
 			Args  []string
@@ -58,6 +64,26 @@ func TestKBCommandParity(t *testing.T) {
 			if method == "POST" && h["Idempotency-Key"] != "fixed" {
 				t.Fatal("missing key", h)
 			}
+			for _, r := range c.Responses {
+				if r.Match == method+" "+path {
+					return r.Status, []byte(r.Body), nil
+				}
+			}
+			t.Fatalf("unexpected %s %s", method, path)
+			return 599, nil, nil
+		}}
+		if e := env.kb(c.Args); e != nil {
+			t.Fatal(e)
+		}
+		if out.String() != c.Out || !reflect.DeepEqual(requests, c.Requests) {
+			t.Fatalf("%v: %q %+v", c.Args, out.String(), requests)
+		}
+	}
+	for _, c := range f.Review { // a project admin's review: no idempotency key
+		var out bytes.Buffer
+		var requests [][]string
+		env := &projectEnv{out: &out, connect: func() (connection, string) { return connection{}, "" }, do: func(_ connection, method, path string, _ map[string]string, b []byte) (int, []byte, http.Header) {
+			requests = append(requests, []string{method, path, string(b)})
 			for _, r := range c.Responses {
 				if r.Match == method+" "+path {
 					return r.Status, []byte(r.Body), nil
@@ -342,5 +368,38 @@ func TestNoteScopeHint(t *testing.T) {
 	other := gatewayError(403, nil, nil)
 	if noteScopeHint(other, false) != other {
 		t.Fatal("hint added to another answer")
+	}
+}
+
+// A project admin reviews another member's submission over a real gateway; members without the role, and the admin's own
+// submission, are refused.
+func TestKBMemberReviewEndToEnd(t *testing.T) {
+	c := newClientFx(t)
+	dir := t.TempDir()
+	ana, _, _ := c.env("ana", dir, "Reviewed by an admin")
+	if err := ana.kb([]string{"submit", "fakture", "--key", "p1", "--title", "Proposal", "-"}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := c.run("ana", dir, "", "kb", "review", "fakture"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatal("a developer reviews", out, err)
+	}
+	if out, err := c.run("ana", dir, "", "kb", "accept", "1"); err == nil {
+		t.Fatal("a developer accepted", out)
+	}
+	if out := c.must("fani", dir, "", "project", "list"); !strings.Contains(out, "1 submission waits for review") {
+		t.Fatal(out)
+	}
+	if out := c.must("fani", dir, "", "kb", "review"); !strings.Contains(out, "Reviewed by an admin") || !strings.Contains(out, "writer ana") {
+		t.Fatal(out)
+	}
+	if out := c.must("fani", dir, "", "kb", "accept", "1"); out != "submission 1 accepted\n" {
+		t.Fatal(out)
+	}
+	fani, _, _ := c.env("fani", dir, "Mine")
+	if err := fani.kb([]string{"submit", "fakture", "--key", "p2", "-"}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := c.run("fani", dir, "", "kb", "reject", "2", "--reason", "x"); err == nil || !strings.Contains(err.Error(), "your own submission") {
+		t.Fatal(out, err)
 	}
 }

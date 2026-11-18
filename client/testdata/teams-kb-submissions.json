@@ -939,6 +939,166 @@
     {"args": ["faq", "demo", "--team", "acme"], "error": "usage: give either a project or --team <team>"},
     {"args": ["submit", "demo", "--team", "acme", "-"], "error": "usage: give either a project or --team <team>"},
     {"args": ["export", "demo", "--team", "acme", "/nowhere"], "error": "usage: give either a project or --team <team>"},
-    {"args": ["import", "demo", "--team", "acme", "/nowhere"], "error": "usage: give either a project or --team <team>"}
+    {"args": ["import", "demo", "--team", "acme", "/nowhere"], "error": "usage: give either a project or --team <team>"},
+    {"args": ["review", "demo", "--team", "acme"], "error": "usage: give either a project or --team <team>"}
+  ],
+  "review": [
+    {
+      "args": [
+        "review",
+        "fakture"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/fakture",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/review?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\"}],\"next\":0}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\"}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0\nReview this\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/fakture",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/review?after=0",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "review"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":8,\"project\":1099511627777,\"user\":3,\"class\":\"data\",\"title\":\"Who deploys?\",\"state\":\"pending\",\"entryKind\":\"faq\"}],\"next\":0}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/8",
+          "status": 200,
+          "body": "{\"id\":8,\"project\":1099511627777,\"user\":3,\"class\":\"data\",\"title\":\"Who deploys?\",\"state\":\"pending\",\"entryKind\":\"faq\",\"replaces\":3,\"revision\":2,\"body\":\"The team lead.\",\"provenance\":{\"device\":\"dev-bor\"},\"authorName\":\"bor\"}"
+        },
+        {
+          "match": "GET /minigw/v1/teams",
+          "status": 200,
+          "body": "[{\"id\":1,\"name\":\"acme\",\"segment\":1099511627777}]"
+        }
+      ],
+      "out": "submission 8  team acme  pending  data  Who deploys?  (faq)\nwriter bor  device dev-bor  replaces 3  revision 2\nThe team lead.\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review?after=0",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/8",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/teams",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "review",
+        "--team",
+        "acme"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/teams/acme",
+          "status": 200,
+          "body": "{\"id\":1,\"name\":\"acme\",\"archived\":false,\"path\":\"\",\"segment\":1099511627777,\"members\":[],\"projects\":[]}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1099511627777/kb/review?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[],\"next\":0}"
+        }
+      ],
+      "out": "no submissions\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/teams/acme",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1099511627777/kb/review?after=0",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "accept",
+        "7"
+      ],
+      "responses": [
+        {
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
+        }
+      ],
+      "out": "submission 7 accepted\n",
+      "requests": [
+        [
+          "POST",
+          "/minigw/v1/projects/0/kb/review/7/accept",
+          "{\"reason\":\"\"}"
+        ]
+      ]
+    },
+    {
+      "args": [
+        "reject",
+        "7",
+        "--reason",
+        "Needs work"
+      ],
+      "responses": [
+        {
+          "match": "POST /minigw/v1/projects/0/kb/review/7/reject",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"rejected\",\"reason\":\"Needs work\"}"
+        }
+      ],
+      "out": "submission 7 rejected\n",
+      "requests": [
+        [
+          "POST",
+          "/minigw/v1/projects/0/kb/review/7/reject",
+          "{\"reason\":\"Needs work\"}"
+        ]
+      ]
+    }
   ]
 }

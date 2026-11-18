@@ -1217,7 +1217,7 @@ the owner keeps with `gw team member add`) reads them; whoever is admin of at le
 also write them. A team member who is only in a project of the team, and not on the team's roster, reads nothing from
 them. They are `structure` or `data` notes; there is no `private` class at team level, and an archived team's notes
 are hidden until it is unarchived. Give `--team <team>` in place of a project: `minigw note list|read|push|edit|rm --team acme`,
-`minigw kb submit --team acme <file>` (the owner reviews it with `minigw gw kb review --team acme`),
+`minigw kb submit --team acme <file>` (the owner reviews it with `minigw gw kb review --team acme`, another writer of the team's notes with `minigw kb review --team acme`),
 `minigw kb faq --team acme`, `minigw kb search --team acme <query>` (only the team's notes),
 `minigw kb export --team acme <dir>` and `kb import --team acme <dir>`. `--team` is not accepted together with a project,
 nor inside an agent run (the run's project is its own). A search of a project also covers the notes of its team, as far as you
@@ -1261,6 +1261,24 @@ class**, including private. `data` is a permission label, not permission to stor
 customer data. Preview and sanitize before publishing or submitting; this beta
 does not detect customer data. Rejection is not deletion. Backups and snapshots
 retain content and provenance; restore can restore old content and permissions.
+
+### Review by project admins
+
+The gateway owner is not the only reviewer: an admin of a project reviews its submissions with `minigw kb review [<project>|--team <team>]`
+(pending submissions with their text, writer and device, and what they replace), `minigw kb accept <id>` and
+`minigw kb reject <id> [--reason text]`; the output is that of `minigw gw kb review|accept|reject`. Admin means the role
+`admin` in that project, given directly or through a team assignment; a grant never makes a reviewer. A team's own notes
+are reviewed by whoever may write them (an admin of one of the team's projects who is on the team's roster). Anyone else
+sees nothing of the review: the answer is the "not found" of a project they cannot see.
+
+**Four eyes.** Nobody reviews their own submission: another admin of the project or the gateway owner does. A project
+with a single admin therefore leaves that admin's submissions for the owner (or a second admin). Accepting also needs
+what the reviewer could write themselves (the class, and the note a replacement changes). The published note keeps the
+writer as its author; its provenance names the reviewing user, and the audit records accept and reject with that user.
+An archived project or team is not reviewed; a deactivated user or an unbound device loses the ability at once.
+`private` submissions follow the private rule: their author and the project admins see them. Submissions an upstream
+gateway sends are reviewed the same way. `minigw project list` shows "N submissions wait for review" on the projects
+you review. Member review is command-line only: there is no panel for it.
 
 ## Search the published KB
 

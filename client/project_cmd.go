@@ -307,6 +307,7 @@ func (e *projectEnv) project(args []string) error {
 			Role     string
 			Origins  []cliOrigin
 			Granted  []string
+			Pending  int `json:"pendingReview"`
 		}
 		json.Unmarshal(data, &list)
 		ps, _ := e.state3()
@@ -328,6 +329,11 @@ func (e *projectEnv) project(args []string) error {
 			}
 			if here.State != noLink && here.Link.Project == p.ID {
 				line += "  (linked here)"
+			}
+			if p.Pending == 1 {
+				line += "  (1 submission waits for review: minigw kb review " + p.Slug + ")"
+			} else if p.Pending > 1 {
+				line += fmt.Sprintf("  (%d submissions wait for review: minigw kb review %s)", p.Pending, p.Slug)
 			}
 			e.say(clean(line))
 		}

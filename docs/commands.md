@@ -36,8 +36,10 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw kb import <project>\|--team <team> <dir\|file.md> [--class c] [--submit]` | Create or update by stable ID/path; unchanged content skips, local edits are preserved; normal member permissions and write limits |
 | `minigw kb mcp [--project slug] [--print-config]` | Read-only knowledge base over MCP (stdio): `kb_search` and `note_read` only, no private notes; `--print-config` prints the `minigw-kb` client configuration instead (see [usage.md](usage.md#read-only-kb-tools-over-mcp)) |
 | `minigw kb search [<project>\|--team <team>] <query> [--json]` | Search the published notes you may read; a project search also covers its team's notes and the notes of projects it depends on (a hit says where it came from) |
-| `minigw kb submit <project>\|--team <team> [--class structure\|data\|private] [--kind finding\|faq] [--title t] [--key k] [--replaces id --revision n] <file\|->` | Propose a note for the owner's review instead of publishing it; `private` is for projects only; `--kind faq`: the title is the question, the text a short answer |
+| `minigw kb submit <project>\|--team <team> [--class structure\|data\|private] [--kind finding\|faq] [--title t] [--key k] [--replaces id --revision n] <file\|->` | Propose a note for review (by the owner or an admin of the project) instead of publishing it; `private` is for projects only; `--kind faq`: the title is the question, the text a short answer |
 | `minigw kb submissions [<project>\|--team <team>] [--json]` | Your submissions; without a project or team: all projects and your teams' own notes |
+| `minigw kb review [<project>\|--team <team>]` | Project admins: the pending submissions you may review (never your own), including bodies; without a project or team: every project and team you review |
+| `minigw kb accept <id>` / `reject <id> [--reason text]` | Project admins: publish or reject another member's submission (see [usage.md](usage.md#review-by-project-admins)) |
 | `minigw kb faq [<project>\|--team <team>] [--json]` | The published questions and answers (faqs), newest first |
 | `minigw kb hooks on\|off\|status [<project>]` | The Claude Code plugin's hooks that ask a session to hand findings in (off by default; per project, gateway and user; stored on this computer) |
 | `minigw note push [--class structure\|data\|private] [--title t] [--key k] [--team <team>] <file\|->` | Create a note (default class `data`); `--key` repeats a push whose answer was lost; `--team`: push to the team's own notes |
@@ -279,6 +281,9 @@ minigw kb submit <project>|--team <team> [--class structure|data|private] [--kin
 minigw kb submissions [<project>|--team <team>] [--json]
 minigw kb faq [<project>|--team <team>] [--json]
 minigw kb hooks on|off|status [<project>]
+minigw kb review [<project>|--team <team>]
+minigw kb accept <id>
+minigw kb reject <id> [--reason text]
 minigw gw kb review [<project>|--team <team>]
 minigw gw project depends list <project> | add <project> <other> | remove <project> <other>
 minigw gw project depends add|remove <project> --team <team>
@@ -288,8 +293,9 @@ minigw gw kb reject <id> [--reason text]
 ```
 
 Submission input matches note push; it requires existing project write access.
-Review is owner-only. Pending entries are visible only to their author and the
-owner. Acceptance publishes a new note or replacement revision. Note push still
+The owner reviews with `gw kb …`; an admin of the project (for a team's own notes: whoever may write them) reviews with
+`kb review|accept|reject`, never their own submission. Pending entries are visible only to their author, the project's
+admins and the owner. `minigw project list` shows "N submissions wait for review" on the projects you review. Acceptance publishes a new note or replacement revision. Note push still
 publishes immediately. `minigw note read <id> --json` includes provenance.
 
 `--kind faq` marks the entry as a question (the title, at most 256 bytes) with a short
