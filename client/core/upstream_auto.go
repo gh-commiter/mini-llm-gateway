@@ -137,7 +137,7 @@ func (s *Store) AutoPush(ctx context.Context, tr UpstreamTransport, sleep func(t
 		}
 		run.Ran, run.Push = true, &res
 		wctx := context.WithoutCancel(ctx)
-		// One audit row per CHANGE of outcome (the failure count is part of it, so a back-off step writes one): a link that keeps being
+		// One audit row per run that sent notes, and otherwise one per CHANGE of outcome (the failure count is part of it, so a back-off step writes one): a link that keeps being
 		// refused, or limited, does not fill the audit table.
 		if e := s.write(wctx, func(tx *sql.Tx) error {
 			var fails int
@@ -146,7 +146,7 @@ func (s *Store) AutoPush(ctx context.Context, tr UpstreamTransport, sleep func(t
 				return notFound(e)
 			}
 			sig := fmt.Sprintf("%v/%v/%v/%d", res.Created+res.Replaced > 0, res.Refused > 0, res.More, fails)
-			if sig == last {
+			if sig == last && res.Created+res.Replaced == 0 { // a run that sent notes is always recorded: the audit says what left
 				return nil
 			}
 			if _, e := tx.Exec(`UPDATE upstream_links SET last_audit=? WHERE project_id=? AND upstream=?`, sig, project, upstream); e != nil {
