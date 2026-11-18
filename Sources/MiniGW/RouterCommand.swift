@@ -491,7 +491,7 @@ func routerCommand(_ argv: [String]) {
             opts.upstream = flags["upstream"] ?? ""
             opts.file = flags["file"] ?? ""; opts.showErrors = flags["show-errors"] == "true"
             opts.withPrivate = flags["with-private"] == "true"; opts.dryRun = flags["dry-run"] == "true"; opts.version = flags["version"] ?? ""
-            opts.read = flags["read"] == "true"; opts.noRead = flags["no-read"] == "true"; opts.acceptReach = flags["accept-reach"] == "true"; opts.readClass = flags["read-class"] ?? ""; opts.readSources = flags["read-sources"] ?? ""
+            opts.read = flags["read"] == "true"; opts.noRead = flags["no-read"] == "true"; opts.acceptReach = flags["accept-reach"] == "true"; opts.readClass = flags["read-class"] ?? ""; opts.readSources = flags["read-sources"] ?? ""; opts.pullEvery = flags["pull-every"] ?? ""
             opts.tokenInput = { readKey("Copy Token of the upstream") }  // stdin or the terminal, not echoed, never an argument
             try cmd.run(pos, opts)
         } catch let e as AdminCLIError { fail(e.message, code: e.code) } catch { fail("\(error)") }

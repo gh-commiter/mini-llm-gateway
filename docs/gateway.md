@@ -113,7 +113,7 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   refusal; **Link Project…**, **Link Team…**, **Dry Run** (writes nothing), **Push Now** (asks first, and says exactly what leaves: title,
   class, kind and text of each note, one line with an opaque reference and the author's display name, the device name and ID in the
   connection; no note ids, revisions, paths or usage data), **Unlink** (asks first). The report of a dry run or a push is shown under the
-  list. Nothing is sent automatically. On the Mac the credentials are Keychain items of the app.
+  list. Nothing is sent automatically unless a link is set to automatic. **Reading from upstream gateways** (below the links): per link reading on or off, classes, extra sources, the pull interval, the mirror's notes, the last complete pull and the next one, and under **Open** the age of the mirror, the failures in a row, whether the automatic pull is off and the last error; **Dry Run**, **Turn Reading On…** (asks first and records the acceptance of the reach), **Change What Is Read…**, **Turn Reading Off**, **Set Pull Interval…** and **Pull Now**; see [usage.md → Automatic pull](usage.md#reading-the-upstreams-notes-the-mirror-the-manual-pull-and-what-members-see). On the Mac the credentials are Keychain items of the app.
 - **Knowledge base** (Mac, last of the panels): built from the panel `builtin.kb`. **Waiting for review:**
   pending submissions of projects and teams (title, project or team, class, kind, author, received); **Accept**, **Reject…**
   (asks first; an optional reason the author sees) and **Open** to read the text, and for a replacement the text of the note it

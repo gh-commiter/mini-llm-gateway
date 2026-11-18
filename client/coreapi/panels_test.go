@@ -542,7 +542,7 @@ func TestBuiltinSecretRouteIsRequired(t *testing.T) {
 }
 
 func TestBuiltinConfirmRoutesAreRequired(t *testing.T) {
-	want := []string{"POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}", "PUT upstreams/{}/links/{}", "POST upstream-resolve"}
+	want := []string{"POST upstream-push", "POST upstream-pull", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}", "PUT upstreams/{}/links/{}", "POST upstream-resolve"}
 	if !reflect.DeepEqual(BuiltinConfirmRoutes, want) {
 		t.Fatalf("%v", BuiltinConfirmRoutes)
 	}

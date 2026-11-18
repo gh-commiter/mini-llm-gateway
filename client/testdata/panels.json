@@ -3095,6 +3095,595 @@
         }
        ]
       }
+     },
+     {
+      "kind": "text",
+      "id": "readintro",
+      "body": "builtin.upstreams.section.readintro.body"
+     },
+     {
+      "kind": "list",
+      "id": "reading",
+      "title": "builtin.upstreams.section.reading.title",
+      "source": {
+       "path": "/upstreams",
+       "items": "links"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "label",
+        "kind": "text",
+        "label": "builtin.upstreams.section.reading.column.label"
+       },
+       {
+        "field": "upstream",
+        "kind": "text",
+        "label": "builtin.upstreams.section.reading.column.upstream"
+       },
+       {
+        "field": "read",
+        "kind": "bool",
+        "label": "builtin.upstreams.section.reading.column.read",
+        "yes": "builtin.upstreams.section.reading.column.read.yes",
+        "no": "builtin.upstreams.section.reading.column.read.no"
+       },
+       {
+        "field": "readClassesText",
+        "kind": "text",
+        "label": "builtin.upstreams.section.reading.column.readclassestext"
+       },
+       {
+        "field": "readSourcesText",
+        "kind": "text",
+        "label": "builtin.upstreams.section.reading.column.readsourcestext"
+       },
+       {
+        "field": "pullEveryMin",
+        "kind": "text",
+        "label": "builtin.upstreams.section.reading.column.pulleverymin"
+       },
+       {
+        "field": "mirror",
+        "kind": "text",
+        "label": "builtin.upstreams.section.reading.column.mirror"
+       },
+       {
+        "field": "lastPullOk",
+        "kind": "time",
+        "label": "builtin.upstreams.section.reading.column.lastpullok"
+       },
+       {
+        "field": "pullNext",
+        "kind": "time",
+        "label": "builtin.upstreams.section.reading.column.pullnext"
+       },
+       {
+        "field": "stale",
+        "kind": "bool",
+        "label": "builtin.upstreams.section.reading.column.stale",
+        "yes": "builtin.upstreams.section.reading.column.stale.yes",
+        "no": "builtin.upstreams.section.reading.column.stale.no"
+       }
+      ],
+      "empty": "builtin.upstreams.section.reading.empty",
+      "rowActions": [
+       {
+        "id": "dry",
+        "label": "builtin.upstreams.section.reading.action.dry",
+        "method": "POST",
+        "path": "/upstream-pull",
+        "body": {
+         "upstream": {
+          "row": "upstream"
+         },
+         "project": {
+          "row": "projectId"
+         },
+         "team": {
+          "row": "teamId"
+         },
+         "dryRun": {
+          "const": true
+         }
+        },
+        "result": {
+         "items": "pulls",
+         "title": "builtin.upstreams.section.reading.action.dry.result.title",
+         "columns": [
+          {
+           "field": "label",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.dry.result.column.label"
+          },
+          {
+           "field": "upstream",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.dry.result.column.upstream"
+          },
+          {
+           "field": "remote",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.dry.result.column.remote"
+          },
+          {
+           "field": "total",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.dry.result.column.total"
+          },
+          {
+           "field": "truncated",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.reading.action.dry.result.column.truncated",
+           "yes": "builtin.upstreams.section.reading.action.dry.result.column.truncated.yes",
+           "no": "builtin.upstreams.section.reading.action.dry.result.column.truncated.no"
+          },
+          {
+           "field": "stopped",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.dry.result.column.stopped"
+          },
+          {
+           "field": "linesText",
+           "kind": "multiline",
+           "label": "builtin.upstreams.section.reading.action.dry.result.column.linestext"
+          }
+         ]
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.reading.action.dry.confirm.title",
+         "message": "builtin.upstreams.section.reading.action.dry.confirm.message",
+         "button": "builtin.upstreams.section.reading.action.dry.confirm.button"
+        }
+       },
+       {
+        "id": "pull",
+        "label": "builtin.upstreams.section.reading.action.pull",
+        "method": "POST",
+        "path": "/upstream-pull",
+        "body": {
+         "upstream": {
+          "row": "upstream"
+         },
+         "project": {
+          "row": "projectId"
+         },
+         "team": {
+          "row": "teamId"
+         },
+         "dryRun": {
+          "const": false
+         }
+        },
+        "when": {
+         "field": "read",
+         "equals": true
+        },
+        "result": {
+         "items": "pulls",
+         "title": "builtin.upstreams.section.reading.action.pull.result.title",
+         "columns": [
+          {
+           "field": "label",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.pull.result.column.label"
+          },
+          {
+           "field": "upstream",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.pull.result.column.upstream"
+          },
+          {
+           "field": "added",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.pull.result.column.added"
+          },
+          {
+           "field": "updated",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.pull.result.column.updated"
+          },
+          {
+           "field": "removed",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.pull.result.column.removed"
+          },
+          {
+           "field": "skipped",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.pull.result.column.skipped"
+          },
+          {
+           "field": "mirror",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.pull.result.column.mirror"
+          },
+          {
+           "field": "more",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.reading.action.pull.result.column.more",
+           "yes": "builtin.upstreams.section.reading.action.pull.result.column.more.yes",
+           "no": "builtin.upstreams.section.reading.action.pull.result.column.more.no"
+          },
+          {
+           "field": "purged",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.reading.action.pull.result.column.purged",
+           "yes": "builtin.upstreams.section.reading.action.pull.result.column.purged.yes",
+           "no": "builtin.upstreams.section.reading.action.pull.result.column.purged.no"
+          },
+          {
+           "field": "stopped",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.action.pull.result.column.stopped"
+          }
+         ]
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.reading.action.pull.confirm.title",
+         "message": "builtin.upstreams.section.reading.action.pull.confirm.message",
+         "button": "builtin.upstreams.section.reading.action.pull.confirm.button"
+        }
+       },
+       {
+        "id": "read-on",
+        "label": "builtin.upstreams.section.reading.action.read-on",
+        "method": "PUT",
+        "path": "/upstreams/{row.upstream}/links/{row.linkId}",
+        "fields": [
+         {
+          "id": "sources",
+          "type": "text",
+          "label": "builtin.upstreams.section.reading.action.read-on.field.sources",
+          "maxLength": 600,
+          "default": {
+           "const": ""
+          }
+         }
+        ],
+        "body": {
+         "team": {
+          "row": "team"
+         },
+         "remote": {
+          "row": "remote"
+         },
+         "readOnly": {
+          "const": true
+         },
+         "read": {
+          "const": true
+         },
+         "readClasses": {
+          "const": "structure"
+         },
+         "readSources": {
+          "field": "sources"
+         },
+         "acceptReach": {
+          "const": true
+         }
+        },
+        "when": {
+         "field": "read",
+         "equals": false
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.reading.action.read-on.confirm.title",
+         "message": "builtin.upstreams.section.reading.action.read-on.confirm.message",
+         "button": "builtin.upstreams.section.reading.action.read-on.confirm.button"
+        }
+       },
+       {
+        "id": "read-on-data",
+        "label": "builtin.upstreams.section.reading.action.read-on-data",
+        "method": "PUT",
+        "path": "/upstreams/{row.upstream}/links/{row.linkId}",
+        "fields": [
+         {
+          "id": "sources",
+          "type": "text",
+          "label": "builtin.upstreams.section.reading.action.read-on-data.field.sources",
+          "maxLength": 600,
+          "default": {
+           "const": ""
+          }
+         }
+        ],
+        "body": {
+         "team": {
+          "row": "team"
+         },
+         "remote": {
+          "row": "remote"
+         },
+         "readOnly": {
+          "const": true
+         },
+         "read": {
+          "const": true
+         },
+         "readClasses": {
+          "const": "structure,data"
+         },
+         "readSources": {
+          "field": "sources"
+         },
+         "acceptReach": {
+          "const": true
+         }
+        },
+        "when": {
+         "field": "read",
+         "equals": false
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.reading.action.read-on-data.confirm.title",
+         "message": "builtin.upstreams.section.reading.action.read-on-data.confirm.message",
+         "button": "builtin.upstreams.section.reading.action.read-on-data.confirm.button"
+        }
+       },
+       {
+        "id": "read-change",
+        "label": "builtin.upstreams.section.reading.action.read-change",
+        "method": "PUT",
+        "path": "/upstreams/{row.upstream}/links/{row.linkId}",
+        "fields": [
+         {
+          "id": "classes",
+          "type": "choice",
+          "label": "builtin.upstreams.section.reading.action.read-change.field.classes",
+          "required": true,
+          "options": [
+           {
+            "value": "structure",
+            "label": "builtin.upstreams.section.reading.action.read-change.field.classes.option.structure"
+           },
+           {
+            "value": "structure,data",
+            "label": "builtin.upstreams.section.reading.action.read-change.field.classes.option.structure-data"
+           }
+          ],
+          "default": {
+           "const": "structure"
+          }
+         },
+         {
+          "id": "sources",
+          "type": "text",
+          "label": "builtin.upstreams.section.reading.action.read-change.field.sources",
+          "maxLength": 600,
+          "default": {
+           "const": ""
+          }
+         }
+        ],
+        "body": {
+         "team": {
+          "row": "team"
+         },
+         "remote": {
+          "row": "remote"
+         },
+         "readOnly": {
+          "const": true
+         },
+         "read": {
+          "const": true
+         },
+         "readClasses": {
+          "field": "classes"
+         },
+         "readSources": {
+          "field": "sources"
+         },
+         "acceptReach": {
+          "const": true
+         }
+        },
+        "when": {
+         "field": "read",
+         "equals": true
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.reading.action.read-change.confirm.title",
+         "message": "builtin.upstreams.section.reading.action.read-change.confirm.message",
+         "button": "builtin.upstreams.section.reading.action.read-change.confirm.button"
+        }
+       },
+       {
+        "id": "read-off",
+        "label": "builtin.upstreams.section.reading.action.read-off",
+        "method": "PUT",
+        "path": "/upstreams/{row.upstream}/links/{row.linkId}",
+        "body": {
+         "team": {
+          "row": "team"
+         },
+         "remote": {
+          "row": "remote"
+         },
+         "readOnly": {
+          "const": true
+         },
+         "read": {
+          "const": false
+         }
+        },
+        "when": {
+         "field": "read",
+         "equals": true
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.reading.action.read-off.confirm.title",
+         "message": "builtin.upstreams.section.reading.action.read-off.confirm.message",
+         "button": "builtin.upstreams.section.reading.action.read-off.confirm.button"
+        }
+       },
+       {
+        "id": "interval",
+        "label": "builtin.upstreams.section.reading.action.interval",
+        "method": "PUT",
+        "path": "/upstreams/{row.upstream}/links/{row.linkId}",
+        "fields": [
+         {
+          "id": "minutes",
+          "type": "choice",
+          "label": "builtin.upstreams.section.reading.action.interval.field.minutes",
+          "required": true,
+          "options": [
+           {
+            "value": "5",
+            "label": "builtin.upstreams.section.reading.action.interval.field.minutes.option.5"
+           },
+           {
+            "value": "10",
+            "label": "builtin.upstreams.section.reading.action.interval.field.minutes.option.10"
+           },
+           {
+            "value": "15",
+            "label": "builtin.upstreams.section.reading.action.interval.field.minutes.option.15"
+           },
+           {
+            "value": "30",
+            "label": "builtin.upstreams.section.reading.action.interval.field.minutes.option.30"
+           },
+           {
+            "value": "60",
+            "label": "builtin.upstreams.section.reading.action.interval.field.minutes.option.60"
+           },
+           {
+            "value": "120",
+            "label": "builtin.upstreams.section.reading.action.interval.field.minutes.option.120"
+           },
+           {
+            "value": "360",
+            "label": "builtin.upstreams.section.reading.action.interval.field.minutes.option.360"
+           },
+           {
+            "value": "720",
+            "label": "builtin.upstreams.section.reading.action.interval.field.minutes.option.720"
+           },
+           {
+            "value": "1440",
+            "label": "builtin.upstreams.section.reading.action.interval.field.minutes.option.1440"
+           }
+          ],
+          "default": {
+           "const": "15"
+          }
+         }
+        ],
+        "body": {
+         "team": {
+          "row": "team"
+         },
+         "remote": {
+          "row": "remote"
+         },
+         "readOnly": {
+          "const": true
+         },
+         "pullEvery": {
+          "field": "minutes"
+         }
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.reading.action.interval.confirm.title",
+         "message": "builtin.upstreams.section.reading.action.interval.confirm.message",
+         "button": "builtin.upstreams.section.reading.action.interval.confirm.button"
+        }
+       }
+      ],
+      "detail": {
+       "title": "label",
+       "sections": [
+        {
+         "kind": "record",
+         "id": "reading",
+         "title": "builtin.upstreams.section.reading.detail.section.reading.title",
+         "source": {
+          "path": "/upstream-links/{parent.id}"
+         },
+         "columns": [
+          {
+           "field": "readAccepted",
+           "kind": "time",
+           "label": "builtin.upstreams.section.reading.detail.readaccepted"
+          },
+          {
+           "field": "mirror",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.detail.mirror"
+          },
+          {
+           "field": "mirrorBytes",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.detail.mirrorbytes"
+          },
+          {
+           "field": "lastPull",
+           "kind": "time",
+           "label": "builtin.upstreams.section.reading.detail.lastpull"
+          },
+          {
+           "field": "lastPullOk",
+           "kind": "time",
+           "label": "builtin.upstreams.section.reading.detail.lastpullok"
+          },
+          {
+           "field": "lastPullAgeText",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.detail.lastpullagetext"
+          }
+         ]
+        },
+        {
+         "kind": "record",
+         "id": "timer",
+         "title": "builtin.upstreams.section.reading.detail.section.timer.title",
+         "source": {
+          "path": "/upstream-links/{parent.id}"
+         },
+         "columns": [
+          {
+           "field": "pullEveryMin",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.detail.pulleverymin"
+          },
+          {
+           "field": "pullNext",
+           "kind": "time",
+           "label": "builtin.upstreams.section.reading.detail.pullnext"
+          },
+          {
+           "field": "pullFailCount",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.detail.pullfailcount"
+          },
+          {
+           "field": "pullTimerOff",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.reading.detail.pulltimeroff",
+           "yes": "builtin.upstreams.section.reading.detail.pulltimeroff.yes",
+           "no": "builtin.upstreams.section.reading.detail.pulltimeroff.no"
+          },
+          {
+           "field": "pullError",
+           "kind": "text",
+           "label": "builtin.upstreams.section.reading.detail.pullerror"
+          },
+          {
+           "field": "stale",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.reading.detail.stale",
+           "yes": "builtin.upstreams.section.reading.detail.stale.yes",
+           "no": "builtin.upstreams.section.reading.detail.stale.no"
+          }
+         ]
+        }
+       ]
+      }
      }
     ]
    }

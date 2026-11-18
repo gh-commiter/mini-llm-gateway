@@ -196,7 +196,7 @@ func TestMigration23To24KeepsLinksAndSnapshots(t *testing.T) {
 	if snaps, _ := filepath.Glob(filepath.Join(dir, "core-23-*.db")); len(snaps) != 1 {
 		t.Fatal("no snapshot of schema 23", snaps)
 	}
-	if v, _ := schemaVersion(ctx, s.DB()); v != 24 {
+	if v, _ := schemaVersion(ctx, s.DB()); v != len(migrations) {
 		t.Fatal("schema", v)
 	}
 	var read, auto int
@@ -207,13 +207,13 @@ func TestMigration23To24KeepsLinksAndSnapshots(t *testing.T) {
 	if err = checkSchemaObjects(ctx, s.DB(), len(migrations)); err != nil {
 		t.Fatal(err)
 	}
-	// an older program meeting this schema refuses it (as for every schema; TestNewerSchemaRefused): here the file claims schema 25
+	// an older program meeting this schema refuses it (as for every schema; TestNewerSchemaRefused): here the file claims one schema more
 	s.Close()
 	db, err = openDB(filepath.Join(dir, dbFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`UPDATE meta SET value='25' WHERE key='schema'`); err != nil {
+	if _, err = db.Exec(`UPDATE meta SET value=? WHERE key='schema'`, strconv.Itoa(len(migrations)+1)); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()

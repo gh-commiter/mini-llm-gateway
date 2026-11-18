@@ -226,14 +226,15 @@ public enum PanelRoutes {
         "DELETE upstreams/{}/links/{}",
         "GET upstream-links/{}",
         "POST upstream-push",
+        "POST upstream-pull",
         "POST upstream-resolve",
         "GET usage/labels/settings",
         "PUT usage/labels/settings",
         "GET usage/labels/agreement"]
     /// The routes that may receive the value of a secret field (in the body); a secret field in any other route is refused.
     public static let builtinSecret = ["PUT upstreams/{}"]
-    /// The routes whose every action must carry a confirm (the sends to an upstream, the links that decide what is sent, the settling of a conflict and its removal); an action on one without it is refused.
-    public static let builtinConfirm = ["POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}", "PUT upstreams/{}/links/{}", "POST upstream-resolve"]
+    /// The routes whose every action must carry a confirm (the sends to and the reads from an upstream, the links that decide what is sent, the settling of a conflict and its removal); an action on one without it is refused.
+    public static let builtinConfirm = ["POST upstream-push", "POST upstream-pull", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}", "PUT upstreams/{}/links/{}", "POST upstream-resolve"]
     public static func registeredConfirm(for provider: String) -> [String] { provider == "builtin" ? builtinConfirm : [] }
     public static func registered(for provider: String) -> [String]? { provider == "builtin" ? builtin : nil }
     public static func registeredSecret(for provider: String) -> [String] { provider == "builtin" ? builtinSecret : [] }

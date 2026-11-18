@@ -63,11 +63,12 @@ type Store struct {
 	// migrated: set by Open when it migrated an older database (see Migrated)
 	migrated *Migration
 	// the automatic upstream push (upstream_auto.go): its timing and the jitter of its back-off (a test gives a fixed one)
-	autoMu sync.Mutex
-	auto   AutoTiming
-	jitter func() float64
-	linkMu map[string]*sync.Mutex   // one real push of a link at a time (guarded by autoMu)
-	upMu   map[string]*sync.RWMutex // removal excludes pushes of every link of an upstream
+	autoMu     sync.Mutex
+	auto       AutoTiming
+	jitter     func() float64
+	autoPushed bool                     // the last step of the timer was a push (guarded by autoMu): the next one tries the pull first, so neither starves the other
+	linkMu     map[string]*sync.Mutex   // one real push of a link at a time (guarded by autoMu)
+	upMu       map[string]*sync.RWMutex // removal excludes pushes of every link of an upstream
 }
 
 // state is what must outlive a restore: it is kept in core.state as well as in the database (max of both wins).
@@ -78,7 +79,7 @@ type state struct {
 }
 
 // migrations is ordered and forward only; migration i brings the schema to version i+1. Tests replace it.
-var migrations = []func(*sql.Tx) error{migrate1, migrate2, migrate3, migrate4, migrate5, migrate6, migrate7, migrate8, migrate9, migrate10, migrate11, migrate12, migrate13, migrate14, migrate15, migrate16, migrate17, migrate18, migrate19, migrate20, migrate21, migrate22, migrate23, migrate24}
+var migrations = []func(*sql.Tx) error{migrate1, migrate2, migrate3, migrate4, migrate5, migrate6, migrate7, migrate8, migrate9, migrate10, migrate11, migrate12, migrate13, migrate14, migrate15, migrate16, migrate17, migrate18, migrate19, migrate20, migrate21, migrate22, migrate23, migrate24, migrate25}
 
 func migrate1(tx *sql.Tx) error {
 	_, err := tx.Exec(`

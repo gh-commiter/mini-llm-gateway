@@ -138,6 +138,9 @@ type UpstreamPull struct {
 	Mirror    int    `json:"mirror"` // notes in the link's mirror after the run
 	// Purged: the upstream withdrew the right to read (or the project is gone there): the mirror of this link was deleted.
 	Purged bool `json:"purged,omitempty"`
+	// outcome (ok, more, wait, fail, purge, skip) and the acceptance the run started with: what afterPull records for the timer.
+	outcome  string
+	accepted int64
 	// More: the run used its budget (note GETs, time, or the upstream's read limit) and stopped without a fault: pull again (after Wait
 	// seconds). Next is the cursor, the id of the last upstream note dealt with, so that the next run goes on above it.
 	More bool  `json:"more,omitempty"`
@@ -173,7 +176,7 @@ func (s *Store) PullUpstream(ctx context.Context, tr UpstreamTransport, project,
 				out = append(out, later)
 				continue
 			}
-			r, err := s.pullLink(ctx, tr, l.UpstreamLink, l.Label, sleep)
+			r, err := s.pullLink(ctx, tr, l.UpstreamLink, l.Label, sleep, false)
 			if err != nil && ctx.Err() != nil && len(out) > 0 {
 				out = append(out, later)
 				continue

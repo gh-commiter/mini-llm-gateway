@@ -37,9 +37,14 @@ var (
 func readInfo(tx *sql.Tx, now int64, i *UpstreamLinkInfo) error {
 	var on int
 	var cls, src string
-	var acc, last, ok int64
-	if e := tx.QueryRow(`SELECT read,read_classes,read_sources,read_accepted,last_pull,last_pull_ok,pull_error FROM upstream_links WHERE project_id=? AND upstream=?`, i.Project, i.Upstream).Scan(&on, &cls, &src, &acc, &last, &ok, &i.PullError); e != nil {
+	var acc, last, ok, every, next int64
+	var timer int
+	if e := tx.QueryRow(`SELECT read,read_classes,read_sources,read_accepted,last_pull,last_pull_ok,pull_error,pull_every,pull_next,pull_fail_count,pull_timer FROM upstream_links WHERE project_id=? AND upstream=?`, i.Project, i.Upstream).Scan(&on, &cls, &src, &acc, &last, &ok, &i.PullError, &every, &next, &i.PullFailCount, &timer); e != nil {
 		return e
+	}
+	i.PullEvery, i.PullTimerOff = int(every), timer == 0
+	if i.PullEvery == 0 {
+		i.PullEvery = DefaultPullEvery
 	}
 	i.Read = on == 1
 	for _, c := range strings.Split(cls, ",") {
@@ -56,6 +61,9 @@ func readInfo(tx *sql.Tx, now int64, i *UpstreamLinkInfo) error {
 		return &x
 	}
 	i.ReadAccepted, i.LastPull, i.LastPullOK = ptr(acc), ptr(last), ptr(ok)
+	if on == 1 && timer == 1 {
+		i.PullNext = ptr(max(next, now)) // overdue or never run: due now
+	}
 	if ok > 0 { // the owner's status says how old the mirror is; the age is the gateway's own clock, not the reader's
 		i.LastPullAge = max(0, int((now-ok)/1000))
 	}
@@ -101,7 +109,7 @@ func (s *Store) pullSettings(ctx context.Context, l UpstreamLink) (st pullSettin
 
 // pullLink: one real pull of one link. As a push it holds the upstream's shared lock and the link's lock: a push, a pull, an unlink or a
 // removal of the upstream never run over each other (the one that comes second is refused and says so).
-func (s *Store) pullLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, sleep func(time.Duration) bool) (UpstreamPull, error) {
+func (s *Store) pullLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, sleep func(time.Duration) bool, auto bool) (UpstreamPull, error) {
 	upMu := s.upstreamLock(l.Upstream)
 	if !upMu.TryRLock() {
 		return UpstreamPull{}, errPushRunning{}
@@ -112,7 +120,10 @@ func (s *Store) pullLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 		return UpstreamPull{}, errPushRunning{}
 	}
 	defer mu.Unlock()
-	res, err := s.pullRun(ctx, tr, l, label, sleep)
+	res, err := s.pullRun(ctx, tr, l, label, sleep, auto)
+	if err == nil {
+		err = s.afterPull(context.WithoutCancel(ctx), l, label, res, auto) // before the lock is released, as the push's
+	}
 	if len(res.Lines) > maxReportLines {
 		res.Lines = append(res.Lines[:maxReportLines], fmt.Sprintf("... and %d more", len(res.Lines)-maxReportLines))
 	}
@@ -130,7 +141,7 @@ type mirrorRow struct {
 	bytes       int
 }
 
-func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, sleep func(time.Duration) bool) (res UpstreamPull, err error) {
+func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, sleep func(time.Duration) bool, auto bool) (res UpstreamPull, err error) {
 	_, isTeam := SegmentTeam(l.Project)
 	res = UpstreamPull{Label: label, Upstream: l.Upstream, Remote: l.Remote, Project: l.Project, Team: isTeam}
 	wctx := context.WithoutCancel(ctx) // what was fetched is written even when the time budget of the call is used up meanwhile
@@ -138,7 +149,9 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 	if err != nil {
 		return res, err
 	}
+	res.accepted = st.accepted
 	if !st.on {
+		res.outcome = "skip"
 		res.Stopped = "reading is off for this link: minigw gw upstream link <project> <upstream> --read --accept-reach"
 		return res, nil
 	}
@@ -159,6 +172,7 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 		return p.call("GET", path, nil, nil)
 	}
 	waiting := func() UpstreamPull {
+		res.outcome = "wait"
 		res.More, res.Wait = true, int(p.wait/time.Second)
 		res.Stopped = "the upstream's read limit: pull again in " + strconv.Itoa(res.Wait) + " seconds"
 		res.Next = st.cursor
@@ -167,7 +181,7 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 	// finish writes the outcome: what was fetched (when mirror), the deletions, the cursor and the status of the link, in one transaction.
 	// No fetched row, no deletion and no cursor survives a link that was changed, removed or turned off meanwhile.
 	record := func(why string) (UpstreamPull, error) { // a failure that leaves the mirror as it is
-		res.Stopped = why
+		res.outcome, res.Stopped = "fail", why
 		e := s.write(wctx, func(tx *sql.Tx) error {
 			_, e := tx.Exec(`UPDATE upstream_links SET last_pull=?,pull_error=? WHERE project_id=? AND upstream=? AND read_accepted=?`, ms(s.now()), why, l.Project, l.Upstream, st.accepted)
 			return e
@@ -175,7 +189,7 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 		return res, e
 	}
 	purge := func(why string) (UpstreamPull, error) { // the upstream withdrew the right: fail closed
-		res.Stopped, res.Purged = why, true
+		res.outcome, res.Stopped, res.Purged = "purge", why, true
 		e := s.write(wctx, func(tx *sql.Tx) error {
 			n, e := purgeMirror(tx, l.Project, l.Upstream)
 			if e != nil {
@@ -366,8 +380,20 @@ fetch:
 		res.More = more
 	}
 	res.Next = cursor
-	if res.More && res.Wait == 0 && cursor == st.cursor && len(fetched) == 0 && res.Skipped == 0 { // no progress: said, not hidden
+	noProgress := false
+	if res.More && res.Wait == 0 && cursor == st.cursor && len(fetched) == 0 && res.Skipped == 0 { // no progress: said, not hidden, and a failure for the timer
 		res.Stopped = "no progress in this run (the time budget of the call is used): pull again"
+		noProgress = true
+	}
+	switch {
+	case failed != "" || noProgress:
+		res.outcome = "fail"
+	case res.More && res.Wait > 0:
+		res.outcome = "wait"
+	case res.More:
+		res.outcome = "more"
+	default:
+		res.outcome = "ok"
 	}
 	ok := !res.More && failed == ""
 	pullErr := ""
@@ -382,7 +408,7 @@ fetch:
 		var reach string
 		switch e := tx.QueryRow(`SELECT read,read_accepted,read_reach FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&on, &acc, &reach); {
 		case e == sql.ErrNoRows || e == nil && (on == 0 || acc != st.accepted || reach != st.reach): // the link was changed: what was fetched belongs to another reach
-			res.Stopped, res.More, res.Next, fetched = "the link was removed or its reading changed during the pull: nothing was stored", false, 0, nil
+			res.outcome, res.Stopped, res.More, res.Next, fetched = "skip", "the link was removed or its reading changed during the pull: nothing was stored", false, 0, nil
 			return nil
 		case e != nil:
 			return e
@@ -483,6 +509,9 @@ ON CONFLICT(project_id,upstream,remote_note) DO UPDATE SET source_id=excluded.so
 		if _, e := tx.Exec(`UPDATE upstream_links SET last_pull=?,pull_cursor=?,pull_error=?,last_pull_ok=`+okAt+` WHERE project_id=? AND upstream=?`, args...); e != nil {
 			return e
 		}
+		if auto { // the timer's runs are audited by afterPull, by the push's rule: one row for a run that did something, otherwise one per change of outcome
+			return nil
+		}
 		return Audit(tx, adminActor, "upstream.pull", l.Upstream, map[string]any{"project": label, "added": res.Added, "updated": res.Updated, "removed": res.Removed, "skipped": res.Skipped, "more": res.More, "failed": failed != ""})
 	})
 	if err != nil {
@@ -572,4 +601,66 @@ func mirrorBody(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// afterPull records what a real run means for the link's timer (the same bookkeeping for a pull by hand and one by the timer, so that a
+// failing upstream is backed off from either way): success schedules the next pull one interval ahead and clears the failures; "more" with
+// progress goes on in a second; waiting for the upstream's read limit comes back no sooner than the wait; a failure, and a run that made no
+// progress, set the back-off; a refusal (the mirror was purged) switches the timer off until the owner accepts the reach again. A run for
+// a link that was changed, removed or turned off meanwhile records nothing. An automatic run writes its audit row here.
+func (s *Store) afterPull(ctx context.Context, l UpstreamLink, label string, res UpstreamPull, auto bool) error {
+	if res.outcome == "" || res.outcome == "skip" {
+		return nil
+	}
+	t := s.autoTiming()
+	now := ms(s.now())
+	return s.write(ctx, func(tx *sql.Tx) error {
+		var n int
+		if e := tx.QueryRow(`SELECT pull_fail_count FROM upstream_links WHERE project_id=? AND upstream=? AND read=1 AND read_accepted=?`, l.Project, l.Upstream, res.accepted).Scan(&n); e != nil {
+			if e == sql.ErrNoRows {
+				return nil
+			}
+			return e
+		}
+		var q string
+		var args []any
+		switch res.outcome {
+		case "ok":
+			n = 0
+			q, args = `UPDATE upstream_links SET pull_fail_count=0,pull_timer=1,pull_next=?1+CASE WHEN pull_every=0 THEN ?4 ELSE pull_every*1000 END WHERE project_id=?2 AND upstream=?3`, []any{now, l.Project, l.Upstream, int64(DefaultPullEvery) * 1000}
+		case "more":
+			q, args = `UPDATE upstream_links SET pull_next=? WHERE project_id=? AND upstream=?`, []any{now + 1000, l.Project, l.Upstream}
+		case "wait":
+			q, args = `UPDATE upstream_links SET pull_next=? WHERE project_id=? AND upstream=?`, []any{now + max(int64(res.Wait), 1)*1000, l.Project, l.Upstream}
+		case "fail":
+			n++
+			q, args = `UPDATE upstream_links SET pull_fail_count=?,pull_next=? WHERE project_id=? AND upstream=?`, []any{n, now + t.backoff(n, s.jitterFn()).Milliseconds(), l.Project, l.Upstream}
+		case "purge":
+			n = 0
+			q, args = `UPDATE upstream_links SET pull_fail_count=0,pull_next=0,pull_timer=0 WHERE project_id=? AND upstream=?`, []any{l.Project, l.Upstream}
+		}
+		if _, e := tx.Exec(q, args...); e != nil {
+			return e
+		}
+		if !auto || res.outcome == "purge" { // a purge has its own audit row
+			return nil
+		}
+		var last string
+		if e := tx.QueryRow(`SELECT last_pull_audit FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&last); e != nil {
+			return e
+		}
+		did := res.Added+res.Updated+res.Removed > 0
+		kind := res.outcome
+		if kind == "wait" {
+			kind = "more"
+		}
+		sig := fmt.Sprintf("%s/%d", kind, min(n, 5))
+		if !did && sig == last {
+			return nil
+		}
+		if _, e := tx.Exec(`UPDATE upstream_links SET last_pull_audit=? WHERE project_id=? AND upstream=?`, sig, l.Project, l.Upstream); e != nil {
+			return e
+		}
+		return Audit(tx, "gateway", "upstream.auto-pull", l.Upstream, map[string]any{"project": label, "added": res.Added, "updated": res.Updated, "removed": res.Removed, "skipped": res.Skipped, "more": res.More, "outcome": kind})
+	})
 }

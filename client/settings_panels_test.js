@@ -435,7 +435,7 @@ async function main() {
       "GET /upstreams/hub/probe": [200, {name: "hub", address: "hub.example", device: "DEV", state: "waiting", probe: "waiting for approval on the upstream"}]};
     const fu = fake(upAnswers), um = modelOf("builtin.upstreams", fu), up = um.panel.sections[1], addAction = up.actions[0];
     await um.load();
-    assert.deepEqual(fu.log, ["GET /projects", "GET /teams", "GET /upstreams", "GET /upstreams", "GET /upstreams"]);  // the refs (sorted), then the two lists
+    assert.deepEqual(fu.log, ["GET /projects", "GET /teams", "GET /upstreams", "GET /upstreams", "GET /upstreams", "GET /upstreams"]);  // the refs (sorted), then the three lists
     assert.deepEqual(um.pickerOptions("projects").map(o => o.id), ["1"]);  // an archived project is not offered
     assert.equal(addAction.fields[2].type, "secret");
     // the request holds the secret in the body only; nothing in a path or a query

@@ -180,6 +180,18 @@ func (s *Store) RemoveUpstream(ctx context.Context, name string) error {
 	})
 }
 
+// migrate25: step C4 (the automatic pull): per link the owner's interval (seconds; 0 = the default of 15 minutes), the earliest time of the
+// next pull (a successful run sets it one interval ahead, a failure the back-off), the failures in a row, the outcome of the last run that
+// wrote an audit row, and the timer's own switch (off after the upstream withdrew the right to read: only the owner turns it on again).
+func migrate25(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE upstream_links ADD COLUMN pull_every INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN pull_fail_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN pull_next INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN last_pull_audit TEXT NOT NULL DEFAULT '';
+ALTER TABLE upstream_links ADD COLUMN pull_timer INTEGER NOT NULL DEFAULT 1 CHECK(pull_timer IN(0,1));`)
+	return err
+}
+
 func (s *Store) ListUpstreams(ctx context.Context) (out []Upstream, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		rows, e := tx.Query(`SELECT name,address FROM upstreams ORDER BY name`)
@@ -266,6 +278,12 @@ type UpstreamLinkInfo struct {
 	Mirror       int        `json:"mirror"`          // notes in the mirror of this link
 	MirrorBytes  int64      `json:"mirrorBytes"`     // their size (titles and bodies)
 	Stale        bool       `json:"stale,omitempty"` // no complete pull for 7 days (or none yet): members do not see the mirror
+	// Step C4, the automatic pull: the interval in seconds (the default when the owner set none), the next attempt, the failures in a row,
+	// and whether the timer was switched off by a refusal of the upstream (only a new acceptance of the reach, or a pull that went through, switches it on).
+	PullEvery     int        `json:"pullEvery"`
+	PullNext      *time.Time `json:"pullNext,omitempty"`
+	PullFailCount int        `json:"pullFailCount,omitempty"`
+	PullTimerOff  bool       `json:"pullTimerOff,omitempty"`
 }
 
 func parseClasses(csv string, withPrivate bool) ([]Class, error) {
@@ -316,6 +334,8 @@ type LinkSpec struct {
 	Read                     *bool
 	ReadClasses, ReadSources string
 	AcceptReach, ReadOnly    bool
+	// PullEvery: the interval of the automatic pull in seconds (MinPullEvery to MaxPullEvery); nil keeps it. It is not part of the reach.
+	PullEvery *int
 }
 
 func (s *Store) LinkUpstreamWith(ctx context.Context, sp LinkSpec) error {
@@ -343,6 +363,9 @@ func (s *Store) LinkUpstreamReport(ctx context.Context, sp LinkSpec) (turnedOff 
 	if withPrivate && !contains(cls, Private) {
 		return false, ErrRefusal{"--with-private names the private class: add it to --class (or leave --class out)"}
 	}
+	if sp.PullEvery != nil && (*sp.PullEvery < MinPullEvery || *sp.PullEvery > MaxPullEvery) {
+		return false, ErrRefusal{fmt.Sprintf("pull interval: %d minutes to %d hours", MinPullEvery/60, MaxPullEvery/3600)}
+	}
 	readOn, readOff := sp.Read != nil && *sp.Read, sp.Read != nil && !*sp.Read
 	readLists := sp.ReadClasses != "" || sp.ReadSources != ""
 	var readCls, readSrc string
@@ -368,7 +391,7 @@ func (s *Store) LinkUpstreamReport(ctx context.Context, sp LinkSpec) (turnedOff 
 			return false, err
 		}
 	}
-	detail := map[string]any{"project": project, "team": team, "remote": remote, "classes": classesCSV(cls), "withPrivate": withPrivate, "auto": sp.Auto, "mode": sp.Mode, "read": sp.Read, "readClasses": readCls, "readSources": readSrc, "readOnly": sp.ReadOnly}
+	detail := map[string]any{"pullEvery": sp.PullEvery, "project": project, "team": team, "remote": remote, "classes": classesCSV(cls), "withPrivate": withPrivate, "auto": sp.Auto, "mode": sp.Mode, "read": sp.Read, "readClasses": readCls, "readSources": readSrc, "readOnly": sp.ReadOnly}
 	err = s.adminWrite(ctx, "upstream.link", upstream, detail, func(tx *sql.Tx) (string, error) {
 		if e := tx.QueryRow(`SELECT name FROM upstreams WHERE name=?`, upstream).Scan(new(string)); e != nil {
 			return "", notFound(e)
@@ -436,6 +459,9 @@ func (s *Store) LinkUpstreamReport(ctx context.Context, sp LinkSpec) (turnedOff 
 			return "", e
 		}
 		if sp.ReadOnly && have > 0 { // only the reading changes: the push settings of the link stay as they are
+			if e := setPullEvery(tx, s.now(), local, upstream, sp.PullEvery); e != nil {
+				return "", e
+			}
 			return "", setLinkRead(tx, s.now(), local, upstream, sp, readOn, readOff, readCls, readSrc, detail)
 		}
 		var au any
@@ -463,6 +489,9 @@ ON CONFLICT(project_id,upstream) DO UPDATE SET remote=excluded.remote, remote_te
 			if turnedOff, e = enforceReach(tx, local, upstream, detail); e != nil { // before the new acceptance, which may follow
 				return "", e
 			}
+		}
+		if e := setPullEvery(tx, s.now(), local, upstream, sp.PullEvery); e != nil {
+			return "", e
 		}
 		return "", setLinkRead(tx, s.now(), local, upstream, sp, readOn, readOff, readCls, readSrc, detail)
 	})
@@ -494,7 +523,7 @@ func enforceReach(tx *sql.Tx, project int64, upstream string, detail map[string]
 		return false, e
 	}
 	detail["readTurnedOff"] = map[string]any{"accepted": reach, "now": reachOf(upstream, remote, team, cls, src), "mirrorNotes": n}
-	_, e = tx.Exec(`UPDATE upstream_links SET read=0,read_accepted=0,read_reach='',pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0 WHERE project_id=? AND upstream=?`, project, upstream)
+	_, e = tx.Exec(`UPDATE upstream_links SET read=0,read_accepted=0,read_reach='',pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0,pull_timer=1,pull_fail_count=0,pull_next=0,last_pull_audit='' WHERE project_id=? AND upstream=?`, project, upstream)
 	return e == nil, e
 }
 
@@ -523,8 +552,8 @@ func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp L
 		detail["readAccepted"] = map[string]any{"reach": reach, "classes": classes, "sources": sources, "remote": remote, "remoteTeam": team == 1}
 	}
 	if on == (cur == 1) && classes == curC && sources == curS {
-		if on { // accepted again
-			_, e := tx.Exec(`UPDATE upstream_links SET read_accepted=?,read_reach=? WHERE project_id=? AND upstream=?`, ms(now), reach, project, upstream)
+		if on { // accepted again: the timer is on again too (a refusal of the upstream had switched it off)
+			_, e := tx.Exec(`UPDATE upstream_links SET read_accepted=?,read_reach=?,pull_timer=1,pull_fail_count=0,pull_next=0 WHERE project_id=? AND upstream=?`, ms(now), reach, project, upstream)
 			return e
 		}
 		return nil
@@ -536,7 +565,24 @@ func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp L
 	if on {
 		accepted, o = ms(now), 1
 	}
-	_, e := tx.Exec(`UPDATE upstream_links SET read=?,read_classes=?,read_sources=?,read_accepted=?,read_reach=?,pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0 WHERE project_id=? AND upstream=?`, o, classes, sources, accepted, reach, project, upstream)
+	_, e := tx.Exec(`UPDATE upstream_links SET read=?,read_classes=?,read_sources=?,read_accepted=?,read_reach=?,pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0,pull_timer=1,pull_fail_count=0,pull_next=0,last_pull_audit='' WHERE project_id=? AND upstream=?`, o, classes, sources, accepted, reach, project, upstream)
+	return e
+}
+
+// The interval of the automatic pull: 5 minutes to 24 hours, 15 minutes when the owner set none.
+const (
+	MinPullEvery     = 5 * 60
+	MaxPullEvery     = 24 * 3600
+	DefaultPullEvery = 15 * 60
+)
+
+// setPullEvery stores the owner's interval of one link (nil: unchanged). A shorter interval brings the next pull forward (never a failure's
+// back-off), a longer one leaves it.
+func setPullEvery(tx *sql.Tx, now time.Time, project int64, upstream string, every *int) error {
+	if every == nil {
+		return nil
+	}
+	_, e := tx.Exec(`UPDATE upstream_links SET pull_every=?1, pull_next=CASE WHEN pull_fail_count=0 AND pull_next>?2+?1*1000 THEN ?2+?1*1000 ELSE pull_next END WHERE project_id=?3 AND upstream=?4`, *every, ms(now), project, upstream)
 	return e
 }
 

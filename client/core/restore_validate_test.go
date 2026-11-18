@@ -191,6 +191,18 @@ func populate(t *testing.T, dir string, v int) {
 	if has("project_team_depends") {
 		run(`INSERT INTO project_team_depends(project_id,team_id) VALUES(3,1)`)
 	}
+	if has("upstream_links") { // step A to C4: an upstream, a link, the mirror and the timer's columns, each only from the schema that has them
+		run(`INSERT INTO upstreams(name,address,created) VALUES('hub','h:8765',1)`)
+		run(`INSERT INTO upstream_links(project_id,upstream,remote,remote_team,classes,with_private) VALUES(1,'hub','alpha',0,'structure',0)`)
+	}
+	if has("upstream_mirror") {
+		run(`UPDATE upstream_links SET read=1,read_accepted=5,read_reach='hub|alpha|0|structure|',last_pull_ok=9`)
+		run(`INSERT INTO upstream_mirror(project_id,upstream,source_id,source_label,remote_note,remote_rev,class,kind,title,body,bytes,updated,fetched) VALUES(1,'hub',7,'project:alpha',3,4,'structure','finding','mirror needle','body',17,1,1)`)
+		run(`DELETE FROM upstream_mirror_search`) // a restore must rebuild this index too
+	}
+	if v >= 25 {
+		run(`UPDATE upstream_links SET pull_every=600,pull_fail_count=2,pull_next=12345,last_pull_audit='fail/2',pull_timer=0`)
+	}
 	if has("note_search") { // stale postings: the backup's index is emptied on purpose, a restore must rebuild it
 		run(`DELETE FROM note_search`)
 	}
@@ -235,6 +247,33 @@ func TestRestoreAcceptsAPopulatedBackupOfEverySchemaVersion(t *testing.T) {
 			var hits int
 			if err := s.DB().QueryRow(`SELECT count(*) FROM note_search WHERE note_search MATCH 'needle'`).Scan(&hits); err != nil || hits != notes {
 				t.Fatal("search postings after restore", hits, "of", notes, err)
+			}
+			if v >= 19 { // the link, with every column it has at this schema (the older ones get the new columns' defaults)
+				var every, fails, next int64
+				var audit string
+				var timer int
+				if v < 25 {
+					every, fails, next, audit, timer = 0, 0, 0, "", 1
+				} else if err := s.DB().QueryRow(`SELECT pull_every,pull_fail_count,pull_next,last_pull_audit,pull_timer FROM upstream_links`).Scan(&every, &fails, &next, &audit, &timer); err != nil {
+					t.Fatal(err)
+				}
+				wantEvery, wantFails, wantNext, wantAudit, wantTimer := int64(0), int64(0), int64(0), "", 1
+				if v >= 25 {
+					wantEvery, wantFails, wantNext, wantAudit, wantTimer = 600, 2, 12345, "fail/2", 0
+				}
+				if every != wantEvery || fails != wantFails || next != wantNext || audit != wantAudit || timer != wantTimer {
+					t.Fatal("the link's timer columns after restore:", every, fails, next, audit, timer)
+				}
+				var links int
+				if err := s.DB().QueryRow(`SELECT count(*) FROM upstream_links WHERE upstream='hub' AND remote='alpha'`).Scan(&links); err != nil || links != 1 {
+					t.Fatal("link after restore", links, err)
+				}
+			}
+			if v >= 24 {
+				var rows, posts int
+				if err := s.DB().QueryRow(`SELECT (SELECT count(*) FROM upstream_mirror),(SELECT count(*) FROM upstream_mirror_search WHERE upstream_mirror_search MATCH 'needle')`).Scan(&rows, &posts); err != nil || rows != 1 || posts != 1 {
+					t.Fatal("mirror after restore", rows, posts, err)
+				}
 			}
 		})
 	}

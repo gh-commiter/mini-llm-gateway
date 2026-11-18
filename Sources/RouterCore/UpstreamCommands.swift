@@ -12,6 +12,7 @@ extension AdminCommands {
           minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)
           minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
           minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run)
+          minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)
           minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)
           minigw gw upstream unlink <project> <name> | --team <team> <name>
           minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
@@ -81,14 +82,23 @@ extension AdminCommands {
             if o.auto { req["auto"] = true } else if o.manual { req["auto"] = false }
             if !o.mode.isEmpty { req["mode"] = o.mode }
             let reading = o.read || o.noRead || !o.readClass.isEmpty || !o.readSources.isEmpty
+            let pulling = !o.pullEvery.isEmpty
+            if pulling {
+                guard let n = Int(o.pullEvery), n >= 5, n <= 1440 else { throw fail("--pull-every: minutes, 5 to 1440") }
+                req["pullEvery"] = n
+            }
             let pushFlags = !o.classes.isEmpty || o.withPrivate || o.auto || o.manual || !o.mode.isEmpty || !o.remoteProject.isEmpty || !o.remoteTeam.isEmpty
             if reading {
                 req["read"] = !o.noRead
                 req["readClasses"] = o.readClass; req["readSources"] = o.readSources; req["acceptReach"] = o.acceptReach
-                req["readOnly"] = !pushFlags  // an existing link keeps its push settings
             }
+            if reading || pulling { req["readOnly"] = !pushFlags }  // an existing link keeps its push settings
             let linked = try request("PUT", path, req)
             defer { if linked["readOff"]?.bool == true { say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach")) } }
+            if pulling && !reading && !pushFlags {
+                say(clean("\(local) -> \(name): a link with reading on is pulled every \(o.pullEvery) minutes"))
+                return
+            }
             if reading && !pushFlags {
                 if o.noRead { say(clean("\(local) -> \(name): reading is off, the mirror was deleted")) }
                 else { say(clean("\(local) -> \(name): reading is on; minigw gw upstream pull fills the mirror, which the members then see in kb search, kb faq and note read (marked from hub)")) }
@@ -239,7 +249,18 @@ extension AdminCommands {
         if let ok = at("lastPullOk") { pulled = ", last pull " + ProjectText.stamp(ok, zone) + " (" + upstreamAge(d["lastPullAge"]?.int ?? 0) + " old)" }
         if let t = at("lastPull"), at("lastPullOk").map({ t > $0 }) ?? true { pulled += ", last try " + ProjectText.stamp(t, zone) }
         if d["stale"]?.bool == true { pulled += ", stale: members do not see the mirror until a pull completes (none in the last 7 days)" }
-        return "read: on, classes \(cls), sources \(srcs.isEmpty ? "none" : srcs.joined(separator: ",") )\(acc), mirror \(d["mirror"]?.int ?? 0) notes (\(upstreamSize(Int64(d["mirrorBytes"]?.int ?? 0))))\(pulled)"
+        return "read: on, classes \(cls), sources \(srcs.isEmpty ? "none" : srcs.joined(separator: ",") )\(acc), mirror \(d["mirror"]?.int ?? 0) notes (\(upstreamSize(Int64(d["mirrorBytes"]?.int ?? 0))))\(pulled)\(upstreamTimerLine(d, zone))"
+    }
+
+    /// The automatic pull of a link that is read: how often, when next, the failures in a row, or that a refusal switched it off (as Go's upstreamTimerLine).
+    static func upstreamTimerLine(_ d: JDict, _ zone: TimeZone) -> String {
+        let every = d["pullEvery"]?.int ?? 0
+        if every == 0 { return "" }
+        if d["pullTimerOff"]?.bool == true { return ", automatic pull off (the upstream refused it; accept the reach again with --read --accept-reach to switch it on)" }
+        var out = ", pulled every \(every / 60) min"
+        if let t = d["pullNext"]?.string.flatMap(ProjectText.parseTime) { out += ", next pull " + ProjectText.stamp(t, zone) }
+        if (d["pullFailCount"]?.int ?? 0) > 0 { out += " (\(d["pullFailCount"]?.int ?? 0) failures in a row)" }
+        return out
     }
 
     static func upstreamSize(_ b: Int64) -> String {

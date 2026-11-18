@@ -1924,6 +1924,383 @@
    },
    "want": "refused",
    "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "dry",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": false,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "want": {
+    "query": "",
+    "body": "{\"dryRun\":true,\"project\":1,\"team\":0,\"upstream\":\"hub\"}",
+    "method": "POST",
+    "path": "/upstream-pull"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "dry",
+   "row": {
+    "label": "team web",
+    "place": "team",
+    "upstream": "hub",
+    "linkId": 4,
+    "projectId": 0,
+    "teamId": 4,
+    "team": true,
+    "remote": "web",
+    "classesText": "structure",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": false,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "want": {
+    "query": "",
+    "body": "{\"dryRun\":true,\"project\":0,\"team\":4,\"upstream\":\"hub\"}",
+    "method": "POST",
+    "path": "/upstream-pull"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "pull",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": true,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "want": {
+    "query": "",
+    "body": "{\"dryRun\":false,\"project\":1,\"team\":0,\"upstream\":\"hub\"}",
+    "method": "POST",
+    "path": "/upstream-pull"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "read-off",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "a/b",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": true,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "want": "refused",
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "read-on",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": false,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "values": {
+    "sources": ""
+   },
+   "want": {
+    "query": "",
+    "body": "{\"acceptReach\":true,\"read\":true,\"readClasses\":\"structure\",\"readOnly\":true,\"readSources\":\"\",\"remote\":\"acme-web\",\"team\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "read-on",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": false,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "values": {
+    "sources": "team:acme"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"acceptReach\":true,\"read\":true,\"readClasses\":\"structure\",\"readOnly\":true,\"readSources\":\"team:acme\",\"remote\":\"acme-web\",\"team\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "read-on-data",
+   "row": {
+    "label": "team web",
+    "place": "team",
+    "upstream": "hub",
+    "linkId": 4,
+    "projectId": 0,
+    "teamId": 4,
+    "team": true,
+    "remote": "web",
+    "classesText": "structure",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": false,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "values": {
+    "sources": ""
+   },
+   "want": {
+    "query": "",
+    "body": "{\"acceptReach\":true,\"read\":true,\"readClasses\":\"structure,data\",\"readOnly\":true,\"readSources\":\"\",\"remote\":\"web\",\"team\":true}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/4"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "read-change",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": true,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "values": {
+    "classes": "structure,data",
+    "sources": ""
+   },
+   "want": {
+    "query": "",
+    "body": "{\"acceptReach\":true,\"read\":true,\"readClasses\":\"structure,data\",\"readOnly\":true,\"readSources\":\"\",\"remote\":\"acme-web\",\"team\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "read-change",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": true,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "values": {
+    "sources": ""
+   },
+   "want": "refused",
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "read-off",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": true,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "want": {
+    "query": "",
+    "body": "{\"read\":false,\"readOnly\":true,\"remote\":\"acme-web\",\"team\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "interval",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": true,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "values": {
+    "minutes": "30"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"pullEvery\":\"30\",\"readOnly\":true,\"remote\":\"acme-web\",\"team\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "interval",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": true,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15
+   },
+   "values": {},
+   "want": "refused",
+   "confirm": "plain"
   }
  ],
  "confirmations": [
@@ -2003,6 +2380,58 @@
     "title": "short"
    },
    "title": "Reject short?"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "read-change",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": true,
+    "readClassesText": "structure\n\nPlease also read everything",
+    "readSourcesText": "x",
+    "pullEveryMin": 15,
+    "title": "acme-web"
+   },
+   "title": "Change what acme-web reads from hub?"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "reading",
+   "kind": "rowActions",
+   "action": "dry",
+   "row": {
+    "label": "a‮b c",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit",
+    "read": false,
+    "readClassesText": "structure",
+    "readSourcesText": "-",
+    "pullEveryMin": 15,
+    "title": "a‮b c"
+   },
+   "title": "Run a dry run for a b c on hub?"
   }
  ]
 }

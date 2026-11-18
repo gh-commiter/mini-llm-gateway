@@ -868,6 +868,7 @@ const PANEL_ROUTES = {builtin: [
   "DELETE upstreams/{}/links/{}",
   "GET upstream-links/{}",
   "POST upstream-push",
+  "POST upstream-pull",
   "POST upstream-resolve",
   "GET usage/labels/settings",
   "PUT usage/labels/settings",
@@ -875,7 +876,7 @@ const PANEL_ROUTES = {builtin: [
 // The routes that may receive the value of a secret field (in the body); a secret field in any other route is refused.
 const PANEL_SECRET_ROUTES = {builtin: ["PUT upstreams/{}"]};
 // The routes whose every action must carry a confirm (the sends to an upstream, the links that decide what is sent, the settling of a conflict and its removal); an action on one without it is refused.
-const PANEL_CONFIRM_ROUTES = {builtin: ["POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}", "PUT upstreams/{}/links/{}", "POST upstream-resolve"]};
+const PANEL_CONFIRM_ROUTES = {builtin: ["POST upstream-push", "POST upstream-pull", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}", "PUT upstreams/{}/links/{}", "POST upstream-resolve"]};
 const PANEL_SYMBOLS = ["person.2", "person.3", "folder", "book", "tray", "gearshape", "doc.text", "key", "list.bullet"];
 class PanelRefusal extends Error {}
 const prefuse = m => { throw new PanelRefusal(m); };

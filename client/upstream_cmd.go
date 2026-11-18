@@ -16,6 +16,7 @@ const upstreamHelp = `
   minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)
   minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
   minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run)
+  minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)
   minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)
   minigw gw upstream unlink <project> <name> | --team <team> <name>
   minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
@@ -43,6 +44,11 @@ type upLink struct {
 	LastFail    *time.Time
 	FailCount   int
 	NextAttempt *time.Time
+
+	PullEvery     int
+	PullNext      *time.Time
+	PullFailCount int
+	PullTimerOff  bool
 
 	Read         bool
 	ReadClasses  []string
@@ -144,16 +150,30 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			req["mode"] = u.mode
 		}
 		reading := u.read || u.noRead || u.readClass != "" || u.readSources != ""
+		pulling := u.pullEvery != ""
+		if pulling {
+			n, err := strconv.Atoi(u.pullEvery)
+			if err != nil || n < core.MinPullEvery/60 || n > core.MaxPullEvery/60 {
+				fail(fmt.Sprintf("--pull-every: minutes, %d to %d", core.MinPullEvery/60, core.MaxPullEvery/60))
+			}
+			req["pullEvery"] = n
+		}
 		pushFlags := u.class != "" || u.withPrivate || u.auto || u.manual || u.mode != "" || u.remoteProject != "" || u.remoteTeam != ""
 		if reading {
 			req["read"] = !u.noRead
 			req["readClasses"], req["readSources"], req["acceptReach"] = u.readClass, u.readSources, u.acceptReach
+		}
+		if reading || pulling {
 			req["readOnly"] = !pushFlags // an existing link keeps its push settings
 		}
 		var linked struct{ ReadOff bool }
 		a.do("PUT", fmt.Sprintf("/upstreams/%s/links/%d", url.PathEscape(name), id), req, &linked)
 		if linked.ReadOff {
 			defer say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach"))
+		}
+		if pulling && !reading && !pushFlags {
+			say(clean(fmt.Sprintf("%s -> %s: a link with reading on is pulled every %s minutes", local, name, u.pullEvery)))
+			return
 		}
 		if reading && !pushFlags {
 			if u.noRead {
@@ -493,7 +513,26 @@ func upstreamReadLine(l upLink) string {
 	if l.Stale {
 		pulled += ", stale: members do not see the mirror until a pull completes (none in the last 7 days)"
 	}
-	return fmt.Sprintf("read: on, classes %s, sources %s%s, mirror %d notes (%s)%s", strings.Join(l.ReadClasses, ","), src, acc, l.Mirror, upstreamSize(l.MirrorBytes), pulled)
+	return fmt.Sprintf("read: on, classes %s, sources %s%s, mirror %d notes (%s)%s%s", strings.Join(l.ReadClasses, ","), src, acc, l.Mirror, upstreamSize(l.MirrorBytes), pulled, upstreamTimerLine(l))
+}
+
+// upstreamTimerLine: the automatic pull of a link that is read: how often, when next, how many failures in a row, or that the upstream's
+// refusal switched it off.
+func upstreamTimerLine(l upLink) string {
+	switch {
+	case l.PullEvery == 0:
+		return ""
+	case l.PullTimerOff:
+		return ", automatic pull off (the upstream refused it; accept the reach again with --read --accept-reach to switch it on)"
+	}
+	out := fmt.Sprintf(", pulled every %d min", l.PullEvery/60)
+	if l.PullNext != nil {
+		out += ", next pull " + l.PullNext.Local().Format("2006-01-02 15:04")
+	}
+	if l.PullFailCount > 0 {
+		out += fmt.Sprintf(" (%d failures in a row)", l.PullFailCount)
+	}
+	return out
 }
 
 func upstreamSize(b int64) string {

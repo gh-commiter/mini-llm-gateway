@@ -178,9 +178,11 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 			ReadSources string `json:"readSources"`
 			AcceptReach bool   `json:"acceptReach"`
 			ReadOnly    bool   `json:"readOnly"`
+			// the interval of the automatic pull, in minutes (a number, or a number in a string as a panel's choice sends it); nil keeps it
+			PullEvery *flexMinutes `json:"pullEvery"`
 		}
 		if len(body) > 0 && decodeStrict(body, &b) != nil {
-			return fail(400, "bad JSON body (team, remote, classes, withPrivate, auto, mode, read, readClasses, readSources, acceptReach, readOnly)")
+			return fail(400, "bad JSON body (team, remote, classes, withPrivate, auto, mode, read, readClasses, readSources, acceptReach, readOnly, pullEvery)")
 		}
 		var project, team int64 = id, 0
 		if b.Team {
@@ -199,7 +201,7 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		readOff := false
 		if method == "PUT" {
 			readOff, err = st.LinkUpstreamReport(ctx, core.LinkSpec{Project: project, Team: team, Upstream: seg[1], Remote: b.Remote, Classes: b.Classes, WithPrivate: b.WithPrivate, Auto: b.Auto, Mode: b.Mode,
-				Read: b.Read, ReadClasses: b.ReadClasses, ReadSources: b.ReadSources, AcceptReach: b.AcceptReach, ReadOnly: b.ReadOnly})
+				Read: b.Read, ReadClasses: b.ReadClasses, ReadSources: b.ReadSources, AcceptReach: b.AcceptReach, ReadOnly: b.ReadOnly, PullEvery: b.PullEvery.seconds()})
 		} else {
 			err = st.UnlinkUpstream(ctx, project, team, seg[1])
 		}
@@ -299,9 +301,9 @@ func ProbeUpstream(ctx context.Context, h UpstreamHost, upstream, deviceName, de
 	return "the upstream answered HTTP " + strconv.Itoa(status)
 }
 
-// adminUpstreamAuto serves POST /upstream-auto: one step of the automatic push (the next due link, if any). The gateway's timer calls the
+// adminUpstreamAuto serves POST /upstream-auto: one step of the automatic push and pull (ONE due link, pushed or pulled in turn). The gateway's timer calls the
 // store directly; this route is for a host whose timer lives outside the process that has the network (the Mac app drives the helper's
-// lane with it). It only ever pushes links the owner set to auto, to upstreams the owner added.
+// lane with it). It only ever pushes links the owner set to auto, and pulls links whose reach the owner accepted, on upstreams the owner added.
 func (a *API) adminUpstreamAuto(ctx context.Context, st *core.Store, method string, failErr func(error) (int, any, bool)) (int, any, bool) {
 	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
 	h := a.upstreamHost(ctx)
@@ -327,7 +329,7 @@ func (a *API) adminUpstreamAuto(ctx context.Context, st *core.Store, method stri
 			return inner(d)
 		}
 	}
-	run, err := st.AutoPush(ctx, h, sleep)
+	run, err := st.AutoStep(ctx, h, sleep)
 	if err != nil {
 		return failErr(err)
 	}
@@ -369,6 +371,37 @@ type adminLinkJSON struct {
 	ClassesText string `json:"classesText"`
 	// ConflictCount: how many publish-mode notes are in conflict (the list itself is in GET /upstream-links/{id}).
 	ConflictCount int `json:"conflictCount"`
+	// Reading, as text a panel shows and a confirmation fills in: the classes and the extra sources the link reads, and the interval in minutes.
+	ReadClassesText string `json:"readClassesText"`
+	ReadSourcesText string `json:"readSourcesText"`
+	PullEveryMin    int    `json:"pullEveryMin"`
+	// LastPullAgeText: how old the mirror is by this gateway's clock ("3 min"), empty before the first complete pull.
+	LastPullAgeText string `json:"lastPullAgeText"`
+}
+
+// flexMinutes is a number of minutes sent as a number or as a string of digits (a panel's choice field sends its value as text).
+type flexMinutes int
+
+func (m *flexMinutes) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 || n > 1<<20 {
+		return errors.New("minutes: a whole number")
+	}
+	*m = flexMinutes(n)
+	return nil
+}
+
+// seconds: nil stays nil (keep the interval); 0 minutes means "the default".
+func (m *flexMinutes) seconds() *int {
+	if m == nil {
+		return nil
+	}
+	n := int(*m) * 60
+	if n == 0 {
+		n = core.DefaultPullEvery
+	}
+	return &n
 }
 
 func toAdminLink(l core.UpstreamLinkInfo) adminLinkJSON {
@@ -383,6 +416,28 @@ func toAdminLink(l core.UpstreamLinkInfo) adminLinkJSON {
 	}
 	j.ClassesText = strings.Join(cs, ", ")
 	j.ConflictCount = len(l.Conflicts)
+	var rc []string
+	for _, c := range l.ReadClasses {
+		rc = append(rc, string(c))
+	}
+	j.ReadClassesText = strings.Join(rc, ", ")
+	j.ReadSourcesText = strings.Join(l.ReadSources, ", ")
+	if j.ReadSourcesText == "" {
+		j.ReadSourcesText = "-"
+	}
+	j.PullEveryMin = l.PullEvery / 60
+	if l.LastPullOK != nil {
+		switch sec := l.LastPullAge; {
+		case sec < 60:
+			j.LastPullAgeText = "under a minute"
+		case sec < 3600:
+			j.LastPullAgeText = strconv.Itoa(sec/60) + " min"
+		case sec < 86400:
+			j.LastPullAgeText = strconv.Itoa(sec/3600) + " h"
+		default:
+			j.LastPullAgeText = strconv.Itoa(sec/86400) + " d"
+		}
+	}
 	return j
 }
 

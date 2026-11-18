@@ -35,7 +35,7 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
             opts.withPrivate = o["withPrivate"] as? Bool ?? false; opts.dryRun = o["dryRun"] as? Bool ?? false
             opts.upstream = o["upstream"] as? String ?? ""
             opts.read = o["read"] as? Bool ?? false; opts.noRead = o["noRead"] as? Bool ?? false; opts.acceptReach = o["acceptReach"] as? Bool ?? false
-            opts.readClass = o["readClass"] as? String ?? ""; opts.readSources = o["readSources"] as? String ?? ""
+            opts.readClass = o["readClass"] as? String ?? ""; opts.readSources = o["readSources"] as? String ?? ""; opts.pullEvery = o["pullEvery"] as? String ?? ""
             let stdin = c["stdin"] as? String ?? ""
             opts.tokenInput = { stdin }
             var exit: Int32 = 0, errText = ""
@@ -827,6 +827,93 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         let st = obj(await adm(h, "GET", "/upstreams"))
         #expect(((st["links"] as? [[String: Any]])?.first?["mirror"] as? Int) == 1)
         #expect(t.calls.allSatisfy { $0.method == "GET" })
+    }
+
+    /// C4 on the Mac: the app's timer step (POST /upstream-auto) also pulls a link whose reading the owner accepted: through the same callouts
+    /// (GET only), once, and then not again before the interval; a link with reading off is never pulled; a member cannot ask for a step.
+    @Test func theAutoRouteAlsoPullsALinkWithReadingOnAndWaitsItsInterval() async throws {
+        let secrets = MemorySecrets(), t = fakeUpstream()
+        let inner = t.handler
+        t.handler = { c in
+            switch (c.method, c.path) {
+            case ("GET", "/minigw/v1/projects/7/kb/manifest"):
+                return UpstreamAnswer(status: 200, body: Data(#"{"v":1,"sources":[{"id":7,"label":"project:shop"}],"notes":[{"id":4,"source":7,"rev":2,"class":"structure","kind":"finding"}],"truncated":false}"#.utf8))
+            case ("GET", "/minigw/v1/projects/7/notes/4"):
+                return UpstreamAnswer(status: 200, body: Data(#"{"id":4,"project":7,"class":"structure","title":"Deploy order","body":"first the db","updated":"2026-11-17T09:00:00Z","revision":2,"entryKind":"finding"}"#.utf8))
+            default: return inner(c)
+            }
+        }
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let (h, _) = try await start(callouts: UpstreamHost(secrets: secrets, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac"))
+        defer { h.stop() }
+        _ = await adm(h, "PUT", "/upstreams/hub", #"{"address":"hub.example","token":"tok#\#(Noise.base64url(Noise.newKey().publicKey.rawRepresentation))"}"#)
+        _ = await adm(h, "PUT", "/bindings/dev-A", #"{"user":1}"#)
+        _ = await adm(h, "POST", "/projects", #"{"slug":"shop","name":"Shop"}"#)
+        _ = await adm(h, "PUT", "/projects/1/members/1", #"{"role":"developer"}"#)
+        #expect((await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop"}"#)).status == 200)
+        let before = t.calls.count  // the add and the link asked the upstream already
+        let off = obj(await adm(h, "POST", "/upstream-auto"))
+        #expect(off["ran"] as? Bool == false && t.calls.count == before, "reading off: nothing is asked of the upstream: \(off)")
+        #expect((await adm(h, "PUT", "/upstreams/hub/links/1", #"{"read":true,"readOnly":true,"remote":"shop","acceptReach":true,"pullEvery":"30"}"#)).status == 200)
+        let step = obj(await adm(h, "POST", "/upstream-auto"))
+        let pull = step["pull"] as? [String: Any]
+        #expect(step["ran"] as? Bool == true && pull?["added"] as? Int == 1 && pull?["mirror"] as? Int == 1, "\(step)")
+        let again = obj(await adm(h, "POST", "/upstream-auto"))
+        let next = again["next"] as? Int ?? 0
+        #expect(again["ran"] as? Bool == false && (1700...1801).contains(next), "\(again)")  // the interval the owner set: 30 minutes
+        #expect(t.calls.allSatisfy { $0.method == "GET" })
+        let st = (obj(await adm(h, "GET", "/upstreams"))["links"] as? [[String: Any]])?.first
+        #expect(st?["mirror"] as? Int == 1 && st?["pullEvery"] as? Int == 1800 && st?["pullNext"] != nil && st?["pullTimerOff"] == nil)
+        let member = CoreContext(kind: .member, device: "dev-A", approved: true)
+        #expect((await h.call(context: member, request: CoreRequest(method: "POST", path: "/upstream-auto"))).status != 200)
+        #expect((await h.call(context: member, request: CoreRequest(method: "POST", path: "/upstream-pull", body: Data(#"{"project":1}"#.utf8)))).status != 200)
+    }
+
+    /// C4 security question: a push and a pull of one link never run at the same time on the lane. A pull (the timer's step) is inside its
+    /// manifest callout when a push of the same link is asked for: the upstream never sees two requests at once, and nothing is sent while
+    /// the pull is in flight.
+    @Test func aPushAndAPullOfOneLinkNeverRunAtTheSameTimeOnTheLane() async throws {
+        let secrets = MemorySecrets(), t = fakeUpstream()
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var inflight = 0, maxInflight = 0, postsWhilePulling = 0, pulling = false
+        let lock = NSLock()
+        let inner = t.handler
+        t.handler = { c in
+            lock.lock(); inflight += 1; maxInflight = max(maxInflight, inflight); if pulling && c.method == "POST" { postsWhilePulling += 1 }; lock.unlock()
+            defer { lock.lock(); inflight -= 1; lock.unlock() }
+            if c.method == "GET" && c.path == "/minigw/v1/projects/7/kb/manifest" {
+                lock.lock(); pulling = true; lock.unlock()
+                entered.signal(); _ = release.wait(timeout: .now() + 20)
+                lock.lock(); pulling = false; lock.unlock()
+                return UpstreamAnswer(status: 200, body: Data(#"{"v":1,"sources":[{"id":7,"label":"project:shop"}],"notes":[],"truncated":false}"#.utf8))
+            }
+            return inner(c)
+        }
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let (h, _) = try await start(callouts: UpstreamHost(secrets: secrets, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac"))
+        defer { h.stop() }
+        _ = await adm(h, "PUT", "/upstreams/hub", #"{"address":"hub.example","token":"tok#\#(Noise.base64url(Noise.newKey().publicKey.rawRepresentation))"}"#)
+        _ = await adm(h, "PUT", "/bindings/dev-A", #"{"user":1}"#)
+        _ = await adm(h, "POST", "/projects", #"{"slug":"shop","name":"Shop"}"#)
+        _ = await adm(h, "PUT", "/projects/1/members/1", #"{"role":"developer"}"#)
+        let member = CoreContext(kind: .member, device: "dev-A", approved: true)
+        _ = await h.call(context: member, request: CoreRequest(method: "POST", path: "/minigw/v1/projects/1/notes", header: ["Idempotency-Key": ["k"]], body: Data(#"{"class":"data","title":"N","body":"t"}"#.utf8)))
+        _ = await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop"}"#)
+        #expect((await adm(h, "PUT", "/upstreams/hub/links/1", #"{"read":true,"readOnly":true,"remote":"shop","acceptReach":true}"#)).status == 200)
+        let pull = Task { await self.adm(h, "POST", "/upstream-auto") }
+        var inCallout = false
+        for _ in 0..<300 where !inCallout { inCallout = entered.wait(timeout: .now()) == .success; if !inCallout { try await Task.sleep(for: .milliseconds(50)) } }
+        #expect(inCallout)  // the pull is waiting for the upstream, inside its callout
+        let push = Task { await self.adm(h, "POST", "/upstream-push", #"{"project":1}"#) }
+        try await Task.sleep(for: .milliseconds(400))
+        lock.lock(); let early = postsWhilePulling; lock.unlock()
+        #expect(early == 0, "a push went out while the pull was in flight")
+        release.signal()
+        let pulled = await pull.value, pushed = await push.value
+        #expect(pulled.status == 200, "pull step answered \(pulled.status)")
+        #expect(pushed.status == 200 || pushed.status == 400, "push answered \(pushed.status)")  // refused as running, or run after the pull
+        lock.lock(); let most = maxInflight, posts = postsWhilePulling; lock.unlock()
+        #expect(most == 1 && posts == 0, "the upstream saw \(most) requests at once")
     }
 
     @Test func aWriteLimitThatCannotBeWaitedOutEndsTheCallWithMore() async throws {

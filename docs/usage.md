@@ -1507,14 +1507,15 @@ owner decides what it may do with the existing means.
 **Reading the upstream's notes (the mirror, the manual pull and what members see).** A link can also *read*: the gateway keeps a bounded **mirror**
 of the notes the upstream's device user may read in the linked project, in a table of its own (`upstream_mirror`), never among the local
 notes. The members of the local project find it in `kb search`, `kb faq`, `note read` and `kb mcp`, marked as coming from the upstream
-(see "What members see of the mirror" below). Nothing pulls by itself yet (automatic pull and a panel are step C4), and it has not been
-tried between two real gateways.
+(see "What members see of the mirror" below). A link with reading on is also **pulled by itself** (see "Automatic pull" below), so the
+mirror stays fresh with no command typed; the Upstream gateways panel has a Reading section for all of it.
 
 ```text
 minigw gw upstream pull <project> --dry-run      # first look: what the upstream's user could read (sources, classes, counts)
 minigw gw upstream link <project> hub --read [--read-class structure,data] [--read-sources team:acme,project:eureko] --accept-reach
 minigw gw upstream pull [<project>|--team <team>]   # fills the mirror; asks again until it is through
 minigw gw upstream status                           # read on/off, accepted reach, mirror notes and size, last pull and its age, last error
+minigw gw upstream link <project> hub --pull-every 30   # how often a link with reading on is pulled by itself (minutes, 5 to 1440; default 15)
 minigw gw upstream link <project> hub --no-read      # reading off: the mirror is deleted
 ```
 
@@ -1562,9 +1563,44 @@ hits are left out and the search says `hub results left out: took too long`; the
 `note edit`, `note delete`, `kb submit --replaces` and `gw upstream resolve` answer such an id as an unknown one, and they are never
 pushed back or exported. A page of 20 hits keeps the local notes first: up to 15 local hits and 5 from the mirror, and slots one side
 does not use go to the other; FAQ entries of the mirror come on the first page after the local ones (at most 20). A note this gateway
-pushed shows once (the local note), not again as the upstream's copy. A mirror without a complete pull for **7 days** is hidden from
+pushed shows once (the local note), not again as the upstream's copy, **as long as the upstream's copy is the version we sent**: when a
+note this gateway published (publish mode) was then changed on the upstream (a conflict, or simply someone edited it there), the
+revision there has moved past the one our push recorded, and members see the upstream's version too, marked and quoted like any
+mirrored note, with one more line under the marker: `[differs from the local note 12: the hub's copy was changed there after this gateway sent it]`.
+The owner's `gw upstream status` keeps listing the conflict, and `resolve --theirs` (the recorded revision becomes the upstream's: the
+copy is hidden again) and `resolve --ours` (our version goes as a submission; the copy stays visible meanwhile) work as before. A copy of
+a note sent as a submission (no note id there is known here) is still recognised by the trailer at the end of its text and hidden. A mirror without a complete pull for **7 days** is hidden from
 members (not deleted) and `gw upstream status` says "stale" until a pull goes through. Reading never contacts the upstream: an
 offline laptop or a stopped hub answers from the mirror within the usual search deadline.
+
+**Automatic pull (links with reading on).** Every link with reading on, whose reach you accepted, is pulled by the gateway itself every
+**15 minutes** (the link's own interval: `link <project> <name> --pull-every <minutes>`, 5 to 1440, or **Set Pull Interval** in the panel). On
+Windows and Linux the gateway's timer does it; on the Mac the app's timer asks the helper for one step at a time (the helper's answer says
+when the next one is due) and never while the app is shutting down. A step is one link, pushed or pulled: the two are tried in turn, so
+neither starves the other. A pull is the same run as `pull` by hand (the same bounds per run: 200 notes, a few seconds on the Mac); a run
+that is not through ends with "more" and continues at the next tick from its cursor. A successful pull schedules the next one an interval
+ahead. A failure backs off from a minute, doubling up to an hour, with jitter, and a run that made no progress counts as a failure. If the
+upstream **refuses** the device (401/403) or no longer knows the project, the mirror is deleted at once, as in a pull by hand, and the
+**timer for that link is switched off** with the error left visible in `status` and the panel; it is switched on again by accepting the
+reach again (`--read --accept-reach`) or by a pull by hand that goes through. A pull never runs at the same time as a push of the same
+link: whichever comes second is refused and tries again a second later, and one automatic pull holds the link for at most 45 seconds, so a
+push is never kept waiting for the 5 minutes of a long pull. `gw upstream status` shows the interval, the next attempt, the failures in a
+row and, when the timer is off, why. The audit log gets one row (`upstream.auto-pull`: counts only, never a title) for a run that added,
+changed or removed something, and otherwise one per change of outcome. With the timer on the mirror stays fresh, so the 7-day
+"stale" state only happens when the upstream cannot be reached for a week (or the timer was switched off). The timer contacts only an
+upstream you added and a link whose reach you accepted (never one of an archived project or team); no member can start or change it. It has been tried only in tests, not between
+two real gateways.
+
+**The panel.** The Upstream gateways pane (the Mac app, and the `minigw serve` settings page) has a section **Reading from upstream
+gateways** under the links. Per link it shows whether reading is on, the classes and extra sources, the interval, the notes in the mirror,
+the last complete pull, the next pull and, when it is not hidden, nothing more; **Open** adds the accepted time, the size and age of the
+mirror, the last try, the failures in a row, whether the automatic pull is off, the last error and "hidden from members" (stale).
+Actions: **Dry Run** (asks the upstream what its user for this gateway may read and shows the sources and counts; writes nothing),
+**Turn Reading On…** and **Turn Reading On With Data…** (a confirmation names the upstream, the project or team there, the classes and
+the extra sources you typed, says that members of the local project will find it, and that confirming records that you accept this
+reach: the same acceptance as `--read --accept-reach`), **Change What Is Read…** (new classes and sources; a new confirmation, the mirror
+is deleted and refilled), **Turn Reading Off** (deletes the mirror at once), **Set Pull Interval…** and **Pull Now** (one bounded run; the
+report says when it is not finished: press it again). Every action that contacts the upstream or changes what is read asks first.
 
 **What leaves the gateway with a push**, exactly: for each note its title, class, kind (finding or faq) and body; one line at the end of the
 body with an opaque reference (a hash of this gateway, the link and the note: stable for the note, it says nothing about this gateway) and

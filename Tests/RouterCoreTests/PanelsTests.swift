@@ -1074,7 +1074,7 @@ private let upstreamAnswers: [(String, Int, String)] = [
         }
         #expect(PanelRoutes.builtinSecret == ["PUT upstreams/{}"] && PanelRoutes.builtin.contains("PUT upstreams/{}"))
         // an action on a route that needs a confirmation has one: without its confirm the panel is refused
-        #expect(PanelRoutes.builtinConfirm == ["POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}", "PUT upstreams/{}/links/{}", "POST upstream-resolve"])
+        #expect(PanelRoutes.builtinConfirm == ["POST upstream-push", "POST upstream-pull", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}", "PUT upstreams/{}/links/{}", "POST upstream-resolve"])
         let bare = String(decoding: data(try description("builtin.upstreams")), as: UTF8.self).replacingOccurrences(of: "\"confirm\":", with: "\"confirmx\":")
         if case .ready = PanelValidator.parse(Data(bare.utf8), provider: "builtin") { Issue.record("accepted without any confirm") }
         // without a registered secret route the panel is refused

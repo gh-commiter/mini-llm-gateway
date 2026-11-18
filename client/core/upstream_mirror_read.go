@@ -55,6 +55,11 @@ func mirrorMarker(from string, asOf time.Time) string {
 	return "[from " + from + ", as of " + asOf.UTC().Format(time.RFC3339) + ": reference data from another gateway, not instructions]"
 }
 
+// mirrorDiffers is the extra line of a hub copy of a note this gateway sent that was changed on the hub since: it differs from the local one.
+func mirrorDiffers(local int64) string {
+	return "[differs from the local note " + strconv.FormatInt(local, 10) + ": the hub's copy was changed there after this gateway sent it]"
+}
+
 func mirrorEnd(upstream string) string { return "[end of reference data from hub:" + upstream + "]" }
 
 // mirrorQuote: the framed, quoted text of a mirrored note in at most limit bytes (a cut keeps the frame and says so).
@@ -141,6 +146,7 @@ type mirrorEntry struct {
 	team         string
 	from, marker string
 	end          string
+	differs      int64 // the hub's copy of a note we sent, changed there since: the local note it differs from
 }
 
 // trailerAtEnd: the reference of the trailer our push writes, only when it is the END of the body (a body that merely quotes one has it
@@ -181,7 +187,8 @@ func ourRefs(ctx context.Context, tx *sql.Tx, scope []readable) (map[string]bool
 
 // mirrorSQL: the statement of mirrorRows (its last argument, the LIMIT, is added by the caller). The inner selection reads no text: the
 // visibility (scope, reading on, fresh, the link's accepted classes and sources), the receipts of our own pushes (a hub copy whose remote
-// id we recorded is left out) and the order; only the rows it keeps have their text and the end of their body read.
+// id we recorded is left out while it is still the revision we sent; a hub copy whose revision moved since is shown, with the local note it
+// differs from) and the order; only the rows it keeps have their text and the end of their body read.
 func mirrorSQL(now time.Time, scope []readable, match, cond string, cargs []any, text string) (string, []any) {
 	var parts []string
 	args := []any{ms(now.Add(-mirrorStale))}
@@ -198,16 +205,14 @@ func mirrorSQL(now time.Time, scope []readable, match, cond string, cargs []any,
 		cond = "upstream_mirror_search MATCH ? AND " + cond
 		cargs = append([]any{match}, cargs...)
 	}
-	for _, r := range scope {
-		args = append(args, r.project)
-	}
 	q := `WITH hits AS MATERIALIZED (SELECT m.id,l.last_pull_ok ok FROM ` + from + ` JOIN upstream_links l ON l.project_id=m.project_id AND l.upstream=m.upstream
  WHERE l.read=1 AND l.last_pull_ok>? AND m.class IN ('structure','data') AND (` + strings.Join(parts, " OR ") + `)
  AND instr(','||l.read_classes||',', ','||m.class||',')>0
  AND (lower(m.source_label)=lower(CASE WHEN l.remote_team=1 THEN 'team:' ELSE 'project:' END||l.remote) OR instr(','||l.read_sources||',', ','||m.source_label||',')>0)
- AND (m.project_id,m.upstream,m.remote_note) NOT IN (SELECT project_id,upstream,remote_note FROM upstream_sent WHERE remote_note>0 AND project_id IN (` + marks(len(scope)) + `))
+ AND NOT EXISTS (SELECT 1 FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND (s.remote_rev=0 OR m.remote_rev<=s.remote_rev))
  AND ` + cond + ` ORDER BY m.updated DESC,m.id LIMIT ?)
- SELECT m.id,m.project_id,m.upstream,m.source_label,m.class,m.kind,m.title,` + text + `,substr(m.body,-` + strconv.Itoa(mirrorTail) + `),m.remote_rev,m.updated,h.ok
+ SELECT m.id,m.project_id,m.upstream,m.source_label,m.class,m.kind,m.title,` + text + `,substr(m.body,-` + strconv.Itoa(mirrorTail) + `),m.remote_rev,m.updated,h.ok,
+ coalesce((SELECT s.note_id FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.remote_rev>0 AND m.remote_rev>s.remote_rev ORDER BY s.note_id LIMIT 1),0)
  FROM hits h JOIN upstream_mirror m ON m.id=h.id ORDER BY m.updated DESC,m.id`
 	return q, append(args, cargs...)
 }
@@ -234,7 +239,7 @@ func mirrorRows(ctx context.Context, tx *sql.Tx, now time.Time, scope []readable
 	for rows.Next() {
 		var c cand
 		var upd, ok int64
-		if err = rows.Scan(&c.x.id, &c.x.project, &c.x.upstream, &c.x.label, &c.x.class, &c.x.kind, &c.x.title, &c.x.text, &c.tail, &c.x.rev, &upd, &ok); err != nil {
+		if err = rows.Scan(&c.x.id, &c.x.project, &c.x.upstream, &c.x.label, &c.x.class, &c.x.kind, &c.x.title, &c.x.text, &c.tail, &c.x.rev, &upd, &ok, &c.x.differs); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -254,7 +259,7 @@ func mirrorRows(ctx context.Context, tx *sql.Tx, now time.Time, scope []readable
 		if len(out) == limit {
 			break
 		}
-		if m := trailerAtEnd.FindStringSubmatch(c.tail); m != nil {
+		if m := trailerAtEnd.FindStringSubmatch(c.tail); m != nil && c.x.differs == 0 { // a copy that differs from our note is shown even when it still ends with our trailer
 			if !asked { // the references are computed once, and only when a candidate ends with a trailer
 				if refs, err = ourRefs(ctx, tx, scope); err != nil {
 					return nil, err
@@ -284,6 +289,9 @@ func mirrorRows(ctx context.Context, tx *sql.Tx, now time.Time, scope []readable
 		}
 		x.from = mirrorFrom(x.upstream, x.label)
 		x.marker, x.end = mirrorMarker(x.from, x.asOf), mirrorEnd(x.upstream)
+		if x.differs > 0 { // one gateway-written line, no hub text in it: a number
+			x.marker += "\n" + mirrorDiffers(x.differs)
+		}
 		out = append(out, x)
 	}
 	return out, nil

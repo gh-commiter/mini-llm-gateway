@@ -78,6 +78,7 @@ func (s *Store) markUpstreamDirty(tx *sql.Tx, project int64) error {
 type AutoRun struct {
 	Ran  bool          `json:"ran"`
 	Push *UpstreamPush `json:"push,omitempty"`
+	Pull *UpstreamPull `json:"pull,omitempty"`
 	// Next: how long until the next link can be due (0: none is dirty), for a timer that wants to sleep; at least a second.
 	Next        time.Duration `json:"-"`
 	NextSeconds int           `json:"next"`
@@ -243,4 +244,117 @@ func (s *Store) jitterFn() func() float64 {
 		return s.jitter
 	}
 	return rand.Float64
+}
+
+// autoPullSlice: the longest one automatic pull holds the link's lock (a push of the same link that finds it busy comes back after a second:
+// a pull never keeps it for its whole five minutes). A run that is not through ends with "more" and its cursor and goes on at the next
+// tick. A variable so that a test can look at the deadline.
+var autoPullSlice = 45 * time.Second
+
+// pullDue: the links the timer reads (reading on, timer on), never one of an archived project or team (as a push sends nothing for one);
+// its one argument is segmentBase.
+const pullDue = `read=1 AND pull_timer=1 AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id=upstream_links.project_id AND p.archived=1) AND NOT EXISTS (SELECT 1 FROM teams t WHERE t.id=upstream_links.project_id-?1 AND t.archived=1)`
+
+// AutoPull pulls ONE due link: reading on, the timer on, next attempt reached (the one that waited longest). It is the same run as a pull
+// by hand (the same bounds per run: note GETs, time, the upstream's read limit), under the same lock as a push; it only ever contacts an
+// upstream the owner added and a link whose reach the owner accepted. A cancelled ctx (the gateway is shutting down) pulls nothing.
+func (s *Store) AutoPull(ctx context.Context, tr UpstreamTransport, sleep func(time.Duration) bool) (AutoRun, error) {
+	var run AutoRun
+	if ctx.Err() != nil {
+		return run, nil
+	}
+	now := ms(s.now())
+	var project int64
+	var upstream string
+	var found bool
+	err := s.read(ctx, func(tx *sql.Tx) error {
+		switch e := tx.QueryRow(`SELECT project_id,upstream FROM upstream_links WHERE `+pullDue+` AND pull_next<=? ORDER BY pull_next,project_id,upstream LIMIT 1`, segmentBase, now).Scan(&project, &upstream); e {
+		case nil:
+			found = true
+		case sql.ErrNoRows:
+		default:
+			return e
+		}
+		return nil
+	})
+	if err != nil {
+		return run, err
+	}
+	next := func() { run.Next = s.autoPullNext(ctx, ms(s.now())); run.NextSeconds = int(run.Next / time.Second) }
+	if !found {
+		next()
+		return run, nil
+	}
+	links, err := s.UpstreamLinks(ctx, 0, 0)
+	if err != nil {
+		return run, err
+	}
+	for _, l := range links {
+		if l.Project != project || l.Upstream != upstream {
+			continue
+		}
+		sctx, cancel := context.WithTimeout(ctx, autoPullSlice)
+		res, err := s.pullLink(sctx, tr, l.UpstreamLink, l.Label, sleep, true)
+		cancel()
+		var busy errPushRunning
+		if errors.As(err, &busy) { // a push or a pull by hand of this link is running: it records its outcome; the timer comes back
+			next()
+			return run, nil
+		}
+		if err != nil {
+			return run, err
+		}
+		run.Ran, run.Pull = true, &res
+		break
+	}
+	next()
+	return run, nil
+}
+
+// autoPullNext: how long until the soonest link with the timer on is due (never below a second; 0 = no link is read by the timer).
+func (s *Store) autoPullNext(ctx context.Context, now int64) time.Duration {
+	var soonest sql.NullInt64
+	s.read(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRow(`SELECT min(pull_next) FROM upstream_links WHERE `+pullDue, segmentBase).Scan(&soonest)
+	})
+	if !soonest.Valid {
+		return 0
+	}
+	return max(time.Duration(soonest.Int64-now)*time.Millisecond, time.Second)
+}
+
+// AutoStep is one step of the gateway's timer: ONE link, pushed or pulled. The two are tried in turn (after a push the pull is tried
+// first, after a pull the push), so a link that is always due for one cannot keep the other from its turn. When nothing ran, Next is the
+// shortest wait of the two kinds.
+func (s *Store) AutoStep(ctx context.Context, tr UpstreamTransport, sleep func(time.Duration) bool) (AutoRun, error) {
+	s.autoMu.Lock()
+	steps := []func(context.Context, UpstreamTransport, func(time.Duration) bool) (AutoRun, error){s.AutoPush, s.AutoPull}
+	if s.autoPushed {
+		steps[0], steps[1] = steps[1], steps[0]
+	}
+	s.autoMu.Unlock()
+	var out AutoRun
+	for _, step := range steps {
+		r, err := step(ctx, tr, sleep)
+		if err != nil {
+			return out, err
+		}
+		if r.Ran {
+			s.autoMu.Lock()
+			s.autoPushed = r.Push != nil
+			s.autoMu.Unlock()
+			return r, nil
+		}
+		out.Next = shorter(out.Next, r.Next)
+	}
+	out.NextSeconds = int(out.Next / time.Second)
+	return out, nil
+}
+
+// shorter: the smaller of two waits, 0 meaning "none".
+func shorter(a, b time.Duration) time.Duration {
+	if a == 0 || b != 0 && b < a {
+		return b
+	}
+	return a
 }

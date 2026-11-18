@@ -51,8 +51,8 @@ func TestMigration20To23AddsLabelsImportObjectsAndTraversal(t *testing.T) {
 	if snaps, _ := filepath.Glob(filepath.Join(dir, "core-20-*.db")); len(snaps) != 1 {
 		t.Fatal("no snapshot of schema 20", snaps)
 	}
-	if v, _ := schemaVersion(ctx, s.DB()); v != 24 || len(migrations) != 24 {
-		t.Fatal("schema after 20 -> 24:", v, len(migrations)) // 21 labels, 22 import objects, 23 push traversal, 24 upstream mirror
+	if v, _ := schemaVersion(ctx, s.DB()); v != 25 || len(migrations) != 25 {
+		t.Fatal("schema after 20 -> 25:", v, len(migrations)) // 21 labels, 22 import objects, 23 push traversal, 24 upstream mirror, 25 automatic pull
 	}
 	if _, err = s.DB().Exec(`SELECT source,kind,id,name,adopted FROM import_objects`); err != nil {
 		t.Fatal(err)

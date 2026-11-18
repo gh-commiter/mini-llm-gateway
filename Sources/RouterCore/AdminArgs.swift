@@ -6,7 +6,7 @@ public enum AdminArgs {
     /// Options that take a value (`--x v`); any other `--x` is a switch.
     public static let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder",
                                              "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider",
-                                             "sort", "reason", "team", "by", "phase", "activity", "task", "label-source", "remote-project", "remote-team", "class", "device-name", "mode", "upstream", "version", "read-class", "read-sources", "file"]
+                                             "sort", "reason", "team", "by", "phase", "activity", "task", "label-source", "remote-project", "remote-team", "class", "device-name", "mode", "upstream", "version", "read-class", "read-sources", "pull-every", "file"]
 
     /// The options `gw usage` accepts (the report and --legacy); every option its help text names must be here.
     public static let usageFlags: Set<String> = ["days", "provider", "model", "sort", "json", "csv", "legacy", "device", "folder", "user", "project",

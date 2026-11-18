@@ -5,10 +5,11 @@ import (
 	"time"
 )
 
-// The automatic upstream push on `minigw serve`: one goroutine that looks every few seconds for a link the owner set to auto that is dirty,
-// quiet for the debounce and past its back-off, and pushes it, one link at a time (core.Store.AutoPush). It contacts only upstreams the
-// owner added and links the owner set to auto, and stops (cancelling a push in flight) when the gateway shuts down. The outbox is in the
-// database, so a restart loses nothing. The Mac app has the same loop in Swift, which asks the helper through POST /upstream-auto.
+// The automatic upstream push and pull on `minigw serve`: one goroutine that looks every few seconds for a link the owner set to auto that is
+// dirty, quiet for the debounce and past its back-off, or a link with reading on whose pull is due (every pull_every, 15 minutes by default),
+// and pushes or pulls it, one link at a time (core.Store.AutoStep: push and pull in turn). It contacts only upstreams the owner added, links
+// the owner set to auto and links whose reach the owner accepted, and stops (cancelling a run in flight) when the gateway shuts down. The
+// outbox and the pull times are in the database, so a restart loses nothing. The Mac app has the same loop in Swift, which asks the helper through POST /upstream-auto.
 func (s *server) startUpstreamAuto() {
 	stop, done := make(chan struct{}), make(chan struct{})
 	s.autoStop, s.autoDone = stop, done
@@ -43,9 +44,9 @@ func (s *server) startUpstreamAuto() {
 			case <-time.After(wait):
 			}
 			for { // drain: one link per call, the next at once while links are due
-				run, err := st.AutoPush(ctx, upstreamHost{s}, sleep)
+				run, err := st.AutoStep(ctx, upstreamHost{s}, sleep)
 				if err != nil {
-					s.log.Printf("automatic upstream push: %v", err)
+					s.log.Printf("automatic upstream push or pull: %v", err)
 					break
 				}
 				if !run.Ran || ctx.Err() != nil {
