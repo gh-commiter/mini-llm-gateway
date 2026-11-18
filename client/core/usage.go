@@ -208,7 +208,10 @@ func finishEvent(tx *sql.Tx, e UsageEvent) error {
 	}
 	_, err := tx.Exec(`UPDATE usage_events SET duration_ms=?, upstream_status=?, error_kind=?, cost_usd_nanos=?, cost_source=?, cache_read_tokens=?, cache_write_tokens=?, upstream_model=COALESCE(upstream_model,?), end=?, outcome=?, tokens_in=?, tokens_out=?, token_source=?, project_id=COALESCE(project_id,?), provider=CASE WHEN provider='' THEN ? ELSE provider END
 WHERE id=? AND outcome IN('open','interrupted')`, dur, status, kind, e.CostUsdNanos, source, validCacheTokens(e.CacheReadTokens), validCacheTokens(e.CacheWriteTokens), nullStr(capStr(e.UpstreamModel, 256)), ms(e.End), e.Outcome, nullTok(e.TokensIn), nullTok(e.TokensOut), e.TokenSource, nullID(e.ProjectID), capStr(e.Provider, 64), e.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	return propagateModelLabels(tx, e.ID)
 }
 
 func validCacheTokens(n *int64) *int64 {

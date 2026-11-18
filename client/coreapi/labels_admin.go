@@ -27,6 +27,8 @@ func (a *API) adminLabels(ctx context.Context, st *core.Store, method, name stri
 		}
 		return 200, row(l), true
 	case "PUT settings":
+		a.labelsMu.Lock()
+		defer a.labelsMu.Unlock()
 		var p core.LabelSettingsPatch
 		if decodeStrict(body, &p) != nil {
 			return bad("settings: enabled, backend, threshold, maxPerHour, shadow, shadowRate, activities")
@@ -34,6 +36,9 @@ func (a *API) adminLabels(ctx context.Context, st *core.Store, method, name stri
 		l, err := st.SetLabelSettings(ctx, p)
 		if err != nil {
 			return failErr(err)
+		}
+		if a.o.LabelsChanged != nil {
+			a.o.LabelsChanged(l)
 		}
 		return 200, row(l), true
 	case "GET agreement":

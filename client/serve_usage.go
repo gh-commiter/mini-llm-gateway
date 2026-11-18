@@ -30,6 +30,11 @@ func (s *server) admitEvent(r *req, model string) {
 	// limits (a modified client): a value that is not a safe token is dropped, the request goes on.
 	e.Phase, e.Activity = core.SafeWordLabel(r.h("x-claude-mini-phase")), core.SafeWordLabel(r.h("x-claude-mini-activity"))
 	e.Task, e.TaskSource = core.SafeTaskLabel(r.h("x-claude-mini-task")), r.h("x-claude-mini-task-source")
+	if e.Task == "" {
+		e.TaskSource = ""
+	} else if e.TaskSource != core.LabelBranch {
+		e.TaskSource = core.LabelGiven
+	}
 	if run := runOf(r); run != nil { // a nested call: the caller's event is the parent; its user and project are inherited
 		e.ParentID, e.UserID = run.evID, run.evUser
 		e.Phase, e.Activity, e.Task, e.TaskSource = run.phase, run.activity, run.task, run.taskSource
@@ -59,6 +64,9 @@ func (s *server) dispatched(r *req) {
 		e.BillingMode = "local"
 	}
 	s.api.EventBegin(*e)
+	if !r.deferLabels {
+		s.enqueueLabels(r)
+	}
 }
 
 // endEvent completes the event of a request that was dispatched; any status then is an outcome (an upstream 4xx is an

@@ -1,0 +1,7 @@
+[
+ {"name":"remove-reminders","input":"<system-reminder>private instructions</system-reminder>\nFix the crash\n<system-reminder>more instructions</system-reminder>","expected":"Fix the crash"},
+ {"name":"attached-read-name","input":"<system-reminder>Called the Read tool with the following input: {\"file_path\":\"src/main.go\"}</system-reminder>","expected":"Attached file src/main.go:"},
+ {"name":"attached-read-result","input":"<system-reminder>Result of calling the Read tool:\n  1\talpha\n  2\tbeta\n</system-reminder>","expected":"```\nalpha\nbeta\n```"},
+ {"name":"multiple","input":"before<system-reminder>a</system-reminder> middle <system-reminder>b</system-reminder>after","expected":"before middle after"},
+ {"name":"unicode","input":"  Popravi 🐛 napako  ","expected":"Popravi 🐛 napako"}
+]

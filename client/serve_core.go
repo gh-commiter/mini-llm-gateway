@@ -57,10 +57,14 @@ func (s *server) openCore() {
 		return // no recorder and no spool file while the core is not open (#106 S3: nothing is written next to protected data)
 	}
 	s.api.StartRecorder()
+	if l, e := s.core.LabelSettings(context.Background()); e == nil {
+		s.labels.open(l)
+	}
 	s.startUpstreamAuto()
 }
 
 func (s *server) closeCore() {
+	s.labels.stop()
 	s.stopUpstreamAuto() // before the store closes: a push in flight is cancelled and waited for
 	s.api.StopRecorder() // drain the usage queue while the core is still open
 	if s.core != nil {
@@ -82,7 +86,8 @@ func (s *server) ensureOwner(st *core.Store) error {
 // newAPI builds the core's request handler for this server (docs/core-adapter.md).
 func (s *server) newAPI() *coreapi.API {
 	return coreapi.New(coreapi.Options{
-		Store: func() *core.Store { return s.core },
+		LabelsChanged: s.labels.configure,
+		Store:         func() *core.Store { return s.core },
 		Unavailable: func() string {
 			if s.coreErr != nil {
 				return s.coreErr.Error()

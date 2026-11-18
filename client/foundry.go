@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -50,6 +51,66 @@ var (
 	foundryCommand     = runFoundryCLI // testi: lažen CLI
 	errFoundryNotFound = errors.New("Foundry Local is not installed (Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal)")
 )
+
+// foundryComplete calls Foundry directly, without the message handler or response body logging.
+func (s *server) foundryComplete(ctx context.Context, model, system, user string) (string, error) {
+	fc := s.conf().Foundry
+	if !fc.Enabled || !fc.modelEnabled(model) || !foundryValidModel(model) {
+		return "", errors.New("foundry unavailable")
+	}
+	base, err := s.foundryEndpoint(ctx)
+	if err != nil {
+		return "", errors.New("foundry unavailable")
+	}
+	return foundryLabelCompletion(ctx, base, model, system, user)
+}
+
+func foundryLabelCompletion(ctx context.Context, base, model, system, user string) (string, error) {
+	// Numeric loopback only: no DNS, credentials, query, proxy or redirects.
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Port() == "" {
+		return "", errors.New("foundry endpoint refused")
+	}
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil || !ip.IsLoopback() {
+		return "", errors.New("foundry endpoint refused")
+	}
+	if !foundryValidModel(model) {
+		return "", errors.New("foundry model refused")
+	}
+	if err := foundryGet(ctx, base+"/openai/load/"+url.PathEscape(model), 20*time.Second, nil); err != nil {
+		return "", errors.New("foundry load failed")
+	}
+	b, _ := json.Marshal(map[string]any{"model": model, "messages": []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": user}}, "temperature": 0.7, "max_completion_tokens": 16, "stream": false})
+	r, err := http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", bytes.NewReader(b))
+	if err != nil {
+		return "", errors.New("foundry request failed")
+	}
+	r.Header.Set("Content-Type", "application/json")
+	resp, err := foundryClient.Do(r)
+	if err != nil {
+		return "", errors.New("foundry completion failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", errors.New("foundry completion failed")
+	}
+	b, err = io.ReadAll(io.LimitReader(resp.Body, 4097))
+	if err != nil || len(b) > 4096 {
+		return "", errors.New("foundry response refused")
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(b, &out) != nil || len(out.Choices) != 1 {
+		return "", errors.New("foundry response refused")
+	}
+	return out.Choices[0].Message.Content, nil
+}
 
 func (f foundryConfig) modelEnabled(m string) bool {
 	return f.Models == nil || containsStr(f.Models, m)
@@ -91,15 +152,18 @@ func runFoundryCLI(ctx context.Context, exe string, args ...string) (string, err
 
 // foundryState: najdena končna točka in seznam modelov (predpomnjeno).
 type foundryState struct {
-	discover  sync.Mutex // F1: iskanje in zagon (klici CLI) brez mu, da /foundry ne čaka
-	retryAt   time.Time  // F6: po neuspelem iskanju ali zagonu 30 s brez novega poskusa
-	mu        sync.Mutex
-	base      string // http://127.0.0.1:<vrata>
-	checked   time.Time
-	models    []foundryModel
-	modelsAt  time.Time
-	loadedAt  map[string]time.Time
-	lastError string
+	priority     sync.Mutex
+	foreground   int
+	sampleCancel context.CancelCauseFunc
+	discover     sync.Mutex // F1: iskanje in zagon (klici CLI) brez mu, da /foundry ne čaka
+	retryAt      time.Time  // F6: po neuspelem iskanju ali zagonu 30 s brez novega poskusa
+	mu           sync.Mutex
+	base         string // http://127.0.0.1:<vrata>
+	checked      time.Time
+	models       []foundryModel
+	modelsAt     time.Time
+	loadedAt     map[string]time.Time
+	lastError    string
 }
 
 type foundryModel struct {
@@ -187,8 +251,17 @@ func (s *server) foundryEndpoint(ctx context.Context) (string, error) {
 		}
 		st.mu.Unlock()
 	}
-	st.discover.Lock()
+	for !st.discover.TryLock() {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 	defer st.discover.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if b, err, ok := cached(); ok { // medtem ga je našla druga zahteva
 		return b, err
 	}
@@ -456,6 +529,9 @@ func foundryStop(reason string) string {
 
 // runFoundry: en odgovor modela Foundry Local (pretok SSE ali cel odgovor).
 func (s *server) runFoundry(w http.ResponseWriter, r *req, body map[string]any, model string) int {
+	release := s.foundry.beginForeground()
+	defer release()
+	r.deferLabels = true
 	fc := s.conf().Foundry
 	ctx, cancel := context.WithTimeout(r.Context(), foundryTimeout)
 	defer cancel()
@@ -500,6 +576,7 @@ func (s *server) runFoundry(w http.ResponseWriter, r *req, body map[string]any, 
 	hreq.Header.Set("Content-Type", "application/json")
 	s.dispatched(r) // the Foundry request goes out (usage event)
 	resp, err := foundryClient.Do(hreq)
+	s.enqueueLabels(r)
 	if err != nil {
 		s.foundry.mu.Lock()
 		s.foundry.base = "" // znova poišči (strežnik je morda na drugih vratih)
@@ -593,4 +670,44 @@ func (s *server) runFoundry(w http.ResponseWriter, r *req, body map[string]any, 
 	}
 	send(t.finish())
 	return 200
+}
+
+// Foreground calls never wait for classification, including a cancelled runtime call.
+var errLabelForeground = errors.New("foreground Foundry work")
+
+func (st *foundryState) beginForeground() func() {
+	st.priority.Lock()
+	st.foreground++
+	if st.sampleCancel != nil {
+		st.sampleCancel(errLabelForeground)
+	}
+	st.priority.Unlock()
+	return func() { st.priority.Lock(); st.foreground--; st.priority.Unlock() }
+}
+
+// Reserve each sample only while Foundry is idle; foreground arrival revokes it.
+func (st *foundryState) labelSample(ctx context.Context) (context.Context, func(), error) {
+	for {
+		st.priority.Lock()
+		if err := ctx.Err(); err != nil {
+			st.priority.Unlock()
+			return nil, nil, err
+		}
+		if st.foreground == 0 {
+			// A label sample may load another model and evict a cached foreground model.
+			st.mu.Lock()
+			st.loadedAt = nil
+			st.mu.Unlock()
+			sample, cancel := context.WithCancelCause(ctx)
+			st.sampleCancel = cancel
+			st.priority.Unlock()
+			return sample, func() { st.priority.Lock(); st.sampleCancel = nil; cancel(nil); st.priority.Unlock() }, nil
+		}
+		st.priority.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 }
