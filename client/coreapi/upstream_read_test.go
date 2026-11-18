@@ -1,10 +1,15 @@
 package coreapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"minigw/core"
 )
@@ -154,5 +159,107 @@ func TestAdminReadLinkAndPull(t *testing.T) {
 	var n int
 	if err := f.st.DB().QueryRow(`SELECT count(*) FROM upstream_mirror`).Scan(&n); err != nil || n != 0 {
 		t.Fatal(n, err)
+	}
+}
+
+// The Mac app lets the helper's upstream callouts through only for the routes of testdata/upstream-callouts.json (CoreHelper.calloutAllowed,
+// asserted against the same file in Swift). Here: every handler that calls the upstream host is in that file with the kinds it needs, and
+// no handler listed without kinds calls it, so a new upstream route without an allow-list entry fails a test on both sides.
+func TestEveryRouteThatCallsTheUpstreamHostIsInTheSharedCalloutFixture(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/upstream-callouts.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fx struct {
+		Routes []struct {
+			Method, Path, Handler string
+			Kinds                 []string
+		}
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatal(err)
+	}
+	needs := map[string]bool{}
+	for _, r := range fx.Routes {
+		needs[r.Handler] = needs[r.Handler] || len(r.Kinds) > 0
+	}
+	files, _ := filepath.Glob("*.go")
+	fn := regexp.MustCompile(`(?m)^func \(a \*API\) (\w+)\(`)
+	found := map[string]bool{}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, _ := os.ReadFile(f)
+		src := string(b)
+		idx := fn.FindAllStringSubmatchIndex(src, -1)
+		for i, m := range idx {
+			end := len(src)
+			if i+1 < len(idx) {
+				end = idx[i+1][0]
+			}
+			name := src[m[2]:m[3]]
+			if name != "upstreamHost" && strings.Contains(src[m[0]:end], "a.upstreamHost(") {
+				found[name] = true
+			}
+		}
+	}
+	for name := range found {
+		if !needs[name] {
+			t.Errorf("%s calls the upstream host but has no route with callout kinds in upstream-callouts.json: the Mac refuses its callouts", name)
+		}
+	}
+	for name, n := range needs {
+		if n && !found[name] {
+			t.Errorf("%s is listed with callout kinds but does not call the upstream host", name)
+		}
+		if !n && found[name] {
+			t.Errorf("%s calls the host but is listed without kinds", name)
+		}
+	}
+	if len(found) < 4 {
+		t.Fatal("found only", found)
+	}
+}
+
+// L1: the default wait for a rate limit ends with the request.
+func TestDefaultUpstreamWaitEndsWithTheRequest(t *testing.T) {
+	c, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if ctxSleep(c)(time.Hour) || time.Since(start) > time.Second {
+		t.Fatal("the wait did not end with its context")
+	}
+	if !ctxSleep(context.Background())(time.Millisecond) {
+		t.Fatal("a wait that fits was refused")
+	}
+}
+
+// M1 on the route: re-linking to another remote answers readOff, and the status shows the accepted reach's remote.
+func TestRelinkToAnotherRemoteTurnsReadingOff(t *testing.T) {
+	f := newFixture(t)
+	h := &methodHost{secretHost: secretHost{secrets: map[string]string{}}}
+	h.answer = func(method, path string) (int, string) { return 404, `{}` }
+	api := New(Options{Store: func() *core.Store { return f.st }, Upstream: h})
+	call := func(method, path, body string) map[string]any {
+		r := api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: method, Path: path, Body: []byte(body)})
+		if r.Status != 200 {
+			t.Fatalf("%s %s: %d %s", method, path, r.Status, r.Body)
+		}
+		var m map[string]any
+		json.Unmarshal(r.Body, &m)
+		return m
+	}
+	call("PUT", "/upstreams/hub", `{"address":"127.0.0.1:8766","token":"tok#key"}`)
+	link := fmt.Sprintf("/upstreams/hub/links/%d", f.pid["fakture"])
+	call("PUT", link, `{"remote":"shop","read":true,"acceptReach":true}`)
+	if m := call("PUT", link, `{"remote":"shop","auto":true}`); m["readOff"] != false {
+		t.Fatalf("%v", m)
+	}
+	if m := call("PUT", link, `{"remote":"fakture","auto":true}`); m["readOff"] != true {
+		t.Fatalf("%v", m)
+	}
+	if m := call("PUT", link, `{"remote":"fakture","read":true,"acceptReach":true}`); m["readOff"] != false {
+		t.Fatalf("%v", m)
 	}
 }

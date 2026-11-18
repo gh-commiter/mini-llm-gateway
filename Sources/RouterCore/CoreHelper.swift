@@ -314,12 +314,12 @@ public final class CoreHelper: @unchecked Sendable {
     /// L3: which callouts a running upstream route may make. The app accepts a callout only while it waits for the answer of the request it sent
     /// (the frame id is the app's own per-request number, echoed by the helper and checked above) and only one this route makes, for its upstream:
     /// `PUT /upstreams/{n}` connects, forgets after a failed add and probes; `DELETE /upstreams/{n}` only forgets; `GET /upstreams/{n}/probe` probes;
-    /// `GET /upstreams` reads the device of each upstream; the push and the automatic push contact the upstreams their links name.
+    /// `GET /upstreams` reads the device of each upstream; the push, the automatic push and the pull contact the upstreams their links name. Every admin route that needs callouts is listed with its kinds in client/testdata/upstream-callouts.json (asserted here and by the Go test that finds the routes calling the host).
     static func calloutAllowed(_ rq: CoreRequest, _ q: [String: Any]) -> Bool {
         guard let op = q["op"] as? String, let up = q["upstream"] as? String else { return false }
         let seg = rq.path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map { $0.split(separator: "/").map(String.init) } ?? []
         switch (rq.method, seg.first ?? "") {
-        case ("POST", "upstream-push"), ("POST", "upstream-auto"):
+        case ("POST", "upstream-push"), ("POST", "upstream-auto"), ("POST", "upstream-pull"):
             return seg.count == 1 && (op == "do" || op == "info")
         case ("GET", "upstreams") where seg.count == 1:
             return op == "info"

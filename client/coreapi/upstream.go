@@ -196,8 +196,9 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 			b.Remote = a.localName(ctx, st, id, b.Team)
 		}
 		var err error
+		readOff := false
 		if method == "PUT" {
-			err = st.LinkUpstreamWith(ctx, core.LinkSpec{Project: project, Team: team, Upstream: seg[1], Remote: b.Remote, Classes: b.Classes, WithPrivate: b.WithPrivate, Auto: b.Auto, Mode: b.Mode,
+			readOff, err = st.LinkUpstreamReport(ctx, core.LinkSpec{Project: project, Team: team, Upstream: seg[1], Remote: b.Remote, Classes: b.Classes, WithPrivate: b.WithPrivate, Auto: b.Auto, Mode: b.Mode,
 				Read: b.Read, ReadClasses: b.ReadClasses, ReadSources: b.ReadSources, AcceptReach: b.AcceptReach, ReadOnly: b.ReadOnly})
 		} else {
 			err = st.UnlinkUpstream(ctx, project, team, seg[1])
@@ -205,7 +206,7 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		if err != nil {
 			return failErr(err)
 		}
-		return 200, map[string]any{"ok": true}, true
+		return 200, map[string]any{"ok": true, "readOff": readOff}, true
 	}
 	return fail(404, "not found")
 }
@@ -232,7 +233,7 @@ func (a *API) adminUpstreamPush(ctx context.Context, st *core.Store, method stri
 	}
 	sleep := a.o.UpstreamSleep
 	if sleep == nil {
-		sleep = func(d time.Duration) bool { time.Sleep(d); return true }
+		sleep = ctxSleep(ctx)
 	}
 	if a.o.UpstreamBudget > 0 { // one call of a helper has a time limit: the run ends with "more" and the caller asks again
 		var cancel context.CancelFunc
@@ -312,7 +313,7 @@ func (a *API) adminUpstreamAuto(ctx context.Context, st *core.Store, method stri
 	}
 	sleep := a.o.UpstreamSleep
 	if sleep == nil {
-		sleep = func(d time.Duration) bool { time.Sleep(d); return true }
+		sleep = ctxSleep(ctx)
 	}
 	if a.o.UpstreamBudget > 0 {
 		var cancel context.CancelFunc
@@ -486,4 +487,19 @@ func (a *API) localName(ctx context.Context, st *core.Store, id int64, team bool
 		}
 	}
 	return ""
+}
+
+// ctxSleep is the default wait for an upstream's rate limit: it ends (false) when the request ends, so a caller that gives up, or a
+// deadline, never leaves a run asleep holding the link's lock.
+func ctxSleep(ctx context.Context) func(time.Duration) bool {
+	return func(d time.Duration) bool {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-t.C:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
 }

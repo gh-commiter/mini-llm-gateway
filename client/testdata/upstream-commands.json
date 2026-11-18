@@ -1432,7 +1432,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub (shop): 0 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, manual\n  read: on, classes structure,data, sources team:acme,project:eureko, accepted 2026-11-17 09:00, mirror 12 notes (3.1 KiB), last pull 2026-11-17 10:30 (3 h old), last try 2026-11-17 10:45\n  last pull error: the upstream says: down\nweb -> hub (web): 0 of 0 notes would go, never pushed, classes structure, manual\n  read: on, classes structure, sources none, accepted 2026-11-17 09:00, mirror 0 notes (0 B), never pulled\n",
+    "out": "shop -> hub (shop): 0 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, manual\n  read: on, classes structure,data, sources team:acme,project:eureko, accepted 2026-11-17 09:00 for shop, mirror 12 notes (3.1 KiB), last pull 2026-11-17 10:30 (3 h old), last try 2026-11-17 10:45\n  last pull error: the upstream says: down\nweb -> hub (web): 0 of 0 notes would go, never pushed, classes structure, manual\n  read: on, classes structure, sources none, accepted 2026-11-17 09:00 for web, mirror 0 notes (0 B), never pulled\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1440,6 +1440,47 @@
       "GET",
       "/upstreams",
       ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link turns reading off",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "auto": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true,\"readOff\":true}"
+    }
+   ],
+   "want": {
+    "out": "linked shop to hub as shop: changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)\nreading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"auto\":true,\"classes\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }

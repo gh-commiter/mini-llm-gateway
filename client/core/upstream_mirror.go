@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -21,8 +20,11 @@ import (
 // THAT upstream and as keys inside THAT link's mirror.
 const (
 	MaxMirrorNotes = 5000     // per link
-	MaxMirrorBytes = 64 << 20 // titles and bodies of all mirrors of a gateway
-	maxPullFails   = 3        // transient failures (no answer, 5xx) of note GETs that end a run
+	MaxMirrorBytes = 64 << 20 // what the mirrors of a gateway cost on disk, approximately: mirrorCost times their titles and bodies
+	// mirrorCost: a mirrored note is kept three times: its row, the search table's own copy of the text and the search index (measured
+	// roughly 2.5 to 3 times the text; the factor leaves the bound honest without a page count). So 64 MiB of disk is about 21 MiB of text.
+	mirrorCost   = 3
+	maxPullFails = 3 // transient failures (no answer, 5xx) of note GETs that end a run
 )
 
 // Variables so that a test can use small ones.
@@ -66,6 +68,7 @@ type pullSettings struct {
 	classes  map[Class]bool
 	sources  map[string]bool
 	accepted int64
+	reach    string
 	cursor   int64
 }
 
@@ -73,7 +76,7 @@ func (s *Store) pullSettings(ctx context.Context, l UpstreamLink) (st pullSettin
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		var on int
 		var cls, src string
-		if e := tx.QueryRow(`SELECT read,read_classes,read_sources,read_accepted,pull_cursor FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&on, &cls, &src, &st.accepted, &st.cursor); e != nil {
+		if e := tx.QueryRow(`SELECT read,read_classes,read_sources,read_accepted,read_reach,pull_cursor FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&on, &cls, &src, &st.accepted, &st.reach, &st.cursor); e != nil {
 			return notFound(e)
 		}
 		st.on, st.classes, st.sources = on == 1, map[Class]bool{}, map[string]bool{}
@@ -137,7 +140,13 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 	}
 	rctx, cancel := context.WithTimeout(ctx, pullRunTimeout)
 	defer cancel()
-	p := &pusher{s: s, tr: tr, up: l.Upstream, sleep: sleep, ctx: rctx}
+	waitFor := func(d time.Duration) bool { // a wait for the upstream's rate limit never outlives the run (or the caller)
+		if dl, ok := rctx.Deadline(); ok && time.Until(dl) < d+time.Second || rctx.Err() != nil {
+			return false
+		}
+		return sleep(d)
+	}
+	p := &pusher{s: s, tr: tr, up: l.Upstream, sleep: waitFor, ctx: rctx}
 	get := func(path string) upAnswer { // one request, with a time of its own: a slow upstream holds nothing for long
 		c, stop := context.WithTimeout(rctx, pullCallTimeout)
 		defer stop()
@@ -239,16 +248,60 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 	if err != nil {
 		return res, err
 	}
-	var todo []int64
-	for id, n := range want {
-		if id > st.cursor && have[id] != n {
-			todo = append(todo, id)
+	var skipNote []string
+	// The room the mirror has for NEW notes, known before anything is fetched: a full mirror ends the traversal ("mirror full") instead of
+	// fetching and discarding notes run after run.
+	var total int64
+	if err = s.read(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRow(`SELECT coalesce(sum(bytes),0) FROM upstream_mirror`).Scan(&total)
+	}); err != nil {
+		return res, err
+	}
+	room := MaxMirrorNotes - len(have)
+	if !m.Truncated {
+		for id := range have {
+			if _, in := want[id]; !in {
+				room++ // deleted in the same write
+			}
 		}
 	}
+	if total*mirrorCost >= MaxMirrorBytes {
+		room = 0
+	}
+	var todo []int64
+	notFetched := 0
+	for id, n := range want {
+		if id <= st.cursor || have[id] == n {
+			continue
+		}
+		if _, known := have[id]; !known && room <= 0 {
+			notFetched++
+			continue
+		}
+		todo = append(todo, id)
+	}
 	sort.Slice(todo, func(i, j int) bool { return todo[i] < todo[j] })
+	// new notes beyond the room are cut from the end of the list (the list is in id order: the ones that come last are not fetched)
+	if room < len(todo) {
+		kept := todo[:0]
+		for _, id := range todo {
+			if _, known := have[id]; known {
+				kept = append(kept, id)
+			} else if room > 0 {
+				kept = append(kept, id)
+				room--
+			} else {
+				notFetched++
+			}
+		}
+		todo = kept
+	}
+	if notFetched > 0 {
+		res.Skipped += notFetched
+		skipNote = append(skipNote, fmt.Sprintf("%d new notes were not fetched: mirror full (%d notes per link, %d MiB of disk per gateway)", notFetched, MaxMirrorNotes, MaxMirrorBytes>>20))
+	}
 
 	var fetched []mirrorRow
-	var skipNote []string
 	skip := func(id int64, why string) {
 		res.Skipped++
 		skipNote = append(skipNote, "skip "+strconv.FormatInt(id, 10)+": "+why)
@@ -322,37 +375,45 @@ fetch:
 	err = s.write(wctx, func(tx *sql.Tx) error {
 		var on int
 		var acc int64
-		switch e := tx.QueryRow(`SELECT read,read_accepted FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&on, &acc); {
-		case e == sql.ErrNoRows || e == nil && (on == 0 || acc != st.accepted):
+		var reach string
+		switch e := tx.QueryRow(`SELECT read,read_accepted,read_reach FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&on, &acc, &reach); {
+		case e == sql.ErrNoRows || e == nil && (on == 0 || acc != st.accepted || reach != st.reach): // the link was changed: what was fetched belongs to another reach
 			res.Stopped, res.More, res.Next, fetched = "the link was removed or its reading changed during the pull: nothing was stored", false, 0, nil
 			return nil
 		case e != nil:
 			return e
 		}
-		if !m.Truncated { // a complete manifest: what it does not list (or the link no longer takes) is gone
-			var gone []int64
-			rows, e := tx.Query(`SELECT remote_note FROM upstream_mirror WHERE project_id=? AND upstream=?`, l.Project, l.Upstream)
-			if e != nil {
+		// A complete manifest: what it does not list is gone. A cut manifest proves nothing about the notes it leaves out, but what this
+		// link no longer takes (a class or a source the owner dropped, a note the upstream moved to a class that is not read) is a local
+		// decision and goes either way.
+		listed := make(map[int64]bool, len(m.Notes))
+		for _, n := range m.Notes {
+			listed[n.ID] = true
+		}
+		var gone []int64
+		rows, e := tx.Query(`SELECT remote_note,source_id,class FROM upstream_mirror WHERE project_id=? AND upstream=?`, l.Project, l.Upstream)
+		if e != nil {
+			return e
+		}
+		for rows.Next() {
+			var id, src int64
+			var cl string
+			if e = rows.Scan(&id, &src, &cl); e != nil {
+				rows.Close()
 				return e
 			}
-			for rows.Next() {
-				var id int64
-				if e = rows.Scan(&id); e != nil {
-					rows.Close()
-					return e
-				}
-				if _, in := want[id]; !in {
-					gone = append(gone, id)
-				}
+			_, in := want[id]
+			if !m.Truncated && !in || m.Truncated && (listed[id] && !in || !st.classes[Class(cl)] || !take[src]) {
+				gone = append(gone, id)
 			}
-			rows.Close()
-			for _, id := range gone {
-				if e := deleteMirrored(tx, l.Project, l.Upstream, id); e != nil {
-					return e
-				}
-			}
-			res.Removed = len(gone)
 		}
+		rows.Close()
+		for _, id := range gone {
+			if e := deleteMirrored(tx, l.Project, l.Upstream, id); e != nil {
+				return e
+			}
+		}
+		res.Removed = len(gone)
 		var count int
 		var total int64
 		if e := tx.QueryRow(`SELECT count(*) FROM upstream_mirror WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&count); e != nil {
@@ -375,7 +436,7 @@ fetch:
 			if oldID == 0 {
 				add = 1
 			}
-			if count+add > MaxMirrorNotes || total-oldBytes+int64(r.bytes) > MaxMirrorBytes {
+			if count+add > MaxMirrorNotes || (total-oldBytes+int64(r.bytes))*mirrorCost > MaxMirrorBytes {
 				skip(r.note, "mirror full")
 				continue
 			}
@@ -448,7 +509,7 @@ func deleteMirrored(tx *sql.Tx, project int64, upstream string, note int64) erro
 }
 
 // checkMirrorNote reads the upstream's answer for one note as DATA: one JSON object, the same id, revision, class and kind as the manifest
-// it was listed in (a different one is not the note the manifest promised), valid UTF-8, within the sizes a local note may have; terminal
+// it was listed in (a different one is not the note the manifest promised), valid UTF-8 (otherwise the note is skipped, never repaired), within the sizes a local note may have; terminal
 // and format controls are removed from title and body (newline and tab stay). Anything else rejects this one note.
 func checkMirrorNote(data []byte, want ManifestNote, label string) (mirrorRow, string) {
 	var n struct {
@@ -459,6 +520,9 @@ func checkMirrorNote(data []byte, want ManifestNote, label string) (mirrorRow, s
 		Updated   string  `json:"updated"`
 		Revision  int64   `json:"revision"`
 		EntryKind string  `json:"entryKind"`
+	}
+	if !utf8.Valid(data) {
+		return mirrorRow{}, "text that is not UTF-8"
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	if d.Decode(&n) != nil {
@@ -478,8 +542,8 @@ func checkMirrorNote(data []byte, want ManifestNote, label string) (mirrorRow, s
 	switch {
 	case n.ID != want.ID || n.Revision != want.Rev || n.Class != want.Class || kind != want.Kind:
 		return mirrorRow{}, "not the note, revision, class or kind the manifest listed"
-	case !utf8.ValidString(n.Title) || !utf8.ValidString(body):
-		return mirrorRow{}, "text that is not UTF-8"
+	case (strings.ContainsRune(n.Title, utf8.RuneError) || strings.ContainsRune(body, utf8.RuneError)) && !bytes.Contains(bytes.ToLower(data), []byte(`\ufffd`)) && !bytes.Contains(data, []byte("\xef\xbf\xbd")):
+		return mirrorRow{}, "text that is not UTF-8" // a lone surrogate escape: the decoder would have repaired it to U+FFFD
 	case len(n.Title) > maxTitle || len(body) > maxBody:
 		return mirrorRow{}, "too large"
 	case kind == KindFAQ && (len(n.Title) > maxFAQTitle || len(body) > maxFAQBody):
@@ -493,14 +557,13 @@ func checkMirrorNote(data []byte, want ManifestNote, label string) (mirrorRow, s
 	return mirrorRow{source: want.Source, label: label, note: want.ID, rev: want.Rev, class: want.Class, kind: kind, title: title, body: text, updated: t, bytes: len(title) + len(text)}, ""
 }
 
-// mirrorBody: what a person or an agent may read of a pulled body: no controls but newline and tab, no format characters (direction
-// overrides, zero-width), no line or paragraph separators.
+// mirrorBody: what a person or an agent may read of a pulled body: newline and tab, and nothing invisible (invisibleRune).
 func mirrorBody(s string) string {
 	return strings.Map(func(r rune) rune {
-		switch {
-		case r == '\n' || r == '\t':
+		if r == '\n' || r == '\t' {
 			return r
-		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029:
+		}
+		if invisibleRune(r) {
 			return -1
 		}
 		return r

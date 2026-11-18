@@ -149,7 +149,11 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			req["readClasses"], req["readSources"], req["acceptReach"] = u.readClass, u.readSources, u.acceptReach
 			req["readOnly"] = !pushFlags // an existing link keeps its push settings
 		}
-		a.do("PUT", fmt.Sprintf("/upstreams/%s/links/%d", url.PathEscape(name), id), req, nil)
+		var linked struct{ ReadOff bool }
+		a.do("PUT", fmt.Sprintf("/upstreams/%s/links/%d", url.PathEscape(name), id), req, &linked)
+		if linked.ReadOff {
+			defer say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach"))
+		}
 		if reading && !pushFlags {
 			if u.noRead {
 				say(clean(fmt.Sprintf("%s -> %s: reading is off, the mirror was deleted", local, name)))
@@ -318,8 +322,14 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		// A run reads a bounded number of notes (and a helper answers a call within 30 seconds): a pull that is not through comes back with
 		// "more" and its cursor; ask again for that link, as long as it gets further (or only waits for the upstream's read limit, a bounded
 		// number of times).
+		// The loop is bounded: at most maxPullRuns runs (the per-link cap of notes) and pullWall of time per command, whatever an upstream offers.
 		targets := []map[string]any{body}
-		lastNext, stalls := map[string]int64{}, map[string]int{}
+		lastNext, stalls, runs := map[string]int64{}, map[string]int{}, map[string]int{}
+		wall := u.pullWall
+		if wall == 0 {
+			wall = pullWallDefault
+		}
+		deadline := time.Now().Add(wall)
 		for len(targets) > 0 {
 			var next []map[string]any
 			wait := 0
@@ -332,7 +342,11 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 						continue
 					}
 					key := fmt.Sprint(p.Project, "|", p.Upstream)
+					runs[key]++
 					switch {
+					case runs[key] >= maxPullRuns || time.Now().After(deadline):
+						say(clean(fmt.Sprintf("  %s -> %s: more remains: run the pull again", p.Label, p.Upstream)))
+						continue
 					case p.Next > lastNext[key]:
 						lastNext[key], stalls[key] = p.Next, 0
 					case p.Wait > 0 && stalls[key] < 30:
@@ -364,6 +378,12 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		usage()
 	}
 }
+
+// maxPullRuns: runs of one pull command for one link (25 runs of 200 notes are the 5000 notes a link's mirror may hold); pullWallDefault: its time.
+const (
+	maxPullRuns     = 25
+	pullWallDefault = 10 * time.Minute
+)
 
 type upPull struct {
 	Label, Upstream, Remote string
@@ -456,7 +476,7 @@ func upstreamReadLine(l upLink) string {
 	}
 	acc := ""
 	if l.ReadAccepted != nil {
-		acc = ", accepted " + l.ReadAccepted.Local().Format("2006-01-02 15:04")
+		acc = ", accepted " + l.ReadAccepted.Local().Format("2006-01-02 15:04") + " for " + l.Remote
 	}
 	pulled := ", never pulled"
 	if l.LastPullOK != nil {

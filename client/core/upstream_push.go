@@ -146,10 +146,27 @@ func (p *pusher) call(method, path string, hdr map[string]string, body []byte) (
 	}
 }
 
+// invisibleRune is THE rule for what a person (or a reviewer reading a screen) cannot see in text that came from somewhere else: controls,
+// format characters (bidi, zero-width, the tag block), line and paragraph separators, variation selectors (also the supplement), the
+// Hangul and combining-grapheme fillers. upText and the mirror's body cleaning both use it; do not copy the list.
+func invisibleRune(r rune) bool {
+	switch {
+	case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029:
+		return true
+	case r >= 0xFE00 && r <= 0xFE0F, r >= 0xE0100 && r <= 0xE01EF, r >= 0x180B && r <= 0x180F, r >= 0xE0000 && r <= 0xE007F:
+		return true
+	}
+	switch r {
+	case 0x034F, 0x115F, 0x1160, 0x3164, 0xFFA0:
+		return true
+	}
+	return false
+}
+
 // upText: text that came from the upstream or from a person there, as one printable line of at most n bytes.
 func upText(s string, n int) string {
 	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029 {
+		if invisibleRune(r) {
 			return ' '
 		}
 		return r

@@ -31,7 +31,7 @@ func (a *API) adminUpstreamPull(ctx context.Context, st *core.Store, method stri
 	}
 	sleep := a.o.UpstreamSleep
 	if sleep == nil {
-		sleep = func(d time.Duration) bool { time.Sleep(d); return true }
+		sleep = ctxSleep(ctx)
 	}
 	if a.o.UpstreamBudget > 0 { // one call of a helper has a time limit
 		var cancel context.CancelFunc

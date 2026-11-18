@@ -48,6 +48,23 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
         }
     }
 
+    /// M2: a hub that offers new notes on every run cannot keep `pull` asking for ever: 25 runs, or the time, then "more remains".
+    @Test func aPullCommandStopsAfterItsRunsAndItsTime() throws {
+        for (wall, want) in [(600.0, 25), (-1.0, 1)] {
+            nonisolated(unsafe) var calls = 0
+            nonisolated(unsafe) var outText = ""
+            let cmd = AdminCommands(call: { _, path, _ in
+                if path == "/projects" { return (200, Data(#"{"projects":[{"ID":3,"Slug":"shop","Name":"Shop","Archived":false}]}"#.utf8)) }
+                calls += 1
+                return (200, Data(#"{"pulls":[{"label":"shop","upstream":"hub","remote":"shop","project":3,"lines":[],"more":true,"next":\#(calls * 200)}]}"#.utf8))
+            }, out: { outText += $0 })
+            cmd.pause = { _ in }
+            cmd.pullWall = wall
+            try cmd.run(["upstream", "pull", "shop"], AdminOpts())
+            #expect(calls == want && outText.contains("more remains: run the pull again"), "\(wall): \(calls) calls")
+        }
+    }
+
     @Test func aLongPushAsksAgainForTheLinkWhereItStoppedAndOnlyWhileItGetsFurther() throws {
         nonisolated(unsafe) var calls = 0
         nonisolated(unsafe) var waits: [Double] = []
@@ -779,6 +796,39 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         }
     }
 
+    /// The pull, dry and real, through the lane (the class of fault where a route is on the lane but its callouts are refused).
+    @Test func pullDryRunAndARealPullThroughTheCallouts() async throws {
+        let secrets = MemorySecrets(), t = fakeUpstream()
+        let inner = t.handler
+        t.handler = { c in
+            switch (c.method, c.path) {
+            case ("GET", "/minigw/v1/projects/7/kb/manifest"):
+                return UpstreamAnswer(status: 200, body: Data(#"{"v":1,"sources":[{"id":7,"label":"project:shop"}],"notes":[{"id":4,"source":7,"rev":2,"class":"structure","kind":"finding"}],"truncated":false}"#.utf8))
+            case ("GET", "/minigw/v1/projects/7/notes/4"):
+                return UpstreamAnswer(status: 200, body: Data(#"{"id":4,"project":7,"class":"structure","title":"Deploy order","body":"first the db","updated":"2026-11-17T09:00:00Z","revision":2,"entryKind":"finding"}"#.utf8))
+            default: return inner(c)
+            }
+        }
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let (h, _) = try await start(callouts: UpstreamHost(secrets: secrets, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac"))
+        defer { h.stop() }
+        _ = await adm(h, "PUT", "/upstreams/hub", #"{"address":"hub.example","token":"tok#\#(Noise.base64url(Noise.newKey().publicKey.rawRepresentation))"}"#)
+        _ = await adm(h, "POST", "/projects", #"{"slug":"shop","name":"Shop"}"#)
+        #expect((await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop"}"#)).status == 200)
+        let dry = obj(await adm(h, "POST", "/upstream-pull", #"{"project":1,"dryRun":true}"#))
+        let d = (dry["pulls"] as? [[String: Any]])?.first
+        #expect(d?["total"] as? Int == 1 && (d?["stopped"] as? String ?? "").isEmpty, "\(dry)")
+        // reading off: a real pull is refused; on (with the acceptance): it fills the mirror
+        #expect((await adm(h, "POST", "/upstream-pull", #"{"project":1}"#)).status == 400)
+        #expect((await adm(h, "PUT", "/upstreams/hub/links/1", #"{"read":true,"readOnly":true,"remote":"shop","acceptReach":true}"#)).status == 200)
+        let real = obj(await adm(h, "POST", "/upstream-pull", #"{"project":1}"#))
+        let p = (real["pulls"] as? [[String: Any]])?.first
+        #expect(p?["added"] as? Int == 1 && p?["mirror"] as? Int == 1 && (p?["stopped"] as? String ?? "").isEmpty, "\(real)")
+        let st = obj(await adm(h, "GET", "/upstreams"))
+        #expect(((st["links"] as? [[String: Any]])?.first?["mirror"] as? Int) == 1)
+        #expect(t.calls.allSatisfy { $0.method == "GET" })
+    }
+
     @Test func aWriteLimitThatCannotBeWaitedOutEndsTheCallWithMore() async throws {
         let secrets = MemorySecrets(), t = fakeUpstream()
         let own = Noise.newKey().publicKey.rawRepresentation
@@ -963,6 +1013,32 @@ final class ScriptedNoiseServer: @unchecked Sendable {
 @Suite struct UpstreamCalloutsFollowTheRoute {
     private func ok(_ method: String, _ path: String, _ op: String, _ up: String = "hub") -> Bool {
         CoreHelper.calloutAllowed(CoreRequest(method: method, path: path), ["op": op, "upstream": up])
+    }
+
+    /// The shared fixture: every admin route that needs callouts, with the kinds it needs (Go asserts the same file against the routes
+    /// that call the upstream host). A route missing here or in calloutAllowed fails closed on the Mac: this is the test that says so.
+    @Test func theSharedFixtureOfRoutesAndCalloutKindsIsWhatTheAppAllows() throws {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let raw = try Data(contentsOf: repo.appendingPathComponent("client/testdata/upstream-callouts.json"))
+        let fx = try #require(try JSONSerialization.jsonObject(with: raw) as? [String: Any])
+        let up = fx["upstream"] as? String ?? ""
+        let routes = fx["routes"] as? [[String: Any]] ?? []
+        #expect(routes.count >= 8)
+        for r in routes {
+            let method = r["method"] as! String, path = r["path"] as! String, kinds = Set(r["kinds"] as! [String])
+            for op in ["do", "info", "connect", "forget"] {
+                #expect(ok(method, path, op, up) == kinds.contains(op), "\(method) \(path) \(op)")
+            }
+            // an upstream route is on the lane exactly when it needs callouts
+            let lane = CoreHelper.isUpstreamRoute(.admin, CoreRequest(method: method, path: path))
+            #expect(lane == (!kinds.isEmpty || path.hasPrefix("/upstreams")), "\(path) lane")
+            #expect(!CoreHelper.isUpstreamRoute(CoreContext(kind: .member, device: "d", approved: true), CoreRequest(method: method, path: path)))
+        }
+    }
+
+    @Test func aPullMakesOnlyDoAndInfo() {
+        #expect(ok("POST", "/upstream-pull", "do", "any") && ok("POST", "/upstream-pull", "info", "any"))
+        #expect(!ok("POST", "/upstream-pull", "forget") && !ok("POST", "/upstream-pull", "connect") && !ok("GET", "/upstream-pull", "do") && !ok("POST", "/upstream-pull/x", "do"))
     }
 
     @Test func aCalloutOutsideAnUpstreamRouteIsRefused() {

@@ -69,6 +69,8 @@ public final class AdminCommands {
     public var now: () -> Date = { Date() }
     /// Waits (seconds) between the calls of a long `upstream push`; tests give a fake.
     public var pause: (Double) -> Void = { Thread.sleep(forTimeInterval: $0) }
+    /// The time of one `gw upstream pull` command (as Go's pullWallDefault, 10 minutes); a test lowers it.
+    public var pullWall: TimeInterval = 600
     /// gw kb accept: is stdin a terminal, and the answer to its question (tests replace both).
     public var isTerminal: () -> Bool = { isatty(0) != 0 }
     public var readAnswer: () -> String? = { readLine() }

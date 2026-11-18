@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode/utf8"
 )
 
 // A scripted hub for the pull tests: its notes, its manifest and every way it can misbehave.
@@ -73,6 +72,9 @@ func (h *hub) up() *fakeUp {
 		case c.method == "GET" && c.path == "/minigw/v1/projects/7/kb/manifest":
 			if h.manifest != nil {
 				st, b := h.manifest()
+				if st == 429 {
+					return st, b, 2 * time.Minute
+				}
 				return st, b, 0
 			}
 			return 200, h.manifestJSON(), 0
@@ -395,18 +397,22 @@ func TestPullSanitisesWhatItStores(t *testing.T) {
 	}
 }
 
-// The decoder repairs invalid UTF-8 (U+FFFD): what is stored is always valid text.
-func TestPullStoresOnlyValidUTF8(t *testing.T) {
-	f, fk := readFx(t)
-	h := &hub{notes: []hubNote{structNote(1, "Good")}}
-	h.note = func(id int64, def string) (int, string, time.Duration) {
-		return 200, strings.Replace(def, `"title":"Good"`, "\"title\":\"G\xff\xfeod\"", 1), 0
-	}
-	pull(f, fk, h.up())
-	var title string
-	f.ok(f.DB().QueryRow(`SELECT title FROM upstream_mirror`).Scan(&title))
-	if !utf8.ValidString(title) || !strings.HasPrefix(title, "G") {
-		t.Fatalf("%q", title)
+// Invalid UTF-8 is not repaired: the note is skipped and counted (a lone surrogate escape too, which the decoder would turn into U+FFFD);
+// a note that really contains U+FFFD is fine.
+func TestPullSkipsNotesThatAreNotUTF8(t *testing.T) {
+	for name, repl := range map[string]string{"bytes": "\"title\":\"G\xff\xfeod\"", "lone surrogate": `"title":"G\ud800od"`} {
+		f, fk := readFx(t)
+		h := &hub{notes: []hubNote{structNote(1, "Good"), structNote(2, "Fine")}}
+		h.note = func(id int64, def string) (int, string, time.Duration) {
+			if id == 1 {
+				return 200, strings.Replace(def, `"title":"Good"`, repl, 1), 0
+			}
+			return 200, strings.Replace(def, `"title":"Fine"`, `"title":"Fi\ufffdne"`, 1), 0
+		}
+		res := pull(f, fk, h.up())
+		if res.Skipped != 1 || res.Added != 1 || !strings.Contains(strings.Join(res.Lines, "\n"), "not UTF-8") || len(mirror(f)) != 1 {
+			t.Fatalf("%s: %+v %v", name, res, mirror(f))
+		}
 	}
 }
 
@@ -685,7 +691,7 @@ func TestPullBoundsPerLinkAndPerGateway(t *testing.T) {
 	}
 	// another link's mirror holds almost the whole budget
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`INSERT INTO upstream_mirror(project_id,upstream,source_id,source_label,remote_note,remote_rev,class,kind,title,body,bytes,updated,fetched) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, 99, "other", 1, "x", 1, 1, "structure", "finding", "t", "b", MaxMirrorBytes-maxBody-100, 1, 1)
+		_, e := tx.Exec(`INSERT INTO upstream_mirror(project_id,upstream,source_id,source_label,remote_note,remote_rev,class,kind,title,body,bytes,updated,fetched) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, 99, "other", 1, "x", 1, 1, "structure", "finding", "t", "b", MaxMirrorBytes/mirrorCost-maxBody-100, 1, 1)
 		return e
 	}))
 	res := pull(f, fk, h.up())
@@ -797,7 +803,7 @@ func TestPullRateLimitedUpstream(t *testing.T) {
 	h = &hub{manifest: func() (int, string) { return 429, `{}` }}
 	res, err = f.PullUpstream(ctx, h.up(), fk, 0, "", false, func(time.Duration) bool { return false })
 	f.ok(err)
-	if !res[0].More || res[0].Wait != 1 || len(mirror(f)) != 0 || linkOf(f, fk).PullError != "" {
+	if !res[0].More || res[0].Wait != 120 || len(mirror(f)) != 0 || linkOf(f, fk).PullError != "" {
 		t.Fatalf("%+v", res[0])
 	}
 	// a wait that cannot be made within this call: "more", the cursor stays, no failure
@@ -1003,5 +1009,253 @@ func TestStatusShowsReadingTheMirrorAndTheAge(t *testing.T) {
 	pull(f, fk, h.up())
 	if l = linkOf(f, fk); l.PullError == "" || l.LastPull == nil || l.LastPullOK == nil || !l.LastPull.After(*l.LastPullOK) || l.Mirror != 1 {
 		t.Fatalf("%+v", l)
+	}
+}
+
+// ---- the review of C2 (sec-upc2-0728)
+
+// M1: the acceptance covers the exact reach: upstream (the link itself), remote project or team, classes, sources.
+func TestAcceptanceIsBoundToTheReach(t *testing.T) {
+	filled := func() (*fx, int64) {
+		f, fk := readFx(t)
+		pull(f, fk, (&hub{notes: []hubNote{structNote(1, "One")}}).up())
+		if len(mirror(f)) != 1 || !linkOf(f, fk).Read {
+			t.Fatal("setup")
+		}
+		return f, fk
+	}
+	yes := true
+	// a plain re-link to another remote project (as `link <project> <name> --auto` does by defaulting the remote): reading off, mirror gone
+	f, fk := filled()
+	auto := true
+	off, err := f.LinkUpstreamReport(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "fakture", Auto: &auto})
+	f.ok(err)
+	if l := linkOf(f, fk); !off || l.Read || l.Mirror != 0 || l.ReadAccepted != nil || l.Remote != "fakture" || !l.Auto || len(mirror(f)) != 0 || postings(f) != 0 {
+		t.Fatalf("%v %+v", off, l)
+	}
+	if _, err = f.PullUpstream(ctx, (&hub{}).up(), fk, 0, "", false, noSleep); err == nil {
+		t.Fatal("a pull ran on a link whose reach was not accepted")
+	}
+	// the same re-link to the SAME remote keeps reading and the mirror
+	f, fk = filled()
+	off, err = f.LinkUpstreamReport(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Auto: &auto})
+	f.ok(err)
+	if l := linkOf(f, fk); off || !l.Read || l.Mirror != 1 {
+		t.Fatalf("%v %+v", off, l)
+	}
+	// the new reach in the same command, with the acceptance: reading stays on for the NEW remote, the old mirror is gone
+	f, fk = filled()
+	off, err = f.LinkUpstreamReport(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "web", Read: &yes, AcceptReach: true})
+	f.ok(err)
+	if l := linkOf(f, fk); off || !l.Read || l.Remote != "web" || l.Mirror != 0 || len(mirror(f)) != 0 {
+		t.Fatalf("%v %+v", off, l)
+	}
+	var reach string
+	f.ok(f.DB().QueryRow(`SELECT read_reach FROM upstream_links`).Scan(&reach))
+	if reach != "hub|web|0|structure|" {
+		t.Fatal(reach)
+	}
+	// a team link: another remote team name is another reach too
+	g := newFx(t)
+	g.ok(g.AddUpstream(ctx, "hub", "hub.example:8765"))
+	tm, e := g.CreateTeam(ctx, "acme")
+	g.ok(e)
+	g.ok(g.LinkUpstreamWith(ctx, LinkSpec{Team: tm.ID, Upstream: "hub", Remote: "acme", Read: &yes, AcceptReach: true}))
+	if off, err = g.LinkUpstreamReport(ctx, LinkSpec{Team: tm.ID, Upstream: "hub", Remote: "acme-eng"}); err != nil || !off {
+		t.Fatal(off, err)
+	}
+	// classes and sources can only change WITH the acceptance: without it the command is refused and the accepted reach stays
+	f, fk = filled()
+	for _, sp := range []LinkSpec{{ReadClasses: "structure,data"}, {ReadSources: "team:acme"}} {
+		sp.Project, sp.Upstream, sp.Remote, sp.ReadOnly = fk, "hub", "shop", true
+		if e := f.LinkUpstreamWith(ctx, sp); e == nil {
+			t.Fatal("a change of what is read without the acceptance")
+		}
+	}
+	if l := linkOf(f, fk); !l.Read || classesCSV(l.ReadClasses) != "structure" || l.Mirror != 1 {
+		t.Fatalf("%+v", l)
+	}
+	// another upstream is another link: its reading is off until accepted there
+	f.ok(f.AddUpstream(ctx, "other", "other.example:8765"))
+	f.ok(f.LinkUpstream(ctx, fk, 0, "other", "shop", "", false))
+	for _, l := range func() []UpstreamLinkInfo { ls, _ := f.UpstreamLinks(ctx, fk, 0); return ls }() {
+		if l.Upstream == "other" && l.Read {
+			t.Fatal("reading came with a new link")
+		}
+	}
+	// the audit row names what is in effect, not only the flags that were given
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Read: &yes, ReadSources: "team:acme", AcceptReach: true, ReadOnly: true}))
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Read: &yes, AcceptReach: true, ReadOnly: true})) // no lists given
+	evs, e2 := f.AuditEvents(ctx, 0, 500)
+	f.ok(e2)
+	last := ""
+	for _, ev := range evs {
+		if ev.Action == "upstream.link" && strings.Contains(string(ev.Detail), "readAccepted") {
+			last = string(ev.Detail)
+		}
+	}
+	if !strings.Contains(last, `"reach":"hub|shop|0|structure|team:acme"`) || !strings.Contains(last, `"classes":"structure"`) || !strings.Contains(last, `"sources":"team:acme"`) {
+		t.Fatal(last)
+	}
+}
+
+// A pull that is running while the link is changed stores nothing of what it fetched from the old reach.
+func TestPullRunningWhileTheLinkChangesStoresNothing(t *testing.T) {
+	f, fk := readFx(t)
+	h := &hub{notes: []hubNote{structNote(1, "One"), structNote(2, "Two")}}
+	h.note = func(id int64, def string) (int, string, time.Duration) {
+		if id == 1 { // the owner re-links to another project while the pull waits for the upstream
+			auto := true
+			f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "fakture", Auto: &auto}))
+		}
+		return 200, def, 0
+	}
+	res := pull(f, fk, h.up())
+	if len(mirror(f)) != 0 || res.Added != 0 || !strings.Contains(res.Stopped, "changed during the pull") {
+		t.Fatalf("%+v %v", res, mirror(f))
+	}
+}
+
+// M2 (core): a full mirror ends the traversal; nothing is fetched to be thrown away.
+func TestFullMirrorFetchesNothingNew(t *testing.T) {
+	f, fk := readFx(t)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		for i := 1; i <= MaxMirrorNotes; i++ {
+			if _, e := tx.Exec(`INSERT INTO upstream_mirror(project_id,upstream,source_id,source_label,remote_note,remote_rev,class,kind,title,body,bytes,updated,fetched) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, fk, "hub", 7, "project:shop", i+100000, 1, "structure", "finding", "t", "b", 2, 1, 1); e != nil {
+				return e
+			}
+		}
+		return nil
+	}))
+	h := &hub{}
+	for i := int64(1); i <= 201; i++ { // the hub offers 201 notes the mirror has no room for
+		h.notes = append(h.notes, structNote(i, "N"))
+	}
+	changed := structNote(100001, "N")
+	changed.rev = 2 // one known note changed: that one is fetched
+	h.notes = append(h.notes, changed)
+	h.truncated = true
+	res := pull(f, fk, h.up())
+	if len(h.asked) != 1 || h.asked[0] != 100001 || res.More || res.Skipped != 201 || !strings.Contains(strings.Join(res.Lines, "\n"), "mirror full") || res.Mirror != MaxMirrorNotes || res.Updated != 1 {
+		t.Fatalf("%v %+v", h.asked, res)
+	}
+	if l := linkOf(f, fk); l.LastPullOK == nil {
+		t.Fatal("a full mirror leaves the traversal unfinished")
+	}
+}
+
+// The disk cost: 64 MiB of cap counts a note at mirrorCost times its text.
+func TestMirrorCapCountsTheDiskCost(t *testing.T) {
+	f, fk := readFx(t)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`INSERT INTO upstream_mirror(project_id,upstream,source_id,source_label,remote_note,remote_rev,class,kind,title,body,bytes,updated,fetched) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, 99, "other", 1, "x", 1, 1, "structure", "finding", "t", "b", MaxMirrorBytes/mirrorCost-10, 1, 1)
+		return e
+	}))
+	res := pull(f, fk, (&hub{notes: []hubNote{structNote(1, "One")}}).up())
+	if res.Added != 0 || res.Skipped != 1 {
+		t.Fatalf("%+v", res) // text alone is below 64 MiB, its cost is not
+	}
+}
+
+// L1: a wait for the rate limit never outlives the run's own deadline.
+func TestPullDoesNotSleepPastItsDeadline(t *testing.T) {
+	old := pullRunTimeout
+	pullRunTimeout = 3 * time.Second
+	defer func() { pullRunTimeout = old }()
+	f, fk := readFx(t)
+	h := &hub{notes: []hubNote{structNote(1, "One")}, manifest: func() (int, string) { return 429, `{}` }}
+	slept := 0
+	res, err := f.PullUpstream(ctx, h.up(), fk, 0, "", false, func(time.Duration) bool { slept++; return true })
+	f.ok(err)
+	if slept != 0 || !res[0].More || res[0].Wait != 120 {
+		t.Fatalf("slept %d %+v", slept, res[0]) // the 2 minute wait does not fit in the 3 seconds that are left
+	}
+}
+
+// L2: a cut manifest keeps what it does not list, but not what this link no longer takes.
+func TestTruncatedManifestStillDropsWhatTheLinkNoLongerTakes(t *testing.T) {
+	f, fk := readFx(t)
+	h := &hub{notes: []hubNote{structNote(1, "One"), structNote(2, "Two"), structNote(3, "Three")}}
+	pull(f, fk, h.up())
+	f.ok(f.write(ctx, func(tx *sql.Tx) error { // a data row (this link reads structure only) and a row of a source it does not take
+		_, e := tx.Exec(`UPDATE upstream_mirror SET class='data' WHERE remote_note=2`)
+		if e == nil {
+			_, e = tx.Exec(`UPDATE upstream_mirror SET source_id=99 WHERE remote_note=3`)
+		}
+		return e
+	}))
+	h.notes = h.notes[:1] // 2 and 3 are not listed any more, and the manifest is cut: unlisted rows stay unless this link does not take them
+	h.truncated = true
+	h.notes = append(h.notes, hubNote{id: 4, src: 7, rev: 1, class: Data, kind: KindFinding, title: "Four", body: "b"}) // listed, but a class not read
+	pull(f, fk, h.up())
+	if got := strings.Join(mirror(f), "|"); got != "1/1/structure/finding/One" {
+		t.Fatal(got)
+	}
+	// a note the hub moved to data stays out of the mirror even when the manifest is cut
+	f, fk = readFx(t)
+	h = &hub{notes: []hubNote{structNote(1, "One"), structNote(2, "Two")}}
+	pull(f, fk, h.up())
+	h.notes[1].class, h.notes[1].rev, h.truncated = Data, 2, true
+	pull(f, fk, h.up())
+	if got := strings.Join(mirror(f), "|"); got != "1/1/structure/finding/One" {
+		t.Fatal(got)
+	}
+}
+
+// L4: what a reader cannot see is removed, by one rule.
+func TestInvisibleRuneTable(t *testing.T) {
+	for r, want := range map[rune]bool{
+		'a': false, ' ': false, '\n': true /* a control: mirrorBody keeps it itself */, 0x7f: true, 0x200b: true, 0x202e: true, 0x2066: true, 0xfeff: true, 0xad: true,
+		0xfe0f: true, 0xfe00: true, 0xe0100: true, 0xe01ef: true, 0xe0041: true, 0xe0001: true, 0x115f: true, 0x1160: true, 0x3164: true, 0xffa0: true,
+		0x034f: true, 0x180b: true, 0x2028: true, 0x2029: true, 'é': false, '日': false, '😀': false, 0xe01f0: false,
+	} {
+		if invisibleRune(r) != want {
+			t.Errorf("U+%04X: %v", r, !want)
+		}
+	}
+	if got := mirrorBody("a\u200bb\ufe0fc\U000e0041d\u3164e\tf\ng"); got != "abcde\tf\ng" {
+		t.Fatalf("%q", got)
+	}
+	if got := upText("x\ufe0f\U000e0100y\u3164z", 40); got != "x y z" {
+		t.Fatalf("%q", got)
+	}
+}
+
+// L8: a restore rebuilds the mirror's search index too (it has its own copy of the text).
+func TestRestoreRebuildsTheMirrorSearchIndex(t *testing.T) {
+	f, fk := readFx(t)
+	pull(f, fk, (&hub{notes: []hubNote{structNote(1, "Alpha title")}}).up())
+	bak := filepath.Join(t.TempDir(), "m.db")
+	f.ok(f.Backup(ctx, bak))
+	damageIndex(t, bak, `UPDATE upstream_mirror_search SET body='zebra'`)
+	dir := t.TempDir()
+	f.ok(Restore(dir, bak))
+	s := openT(t, dir)
+	defer s.Close()
+	var zebra, alpha int
+	s.DB().QueryRow(`SELECT count(*) FROM upstream_mirror_search WHERE upstream_mirror_search MATCH 'zebra'`).Scan(&zebra)
+	s.DB().QueryRow(`SELECT count(*) FROM upstream_mirror_search WHERE upstream_mirror_search MATCH 'alpha'`).Scan(&alpha)
+	if zebra != 0 || alpha != 1 {
+		t.Fatal("the mirror's index was not rebuilt", zebra, alpha)
+	}
+}
+
+// L9: pulling every link in one call: a link after the used-up budget is "more", the reports of the links done stay.
+func TestPullAllLinksKeepsTheReportsWhenTheBudgetIsUsed(t *testing.T) {
+	f, _ := readFx(t)
+	f.ok(f.LinkUpstream(ctx, f.pid["eureko"], 0, "hub", "shop", "", false))
+	readOn(f, f.pid["eureko"], "", "")
+	h := &hub{notes: []hubNote{structNote(1, "One"), structNote(2, "Two")}}
+	c, cancel := context.WithCancel(ctx)
+	h.note = func(id int64, def string) (int, string, time.Duration) {
+		if id == 2 {
+			cancel() // the budget is gone while the first link is in its last note
+		}
+		return 200, def, 0
+	}
+	res, err := f.PullUpstream(c, h.up(), 0, 0, "", false, noSleep)
+	f.ok(err)
+	if len(res) != 2 || res[0].Added != 2 || !res[1].More || res[1].Wait != 1 {
+		t.Fatalf("%+v", res)
 	}
 }

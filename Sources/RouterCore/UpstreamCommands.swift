@@ -29,6 +29,9 @@ extension AdminCommands {
         return key
     }
 
+    /// Runs of one pull command for one link (25 runs of 200 notes are the 5000 notes a link's mirror may hold); the same number in Go.
+    static let maxPullRuns = 25
+
     func upstream(_ pos: [String], _ o: AdminOpts) throws {
         let usage = fail(Self.upstreamHelp.trimmingCharacters(in: .whitespacesAndNewlines))
         guard pos.count >= 2 else { throw usage }
@@ -84,7 +87,8 @@ extension AdminCommands {
                 req["readClasses"] = o.readClass; req["readSources"] = o.readSources; req["acceptReach"] = o.acceptReach
                 req["readOnly"] = !pushFlags  // an existing link keeps its push settings
             }
-            try request("PUT", path, req)
+            let linked = try request("PUT", path, req)
+            defer { if linked["readOff"]?.bool == true { say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach")) } }
             if reading && !pushFlags {
                 if o.noRead { say(clean("\(local) -> \(name): reading is off, the mirror was deleted")) }
                 else { say(clean("\(local) -> \(name): reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)")) }
@@ -180,7 +184,9 @@ extension AdminCommands {
             // "more" and its cursor; ask again for that link, as long as it gets further (or only waits for the upstream's read limit, a
             // bounded number of times).
             var targets: [[String: Any]] = [body]
-            var lastNext: [String: Int64] = [:], stalls: [String: Int] = [:]
+            // The loop is bounded: at most maxPullRuns runs (the per-link cap of notes) and pullWall seconds per command, whatever an upstream offers.
+            var lastNext: [String: Int64] = [:], stalls: [String: Int] = [:], runs: [String: Int] = [:]
+            let deadline = Date().addingTimeInterval(pullWall)
             while !targets.isEmpty {
                 var next: [[String: Any]] = []
                 var wait: Int64 = 0
@@ -195,6 +201,8 @@ extension AdminCommands {
                         guard d["more"]?.bool == true else { continue }
                         let project = d["project"]?.int ?? 0, upstream = d["upstream"]?.string ?? "", nextID = d["next"]?.int ?? 0, w = d["wait"]?.int ?? 0
                         let key = "\(project)|\(upstream)"
+                        runs[key, default: 0] += 1
+                        if runs[key]! >= Self.maxPullRuns || Date() > deadline { say(clean("  \(d["label"]?.string ?? "") -> \(upstream): more remains: run the pull again")); continue }
                         if nextID > lastNext[key] ?? 0 { lastNext[key] = nextID; stalls[key] = 0 }
                         else if w > 0 && (stalls[key] ?? 0) < 30 { stalls[key] = (stalls[key] ?? 0) + 1 }
                         else { say(clean("  \(d["label"]?.string ?? "") -> \(upstream): no progress: run the pull again later")); continue }
@@ -226,7 +234,7 @@ extension AdminCommands {
         let cls = (d["readClasses"]?.array ?? []).compactMap { $0.string }.joined(separator: ",")
         let srcs = (d["readSources"]?.array ?? []).compactMap { $0.string }
         func at(_ key: String) -> Date? { d[key]?.string.flatMap(ProjectText.parseTime) }
-        let acc = at("readAccepted").map { ", accepted " + ProjectText.stamp($0, zone) } ?? ""
+        let acc = at("readAccepted").map { ", accepted " + ProjectText.stamp($0, zone) + " for " + (d["remote"]?.string ?? "") } ?? ""
         var pulled = ", never pulled"
         if let ok = at("lastPullOk") { pulled = ", last pull " + ProjectText.stamp(ok, zone) + " (" + upstreamAge(d["lastPullAge"]?.int ?? 0) + " old)" }
         if let t = at("lastPull"), at("lastPullOk").map({ t > $0 }) ?? true { pulled += ", last try " + ProjectText.stamp(t, zone) }

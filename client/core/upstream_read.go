@@ -165,7 +165,19 @@ func (s *Store) PullUpstream(ctx context.Context, tr UpstreamTransport, project,
 		case dry:
 			out = append(out, s.pullDry(ctx, tr, l.UpstreamLink, l.Label, sleep))
 		case l.Read:
+			// one budget for all links: a link that comes after it is used up is "more" (the reports of the links done stay in the answer)
+			_, isTeam := SegmentTeam(l.Project)
+			later := UpstreamPull{Label: l.Label, Upstream: l.Upstream, Remote: l.Remote, Project: l.Project, Team: isTeam, More: true, Wait: 1,
+				Stopped: "the time budget of this call is used: pull again"}
+			if ctx.Err() != nil {
+				out = append(out, later)
+				continue
+			}
 			r, err := s.pullLink(ctx, tr, l.UpstreamLink, l.Label, sleep)
+			if err != nil && ctx.Err() != nil && len(out) > 0 {
+				out = append(out, later)
+				continue
+			}
 			if err != nil {
 				return out, err
 			}

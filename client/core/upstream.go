@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"regexp"
 	"sort"
@@ -125,6 +126,7 @@ func migrate24(tx *sql.Tx) error {
 ALTER TABLE upstream_links ADD COLUMN read_classes TEXT NOT NULL DEFAULT 'structure';
 ALTER TABLE upstream_links ADD COLUMN read_sources TEXT NOT NULL DEFAULT '';
 ALTER TABLE upstream_links ADD COLUMN read_accepted INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN read_reach TEXT NOT NULL DEFAULT ''; -- what the owner accepted: upstream, remote project or team, classes, sources
 ALTER TABLE upstream_links ADD COLUMN last_pull INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_links ADD COLUMN last_pull_ok INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_links ADD COLUMN pull_cursor INTEGER NOT NULL DEFAULT 0;
@@ -316,9 +318,16 @@ type LinkSpec struct {
 }
 
 func (s *Store) LinkUpstreamWith(ctx context.Context, sp LinkSpec) error {
+	_, err := s.LinkUpstreamReport(ctx, sp)
+	return err
+}
+
+// LinkUpstreamReport is LinkUpstreamWith and says whether it turned reading off because the link now reaches something else than what the
+// owner accepted (the remote project or team changed without a new --read ... --accept-reach): the mirror is then deleted.
+func (s *Store) LinkUpstreamReport(ctx context.Context, sp LinkSpec) (turnedOff bool, err error) {
 	project, team, upstream, remote, classes, withPrivate := sp.Project, sp.Team, sp.Upstream, sp.Remote, sp.Classes, sp.WithPrivate
 	if sp.Mode != "" && sp.Mode != "submit" && sp.Mode != "publish" {
-		return ErrRefusal{"mode: submit or publish"}
+		return false, ErrRefusal{"mode: submit or publish"}
 	}
 	if classes == "" {
 		classes = "structure,data"
@@ -328,37 +337,38 @@ func (s *Store) LinkUpstreamWith(ctx context.Context, sp LinkSpec) error {
 	}
 	cls, err := parseClasses(classes, withPrivate)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if withPrivate && !contains(cls, Private) {
-		return ErrRefusal{"--with-private names the private class: add it to --class (or leave --class out)"}
+		return false, ErrRefusal{"--with-private names the private class: add it to --class (or leave --class out)"}
 	}
 	readOn, readOff := sp.Read != nil && *sp.Read, sp.Read != nil && !*sp.Read
 	readLists := sp.ReadClasses != "" || sp.ReadSources != ""
 	var readCls, readSrc string
 	switch {
 	case readOff && readLists:
-		return ErrRefusal{"--no-read with --read-class or --read-sources: choose one"}
+		return false, ErrRefusal{"--no-read with --read-class or --read-sources: choose one"}
 	case (readOn || readLists) && !sp.AcceptReach:
-		return ErrRefusal{"reading gives the members of this project what the upstream's user may read there: look first (minigw gw upstream pull <project> --dry-run on a link without --read), then repeat with --accept-reach"}
+		return false, ErrRefusal{"reading gives the members of this project what the upstream's user may read there: look first (minigw gw upstream pull <project> --dry-run on a link without --read), then repeat with --accept-reach"}
 	}
 	if sp.ReadClasses != "" {
 		if strings.Contains(","+strings.ReplaceAll(sp.ReadClasses, " ", "")+",", ",private,") {
-			return ErrRefusal{"private notes are never read from an upstream"}
+			return false, ErrRefusal{"private notes are never read from an upstream"}
 		}
 		rc, err := parseClasses(sp.ReadClasses, false)
 		if err != nil {
-			return err
+			return false, err
 		}
 		readCls = classesCSV(rc)
 	}
 	if sp.ReadSources != "" {
 		var err error
 		if readSrc, err = parseReadSources(sp.ReadSources); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return s.adminWrite(ctx, "upstream.link", upstream, map[string]any{"project": project, "team": team, "remote": remote, "classes": classesCSV(cls), "withPrivate": withPrivate, "auto": sp.Auto, "mode": sp.Mode, "read": sp.Read, "readClasses": readCls, "readSources": readSrc, "readOnly": sp.ReadOnly}, func(tx *sql.Tx) (string, error) {
+	detail := map[string]any{"project": project, "team": team, "remote": remote, "classes": classesCSV(cls), "withPrivate": withPrivate, "auto": sp.Auto, "mode": sp.Mode, "read": sp.Read, "readClasses": readCls, "readSources": readSrc, "readOnly": sp.ReadOnly}
+	err = s.adminWrite(ctx, "upstream.link", upstream, detail, func(tx *sql.Tx) (string, error) {
 		if e := tx.QueryRow(`SELECT name FROM upstreams WHERE name=?`, upstream).Scan(new(string)); e != nil {
 			return "", notFound(e)
 		}
@@ -425,7 +435,7 @@ func (s *Store) LinkUpstreamWith(ctx context.Context, sp LinkSpec) error {
 			return "", e
 		}
 		if sp.ReadOnly && have > 0 { // only the reading changes: the push settings of the link stay as they are
-			return "", setLinkRead(tx, s.now(), local, upstream, sp, readOn, readOff, readCls, readSrc)
+			return "", setLinkRead(tx, s.now(), local, upstream, sp, readOn, readOff, readCls, readSrc, detail)
 		}
 		var au any
 		if sp.Auto != nil {
@@ -445,22 +455,58 @@ ON CONFLICT(project_id,upstream) DO UPDATE SET remote=excluded.remote, remote_te
 		} else if sp.Auto != nil { // switching it off: no outbox, no back-off
 			_, e = tx.Exec(`UPDATE upstream_links SET dirty_since=0, last_change=0, fail_count=0, next_attempt=0, push_cursor=0, push_generation=0, push_failed=0 WHERE project_id=? AND upstream=?`, local, upstream)
 		}
-		if e == nil {
-			e = setLinkRead(tx, s.now(), local, upstream, sp, readOn, readOff, readCls, readSrc)
+		if e != nil {
+			return "", e
 		}
-		return "", e
+		if have > 0 { // a new link reads nothing yet
+			if turnedOff, e = enforceReach(tx, local, upstream, detail); e != nil { // before the new acceptance, which may follow
+				return "", e
+			}
+		}
+		return "", setLinkRead(tx, s.now(), local, upstream, sp, readOn, readOff, readCls, readSrc, detail)
 	})
+	if readOn || sp.ReadClasses != "" || sp.ReadSources != "" { // the same command accepted the new reach: reading is on again
+		turnedOff = false
+	}
+	return turnedOff, err
+}
+
+// reachOf is what an acceptance covers: the upstream, the remote project or team (and which of the two), the classes and the sources.
+func reachOf(upstream, remote string, remoteTeam int, classes, sources string) string {
+	return fmt.Sprintf("%s|%s|%d|%s|%s", upstream, remote, remoteTeam, classes, sources)
+}
+
+// enforceReach: reading stays on only while the link reaches exactly what the owner accepted. A link that now points at another remote
+// project or team (both CLIs default the remote to the local name, so a plain `link <project> <name> --auto` can do that) loses its
+// reading and its mirror; the owner accepts the new reach with --read --accept-reach.
+func enforceReach(tx *sql.Tx, project int64, upstream string, detail map[string]any) (bool, error) {
+	var remote, cls, src, reach string
+	var team, on int
+	if e := tx.QueryRow(`SELECT remote,remote_team,read,read_classes,read_sources,read_reach FROM upstream_links WHERE project_id=? AND upstream=?`, project, upstream).Scan(&remote, &team, &on, &cls, &src, &reach); e != nil {
+		return false, e
+	}
+	if on == 0 || reach == reachOf(upstream, remote, team, cls, src) {
+		return false, nil
+	}
+	n, e := purgeMirror(tx, project, upstream)
+	if e != nil {
+		return false, e
+	}
+	detail["readTurnedOff"] = map[string]any{"accepted": reach, "now": reachOf(upstream, remote, team, cls, src), "mirrorNotes": n}
+	_, e = tx.Exec(`UPDATE upstream_links SET read=0,read_accepted=0,read_reach='',pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0 WHERE project_id=? AND upstream=?`, project, upstream)
+	return e == nil, e
 }
 
 // setLinkRead applies the reading part of a link spec. Any change of what is read (on, off, classes, sources) deletes the mirror of the
-// link in the same transaction: what stays is never more than what the owner has accepted.
-func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp LinkSpec, readOn, readOff bool, classes, sources string) error {
+// link in the same transaction: what stays is never more than what the owner has accepted. The acceptance stores the exact reach and the
+// audit row names it (the effective classes and sources, not only the flags that were given).
+func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp LinkSpec, readOn, readOff bool, classes, sources string, detail map[string]any) error {
 	if sp.Read == nil && sp.ReadClasses == "" && sp.ReadSources == "" {
 		return nil
 	}
-	var cur int
-	var curC, curS string
-	if e := tx.QueryRow(`SELECT read,read_classes,read_sources FROM upstream_links WHERE project_id=? AND upstream=?`, project, upstream).Scan(&cur, &curC, &curS); e != nil {
+	var cur, team int
+	var curC, curS, remote string
+	if e := tx.QueryRow(`SELECT read,read_classes,read_sources,remote,remote_team FROM upstream_links WHERE project_id=? AND upstream=?`, project, upstream).Scan(&cur, &curC, &curS, &remote, &team); e != nil {
 		return e
 	}
 	on := !readOff
@@ -470,9 +516,14 @@ func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp L
 	if sources == "" {
 		sources = curS
 	}
+	reach := ""
+	if on {
+		reach = reachOf(upstream, remote, team, classes, sources)
+		detail["readAccepted"] = map[string]any{"reach": reach, "classes": classes, "sources": sources, "remote": remote, "remoteTeam": team == 1}
+	}
 	if on == (cur == 1) && classes == curC && sources == curS {
 		if on { // accepted again
-			_, e := tx.Exec(`UPDATE upstream_links SET read_accepted=? WHERE project_id=? AND upstream=?`, ms(now), project, upstream)
+			_, e := tx.Exec(`UPDATE upstream_links SET read_accepted=?,read_reach=? WHERE project_id=? AND upstream=?`, ms(now), reach, project, upstream)
 			return e
 		}
 		return nil
@@ -484,7 +535,7 @@ func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp L
 	if on {
 		accepted, o = ms(now), 1
 	}
-	_, e := tx.Exec(`UPDATE upstream_links SET read=?,read_classes=?,read_sources=?,read_accepted=?,pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0 WHERE project_id=? AND upstream=?`, o, classes, sources, accepted, project, upstream)
+	_, e := tx.Exec(`UPDATE upstream_links SET read=?,read_classes=?,read_sources=?,read_accepted=?,read_reach=?,pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0 WHERE project_id=? AND upstream=?`, o, classes, sources, accepted, reach, project, upstream)
 	return e
 }
 
