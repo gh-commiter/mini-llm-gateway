@@ -50,7 +50,9 @@
   "DELETE upstreams/{}/links/{}",
   "GET upstream-links/{}",
   "POST upstream-push",
-  "POST upstream-resolve"
+  "POST upstream-resolve",
+  "GET usage/labels/settings",
+  "PUT usage/labels/settings"
  ],
  "builtinSecret": [
   "PUT upstreams/{}"

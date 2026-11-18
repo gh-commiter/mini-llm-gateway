@@ -15,8 +15,8 @@ import (
 	"unicode/utf8"
 )
 
-const usageReportHelp = `minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
-  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels; at most 50 groups and an (other) row); unlabelled usage is its own row; --json gives these groups, not the raw rows
+const usageReportHelp = `minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--label-source given|branch|model] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
+  minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--label-source given|branch|model] [--json]   the same numbers per phase, activity, task, project or model (one or two levels; at most 50 groups and an (other) row); unlabelled usage is its own row; --json gives these groups, not the raw rows
   minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)`
 
 type usageEventRow struct {
@@ -357,15 +357,15 @@ const unlabelled = "(unlabelled)"
 // maxByGroups: the table and the grouped JSON show this many groups; the rest is one "(other)" row, so shares add up.
 const maxByGroups = 50
 
-// usageByValue is the value of one dimension of a row, with the source of a task's label: the display text adds
-// " (branch)" to a task taken from the branch; raw is the value alone ("(unlabelled)" for no label).
+// usageByValue is the value of one dimension of a row, with the source of a label: the display text adds " (branch)" to a
+// task taken from the branch and " (model)" or " (internal)" to a phase or activity chosen by a model or the gateway; raw is the value alone ("(unlabelled)" for no label).
 func usageByValue(r usageEventRow, dim string, projects map[int64]string) (display, raw, source string) {
 	v := ""
 	switch dim {
 	case "phase":
-		v = r.Phase
+		v, source = r.Phase, modelSource(r.PhaseSource)
 	case "activity":
-		v = r.Activity
+		v, source = r.Activity, modelSource(r.ActivitySource)
 	case "task":
 		v, source = r.Task, r.TaskSource
 	case "model":
@@ -384,10 +384,19 @@ func usageByValue(r usageEventRow, dim string, projects map[int64]string) (displ
 	if v == "" {
 		return unlabelled, unlabelled, ""
 	}
-	if source == "branch" {
-		return v + " (branch)", v, source
+	if source == "branch" || source == "model" || source == "internal" {
+		return v + " (" + source + ")", v, source
 	}
 	return v, v, source
+}
+
+// modelSource: of a phase or activity only a label a model chose, or the gateway's own event, shows its source (a given one
+// is the plain value, as before labels could be filled by a model).
+func modelSource(src string) string {
+	if src == "model" || src == "internal" {
+		return src
+	}
+	return ""
 }
 
 type byGroup struct {

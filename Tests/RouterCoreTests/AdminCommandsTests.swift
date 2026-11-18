@@ -34,7 +34,7 @@ private func fixtureJSON(_ name: String) throws -> [String: Any] {
             do {
                 try cmd.run(c["args"] as! [String], AdminOpts(days: o["days"] ?? "7", user: o["user"] ?? "", project: o["project"] ?? "",
                                                               model: o["model"] ?? "", claudeProbe: o["claudeProbe"] ?? "", team: o["team"] ?? "",
-                                                              phase: o["phase"] ?? "", activity: o["activity"] ?? "", task: o["task"] ?? ""))
+                                                              phase: o["phase"] ?? "", activity: o["activity"] ?? "", task: o["task"] ?? "", labelSource: o["labelSource"] ?? ""))
             } catch let e as AdminCLIError { exit = e.code; errText = "minigw: " + e.message + "\n" }
             let want = c["want"] as! [String: Any]
             #expect(outText == want["out"] as! String, "\(name): stdout")

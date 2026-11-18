@@ -39,7 +39,7 @@ const coreHelp = `
   minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups
   minigw gw core audit                                  the audit trail of the core
   minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]
-  minigw gw usage-events [--days n] [--user u] [--project p] [--model m] [--phase p] [--activity a] [--task t]   model invocations per day, model and user (core; all of them)
+  minigw gw usage-events [--days n] [--user u] [--project p] [--model m] [--phase p] [--activity a] [--task t] [--label-source given|branch|model]   model invocations per day, model and user (core; all of them)
   minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
   minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
 (<user> and <project>: the name or slug, or the number.)`
@@ -88,8 +88,8 @@ func projectID(a *adminClient, ref string) int64 {
 
 // coreOpts: the flags of usage-events and usage.
 type coreOpts struct {
-	days, user, project, model, claudeProbe, provider, device, folder, sort, reason, team, by, phase, activity, task string
-	json, csv, history, explain                                                                                      bool
+	days, user, project, model, claudeProbe, provider, device, folder, sort, reason, team, by, phase, activity, task, labelSource string
+	json, csv, history, explain                                                                                                   bool
 	// upstream (upstream_cmd.go): the token comes from in; the rest are the link and push options
 	in                        io.Reader
 	remoteProject, remoteTeam string
@@ -341,6 +341,7 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 			q.Set("model", o.model)
 		}
 		addLabelFilters(q, o)
+		addLabelSource(q, o)
 		if byLabels(by) {
 			q.Set("labels", "1")
 		}
@@ -414,6 +415,7 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 			q.Set("model", o.model)
 		}
 		addLabelFilters(q, o)
+		addLabelSource(q, o)
 		var r usageReply
 		a.do("GET", "/usage/events?"+q.Encode(), nil, &r)
 		printUsage(os.Stdout, r, true)
@@ -580,6 +582,14 @@ func orDash(s string) string {
 // restoreOutcome: core.RestoreOutcome for minigw serve.
 func restoreOutcome(err error) (msg string, failed bool) {
 	return core.RestoreOutcome(err, "stop minigw serve first")
+}
+
+// addLabelSource adds --label-source (given|branch|model): events that have a label from that source. Only usage and
+// usage-events take it; like the other filters it narrows, never widens.
+func addLabelSource(q url.Values, o coreOpts) {
+	if o.labelSource != "" {
+		q.Set("label_source", o.labelSource)
+	}
 }
 
 // addLabelFilters adds the label filters of the owner's usage commands (they select events; they never widen access).

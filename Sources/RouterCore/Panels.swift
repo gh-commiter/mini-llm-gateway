@@ -225,7 +225,9 @@ public enum PanelRoutes {
         "DELETE upstreams/{}/links/{}",
         "GET upstream-links/{}",
         "POST upstream-push",
-        "POST upstream-resolve"]
+        "POST upstream-resolve",
+        "GET usage/labels/settings",
+        "PUT usage/labels/settings"]
     /// The routes that may receive the value of a secret field (in the body); a secret field in any other route is refused.
     public static let builtinSecret = ["PUT upstreams/{}"]
     /// The routes whose every action must carry a confirm (the sends to an upstream, the links that decide what is sent, the settling of a conflict and its removal); an action on one without it is refused.

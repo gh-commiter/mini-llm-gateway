@@ -52,7 +52,7 @@ func IsAdminPath(method, escapedPath string) bool {
 	case "quota":
 		return len(seg) == 2 && seg[1] == "history"
 	case "usage": // GET /usage itself remains the gateway counter report
-		return len(seg) == 2 && (seg[1] == "events" || seg[1] == "sessions")
+		return len(seg) == 2 && (seg[1] == "events" || seg[1] == "sessions") || len(seg) == 3 && seg[1] == "labels" && (seg[2] == "settings" || seg[2] == "agreement")
 	}
 	return false
 }
@@ -142,6 +142,9 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 	}
 	if (seg[0] == "core" || seg[0] == "usage") && len(seg) == 2 {
 		route = method + " " + seg[0] + "/" + seg[1]
+	}
+	if seg[0] == "usage" && len(seg) == 3 {
+		return a.adminLabels(ctx, st, method, seg[2], q, body, failErr)
 	}
 	if seg[0] == "teams" {
 		return a.adminTeams(ctx, st, method, seg, q, body)
@@ -498,7 +501,7 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		f := core.UsageFilter{Model: q.Get("model"), Provider: q.Get("provider")}
 		f.User, _ = strconv.ParseInt(q.Get("user"), 10, 64)
 		f.Project, _ = strconv.ParseInt(q.Get("project"), 10, 64)
-		f.Phase, f.Activity, f.Task, f.Labels = q.Get("phase"), q.Get("activity"), q.Get("task"), q.Get("labels") == "1"
+		f.Phase, f.Activity, f.Task, f.Labels, f.LabelSource = q.Get("phase"), q.Get("activity"), q.Get("task"), q.Get("labels") == "1", q.Get("label_source")
 		rep, err := st.AdminUsage(ctx, days, f)
 		if err != nil {
 			return failErr(err)

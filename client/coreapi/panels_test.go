@@ -503,7 +503,7 @@ func TestBuiltinPanelOrderIsExplicit(t *testing.T) {
 		json.Unmarshal(raw, &d)
 		ids = append(ids, d.ID)
 	}
-	if !reflect.DeepEqual(ids, []string{"builtin.users", "builtin.teams", "builtin.kb", "builtin.upstreams"}) {
+	if !reflect.DeepEqual(ids, []string{"builtin.users", "builtin.teams", "builtin.kb", "builtin.upstreams", "builtin.labels"}) {
 		t.Fatalf("order %v", ids)
 	}
 	// the answer keeps it
@@ -512,7 +512,7 @@ func TestBuiltinPanelOrderIsExplicit(t *testing.T) {
 		Panels []struct{ Description struct{ ID string } }
 	}
 	json.Unmarshal(r.Body, &o)
-	if len(o.Panels) != 4 || o.Panels[0].Description.ID != "builtin.users" || o.Panels[1].Description.ID != "builtin.teams" || o.Panels[2].Description.ID != "builtin.kb" || o.Panels[3].Description.ID != "builtin.upstreams" {
+	if len(o.Panels) != 5 || o.Panels[0].Description.ID != "builtin.users" || o.Panels[1].Description.ID != "builtin.teams" || o.Panels[2].Description.ID != "builtin.kb" || o.Panels[3].Description.ID != "builtin.upstreams" || o.Panels[4].Description.ID != "builtin.labels" {
 		t.Fatalf("%s", r.Body)
 	}
 }

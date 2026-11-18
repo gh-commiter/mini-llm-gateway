@@ -366,7 +366,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
 
     @Test(.enabled(if: haveFixtures)) func theGoAnswerLoads() async throws {
         let c = await catalog(200, String(decoding: try fixture("panels.json"), as: UTF8.self))
-        #expect(c.error == nil && c.entries.map(\.id) == ["builtin.users", "builtin.teams", "builtin.kb", "builtin.upstreams"])  // the order of the answer
+        #expect(c.error == nil && c.entries.map(\.id) == ["builtin.users", "builtin.teams", "builtin.kb", "builtin.upstreams", "builtin.labels"])  // the order of the answer
         let usersEntry = c.entries[0]
         #expect(usersEntry.title(c.strings) == "Users and devices" && usersEntry.sidebarSymbol == "person.2" && c.strings.locale == "C")
         #expect(c.entries[2].title(c.strings) == "Knowledge base" && c.entries[2].sidebarSymbol == "book" && c.entries[1].title(c.strings) == "Teams and projects")

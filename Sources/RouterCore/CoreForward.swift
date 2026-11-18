@@ -23,7 +23,7 @@ enum CoreRoutes {
         case "users", "bindings", "projects", "teams", "kb", "grants", "audit", "core", "export", "import", "upstreams", "upstream-push", "upstream-pull", "upstream-auto", "upstream-resolve", "upstream-links": return true
         case "panels": return seg.count == 1 || (seg.count == 2 && seg[1] == "strings")
         case "quota": return seg.count == 2 && seg[1] == "history"
-        case "usage": return seg.count == 2 && (seg[1] == "events" || seg[1] == "sessions")  // GET /usage is the 0.5.x folder counter of the gateway
+        case "usage": return seg.count == 2 && (seg[1] == "events" || seg[1] == "sessions") || seg.count == 3 && seg[1] == "labels" && (seg[2] == "settings" || seg[2] == "agreement")  // GET /usage is the 0.5.x folder counter of the gateway
         default: return false
         }
     }

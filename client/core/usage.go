@@ -331,6 +331,9 @@ type UsageFilter struct {
 	// folded totals carry no labels and appear as unlabelled rows (none when a label filter is set).
 	Phase, Activity, Task string
 	Labels                bool
+	// LabelSource keeps the events that have a label (phase, activity or task) with this source (given, branch, model);
+	// like the other label filters it only narrows, and folded totals (no labels) are left out.
+	LabelSource string
 }
 
 // Usage is what a member may see (section 2): project given: an admin sees all events of the project, a developer
@@ -340,10 +343,11 @@ type UsageFilter struct {
 type LabelQuery struct {
 	Phase, Activity, Task string
 	Labels                bool
+	LabelSource           string
 }
 
 func (l LabelQuery) apply(f UsageFilter) UsageFilter {
-	f.Phase, f.Activity, f.Task, f.Labels = l.Phase, l.Activity, l.Task, l.Labels
+	f.Phase, f.Activity, f.Task, f.Labels, f.LabelSource = l.Phase, l.Activity, l.Task, l.Labels, l.LabelSource
 	return f
 }
 
@@ -426,6 +430,12 @@ func (s *Store) usageRows(tx *sql.Tx, days int, f UsageFilter, withFolded, withG
 			where, args = append(where, "e."+l.col+"=?"), append(args, l.val)
 		}
 	}
+	if f.LabelSource != "" {
+		if !ValidLabelSource(f.LabelSource) {
+			return UsageReport{}, ErrInvalid{"label source"}
+		}
+		where, args = append(where, "(e.phase_source=? OR e.activity_source=? OR e.task_source=?)"), append(args, f.LabelSource, f.LabelSource, f.LabelSource)
+	}
 	labelCols, labelGroup := `'','','','','',''`, ""
 	if f.Labels {
 		labelCols, labelGroup = `e.phase,e.activity,e.task,e.phase_source,e.activity_source,e.task_source`, `, e.phase, e.activity, e.task, e.phase_source, e.activity_source, e.task_source`
@@ -452,7 +462,7 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 		return rep, err
 	}
 	rows.Close()
-	if withFolded && f.Phase == "" && f.Activity == "" && f.Task == "" {
+	if withFolded && f.Phase == "" && f.Activity == "" && f.Task == "" && f.LabelSource == "" {
 		fw, fa := []string{"d.day>=?"}, []any{from.Format("2006-01-02")}
 		if f.User != 0 {
 			fw, fa = append(fw, "d.user_id=?"), append(fa, f.User)

@@ -6,8 +6,8 @@ import Foundation
 
 public enum UsageReport {
     public static let help = """
-        minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
-          minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--json]   the same numbers per phase, activity, task, project or model (one or two levels; at most 50 groups and an (other) row); unlabelled usage is its own row; --json gives these groups, not the raw rows
+        minigw gw usage [--days N] [--provider P] [--model M] [--phase P] [--activity A] [--task T] [--label-source given|branch|model] [--sort failed] [--json|--csv]   requests, tokens, cost and failed agent time per provider, model and day (UTC)
+          minigw gw usage --by phase|activity|task|project|model[,...] [--days N] [--phase P] [--activity A] [--task T] [--label-source given|branch|model] [--json]   the same numbers per phase, activity, task, project or model (one or two levels; at most 50 groups and an (other) row); unlabelled usage is its own row; --json gives these groups, not the raw rows
           minigw gw usage --legacy [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)
         """
 
@@ -211,13 +211,14 @@ public enum UsageReport {
     /// Does --by need the rows split by label (labels=1)?
     static func byLabels(_ by: [String]) -> Bool { by.contains { ["phase", "activity", "task"].contains($0) } }
 
-    /// The value of one dimension of a row, with the source of a task's label: the display text adds " (branch)" to a task taken from
-    /// the branch; raw is the value alone ("(unlabelled)" for no label).
+    /// The value of one dimension of a row, with the source of a label: the display text adds " (branch)" to a task taken from
+    /// the branch and " (model)" or " (internal)" to a phase or activity chosen by a model or the gateway; raw is the value alone
+    /// ("(unlabelled)" for no label). Of a phase or activity only those two sources show (a given one is the plain value).
     static func byValue(_ r: JDict, _ dim: String, _ projects: [Int64: String]) -> (display: String, raw: String, source: String) {
         var v = "", source = ""
         switch dim {
-        case "phase": v = r["phase"]?.string ?? ""
-        case "activity": v = r["activity"]?.string ?? ""
+        case "phase": v = r["phase"]?.string ?? ""; source = modelSource(r["phasesource"]?.string)
+        case "activity": v = r["activity"]?.string ?? ""; source = modelSource(r["activitysource"]?.string)
         case "task": v = r["task"]?.string ?? ""; source = r["tasksource"]?.string ?? ""
         case "model": let m = r["model"]?.string ?? ""; return (m, m, "")
         default:
@@ -226,8 +227,10 @@ public enum UsageReport {
             return (n, n, "")
         }
         if v.isEmpty { return (unlabelled, unlabelled, "") }
-        return source == "branch" ? (v + " (branch)", v, source) : (v, v, source)
+        return ["branch", "model", "internal"].contains(source) ? (v + " (" + source + ")", v, source) : (v, v, source)
     }
+
+    static func modelSource(_ s: String?) -> String { s == "model" || s == "internal" ? s! : "" }
 
     /// At most this many groups are shown; the rest is one "(other)" group, so shares add up.
     static let maxByGroups = 50

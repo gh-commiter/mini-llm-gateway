@@ -59,7 +59,7 @@ async function main() {
   // 2. the Go answer loads, in the registry's order, with the texts of the chosen locale
   const sends = (locale, strs) => async req => (req.path === "/panels/strings" ? {status: 200, body: fixture("panels-strings-" + locale + ".json")} : {status: 200, body: strs || fixture("panels.json")});
   const cat = await panelCatalogLoad(sends("sl_SI"), "sl_SI");
-  assert.deepEqual(cat.entries.map(e => e.id), ["builtin.users", "builtin.teams", "builtin.kb", "builtin.upstreams"]);
+  assert.deepEqual(cat.entries.map(e => e.id), ["builtin.users", "builtin.teams", "builtin.kb", "builtin.upstreams", "builtin.labels"]);
   assert.ok(cat.entries.every(e => e.parse.state === "ready" && e.provider === "builtin"));
   assert.equal(panelText(cat.strings, cat.entries[0].title), "Uporabniki in naprave");
   assert.equal(panelText(cat.strings, cat.entries[2].title), "Baza znanja");
@@ -161,7 +161,7 @@ async function main() {
   panelParse = (raw, provider, routes) => { if (raw.id === "builtin.users") throw new TypeError("boom"); return realParse(raw, provider, routes); };  // a bug must not abort the list
   const broken = await panelCatalogLoad(sends("C"), "C");
   panelParse = realParse;
-  assert.deepEqual(broken.entries.map(e => e.parse.state), ["refused", "ready", "ready", "ready"]);
+  assert.deepEqual(broken.entries.map(e => e.parse.state), ["refused", "ready", "ready", "ready", "ready"]);
   assert.ok(broken.entries[0].parse.reason.startsWith("internal error"));
   // display cuts are by code points: a title of 119 letters and two emoji keeps 120 code points and no lone surrogate
   const longTitle = "a".repeat(119) + "😀😀";

@@ -333,7 +333,7 @@ func routerCommand(_ argv: [String]) {
         }
 
     case "usage" where flags["legacy"] == "true":  // the folder and device counters of 0.5.x
-        guard pos.count == 1, ["json", "csv", "model", "provider", "sort", "user", "project", "by", "phase", "activity", "task"].allSatisfy({ flags[$0] == nil }) else { fail(UsageReport.help) }
+        guard pos.count == 1, ["json", "csv", "model", "provider", "sort", "user", "project", "by", "phase", "activity", "task", "label-source"].allSatisfy({ flags[$0] == nil }) else { fail(UsageReport.help) }
         let query = "?days=" + esc(flags["days"] ?? "7") + "&device=" + esc(flags["device"] ?? "") + "&folder=" + esc(flags["folder"] ?? "")
         let list = a.call("GET", "/usage" + query)["usage"] as? [[String: Any]] ?? []
         list.forEach { say(usageLine($0)) }
@@ -485,7 +485,7 @@ func routerCommand(_ argv: [String]) {
             var opts = AdminOpts(days: flags["days"] ?? "7", user: flags["user"] ?? "", project: flags["project"] ?? "",
                                        model: flags["model"] ?? "", claudeProbe: flags["claude-probe"] ?? "",
                                        provider: flags["provider"] ?? "", device: flags["device"] ?? "", folder: flags["folder"] ?? "", sort: flags["sort"] ?? "",
-                                       json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true", explain: flags["explain"] == "true", reason: flags["reason"] ?? "", team: flags["team"] ?? "", by: flags["by"] ?? "", phase: flags["phase"] ?? "", activity: flags["activity"] ?? "", task: flags["task"] ?? "")
+                                       json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true", explain: flags["explain"] == "true", reason: flags["reason"] ?? "", team: flags["team"] ?? "", by: flags["by"] ?? "", phase: flags["phase"] ?? "", activity: flags["activity"] ?? "", task: flags["task"] ?? "", labelSource: flags["label-source"] ?? "")
             opts.remoteProject = flags["remote-project"] ?? ""; opts.remoteTeam = flags["remote-team"] ?? ""; opts.classes = flags["class"] ?? ""; opts.deviceName = flags["device-name"] ?? ""; opts.mode = flags["mode"] ?? ""; opts.auto = flags["auto"] == "true"; opts.manual = flags["manual"] == "true"; opts.theirs = flags["theirs"] == "true"; opts.ours = flags["ours"] == "true"
             opts.withPrivate = flags["with-private"] == "true"; opts.dryRun = flags["dry-run"] == "true"
             opts.tokenInput = { readKey("Copy Token of the upstream") }  // stdin or the terminal, not echoed, never an argument

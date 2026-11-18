@@ -37,6 +37,7 @@ type admCase struct {
 		Phase       string `json:"phase,omitempty"`
 		Activity    string `json:"activity,omitempty"`
 		Task        string `json:"task,omitempty"`
+		LabelSource string `json:"labelSource,omitempty"`
 		// upstream commands
 		DeviceName    string `json:"deviceName,omitempty"`
 		RemoteProject string `json:"remoteProject,omitempty"`
@@ -107,7 +108,7 @@ func runAdminCase(c *admCase) *admWant {
 		return 599, []byte(`{"error":{"message":"no such response in the fixture"}}`)
 	}}
 	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
-		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, team: c.Opts.Team, by: c.Opts.By, phase: c.Opts.Phase, activity: c.Opts.Activity, task: c.Opts.Task,
+		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, team: c.Opts.Team, by: c.Opts.By, labelSource: c.Opts.LabelSource, phase: c.Opts.Phase, activity: c.Opts.Activity, task: c.Opts.Task,
 		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, deviceName: c.Opts.DeviceName, auto: c.Opts.Auto, manual: c.Opts.Manual, theirs: c.Opts.Theirs, ours: c.Opts.Ours, mode: c.Opts.Mode, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun}
 	if c.Opts.Days != "" {
 		o.days = c.Opts.Days

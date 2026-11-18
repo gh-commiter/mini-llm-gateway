@@ -608,7 +608,7 @@ func dependsJSON(ps []core.Project) []map[string]any {
 	return out
 }
 
-// labelQuery reads the label parameters of the usage routes: phase, activity, task (filters) and labels=1 (rows split by label).
+// labelQuery reads the label parameters of the usage routes: phase, activity, task, label_source (filters: they only narrow) and labels=1 (rows split by label).
 func labelQuery(q url.Values) core.LabelQuery {
-	return core.LabelQuery{Phase: q.Get("phase"), Activity: q.Get("activity"), Task: q.Get("task"), Labels: q.Get("labels") == "1"}
+	return core.LabelQuery{Phase: q.Get("phase"), Activity: q.Get("activity"), Task: q.Get("task"), Labels: q.Get("labels") == "1", LabelSource: q.Get("label_source")}
 }

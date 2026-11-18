@@ -472,6 +472,9 @@ repository, an empty task becomes the current branch name (marked `branch`; the 
 A role such as `plan.feature` is not parsed into labels. The labels are data, not permissions. Read them with `minigw gw usage --by phase`
 (also `activity`, `task`, `project`, `model`, or two of them: `--by project,phase`), filter with `--phase`, `--activity`, `--task` on
 `gw usage`, `gw usage-events`, `gw project-sessions` and `minigw project sessions`. Usage without a label is its own row, `(unlabelled)`.
+A phase or activity that a model chose (off by default, set in the Model labels pane; nothing fills labels yet) is a row of its own, `do (model)`
+next to `do`; `--label-source given|branch|model` on `gw usage` and `gw usage-events` keeps the events that have a label from that source. A label a
+caller gave is never replaced by a model's, and a label never gives access to anything.
 Totals older than 400 days are folded without labels. A topic project is the place for a task of its own: link its subfolder and the branch
 names the task.
 
