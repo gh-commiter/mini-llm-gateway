@@ -31,7 +31,31 @@ jobs:
         run: |
           sudo apt-get install -y -qq bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-      - run: go test -timeout 30m ./...  # the default 10 min per package is what the Windows runner needs for package minigw (520-580 s measured on 0.7.23 and 0.7.24; 0.7.25 hit the limit)
+      # the default 10 min per package is what the Windows runner needs for package minigw (520-580 s measured on 0.7.23 and 0.7.24; 0.7.25 hit the limit)
+      # -json goes to gotest.json (artifact, for timings); the summary step prints failures and the slowest tests in the log
+      - name: go test
+        shell: bash
+        run: |
+          code=0
+          go test -timeout 30m -json ./... > gotest.json || code=$?
+          jq -Rr 'fromjson? // empty' gotest.json > gotest.events
+          echo "== failed tests, with output =="
+          jq -rs 'map(select(.Test != null and .Action == "fail")) | .[] | .Package + " " + .Test' gotest.events | while read -r pkg name; do
+            echo "--- FAIL $pkg $name"
+            jq -rs --arg p "$pkg" --arg n "$name" '.[] | select(.Package == $p and .Test == $n and .Action == "output") | .Output' gotest.events
+          done
+          echo "== failed packages (build errors, timeouts) =="
+          jq -rs '[.[] | select(.Test == null and .Action == "fail") | .Package] | .[]' gotest.events
+          echo "== 40 slowest tests per package (seconds) =="
+          jq -rs '[.[] | select(.Test != null and (.Action == "pass" or .Action == "fail"))] | group_by(.Package)[] | (.[0].Package), (sort_by(-.Elapsed) | .[:40][] | "  \(.Elapsed)  \(.Test)")' gotest.events
+          exit $code
+      - name: Upload go test timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gotest-${{ runner.os }}
+          path: client/gotest.json
+          if-no-files-found: ignore
       - name: Cross-build (Windows, Linux, macOS)
         run: |
           for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/arm64; do
@@ -53,4 +77,28 @@ jobs:
         with:
           go-version-file: client/go.mod
           cache-dependency-path: client/go.sum
-      - run: go test -timeout 30m ./...  # the default 10 min per package is what the Windows runner needs for package minigw (520-580 s measured on 0.7.23 and 0.7.24; 0.7.25 hit the limit)
+      # the default 10 min per package is what the Windows runner needs for package minigw (520-580 s measured on 0.7.23 and 0.7.24; 0.7.25 hit the limit)
+      # -json goes to gotest.json (artifact, for timings); the summary step prints failures and the slowest tests in the log
+      - name: go test
+        shell: bash
+        run: |
+          code=0
+          go test -timeout 30m -json ./... > gotest.json || code=$?
+          jq -Rr 'fromjson? // empty' gotest.json > gotest.events
+          echo "== failed tests, with output =="
+          jq -rs 'map(select(.Test != null and .Action == "fail")) | .[] | .Package + " " + .Test' gotest.events | while read -r pkg name; do
+            echo "--- FAIL $pkg $name"
+            jq -rs --arg p "$pkg" --arg n "$name" '.[] | select(.Package == $p and .Test == $n and .Action == "output") | .Output' gotest.events
+          done
+          echo "== failed packages (build errors, timeouts) =="
+          jq -rs '[.[] | select(.Test == null and .Action == "fail") | .Package] | .[]' gotest.events
+          echo "== 40 slowest tests per package (seconds) =="
+          jq -rs '[.[] | select(.Test != null and (.Action == "pass" or .Action == "fail"))] | group_by(.Package)[] | (.[0].Package), (sort_by(-.Elapsed) | .[:40][] | "  \(.Elapsed)  \(.Test)")' gotest.events
+          exit $code
+      - name: Upload go test timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gotest-${{ runner.os }}
+          path: client/gotest.json
+          if-no-files-found: ignore
