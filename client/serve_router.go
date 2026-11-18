@@ -388,6 +388,9 @@ func routerCommand(args []string, in io.Reader) {
 		}
 		say(fmt.Sprintf("version %s, port %d on %s", st.Version, st.Port, addr))
 		say(autostartLine(st.Autostart))
+		if st.Secrets != "" {
+			say(clean("secrets: " + st.Secrets))
+		}
 		say(fmt.Sprintf("agent requests running: %d", st.Agents))
 		if st.Core != "" { // #106
 			say(clean(st.Core))

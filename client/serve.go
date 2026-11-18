@@ -700,10 +700,12 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		}
 		out = f
 	}
+	secretsFor(cfgDir) // the place of the secrets is chosen here, once, and never changes while this process runs
 	s := &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, admin: secret, key: k, log: log.New(out, "", log.LstdFlags), hub: newShareHub(),
 		sessions: sessionRegistry{m: map[string]string{}}, procs: make(chan struct{}, 6),
 		gwSlots: make(chan struct{}, 16), state: loadState(filepath.Join(cfgDir, "state.json"))}
 	s.remoteAuth = remote
+	s.log.Printf("secrets: %s", secretsFor(cfgDir).Where())
 	if remoteErr != nil {
 		s.log.Printf("WARNING: remote settings are off: %v (fix or remove %s, then restart)", remoteErr, filepath.Join(cfgDir, "remote-settings.lockouts.json"))
 	}

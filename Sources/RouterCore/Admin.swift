@@ -18,6 +18,8 @@ public struct AdminHooks: Sendable {
     /// Proces odjemalca (vrata odjemalca, vrata routerja) → razlog za zavrnitev ali nil (PeerProcess.refusal).
     public var peerCheck: (@Sendable (UInt16, UInt16) -> String?)?
     /// L3: Scratch v rabi (agenti, registrirane mape); testi ga zamenjajo.
+    /// GET /status "secrets" (step 2 of the secrets plan): where secrets are kept, one line, never a value.
+    public var secretsPlace: String = Keychain().place
     public var scratchInUse: @Sendable () async -> Bool = { await Router.scratchInUse() }
     /// GET /activity: zgodovina okna Activity (najnovejša prva) in tekoče zahteve (id, začetek, model, zadnji korak).
     public var activity: @Sendable () async -> (requests: [RequestLog], inflight: [(id: String, time: Date, model: String, step: String?)]) = { ([], []) }
@@ -197,7 +199,7 @@ extension Router {
             let list = await gateways(c)
             let coreLine = await coreStatusLine()  // 0.6.0 (#106): as Go's status field "core"; absent when there is no helper
             return (200, ["running": true, "version": hooks.version, "port": Int(c.port), "address": c.host, "installed": hooks.installed(),
-                          "autostart": hooks.installed() ? "sign-in" : "", "agents": AgentCount.running.load(ordering: .relaxed),
+                          "autostart": hooks.installed() ? "sign-in" : "", "secrets": hooks.secretsPlace, "agents": AgentCount.running.load(ordering: .relaxed),
                           "devices": c.devices.count, "pending": Router.deviceLog.pending.count, "claude": await claudeInfo(c.claudeCLI), "gateways": list, "providers": list]
                           .merging(c.copilot.enabled ? Copilot.login(copilotConfig).problem.map { ["copilot": $0] } ?? [:] : [:]) { $1 }  // #81
                           .merging(coreLine.isEmpty ? [:] : ["core": coreLine]) { $1 }

@@ -139,6 +139,8 @@ type apiStatus struct {
 	ClaudeSandboxReason string `json:"claudeSandboxReason,omitempty"`
 	// Copilot (#81): zakaj vklopljeni Copilot ni na voljo (prijava copilot login, shramba ključev); "" = v redu ali izklopljen.
 	Copilot string `json:"copilot,omitempty"`
+	// Secrets (step 2 of the secrets plan): where secrets are kept, one line, never a value (secretstore.go).
+	Secrets string `json:"secrets,omitempty"`
 }
 
 // adminSecret: 32 naključnih bajtov (base64url) v admin.secret (0600) v mapi nastavitev, ki je agentom prepovedana.
@@ -380,7 +382,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		c := s.conf()
 		st := apiStatus{Running: !s.offline, Starting: s.offline && s.coreStarting(), Version: version, Port: c.Port, Address: c.Address, Installed: serviceInstalled(runtime.GOOS),
 			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning(), Build: buildCommit(),
-			Agents: int(s.agentsRunning.Load()), Autostart: autostart(runtime.GOOS), AgentsUnsandboxed: !agentSandboxed(s.cfgDir),
+			Agents: int(s.agentsRunning.Load()), Autostart: autostart(runtime.GOOS), Secrets: secretsFor(s.cfgDir).Where(), AgentsUnsandboxed: !agentSandboxed(s.cfgDir),
 			AgentSandbox: agentSandboxInfo(), Core: s.coreStatus(c)}
 		if c.Copilot.Enabled {
 			_, st.Copilot = copilotLogin()

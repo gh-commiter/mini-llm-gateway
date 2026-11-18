@@ -624,6 +624,7 @@ func main() {
 				ok = false
 			}
 		}
+		say("Secrets:   " + clientSecretsWhere()) // where the tokens and the device key are kept, never a value
 		if !ok {
 			os.Exit(1)
 		}
