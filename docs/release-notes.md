@@ -22,12 +22,16 @@
 - `minigw gw import`: a team bundle could take over local projects, users and teams that it only matched by name. If the owner imported a bundle from elsewhere without `--dry-run`, a project of this gateway that was in no team could be attached to the bundle's team, an existing user could become a team member and get the admin role on it, grants from local projects could be added, and notes written into them. An import now merges only into objects that the same `--source` created before; a name that matches any other local project, team or user stops the whole import before anything is written and lists each conflict. `--adopt project:<slug>,team:<name>,user:<name>` merges into exactly the objects you list (a user is never adopted implicitly; an adopted object keeps its local roles, grants from an adopted project need the project in the list, and the audit row names what was adopted). `--dry-run` shows the same list. Re-importing from the same source needs no flag. Bundles imported by an earlier version left no record: their objects show up as conflicts once. Still import only bundles you trust.
 - Re-importing a Markdown file that replaces a published note could change the note's kind (finding to faq, or faq to finding past the faq size limits) when the pending replacement was updated; a replacement now keeps the kind of the note it replaces.
 - The hand-in request of the hooks (and the notes skill) put a title in double quotes on the command line, so a title copied from hostile repository text with `$(...)` or backticks could run a command in the shell. The request now gives no `--title`: the first line of the text on stdin is the title.
+- A project admin who asked for the usage of their project also got the gateway-wide records of lost usage events (counts and time windows, no content and no names). Members no longer get them; the owner's report does.
 
 ### Fixed
 - A second sync conflict on the same file no longer overwrites the first saved copy: further copies are `<name>.minigw-conflict-2`, `-3`, ... (up to 99; after that the file is not synced and the note says so).
 - Automatic push: an edit made between two batches of a large link, or notes refused in an earlier batch, could be left unsent or forgotten. The link now stays marked until a full pass finds nothing left. Schema 23 restarts old push cursors once.
 - Resolving a conflict now names the upstream (`minigw gw upstream resolve ... --upstream <name>`; the panel sends it): resolving on one upstream no longer settles the same note on the others.
 - Unlinking or removing an upstream while a push of it runs now waits or is refused, and the push's audit row is always written.
+- `minigw gw settings password` now confirms on success ("remote settings password set", that remote sessions are signed out, and whether the listener is on); it printed nothing when the password came on standard input.
+- The sessions report of a project no longer reads every event of the project on each call: a project with more than 100000 events inside the retention made the report fail for good.
+- The confirmations and the help for linking an upstream now say that each note carries its author's name and that `--with-private` sends the private notes of all members of the project.
 
 ### Known problems
 - The four admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base, Upstream gateways) have only been tried through tests, not in a real window. In the Teams and projects pane team notes (a team's own notes) are not shown, only in the Knowledge base pane; in the Knowledge base pane notes and questions are read, not edited, and a replacement shows both texts, not a line difference. The "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI.
@@ -43,6 +47,7 @@
 - Worktree mode runs the top repository's own git clean/smudge filters (intended for LFS): use sync for an untrusted repository.
 - Nothing is pulled yet: `pull` without `--dry-run` is refused, there is no local copy of an upstream's notes and search does not include them. A hub must run this version before a local gateway's dry run can read it (an older hub answers "does not support reading"). The dry run has only been tried through tests.
 - Nothing fills labels yet: the model step comes in the next betas, so turning the setting on changes nothing in the reports today.
+- `minigw gw core restore` refuses a snapshot or backup made at schema 17 or older ("no such table: project_team_depends"); restore those with the release that made them. Found by trying the restore on copies of a real gateway's snapshots (schema 18 and 19 restore).
 
 ## 0.7.25
 
