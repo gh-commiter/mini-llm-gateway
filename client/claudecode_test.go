@@ -192,7 +192,7 @@ func fakeClaudeMain() {
 	if s := os.Getenv("MINIGW_TEST_CLAUDE_SIGNAL"); s != "" { // L-b: claude se konča s signalom (TERM) ali se ustavi (STOP)
 		p, _ := os.FindProcess(os.Getpid())
 		if s == "STOP" && fakeStop != nil {
-			p.Signal(fakeStop)
+			fakeStop()
 			os.Exit(0) // po SIGCONT
 		}
 		p.Signal(syscall.SIGTERM)
@@ -201,8 +201,8 @@ func fakeClaudeMain() {
 	os.Exit(0)
 }
 
-// fakeStop: SIGSTOP, kjer ga test rabi (claudewait_linux_test.go).
-var fakeStop os.Signal
+// fakeStop: ustavi proces (SIGSTOP), kjer ga test rabi (claudewait_linux_test.go); vrne se šele po SIGCONT.
+var fakeStop func()
 
 // fakeClaudeDir: mapa z lažnim claude (kopija testnega programa) in dnevnik njegovih argumentov.
 func fakeClaudeDir(t *testing.T) (dir, log string) {
