@@ -171,6 +171,21 @@ func (s *server) labelsEval(ctx context.Context, body []byte) (int, any) {
 	}
 	runCtx, stop := context.WithTimeout(ctx, labelEvalBudget)
 	defer stop()
+	// Registered under the worker's lock: stop() (before the core closes) cancels and drains it; none starts once closed.
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return 503, errorBody(503, "The label subsystem is stopped (the gateway is shutting down)")
+	}
+	doneCh := make(chan struct{})
+	l.evalCancel, l.evalDone = stop, doneCh
+	l.mu.Unlock()
+	defer func() {
+		l.mu.Lock()
+		l.evalCancel, l.evalDone = nil, nil
+		l.mu.Unlock()
+		close(doneCh)
+	}()
 	start := time.Now()
 	res := labelEvalResult{Backend: settings.Backend, Examples: len(req.Examples), Mistakes: map[string][]labelEvalConfusion{}, Wrong: []labelEvalWrong{}}
 	var meter labelMeter
@@ -248,9 +263,14 @@ func (s *server) labelsEval(ctx context.Context, body []byte) (int, any) {
 		res.Mistakes[kind] = append([]labelEvalConfusion{}, list[:min(len(list), labelEvalMaxConfused)]...)
 	}
 	// The worker's own accounting, once for the run. Nothing but numbers is handed to storage; its failure never fails the evaluation.
-	storeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_ = s.core.FinishLabelDecision(storeCtx, "ev_"+randomToken()[:16], "foundry", model, start, time.Now(), meter.in, meter.out, res.Run == 0, false)
-	cancel()
+	l.mu.Lock()
+	stopped := l.closed
+	l.mu.Unlock()
+	if !stopped { // stop() waits for this function: the store is still open here unless the subsystem was already stopped
+		storeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = s.core.FinishLabelDecision(storeCtx, "ev_"+randomToken()[:16], "foundry", model, start, time.Now(), meter.in, meter.out, res.Run == 0, false)
+		cancel()
+	}
 	if res.Run == 0 {
 		if errors.Is(runCtx.Err(), context.Canceled) {
 			return 499, errorBody(499, "The evaluation was cancelled")

@@ -593,3 +593,38 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/p"), allTools: [], scratch: c.scratchURL, folders: recorded)
     #expect(!args.contains(tmp.path) && !args[args.firstIndex(of: "--settings")! + 1].contains(#""allowWrite":["\/p","#))
 }
+
+/// The admin body limit is enforced from the head, before the body is read: only the head bytes exist here, none of the 64 MiB the
+/// request announces was consumed, and a request without the proof of its own connection is refused before any body too.
+@Suite struct AdminBodyPreflight {
+    private func head(_ len: Int, auth: String? = nil, path: String = "/usage/labels/eval") -> Data {
+        var s = "POST \(Router.adminPrefix)\(path) HTTP/1.1\r\nHost: 127.0.0.1:8765\r\ncontent-length: \(len)\r\n"
+        if let auth { s += "Authorization: \(auth)\r\n" }
+        return Data((s + "\r\n").utf8)
+    }
+    private func status(_ r: ParseResult?) -> Int? { if case .error(let s, _)? = r { return s }; return nil }
+
+    @Test func anOversizedAdminBodyIsRefusedFromTheHeadAlone() {
+        let router = FakeApp().router()
+        let proof = AdminHooks.scheme + AdminHooks.proof(secret: adminSecret, hash: testHash)
+        let big = 64 << 20
+        // no credentials: refused (401) with the head only, whatever the length
+        #expect(status(RouterServer.adminPreflight(head(big), hash: testHash, router: router)) == 401)
+        // the proof of ANOTHER connection does not help
+        #expect(status(RouterServer.adminPreflight(head(big, auth: proof), hash: Data(repeating: 9, count: 32), router: router)) == 401)
+        // with the proof, over the admin limit: refused (413) from the head
+        #expect(status(RouterServer.adminPreflight(head(Router.adminMaxBody + 1, auth: proof), hash: testHash, router: router)) == 413)
+        // within the limit: nothing to say, the body is read and adminHTTP checks the rest
+        #expect(RouterServer.adminPreflight(head(Router.adminMaxBody, auth: proof), hash: testHash, router: router) == nil)
+        // plain HTTP has no hash: refused; other paths are not the admin API's
+        #expect(status(RouterServer.adminPreflight(head(big, auth: proof), hash: nil, router: router)) == 401)
+        #expect(RouterServer.adminPreflight(head(big, path: "x").replacingPath(), hash: testHash, router: router) == nil)
+        // an incomplete head says nothing yet
+        #expect(RouterServer.adminPreflight(Data("POST /minigw/admin/v1/usage HTTP/1.1\r\ncontent-length: 99999999\r\n".utf8), hash: testHash, router: router) == nil)
+    }
+}
+
+private extension Data {
+    /// The same head aimed at a path outside the admin API.
+    func replacingPath() -> Data { Data(String(decoding: self, as: UTF8.self).replacingOccurrences(of: Router.adminPrefix + "x", with: "/v1/messages").utf8) }
+}

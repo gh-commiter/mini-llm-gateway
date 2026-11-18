@@ -130,6 +130,16 @@ extension Router {
 
     /// Le s tega računalnika (naslov povezave, ne glava), Host 127.0.0.1/localhost pri navadnem HTTP (DNS rebinding;
     /// brskalnik ne govori Noise), skrivnost v konstantnem času, brez CORS, telo do 1 MB.
+    /// The largest body of any admin route (adminHTTP refuses more with 413); the transport enforces it from the headers, before the body is read.
+    public static let adminMaxBody = 1 << 20
+
+    /// The MGW-Admin proof of a request, as adminHTTP checks it (the transport asks it before it buffers a body).
+    func adminProofOK(_ req: HTTPRequest) -> Bool {
+        guard let admin, req.header("authorization")?.hasPrefix(AdminHooks.scheme) == true, let h = req.noiseHash, !admin.secret.isEmpty else { return false }
+        let a = Array((req.header("authorization") ?? "").dropFirst(AdminHooks.scheme.count).utf8), b = Array(AdminHooks.proof(secret: admin.secret, hash: h).utf8)
+        return a.count == b.count && zip(a, b).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0
+    }
+
     func adminHTTP(_ req: HTTPRequest, rid: String, writer: ResponseWriter) async -> Int {
         guard let admin else { return await adminError(404, "Not found: \(req.method) \(req.path)", rid: rid, writer: writer) }
         // Vrstni red: loopback → Host (le navaden HTTP) → dokaz MGW-Admin → proces odjemalca.
@@ -154,7 +164,7 @@ extension Router {
             Self.log.error("admin API refused: \(why, privacy: .public)")
             return await adminError(403, why, rid: rid, writer: writer)
         }
-        guard req.body.count <= 1 << 20 else { return await adminError(413, "Request body too large", rid: rid, writer: writer) }
+        guard req.body.count <= Self.adminMaxBody else { return await adminError(413, "Request body too large", rid: rid, writer: writer) }
         let below = String(req.path.dropFirst(Self.adminPrefix.count))  // the escaped path below the prefix
         if CoreRoutes.isAdminPath(req.method, below) {  // 0.6.0: the routes of coreapi (users, bindings, projects, grants, audit, core, usage/events)
             return await coreAdmin(req, below: below, rid: rid, writer: writer)

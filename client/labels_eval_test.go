@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -510,3 +512,74 @@ func TestStatusSaysWhereTheRemoteSettingsPasswordIsKept(t *testing.T) {
 }
 
 var _ = http.StatusOK
+
+// An evaluation is part of the label subsystem's lifecycle: closing (before the core closes) cancels it and waits for it, no model call
+// and no store write follows, and none starts afterwards.
+func TestLabelsEvalEndsWithTheSubsystem(t *testing.T) {
+	s, _ := evalServer(t)
+	started := make(chan struct{})
+	var once sync.Once
+	var calls atomic.Int32
+	s.labels.backend = func(ctx context.Context, system, user string) (string, error) {
+		calls.Add(1)
+		once.Do(func() { close(started) })
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	done := make(chan int, 1)
+	go func() {
+		st, _, _ := evalRun(t, s, evalBody([3]string{"alpha", "do", "bugfix"}, [3]string{"beta", "do", ""}))
+		done <- st
+	}()
+	<-started
+	stopped := make(chan struct{})
+	go func() { s.labels.stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("stop did not end the evaluation")
+	}
+	n := calls.Load()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the evaluation did not end")
+	}
+	if s.labels.evalBusy.Load() {
+		t.Fatal("slot not released")
+	}
+	time.Sleep(50 * time.Millisecond)
+	var events int
+	_ = s.core.DB().QueryRow(`SELECT count(*) FROM usage_events WHERE device_id='gateway'`).Scan(&events)
+	if calls.Load() != n || events != 0 {
+		t.Fatal("work after stop", calls.Load(), n, events)
+	}
+	if st, obj := s.adminDo("POST", "/usage/labels/eval", evalBody(evalExamples[0])); st != 503 {
+		t.Fatal("eval after close", st, obj)
+	}
+	if evalBusyNow := s.labels.evalBusy.Load(); evalBusyNow {
+		t.Fatal("slot not released")
+	}
+}
+
+type countingBody struct{ n atomic.Int64 }
+
+func (c *countingBody) Read(p []byte) (int, error) { c.n.Add(int64(len(p))); return len(p), nil }
+func (c *countingBody) Close() error               { return nil }
+
+// The Go admin handler authenticates before it reads a body and caps the read at 1 MiB: an oversized body to the eval route without
+// credentials is refused without a single byte being read.
+func TestAdminBodyIsNotReadBeforeAuthentication(t *testing.T) {
+	s, _ := evalServer(t)
+	srv, cli := net.Pipe()
+	defer srv.Close()
+	defer cli.Close()
+	body := &countingBody{}
+	hr := httptest.NewRequest("POST", adminPrefix+"/usage/labels/eval", nil)
+	hr.Body, hr.ContentLength, hr.Host = body, 64<<20, "127.0.0.1:"
+	r := &req{Request: hr, conn: &serveConn{Conn: srv, peer: "127.0.0.1"}}
+	w := httptest.NewRecorder()
+	if st := s.adminHTTP(w, r); st != 401 || body.n.Load() != 0 {
+		t.Fatal(st, body.n.Load())
+	}
+}

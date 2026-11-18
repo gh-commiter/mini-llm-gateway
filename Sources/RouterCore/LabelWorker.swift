@@ -97,6 +97,7 @@ final class LabelWorker: @unchecked Sendable {
     private var starts: [Date] = []
     private var sampleBusy = false  // one on-device sample at a time, whether the worker or an evaluation asks (tryTakeSlot)
     private var evaluating = false
+    private var evalTask: Task<(Int, Data), Never>?  // the running evaluation: part of the worker's lifecycle (stop() cancels it and waits)
     private var errorRevision: UInt64?
     private var errorShown = false
     private var _skipped = 0, _failed = 0, _done = 0, _samples = 0
@@ -131,17 +132,18 @@ final class LabelWorker: @unchecked Sendable {
 
     /// Clean stop: the queue is dropped, the running decision is cancelled, nothing is started or stored afterwards.
     func stop() {
-        let (cancel, tasks) = lock.withLock { () -> ((@Sendable () -> Void)?, [Task<Void, Never>]) in
+        let (cancel, tasks, eval) = lock.withLock { () -> ((@Sendable () -> Void)?, [Task<Void, Never>], Task<(Int, Data), Never>?) in
             closed = true; queue.removeAll(); cache.removeAll()
-            return (cancelCurrent, Array(tracked.values))
+            return (cancelCurrent, Array(tracked.values), evalTask)
         }
         cancel?()
         tasks.forEach { $0.cancel() }
+        eval?.cancel()
         // `closed` is checked under the same lock before every helper call starts, so only calls already on their way remain: wait for them,
         // a few seconds at most, then abandon (nothing new is called either way).
         lock.lock()
         let end = Date().addingTimeInterval(3)
-        while inflight > 0, lock.wait(until: end) {}
+        while inflight > 0 || evaluating, lock.wait(until: end) {}
         lock.unlock()
     }
 
@@ -386,7 +388,7 @@ final class LabelWorker: @unchecked Sendable {
         let counted: Decide.Backend = { [self] system, user, ids in
             await Task.yield()  // between the samples
             while true {  // never start a sample while a user request runs
-                if Task.isCancelled { preempted.set(); throw CancellationError() }
+                if Task.isCancelled || isClosed() { preempted.set(); throw CancellationError() }
                 let box = SampleBox()
                 if takeSlot() {
                     defer { freeSlot() }
@@ -425,7 +427,7 @@ final class LabelWorker: @unchecked Sendable {
         if registerCancel { lock.withLock { cancelCurrent = { work.cancel() } } }
         let timer = Task { [budget] in try? await Task.sleep(for: budget); work.cancel() }
         if isClosed() { work.cancel() }
-        let r = await work.value
+        let r = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }  // a cancelled caller (a disconnect, stop) ends the decision
         timer.cancel()
         if registerCancel { lock.withLock { cancelCurrent = nil } }
         // a cancel by the budget, the user or a settings change gives no result; only the user (or waiting for the user) is a retry
@@ -502,11 +504,19 @@ extension LabelWorker {
             if phase.isEmpty && activity.isEmpty { return Self.evalError(400, "example \(n): needs a phase or an activity") }
             examples.append(EvalExample(text: Decide.capInput(e.text), phase: phase, activity: activity))
         }
-        guard lock.withLock({ if evaluating || closed { return false }; evaluating = true; return true }) else {
+        if lock.withLock({ closed }) { return Self.evalError(503, "The label subsystem is stopped (the app is quitting)") }
+        guard lock.withLock({ if evaluating { return false }; evaluating = true; return true }) else {
             return Self.evalError(429, "Another label evaluation is running on this gateway: wait for it to finish, then run this one again")
         }
-        defer { lock.withLock { evaluating = false } }
+        // One lifecycle with the worker: stop() cancels the run and waits for it; a cancelled request (the caller went away) cancels it too.
+        let work = Task.detached(priority: .utility) { [self, examples] in await runEval(examples, s) }
+        lock.withLock { evalTask = work }
+        let result = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+        lock.withLock { evalTask = nil; evaluating = false; lock.broadcast() }  // the slot is free on every exit
+        return result
+    }
 
+    private func runEval(_ examples: [EvalExample], _ s: Settings) async -> (Int, Data) {
         let start = Date(), deadline = ContinuousClock.now + Self.evalBudget
         var run = 0, tokensIn = 0, tokensOut = 0
         var cells: [String: [String: Int]] = ["phase": [:], "activity": [:]]  // scored, two (decided, correct), one (decided, correct)
@@ -516,10 +526,11 @@ extension LabelWorker {
         for (i, e) in examples.enumerated() {
             var done = false
             var attempt = 0
-            while attempt < Self.evalAttempts, !done, ContinuousClock.now < deadline, !isClosed() {
+            while attempt < Self.evalAttempts, !done, ContinuousClock.now < deadline, !isClosed(), !Task.isCancelled {
                 attempt += 1
                 let outcome = await decision(e.text, s, threshold: 0.67, phase: !e.phase.isEmpty, activity: !e.activity.isEmpty, registerCancel: false)
                 tokensIn += outcome.tokensIn; tokensOut += outcome.tokensOut
+                if Task.isCancelled || isClosed() { break }  // cancelled (not a user's request): no retry, no further sample
                 if outcome.preempted {  // the user's request has priority; the example waits a moment and is tried again
                     try? await Task.sleep(for: .milliseconds(200))
                     continue

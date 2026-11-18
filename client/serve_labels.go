@@ -85,7 +85,9 @@ type labelState struct {
 	budget         time.Duration              // tests may shorten the deadline
 	skipped        atomic.Uint64
 	failed         atomic.Uint64
-	evalBusy       atomic.Bool // one `minigw gw labels eval` at a time (serve_labels_eval.go)
+	evalBusy       atomic.Bool        // one `minigw gw labels eval` at a time (serve_labels_eval.go)
+	evalCancel     context.CancelFunc // the running evaluation's, under mu: stop() cancels it and waits for evalDone
+	evalDone       chan struct{}
 }
 
 // The tray can close and reopen the core without restarting the gateway.
@@ -121,9 +123,16 @@ func (l *labelState) stop() {
 	if cancel != nil {
 		cancel()
 	}
+	evalCancel, evalDone := l.evalCancel, l.evalDone
+	if evalCancel != nil {
+		evalCancel()
+	}
 	l.mu.Unlock()
 	if done != nil {
 		<-done
+	}
+	if evalDone != nil { // an evaluation is part of the same lifecycle: nothing of it runs once stop returned
+		<-evalDone
 	}
 }
 

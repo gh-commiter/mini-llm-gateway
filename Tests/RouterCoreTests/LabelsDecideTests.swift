@@ -765,4 +765,50 @@ private func message(_ o: [String: Any]) -> String { ((o["error"] as? [String: A
             .appendingPathComponent("Sources/RouterCore/LabelWorker.swift"), encoding: .utf8)
         for word in ["print(", "NSLog(", "Logger(", "os_log", "debugPrint(", "dump("] { #expect(!src.contains(word), "\(word) in LabelWorker.swift") }
     }
+
+    @Test func aDisconnectEndsTheEvaluationAtOnceAndFreesTheSlot() async throws {
+        let core = evalCore()
+        let started = Tally()
+        let slow = Flag2()
+        let w = worker(core, backend: { _, _, ids in
+            started.inc()
+            if slow.on { try await Task.sleep(for: .seconds(60)) }  // runs until cancelled
+            return ids.contains("plan") ? "do" : "bugfix"
+        })
+        slow.on = true
+        let run = Task { await w.evaluate(evalExamples) }
+        #expect(await until { started.value == 1 })
+        run.cancel()  // the caller went away
+        let (st, _) = evalReply(await run.value)
+        #expect(st == 502 || st == 200)
+        let n = started.value
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(started.value == n && n == 1, "a sample started after the disconnect")
+        slow.on = false
+        #expect(evalReply(await w.evaluate([.init(text: "alpha", phase: "do", activity: "")])).0 == 200)  // the slot was free at once
+    }
+
+    @Test func stopDuringAnEvaluationWaitingForAUserRequestStartsNothing() async throws {
+        let core = evalCore()
+        let fg = FMForeground()
+        let samples = Tally()
+        fg.enter()
+        let w = worker(core, backend: evalBackend(samples), foreground: fg)
+        let run = Task { await w.evaluate(evalExamples) }
+        try await Task.sleep(for: .milliseconds(150))
+        let before = core.log.count
+        w.stop()  // returns only when the evaluation has ended
+        let (st, _) = evalReply(await run.value)
+        #expect(st == 502)
+        fg.leave()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(samples.value == 0 && w.samplesStarted == 0)
+        #expect(core.log.count == before, "a helper call after stop")
+        #expect(evalReply(await w.evaluate(evalExamples)).0 == 503)  // none starts afterwards
+    }
+
+    final class Flag2: @unchecked Sendable {
+        private let lock = NSLock(); private var v = false
+        var on: Bool { get { lock.withLock { v } } set { lock.withLock { v = newValue } } }
+    }
 }
