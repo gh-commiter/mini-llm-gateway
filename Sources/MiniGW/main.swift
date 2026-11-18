@@ -1021,6 +1021,7 @@ case "status":
         }
         if !profileStatus(p), i == 0 { ok = false }
     }
+    say("Secrets:   macOS Keychain")  // where the tokens and the device key are kept (never a file), never a value; the line set is in client/testdata/status-lines.json
     exit(ok ? 0 : 1)
 
 case "models":

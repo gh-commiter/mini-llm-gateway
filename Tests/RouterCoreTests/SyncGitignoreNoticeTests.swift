@@ -21,4 +21,26 @@ import Testing
         try "build/\n".write(to: root.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
         #expect(Sync.gitignoreHidden(root).isEmpty)
     }
+
+    /// The shared fixture client/testdata/sync-gitignore.json (asserted by client/sync_gitignore_test.go too): what a sync sends and says.
+    @Test func sharedFixtureMatchesGo() throws {
+        var repo = URL(fileURLWithPath: #filePath)
+        for _ in 0..<3 { repo.deleteLastPathComponent() }
+        let fx = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("client/testdata/sync-gitignore.json"))) as! [String: Any]
+        let fm = FileManager.default
+        for c in fx["cases"] as! [[String: Any]] {
+            let name = c["name"] as! String
+            let root = fm.temporaryDirectory.appendingPathComponent("sync-gi-fx-\(UUID().uuidString)")
+            try fm.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: root) }
+            for (p, content) in c["tree"] as! [String: String] {
+                let url = root.appendingPathComponent(p)
+                try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try content.write(to: url, atomically: true, encoding: .utf8)
+            }
+            let sent = Sync.scan(root, trusted: true).files.keys.sorted()
+            #expect(sent == c["synced"] as! [String], "\(name)")
+            #expect(Sync.gitignoreNotice(Sync.gitignoreHidden(root)) == c["notice"] as? String, "\(name)")
+        }
+    }
 }

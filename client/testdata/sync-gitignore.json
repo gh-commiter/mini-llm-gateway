@@ -1,0 +1,98 @@
+{
+ "comment": "Shared by client/sync_gitignore_test.go and Tests/RouterCoreTests/SyncGitignoreNoticeTests.swift: a folder tree (path -> content) with its root .gitignore, the sorted paths a sync sends, and the notice (null = none; Go prints it with the prefix 'minigw: ').",
+ "cases": [
+  {
+   "name": "tester: .hidden listed, plain folder",
+   "tree": {
+    ".gitignore": ".hidden\n",
+    "plan.md": "p",
+    ".hidden/note.md": "n"
+   },
+   "synced": [
+    ".gitignore",
+    "plan.md"
+   ],
+   "notice": "sync: not copied because .gitignore lists them: .hidden (use direct mode or put what the agent needs in the prompt)"
+  },
+  {
+   "name": ".omc/ directory rule, built-in names, nested files",
+   "tree": {
+    ".gitignore": ".omc/\nbuild/\n",
+    "a.go": "a",
+    ".omc/state.json": "s",
+    "build/o": "o",
+    "node_modules/x/i.js": "i",
+    "src/b.go": "b",
+    ".DS_Store": "d",
+    ".git/HEAD": "h"
+   },
+   "synced": [
+    ".gitignore",
+    "a.go",
+    "src/b.go"
+   ],
+   "notice": "sync: not copied because .gitignore lists them: .omc (use direct mode or put what the agent needs in the prompt)"
+  },
+  {
+   "name": "patterns: *.env, /out, anchored deep path, CRLF, comment, negation ignored",
+   "tree": {
+    ".gitignore": "# c\r\n*.env\r\n/out\r\ndeep/x.txt\r\n!keep.env\r\n",
+    "secret.env": "s",
+    "keep.env": "k",
+    "out/r": "r",
+    "deep/x.txt": "x",
+    "deep/y.txt": "y",
+    "z/out": "z"
+   },
+   "synced": [
+    ".gitignore",
+    "deep/y.txt",
+    "z/out"
+   ],
+   "notice": "sync: not copied because .gitignore lists them: keep.env, out, secret.env (use direct mode or put what the agent needs in the prompt)"
+  },
+  {
+   "name": "no .gitignore",
+   "tree": {
+    "a": "a",
+    ".hidden/b": "b"
+   },
+   "synced": [
+    ".hidden/b",
+    "a"
+   ],
+   "notice": null
+  },
+  {
+   "name": "only the built-in list: nothing to say",
+   "tree": {
+    ".gitignore": "build/\ntarget/\n",
+    "build/x": "x",
+    "a": "a"
+   },
+   "synced": [
+    ".gitignore",
+    "a"
+   ],
+   "notice": null
+  },
+  {
+   "name": "more than five top-level entries",
+   "tree": {
+    ".gitignore": "a1\na2\na3\na4\na5\na6\n",
+    "a1": "1",
+    "a2": "1",
+    "a3": "1",
+    "a4": "1",
+    "a5": "1",
+    "a6": "1",
+    "k": "k"
+   },
+   "synced": [
+    ".gitignore",
+    "k"
+   ],
+   "notice": "sync: not copied because .gitignore lists them: a1, a2, a3, a4, a5, … (use direct mode or put what the agent needs in the prompt)"
+  }
+ ]
+}
