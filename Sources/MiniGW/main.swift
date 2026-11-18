@@ -552,6 +552,7 @@ final class ShareClient: @unchecked Sendable {
     /// Pred agentom: manifest k routerju, nato datoteke, ki jih potrebuje.
     private func push(_ k: String) -> Bool {
         var (files, skipped) = Sync.scan(root, previous: synced, trusted: true)
+        if reported.insert("gitignore").inserted, let msg = Sync.gitignoreNotice(Sync.gitignoreHidden(root)) { note(msg) }
         for p in skipped where reported.insert(p).inserted { note("not synced (larger than 64 MB): \(p)") }
         for p in Sync.caseCollisions(Set(files.keys)) {  // #2
             files[p] = nil

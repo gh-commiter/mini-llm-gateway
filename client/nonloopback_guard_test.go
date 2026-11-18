@@ -19,12 +19,57 @@ var nonLoopbackListener = []*regexp.Regexp{
 	regexp.MustCompile(`\[::\]`),
 	regexp.MustCompile(`net\.ListenConfig`),
 	regexp.MustCompile(`Interface(Addrs|s)\(\)`),
+	// Outbound connections to this machine's own name or LAN address (the firewall prompts for these as well, and the result depends on the network):
+	regexp.MustCompile(`os\.Hostname\(\)`),
+	regexp.MustCompile(`(net|Resolver)\.Lookup\w+\((ctx|context\.\w+\(\)|t\.Context\(\)),\s*[^"\s]`), // with a context: a host that is not a literal
+	regexp.MustCompile(`Resolver\.LookupIP\(\w+(\.\w+\(\))?,\s*"[a-z0-9]+",\s*[^"\s]`),
+	regexp.MustCompile(`net\.Lookup(Host|IP|Addr)\([^"\s]`), // without one
+	regexp.MustCompile(`(Dial\w*|http\.(Get|Post|Head|PostForm)|NewRequest\w*)\(.*(\b10\.\d+\.\d+\.\d+|\b172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|\b192\.168\.\d+\.\d+|[a-z0-9-]+\.local([:/"]|$))`),
 }
 
 // file, text that is allowed there, why
 var nonLoopbackAllowed = []struct{ file, text, why string }{
 	{"serve_admin_test.go", `"address":"0.0.0.0"`, "the admin API validates the address setting (saved for the next start); nothing binds in the test"},
 	{"serve_admin_test.go", `0.0.0.0 refused`, "the failure message of the line above"},
+}
+
+// A source line is a hit when any pattern matches; the guard test and its own matcher test both use it.
+func nonLoopbackHit(line string) bool {
+	for _, re := range nonLoopbackListener {
+		if re.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// The matcher must catch planted outbound examples and let data-only lines through (the guard reads sources, so the planted lines live here, which it skips).
+func TestNonLoopbackGuardMatchesOutboundExamples(t *testing.T) {
+	for _, line := range []string{
+		`host, _ := os.Hostname(); u := "http://" + host + ":8080"`,
+		`addrs, _ := net.LookupHost(name)`,
+		`addrs, err := net.DefaultResolver.LookupIP(ctx, "ip", host)`,
+		`c, err := net.Dial("tcp", "192.168.1.5:80")`,
+		`resp, _ := http.Get("http://10.1.2.3:4000/x")`,
+		`req, _ := http.NewRequest("GET", "http://172.20.0.4/x", nil)`,
+		`c, _ := net.DialTimeout("tcp", "mini.local:8765", time.Second)`,
+	} {
+		if !nonLoopbackHit(line) {
+			t.Errorf("not caught: %s", line)
+		}
+	}
+	for _, line := range []string{
+		`fakeResolver(t, map[string]string{"litellm": "172.22.0.3"})`,
+		`for _, u := range []string{"http://10.1.2.3:4000/key/info", "http://litellm.local:4000/key/info"} {`,
+		`{"PUT", ".claude/settings.local.json", ""}`,
+		`resp, _ := http.Get("http://192.0.2.1/x")`,
+		`net.LookupHost("localhost")`,
+		`c, _ := net.Dial("tcp", "127.0.0.1:80")`,
+	} {
+		if nonLoopbackHit(line) {
+			t.Errorf("caught data: %s", line)
+		}
+	}
 }
 
 func TestNoTestListensOutsideLoopbackWithoutAReason(t *testing.T) {
@@ -45,8 +90,8 @@ func TestNoTestListensOutsideLoopbackWithoutAReason(t *testing.T) {
 			t.Fatal(err)
 		}
 		for n, line := range strings.Split(string(b), "\n") {
-			for _, re := range nonLoopbackListener {
-				if !re.MatchString(line) {
+			{
+				if !nonLoopbackHit(line) {
 					continue
 				}
 				ok := false

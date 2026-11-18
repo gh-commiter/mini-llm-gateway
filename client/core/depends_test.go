@@ -443,3 +443,105 @@ func TestDependsPrivateNoteByIDRefused(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// An archived project confers nothing: a grant whose READER project is archived no longer gives its members access to the source.
+func TestGrantThroughAnArchivedReaderConfersNothing(t *testing.T) {
+	f := newFx(t)
+	fk, eu := f.pid["fakture"], f.pid["eureko"]
+	n := f.mk("ana", "fakture", Structure)
+	f.ok(f.AddDepends(ctx, eu, fk))
+	cene := f.p("cene") // member of eureko only: eureko -> fakture is her only path
+	reads := func() (list, search, manifest, depends bool) {
+		pg, e := f.ListNotes(ctx, cene, fk, "", "", 10)
+		list = e == nil && len(pg.Notes) == 1 && pg.Notes[0].ID == n.ID
+		if sp, e := f.SearchNotes(ctx, cene, fk, "body"); e == nil {
+			search = len(sp.Hits) > 0
+		}
+		if m, e := f.Manifest(ctx, cene, eu); e == nil {
+			for _, x := range m.Notes {
+				manifest = manifest || x.Source == fk
+			}
+		}
+		if ds, e := f.ListDepends(ctx, cene, eu); e == nil {
+			depends = len(ds) == 1
+		}
+		return
+	}
+	if l, s, m, d := reads(); !l || !s || !m || !d {
+		t.Fatal("active reader: list/search/manifest/depends", l, s, m, d)
+	}
+	f.ok(f.SetProjectArchived(ctx, eu, true))
+	if l, s, m, d := reads(); l || s || m || d {
+		t.Fatal("archived reader still confers access: list/search/manifest/depends", l, s, m, d)
+	}
+	if _, err := f.GetNote(ctx, cene, fk, n.ID); err == nil {
+		t.Fatal("note readable through an archived reader")
+	}
+	f.ok(f.SetProjectArchived(ctx, eu, false))
+	if l, _, _, _ := reads(); !l {
+		t.Fatal("unarchived reader lost the grant")
+	}
+}
+
+// The other grant joins (a run's reads, the project list, a team's project list) follow the same rule, each with its own assertion.
+func TestArchivedReaderGrantInRunScopeProjectListAndTeamProjects(t *testing.T) {
+	f := newFx(t)
+	fk, eu := f.pid["fakture"], f.pid["eureko"]
+	n := f.mk("ana", "fakture", Structure)
+	team, err := f.CreateTeam(ctx, "core")
+	f.ok(err)
+	f.ok(f.AddTeamMember(ctx, team.ID, f.uid["cene"]))
+	f.ok(f.AddTeamProject(ctx, team.ID, fk))
+	cene := f.p("cene")
+	cap := RunCap{UserID: cene.UserID, DeviceID: cene.DeviceID, ProjectID: eu, Epoch: f.epoch.Load()} // issued BEFORE the archive, reused after it
+	run := func() bool {
+		hits, e := f.RunSearchNotes(ctx, cap, true, "body")
+		if e != nil {
+			return false
+		}
+		for _, h := range hits.Hits {
+			if h.Project == fk {
+				return true
+			}
+		}
+		return false
+	}
+	listed := func(includeArchived bool) bool {
+		ps, e := f.ListProjects(ctx, cene, includeArchived)
+		f.ok(e)
+		for _, p := range ps {
+			if p.ID == fk {
+				return true
+			}
+		}
+		return false
+	}
+	teamListed := func() bool {
+		td, e := f.GetTeam(ctx, cene, "core")
+		f.ok(e)
+		for _, p := range td.Projects {
+			if p.ID == fk {
+				return true
+			}
+		}
+		return false
+	}
+	_ = n
+	if !run() || !listed(false) || !teamListed() {
+		t.Fatal("active reader: run/list/team", run(), listed(false), teamListed())
+	}
+	f.ok(f.SetProjectArchived(ctx, eu, true))
+	if run() {
+		t.Error("runScope still reads through the grant of an archived reader")
+	}
+	if listed(false) || listed(true) {
+		t.Error("ListProjects still lists the source through an archived reader")
+	}
+	if teamListed() {
+		t.Error("teamProjects still lists the source through an archived reader")
+	}
+	f.ok(f.SetProjectArchived(ctx, eu, false))
+	if !run() || !listed(false) || !teamListed() {
+		t.Error("unarchived reader lost the grant: run/list/team", run(), listed(false), teamListed())
+	}
+}

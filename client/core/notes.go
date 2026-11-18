@@ -606,7 +606,7 @@ func (s *Store) ListProjects(ctx context.Context, p Principal, includeArchived b
 		}
 		rows, err := tx.Query(`SELECT id,slug,name,archived FROM projects WHERE (archived=0 OR ?1) AND (
   id IN (SELECT project_id FROM memberships WHERE user_id=?2) OR
-  id IN (SELECT g.source_id FROM grants g JOIN memberships m ON m.project_id=g.reader_id WHERE m.user_id=?2)) ORDER BY slug`, includeArchived, p.UserID)
+  id IN (SELECT g.source_id FROM grants g JOIN memberships m ON m.project_id=g.reader_id JOIN projects rp ON rp.id=g.reader_id AND rp.archived=0 WHERE m.user_id=?2)) ORDER BY slug`, includeArchived, p.UserID)
 		if err != nil {
 			return err
 		}
@@ -731,7 +731,7 @@ func (s *Store) runScope(tx *sql.Tx, c RunCap, approved, extended bool) ([]reada
 		return nil, noAccess("not a member of the run project")
 	}
 	rs := []readable{a.readable(c.ProjectID, true)}
-	rows, err := tx.Query(`SELECT source_id,class FROM grants WHERE reader_id=? ORDER BY source_id`, c.ProjectID)
+	rows, err := tx.Query(`SELECT g.source_id,g.class FROM grants g JOIN projects rp ON rp.id=g.reader_id AND rp.archived=0 WHERE g.reader_id=? ORDER BY g.source_id`, c.ProjectID)
 	if err != nil {
 		return nil, err
 	}

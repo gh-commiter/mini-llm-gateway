@@ -129,7 +129,7 @@ func loadAccess(tx *sql.Tx, user, project int64) (a access, err error) {
 	if err != nil {
 		return
 	}
-	rows, err := tx.Query(`SELECT DISTINCT g.class FROM grants g JOIN memberships m ON m.project_id=g.reader_id AND m.user_id=? WHERE g.source_id=?`, user, project)
+	rows, err := tx.Query(`SELECT DISTINCT g.class FROM grants g JOIN memberships m ON m.project_id=g.reader_id AND m.user_id=? JOIN projects rp ON rp.id=g.reader_id AND rp.archived=0 WHERE g.source_id=?`, user, project)
 	if err != nil {
 		return
 	}

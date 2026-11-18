@@ -121,7 +121,7 @@ func teamProjects(tx *sql.Tx, id, user int64) (out []Project, err error) {
 	q := `SELECT p.id,p.slug,p.name,p.archived FROM projects p JOIN team_projects t ON t.project_id=p.id WHERE t.team_id=?`
 	args := []any{id}
 	if user != 0 {
-		q += ` AND (p.id IN (SELECT project_id FROM memberships WHERE user_id=?) OR p.id IN (SELECT g.source_id FROM grants g JOIN memberships m ON m.project_id=g.reader_id WHERE m.user_id=?))`
+		q += ` AND (p.id IN (SELECT project_id FROM memberships WHERE user_id=?) OR p.id IN (SELECT g.source_id FROM grants g JOIN memberships m ON m.project_id=g.reader_id JOIN projects rp ON rp.id=g.reader_id AND rp.archived=0 WHERE m.user_id=?))`
 		args = append(args, user, user)
 	}
 	rows, err := tx.Query(q+` ORDER BY p.slug`, args...)
