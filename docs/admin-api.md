@@ -628,7 +628,7 @@ Member routes require an approved authenticated device bound to an active user:
 | GET | `/minigw/v1/projects/{id}/kb/submissions/{id}` | Own submission with body |
 | GET | `/minigw/v1/projects/{id}/kb/review?after=0` | Project admins: the pending submissions of the project (or of a team's own notes, by its `segment`) that the caller may review, never their own, `{submissions,next}`; project `0` means every project and team the caller reviews now |
 | GET | `/minigw/v1/projects/{id}/kb/review/{id}` | One submission with body and the writer's `authorName`; project `0` means the submission's own project |
-| POST | `/minigw/v1/projects/{id}/kb/review/{id}/accept` | Publish; JSON `{"reason":""}`; project `0` as above |
+| POST | `/minigw/v1/projects/{id}/kb/review/{id}/accept` | Publish; JSON `{"reason":"","reviewHash":"…"}` with the `reviewHash` of the read; project `0` as above |
 | POST | `/minigw/v1/projects/{id}/kb/review/{id}/reject` | Reject; JSON `{"reason":"text"}`; project `0` as above |
 
 Owner routes use the existing owner admin authentication and base URL:
@@ -637,7 +637,7 @@ Owner routes use the existing owner admin authentication and base URL:
 |---|---|---|
 | GET | `/kb/submissions?project=0&after=0` | Pending metadata; project 0 means all |
 | GET | `/kb/submissions/{id}` | Submission with body |
-| POST | `/kb/submissions/{id}/accept` | Publish; JSON `{}` |
+| POST | `/kb/submissions/{id}/accept` | Publish; JSON `{"reviewHash":"…"}`, the `reviewHash` of the list row or the read (required) |
 | POST | `/kb/submissions/{id}/reject` | Reject; JSON `{"reason":"text"}` |
 | GET | `/kb/notes?project={id}&class=&kind=&after=&limit=` | The notes of a project or of a team's own notes, every class (`private` too), 50 per page by default, `{notes, next}` (`next` absent on the last page) |
 | GET | `/kb/notes/{id}` | One note with body and provenance, any class |
@@ -670,6 +670,15 @@ user (`user:<id>`) as the actor, and the published revision's provenance names t
 stays the writer. `private` submissions follow the private rule: the author and the project admins. The member project
 list (`GET /minigw/v1/projects`) carries `pendingReview`, the number of submissions the caller may review, for projects
 where the caller is admin (absent when 0).
+
+**An accept names what was read.** Every review read (the owner's `GET /kb/submissions` rows and `GET /kb/submissions/{id}`,
+the member's `GET …/kb/review/{id}`) carries `reviewHash`, a hash of everything an accept publishes (class, title, kind,
+text, what it replaces and at which revision). Accept requires it, owner and member alike: without it 400 "name the
+version you read", and when the author changed the pending submission since (a `kb import` merges into it) 400 "the
+submission changed since you read it: review it again". The Knowledge base panel sends the hash of the row it shows.
+When the writer may no longer write the note at accept time (deactivated, device unbound, role or note changed), the
+answer is 409 `writer_lost`, never the writer's own 403 or 404. An admin of an archived project does not write or review
+the team's own notes.
 
 Acceptance rechecks the authenticated writer binding, current project permissions,
 archive status, note limits and replacement revision. Pending entries are separate

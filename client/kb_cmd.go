@@ -344,15 +344,7 @@ func (e *projectEnv) kbReview(c connection, project int64, names map[int64]strin
 					}
 				}
 			}
-			e.say(submissionLine(full.Submission, names))
-			writer := strconv.FormatInt(full.User, 10)
-			if full.AuthorName != "" {
-				writer = full.AuthorName
-			}
-			e.say(clean(fmt.Sprintf("writer %s  device %s  replaces %d  revision %d", writer, full.Provenance.Device, full.Replaces, full.Revision)))
-			if full.Body != nil {
-				e.say(clean(*full.Body))
-			}
+			printReview(e.say, full.Submission, full.AuthorName, names)
 			count++
 		}
 		if pg.Next == 0 {
@@ -366,7 +358,22 @@ func (e *projectEnv) kbReview(c connection, project int64, names map[int64]strin
 	return nil
 }
 
+// printReview prints one submission as gw kb review and kb review do: its line, the writer, and the text.
+func printReview(say func(string), v core.Submission, authorName string, names map[int64]string) {
+	say(submissionLine(v, names))
+	writer := strconv.FormatInt(v.User, 10)
+	if authorName != "" {
+		writer = authorName
+	}
+	say(clean(fmt.Sprintf("writer %s  device %s  replaces %d  revision %d", writer, v.Provenance.Device, v.Replaces, v.Revision)))
+	if v.Body != nil {
+		say(clean(*v.Body))
+	}
+}
+
 // kbDecide is a project admin's kb accept|reject <id>: the gateway finds the submission's project and decides who may.
+// An accept first reads the submission, prints what it accepts and sends the version it read (the gateway refuses
+// when the text changed in between).
 func (e *projectEnv) kbDecide(pos []string, team, reason string) error {
 	if len(pos) != 2 || team != "" {
 		return errors.New("usage:\n" + kbHelp)
@@ -376,7 +383,23 @@ func (e *projectEnv) kbDecide(pos []string, team, reason string) error {
 		return errors.New("usage:\n" + kbHelp)
 	}
 	c, _ := e.connect()
-	body, _ := json.Marshal(map[string]any{"reason": reason})
+	fields := map[string]any{"reason": reason}
+	if pos[0] == "accept" {
+		st, b, h := e.do(c, "GET", fmt.Sprintf("%s/0/kb/review/%d", apiProjects, id), nil, nil)
+		if st != 200 {
+			return gatewayError(st, b, h)
+		}
+		var full struct {
+			core.Submission
+			AuthorName string
+		}
+		if err := json.Unmarshal(b, &full); err != nil {
+			return err
+		}
+		printReview(e.say, full.Submission, full.AuthorName, nil)
+		fields["reviewHash"] = full.ReviewHash
+	}
+	body, _ := json.Marshal(fields)
 	st, b, h := e.do(c, "POST", fmt.Sprintf("%s/0/kb/review/%d/%s", apiProjects, id, pos[0]), nil, body)
 	if st != 200 {
 		return gatewayError(st, b, h)
@@ -646,8 +669,18 @@ func kbAdmin(a *adminClient, pos []string, reason, team string) {
 			usage()
 			return
 		}
+		fields := map[string]any{"reason": reason}
+		if pos[1] == "accept" { // what is accepted, and the version read: the gateway refuses a text changed since
+			var full struct {
+				core.Submission
+				AuthorName string
+			}
+			a.do("GET", "/kb/submissions/"+strconv.FormatInt(id, 10), nil, &full)
+			printReview(say, full.Submission, full.AuthorName, nil)
+			fields["reviewHash"] = full.ReviewHash
+		}
 		var v core.Submission
-		a.do("POST", fmt.Sprintf("/kb/submissions/%d/%s", id, pos[1]), map[string]any{"reason": reason}, &v)
+		a.do("POST", fmt.Sprintf("/kb/submissions/%d/%s", id, pos[1]), fields, &v)
 		say(submissionResult(v))
 		return
 	}

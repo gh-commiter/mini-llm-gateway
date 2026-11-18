@@ -6,6 +6,10 @@
 - Project admins review the submissions of their own project: `minigw kb review [<project>|--team <team>]`, `minigw kb accept <id>` and `minigw kb reject <id> [--reason text]` (same output as the owner's `gw kb` commands), on the member routes `/minigw/v1/projects/{id}/kb/review…`. Admin means the role `admin` in that project (directly or through a team assignment; a grant never); a team's own notes are reviewed by whoever may write them. Nobody reviews their own submission (four eyes: another admin or the owner does), and an accept needs what the reviewer could write themselves. The note keeps the writer as author; its provenance and the audit name the reviewing user. `minigw project list` shows "N submissions wait for review" to a project's admins. The owner's review is unchanged. See [usage.md](usage.md#review-by-project-admins).
 
 ### Security
+- An accept now names the version its reviewer read: the review reads carry `reviewHash`, and every accept (the owner's admin route and panel, and the member route) requires it and is refused with "the submission changed since you read it: review it again" when the writer rewrote the pending submission in between (for example with `kb import`). `kb accept` and `gw kb accept` print what they accept before sending it. An older `minigw gw kb accept` is refused with "name the version you read": update minigw.
+- When the writer may no longer write the note at accept time, the reviewer gets its own answer (409 `writer_lost`), never the writer's 403 or 404 as if it were the reviewer's.
+- Changed rule: an admin of an ARCHIVED project no longer writes (or reviews) the own notes of the project's team; only admins of active team projects do.
+- `minigw kb review` without a project reads only the projects the caller reviews, at most 100 rows a page.
 - `kb submit --replaces <id>` no longer reveals whether a note id exists elsewhere or is a faq: the replaced note's kind (and its size limits) is looked up only after the check that the caller may change that note, so a note of another project or team answers exactly like a missing one (404).
 
 ### Known problems

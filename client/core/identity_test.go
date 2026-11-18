@@ -117,7 +117,7 @@ func TestBackup14KeepsIdentitiesPathAndKinds(t *testing.T) {
 	f.ok(f.SetTeamPath(ctx, team.ID, "Eureko/Core"))
 	v, _, err := f.Submit(ctx, f.p("ana"), project, "k", SubmissionInput{NoteInput: NoteInput{Class: Data, Title: "Q?", Body: "A.", EntryKind: KindFAQ}})
 	f.ok(err)
-	_, err = f.ReviewSubmission(ctx, v.ID, true, "")
+	_, err = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	f.ok(err)
 	bak := filepath.Join(t.TempDir(), "b.db")
 	f.ok(f.Backup(ctx, bak))
@@ -148,7 +148,7 @@ func TestEntryKindFlow(t *testing.T) {
 	if len(pg.Entries) != 0 {
 		t.Fatal("pending faq listed", pg)
 	}
-	v, err = f.ReviewSubmission(ctx, v.ID, true, "")
+	v, err = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	f.ok(err)
 	n, err := f.GetNote(ctx, ana, project, v.NoteID)
 	f.ok(err)
@@ -185,7 +185,7 @@ func TestEntryKindFlow(t *testing.T) {
 	if rep.EntryKind != KindFAQ {
 		t.Fatal(rep)
 	}
-	rep, err = f.ReviewSubmission(ctx, rep.ID, true, "")
+	rep, err = f.ReviewSubmission(ctx, rep.ID, true, "", f.seen(rep.ID))
 	f.ok(err)
 	if n, err = f.GetNote(ctx, ana, project, rep.NoteID); err != nil || n.EntryKind != KindFAQ || n.Title != "Again?" {
 		t.Fatal(n, err)
@@ -404,7 +404,7 @@ func TestFAQViewVisibility(t *testing.T) {
 		t.Helper()
 		v, _, err := f.Submit(ctx, p, project, key, SubmissionInput{NoteInput: NoteInput{Class: class, Title: title, Body: "answer " + title, EntryKind: KindFAQ}})
 		f.ok(err)
-		v, err = f.ReviewSubmission(ctx, v.ID, true, "")
+		v, err = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 		f.ok(err)
 		f.clock = f.clock.Add(1e9)
 		n, err := f.GetNote(ctx, p, project, v.NoteID)
@@ -445,7 +445,7 @@ func TestFAQViewVisibility(t *testing.T) {
 		keySeq++
 		v, _, err := f.Submit(ctx, ana, project, "p"+i64(int64(keySeq)), SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "q" + i64(int64(i)), Body: "a", EntryKind: KindFAQ}})
 		f.ok(err)
-		_, err = f.ReviewSubmission(ctx, v.ID, true, "")
+		_, err = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 		f.ok(err)
 	}
 	pg, err := f.ListFAQ(ctx, bor, project, "")
@@ -474,7 +474,7 @@ func TestBundleCarriesKindsRemotesAndPath(t *testing.T) {
 	f.ok(err)
 	v, _, err := f.Submit(ctx, f.p("ana"), project, "faq", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Q?", Body: "A.", EntryKind: KindFAQ}})
 	f.ok(err)
-	_, err = f.ReviewSubmission(ctx, v.ID, true, "")
+	_, err = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	f.ok(err)
 	f.mk("ana", "fakture", Structure)
 	file := filepath.Join(t.TempDir(), "b.zip")
@@ -589,7 +589,7 @@ func TestInheritedFAQKeepsItsLimitsAndKind(t *testing.T) {
 	ana := f.p("ana")
 	v, _, err := f.Submit(ctx, ana, project, "k", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Q?", Body: "A.", EntryKind: KindFAQ}})
 	f.ok(err)
-	v, err = f.ReviewSubmission(ctx, v.ID, true, "")
+	v, err = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	f.ok(err)
 	n, err := f.GetNote(ctx, ana, project, v.NoteID)
 	f.ok(err)
@@ -607,7 +607,7 @@ func TestInheritedFAQKeepsItsLimitsAndKind(t *testing.T) {
 		_, e := tx.Exec(`UPDATE kb_submissions SET body=? WHERE id=?`, long, r.ID)
 		return e
 	}))
-	_, err = f.ReviewSubmission(ctx, r.ID, true, "")
+	_, err = f.ReviewSubmission(ctx, r.ID, true, "", f.seen(r.ID))
 	is(t, err, ErrInvalid{"faq answer: at most 2048 bytes"})
 
 	// Markdown re-import without entry_kind: same limits; a different entry_kind never changes the kind.

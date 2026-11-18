@@ -108,7 +108,11 @@
      "label": "builtin.kb.section.queue.action.accept",
      "method": "POST",
      "path": "/kb/submissions/{row.id}/accept",
-     "body": {}
+     "body": {
+      "reviewHash": {
+       "row": "reviewHash"
+      }
+     }
     },
     {
      "id": "reject",

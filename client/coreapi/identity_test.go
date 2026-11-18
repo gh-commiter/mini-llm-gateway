@@ -235,7 +235,7 @@ func TestFAQRouteAndKinds(t *testing.T) {
 	}
 	for _, v := range subs {
 		if v.EntryKind == "faq" {
-			if _, err := f.st.ReviewSubmission(bg, v.ID, true, ""); err != nil {
+			if _, err := f.st.ReviewSubmission(bg, v.ID, true, "", seenHash(f.st, v.ID)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -312,4 +312,10 @@ func TestRemoveRemoteByListedIdentityNamesIt(t *testing.T) {
 	if err := json.Unmarshal(r.Body, &out); err != nil || len(out.Remotes) != 0 || len(out.Removed) != 1 || out.Removed[0] != "host.example/a/b" {
 		t.Fatal(string(r.Body), err)
 	}
+}
+
+// seenHash is the review hash of submission id as the owner reads it now.
+func seenHash(st *core.Store, id int64) string {
+	v, _ := st.GetSubmission(bg, core.Principal{}, 0, id, true)
+	return v.ReviewHash
 }

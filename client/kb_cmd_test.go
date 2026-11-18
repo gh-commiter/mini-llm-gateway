@@ -148,7 +148,7 @@ func TestKBClientGatewayFlow(t *testing.T) {
 		t.Fatal(review)
 	}
 	accepted := stdout(t, func() { kbAdmin(owner, []string{"kb", "accept", "1"}, "", "") })
-	if accepted != "submission 1 accepted\n" {
+	if !strings.HasSuffix(accepted, "Reviewed knowledge\nsubmission 1 accepted\n") { // the accept shows what it publishes first
 		t.Fatal(accepted)
 	}
 	out.Reset()
@@ -392,7 +392,7 @@ func TestKBMemberReviewEndToEnd(t *testing.T) {
 	if out := c.must("fani", dir, "", "kb", "review"); !strings.Contains(out, "Reviewed by an admin") || !strings.Contains(out, "writer ana") {
 		t.Fatal(out)
 	}
-	if out := c.must("fani", dir, "", "kb", "accept", "1"); out != "submission 1 accepted\n" {
+	if out := c.must("fani", dir, "", "kb", "accept", "1"); !strings.HasSuffix(out, "Reviewed by an admin\nsubmission 1 accepted\n") {
 		t.Fatal(out)
 	}
 	fani, _, _ := c.env("fani", dir, "Mine")

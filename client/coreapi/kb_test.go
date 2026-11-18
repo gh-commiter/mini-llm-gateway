@@ -95,7 +95,7 @@ func TestKBIdentityRoutesAndReplay(t *testing.T) {
 	if r.Status != 200 {
 		t.Fatal(r.Status, string(r.Body))
 	}
-	action := Request{Method: "POST", Path: fmt.Sprintf("/kb/submissions/%d/accept", v.ID), Body: []byte(`{}`)}
+	action := Request{Method: "POST", Path: fmt.Sprintf("/kb/submissions/%d/accept", v.ID), Body: []byte(`{"reviewHash":"` + seenHash(f.st, v.ID) + `"}`)}
 	for i := 0; i < 2; i++ {
 		r = f.api.Handle(bg, admin, action)
 		if r.Status != 200 {
@@ -124,7 +124,7 @@ func TestMemberReviewRoutes(t *testing.T) {
 	}
 	list := get(fmt.Sprintf("/minigw/v1/projects/%d/kb/review", pid))
 	one := get(fmt.Sprintf("/minigw/v1/projects/0/kb/review/%d", v.ID))
-	accept := Request{Method: "POST", Path: fmt.Sprintf("/minigw/v1/projects/0/kb/review/%d/accept", v.ID), Body: []byte(`{"reason":""}`)}
+	accept := Request{Method: "POST", Path: fmt.Sprintf("/minigw/v1/projects/0/kb/review/%d/accept", v.ID), Body: []byte(`{"reason":"","reviewHash":"` + seenHash(f.st, v.ID) + `"}`)}
 	for _, dev := range []string{"dev-ana", "dev-eva", "dev-cene"} { // not an admin of the project: as if unseen
 		for _, req := range []Request{list, one, accept} {
 			if r := f.api.Handle(bg, member(dev), req); r.Status != 404 {
@@ -157,6 +157,23 @@ func TestMemberReviewRoutes(t *testing.T) {
 	}
 	r = f.api.Handle(bg, member("dev-fani"), Request{Method: "POST", Path: fmt.Sprintf("/minigw/v1/projects/%d/kb/review/%d/reject", pid, own.ID), Body: []byte(`{"reason":"x"}`)})
 	if r.Status != 400 || !strings.Contains(string(r.Body), "your own submission") {
+		t.Fatal(r.Status, string(r.Body))
+	}
+	// a stale version is refused; the writer's lost access is its own 409, never the reviewer's 403
+	w, _, err := f.st.Submit(bg, core.Principal{UserID: f.uid["ana"], DeviceID: "dev-ana"}, pid, "k3", core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Data, Title: "Late", Body: "b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("/minigw/v1/projects/0/kb/review/%d/accept", w.ID)
+	r = f.api.Handle(bg, member("dev-fani"), Request{Method: "POST", Path: path, Body: []byte(`{"reason":"","reviewHash":"stale"}`)})
+	if r.Status != 400 || !strings.Contains(string(r.Body), "changed since you read it") {
+		t.Fatal(r.Status, string(r.Body))
+	}
+	if err = f.st.RemoveBinding(bg, "dev-ana"); err != nil {
+		t.Fatal(err)
+	}
+	r = f.api.Handle(bg, member("dev-fani"), Request{Method: "POST", Path: path, Body: []byte(`{"reason":"","reviewHash":"` + seenHash(f.st, w.ID) + `"}`)})
+	if r.Status != 409 || !strings.Contains(string(r.Body), "writer_lost") {
 		t.Fatal(r.Status, string(r.Body))
 	}
 }

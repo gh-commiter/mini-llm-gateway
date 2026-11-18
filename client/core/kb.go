@@ -180,6 +180,8 @@ type Submission struct {
 	Reason     string     `json:"reason"`
 	NoteID     int64      `json:"note"`
 	EntryKind  string     `json:"entryKind"`
+	// ReviewHash names the content a reviewer read (reviewHash); only the review reads carry it, and accept requires it.
+	ReviewHash string `json:"reviewHash,omitempty"`
 }
 
 const submissionCols = `id,project_id,user_id,class,title,replaces,revision,state,provenance,reason,note_id,entry_kind`
@@ -336,7 +338,10 @@ func (s *Store) GetSubmission(ctx context.Context, p Principal, project, id int6
 		if !owner && lim != nil {
 			return lim
 		}
-		v, e = getSubmission(tx, p, project, id, owner, true)
+		if v, e = getSubmission(tx, p, project, id, owner, true); e != nil || !owner {
+			return e
+		}
+		v.ReviewHash, e = reviewHash(tx, id) // the owner's read is a review read
 		return e
 	})
 	if err != nil {
@@ -373,23 +378,59 @@ func (s *Store) ListSubmissions(ctx context.Context, p Principal, project, after
 		if e != nil {
 			return e
 		}
-		defer rows.Close()
 		for rows.Next() {
 			v, e := scanSubmission(rows)
 			if e != nil {
+				rows.Close()
 				return e
 			}
 			out = append(out, v)
 		}
-		return rows.Err()
+		e = rows.Err()
+		rows.Close()
+		for i := range out { // the owner's queue rows are review reads: the panel accepts with this hash
+			if e == nil && owner {
+				out[i].ReviewHash, e = reviewHash(tx, out[i].ID)
+			}
+		}
+		return e
 	})
 	return
 }
 
-// ReviewSubmission is the gateway owner's review: any submission, audited as the owner.
-func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, reason string) (v Submission, err error) {
-	return s.review(ctx, nil, 0, id, accept, reason, nil)
+// ReviewSubmission is the gateway owner's review: any submission, audited as the owner. seen is the ReviewHash of the
+// read the decision rests on: an accept requires it to name the current content (reject ignores it).
+func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, reason, seen string) (v Submission, err error) {
+	return s.review(ctx, nil, 0, id, accept, reason, seen, nil)
 }
+
+// reviewHash is the version of a submission a reviewer read: everything an accept publishes (class, title, kind, body,
+// what it replaces and at which revision). An author's rewrite of a pending submission (kb import merges into it) changes it.
+func reviewHash(tx *sql.Tx, id int64) (string, error) {
+	var class, title, kind, body string
+	var replaces, revision int64
+	if err := tx.QueryRow(`SELECT class,title,entry_kind,body,replaces,revision FROM kb_submissions WHERE id=?`, id).Scan(&class, &title, &kind, &body, &replaces, &revision); err != nil {
+		return "", notFound(err)
+	}
+	b, _ := json.Marshal([]any{class, title, kind, body, replaces, revision})
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:]), nil
+}
+
+// The refusals of an accept that does not name what is there now.
+var (
+	ErrReviewHashMissing = ErrRefusal{"name the version you read: read the submission first (minigw kb review), or update minigw"}
+	ErrSubmissionChanged = ErrRefusal{"the submission changed since you read it: review it again"}
+)
+
+// ErrWriterLost: at accept, the WRITER may no longer write this (deactivated, device unbound, role or note changed). Its
+// own answer, so that a reviewer never reads it as their own lost access; Unwrap keeps the cause for errors.Is.
+type ErrWriterLost struct{ Cause error }
+
+func (e ErrWriterLost) Error() string {
+	return "the writer of this submission may no longer write it here: reject it or ask them to submit again"
+}
+func (e ErrWriterLost) Unwrap() error { return e.Cause }
 
 // reviewAccess: a member reviews the submissions of a project (or a team's own notes) only with the role admin there,
 // as loadAccess computes it (direct or through a team assignment; a grant never; for a team segment: a project admin of
@@ -433,54 +474,79 @@ func (s *Store) ListReview(ctx context.Context, p Principal, project, after int6
 	out = []Submission{}
 	lim := s.rate(p.UserID, false)
 	err = s.read(ctx, func(tx *sql.Tx) error {
+		projects := []int64{project}
 		if project != 0 {
 			if e := reviewAccess(tx, p, project); e != nil {
 				return e
 			}
-		} else if e := checkPrincipal(tx, p); e != nil {
-			return e
+		} else {
+			if e := checkPrincipal(tx, p); e != nil {
+				return e
+			}
+			var e error
+			if projects, e = reviewedProjects(tx, p); e != nil {
+				return e
+			}
 		}
 		if lim != nil {
 			return lim
 		}
-		rows, e := tx.Query(`SELECT `+submissionCols+` FROM kb_submissions WHERE state='pending' AND (project_id=?1 OR ?1=0) AND user_id<>?2 AND id>?3 ORDER BY id`, project, p.UserID, after)
+		if len(projects) == 0 {
+			return nil
+		}
+		args := []any{p.UserID, after}
+		for _, id := range projects {
+			args = append(args, id)
+		}
+		rows, e := tx.Query(`SELECT `+submissionCols+` FROM kb_submissions WHERE state='pending' AND user_id<>? AND id>? AND project_id IN (`+marks(len(projects))+`) ORDER BY id LIMIT 100`, args...)
 		if e != nil {
 			return e
 		}
-		var all []Submission
+		defer rows.Close()
 		for rows.Next() {
 			v, e := scanSubmission(rows)
 			if e != nil {
-				rows.Close()
 				return e
 			}
-			all = append(all, v)
+			out = append(out, v)
 		}
-		e = rows.Err()
-		rows.Close()
-		if e != nil {
-			return e
-		}
-		ok := map[int64]bool{project: project != 0}
-		for _, v := range all {
-			if len(out) == 100 {
-				break
-			}
-			may, known := ok[v.Project]
-			if !known {
-				e := reviewAccess(tx, p, v.Project)
-				if e != nil && !errors.Is(e, ErrNotFound) && !errors.Is(e, ErrArchived) {
-					return e
-				}
-				may, ok[v.Project] = e == nil, e == nil
-			}
-			if may {
-				out = append(out, v)
-			}
-		}
-		return nil
+		return rows.Err()
 	})
 	return
+}
+
+// reviewedProjects: the projects and team segments p reviews now. The candidates come from p's own admin roles (bounded
+// by p's memberships, never a scan of the gateway's submissions); reviewAccess, the one rule, confirms each.
+func reviewedProjects(tx *sql.Tx, p Principal) (out []int64, err error) {
+	rows, err := tx.Query(`SELECT project_id FROM memberships WHERE user_id=?1 AND role='admin'
+ UNION SELECT ?2+tp.team_id FROM team_projects tp JOIN memberships m ON m.project_id=tp.project_id AND m.user_id=?1 AND m.role='admin'
+ JOIN team_members tm ON tm.team_id=tp.team_id AND tm.user_id=?1 ORDER BY 1`, p.UserID, segmentBase)
+	if err != nil {
+		return nil, err
+	}
+	var cands []int64
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		cands = append(cands, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range cands {
+		e := reviewAccess(tx, p, id)
+		if e == nil {
+			out = append(out, id)
+		} else if !errors.Is(e, ErrNotFound) && !errors.Is(e, ErrArchived) {
+			return nil, e
+		}
+	}
+	return out, nil
 }
 
 // GetReview reads one submission, with its body and the writer's name, for a reviewer of its project (project 0 = any).
@@ -497,6 +563,9 @@ func (s *Store) GetReview(ctx context.Context, p Principal, project, id int64) (
 		if v, e = getSubmission(tx, Principal{}, 0, id, true, true); e != nil {
 			return e
 		}
+		if v.ReviewHash, e = reviewHash(tx, id); e != nil {
+			return e
+		}
 		return tx.QueryRow(`SELECT name FROM users WHERE id=?`, v.User).Scan(&writer)
 	})
 	if err != nil {
@@ -507,12 +576,12 @@ func (s *Store) GetReview(ctx context.Context, p Principal, project, id int64) (
 
 // MemberReview is a project admin's accept or reject of a submission of project (0 = its own project): reviewable, never their own, and an
 // accept only of what the reviewer could write themselves (class, the replaced note). Audited as the reviewing user.
-func (s *Store) MemberReview(ctx context.Context, p Principal, project, id int64, accept bool, reason string) (Submission, error) {
-	return s.review(ctx, &p, project, id, accept, reason, s.rate(p.UserID, true))
+func (s *Store) MemberReview(ctx context.Context, p Principal, project, id int64, accept bool, reason, seen string) (Submission, error) {
+	return s.review(ctx, &p, project, id, accept, reason, seen, s.rate(p.UserID, true))
 }
 
 // review: rv nil = the owner (any project); else the reviewing member, limited to project (lim after the access checks).
-func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, accept bool, reason string, lim error) (v Submission, err error) {
+func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, accept bool, reason, seen string, lim error) (v Submission, err error) {
 	if len(reason) > maxReason {
 		return v, ErrInvalid{"reason: at most 1024 bytes"}
 	}
@@ -539,6 +608,18 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 		if lim != nil {
 			return lim
 		}
+		if accept { // four eyes on the text too: publish only what the reviewer read
+			cur, e := reviewHash(tx, id)
+			if e != nil {
+				return e
+			}
+			if seen == "" {
+				return ErrReviewHashMissing
+			}
+			if seen != cur {
+				return ErrSubmissionChanged
+			}
+		}
 		state := "rejected"
 		if accept {
 			state = "accepted"
@@ -555,13 +636,16 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 		if accept {
 			p := Principal{UserID: v.User, DeviceID: v.Provenance.Device}
 			in := SubmissionInput{NoteInput: NoteInput{Class: v.Class, Title: v.Title}, Replaces: v.Replaces, Revision: v.Revision}
-			if e = submissionAccess(tx, p, v.Project, in, true); e != nil {
-				return e
-			}
-			if rv != nil { // the reviewer could write this note themselves: class, and the note it replaces
+			if rv != nil { // first: the reviewer could write this note themselves (class, and the note it replaces)
 				if e = submissionAccess(tx, *rv, v.Project, in, true); e != nil {
 					return e
 				}
+			}
+			if e = submissionAccess(tx, p, v.Project, in, true); e != nil { // then the writer, as of now
+				if errors.Is(e, ErrNoProjectAccess) || errors.Is(e, ErrNotFound) || errors.Is(e, ErrForbidden) {
+					return ErrWriterLost{e}
+				}
+				return e
 			}
 			var body string
 			if e = tx.QueryRow(`SELECT body FROM kb_submissions WHERE id=?`, id).Scan(&body); e != nil {

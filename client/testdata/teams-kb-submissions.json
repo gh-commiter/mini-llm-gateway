@@ -45,20 +45,30 @@
       ],
       "responses": [
         {
+          "match": "GET /kb/submissions/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"authorName\":\"ana\",\"reviewHash\":\"h7\"}"
+        },
+        {
           "match": "POST /kb/submissions/7/accept",
           "status": 200,
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
         }
       ],
       "want": {
-        "out": "submission 7 accepted\n",
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 0  revision 0\nReview this\nsubmission 7 accepted\n",
         "err": "",
         "exit": 0,
         "requests": [
           [
+            "GET",
+            "/kb/submissions/7",
+            ""
+          ],
+          [
             "POST",
             "/kb/submissions/7/accept",
-            "{\"reason\":\"\"}"
+            "{\"reason\":\"\",\"reviewHash\":\"h7\"}"
           ]
         ]
       }
@@ -1063,17 +1073,27 @@
       ],
       "responses": [
         {
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"h7\"}"
+        },
+        {
           "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
           "status": 200,
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
         }
       ],
-      "out": "submission 7 accepted\n",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0\nReview this\nsubmission 7 accepted\n",
       "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ],
         [
           "POST",
           "/minigw/v1/projects/0/kb/review/7/accept",
-          "{\"reason\":\"\"}"
+          "{\"reason\":\"\",\"reviewHash\":\"h7\"}"
         ]
       ]
     },

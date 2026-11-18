@@ -178,9 +178,7 @@ extension ProjectEnv {
                         }
                     }
                 }
-                say(Self.submissionLine(full, names))
-                say(ProjectText.clean("writer \(full["authorName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? String(full["user"]?.int ?? 0))  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)"))
-                if let body = full["body"]?.string { say(ProjectText.clean(body)) }
+                Self.printReview(say, full, names)
                 count += 1
             }
             after = pg["next"]?.int ?? 0
@@ -188,11 +186,27 @@ extension ProjectEnv {
         if count == 0 { say("no submissions") }
     }
 
-    /// A project admin's kb accept|reject <id>: the gateway finds the submission's project and decides who may.
+    /// One submission as gw kb review and kb review print it: its line, the writer, and the text.
+    static func printReview(_ say: (String) -> Void, _ full: JDict, _ names: [Int64: String]) {
+        say(submissionLine(full, names))
+        say(ProjectText.clean("writer \(full["authorName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? String(full["user"]?.int ?? 0))  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)"))
+        if let body = full["body"]?.string { say(ProjectText.clean(body)) }
+    }
+
+    /// A project admin's kb accept|reject <id>: the gateway finds the submission's project and decides who may. An accept
+    /// first reads the submission, prints what it accepts and sends the version it read (refused when the text changed).
     func kbDecide(_ pos: [String], _ team: String, _ reason: String) throws {
         guard pos.count == 2, team.isEmpty, let id = Int64(pos[1]), id > 0 else { throw ProjectError("usage:\n" + Self.kbHelp) }
         let (c, _) = connect()
-        let r = send(c, "POST", "\(Self.apiProjects)/0/kb/review/\(id)/\(pos[0])", [:], try JSONSerialization.data(withJSONObject: ["reason": reason]))
+        var fields: [String: Any] = ["reason": reason]
+        if pos[0] == "accept" {
+            let g = send(c, "GET", "\(Self.apiProjects)/0/kb/review/\(id)", [:], nil)
+            guard g.status == 200 else { throw Self.gatewayError(g.status, g.data, g.retryAfter) }
+            let full = JSONValue.parse(g.data)?.dict ?? JDict()
+            Self.printReview(say, full, [:])
+            fields["reviewHash"] = full["reviewHash"]?.string ?? ""
+        }
+        let r = send(c, "POST", "\(Self.apiProjects)/0/kb/review/\(id)/\(pos[0])", [:], try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]))
         guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
         say(Self.submissionResult(JSONValue.parse(r.data)?.dict ?? JDict()))
     }
@@ -268,7 +282,13 @@ extension AdminCommands {
             if count == 0 { say("no submissions") }; return
         }
         if pos.count == 3 && ["accept", "reject"].contains(pos[1]), let id = Int64(pos[2]), id > 0 {
-            let v = try request("POST", "/kb/submissions/\(id)/\(pos[1])", ["reason": reason])
+            var fields: [String: Any] = ["reason": reason]
+            if pos[1] == "accept" {  // what is accepted, and the version read: the gateway refuses a text changed since
+                let full = try request("GET", "/kb/submissions/\(id)")
+                ProjectEnv.printReview(say, full, [:])
+                fields["reviewHash"] = full["reviewHash"]?.string ?? ""
+            }
+            let v = try request("POST", "/kb/submissions/\(id)/\(pos[1])", fields)
             say(ProjectEnv.submissionResult(v)); return
         }
         throw usage

@@ -1213,7 +1213,7 @@ it follows the same visibility as `note list` (private entries only for their au
 available inside an agent run. Exported Markdown and team bundles carry `entry_kind`.
 
 **Team notes.** A team has notes of its own, next to those of its projects. Every member of the team (the roster
-the owner keeps with `gw team member add`) reads them; whoever is admin of at least one of the team's projects can
+the owner keeps with `gw team member add`) reads them; whoever is admin of at least one of the team's projects (one that is not archived) can
 also write them. A team member who is only in a project of the team, and not on the team's roster, reads nothing from
 them. They are `structure` or `data` notes; there is no `private` class at team level, and an archived team's notes
 are hidden until it is unarchived. Give `--team <team>` in place of a project: `minigw note list|read|push|edit|rm --team acme`,
@@ -1275,7 +1275,12 @@ sees nothing of the review: the answer is the "not found" of a project they cann
 with a single admin therefore leaves that admin's submissions for the owner (or a second admin). Accepting also needs
 what the reviewer could write themselves (the class, and the note a replacement changes). The published note keeps the
 writer as its author; its provenance names the reviewing user, and the audit records accept and reject with that user.
-An archived project or team is not reviewed; a deactivated user or an unbound device loses the ability at once.
+`kb accept` (and the owner's `gw kb accept`) first reads the submission, prints what it accepts and sends the version it
+read: if the writer changed the pending text after that read, the gateway refuses with "the submission changed since you
+read it: review it again". The panel's Accept is bound to the row on screen the same way. If the writer may no longer write
+the note when you accept, you are told so ("the writer of this submission may no longer write it here"); reject it.
+An archived project or team is not reviewed; a deactivated user or an unbound device loses the ability at once. An archived
+project also no longer makes its admins writers of the team's own notes.
 `private` submissions follow the private rule: their author and the project admins see them. Submissions an upstream
 gateway sends are reviewed the same way. `minigw project list` shows "N submissions wait for review" on the projects
 you review. Member review is command-line only: there is no panel for it.
