@@ -99,7 +99,7 @@ func TestModelLabelRoutes(t *testing.T) {
 	if st, _ = in("label-agreement", `{"kind":"phase","bucket":"5","agree":true}`); st != 400 {
 		t.Fatal(st)
 	}
-	if st, b = call(admin, "GET", "/usage/labels/agreement", ""); st != 200 || !strings.Contains(b, `{"kind":"phase","bucket":"1000","agree":1,"n":1}`) {
+	if st, b = call(admin, "GET", "/usage/labels/agreement", ""); st != 200 || !strings.Contains(b, `{"kind":"phase","bucket":"1000","agree":1,"n":1,"id":"phase/1000","percent":"100 %","count":"1","days":"`) {
 		t.Fatalf("%d %s", st, b)
 	}
 	if st, _ = call(admin, "GET", "/usage/labels/agreement?days=0", ""); st != 200 {

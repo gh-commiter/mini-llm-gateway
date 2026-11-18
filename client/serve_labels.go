@@ -85,6 +85,7 @@ type labelState struct {
 	budget         time.Duration              // tests may shorten the deadline
 	skipped        atomic.Uint64
 	failed         atomic.Uint64
+	evalBusy       atomic.Bool // one `minigw gw labels eval` at a time (serve_labels_eval.go)
 }
 
 // The tray can close and reopen the core without restarting the gateway.
@@ -326,39 +327,14 @@ func (s *server) runLabels(ctx context.Context) {
 			}
 			l.decisionCancel = cancel
 			l.mu.Unlock()
-			backend := l.backend
-			if backend == nil {
-				backend = func(c context.Context, system, user string) (string, error) {
-					return s.foundryComplete(c, model, system, user)
-				}
-			}
-			var tokensIn, tokensOut int64
-			preempted := false
-			counted := func(c context.Context, system, user string) (string, error) {
-				sample, release, err := s.foundry.labelSample(c)
-				if err != nil {
-					return "", err
-				}
-				defer release()
-				tokensIn += int64((len(system) + len(user) + 3) / 4)
-				reply, err := backend(sample, system, user)
-				if context.Cause(sample) == errLabelForeground {
-					preempted = true
-					cancel()
-					return "", decide.ErrBackend
-				}
-				tokensOut += int64((len(reply) + 3) / 4)
-				return reply, err
-			}
+			var meter labelMeter
+			counted := s.meteredBackend(s.labelBackend(model), &meter, cancel)
 			threshold := 1.0
 			if settings.Threshold == "0.67" {
 				threshold = 0.67
 			}
 			var err error
-			results[0], err = decide.Decide(decisionCtx, counted, decide.Request{Question: "Which phase describes this work?", Candidates: labelCandidates(core.PhaseWords), Input: job.input}, threshold)
-			if err == nil {
-				results[1], err = decide.Decide(decisionCtx, counted, decide.Request{Question: "Which activity describes this work?", Candidates: labelCandidates(settings.Activities), Input: job.input}, threshold)
-			}
+			results, err = decideLabels(decisionCtx, counted, settings.Activities, job.input, threshold, true, true)
 			if decisionCtx.Err() != nil {
 				err = decide.ErrBackend
 			}
@@ -371,9 +347,9 @@ func (s *server) runLabels(ctx context.Context) {
 			}
 			// No backend error, reply or input is ever handed to storage or a logger.
 			storeCtx, storeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			eventErr := s.core.FinishLabelDecision(storeCtx, "ev_"+randomToken()[:16], "foundry", model, now, time.Now(), tokensIn, tokensOut, err != nil, false)
+			eventErr := s.core.FinishLabelDecision(storeCtx, "ev_"+randomToken()[:16], "foundry", model, now, time.Now(), meter.in, meter.out, err != nil, false)
 			storeCancel()
-			if preempted && ctx.Err() == nil {
+			if meter.preempted && ctx.Err() == nil {
 				if job.retries == 0 {
 					job.retries++
 					pending = &job

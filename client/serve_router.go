@@ -226,6 +226,9 @@ func (a *adminClient) do(method, path string, body, out any) int {
 		if path == "/general/scratch/move" { // kopija na drug disk traja
 			timeout = 4 * time.Hour
 		}
+		if path == "/usage/labels/eval" { // up to 500 examples, six samples each; the gateway stops it after 30 minutes
+			timeout = 40 * time.Minute
+		}
 		if path == "/upstream-push" { // waits out the upstream's rate limit
 			timeout = 2 * time.Hour
 		}
@@ -321,6 +324,8 @@ func routerCommand(args []string, in io.Reader) {
 	upReadSources := fs.String("read-sources", "", "upstream link --read: more sources to read, as pull --dry-run names them (project:<slug>, team:<name>), comma-separated")
 	upAcceptReach := fs.Bool("accept-reach", false, "upstream link --read: you have seen what the upstream's user may read (pull --dry-run) and accept it for this link")
 	evTask := fs.String("task", "", "usage, usage-events, project-sessions: only this task")
+	evFile := fs.String("file", "", "labels eval: the file of hand-labelled examples (one JSON object per line: text, phase, activity)")
+	evShowErrors := fs.Bool("show-errors", false, "labels eval: list the misses with their text (to this terminal only)")
 	explain := fs.Bool("explain", false, "member list: show membership origins")
 	history := fs.Bool("history", false, "quota: recorded probes, without fetching")
 	claudeProbe := fs.String("claude-probe", "", "quota: on or off (the Claude quota probe)")
@@ -398,6 +403,9 @@ func routerCommand(args []string, in io.Reader) {
 		say(autostartLine(st.Autostart))
 		if st.Secrets != "" {
 			say(clean("secrets: " + st.Secrets))
+		}
+		if st.RemotePassword != "" {
+			say(clean("remote settings password: " + st.RemotePassword))
 		}
 		say(fmt.Sprintf("agent requests running: %d", st.Agents))
 		if st.Core != "" { // #106
@@ -862,8 +870,8 @@ func routerCommand(args []string, in io.Reader) {
 		var out json.RawMessage
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
-	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota", "upstream":
-		coreCommand(a, pos, coreOpts{in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, read: *upRead, noRead: *upNoRead, readClass: *upReadClass, readSources: *upReadSources, acceptReach: *upAcceptReach, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, version: *version, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
+	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota", "upstream", "labels":
+		coreCommand(a, pos, coreOpts{file: *evFile, showErrors: *evShowErrors, in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, read: *upRead, noRead: *upNoRead, readClass: *upReadClass, readSources: *upReadSources, acceptReach: *upAcceptReach, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, version: *version, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

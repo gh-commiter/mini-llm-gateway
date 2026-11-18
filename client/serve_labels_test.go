@@ -255,7 +255,7 @@ func TestLabelsShadowOneInFourOnlyCounters(t *testing.T) {
 	waitLabels(t, func() bool { rows, _ := s.core.Agreement(t0, 30); return len(rows) == 2 })
 	s.labels.stop()
 	rows, err := s.core.Agreement(t0, 30)
-	if err != nil || len(rows) != 2 || rows[0] != (core.AgreementRow{Kind: "activity", Bucket: "1000", N: 1}) || rows[1] != (core.AgreementRow{Kind: "phase", Bucket: "1000", Agree: 1, N: 1}) || calls.Load() != 6 {
+	if err != nil || len(rows) != 2 || rows[0] != (core.AgreementRow{Kind: "activity", Bucket: "1000", N: 1, ID: "activity/1000", Percent: "0 %", Count: "1", Days: rows[0].Days}) || rows[1] != (core.AgreementRow{Kind: "phase", Bucket: "1000", Agree: 1, N: 1, ID: "phase/1000", Percent: "100 %", Count: "1", Days: rows[1].Days}) || calls.Load() != 6 {
 		t.Fatal(rows, err, calls.Load())
 	}
 	for _, r := range roots {
@@ -531,10 +531,16 @@ func TestLabelsUnavailableBackendIdles(t *testing.T) {
 	// A fake enables exercising worker lifecycle on the Mac test host; remove it before dispatch on other hosts.
 	s.labels.backend = fakeLabelBackend
 	enableTestLabels(t, s, "")
-	status, body := s.adminDo("PUT", "/usage/labels/settings", []byte(`{"backend":"apple-fm"}`))
-	if status != 200 {
+	// The Go gateway refuses apple-fm at the settings route; a stored one (an older version or a restore) is written directly.
+	if status, body := s.adminDo("PUT", "/usage/labels/settings", []byte(`{"backend":"apple-fm"}`)); status != 400 || !strings.Contains(fmt.Sprint(body), "choose foundry:<model>") {
 		t.Fatal(status, body)
 	}
+	apple := "apple-fm"
+	stored, err := s.core.SetLabelSettings(t0, core.LabelSettingsPatch{Backend: &apple})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.labels.configure(stored)
 	// Check production platform gating directly through the worker, without a real model.
 	s.labels.backend = nil
 	s.labels.mu.Lock()

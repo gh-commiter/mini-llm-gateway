@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -58,7 +59,10 @@ type admCase struct {
 		ReadClass     string `json:"readClass,omitempty"`
 		ReadSources   string `json:"readSources,omitempty"`
 		AcceptReach   bool   `json:"acceptReach,omitempty"`
+		ShowErrors    bool   `json:"showErrors,omitempty"` // labels eval
 	} `json:"opts"`
+	File      string    `json:"file,omitempty"` // labels eval: the content of the examples file (written to a temp file by the test)
+	path      string    // where the test wrote it
 	Stdin     string    `json:"stdin,omitempty"` // what the command reads (the upstream's token)
 	Responses []cmdResp `json:"responses"`
 	Want      *admWant  `json:"want,omitempty"`
@@ -117,7 +121,7 @@ func runAdminCase(c *admCase) *admWant {
 	}}
 	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
 		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, version: c.Opts.Version, team: c.Opts.Team, by: c.Opts.By, labelSource: c.Opts.LabelSource, phase: c.Opts.Phase, activity: c.Opts.Activity, task: c.Opts.Task,
-		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, deviceName: c.Opts.DeviceName, auto: c.Opts.Auto, manual: c.Opts.Manual, theirs: c.Opts.Theirs, ours: c.Opts.Ours, mode: c.Opts.Mode, upstream: c.Opts.Upstream, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun, read: c.Opts.Read, noRead: c.Opts.NoRead, readClass: c.Opts.ReadClass, readSources: c.Opts.ReadSources, acceptReach: c.Opts.AcceptReach}
+		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, deviceName: c.Opts.DeviceName, auto: c.Opts.Auto, manual: c.Opts.Manual, theirs: c.Opts.Theirs, ours: c.Opts.Ours, mode: c.Opts.Mode, upstream: c.Opts.Upstream, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun, read: c.Opts.Read, noRead: c.Opts.NoRead, readClass: c.Opts.ReadClass, readSources: c.Opts.ReadSources, acceptReach: c.Opts.AcceptReach, file: c.path, showErrors: c.Opts.ShowErrors}
 	if c.Opts.Days != "" {
 		o.days = c.Opts.Days
 	}
@@ -144,6 +148,12 @@ func TestAdminParityCommands(t *testing.T) {
 	}
 	for _, c := range fx.Cases {
 		t.Run(c.Name, func(t *testing.T) {
+			if c.File != "" {
+				c.path = filepath.Join(t.TempDir(), "examples.jsonl")
+				if err := os.WriteFile(c.path, []byte(c.File), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			got := runAdminCase(c)
 			if updateFixtures() {
 				c.Want = got

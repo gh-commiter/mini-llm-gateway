@@ -83,6 +83,7 @@
   {"kind": "admin", "method": "GET", "path": "/usage/labels", "want": false},
   {"kind": "admin", "method": "GET", "path": "/usage/labels/other", "want": false},
   {"kind": "admin", "method": "GET", "path": "/usage/labels/settings/x", "want": false},
+  {"kind": "admin", "method": "POST", "path": "/usage/labels/eval", "want": false},
   {"kind": "member", "method": "GET", "path": "/minigw/v1/projects/1/sessions", "want": true},
   {"kind": "admin", "method": "POST", "path": "/export", "want": true},
   {"kind": "admin", "method": "POST", "path": "/import", "want": true},

@@ -23,6 +23,8 @@ public struct AdminOpts {
     public var withPrivate = false, dryRun = false, auto = false, manual = false, theirs = false, ours = false
     /// upstream link, reading (step C): --read, --no-read, --read-class, --read-sources, --accept-reach
     public var read = false, noRead = false, acceptReach = false, readClass = "", readSources = ""
+    /// labels eval: the examples file and --show-errors (the misses with their text, to this terminal only)
+    public var file = "", showErrors = false
     public var tokenInput: (() throws -> String)?
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
                 provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "", by: String = "", phase: String = "", activity: String = "", task: String = "", labelSource: String = "") {
@@ -55,6 +57,7 @@ public final class AdminCommands {
           minigw gw core audit                                  the audit trail of the core
           minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]
           minigw gw usage-events [--days n] [--user u] [--project p] [--model m] [--phase p] [--activity a] [--task t] [--label-source given|branch|model]   model invocations per day, model and user (core; all of them)
+          minigw gw labels eval --file <examples.jsonl> [--show-errors]   check the label model against your hand-labelled examples (one JSON object per line: text, phase, activity; at most 500 lines, 1 MiB); stores nothing
           minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
           minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
         (<user> and <project>: the name or slug, or the number.)
@@ -126,6 +129,7 @@ public final class AdminCommands {
         switch pos[0] {
         case "kb": try kb(pos, reason: o.reason, team: o.team, version: o.version)
         case "team": try team(pos)
+        case "labels": try labelsCommand(pos, o)
         case "upstream": try upstream(pos, o)
         case "user":
             try need(2, 4)

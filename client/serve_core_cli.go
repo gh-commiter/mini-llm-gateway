@@ -40,6 +40,7 @@ const coreHelp = `
   minigw gw core audit                                  the audit trail of the core
   minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]
   minigw gw usage-events [--days n] [--user u] [--project p] [--model m] [--phase p] [--activity a] [--task t] [--label-source given|branch|model]   model invocations per day, model and user (core; all of them)
+  minigw gw labels eval --file <examples.jsonl> [--show-errors]   check the label model against your hand-labelled examples (one JSON object per line: text, phase, activity; at most 500 lines, 1 MiB); stores nothing
   minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
   minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
 (<user> and <project>: the name or slug, or the number.)`
@@ -91,6 +92,8 @@ type coreOpts struct {
 	upstream                                                                                                                               string
 	days, user, project, model, claudeProbe, provider, device, folder, sort, reason, version, team, by, phase, activity, task, labelSource string
 	json, csv, history, explain                                                                                                            bool
+	file                                                                                                                                   string // labels eval: the examples file
+	showErrors                                                                                                                             bool   // labels eval: list the misses with their text (this terminal only)
 	// upstream (upstream_cmd.go): the token comes from in; the rest are the link and push options
 	in                        io.Reader
 	remoteProject, remoteTeam string
@@ -116,6 +119,8 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		kbAdmin(a, pos, o)
 	case "team":
 		teamAdmin(a, pos)
+	case "labels":
+		labelsCommand(a, pos, o)
 	case "upstream":
 		upstreamCommand(a, pos, o)
 	case "user":

@@ -1,5 +1,20 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Model Labels panel: the agreement list. The shadow counters (kind, the agreement of the model, agree %, number of checks, the day range of the last 30 days) are listed under the settings, read through `GET /usage/labels/agreement`, now registered for panels in the Go provider, the Mac renderer and the settings page. The panel says in plain words that agreement is not calibrated accuracy and what shadow mode measures. The answer of the route gains `id`, `percent`, `count` and `days` beside the counters (text for the panel).
+- `minigw gw labels eval --file <examples.jsonl> [--show-errors]` (Windows, Linux and the Mac; same output, shared fixtures): checks the label model against hand-labelled examples, one JSON object per line (`text`, `phase`, `activity`; the file at most 1 MiB and 500 lines, each text capped to 2000 characters). The gateway classifies each with the configured backend through the worker's own decision and answers numbers: coverage and accuracy for the phase and the activity at two of three and at three of three, and the most frequent mistakes. It stores nothing (one internal usage event for the model time, the worker's own rule); the example text is never logged or answered and is shown only with `--show-errors`, from the command's own copy, on the terminal. One evaluation at a time; the user's own model requests keep priority as for the worker; owner-only admin route `POST /usage/labels/eval`, not on the remote settings listener.
+- `minigw gw status` says where the remote settings password record is kept when there is one (`remote settings password: file <path>`); it never prints its content. The record is still a file (see Known problems).
+
+### Fixed
+- The Model Labels settings row listed `apple-fm` as a supported backend on Windows and Linux, where it cannot exist. The Go gateway now names only `foundry:<model>` and refuses `apple-fm` with "backend: not available on this system; choose foundry:<model>", as the Mac refuses a Foundry backend.
+
+### Known problems
+- `gw labels eval` was tried with fake models in tests, not with a real model (Foundry Local or Apple Foundation Models).
+- The remote settings password record is still a file in the config folder, also where the other secrets are in the credential store; this step only reports where it is.
+- Agreement and eval numbers are agreement with explicit labels, a biased sample, not calibrated accuracy.
+
 ## 0.7.28
 
 ### New

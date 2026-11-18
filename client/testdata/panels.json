@@ -3288,6 +3288,58 @@
         }
        }
       ]
+     },
+     {
+      "kind": "text",
+      "id": "agreementnote",
+      "body": "builtin.labels.section.agreementnote.body"
+     },
+     {
+      "kind": "list",
+      "id": "agreement",
+      "title": "builtin.labels.section.agreement.title",
+      "source": {
+       "path": "/usage/labels/agreement",
+       "items": "agreement"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "kind",
+        "kind": "enum",
+        "label": "builtin.labels.section.agreement.column.kind",
+        "values": {
+         "phase": "builtin.labels.section.agreement.column.kind.phase",
+         "activity": "builtin.labels.section.agreement.column.kind.activity"
+        }
+       },
+       {
+        "field": "bucket",
+        "kind": "enum",
+        "label": "builtin.labels.section.agreement.column.bucket",
+        "values": {
+         "667": "builtin.labels.section.agreement.column.bucket.v667",
+         "1000": "builtin.labels.section.agreement.column.bucket.v1000",
+         "unknown": "builtin.labels.section.agreement.column.bucket.unknown"
+        }
+       },
+       {
+        "field": "percent",
+        "kind": "text",
+        "label": "builtin.labels.section.agreement.column.percent"
+       },
+       {
+        "field": "count",
+        "kind": "text",
+        "label": "builtin.labels.section.agreement.column.count"
+       },
+       {
+        "field": "days",
+        "kind": "text",
+        "label": "builtin.labels.section.agreement.column.days"
+       }
+      ],
+      "empty": "builtin.labels.section.agreement.empty"
      }
     ]
    }

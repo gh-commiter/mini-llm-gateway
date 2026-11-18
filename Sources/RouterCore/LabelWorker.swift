@@ -95,6 +95,8 @@ final class LabelWorker: @unchecked Sendable {
     private var cache: [String: (results: [Decide.Result], at: Date)] = [:]
     private var cacheRevision: UInt64 = 0
     private var starts: [Date] = []
+    private var sampleBusy = false  // one on-device sample at a time, whether the worker or an evaluation asks (tryTakeSlot)
+    private var evaluating = false
     private var errorRevision: UInt64?
     private var errorShown = false
     private var _skipped = 0, _failed = 0, _done = 0, _samples = 0
@@ -321,7 +323,7 @@ final class LabelWorker: @unchecked Sendable {
                     return true
                 }
                 guard allowed else { return skip() }
-                let outcome = await decision(job, s)
+                let outcome = await decision(job.input, s, threshold: s.threshold)
                 guard !isClosed() else { return }
                 if outcome.preempted {
                     if outcome.tokensIn > 0 {  // inference began: the attempt was real work, recorded without any text or error
@@ -372,8 +374,13 @@ final class LabelWorker: @unchecked Sendable {
         func add(output n: Int) { lock.withLock { o += n } }
     }
 
-    /// Phase, then activity: three samples each, every sample only while no user request runs on the on-device model.
-    private func decision(_ job: Job, _ s: Settings) async -> Outcome {
+    private func takeSlot() -> Bool { lock.withLock { if sampleBusy { return false }; sampleBusy = true; return true } }
+    private func freeSlot() { lock.withLock { sampleBusy = false } }
+
+    /// Phase, then activity: three samples each, every sample only while no user request runs on the on-device model. The worker asks for both
+    /// and registers its cancel (a settings change ends it); an evaluation (`evaluate`) asks only for the kinds it has hand labels for.
+    private func decision(_ input: String, _ s: Settings, threshold: Double, phase wantPhase: Bool = true, activity wantActivity: Bool = true,
+                          registerCancel: Bool = true) async -> Outcome {
         let preempted = Flag(), tokens = Tokens()
         let backend = self.backend, foreground = self.foreground, step = waitStep
         let counted: Decide.Backend = { [self] system, user, ids in
@@ -381,37 +388,46 @@ final class LabelWorker: @unchecked Sendable {
             while true {  // never start a sample while a user request runs
                 if Task.isCancelled { preempted.set(); throw CancellationError() }
                 let box = SampleBox()
-                if let id = foreground.watch({ preempted.set(); box.cancel() }) {  // registered before the model is touched
-                    defer { foreground.unwatch(id) }
-                    foreground.afterRegister?()
-                    let sample = Task<String, Error> { [self] in
-                        try box.enter()
-                        lock.withLock { _samples += 1 }  // counted only once inference really starts
-                        tokens.add(input: (system.utf8.count + user.utf8.count + 3) / 4)
-                        return try await backend(system, user, ids)
+                if takeSlot() {
+                    defer { freeSlot() }
+                    if let id = foreground.watch({ preempted.set(); box.cancel() }) {  // registered before the model is touched
+                        defer { foreground.unwatch(id) }
+                        foreground.afterRegister?()
+                        let sample = Task<String, Error> { [self] in
+                            try box.enter()
+                            lock.withLock { _samples += 1 }  // counted only once inference really starts
+                            tokens.add(input: (system.utf8.count + user.utf8.count + 3) / 4)
+                            return try await backend(system, user, ids)
+                        }
+                        box.set(sample)
+                        let reply = try await withTaskCancellationHandler { try await sample.value } onCancel: { sample.cancel() }
+                        if preempted.value { throw CancellationError() }
+                        tokens.add(output: (reply.utf8.count + 3) / 4)
+                        return reply
                     }
-                    box.set(sample)
-                    let reply = try await withTaskCancellationHandler { try await sample.value } onCancel: { sample.cancel() }
-                    if preempted.value { throw CancellationError() }
-                    tokens.add(output: (reply.utf8.count + 3) / 4)
-                    return reply
                 }
                 try? await Task.sleep(for: step)  // ponytail: polling; a notification when many workers wait
             }
         }
         let activities = s.activities.map { Decide.Candidate(id: $0, criteria: Self.criteria[$0] ?? $0) }
         let work = Task<[Decide.Result]?, Never> {
-            guard let p = try? await Decide.decide(counted, .init(question: "Which phase describes this work?", candidates: Self.phases, input: job.input), threshold: s.threshold),
-                  let a = try? await Decide.decide(counted, .init(question: "Which activity describes this work?", candidates: activities, input: job.input), threshold: s.threshold)
-            else { return nil }
+            var p = Decide.Result(), a = Decide.Result()
+            if wantPhase {
+                guard let r = try? await Decide.decide(counted, .init(question: "Which phase describes this work?", candidates: Self.phases, input: input), threshold: threshold) else { return nil }
+                p = r
+            }
+            if wantActivity {
+                guard let r = try? await Decide.decide(counted, .init(question: "Which activity describes this work?", candidates: activities, input: input), threshold: threshold) else { return nil }
+                a = r
+            }
             return [p, a]
         }
-        lock.withLock { cancelCurrent = { work.cancel() } }
+        if registerCancel { lock.withLock { cancelCurrent = { work.cancel() } } }
         let timer = Task { [budget] in try? await Task.sleep(for: budget); work.cancel() }
         if isClosed() { work.cancel() }
         let r = await work.value
         timer.cancel()
-        lock.withLock { cancelCurrent = nil }
+        if registerCancel { lock.withLock { cancelCurrent = nil } }
         // a cancel by the budget, the user or a settings change gives no result; only the user (or waiting for the user) is a retry
         return Outcome(results: r, preempted: r == nil && preempted.value, tokensIn: tokens.input, tokensOut: tokens.output)
     }
@@ -445,5 +461,109 @@ final class LabelWorker: @unchecked Sendable {
         }
         lock.withLock { _done += 1 }
         if lock.withLock({ defer { errorShown = false }; return errorShown }) { _ = await call("label-error", ["message": ""]) }
+    }
+}
+
+/// `minigw gw labels eval` on the Mac (docs/usage.md): the owner's check of the on-device label model against hand-labelled examples. The
+/// examples arrive in the body of `POST /usage/labels/eval` (the app's own admin route, never a core route, never a member or remote one);
+/// each goes through the same decision the worker makes (`decision`, with the same foreground coordination and the same strict `Decide`),
+/// and only numbers come back. Nothing is stored: no label, no agreement counter, no text. The one record is the worker's own accounting rule:
+/// one internal usage event for the whole run (`label-decision`: no user, source internal, tokens estimated). The text is in memory for the run
+/// and never reaches a log, an error or an answer; the client keeps its own copy for `--show-errors`.
+extension LabelWorker {
+    struct EvalExample: Sendable { var text: String, phase: String, activity: String }
+
+    static let evalMaxExamples = 500
+    static let evalBudget: Duration = .seconds(30 * 60)
+    static let evalAttempts = 3
+    static let evalMaxWrong = 100
+    static let evalMaxConfused = 5
+
+    private static func evalError(_ status: Int, _ message: String) -> (Int, Data) {
+        (status, (try? JSONSerialization.data(withJSONObject: ["type": "error", "error": ["type": Router.errorType(status), "message": message]])) ?? Data())
+    }
+
+    /// (status, JSON): the report `{"eval": …}` (the same fields as the Go gateway's) or an error body. `examples` have their text capped, the labels
+    /// are validated here against the settings (a hand label is a phase word or one of the configured activities).
+    func evaluate(_ raw: [EvalExample]) async -> (Int, Data) {
+        await fetchSettings()
+        guard let s = lock.withLock({ settings }) else { return Self.evalError(503, "The project database is not available") }
+        guard !s.backend.isEmpty else { return Self.evalError(409, "choose a backend first (Settings, Model Labels), then evaluate it") }
+        guard s.backend == "apple-fm" else { return Self.evalError(409, "label backend unavailable on this gateway") }
+        guard available() else { return Self.evalError(409, "on-device model unavailable") }
+        var examples: [EvalExample] = []
+        for (i, e) in raw.enumerated() {
+            let n = i + 1
+            if e.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return Self.evalError(400, "example \(n): text is empty") }
+            let phase = Self.safeWord(e.phase), activity = Self.safeWord(e.activity)
+            if (!e.phase.isEmpty && !Self.phases.contains { $0.id == phase }) || (!e.activity.isEmpty && !s.activities.contains(activity)) {
+                return Self.evalError(400, "example \(n): phase is one of \(Self.phases.map(\.id).joined(separator: ", ")), activity one of the configured list (\(s.activities.joined(separator: ", ")))")
+            }
+            if phase.isEmpty && activity.isEmpty { return Self.evalError(400, "example \(n): needs a phase or an activity") }
+            examples.append(EvalExample(text: Decide.capInput(e.text), phase: phase, activity: activity))
+        }
+        guard lock.withLock({ if evaluating || closed { return false }; evaluating = true; return true }) else {
+            return Self.evalError(429, "Another label evaluation is running on this gateway: wait for it to finish, then run this one again")
+        }
+        defer { lock.withLock { evaluating = false } }
+
+        let start = Date(), deadline = ContinuousClock.now + Self.evalBudget
+        var run = 0, tokensIn = 0, tokensOut = 0
+        var cells: [String: [String: Int]] = ["phase": [:], "activity": [:]]  // scored, two (decided, correct), one (decided, correct)
+        var confused: [String: [[String]: Int]] = ["phase": [:], "activity": [:]]
+        var wrong: [[String: Any]] = []
+        func bump(_ kind: String, _ key: String) { cells[kind, default: [:]][key, default: 0] += 1 }
+        for (i, e) in examples.enumerated() {
+            var done = false
+            var attempt = 0
+            while attempt < Self.evalAttempts, !done, ContinuousClock.now < deadline, !isClosed() {
+                attempt += 1
+                let outcome = await decision(e.text, s, threshold: 0.67, phase: !e.phase.isEmpty, activity: !e.activity.isEmpty, registerCancel: false)
+                tokensIn += outcome.tokensIn; tokensOut += outcome.tokensOut
+                if outcome.preempted {  // the user's request has priority; the example waits a moment and is tried again
+                    try? await Task.sleep(for: .milliseconds(200))
+                    continue
+                }
+                guard let results = outcome.results else { break }  // a failed example is not repeated: the run goes on
+                done = true
+                run += 1
+                for (k, kind) in ["phase", "activity"].enumerated() {
+                    let given = k == 0 ? e.phase : e.activity
+                    if given.isEmpty { continue }
+                    let r = results[k]
+                    let score = Int(((r.scores[r.choice] ?? 0) * 1000).rounded())
+                    bump(kind, "scored")
+                    if !r.choice.isEmpty {
+                        bump(kind, "twoDecided")
+                        if score == 1000 { bump(kind, "oneDecided") }
+                        if r.choice == given {
+                            bump(kind, "twoCorrect")
+                            if score == 1000 { bump(kind, "oneCorrect") }
+                        }
+                    }
+                    if r.choice != given {
+                        if !r.choice.isEmpty { confused[kind, default: [:]][[given, r.choice], default: 0] += 1 }
+                        if wrong.count < Self.evalMaxWrong { wrong.append(["kind": kind, "line": i + 1, "expected": given, "got": r.choice]) }
+                    }
+                }
+            }
+        }
+        // The worker's own accounting, once for the run; its failure never fails the evaluation.
+        _ = await call("label-decision", ["id": Self.eventID(), "provider": "apple-fm", "model": "apple-fm", "start": UsageEvent.iso(start), "end": UsageEvent.iso(Date()),
+                                          "tokensIn": tokensIn, "tokensOut": tokensOut, "failed": run == 0])
+        guard run > 0 else { return Self.evalError(502, "The label backend gave no answer for any example: check that the model is available") }
+        func kind(_ k: String) -> [String: Any] {
+            let c = cells[k] ?? [:]
+            return ["scored": c["scored"] ?? 0, "t067": ["decided": c["twoDecided"] ?? 0, "correct": c["twoCorrect"] ?? 0],
+                    "t10": ["decided": c["oneDecided"] ?? 0, "correct": c["oneCorrect"] ?? 0]]
+        }
+        func mistakes(_ k: String) -> [[String: Any]] {
+            (confused[k] ?? [:]).sorted { a, b in
+                a.value != b.value ? a.value > b.value : (a.key[0] != b.key[0] ? a.key[0] < b.key[0] : a.key[1] < b.key[1])
+            }.prefix(Self.evalMaxConfused).map { ["expected": $0.key[0], "got": $0.key[1], "n": $0.value] }
+        }
+        let report: [String: Any] = ["backend": s.backend, "examples": examples.count, "run": run, "notRun": examples.count - run, "phase": kind("phase"), "activity": kind("activity"),
+                                     "mistakes": ["phase": mistakes("phase"), "activity": mistakes("activity")], "wrong": wrong]
+        return (200, (try? JSONSerialization.data(withJSONObject: ["eval": report])) ?? Data())
     }
 }

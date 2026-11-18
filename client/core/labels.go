@@ -392,12 +392,17 @@ func (s *Store) RecordAgreement(ctx context.Context, kind, bucket string, agree 
 	})
 }
 
-// AgreementRow: shadow comparisons of one kind and score bucket over the days asked.
+// AgreementRow: shadow comparisons of one kind and score bucket over the days asked. The text fields are for the panel (a row key and
+// strings: its columns show text); the counters stay numbers. Agreement is not accuracy: unknown decisions count as disagreements.
 type AgreementRow struct {
-	Kind   string `json:"kind"`
-	Bucket string `json:"bucket"`
-	Agree  int64  `json:"agree"`
-	N      int64  `json:"n"`
+	Kind    string `json:"kind"`
+	Bucket  string `json:"bucket"`
+	Agree   int64  `json:"agree"`
+	N       int64  `json:"n"`
+	ID      string `json:"id"`
+	Percent string `json:"percent"` // agree / n, whole per cent ("87 %")
+	Count   string `json:"count"`   // n as text
+	Days    string `json:"days"`    // the first and the last day with counters ("2026-11-04 - 2026-11-18", or the one day)
 }
 
 // Agreement sums the counters of the last days (1 to 400, default 30), per kind and bucket.
@@ -411,15 +416,21 @@ func (s *Store) Agreement(ctx context.Context, days int) (rows []AgreementRow, e
 	from := s.now().UTC().AddDate(0, 0, -(days - 1)).Format("2006-01-02")
 	rows = []AgreementRow{}
 	err = s.read(ctx, func(tx *sql.Tx) error {
-		rs, e := tx.Query(`SELECT kind,bucket,COALESCE(sum(CASE WHEN agree=1 THEN n END),0),sum(n) FROM label_agreement WHERE day>=? GROUP BY kind,bucket ORDER BY kind,bucket`, from)
+		rs, e := tx.Query(`SELECT kind,bucket,COALESCE(sum(CASE WHEN agree=1 THEN n END),0),sum(n),min(day),max(day) FROM label_agreement WHERE day>=? GROUP BY kind,bucket ORDER BY kind,bucket`, from)
 		if e != nil {
 			return e
 		}
 		defer rs.Close()
 		for rs.Next() {
 			var r AgreementRow
-			if e := rs.Scan(&r.Kind, &r.Bucket, &r.Agree, &r.N); e != nil {
+			var first, last string
+			if e := rs.Scan(&r.Kind, &r.Bucket, &r.Agree, &r.N, &first, &last); e != nil {
 				return e
+			}
+			r.ID, r.Count = r.Kind+"/"+r.Bucket, strconv.FormatInt(r.N, 10)
+			r.Percent = strconv.FormatInt((r.Agree*100+r.N/2)/r.N, 10) + " %"
+			if r.Days = first; last != first {
+				r.Days = first + " - " + last
 			}
 			rows = append(rows, r)
 		}

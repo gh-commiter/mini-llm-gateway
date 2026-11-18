@@ -516,6 +516,8 @@ extension Router {
             }
             await Router.foundry.forget()
             return (200, await foundryInfo(n.foundry))
+        case "POST usage/{}/eval" where seg[1] == "labels":  // the app's own (the on-device model is here): not a core route, never on a member or remote path
+            return try await labelsEval(body)
         case "GET quota", "PATCH quota":  // 0.6.0: the report and the opt-in of the Claude probe (QuotaAdmin.swift)
             return try await quotaAdmin(method, body: body, hooks: hooks)
 

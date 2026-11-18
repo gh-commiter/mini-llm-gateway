@@ -29,18 +29,66 @@ private func fixtureJSON(_ name: String) throws -> [String: Any] {
                 return (r["status"] as! Int, Data((r["body"] as! String).utf8))
             }, out: { outText += $0 })
             cmd.zone = TimeZone(identifier: "UTC")!
-            let o = c["opts"] as! [String: String]
+            let o = c["opts"] as! [String: Any]
+            func str(_ k: String) -> String? { o[k] as? String }
             var exit: Int32 = 0, errText = ""
             do {
-                try cmd.run(c["args"] as! [String], AdminOpts(days: o["days"] ?? "7", user: o["user"] ?? "", project: o["project"] ?? "",
-                                                              model: o["model"] ?? "", claudeProbe: o["claudeProbe"] ?? "", team: o["team"] ?? "",
-                                                              phase: o["phase"] ?? "", activity: o["activity"] ?? "", task: o["task"] ?? "", labelSource: o["labelSource"] ?? ""))
+                var opts = AdminOpts(days: str("days") ?? "7", user: str("user") ?? "", project: str("project") ?? "",
+                                     model: str("model") ?? "", claudeProbe: str("claudeProbe") ?? "", team: str("team") ?? "",
+                                     phase: str("phase") ?? "", activity: str("activity") ?? "", task: str("task") ?? "", labelSource: str("labelSource") ?? "")
+                opts.showErrors = o["showErrors"] as? Bool ?? false
+                if let content = c["file"] as? String {  // labels eval: the examples file
+                    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("admin-case-" + UUID().uuidString)
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    opts.file = dir.appendingPathComponent("examples.jsonl").path
+                    try Data(content.utf8).write(to: URL(fileURLWithPath: opts.file))
+                }
+                try cmd.run(c["args"] as! [String], opts)
             } catch let e as AdminCLIError { exit = e.code; errText = "minigw: " + e.message + "\n" }
             let want = c["want"] as! [String: Any]
             #expect(outText == want["out"] as! String, "\(name): stdout")
             #expect(errText == want["err"] as! String, "\(name): stderr")
             #expect(Int(exit) == want["exit"] as! Int, "\(name): exit")
             #expect(requests == want["requests"] as! [[String]], "\(name): requests")
+        }
+    }
+
+    /// labels eval: the file's own limits are checked before anything is sent, and an error names the line, never its text.
+    @Test func labelsEvalChecksTheFileBeforeSendingAnything() throws {
+        let marker = "LINE-TEXT-MARKER-3321"
+        let line = #"{"text":"alpha","phase":"do"}"# + "\n"
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("labels-eval-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        func file(_ content: Data) throws -> String {
+            let p = dir.appendingPathComponent(UUID().uuidString).path
+            try content.write(to: URL(fileURLWithPath: p))
+            return p
+        }
+        let cases: [(String, Data, String)] = [
+            ("file over 1 MiB", Data((String(repeating: " ", count: 1 << 20) + line).utf8), "the file is larger than 1 MiB"),
+            ("over 500 lines", Data(String(repeating: line, count: 501).utf8), "at most 500 examples"),
+            ("bad line", Data((line + #"{"text":"\#(marker)","phase":"do",}"# + "\n").utf8), "line 2: one JSON object"),
+            ("unknown key", Data((#"{"text":"\#(marker)","phase":"do","note":1}"# + "\n").utf8), "line 1: one JSON object"),
+            ("no text", Data((#"{"phase":"do"}"# + "\n").utf8), "line 1: text is required"),
+            ("no label", Data((line + #"{"text":"\#(marker)"}"# + "\n").utf8), "line 2: needs a phase or an activity"),
+            ("invalid UTF-8", Data(line.utf8) + Data([0x7b, 0x22, 0x74, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d, 0x0a]), "not valid UTF-8"),
+            ("empty", Data("\n\n".utf8), "no examples"),
+            ("empty file", Data(), "no examples"),
+            ("examples over 1 MiB", Data(String(repeating: #"{"text":"\#(String(repeating: "<", count: 1990))","phase":"do"}"# + "\n", count: 500).utf8), "larger than the 1 MiB")]
+        for (name, content, want) in cases {
+            nonisolated(unsafe) var sent = 0
+            nonisolated(unsafe) var outText = ""
+            let cmd = AdminCommands(call: { _, _, _ in sent += 1; return (599, Data("{}".utf8)) }, out: { outText += $0 })
+            var o = AdminOpts()
+            o.file = try file(content)
+            do { try cmd.run(["labels", "eval"], o); Issue.record("\(name): no error") } catch let e as AdminCLIError {
+                #expect(e.code == 1 && e.message.contains(want) && !e.message.contains(marker) && !outText.contains(marker), "\(name): \(e.message)")
+            }
+            #expect(sent == 0, "\(name): something was sent")
+        }
+        for (o, want) in [(AdminOpts(), "--file"), ({ var o = AdminOpts(); o.file = dir.appendingPathComponent("missing").path; return o }(), "cannot open the file")] {
+            let cmd = AdminCommands(call: { _, _, _ in (599, Data()) }, out: { _ in })
+            do { try cmd.run(["labels", "eval"], o); Issue.record("no error") } catch let e as AdminCLIError { #expect(e.message.contains(want)) }
         }
     }
 
