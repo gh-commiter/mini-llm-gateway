@@ -482,3 +482,65 @@ func TestGrantThroughAnArchivedReaderConfersNothing(t *testing.T) {
 		t.Fatal("unarchived reader lost the grant")
 	}
 }
+
+// The other grant joins (a run's reads, the project list, a team's project list) follow the same rule, each with its own assertion.
+func TestArchivedReaderGrantInRunScopeProjectListAndTeamProjects(t *testing.T) {
+	f := newFx(t)
+	fk, eu := f.pid["fakture"], f.pid["eureko"]
+	n := f.mk("ana", "fakture", Structure)
+	team, err := f.CreateTeam(ctx, "core")
+	f.ok(err)
+	f.ok(f.AddTeamMember(ctx, team.ID, f.uid["cene"]))
+	f.ok(f.AddTeamProject(ctx, team.ID, fk))
+	cene := f.p("cene")
+	run := func() bool { // a run of eureko (cap issued before the archive is reused: only the reader's state changes)
+		hits, e := f.RunSearchNotes(ctx, RunCap{UserID: cene.UserID, DeviceID: cene.DeviceID, ProjectID: eu, Epoch: f.epoch.Load()}, true, "body")
+		if e != nil {
+			return false
+		}
+		for _, h := range hits.Hits {
+			if h.Project == fk {
+				return true
+			}
+		}
+		return false
+	}
+	listed := func(includeArchived bool) bool {
+		ps, e := f.ListProjects(ctx, cene, includeArchived)
+		f.ok(e)
+		for _, p := range ps {
+			if p.ID == fk {
+				return true
+			}
+		}
+		return false
+	}
+	teamListed := func() bool {
+		td, e := f.GetTeam(ctx, cene, "core")
+		f.ok(e)
+		for _, p := range td.Projects {
+			if p.ID == fk {
+				return true
+			}
+		}
+		return false
+	}
+	_ = n
+	if !run() || !listed(false) || !teamListed() {
+		t.Fatal("active reader: run/list/team", run(), listed(false), teamListed())
+	}
+	f.ok(f.SetProjectArchived(ctx, eu, true))
+	if run() {
+		t.Error("runScope still reads through the grant of an archived reader")
+	}
+	if listed(false) || listed(true) {
+		t.Error("ListProjects still lists the source through an archived reader")
+	}
+	if teamListed() {
+		t.Error("teamProjects still lists the source through an archived reader")
+	}
+	f.ok(f.SetProjectArchived(ctx, eu, false))
+	if !run() || !listed(false) || !teamListed() {
+		t.Error("unarchived reader lost the grant: run/list/team", run(), listed(false), teamListed())
+	}
+}
