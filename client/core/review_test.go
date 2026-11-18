@@ -431,3 +431,47 @@ func TestReviewHashWholeAndCoversProvenance(t *testing.T) {
 		t.Fatal(v)
 	}
 }
+
+// L1: a review read shows the text without what a reviewer cannot see and says how much was left out; an accept is refused while the
+// stored text has any (the hash stays over the stored text); a body longer than the owner's panel shows is marked "long" and is still
+// accepted by its version (gw kb review prints all of it).
+func TestReviewReadShowsHiddenCharactersAndAcceptRefusesThem(t *testing.T) {
+	f := newFx(t)
+	project := f.pid["fakture"]
+	in := SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Pay ‮to‬", Body: "line one\nsend​ to\tX\r\n"}}
+	v, _, e := f.Submit(ctx, f.p("ana"), project, "hidden", in)
+	f.ok(e)
+	r, e := f.GetSubmission(ctx, Principal{}, 0, v.ID, true)
+	f.ok(e)
+	if r.Title != "Pay to" || r.Body == nil || *r.Body != "line one\nsend to\tX\n" || r.Hidden != 4 || r.ReviewCheck != "hidden" {
+		t.Fatalf("%q %q %d %q", r.Title, *r.Body, r.Hidden, r.ReviewCheck)
+	}
+	var stored string
+	f.ok(f.DB().QueryRow(`SELECT body FROM kb_submissions WHERE id=?`, v.ID).Scan(&stored))
+	if stored != in.Body {
+		t.Fatalf("stored text changed: %q", stored)
+	}
+	rows, e := f.ListSubmissions(ctx, Principal{}, project, 0, true)
+	f.ok(e)
+	if len(rows) != 1 || rows[0].ReviewCheck != "hidden" || rows[0].ReviewHash != r.ReviewHash {
+		t.Fatalf("%+v", rows)
+	}
+	_, e = f.ReviewSubmission(ctx, v.ID, true, "", r.ReviewHash)
+	if e == nil || !strings.Contains(e.Error(), "contains 4 hidden characters") {
+		t.Fatal(e)
+	}
+	if _, e = f.ReviewSubmission(ctx, v.ID, false, "hidden characters", ""); e != nil { // reject stays possible
+		t.Fatal(e)
+	}
+	long := SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Long", Body: strings.Repeat("é", reviewPanelLimit+1)}}
+	v, _, e = f.Submit(ctx, f.p("ana"), project, "long", long)
+	f.ok(e)
+	r, e = f.GetSubmission(ctx, Principal{}, 0, v.ID, true)
+	f.ok(e)
+	if r.ReviewCheck != "long" || r.Hidden != 0 || *r.Body != long.Body {
+		t.Fatalf("%q %d", r.ReviewCheck, r.Hidden)
+	}
+	if _, e = f.ReviewSubmission(ctx, v.ID, true, "", r.ReviewHash); e != nil {
+		t.Fatal(e)
+	}
+}

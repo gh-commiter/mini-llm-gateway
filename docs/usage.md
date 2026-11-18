@@ -1381,6 +1381,13 @@ text CHANGED after the review is never published by mistake. It does not prove t
 scripts and agents accept, and nothing technical makes an agent show you the text first (the minigw skill tells it to);
 four eyes means a second admin's credentials, and the care of the person who holds them.
 
+Text a reviewer cannot see is never published: the review reads (`kb review`, `gw kb review` and the owner's Knowledge base panel) show
+the title and text without invisible and direction-changing characters (bidi overrides, zero-width characters, the tag block, line and
+paragraph separators, carriage returns and the other controls except newline and tab: the rule the mirror uses) and say how many were left out
+("contains hidden characters: N removed"). Such a submission cannot be accepted; reject it and ask the writer to submit the text without
+them. A text longer than the panel shows (20,000 characters) has no Accept in the panel ("too long to review here"): review it with
+`minigw gw kb review`, which prints all of it, and accept it with `--version`.
+
 In the owner's Knowledge base panel, Accept sends the version of its row, and the row's detail page shows exactly that
 version (or says that it changed since the list was loaded), so what the detail showed is what Accept publishes. An Accept
 straight from the list, without opening the detail, publishes the row's version unread. If the writer may no longer write
@@ -1637,6 +1644,16 @@ never as an overwrite). Add `--upstream <name>` to resolve only that link; it is
 Without it, a single conflict is still resolved as before; an ambiguous request lists the upstreams and changes nothing. The mode cannot
 be changed once the link has sent notes: unlink and link again (what was sent stays there). Deleting a
 note here or making it private is not propagated in either mode; `status` lists it.
+
+**Notes that came from another gateway are never pushed onward.** A note whose text ends with the trailer line a push writes (`<!-- minigw
+upstream ref …, author … -->`) arrived from another gateway: that gateway's push created or updated it here, or a submission it sent was
+accepted. Such a note is never sent by any push, automatic or manual, in either mode: not back to the gateway it came from (two gateways
+linked to each other would otherwise copy each other's notes back and forth until both projects were full) and not to any other upstream
+(that would hand a note, and its author's name, to a gateway its origin never chose). `upstream status` counts them ("N notes not sent:
+arrived from another gateway, never pushed onward"), and the push report lists each as `skip … arrived from another gateway`. A member who
+takes such a note over and removes that last line makes it local work: it is sent like any other note (to the gateway it came from too,
+where it becomes a new note that ends with this gateway's trailer, so it never comes back). A member who ends a note with such a line by
+hand keeps that note from being pushed; they could change or delete it anyway. Relaying notes on purpose is not a setting (yet).
 
 A repeated push sends only what changed: every note is remembered by its content (class, kind, title, text). A changed note is sent
 as a **replacement** of the note the upstream accepted before; if that note is still pending there, or cannot be read by the bound

@@ -37,6 +37,7 @@ type upLink struct {
 	Label       string
 	Pending     int
 	Total       int
+	Foreign     int
 	Auto        bool
 	Mode        string
 	DirtySince  *time.Time
@@ -240,6 +241,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 				say(clean("  " + s))
 			}
 			if s := upstreamConflicts(l); s != "" {
+				say(clean("  " + s))
+			}
+			if s := upstreamForeign(l); s != "" {
 				say(clean("  " + s))
 			}
 			if s := upstreamSkipped(l); s != "" {
@@ -626,6 +630,17 @@ func upstreamConflicts(l upLink) string {
 		return ""
 	}
 	return "CONFLICT: " + strings.Join(parts, ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
+}
+
+// upstreamForeign: published notes that arrived from another gateway: never pushed onward (not back, not to another upstream).
+func upstreamForeign(l upLink) string {
+	switch l.Foreign {
+	case 0:
+		return ""
+	case 1:
+		return "1 note not sent: arrived from another gateway, never pushed onward"
+	}
+	return fmt.Sprintf("%d notes not sent: arrived from another gateway, never pushed onward", l.Foreign)
 }
 
 // upstreamBackwards: published notes whose copy on the upstream has a lower revision than our push recorded (replaced by an older one there).

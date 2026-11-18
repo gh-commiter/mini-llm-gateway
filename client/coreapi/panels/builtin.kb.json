@@ -90,6 +90,16 @@
      "field": "received",
      "kind": "time",
      "label": "builtin.kb.section.queue.column.received"
+    },
+    {
+     "field": "reviewCheck",
+     "kind": "enum",
+     "label": "builtin.kb.section.queue.column.reviewcheck",
+     "values": {
+      "ok": "builtin.kb.section.queue.column.reviewcheck.value.ok",
+      "hidden": "builtin.kb.section.queue.column.reviewcheck.value.hidden",
+      "long": "builtin.kb.section.queue.column.reviewcheck.value.long"
+     }
     }
    ],
    "filter": [
@@ -108,6 +118,10 @@
      "label": "builtin.kb.section.queue.action.accept",
      "method": "POST",
      "path": "/kb/submissions/{row.id}/accept",
+     "when": {
+      "field": "reviewCheck",
+      "equals": "ok"
+     },
      "body": {
       "reviewHash": {
        "row": "reviewHash"
@@ -202,6 +216,21 @@
         "field": "received",
         "kind": "time",
         "label": "builtin.kb.section.queue.detail.section.submission.column.received"
+       },
+       {
+        "field": "reviewCheck",
+        "kind": "enum",
+        "label": "builtin.kb.section.queue.detail.section.submission.column.reviewcheck",
+        "values": {
+         "ok": "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.ok",
+         "hidden": "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.hidden",
+         "long": "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.long"
+        }
+       },
+       {
+        "field": "hidden",
+        "kind": "text",
+        "label": "builtin.kb.section.queue.detail.section.submission.column.hidden"
        },
        {
         "field": "body",

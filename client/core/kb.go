@@ -7,8 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Source kinds recorded in revision provenance.
@@ -182,6 +185,52 @@ type Submission struct {
 	EntryKind  string     `json:"entryKind"`
 	// ReviewHash names the content a reviewer read (reviewHash); only the review reads carry it, and accept requires it.
 	ReviewHash string `json:"reviewHash,omitempty"`
+	// The review reads (with ReviewHash) show Title and Body without what a reviewer cannot see (invisibleRune, the mirror's rule):
+	// Hidden counts what was left out of the text shown (an accept is refused while the stored text has any); ReviewCheck is "ok",
+	// "hidden", or "long" (the body is longer than the owner's panel shows: review and accept it with gw kb review).
+	Hidden      int    `json:"hidden,omitempty"`
+	ReviewCheck string `json:"reviewCheck,omitempty"`
+}
+
+// reviewPanelLimit: the characters of a body the owner's panel shows (PanelLimits.multiline, PL.multiline); a rune count is never
+// lower than either renderer's count, so "long" covers every body a panel would cut.
+const reviewPanelLimit = 20000
+
+// hiddenIn: the stored title and body as a reviewer is shown them, and how many characters that leaves out.
+func hiddenIn(title, body string) (t, b string, n int) {
+	t = strings.Map(func(r rune) rune {
+		if invisibleRune(r) {
+			return -1
+		}
+		return r
+	}, title)
+	b = mirrorBody(body)
+	return t, b, utf8.RuneCountInString(title) - utf8.RuneCountInString(t) + utf8.RuneCountInString(body) - utf8.RuneCountInString(b)
+}
+
+// reviewRead: a review read of v (stored text from the table, whatever v carries): the text shown, Hidden and ReviewCheck.
+func reviewRead(tx *sql.Tx, v *Submission) error {
+	var title, body string
+	if err := tx.QueryRow(`SELECT title, body FROM kb_submissions WHERE id=?`, v.ID).Scan(&title, &body); err != nil {
+		return err
+	}
+	t, b, n := hiddenIn(title, body)
+	v.Title, v.Hidden, v.ReviewCheck = t, n, "ok"
+	if v.Body != nil {
+		v.Body = &b
+	}
+	switch {
+	case n > 0:
+		v.ReviewCheck = "hidden"
+	case utf8.RuneCountInString(body) > reviewPanelLimit:
+		v.ReviewCheck = "long"
+	}
+	return nil
+}
+
+// ErrHiddenCharacters: an accept of a submission whose stored text has characters a reviewer cannot see.
+func ErrHiddenCharacters(n int) error {
+	return ErrRefusal{fmt.Sprintf("the submission contains %d hidden characters (invisible or direction-changing ones, or carriage returns) that a reviewer cannot see: it cannot be accepted; reject it and ask the writer to submit the text without them", n)}
 }
 
 const submissionCols = `id,project_id,user_id,class,title,replaces,revision,state,provenance,reason,note_id,entry_kind`
@@ -341,8 +390,10 @@ func (s *Store) GetSubmission(ctx context.Context, p Principal, project, id int6
 		if v, e = getSubmission(tx, p, project, id, owner, true); e != nil || !owner {
 			return e
 		}
-		v.ReviewHash, e = reviewHash(tx, id) // the owner's read is a review read
-		return e
+		if v.ReviewHash, e = reviewHash(tx, id); e != nil { // the owner's read is a review read
+			return e
+		}
+		return reviewRead(tx, &v)
 	})
 	if err != nil {
 		return Submission{}, err
@@ -390,7 +441,9 @@ func (s *Store) ListSubmissions(ctx context.Context, p Principal, project, after
 		rows.Close()
 		for i := range out { // the owner's queue rows are review reads: the panel accepts with this hash
 			if e == nil && owner {
-				out[i].ReviewHash, e = reviewHash(tx, out[i].ID)
+				if out[i].ReviewHash, e = reviewHash(tx, out[i].ID); e == nil {
+					e = reviewRead(tx, &out[i])
+				}
 			}
 		}
 		return e
@@ -580,6 +633,9 @@ func (s *Store) GetReview(ctx context.Context, p Principal, project, id int64) (
 		if v.ReviewHash, e = reviewHash(tx, id); e != nil {
 			return e
 		}
+		if e = reviewRead(tx, &v); e != nil {
+			return e
+		}
 		return tx.QueryRow(`SELECT name FROM users WHERE id=?`, v.User).Scan(&writer)
 	})
 	if err != nil {
@@ -642,6 +698,13 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 			}
 			if seen != cur {
 				return ErrSubmissionChanged
+			}
+			var title, body string
+			if e = tx.QueryRow(`SELECT title, body FROM kb_submissions WHERE id=?`, id).Scan(&title, &body); e != nil {
+				return e
+			}
+			if _, _, n := hiddenIn(title, body); n > 0 { // publish only text the reviewer could see whole
+				return ErrHiddenCharacters(n)
 			}
 		}
 		now := fromMs(ms(s.now()))

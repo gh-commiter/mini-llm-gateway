@@ -658,5 +658,14 @@
  "builtin.users.section.users.empty": "No users yet.",
  "builtin.users.section.users.hide": "Show inactive users",
  "builtin.users.section.users.title": "Users",
- "builtin.users.title": "Users and devices"
+ "builtin.users.title": "Users and devices",
+ "builtin.kb.section.queue.column.reviewcheck": "Review here",
+ "builtin.kb.section.queue.column.reviewcheck.value.ok": "Shown in full",
+ "builtin.kb.section.queue.column.reviewcheck.value.hidden": "Hidden characters: cannot be accepted",
+ "builtin.kb.section.queue.column.reviewcheck.value.long": "Too long to review here",
+ "builtin.kb.section.queue.detail.section.submission.column.reviewcheck": "Review here",
+ "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.ok": "Shown in full",
+ "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.hidden": "Hidden characters removed from the text shown: it cannot be accepted (reject it, ask for clean text)",
+ "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.long": "Too long to review here: use minigw gw kb review and accept by version",
+ "builtin.kb.section.queue.detail.section.submission.column.hidden": "Hidden characters removed"
 }

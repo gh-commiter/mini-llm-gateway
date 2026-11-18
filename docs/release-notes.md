@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+### Security
+- Two gateways that push to each other no longer copy each other's notes for ever. A note that arrived from another gateway (its text ends with the line that gateway's push adds) is never pushed onward: not back to where it came from, and not to a third gateway. Before, two gateways linked both ways (in either mode) made a new copy of every note at each push until both projects reached their note limit, and a gateway in the middle passed notes, with their author's name, on to its own upstreams. `upstream status` counts these notes as "not sent: arrived from another gateway"; a member who removes that last line from such a note makes it local work again.
+- Reviewers are no longer shown text they cannot see. The review reads (`kb review`, `gw kb review`, the Knowledge base panel) leave out invisible and direction-changing characters and say how many were removed, and such a submission cannot be accepted (reject it and ask for clean text). In the panel, Accept is not offered for a text longer than the panel shows (20,000 characters): use `minigw gw kb review` and accept by version.
+
 ## 0.7.31
 
 A candidate for the next stable release: no new features.

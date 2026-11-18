@@ -373,6 +373,9 @@ func printReview(say func(string), v core.Submission, authorName string, names m
 	if v.ReviewHash != "" { // on its own line, to copy whole into kb accept --version
 		say(clean("version " + v.ReviewHash))
 	}
+	if v.Hidden > 0 {
+		say(fmt.Sprintf(hiddenLine, v.Hidden))
+	}
 	if v.Body != nil {
 		say(clean(*v.Body))
 	}
@@ -380,6 +383,7 @@ func printReview(say func(string), v core.Submission, authorName string, names m
 
 const (
 	changedSinceRead = "the submission changed since you read it: review it again"
+	hiddenLine       = "contains hidden characters: %d removed from the text shown; it cannot be accepted (reject it and ask for the text without them)"
 	acceptNeedsTag   = "not accepted: without a terminal, name the version you read: --version <hash> (kb review shows it)"
 	acceptDeclined   = "not accepted"
 	versionWhole     = "--version takes the whole version line of kb review (64 hex characters), not a part of it"
