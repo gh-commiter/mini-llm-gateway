@@ -23,7 +23,7 @@ func (f *fx) labelsOf(id string) (a [6]string, s [2]int) {
 	return
 }
 
-func TestModelLabelsMigration21(t *testing.T) {
+func TestMigration20To22AddsLabelsAndImportObjects(t *testing.T) {
 	dir := t.TempDir()
 	db, err := openDB(filepath.Join(dir, dbFile))
 	if err != nil {
@@ -50,6 +50,12 @@ func TestModelLabelsMigration21(t *testing.T) {
 	}
 	if snaps, _ := filepath.Glob(filepath.Join(dir, "core-20-*.db")); len(snaps) != 1 {
 		t.Fatal("no snapshot of schema 20", snaps)
+	}
+	if v, _ := schemaVersion(ctx, s.DB()); v != 22 || len(migrations) != 22 {
+		t.Fatal("schema after 20 -> 22:", v, len(migrations)) // 21 labels, 22 import objects
+	}
+	if _, err = s.DB().Exec(`SELECT source,kind,id,name,adopted FROM import_objects`); err != nil {
+		t.Fatal(err)
 	}
 	if err = checkSchemaObjects(ctx, s.DB(), len(migrations)); err != nil {
 		t.Fatal(err)

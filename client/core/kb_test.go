@@ -326,3 +326,26 @@ func TestProvenanceMigration10BackupRestore(t *testing.T) {
 		t.Fatal(n)
 	}
 }
+
+// A member who may not read a private note gets neither the note nor its editor's name, through the list or the read.
+func TestEditorOfPrivateNoteHiddenFromOthers(t *testing.T) {
+	f := newFx(t)
+	project := f.pid["fakture"]
+	n := f.mk("ana", "fakture", Data)
+	n, e := f.UpdateNote(ctx, f.p("fani"), project, n.ID, n.Revision, NoteInput{Class: Private, Title: "secret", Body: "secret body"})
+	f.ok(e)
+	if n.Editor != "fani" {
+		t.Fatal("the writer should see the editor", n.Editor)
+	}
+	for _, who := range []string{"bor", "eva"} {
+		_, e = f.GetNote(ctx, f.p(who), project, n.ID)
+		is(t, e, ErrNotFound)
+		pg, e := f.ListNotes(ctx, f.p(who), project, "", "", 100)
+		f.ok(e)
+		for _, x := range pg.Notes {
+			if x.ID == n.ID || x.Title == "secret" || x.Editor == "fani" && x.Class == Private {
+				t.Fatal(who, "sees the private note or its editor in the list", x)
+			}
+		}
+	}
+}

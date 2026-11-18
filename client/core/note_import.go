@@ -19,10 +19,10 @@ ALTER TABLE notes ADD COLUMN imported INTEGER NOT NULL DEFAULT 0;`)
 	return err
 }
 
-// migrate21: the objects (projects, teams, users) that an import source created or that the owner adopted for it. An import merges
+// migrate22: the objects (projects, teams, users) that an import source created or that the owner adopted for it. An import merges
 // only into these; a name that matches any other local object is a conflict the owner settles with --adopt. The name is kept so that
 // a local rename (or a deleted object whose id is reused) ends the source's claim on the object.
-func migrate21(tx *sql.Tx) error {
+func migrate22(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE TABLE import_objects(source TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN('project','team','user')), id INTEGER NOT NULL, name TEXT NOT NULL, adopted INTEGER NOT NULL DEFAULT 0 CHECK(adopted IN(0,1)), PRIMARY KEY(source,kind,id)) WITHOUT ROWID`)
 	return err
 }
