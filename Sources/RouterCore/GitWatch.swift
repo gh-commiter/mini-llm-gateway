@@ -19,8 +19,13 @@ public struct GitWatch: Sendable {
         public var partial = false
         /// end state only: what the check could not read in full (output over the limit, a git command that failed). Never a clean result: the report says so.
         public var incomplete: [String] = []
+        /// end state only: a git read failed (or the index was not read at all, or a request was still running), so `cached` and `index` cannot be trusted: no path is taken out of the index.
+        /// A limit that was reached while every call succeeded (more than maxCommits new commits) leaves it false: the index reads are reliable.
+        public var unreliable = false
+        /// end state only: the index listing or the staged-path list was cut or failed, so protected paths may be staged that are not listed.
+        public var indexCut = false
         public init() {}
-        enum CodingKeys: String, CodingKey { case head, headId, refs, index, pending, cached, indexHash, partial, incomplete }
+        enum CodingKeys: String, CodingKey { case head, headId, refs, index, pending, cached, indexHash, partial, incomplete, unreliable, indexCut }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
             head = try c.decodeIfPresent(String.self, forKey: .head) ?? ""
@@ -32,6 +37,8 @@ public struct GitWatch: Sendable {
             indexHash = try c.decodeIfPresent(String.self, forKey: .indexHash) ?? ""
             partial = try c.decodeIfPresent(Bool.self, forKey: .partial) ?? false
             incomplete = try c.decodeIfPresent([String].self, forKey: .incomplete) ?? []
+            unreliable = try c.decodeIfPresent(Bool.self, forKey: .unreliable) ?? false
+            indexCut = try c.decodeIfPresent(Bool.self, forKey: .indexCut) ?? false
         }
     }
     public struct Commit: Codable, Equatable, Sendable {
@@ -46,6 +53,22 @@ public struct GitWatch: Sendable {
     static func list(_ l: [String]) -> String {
         let s = l.sorted()
         return s.count > names ? s.prefix(names).joined(separator: ", ") + " and \(s.count - names) more" : s.joined(separator: ", ")
+    }
+
+    /// The warning when the staged protected paths could not be told reliably: nothing was removed from the index; the literal command per path (the first five), no command for a
+    /// name with a control character.
+    static func unstageWarning(_ paths: [String], indexCut: Bool) -> String {
+        let plain = paths.filter { !$0.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } }, odd = paths.count - plain.count
+        var m = "minigw: WARNING: "
+        if paths.isEmpty { m += "protected paths may be staged that are not listed (the index listing was cut): look at git status before your next commit" }
+        else {
+            m += "a protected path looks staged: " + list(plain) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit."
+            let cmds = plain.prefix(5).map { "git --literal-pathspecs restore --staged -- '" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+            if !cmds.isEmpty { m += " To unstage by hand (this unstages your own staged change of that path too): " + cmds.joined(separator: "; ") + (plain.count > 5 ? " and \(plain.count - 5) more" : "") + "." }
+            if odd > 0 { m += " \(odd) path(s) with a control character in the name: no command printed, use git status." }
+            if indexCut { m += " The index listing was cut: protected paths may be staged that are not listed." }
+        }
+        return m
     }
 
     /// The lines for the owner and the staged protected paths to reset. Pure: the fixture asserts it.
@@ -93,8 +116,8 @@ public struct GitWatch: Sendable {
         for c in commits { for f in c.files where isProtected(f) && !committed.contains(f) { committed.append(f) } }
         if !committed.isEmpty { lines.append("minigw: WARNING: the agent committed a protected path: " + list(committed) + " - review before git checkout, reset --hard, restore, stash pop or your next commit") }
         var reset = staged.filter(isProtected).sorted()
-        if !reset.isEmpty, !end.incomplete.isEmpty {  // the staged paths come from a read that failed in part: the index is left alone
-            lines.append("minigw: WARNING: a protected path looks staged: " + list(reset) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit")
+        if end.unreliable, !reset.isEmpty || end.indexCut {  // the staged paths come from a read that failed: the index is left alone, the owner gets the command
+            lines.append(unstageWarning(reset, indexCut: end.indexCut))
             reset = []
         } else if !reset.isEmpty { lines.append("minigw: WARNING: the agent staged a protected path: " + list(reset) + " - removed from the index for you (your files were not touched)") }
         let dashed = end.refs.filter { r, id in start.refs[r] != id && r.split(separator: "/").contains { $0.hasPrefix("-") } }.keys.map { $0 }
@@ -134,14 +157,14 @@ public struct GitWatch: Sendable {
         let refs = git(root, maxOutput: maxOutput, ["for-each-ref", "--format=%(refname) %(objectname)"])  // every namespace: heads, tags, stash, notes, replace, packed refs too
         guard refs.ok || !refs.out.isEmpty else { return nil }
         var s = State()
-        if !refs.ok { s.incomplete.append("refs not read in full") }
+        if !refs.ok { s.incomplete.append("refs not read in full"); s.unreliable = true }
         for l in refs.out.split(separator: "\n") { let p = l.split(separator: " ", maxSplits: 1).map(String.init); if p.count == 2 { s.refs[p[0]] = p[1] } }
         let h = git(root, maxOutput: maxOutput, ["symbolic-ref", "-q", "--short", "HEAD"])
         if h.ok { s.head = h.out.trimmingCharacters(in: .whitespacesAndNewlines) }
         let hid = git(root, maxOutput: maxOutput, ["rev-parse", "-q", "--verify", "HEAD"])  // also when HEAD is detached: no ref names that commit
         if hid.ok { s.headId = hid.out.trimmingCharacters(in: .whitespacesAndNewlines) }
         let ls = git(root, maxOutput: maxOutput, ["ls-files", "-s", "-z"])
-        if !ls.ok { s.incomplete.append("index not read in full") }
+        if !ls.ok { s.incomplete.append("index not read in full"); s.unreliable = true; s.indexCut = true }
         let idx = ls.out
         s.indexHash = SHA256.hash(data: Data(idx.utf8)).map { String(format: "%02x", $0) }.joined()
         for e in idx.split(separator: "\0") {
@@ -149,7 +172,7 @@ public struct GitWatch: Sendable {
             if parts.count == 2 { let f = parts[0].split(separator: " ").map(String.init); if f.count == 3 { s.index[parts[1]] = f.joined(separator: " ") } }
         }
         let cached = git(root, maxOutput: maxOutput, ["diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z"])
-        if !cached.ok { s.incomplete.append("staged paths not read in full") }
+        if !cached.ok { s.incomplete.append("staged paths not read in full"); s.unreliable = true; s.indexCut = true }
         s.cached = cached.out.split(separator: "\0").map(String.init)
         for n in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] where lstat(root + "/.git/" + n, &st) == 0 { s.pending.append(n) }
         return s
@@ -181,12 +204,13 @@ public struct GitWatch: Sendable {
             return (["minigw: WARNING: the check of git in this folder is INCOMPLETE (the repository could not be read at the end" + incomplete.map { "; " + $0 }.joined() + "): review the repository before git checkout, reset --hard, restore, stash pop or your next commit"], false)
         }
         end.incomplete += incomplete
+        if !incomplete.isEmpty { end.unreliable = true }  // a request of the agent was still running: the index may be changing
         let tips = Self.tips(end), old = Self.tips(start)
         var commits: [Commit] = []
         if !tips.isEmpty {
             // Framing that a file name cannot forge: the commit ids come alone (rev-list), then each commit's names alone (diff-tree, NUL-separated, raw, no header at all).
             let r = Self.git(root, maxOutput: maxOutput, ["rev-list", "-n", String(maxCommits + 1)] + tips + (old.isEmpty ? [] : ["--not"] + old))
-            if !r.ok { end.incomplete.append("history not read in full") }
+            if !r.ok { end.incomplete.append("history not read in full"); end.unreliable = true }
             var ids = r.out.split(whereSeparator: \.isWhitespace).map(String.init)
             if ids.count > maxCommits {
                 ids = Array(ids.prefix(maxCommits))
@@ -195,7 +219,7 @@ public struct GitWatch: Sendable {
             for id in ids {
                 // -m: a merge is diffed against each parent; --root: the first commit has files too
                 let n = Self.git(root, maxOutput: maxOutput, ["diff-tree", "-m", "-r", "-z", "--raw", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id])
-                if !n.ok { end.incomplete.append("files of a commit not read in full") }
+                if !n.ok { end.incomplete.append("files of a commit not read in full"); end.unreliable = true }
                 let (files, modes) = Self.parseRaw(n.out)
                 commits.append(Commit(id: id, files: files, modes: modes))
             }

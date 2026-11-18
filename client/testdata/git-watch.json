@@ -144,7 +144,7 @@
    ]
   },
   {
-   "name": "protected path looks staged but the check was incomplete: the index is left alone",
+   "name": "protected path looks staged but a git read failed: the index is left alone, the command is given",
    "start": {
     "head": "main",
     "refs": {
@@ -170,13 +170,92 @@
     ],
     "incomplete": [
      "history not read in full"
+    ],
+    "unreliable": true
+   },
+   "commits": [],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: moved branches: main; 1 staged path(s)",
+    "minigw: WARNING: a protected path looks staged: .envrc - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit. To unstage by hand (this unstages your own staged change of that path too): git --literal-pathspecs restore --staged -- '.envrc'.",
+    "minigw: WARNING: the check of git in this folder is INCOMPLETE (history not read in full): the absence of other warnings is not a clean result - review the repository before git checkout, reset --hard, restore, stash pop or your next commit"
+   ],
+   "reset": []
+  },
+  {
+   "name": "a limit was reached while every read succeeded: the staged protected path is removed as before",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "a.txt": "100644 aaaa 0"
+    },
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "b"
+    },
+    "index": {
+     "a.txt": "100644 aaaa 0",
+     ".envrc": "100644 bbbb 0"
+    },
+    "pending": [],
+    "cached": [
+     ".envrc"
+    ],
+    "incomplete": [
+     "more than 3 new commits: only the first 3 were checked"
     ]
    },
    "commits": [],
    "lines": [
     "minigw: git in this folder, changed by the agent: moved branches: main; 1 staged path(s)",
-    "minigw: WARNING: a protected path looks staged: .envrc - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit",
-    "minigw: WARNING: the check of git in this folder is INCOMPLETE (history not read in full): the absence of other warnings is not a clean result - review the repository before git checkout, reset --hard, restore, stash pop or your next commit"
+    "minigw: WARNING: the agent staged a protected path: .envrc - removed from the index for you (your files were not touched)",
+    "minigw: WARNING: the check of git in this folder is INCOMPLETE (more than 3 new commits: only the first 3 were checked): the absence of other warnings is not a clean result - review the repository before git checkout, reset --hard, restore, stash pop or your next commit"
+   ],
+   "reset": [
+    ".envrc"
+   ]
+  },
+  {
+   "name": "the index listing was cut: no reset, the owner is told paths may be staged that are not listed",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "a.txt": "100644 aaaa 0"
+    },
+    "pending": []
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "b"
+    },
+    "index": {
+     "a.txt": "100644 aaaa 0",
+     ".envrc": "100644 bbbb 0"
+    },
+    "pending": [],
+    "cached": [
+     ".envrc"
+    ],
+    "incomplete": [
+     "index not read in full"
+    ],
+    "unreliable": true,
+    "indexCut": true
+   },
+   "commits": [],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: moved branches: main; 1 staged path(s)",
+    "minigw: WARNING: a protected path looks staged: .envrc - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit. To unstage by hand (this unstages your own staged change of that path too): git --literal-pathspecs restore --staged -- '.envrc'. The index listing was cut: protected paths may be staged that are not listed.",
+    "minigw: WARNING: the check of git in this folder is INCOMPLETE (index not read in full): the absence of other warnings is not a clean result - review the repository before git checkout, reset --hard, restore, stash pop or your next commit"
    ],
    "reset": []
   },

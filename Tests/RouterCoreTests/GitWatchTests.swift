@@ -150,15 +150,20 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
 }
 
 // An incomplete check never changes the owner's index: the staged paths came from a read that failed in part (a committed .envrc looked staged, 0.7.36 flake).
-@Test func gitWatchLeavesTheIndexAloneWhenTheCheckIsIncomplete() {
+@Test func gitWatchLeavesTheIndexAloneWhenAReadFailed() {
     var s = GitWatch.State(), e = GitWatch.State()
     s.refs = ["refs/heads/main": "a"]; s.index = ["a.txt": "100644 aaaa 0"]
     e.refs = ["refs/heads/main": "b"]; e.index = ["a.txt": "100644 aaaa 0", ".envrc": "100644 bbbb 0"]; e.cached = [".envrc"]; e.incomplete = ["history not read in full"]
-    let r = GitWatch.report(start: s, end: e, commits: [], isProtected: { Sync.isProtected($0) })
+    let prot = { (p: String) in Sync.isProtected(p) }
+    // a limit alone (every read succeeded): the path is removed as before
+    #expect(GitWatch.report(start: s, end: e, commits: [], isProtected: prot).reset == [".envrc"])
+    e.unreliable = true
+    let r = GitWatch.report(start: s, end: e, commits: [], isProtected: prot)
     #expect(r.reset.isEmpty)
-    #expect(r.lines.contains { $0.contains("a protected path looks staged: .envrc - NOT removed from the index") })
-    e.incomplete = []
-    #expect(GitWatch.report(start: s, end: e, commits: [], isProtected: { Sync.isProtected($0) }).reset == [".envrc"])
+    #expect(r.lines.contains { $0.contains("a protected path looks staged: .envrc - NOT removed from the index") && $0.contains("git --literal-pathspecs restore --staged -- '.envrc'") && $0.contains("your own staged change of that path too") })
+    let w = GitWatch.unstageWarning([".vscode/it's.json", ".vscode/x\ty.json"], indexCut: true)
+    #expect(w.contains("restore --staged -- '.vscode/it'\\''s.json'") && !w.contains("x\ty") && w.contains("1 path(s) with a control character") && w.contains("may be staged that are not listed"), "\(w)")
+    #expect(GitWatch.unstageWarning((1...7).map { ".envrc\($0)" }, indexCut: false).contains("and 2 more"))
 }
 
 // End to end: HEAD points at a branch that does not exist (diff --cached then lists the whole index, .envrc included) and the tip commit is corrupt (rev-list fails).
@@ -167,8 +172,30 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
     _ = git(root.path, "echo 'echo hi' > .envrc && git add .envrc && git commit -qm envrc && git symbolic-ref HEAD refs/heads/ghost && h=$(git rev-parse main) && f=.git/objects/$(echo $h | cut -c1-2)/$(echo $h | cut -c3-) && chmod u+w $f && echo junk > $f")
     let out = w.finish().joined(separator: "\n")
-    #expect(out.contains("history not read in full") && out.contains("NOT removed from the index"), "\(out)")
+    #expect(out.contains("history not read in full") && out.contains("NOT removed from the index") && out.contains("restore --staged -- '.envrc'"), "\(out)")
     #expect(git(root.path, "git ls-files -s .envrc").contains(".envrc"), "the watcher took a path out of the index: \(out)")
+}
+
+// A limit reached while every git read succeeded (an agent can make 201 commits on purpose) does not switch the protection off: the staged path is still removed, the report says INCOMPLETE.
+@Test func gitWatchStillUnstagesWhenOnlyALimitWasReached() throws {
+    let (root, state) = try watched("lim4"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    var w = try #require(GitWatch.begin(root.path, stateDir: state))
+    w.maxCommits = 3
+    _ = git(root.path, "for i in 1 2 3 4; do git commit -q --allow-empty -m more; done; echo 'echo hi' > .envrc && git add .envrc")
+    let out = w.finish().joined(separator: "\n")
+    #expect(out.contains("INCOMPLETE") && out.contains("more than 3 new commits") && out.contains("removed from the index for you"), "\(out)")
+    #expect(git(root.path, "git ls-files -s .envrc").isEmpty, "still in the index")
+}
+
+// The index listing is cut (small output limit): no reset, and the owner is told that paths may be staged that are not listed.
+@Test func gitWatchLeavesTheIndexAloneWhenTheListingIsCut() throws {
+    let (root, state) = try watched("cut1"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    var w = try #require(GitWatch.begin(root.path, stateDir: state))
+    _ = git(root.path, "echo 'echo hi' > .envrc; for i in $(seq 1 30); do echo x > file-with-a-long-name-$i.txt; done; git add .")
+    w.maxOutput = 300
+    let out = w.finish().joined(separator: "\n")
+    #expect(out.contains("NOT removed from the index") && out.contains("may be staged that are not listed"), "\(out)")
+    #expect(!git(root.path, "git ls-files -s .envrc").isEmpty, "the watcher took a path out of the index: \(out)")
 }
 
 @Test func gitWatchSaysWhenALimitWasReached() throws {
