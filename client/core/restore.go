@@ -302,6 +302,9 @@ func validateAs(ctx context.Context, path, shown, gateway string) (state, error)
 	if err := checkSchemaObjects(ctx, db, v); err != nil {
 		return state{}, fmt.Errorf("%s: %w", shown, err)
 	}
+	if err := checkForeignKeys(ctx, db); err != nil {
+		return state{}, fmt.Errorf("%s: %w", shown, err)
+	}
 	if v >= 10 {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
@@ -320,10 +323,29 @@ func validateAs(ctx context.Context, path, shown, gateway string) (state, error)
 	if err != nil {
 		return state{}, err
 	}
+	if m.Epoch < 0 || m.Epoch > maxCounter || m.ProjectHigh < 0 || m.ProjectHigh > maxCounter {
+		return state{}, fmt.Errorf("%s: epoch %d or project mark %d is outside 0..%d", shown, m.Epoch, m.ProjectHigh, int64(maxCounter))
+	}
 	if gateway != "" && m.GatewayID != gateway {
 		return state{}, fmt.Errorf("%w (backup %s, this %s)", ErrForeign, m.GatewayID, gateway)
 	}
 	return m.state, nil
+}
+
+// maxCounter bounds the epoch and the project-id mark a backup may carry; a larger value would overflow max+1.
+const maxCounter = 1 << 60
+
+// checkForeignKeys refuses a database with any row that breaks a foreign key.
+func checkForeignKeys(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		return errors.New("rows break a foreign key (PRAGMA foreign_key_check)")
+	}
+	return rows.Err()
 }
 
 func copyFile(src, dst string) error {
@@ -384,9 +406,12 @@ func stamp(ctx context.Context, path string, st state, src string) error {
 	return err
 }
 
-// checkSchemaObjects (L2): a backup may hold exactly the tables and indexes of its schema version, built here from
-// this program's own migrations: no trigger, view, virtual table or unknown table that could run code or read data
-// when the restored file is opened.
+// checkSchemaObjects (L2): a backup may hold exactly the objects of its schema version, built here from this
+// program's own migrations: no trigger, view, virtual table or unknown table that could run code or read data when the
+// restored file is opened, and every table, index, virtual table and trigger with the definition the migrations produce
+// (a table without its foreign keys or CHECKs, or an index that lost UNIQUE, is refused). There is no exemption by name:
+// the automatic indexes are in the expected list, with their empty definition. Every database a released beta
+// creates equals what the migrations produce (checked against the release builds 0.6.0 to 0.7.25), so no historic definition is allowed.
 func checkSchemaObjects(ctx context.Context, db *sql.DB, version int) error {
 	want, err := expectedObjects(ctx, version)
 	if err != nil {
@@ -405,19 +430,22 @@ func checkSchemaObjects(ctx context.Context, db *sql.DB, version int) error {
 		}
 		seen[typ+" "+name] = true
 		w, ok := want[typ+" "+name]
-		if !ok && !strings.HasPrefix(name, "sqlite_autoindex_") {
+		if !ok {
 			return fmt.Errorf("unexpected %s %q in a core database of schema %d", typ, name, version)
 		}
-		if typ == "trigger" && ok && strings.Join(strings.Fields(def), " ") != w { // the name alone proves nothing: the body is what fires
-			return fmt.Errorf("trigger %q differs from the one this program creates in a core database of schema %d", name, version)
+		if strings.Join(strings.Fields(def), " ") != w { // the name alone proves nothing: the definition is what counts (a trigger's body is what fires)
+			return fmt.Errorf("%s %q differs from the one this program creates in a core database of schema %d", typ, name, version)
 		}
 	}
-	for k := range want { // triggers guard permissions: a backup must not lack them
-		if strings.HasPrefix(k, "trigger ") && !seen[k] {
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for k := range want { // triggers guard permissions, constraints and indexes keep the data sound: a backup must not lack them
+		if !seen[k] {
 			return fmt.Errorf("missing %s in a core database of schema %d", k, version)
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 // expectedObjects runs the first version migrations on an empty in-memory database and lists what they made.

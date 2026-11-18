@@ -364,8 +364,8 @@ func TestRestoreFailsWhenTheSearchIndexCannotBeRebuilt(t *testing.T) {
 	dir, bak, _, _, _, _ := searchRestoreFixture(t)
 	before := hash(t, filepath.Join(dir, dbFile))
 	damageIndex(t, bak, `DROP TABLE note_search`)
-	err := Restore(dir, bak)
-	if err == nil || !strings.Contains(err.Error(), "search index") {
+	err := Restore(dir, bak) // since the definitions are compared, the missing index is refused at validation (before: at the rebuild)
+	if err == nil || !strings.Contains(err.Error(), "note_search") {
 		t.Fatalf("got %v", err)
 	}
 	if hash(t, filepath.Join(dir, dbFile)) != before {

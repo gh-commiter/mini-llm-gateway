@@ -6,6 +6,10 @@
 - Documentation brought up to date with beta 0.7.25: four admin panels (not three) in the README, `usage.md` and `gateway.md`; the Compose admin setup is no longer listed as unsupported in `docker.md`; a new parity table of macOS app, Windows, Linux and Docker per feature group ([parity.md](parity.md); the control-by-control list stays in [windows-parity.md](windows-parity.md)); a one-page [team onboarding guide](team-onboarding.md).
 - The plugin's skills describe the current commands: upstream `--auto|--manual`, `--mode submit|publish` and `upstream resolve`, the four panes, `gw settings password`, `kb mcp`, `kb export`/`kb import`, team commands, `project remote`, `project depends` and `project sessions`. The plugin version is not raised here: users get the new skill text with the next plugin release.
 
+### Security
+- Offline restore (`minigw gw core restore`, gateway stopped) accepted a crafted backup file that hid a trigger under the name of an automatic index, and one whose tables had lost their foreign keys, cascades or checks or whose unique index was not unique. Such a file could keep access that could not be revoked. It needed the owner to restore that file by hand: no network route restores. A restore now refuses any object that is not exactly what this program's migrations make for the backup's schema (no exemption by name), compares the definition of every table, index and the search table, refuses a backup with rows that break a foreign key, and refuses an epoch or project mark outside a sane range (a huge value overflowed the epoch and broke a later cleanup).
+- Repeated failing starts of an upgrade no longer push out the snapshot taken before the upgrade: the oldest snapshot from before an unfinished upgrade is kept besides the newest three, and a failed start on an unchanged file writes no new snapshot.
+
 ### Known problems
 - The four admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base, Upstream gateways) have only been tried through tests, not in a real window. In the Teams and projects pane team notes (a team's own notes) are not shown, only in the Knowledge base pane; in the Knowledge base pane notes and questions are read, not edited, and a replacement shows both texts, not a line difference. The "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI.
 - The panels on the settings page of `minigw serve`, the Upstream gateways pane and `gw settings password` were tried on one Windows gateway in a headless Chromium browser (they work; no Content Security Policy error); not in Edge or Firefox, and not on Linux. A detail page opens in place of the panel with a Back button. The Mac app does not use this page. Opening an upstream's detail page contacts it.
@@ -16,21 +20,7 @@
 - Upstream gateway: one way. Nothing is pulled from an upstream: reads there are local only. Deletions and notes that became private are not propagated (status lists them).
 - Automatic push and publish mode, with a conflict and `resolve --ours`, were tried between two real gateways on 2026-11-18 (a Mac gateway to a Windows gateway; a test project with three notes; one push for five quick edits; a conflict was not overwritten). Replacements of accepted notes, team notes and `resolve --theirs` have only been tried in tests.
 - Only the owner reviews submissions; a project admin cannot. With one reviewer this is the main bottleneck of a team.
-- Archived projects and teams cannot be chosen in the Knowledge base pickers any more; read their notes with `minigw`.
-- Labels are data, never permissions: a member sees them only on sessions and usage already visible to them, and a label filter never widens whose events are read. A call made by hand gets labels only when the caller sets them (or the branch fills the task); classifying unlabelled calls is not done yet.
-- A role of the form `<phase>.<activity>` set by older scripts is not read as labels.
-- A project linked to a subfolder of another project's folder gets no automatic dependency; the owner sets it with `gw project depends add`.
 - Team notes have no `private` class, and only a project admin of the team writes them; the owner has no write path to them (the owner reviews submissions and exports bundles).
-- The hooks ask after a commit or a compaction, not at the end of a session: Claude Code gives a hook no way to talk to the model then. A failed hand-in is not retried. Checked by tests of both clients and of the plugin script, but not yet tried in a real Claude Code session (neither on a Mac nor on Windows).
-- Project git identity, team path labels and entry kinds are new and not yet in daily use. `minigw project link` without a slug needs `git` on the computer; on Windows it has only been built, not tried.
-- A replacement of a `faq` entry keeps the kind `faq`, and an import never changes the kind of an existing note: to change a kind, remove the entry and hand it in again.
-- `minigw gw import`: an `INDEX.md` inside a bundle has no size limit of its own (only the 100 MiB total). Import only bundles you made yourself.
-- `minigw kb export` on Windows: the protection of each exported file is still set by path after the file is created through the opened folder; not tested on Windows yet.
-- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
-- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
-- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
-- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
-- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
 
 ## 0.7.25
 

@@ -504,7 +504,7 @@ holds a lock on it, so only one process uses it at a time.
   when you need it elsewhere. The approved device list (`serve.json`) is not part of it.
 - **Restore:** `minigw gw core restore <file|name>` works only with the gateway stopped (a name is looked up in
   `backups`; an explicit path is accepted here, offline). It checks the file (same gateway,
-  schema not newer, integrity), keeps the current database as a snapshot, and puts the backup in place with one
+  schema not newer, integrity, every table, index, trigger and virtual table equal to what this program's migrations make for that schema, no foreign-key violation, epoch and project mark in range), keeps the current database as a snapshot, and puts the backup in place with one
   rename. A backup of schema 12 or newer has its search index rebuilt from the notes before the swap, so a damaged or
   tampered index is not installed; if the rebuild fails, the restore fails and the current database stays. It brings back the users, bindings, memberships, team members, team projects, team assignments and grants of the backup, also ones revoked since, so it asks
   you to confirm (`--yes` skips that). The epoch is set above both values (all runs and conversations end) and the
@@ -512,7 +512,8 @@ holds a lock on it, so only one process uses it at a time.
 - **Where backups go:** `minigw gw core backup [name]` writes only into `core/backups` (agents cannot read that folder); the
   gateway makes none by itself. A backup there is removed together with the core folder (see below): to keep one, copy the
   file yourself to a place that agents cannot read, not into a project or an allowed folder. The only automatic copies are the
-  migration snapshots and the restore snapshot, both inside the core folder.
+  migration snapshots and the restore snapshot, both inside the core folder. The newest three snapshots are kept; while an
+  upgrade has failed and not yet completed, the oldest snapshot from before it is kept as well, and a failed start repeated on an unchanged file writes no new one.
 - **Uninstall:** the core folder is never removed by an uninstall or an upgrade, only by purge. Windows MSI: Uninstall and
   upgrade leave `%AppData%\minigw\core`; `PURGE=1` (or `minigw uninstall --purge`) deletes the whole settings folder,
   `core` with the projects, members, notes, usage events and audit trail, for good. Linux: `install.sh --uninstall` keeps
