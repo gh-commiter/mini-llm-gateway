@@ -263,8 +263,9 @@ type UpstreamLinkInfo struct {
 	LastPullOK   *time.Time `json:"lastPullOk,omitempty"`  // the last pull that went through to the end
 	LastPullAge  int        `json:"lastPullAge,omitempty"` // seconds since then, by this gateway's clock
 	PullError    string     `json:"pullError,omitempty"`
-	Mirror       int        `json:"mirror"`      // notes in the mirror of this link
-	MirrorBytes  int64      `json:"mirrorBytes"` // their size (titles and bodies)
+	Mirror       int        `json:"mirror"`          // notes in the mirror of this link
+	MirrorBytes  int64      `json:"mirrorBytes"`     // their size (titles and bodies)
+	Stale        bool       `json:"stale,omitempty"` // no complete pull for 7 days (or none yet): members do not see the mirror
 }
 
 func parseClasses(csv string, withPrivate bool) ([]Class, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -64,9 +65,16 @@ type SearchHit struct {
 	From string `json:"from,omitempty"`
 	// Team names the team of a hit that lives in a team's own notes (Project is then a hidden id to be shown as the team).
 	Team string `json:"team,omitempty"`
+	// Upstream and AsOf: a hit from the mirror of another gateway (From is then "hub:<upstream> <source>"), and the time of the last
+	// complete pull of that mirror.
+	Upstream string     `json:"upstream,omitempty"`
+	Source   string     `json:"source,omitempty"` // the source as the upstream named it (project:<slug> or team:<name> THERE)
+	AsOf     *time.Time `json:"asOf,omitempty"`
 }
 type SearchPage struct {
 	Hits []SearchHit `json:"hits"`
+	// Note: the hub's hits were left out (MirrorLeftOut): they took longer than their part of the deadline.
+	Note string `json:"note,omitempty"`
 }
 
 // Only literal words, combined with AND. Operators and prefixes never reach FTS.
@@ -115,7 +123,7 @@ func searchSQL(filter string) string {
  SELECT h.id,h.project_id,h.class,h.title,substr(n.body,1,160),h.updated,n.entry_kind
  FROM hits h JOIN notes n ON n.id=h.id ORDER BY h.g,h.updated DESC,h.id`
 }
-func searchNotes(ctx context.Context, tx *sql.Tx, user, home int64, rs []readable, text string) (SearchPage, error) {
+func searchNotes(ctx context.Context, tx *sql.Tx, now time.Time, user, home int64, rs []readable, text string) (SearchPage, error) {
 	out := SearchPage{Hits: []SearchHit{}}
 	query, err := searchQuery(text)
 	if err != nil {
@@ -182,6 +190,24 @@ func searchNotes(ctx context.Context, tx *sql.Tx, user, home int64, rs []readabl
 			continue
 		}
 	}
+	// The hub's hits (D6): their own slots after the local ones (15 local + 5 hub, a side's unused slots go to the other), so hub text
+	// never displaces or comes before a local note.
+	scope, err := mirrorScope(tx, user, home, rs)
+	if err != nil {
+		return SearchPage{}, err
+	}
+	// The hub's part has a budget of its own: over it the hub's hits are left out and said so, the local hits are never delayed or lost.
+	mctx, cancel := context.WithTimeout(ctx, mirrorBudget)
+	hub, err := mirrorSearch(mctx, tx, now, scope, query, 20)
+	cancel()
+	if err != nil && ctx.Err() == nil && (mctx.Err() != nil || errors.Is(err, context.DeadlineExceeded)) {
+		hub, err, out.Note = nil, nil, MirrorLeftOut
+	}
+	if err != nil {
+		return SearchPage{}, err
+	}
+	keep := min(len(found), max(mirrorLocalSlots, 20-len(hub)))
+	found = append(found[:keep], hub[:min(len(hub), 20-keep)]...)
 	for _, h := range found {
 		candidate := append(out.Hits, h)
 		b, _ := json.Marshal(SearchPage{Hits: candidate})
@@ -208,7 +234,7 @@ func (s *Store) SearchNotes(ctx context.Context, p Principal, project int64, tex
 		if e != nil {
 			return e
 		}
-		out, e = searchNotes(ctx, tx, p.UserID, project, rs, text)
+		out, e = searchNotes(ctx, tx, s.now(), p.UserID, project, rs, text)
 		return e
 	})
 	if err != nil {
@@ -228,7 +254,7 @@ func (s *Store) RunSearchNotes(ctx context.Context, c RunCap, approved bool, tex
 		if lim != nil {
 			return lim
 		}
-		out, e = searchNotes(ctx, tx, c.UserID, c.ProjectID, rs, text)
+		out, e = searchNotes(ctx, tx, s.now(), c.UserID, c.ProjectID, rs, text)
 		return e
 	})
 	if err != nil {

@@ -165,7 +165,8 @@ extension ProjectEnv {
         }
         if fl.bool("json") { say(ProjectText.jsonText(Self.kbJSON(["entries": raw]))); return }
         for v in entries {
-            say(ProjectText.clean("\(v["id"]?.int ?? 0)  \(v["title"]?.string ?? "")  \(v["class"]?.string ?? "")  \(stamp(v["updated"]?.string.flatMap(ProjectText.parseTime)))"))
+            let from = v["from"]?.string.flatMap { $0.isEmpty ? nil : "  from " + $0 } ?? ""  // another gateway's entry: its answer starts with the marker line
+            say(ProjectText.clean("\(v["id"]?.int ?? 0)  \(v["title"]?.string ?? "")  \(v["class"]?.string ?? "")  \(stamp(v["updated"]?.string.flatMap(ProjectText.parseTime)))\(from)"))
             say(ProjectText.clean(v["answer"]?.string ?? ""))
         }
         if entries.isEmpty { say("no faq entries") }

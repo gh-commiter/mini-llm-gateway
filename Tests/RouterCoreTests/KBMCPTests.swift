@@ -115,3 +115,43 @@ private func mcpRun(_ input: String, call: (String, [String: Any]) throws -> Any
         #expect(!output.contains("token") && !output.contains("AUTH"))
     }
 }
+
+/// C3: a hub hit and a hub note reach the model with their origin (from, upstream, asOf) and the marker line at the start of the text,
+/// in both modes (client/testdata/kb-search-upstream.json, as Go's TestMCPCarriesTheUpstreamMarker).
+@Suite struct KBMCPUpstreamMarker {
+    @Test func marked() throws {
+        let f = try JSONSerialization.jsonObject(with: Data(contentsOf: mcpRepo.appendingPathComponent("client/testdata/kb-search-upstream.json"))) as! [String: Any]
+        let marker = f["marker"] as! String
+        for run in [false, true] {
+            var out = Data()
+            var input = Data(try mcpInput([
+                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"kb_search\",\"arguments\":{\"query\":\"orbit\"}}}",
+                "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"note_read\",\"arguments\":{\"id\":1125899906842625}}}"
+            ]).utf8)
+            let env = ProjectEnv(connect: { (ProjectConn(url: "x", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { out.append(Data($0.utf8)) }, err: { _ in }, agent: run,
+                                 runConn: run ? ProjectConn(url: "x", token: "") : nil, send: { _, _, path, _, _ in
+                if path == "/minigw/v1/projects/slug" { return ProjectReply(status: 200, data: Data("{\"id\":1}".utf8)) }
+                if path.contains("/kb/search?") { return ProjectReply(status: 200, data: Data((f["search"] as! String).utf8)) }
+                #expect(path.hasSuffix("/notes/1125899906842625"))
+                return ProjectReply(status: 200, data: Data((f["note"] as! String).utf8))
+            })
+            try env.kbMCP(run ? [] : ["--project", "slug"], executable: "/minigw", read: { if input.isEmpty { return nil }; let d = input; input = Data(); return d }, write: { out.append($0) })
+            let replies = try out.split(separator: 10).map { try JSONSerialization.jsonObject(with: Data($0)) as! [String: Any] }
+            func payload(_ i: Int) throws -> [String: Any] {
+                let text = ((replies[i]["result"] as! [String: Any])["content"] as! [[String: Any]])[0]["text"] as! String
+                #expect(text.hasPrefix(KBMCP.reference + "\n"))
+                return try JSONSerialization.jsonObject(with: Data(text.dropFirst(KBMCP.reference.count + 1).utf8)) as! [String: Any]
+            }
+            let hits = try payload(1)["hits"] as! [[String: Any]]
+            for h in hits.dropFirst() {
+                #expect((h["from"] as? String ?? "").hasPrefix("hub:hub ") && h["upstream"] as? String == "hub" && h["asOf"] as? String == "2026-11-18T10:00:00Z")
+            }
+            #expect(hits[2]["project"] == nil && hits[2]["team"] as? String == "acme")
+            let note = try payload(2)
+            let body = note["body"] as? String ?? "", lines = body.components(separatedBy: "\n")
+            #expect(body.hasPrefix(marker + "\n") && lines.last == f["end"] as? String && note["text"] as? String == f["text"] as? String)
+            #expect(lines.dropFirst().dropLast().allSatisfy { $0 == ">" || $0.hasPrefix("> ") })
+            #expect(note["from"] as? String == "hub:hub (there: project:shop)" && note["source"] as? String == "project:shop" && note["upstream"] as? String == "hub" && note["asOf"] != nil)
+        }
+    }
+}

@@ -333,12 +333,13 @@ public final class ProjectEnv {
 
     struct NoteView {
         var id: Int64 = 0, revision: Int64 = 0
-        var cls = "", title = "", author = "", editor = ""
+        var cls = "", title = "", author = "", editor = "", upstream = ""
         var body: String?
         var updated: Date?
         init(_ d: JDict) {
             id = d["id"]?.int ?? 0; revision = d["revision"]?.int ?? 0
             cls = d["class"]?.string ?? ""; title = d["title"]?.string ?? ""; author = d["author"]?.string ?? ""; editor = d["editor"]?.string ?? ""
+            upstream = d["upstream"]?.string ?? ""
             body = d["body"]?.string
             updated = d["updated"]?.string.flatMap(ProjectText.parseTime)
         }
@@ -437,7 +438,7 @@ public final class ProjectEnv {
         case "read":
             emit(try one("GET")) { n in
                 let body = n.body ?? ""
-                say(ProjectText.clean("note \(n.id)  \(n.cls)  revision \(n.revision)  by \(n.author)\(n.editor.isEmpty ? "" : ", last changed by \(n.editor)")  \(stamp(n.updated))\n\(n.title)\n"))
+                say(ProjectText.clean("note \(n.id)  \(n.cls)  revision \(n.revision)  by \(n.author)\(n.editor.isEmpty ? "" : ", last changed by \(n.editor)")  \(stamp(n.updated))\n\(n.upstream.isEmpty ? "" : "> ")\(n.title)\n"))  // another gateway's title is quoted like its text
                 out(ProjectText.clean(body.replacingOccurrences(of: "\t", with: "    ")))
                 if !body.hasSuffix("\n") { say("") }
             }
