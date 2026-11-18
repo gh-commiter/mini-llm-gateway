@@ -108,6 +108,8 @@ func main() {
 		},
 		Dir: *store,
 		Log: log.Printf, // reasons only; never a body
+		// the Mac runs model labels with Apple Foundation Models only (the app's label worker)
+		LabelBackends: []string{"apple-fm"},
 	})
 	if openErr == nil { // as in minigw serve: no recorder and no spool file while the core is not open (nothing is written next to protected data)
 		api.StartRecorder() // usage events (the app sends them): stored in the core; spooled (bounded) in the store folder if a write fails

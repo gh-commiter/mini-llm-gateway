@@ -161,6 +161,22 @@ type EventLabelsRequest struct {
 	Activity      string `json:"activity"`
 	PhaseScore    int    `json:"phaseScore"`
 	ActivityScore int    `json:"activityScore"`
+	// Revision: the settings revision the worker decided under; a result of an older one is dropped (nil = not checked).
+	Revision *uint64 `json:"revision,omitempty"`
+}
+
+// LabelDecisionRequest: the internal usage event of one decision of the Mac worker (no user, device "gateway", labels internal).
+// Provider is only apple-fm; the model is a safe word. Never any text of the classified prompt.
+type LabelDecisionRequest struct {
+	ID        string    `json:"id"`
+	Provider  string    `json:"provider"`
+	Model     string    `json:"model"`
+	Start     time.Time `json:"start"`
+	End       time.Time `json:"end"`
+	TokensIn  int64     `json:"tokensIn"`
+	TokensOut int64     `json:"tokensOut"`
+	Failed    bool      `json:"failed"`
+	Preempted bool      `json:"preempted,omitempty"` // a user's request cancelled the attempt after inference began
 }
 
 // LabelAgreementRequest: one shadow comparison (counters only): kind phase|activity, bucket 667|1000|unknown, agree.
@@ -168,6 +184,8 @@ type LabelAgreementRequest struct {
 	Kind   string `json:"kind"`
 	Bucket string `json:"bucket"`
 	Agree  bool   `json:"agree"`
+	// Revision: as in EventLabelsRequest.
+	Revision *uint64 `json:"revision,omitempty"`
 }
 
 // LabelErrorRequest: why the label worker idles (an error class, never prompt text); "" clears it.
@@ -294,7 +312,11 @@ func (a *API) internal(ctx context.Context, r Request) Response {
 		if st == nil {
 			return unavailable()
 		}
-		n, err := st.SetModelLabels(ctx, in.ID, in.Phase, in.Activity, in.PhaseScore, in.ActivityScore)
+		var rev []uint64
+		if in.Revision != nil {
+			rev = []uint64{*in.Revision}
+		}
+		n, err := st.SetModelLabels(ctx, in.ID, in.Phase, in.Activity, in.PhaseScore, in.ActivityScore, rev...)
 		switch {
 		case errors.Is(err, core.ErrNotFound):
 			return jsonErr(404, "not_found", "no such root event")
@@ -311,11 +333,28 @@ func (a *API) internal(ctx context.Context, r Request) Response {
 		if st == nil {
 			return unavailable()
 		}
-		if err := st.RecordAgreement(ctx, in.Kind, in.Bucket, in.Agree); err != nil {
+		var rev []uint64
+		if in.Revision != nil {
+			rev = []uint64{*in.Revision}
+		}
+		if err := st.RecordAgreement(ctx, in.Kind, in.Bucket, in.Agree, rev...); err != nil {
 			if errors.Is(err, core.ErrInvalid{What: "agreement"}) {
 				return bad
 			}
 			a.o.Log("label-agreement: %v", err)
+			return jsonErr(500, "internal", "Internal error")
+		}
+		return resp(200, map[string]any{"ok": true})
+	case "label-decision":
+		var in LabelDecisionRequest
+		if decodeStrict(r.Body, &in) != nil || in.Provider != "apple-fm" || core.SafeWordLabel(in.Model) != in.Model || in.Model == "" || !validGapID(in.ID) || in.TokensIn < 0 || in.TokensOut < 0 || in.End.Before(in.Start) {
+			return bad
+		}
+		if st == nil {
+			return unavailable()
+		}
+		if err := st.FinishLabelDecision(ctx, in.ID, in.Provider, in.Model, in.Start, in.End, in.TokensIn, in.TokensOut, in.Failed, in.Preempted); err != nil {
+			a.o.Log("label-decision: %v", err)
 			return jsonErr(500, "internal", "Internal error")
 		}
 		return resp(200, map[string]any{"ok": true})

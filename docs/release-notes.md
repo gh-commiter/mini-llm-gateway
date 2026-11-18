@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### New
+- Usage labels on the Mac: the app's worker fills the phase and activity labels of usage reports with the on-device model (Apple Foundation Models) when the owner turns the setting on and chooses `apple-fm` (`Sources/RouterCore/Decide.swift`, `LabelWorker.swift`). Off by default; nothing leaves the Mac; if the model is unavailable the worker only reports "on-device model unavailable". It never delays a request, yields to a user's request for the on-device model (no sample starts while one runs; a running sample is cancelled and retried once), and the text it classifies is never stored or logged. The Mac settings route accepts only `apple-fm`. The helper has a new internal call `label-decision` (the decision's own usage event) and `event-labels` and `label-agreement` take the settings `revision`. See [usage.md](usage.md#model-labels).
+
 ### Security
 - `gw core restore` of an older backup now migrates the staged copy itself and validates it as a current-schema database (segments, memberships, objects, foreign keys) before it replaces the live one; a failure leaves the previous database in place. A pre-schema-15 backup with a project in the id range (from 2^40) or name range (`@...`) reserved for team segments is refused (it would have let a team read that project's notes). The search index is rebuilt after that migration, for every schema.
 - A grant no longer gives read access while the READER project is archived: an archived project confers nothing. This only removes access (reads, search, `depends on`, the upstream manifest, a run's grant reads and the project lists follow the same rule).
@@ -9,6 +12,9 @@
 ### Fixed
 - `minigw gw core restore` refused a snapshot or backup made at schema 17 or older (`no such table: project_team_depends`; schema 12 also failed on the search index). Every restore check now reads only the tables that schema has; a test restores a backup of every schema from 8 on.
 - Folder sync says so when the root `.gitignore` keeps top-level entries out of the copy (one stderr line, first time in a run, up to five names), instead of leaving the agent without them silently.
+
+### Known problems
+- The Mac label worker was tried with a fake model in tests, not with the real on-device model in a real session.
 
 ## 0.7.27
 

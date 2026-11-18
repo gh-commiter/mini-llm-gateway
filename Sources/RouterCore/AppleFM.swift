@@ -23,6 +23,22 @@ enum AppleFM {
         await offPool { SystemLanguageModel.default.contextSize }
     }
 
+    /// Is the on-device model usable right now (OS support is the package's platform; Apple Intelligence off or the model not ready = false)?
+    static func isAvailable() -> Bool {
+        if case .available = SystemLanguageModel.default.availability { return true }
+        return false
+    }
+
+    /// One classification sample for the label worker: a fresh session (no tools, no history), temperature 0.7, and guided generation over
+    /// the fixed set of ids, so the reply is always one of them. Called directly, never through the gateway's own route. The caller still
+    /// parses strictly; nothing of the prompt is logged, and an error is rethrown as it is (the caller turns it into a fixed class).
+    static func classify(system: String, user: String, ids: [String]) async throws -> String {
+        let schema = try GenerationSchema(root: DynamicGenerationSchema(name: "Choice", description: "One candidate id", anyOf: ids), dependencies: [])
+        let session = LanguageModelSession(model: .default, tools: [], instructions: system)
+        let r = try await session.respond(to: user, schema: schema, options: GenerationOptions(temperature: 0.7))
+        return try r.content.value(String.self)
+    }
+
     static let ids: Set<String> = ["claude-apple-fm", "apple-fm"]
     static let responseReserve = 1024  // tokeni, ki ostanejo za odgovor
 
@@ -83,6 +99,8 @@ enum AppleFM {
 
 extension Router {
     func runFM(_ req: HTTPRequest, body: [String: Any], rid: String, writer: ResponseWriter) async -> Int {
+        FMForeground.shared.enter()  // the label worker yields to a user's request and cancels its running sample
+        defer { FMForeground.shared.leave() }
         let model = SystemLanguageModel.default
         guard case .available = model.availability else {
             return await error(503, "api_error", "Apple Foundation Models unavailable: \(model.availability)", rid: rid, writer: writer)
@@ -137,8 +155,9 @@ extension Router {
             t.usage = ["output_tokens": (try? await model.tokenCount(for: r.content)) ?? 0]
             return await json(200, t.message(), rid: rid, writer: writer)
         } catch {
-            Self.log.error("\(rid, privacy: .public) apple-fm failed: \(String(describing: error), privacy: .public)")
             let (status, type) = Self.fmStatus(error)
+            // the log keeps the error class only: a model error may describe the context it was given (the user's prompt)
+            Self.log.error("\(rid, privacy: .public) apple-fm failed: \(type, privacy: .public) \(status)")
             if started {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": "Apple FM: \(error)"]]))
                 return status

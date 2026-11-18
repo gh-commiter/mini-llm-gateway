@@ -3138,6 +3138,11 @@
         "label": "builtin.labels.section.settings.column.backend"
        },
        {
+        "field": "backends",
+        "kind": "text",
+        "label": "builtin.labels.section.settings.column.backends"
+       },
+       {
         "field": "threshold",
         "kind": "enum",
         "label": "builtin.labels.section.settings.column.threshold",
@@ -3167,6 +3172,11 @@
         "field": "activitiesText",
         "kind": "text",
         "label": "builtin.labels.section.settings.column.activitiestext"
+       },
+       {
+        "field": "backendProblem",
+        "kind": "text",
+        "label": "builtin.labels.section.settings.column.backendproblem"
        },
        {
         "field": "lastError",

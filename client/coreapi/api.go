@@ -67,9 +67,12 @@ type Response struct {
 // Options of an API.
 type Options struct {
 	LabelsChanged func(core.LabelSettings) // owner settings changed; adapters cache these off the request path
-	Store         func() *core.Store       // the store, nil while it is not usable
-	Unavailable   func() string            // why it is not usable (for the admin 503 text)
-	Dir           string                   // private folder for the usage spool
+	// LabelBackends: the model-label backends this host can run, as exact names or prefixes ending in ":" (the Mac helper: apple-fm).
+	// The settings route refuses any other choice with a clear message. nil = no restriction.
+	LabelBackends []string
+	Store         func() *core.Store // the store, nil while it is not usable
+	Unavailable   func() string      // why it is not usable (for the admin 503 text)
+	Dir           string             // private folder for the usage spool
 	Log           func(format string, args ...any)
 	// AfterAdmission is a test hook: called after a member request has its principal and before the route runs.
 	AfterAdmission func(ctx context.Context, c Context, r Request)

@@ -371,7 +371,7 @@ func (s *server) runLabels(ctx context.Context) {
 			}
 			// No backend error, reply or input is ever handed to storage or a logger.
 			storeCtx, storeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			eventErr := s.core.FinishLabelDecision(storeCtx, "ev_"+randomToken()[:16], model, now, time.Now(), tokensIn, tokensOut, err != nil)
+			eventErr := s.core.FinishLabelDecision(storeCtx, "ev_"+randomToken()[:16], "foundry", model, now, time.Now(), tokensIn, tokensOut, err != nil, false)
 			storeCancel()
 			if preempted && ctx.Err() == nil {
 				if job.retries == 0 {
