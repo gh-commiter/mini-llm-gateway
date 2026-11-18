@@ -123,7 +123,7 @@
  "builtin.kb.section.queue.title": "Čaka na pregled",
  "builtin.kb.title": "Baza znanja",
  "builtin.labels.about": "Model na napravi izpolni fazo in dejavnost klica, ki ju ni navedel",
- "builtin.labels.section.intro.body": "Privzeto izklopljeno. Ko je vklopljeno, fazo in dejavnost klica, ki ju ni navedel, izbere model na tem gatewayu: začetek prvega sporočila v pomnilniku prebere izbrani backend, nič od tega se ne shrani ali zapiše v dnevnik. Oznaka, ki jo izbere model, je v poročilih o porabi prikazana kot (model); oznaka, ki jo je podal klic, vedno prevlada in se nikoli ne zamenja. Oznake so podatki za poročila in ne dajejo dostopa do ničesar. Ta korak le shrani in prikaže nastavitve; oznak še nič ne izpolnjuje.",
+ "builtin.labels.section.intro.body": "Privzeto izklopljeno. Ko je vklopljeno, fazo in dejavnost klica, ki ju ni navedel, izbere model na tem gatewayu: začetek prvega sporočila v pomnilniku prebere izbrani backend, nič od tega se ne shrani ali zapiše v dnevnik. Oznaka, ki jo izbere model, je v poročilih o porabi prikazana kot (model); oznaka, ki jo je podal klic, vedno prevlada in se nikoli ne zamenja. Oznake so podatki za poročila in ne dajejo dostopa do ničesar. Ko je vklopljeno, gateway fazo in dejavnost klicev brez oznak izpolni z izbranim modelom na napravi ali lokalnim modelom.",
  "builtin.labels.section.settings.action.edit": "Uredi …",
  "builtin.labels.section.settings.action.edit.field.activities": "Dejavnosti, ki jih model lahko izbere (ločene z vejico, do 16)",
  "builtin.labels.section.settings.action.edit.field.backend": "Backend (eden od podprtih backendov)",

@@ -123,7 +123,7 @@
  "builtin.kb.section.queue.title": "Waiting for review",
  "builtin.kb.title": "Knowledge base",
  "builtin.labels.about": "Let an on-device model fill in the phase and activity of a call that did not name them",
- "builtin.labels.section.intro.body": "Off by default. When on, a call that arrives without a phase or activity gets them chosen by a model on this gateway: the start of its first message is read in memory by the backend you choose, and nothing of it is stored or logged. A label chosen by a model is shown as (model) in usage reports; a label the caller gave always wins and is never replaced. Labels are data for reports and never give access to anything. This step only stores and shows the settings; nothing fills labels yet.",
+ "builtin.labels.section.intro.body": "Off by default. When on, a call that arrives without a phase or activity gets them chosen by a model on this gateway: the start of its first message is read in memory by the backend you choose, and nothing of it is stored or logged. A label chosen by a model is shown as (model) in usage reports; a label the caller gave always wins and is never replaced. Labels are data for reports and never give access to anything. When turned on, the gateway fills the phase and activity of unlabelled calls with the on-device or local model you choose.",
  "builtin.labels.section.settings.action.edit": "Edit…",
  "builtin.labels.section.settings.action.edit.field.activities": "Activities the model may choose (comma separated, up to 16)",
  "builtin.labels.section.settings.action.edit.field.backend": "Backend (one of the supported backends)",
