@@ -12,11 +12,22 @@
 - The Model Labels settings row listed `apple-fm` as a supported backend on Windows and Linux, where it cannot exist. The Go gateway now names only `foundry:<model>` and refuses `apple-fm` with "backend: not available on this system; choose foundry:<model>", as the Mac refuses a Foundry backend.
 
 ### Known problems
-- `gw labels eval` was tried with fake models in tests, not with a real model (Foundry Local or Apple Foundation Models).
+- Member review is command-line only: the Knowledge base panel is the owner's, and members have no panel for it.
+- A project with a single admin leaves that admin's own submissions for the owner.
+- The four admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base, Upstream gateways) have only been tried through tests, not in a real window. In the Teams and projects pane team notes (a team's own notes) are not shown, only in the Knowledge base pane; in the Knowledge base pane notes and questions are read, not edited, and a replacement shows both texts, not a line difference. The "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI.
+- The panels on the settings page of `minigw serve`, the Upstream gateways pane and `gw settings password` were tried on one Windows gateway in a headless Chromium browser (they work; no Content Security Policy error); not in Edge or Firefox, and not on Linux. A detail page opens in place of the panel with a Back button. The Mac app does not use this page. Opening an upstream's detail page contacts it.
+- Remote settings have no team, project or knowledge base administration: the listener serves providers, models and devices only, so a Docker team gateway has no web page for teams, projects or review (use `docker compose exec ... minigw gw`).
 - The remote settings password record is still a file in the config folder, also where the other secrets are in the credential store; this step only reports where it is.
+- The Mac app has no remote settings listener and no `gw settings password`, by design: on the Mac the admin UI is the native app.
+- Docker Compose: the admin setup (`compose.admin.yaml`) was tried only with its test script (`scripts/compose-admin-e2e.sh`) on one Mac through Docker, not on the team server. The default HTTPS port 443 and a host port other than 443 for a real certificate name are not covered by the test (it uses a high port). On Docker Desktop and rootless Docker the proxy sees the Docker gateway address for every browser, so `allowedSourceCIDRs` and the per-source lockout do not tell browsers apart there; real source filtering needs rootful Docker on Linux. The gateway itself was tried on arm64 and, through emulation, on amd64 on one Mac. Any container on the same Docker network can take a service name's alias and would then receive that provider's key: put only trusted containers on that network.
+- Upstream gateway: one way. Deletions and notes that became private are not propagated (status lists them).
+- Automatic push and publish mode, with a conflict and `resolve --ours`, were tried between two real gateways on 2026-11-18 (a Mac gateway to a Windows gateway; a test project with three notes; one push for five quick edits; a conflict was not overwritten). Replacements of accepted notes, team notes and `resolve --theirs` have only been tried in tests.
+- Team notes have no `private` class, and only a project admin of the team writes them; the owner has no write path to them (the owner reviews submissions and exports bundles).
+- Worktree mode runs the top repository's own git clean/smudge filters (intended for LFS): use sync for an untrusted repository.
+- A manual pull stores a bounded local copy of an upstream's notes; members of the linked project see it in search, read, FAQ and MCP, marked and quoted. Pull is still manual, so a mirror not refreshed for 7 days is hidden. A hub must run this version before a local gateway can read it (an older hub answers "does not support reading"). Not tried between two real gateways, only with a scripted upstream and in tests.
+- Labels can be filled on Windows and Linux with Foundry Local and on the Mac with the on-device model (Apple Foundation Models) when the owner turns it on. Not tried with a real model on either (the Mac worker was tried with a fake model in tests, not in a real session). `gw labels eval` was tried only with fake models.
+- A pull is manual: there is no automatic pull and no panel (step C4).
 - Agreement and eval numbers are agreement with explicit labels, a biased sample, not calibrated accuracy.
-- Pulling the upstream's notes is still manual (`minigw gw upstream pull`): no automatic pull and no panel for reading yet (step C4).
-- What members see of the mirror has only been tried in tests, not between two real gateways.
 
 ## 0.7.28
 
