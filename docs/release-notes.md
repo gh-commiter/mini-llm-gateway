@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.27
 
 ### New
 - Project admins review the submissions of their own project: `minigw kb review [<project>|--team <team>]`, `minigw kb accept <id>` and `minigw kb reject <id> [--reason text]` (same output as the owner's `gw kb` commands), on the member routes `/minigw/v1/projects/{id}/kb/review…`. Admin means the role `admin` in that project (directly or through a team assignment; a grant never); a team's own notes are reviewed by whoever may write them. Nobody reviews their own submission (four eyes: another admin or the owner does), and an accept needs what the reviewer could write themselves. The note keeps the writer as author; its provenance and the audit name the reviewing user. `minigw project list` shows "N submissions wait for review" to a project's admins. The owner's review is unchanged. See [usage.md](usage.md#review-by-project-admins).
