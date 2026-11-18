@@ -190,6 +190,7 @@ the agent's changes back after it. Agents and builds work on the gateway's local
   files go (compared by size, time and SHA-256). When the root `.gitignore` (not the built-in list) keeps top-level
   entries out, `minigw` prints one line on stderr the first time in a run, naming up to five of them: the agent
   cannot see those (use direct mode, or put what it needs in the prompt).
+  Models of a provider (LiteLLM, OpenRouter, xAI) with `--minigw-tools` do not use sync at all: their tools read the folder here.
 - **Never copied back:** files the agent puts into a [protected path](how-it-works.md#protected-paths).
 - **Conflicts:** if you changed a file the agent also changed, yours stays and the agent's version is saved next to
   it as `<name>.minigw-conflict` (a later conflict on the same file: `-2`, `-3`, ...; copies are never overwritten).

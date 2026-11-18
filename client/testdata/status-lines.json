@@ -1,0 +1,4 @@
+{
+  "comment": "The line labels of `minigw status`, Go (client/main.go) and Swift (Sources/MiniGW/main.swift): asserted by client/status_parity_test.go and Tests/RouterCoreTests/StatusParityTests.swift. A label is the word, a colon, and spaces up to column 11.",
+  "labels": ["Profile", "Gateway", "Version", "Providers", "Models", "Device", "Status", "Secrets"]
+}

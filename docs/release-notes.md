@@ -1,5 +1,14 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- `minigw status` on the Mac now prints the `Secrets:` line the Windows and Linux client has had since 0.7.26 (`Secrets:   macOS Keychain`; never a value). A shared list of the status line labels, asserted by both clients' tests, keeps the two from drifting apart again.
+
+### Known problems
+- A model of a provider (LiteLLM, OpenRouter, xAI) with `--minigw-tools` reads your folder with the tools of your own Claude Code on your computer: nothing is synced for it, so the root `.gitignore` does not limit what it can read (the line "syncing ... for agent models" is about agent models only). Use `--minigw-tools none`, or run it in a folder without secrets.
+- Sync copies were checked for the root `.gitignore`: every sync mode on both clients leaves the listed entries out of what is sent (the same shared test fixture on both). But a file that was already copied before it was added to `.gitignore` stays in the gateway's copy (kept up to 14 days) until the owner removes the copy (`minigw gw sync remove <copy id> --device ID`).
+
 ## 0.7.31
 
 A candidate for the next stable release: no new features.
