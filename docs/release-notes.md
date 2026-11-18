@@ -4,6 +4,7 @@
 
 ### New
 - `minigw gw status` prints a `secrets:` line saying where secrets are kept (Windows Credential Manager, the Secret Service, Keychain, platform files, or a file with the reason), and `minigw status` on a client a `Secrets:` line. The admin API's `GET /status` carries it as `secrets`. Nothing moves yet: no secret changed its place, and a credential store that fails now gives an error instead of a quiet fall-back to `gateway-keys.json`.
+- A note edited by someone other than its author now shows who changed it: `minigw note read` prints "by A, last changed by B", `minigw note list` ends such a row with "(edited: B)", the Knowledge base panel has a "Last changed by" column, and the member and admin note answers carry an additive `editor` field (absent when the author last changed it). No schema change; the Markdown export and the upstream push are unchanged.
 
 ### Changed
 - Documentation brought up to date with beta 0.7.25: four admin panels (not three) in the README, `usage.md` and `gateway.md`; the Compose admin setup is no longer listed as unsupported in `docker.md`; a new parity table of macOS app, Windows, Linux and Docker per feature group ([parity.md](parity.md); the control-by-control list stays in [windows-parity.md](windows-parity.md)); a one-page [team onboarding guide](team-onboarding.md).

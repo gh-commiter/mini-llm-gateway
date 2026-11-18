@@ -394,7 +394,7 @@ body), 403 `forbidden`, 403 `archived`, 409 `revision_mismatch` (with `revision`
 | `GET /projects[?archived=1]` | `[{id, slug, name, archived, role?, granted: [class]}]` |
 | `GET /projects/{id-or-slug}` | one project; digits are always an id |
 | `POST /projects/{id-or-slug}/link-check` | the project, only if the user has a direct role (a grant alone: 403 `forbidden`); for `minigw project link` |
-| `GET /projects/{id}/notes?class=&after=&limit=` | `{notes: [{id, project, class, title, author, created, updated, revision}], next?}`, updated descending then id, default 50, max 100 |
+| `GET /projects/{id}/notes?class=&after=&limit=` | `{notes: [{id, project, class, title, author, editor (only when someone other than the author last changed the note), created, updated, revision}], next?}`, updated descending then id, default 50, max 100 |
 | `GET /projects/{id}/notes/{note}` | the note with `body` |
 | `POST /projects/{id}/notes` | 201; header `Idempotency-Key` (1-64 bytes); body `{"class", "title", "body"}`; a repeat of the same key and payload within 24 h reauthorizes the current note before answering the first result; deleted or reclassified notes return 404, including after a class is changed back (header `Idempotent-Replay: true`) |
 | `PUT /projects/{id}/notes/{note}` | 200; body `{"revision", "class", "title", "body"}` |

@@ -98,7 +98,7 @@ func TestSubmissionLifecycle(t *testing.T) {
 	f.ok(e)
 	n, e = f.GetNote(ctx, p, project, n.ID)
 	f.ok(e)
-	if n.Revision != 2 || n.Body != replacement.Body || v.NoteID != n.ID {
+	if n.Revision != 2 || n.Body != replacement.Body || v.NoteID != n.ID || n.Editor != "" {
 		t.Fatal(n, v)
 	}
 	_, replay, e = f.Submit(ctx, p, project, "replace", replacement)
@@ -116,6 +116,26 @@ func TestSubmissionLifecycle(t *testing.T) {
 	f.ok(e)
 	if n.AuthorID != p.UserID || n.Provenance.User != f.uid["fani"] || n.Provenance.Reviewer != "" {
 		t.Fatal(n)
+	}
+	// The editor (a user other than the author) shows in the read and in the list, only to those who may read the note at all.
+	if n.Editor != "fani" {
+		t.Fatal("editor", n.Editor)
+	}
+	pg, e = f.ListNotes(ctx, p, project, "", "", 100)
+	f.ok(e)
+	found := false
+	for _, x := range pg.Notes {
+		if x.ID == n.ID {
+			found = x.Editor == "fani"
+		}
+	}
+	if !found {
+		t.Fatal("editor missing in list", pg.Notes)
+	}
+	n, e = f.UpdateNote(ctx, p, project, n.ID, n.Revision, NoteInput{Class: Data, Title: "Edited", Body: "by the author again"})
+	f.ok(e)
+	if n.Editor != "" {
+		t.Fatal("author edit shows an editor", n.Editor)
 	}
 }
 
