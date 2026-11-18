@@ -91,7 +91,17 @@ private func sh(_ cmd: String, cwd: String, timeout: Double = 90) -> (status: In
     // Give it a moment, then close our end: the read fails and the thread ends with what it has.
     let patience = Date().addingTimeInterval(5)
     while reader.isExecuting && Date() < patience { usleep(5_000) }
-    if reader.isExecuting { try? pipe.fileHandleForReading.close() }
+    if reader.isExecuting {
+        // #150: name the holder (the cause of the old hour-long hang was never seen): pid, parent, program, command line.
+        let holders = Native.pipeWriters(of: pipe.fileHandleForReading.fileDescriptor).map { pid -> String in
+            var path = [CChar](repeating: 0, count: 4096), bsd = proc_bsdinfo()
+            _ = proc_pidpath(pid, &path, UInt32(path.count))
+            _ = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size))
+            return "pid \(pid) ppid \(bsd.pbi_ppid) \(String(cString: path))"
+        }
+        print("[#150] `\(cmd)`: the shell exited but the pipe is still held by: \(holders.isEmpty ? "nobody we can see" : holders.joined(separator: "; "))")
+        try? pipe.fileHandleForReading.close()
+    }
     let last = Date().addingTimeInterval(5)
     while reader.isExecuting && Date() < last { usleep(5_000) }
     return (p.terminationStatus, String(decoding: data, as: UTF8.self))
