@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.28
 
 ### New
 - Usage labels on the Mac: the app's worker fills the phase and activity labels of usage reports with the on-device model (Apple Foundation Models) when the owner turns the setting on and chooses `apple-fm` (`Sources/RouterCore/Decide.swift`, `LabelWorker.swift`). Off by default; nothing leaves the Mac; if the model is unavailable the worker only reports "on-device model unavailable". It never delays a request, yields to a user's request for the on-device model (no sample starts while one runs; a running sample is cancelled and retried once), and the text it classifies is never stored or logged. The Mac settings route accepts only `apple-fm`. The helper has a new internal call `label-decision` (the decision's own usage event) and `event-labels` and `label-agreement` take the settings `revision`. See [usage.md](usage.md#model-labels).
