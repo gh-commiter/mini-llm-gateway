@@ -144,6 +144,8 @@ func TestShutdownStopsTheAutoPushBeforeTheDrain(t *testing.T) {
 	s.shutdown(srv, 5*time.Second)
 	if !<-stoppedDuringDrain {
 		t.Fatal("the automatic push was still running while requests drained")
+	}
+}
 
 func fakeResolver(t *testing.T, m map[string]string) {
 	old := resolveHost
