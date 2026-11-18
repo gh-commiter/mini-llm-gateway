@@ -258,6 +258,7 @@ func TestLabelsShadowOneInFourOnlyCounters(t *testing.T) {
 	if err != nil || len(rows) != 2 || rows[0] != (core.AgreementRow{Kind: "activity", Bucket: "1000", N: 1, ID: "activity/1000", Percent: "0 %", Count: "1", Days: rows[0].Days}) || rows[1] != (core.AgreementRow{Kind: "phase", Bucket: "1000", Agree: 1, N: 1, ID: "phase/1000", Percent: "100 %", Count: "1", Days: rows[1].Days}) || calls.Load() != 6 {
 		t.Fatal(rows, err, calls.Load())
 	}
+	s.api.FlushRecorder()
 	for _, r := range roots {
 		if p, a := labelsOf(t, s, r.event.ID); p != "do" || a != "docs" {
 			t.Fatal(p, a)
@@ -519,6 +520,7 @@ func TestLabelsDisableCancelsInFlightAndDropsQueued(t *testing.T) {
 	if settings, err := s.core.LabelSettings(t0); err != nil || settings.LastError != "" || s.labels.failed.Load() != 0 {
 		t.Fatal("owner cancellation reported as a backend failure", settings, err)
 	}
+	s.api.FlushRecorder() // the event is written by the recorder, asynchronously: wait for it before reading its row
 	if p, a := labelsOf(t, s, r.event.ID); p != "" || a != "" {
 		t.Fatal(p, a)
 	}
