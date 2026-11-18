@@ -267,3 +267,183 @@ func TestNotesNoLongerHereAreListedNotPropagated(t *testing.T) {
 		t.Fatal(whys)
 	}
 }
+
+// a link that keeps ending with "more" and getting nowhere backs off, resumes from its cursor, and writes a bounded audit
+func autoAudits(f *fx) (n int) {
+	f.ok(f.read(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRow(`SELECT count(*) FROM audit_events WHERE action='upstream.auto-push'`).Scan(&n)
+	}))
+	return
+}
+
+// slowRefuser: every note is refused with a 400 and takes `cost` of virtual time (the clock of the fixture is advanced by it)
+func slowRefuser(f *fx, cost time.Duration, budget int) *fakeUp {
+	return &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
+		if c.method == "GET" {
+			return 200, `{"id":7,"slug":"shop"}`, 0
+		}
+		f.clock = f.clock.Add(cost)
+		return 400, `{"error":{"message":"no"}}`, 0
+	}}
+}
+
+func TestAMoreRunWithNoProgressBacksOff(t *testing.T) {
+	f, fk, _ := autoFx(t)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error { return f.markUpstreamDirty(tx, fk) }))
+	f.clock = f.clock.Add(61 * time.Second)
+	up := slowRefuser(f, time.Second, 0)
+	// the time budget of every call is used up after the first note: ctx cancelled by the second call's check
+	runs := 0
+	start := f.clock
+	for f.clock.Sub(start) < time.Hour {
+		cctx, cancel := context.WithCancel(ctx)
+		ucancel := &cancelAfterPost{up: up, cancel: cancel}
+		r, e := f.AutoPush(cctx, ucancel, noSleep)
+		cancel()
+		f.ok(e)
+		if r.Ran {
+			runs++
+		}
+		f.clock = f.clock.Add(time.Second)
+	}
+	if runs > 6 { // base 1 min doubling: about 1,2,4,8,16,32 min within the hour
+		t.Fatalf("%d runs in an hour: no back-off", runs)
+	}
+	if l := f.link(fk); l.FailCount < 2 {
+		t.Fatalf("%+v", l)
+	}
+	if n := autoAudits(f); n > runs {
+		t.Fatalf("%d audit rows for %d runs", n, runs)
+	}
+}
+
+// cancelAfterPost: lets one POST through, then ends the call's time budget (as the Mac helper's 10 s does)
+type cancelAfterPost struct {
+	up     *fakeUp
+	cancel func()
+}
+
+func (c *cancelAfterPost) Do(ctx context.Context, up, m, p string, h map[string]string, b []byte) (int, []byte, time.Duration, error) {
+	st, d, w, e := c.up.Do(ctx, up, m, p, h, b)
+	if m == "POST" {
+		c.cancel()
+	}
+	return st, d, w, e
+}
+
+func TestARateLimitIsWaitedOutOnceAndAudited(t *testing.T) {
+	f, fk, _ := autoFx(t)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error { return f.markUpstreamDirty(tx, fk) }))
+	f.clock = f.clock.Add(61 * time.Second)
+	limited := &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
+		if c.method == "GET" {
+			return 200, `{"id":7,"slug":"shop"}`, 0
+		}
+		return 429, `{}`, 120 * time.Second
+	}}
+	runs := 0
+	start := f.clock
+	for f.clock.Sub(start) < time.Hour {
+		r, e := f.AutoPush(ctx, limited, func(time.Duration) bool { return false })
+		f.ok(e)
+		if r.Ran {
+			runs++
+			if l := f.link(fk); l.FailCount != 0 || l.NextAttempt == nil || l.NextAttempt.Sub(f.clock) < 120*time.Second {
+				t.Fatalf("%+v", l)
+			}
+		}
+		f.clock = f.clock.Add(10 * time.Second)
+	}
+	if runs > 31 || runs < 25 { // one per 120 s, never sooner
+		t.Fatalf("%d runs in an hour", runs)
+	}
+	if n := autoAudits(f); n != 1 {
+		t.Fatalf("%d audit rows for %d identical runs", n, runs)
+	}
+}
+
+func TestMoreThanAThousandRefusedNotesAreNotResentEveryRun(t *testing.T) {
+	f, fk, _ := autoFx(t)
+	for i := 0; i < maxPushNotes+50; i++ {
+		f.clock = f.clock.Add(time.Millisecond)
+		keySeq++
+		_, _, e := f.CreateNote(ctx, f.p("ana"), fk, fmt.Sprint("uk", keySeq), NoteInput{Class: Structure, Title: fmt.Sprint("bulk ", i), Body: "b"})
+		f.ok(e)
+	}
+	f.clock = f.clock.Add(61 * time.Second)
+	up := slowRefuser(f, 0, 0)
+	hour := f.clock.Add(time.Hour)
+	runs, afterTwo := 0, 0
+	for f.clock.Before(hour) {
+		r, e := f.AutoPush(ctx, up, noSleep)
+		f.ok(e)
+		if r.Ran {
+			runs++
+			if runs == 2 {
+				afterTwo = up.count("POST")
+			}
+		}
+		f.clock = f.clock.Add(10 * time.Second)
+	}
+	// 1052 notes (3 setup notes of which 2 are sent): the first run refuses 1000, the second goes on from the cursor (not from note 0)
+	// and sees only the rest, then the cursor resets and the back-off has grown
+	if afterTwo != maxPushNotes+52 {
+		t.Fatalf("%d POSTs in two runs: the second one did not go on from the cursor", afterTwo)
+	}
+	if runs > 6 {
+		t.Fatalf("%d runs in an hour: no back-off", runs)
+	}
+}
+
+func TestAMoreRunGoesOnFromTheCursor(t *testing.T) {
+	f, fk, _ := autoFx(t)
+	for i := 0; i < maxPushNotes+10; i++ {
+		f.clock = f.clock.Add(time.Millisecond)
+		keySeq++
+		_, _, e := f.CreateNote(ctx, f.p("ana"), fk, fmt.Sprint("uk", keySeq), NoteInput{Class: Structure, Title: fmt.Sprint("bulk ", i), Body: "b"})
+		f.ok(e)
+	}
+	f.clock = f.clock.Add(61 * time.Second)
+	up := okUp()
+	r, e := f.AutoPush(ctx, up, noSleep)
+	f.ok(e)
+	if !r.Push.More || f.link(fk).FailCount != 0 { // progress: a "more" that sent notes is not a failure
+		t.Fatalf("%+v", r)
+	}
+	f.clock = f.clock.Add(2 * time.Second)
+	r, e = f.AutoPush(ctx, up, noSleep)
+	f.ok(e)
+	if r.Push.More || up.count("POST") != maxPushNotes+10+2 {
+		t.Fatalf("%+v posts %d", r, up.count("POST"))
+	}
+}
+
+func TestTwoPushesOfOneLinkDoNotOverlap(t *testing.T) {
+	f, fk, _ := autoFx(t)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error { return f.markUpstreamDirty(tx, fk) }))
+	f.clock = f.clock.Add(61 * time.Second)
+	inside := make(chan struct{})
+	release := make(chan struct{})
+	slow := okUp()
+	inner := slow.handler
+	first := true
+	slow.handler = func(c upCall) (int, string, time.Duration) {
+		if c.method == "POST" && first {
+			first = false
+			close(inside)
+			<-release
+		}
+		return inner(c)
+	}
+	done := make(chan error, 1)
+	go func() { _, e := f.AutoPush(ctx, slow, noSleep); done <- e }()
+	<-inside
+	if _, e := f.PushUpstream(ctx, okUp(), fk, 0, "", 0, false, noSleep); e == nil || !strings.Contains(e.Error(), "is running") {
+		t.Fatalf("a second push of the link was not refused: %v", e)
+	}
+	if r, e := f.AutoPush(ctx, okUp(), noSleep); e != nil || r.Ran {
+		t.Fatalf("the timer pushed a link that is being pushed: %+v %v", r, e)
+	}
+	close(release)
+	f.ok(<-done)
+}

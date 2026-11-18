@@ -116,3 +116,29 @@ func TestShutdownDrainsThenCuts(t *testing.T) {
 		t.Fatalf("shutdown took %v with a 300ms deadline", d)
 	}
 }
+
+// the automatic upstream push stops when the drain starts, not only when the core closes: no new push while requests finish
+func TestShutdownStopsTheAutoPushBeforeTheDrain(t *testing.T) {
+	s, _ := testServer(t, nil)
+	stop, done := make(chan struct{}), make(chan struct{})
+	s.autoStop, s.autoDone = stop, done
+	go func() { <-stop; close(done) }()
+	stoppedDuringDrain := make(chan bool, 1)
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond) // shutdown has started by now
+		select {
+		case <-stop:
+			stoppedDuringDrain <- true
+		default:
+			stoppedDuringDrain <- false
+		}
+	})}
+	go srv.Serve(ln)
+	go http.Get("http://" + ln.Addr().String())
+	time.Sleep(100 * time.Millisecond)
+	s.shutdown(srv, 5*time.Second)
+	if !<-stoppedDuringDrain {
+		t.Fatal("the automatic push was still running while requests drained")
+	}
+}

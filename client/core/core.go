@@ -66,6 +66,7 @@ type Store struct {
 	autoMu sync.Mutex
 	auto   AutoTiming
 	jitter func() float64
+	linkMu map[string]*sync.Mutex // one real push of a link at a time (guarded by autoMu)
 }
 
 // state is what must outlive a restore: it is kept in core.state as well as in the database (max of both wins).

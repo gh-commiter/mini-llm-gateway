@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"math/rand"
 	"time"
 )
@@ -94,10 +96,11 @@ func (s *Store) AutoPush(ctx context.Context, tr UpstreamTransport, sleep func(t
 	now := ms(s.now())
 	var project int64
 	var upstream string
+	var cursor int64
 	var found bool
 	err := s.read(ctx, func(tx *sql.Tx) error {
-		switch e := tx.QueryRow(`SELECT project_id,upstream FROM upstream_links WHERE auto=1 AND dirty_since>0 AND next_attempt<=?1 AND (last_change<=?2 OR dirty_since<=?3) ORDER BY dirty_since LIMIT 1`,
-			now, now-t.Debounce.Milliseconds(), now-t.MaxWait.Milliseconds()).Scan(&project, &upstream); e {
+		switch e := tx.QueryRow(`SELECT project_id,upstream,push_cursor FROM upstream_links WHERE auto=1 AND dirty_since>0 AND next_attempt<=?1 AND (last_change<=?2 OR dirty_since<=?3) ORDER BY dirty_since LIMIT 1`,
+			now, now-t.Debounce.Milliseconds(), now-t.MaxWait.Milliseconds()).Scan(&project, &upstream, &cursor); e {
 		case nil:
 			found = true
 		case sql.ErrNoRows:
@@ -122,13 +125,33 @@ func (s *Store) AutoPush(ctx context.Context, tr UpstreamTransport, sleep func(t
 		if l.Project != project || l.Upstream != upstream {
 			continue
 		}
-		res, err := s.pushLink(ctx, tr, l.UpstreamLink, l.Label, 0, false, sleep) // records the outcome (afterRun) too
+		res, err := s.pushLink(ctx, tr, l.UpstreamLink, l.Label, cursor, false, sleep) // records the outcome (afterRun) too
+		var busy errPushRunning
+		if errors.As(err, &busy) { // a manual push of this link is running: it records the outcome; the timer comes back
+			run.Next = s.autoNext(ctx, t, ms(s.now()))
+			run.NextSeconds = int(run.Next / time.Second)
+			return run, nil
+		}
 		if err != nil {
 			return run, err
 		}
 		run.Ran, run.Push = true, &res
 		wctx := context.WithoutCancel(ctx)
+		// One audit row per CHANGE of outcome (the failure count is part of it, so a back-off step writes one): a link that keeps being
+		// refused, or limited, does not fill the audit table.
 		if e := s.write(wctx, func(tx *sql.Tx) error {
+			var fails int
+			var last string
+			if e := tx.QueryRow(`SELECT fail_count,last_audit FROM upstream_links WHERE project_id=? AND upstream=?`, project, upstream).Scan(&fails, &last); e != nil {
+				return notFound(e)
+			}
+			sig := fmt.Sprintf("%v/%v/%v/%d", res.Created+res.Replaced > 0, res.Refused > 0, res.More, fails)
+			if sig == last {
+				return nil
+			}
+			if _, e := tx.Exec(`UPDATE upstream_links SET last_audit=? WHERE project_id=? AND upstream=?`, sig, project, upstream); e != nil {
+				return e
+			}
 			return Audit(tx, "gateway", "upstream.auto-push", upstream, map[string]any{"project": l.Label, "created": res.Created, "replaced": res.Replaced, "skipped": res.Skipped, "refused": res.Refused, "more": res.More, "stopped": res.Stopped != ""})
 		}); e != nil {
 			return run, e
@@ -157,19 +180,26 @@ func (s *Store) autoNext(ctx context.Context, t AutoTiming, now int64) time.Dura
 }
 
 // afterRun records the outcome of a real run on the link: success (the outbox is cleared unless a change arrived while it ran), a failure
-// (the back-off), or "more" (try again soon: not a failure).
+// (the back-off), or "more". A "more" that waits for the upstream's write limit is not a failure and comes back no sooner than the wait;
+// a "more" that got somewhere (a note sent) goes on soon; a "more" that got nowhere (every note refused, a time budget used for nothing)
+// is a failure, so the back-off applies. A "more" keeps the cursor (the last note dealt with) for the next run; any other end resets it.
 func (s *Store) afterRun(ctx context.Context, l UpstreamLink, res UpstreamPush, started int64) error {
 	t := s.autoTiming()
 	now := ms(s.now())
 	failed := res.Refused > 0 || (res.Stopped != "" && !res.More)
+	var cursor int64
+	if res.More {
+		cursor = res.Next
+		failed = res.Wait == 0 && res.Created+res.Replaced == 0
+	}
 	return s.write(ctx, func(tx *sql.Tx) error {
 		switch {
-		case res.More:
+		case res.More && !failed:
 			wait := time.Duration(res.Wait) * time.Second
 			if wait < time.Second {
 				wait = time.Second
 			}
-			_, e := tx.Exec(`UPDATE upstream_links SET next_attempt=? WHERE project_id=? AND upstream=?`, now+wait.Milliseconds(), l.Project, l.Upstream)
+			_, e := tx.Exec(`UPDATE upstream_links SET next_attempt=?, push_cursor=? WHERE project_id=? AND upstream=?`, now+wait.Milliseconds(), cursor, l.Project, l.Upstream)
 			return e
 		case failed:
 			var n int
@@ -177,10 +207,10 @@ func (s *Store) afterRun(ctx context.Context, l UpstreamLink, res UpstreamPush, 
 				return notFound(e)
 			}
 			n++
-			_, e := tx.Exec(`UPDATE upstream_links SET fail_count=?, last_fail=?, next_attempt=? WHERE project_id=? AND upstream=?`, n, now, now+t.backoff(n, s.jitterFn()).Milliseconds(), l.Project, l.Upstream)
+			_, e := tx.Exec(`UPDATE upstream_links SET fail_count=?, last_fail=?, next_attempt=?, push_cursor=? WHERE project_id=? AND upstream=?`, n, now, now+t.backoff(n, s.jitterFn()).Milliseconds(), cursor, l.Project, l.Upstream)
 			return e
 		}
-		_, e := tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN last_change>? THEN dirty_since ELSE 0 END, last_ok=?, fail_count=0, next_attempt=0 WHERE project_id=? AND upstream=?`, started, now, l.Project, l.Upstream)
+		_, e := tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN last_change>? THEN dirty_since ELSE 0 END, last_ok=?, fail_count=0, next_attempt=0, push_cursor=0 WHERE project_id=? AND upstream=?`, started, now, l.Project, l.Upstream)
 		return e
 	})
 }

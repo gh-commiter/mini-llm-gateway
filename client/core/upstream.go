@@ -95,6 +95,8 @@ ALTER TABLE upstream_links ADD COLUMN last_ok INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_links ADD COLUMN last_fail INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_links ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_links ADD COLUMN next_attempt INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN push_cursor INTEGER NOT NULL DEFAULT 0; -- an automatic run that ended with "more": the last local note it dealt with
+ALTER TABLE upstream_links ADD COLUMN last_audit TEXT NOT NULL DEFAULT ''; -- the outcome of the last run that wrote an audit row
 ALTER TABLE upstream_sent ADD COLUMN remote_rev INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_sent ADD COLUMN conflict INTEGER NOT NULL DEFAULT 0 CHECK(conflict IN(0,1,2)); -- 1: changed on the upstream since our last write, 2: the owner chose "ours": send it as a submission
 ALTER TABLE upstream_sent ADD COLUMN conflict_rev INTEGER NOT NULL DEFAULT 0;`)

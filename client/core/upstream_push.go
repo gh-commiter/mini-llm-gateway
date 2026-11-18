@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -236,7 +237,33 @@ func (p *pusher) trailer(project int64, n UpstreamNote, supersedes int64) string
 // maxReportLines: the lines of one report; the totals count everything, the rest of the lines is "... and K more".
 const maxReportLines = 200
 
+// errPushRunning: another push of this link is running; a manual push answers it as a refusal, the timer just comes back later.
+type errPushRunning struct{}
+
+func (errPushRunning) Error() string   { return "a push of this link is running: try again in a moment" }
+func (e errPushRunning) Unwrap() error { return ErrRefusal{e.Error()} }
+
+func (s *Store) linkLock(project int64, upstream string) *sync.Mutex {
+	s.autoMu.Lock()
+	defer s.autoMu.Unlock()
+	k := fmt.Sprintf("%d|%s", project, upstream)
+	if s.linkMu == nil {
+		s.linkMu = map[string]*sync.Mutex{}
+	}
+	if s.linkMu[k] == nil {
+		s.linkMu[k] = &sync.Mutex{}
+	}
+	return s.linkMu[k]
+}
+
 func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, after int64, dry bool, sleep func(time.Duration) bool) (UpstreamPush, error) {
+	if !dry { // one real push of a link at a time: two would both write with the same revision and one would record a false conflict
+		mu := s.linkLock(l.Project, l.Upstream)
+		if !mu.TryLock() {
+			return UpstreamPush{}, errPushRunning{}
+		}
+		defer mu.Unlock()
+	}
 	started := ms(s.now())
 	res, err := s.pushLinkRun(ctx, tr, l, label, after, dry, sleep)
 	if err == nil && !dry && !res.archived { // the outbox: cleared by a success, a back-off after a failure
@@ -327,7 +354,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			line("conflict", n, "changed on the upstream since our last write, not overwritten: minigw gw upstream resolve <project> "+strconv.FormatInt(n.ID, 10)+" --theirs|--ours")
 			continue
 		}
-		if l.Mode == "publish" && n.EntryKind != "faq" && !(n.Sent != nil && n.Sent.Conflict == 2) {
+		if l.Mode == "publish" && n.EntryKind != "faq" && !(n.Sent != nil && (n.Sent.Conflict == 2 || n.Sent.RemoteSub > 0)) { // a note sent as a submission ("ours") stays on the submission path
 			// publish mode: the note is written on the upstream directly (a note, not a submission)
 			notesBase := fmt.Sprintf("/minigw/v1/projects/%d/notes", remote)
 			waitMsg := func() (UpstreamPush, error) {

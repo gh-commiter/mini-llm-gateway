@@ -811,3 +811,64 @@ func TestUpstreamRequestsMatchTheSharedFixture(t *testing.T) {
 		}
 	}
 }
+
+// after "resolve --ours" the note is tracked as a submission pending review: a later local edit in publish mode sends another submission
+// (never a PUT, never a second direct POST of the note), whether the upstream note changed or was gone.
+func TestResolveOursThenEditStaysOnTheSubmissionPath(t *testing.T) {
+	for _, gone := range []bool{false, true} {
+		f, notes := upFx(t)
+		fk := f.pid["fakture"]
+		f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Mode: "publish"}))
+		remote := func(c upCall) (int, string, time.Duration) { // the upstream note: moved on, or gone
+			if gone {
+				return 404, `{"error":{"message":"gone"}}`, 0
+			}
+			return 200, `{"id":55,"revision":9}`, 0
+		}
+		first := true
+		up := &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
+			switch {
+			case c.path == "/minigw/v1/projects/shop":
+				return 200, `{"id":7,"slug":"shop"}`, 0
+			case c.method == "POST" && strings.HasSuffix(c.path, "/kb/submissions"):
+				return 201, `{"id":31,"state":"pending"}`, 0
+			case c.method == "POST":
+				return 201, `{"id":55,"revision":1}`, 0
+			case strings.Contains(c.path, "/kb/submissions/"):
+				return 200, `{"id":31,"state":"pending"}`, 0
+			case c.method == "GET" && !first:
+				return remote(c)
+			}
+			return 200, `{"id":55,"revision":1}`, 0
+		}}
+		_, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
+		f.ok(e)
+		first = false
+		n := notes["Structure one"]
+		edit := func(body string) {
+			f.clock = f.clock.Add(time.Second)
+			cur, e := f.GetNote(ctx, f.p("ana"), fk, n.ID)
+			f.ok(e)
+			_, e = f.UpdateNote(ctx, f.p("ana"), fk, n.ID, cur.Revision, NoteInput{Class: Structure, Title: "Structure one", Body: body})
+			f.ok(e)
+		}
+		edit("second")
+		_, e = f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep) // conflict
+		f.ok(e)
+		f.ok(f.ResolveUpstream(ctx, fk, 0, n.ID, true))
+		_, e = f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep) // the "ours" submission
+		f.ok(e)
+		before := len(up.calls)
+		edit("third")
+		r, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
+		f.ok(e)
+		if r[0].Conflicts != 0 || r[0].Replaced != 1 {
+			t.Fatalf("gone=%v: %+v", gone, r[0])
+		}
+		for _, c := range up.calls[before:] {
+			if c.method == "PUT" || (c.method == "POST" && strings.HasSuffix(c.path, "/notes")) {
+				t.Fatalf("gone=%v: a direct write after resolve --ours: %s %s", gone, c.method, c.path)
+			}
+		}
+	}
+}

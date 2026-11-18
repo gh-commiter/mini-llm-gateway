@@ -1156,6 +1156,7 @@ const shutdownDeadline = 30 * time.Second
 // contexts end, agent runs are cancelled), and only then close the core database and save the state.
 func (s *server) shutdown(srv *http.Server, deadline time.Duration) {
 	s.log.Print("shutting down: no new requests, waiting up to " + deadline.String() + " for running ones")
+	s.stopUpstreamAuto() // no new automatic push during the drain (idempotent: closeCore calls it too)
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
