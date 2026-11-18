@@ -26,6 +26,13 @@ func TestKBCommandParity(t *testing.T) {
 			Responses  []cmdResp
 			Requests   [][]string
 		}
+		Review []struct {
+			Args              []string
+			Out, Error, Input string
+			TTY               bool
+			Responses         []cmdResp
+			Requests          [][]string
+		}
 		NoteJSON, NoteJSONOut string
 		MemberErrors          []struct {
 			Args  []string
@@ -68,6 +75,27 @@ func TestKBCommandParity(t *testing.T) {
 		}}
 		if e := env.kb(c.Args); e != nil {
 			t.Fatal(e)
+		}
+		if out.String() != c.Out || !reflect.DeepEqual(requests, c.Requests) {
+			t.Fatalf("%v: %q %+v", c.Args, out.String(), requests)
+		}
+	}
+	for _, c := range f.Review { // a project admin's review: no idempotency key
+		var out bytes.Buffer
+		var requests [][]string
+		tty := c.TTY
+		env := &projectEnv{out: &out, in: strings.NewReader(c.Input), tty: func() bool { return tty }, connect: func() (connection, string) { return connection{}, "" }, do: func(_ connection, method, path string, _ map[string]string, b []byte) (int, []byte, http.Header) {
+			requests = append(requests, []string{method, path, string(b)})
+			for _, r := range c.Responses {
+				if r.Match == method+" "+path {
+					return r.Status, []byte(r.Body), nil
+				}
+			}
+			t.Fatalf("unexpected %s %s", method, path)
+			return 599, nil, nil
+		}}
+		if e := env.kb(c.Args); c.Error == "" && e != nil || c.Error != "" && (e == nil || e.Error() != c.Error) {
+			t.Fatalf("%v: %v, want %q", c.Args, e, c.Error)
 		}
 		if out.String() != c.Out || !reflect.DeepEqual(requests, c.Requests) {
 			t.Fatalf("%v: %q %+v", c.Args, out.String(), requests)
@@ -117,12 +145,12 @@ func TestKBClientGatewayFlow(t *testing.T) {
 		t.Fatal("reader submitted")
 	}
 	owner := &adminClient{off: c.f.s}
-	review := stdout(t, func() { kbAdmin(owner, []string{"kb", "review"}, "", "") })
+	review := stdout(t, func() { kbAdmin(owner, []string{"kb", "review"}, coreOpts{}) })
 	if !strings.Contains(review, "Reviewed knowledge") {
 		t.Fatal(review)
 	}
-	accepted := stdout(t, func() { kbAdmin(owner, []string{"kb", "accept", "1"}, "", "") })
-	if accepted != "submission 1 accepted\n" {
+	accepted := stdout(t, func() { kbAdmin(owner, []string{"kb", "accept", "1"}, coreOpts{version: versionIn(t, review)}) })
+	if !strings.HasSuffix(accepted, "Reviewed knowledge\nsubmission 1 accepted\n") { // the accept shows what it publishes first
 		t.Fatal(accepted)
 	}
 	out.Reset()
@@ -343,4 +371,51 @@ func TestNoteScopeHint(t *testing.T) {
 	if noteScopeHint(other, false) != other {
 		t.Fatal("hint added to another answer")
 	}
+}
+
+// A project admin reviews another member's submission over a real gateway; members without the role, and the admin's own
+// submission, are refused.
+func TestKBMemberReviewEndToEnd(t *testing.T) {
+	c := newClientFx(t)
+	dir := t.TempDir()
+	ana, _, _ := c.env("ana", dir, "Reviewed by an admin")
+	if err := ana.kb([]string{"submit", "fakture", "--key", "p1", "--title", "Proposal", "-"}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := c.run("ana", dir, "", "kb", "review", "fakture"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatal("a developer reviews", out, err)
+	}
+	if out, err := c.run("ana", dir, "", "kb", "accept", "1"); err == nil {
+		t.Fatal("a developer accepted", out)
+	}
+	if out := c.must("fani", dir, "", "project", "list"); !strings.Contains(out, "1 submission waits for review") {
+		t.Fatal(out)
+	}
+	review := c.must("fani", dir, "", "kb", "review")
+	if !strings.Contains(review, "Reviewed by an admin") || !strings.Contains(review, "writer ana") {
+		t.Fatal(review)
+	}
+	if out, err := c.run("fani", dir, "", "kb", "accept", "1"); err == nil || !strings.Contains(err.Error(), "--version") { // no terminal here
+		t.Fatal("accepted without naming the version", out, err)
+	}
+	if out := c.must("fani", dir, "", "kb", "accept", "1", "--version", versionIn(t, review)); !strings.HasSuffix(out, "Reviewed by an admin\nsubmission 1 accepted\n") {
+		t.Fatal(out)
+	}
+	fani, _, _ := c.env("fani", dir, "Mine")
+	if err := fani.kb([]string{"submit", "fakture", "--key", "p2", "-"}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := c.run("fani", dir, "", "kb", "reject", "2", "--reason", "x"); err == nil || !strings.Contains(err.Error(), "your own submission") {
+		t.Fatal(out, err)
+	}
+}
+
+// versionIn is the version tag kb review printed (the one submission of the listing).
+func versionIn(t *testing.T, review string) string {
+	t.Helper()
+	m := regexp.MustCompile(`  version ([0-9a-f]{12})`).FindStringSubmatch(review)
+	if m == nil {
+		t.Fatal("no version in", review)
+	}
+	return m[1]
 }

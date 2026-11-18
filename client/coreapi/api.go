@@ -150,7 +150,10 @@ func (a *API) errResponse(err error) Response {
 	var lim core.ErrLimit
 	var inv core.ErrInvalid
 	var ref core.ErrRefusal
+	var lost core.ErrWriterLost
 	switch {
+	case errors.As(err, &lost): // before the cause: never the reviewer's own 403/404
+		return jsonErr(409, "writer_lost", lost.Error())
 	case errors.As(err, &ref):
 		return jsonErr(400, "invalid", ref.Msg)
 	case errors.Is(err, core.ErrNoProjectAccess):

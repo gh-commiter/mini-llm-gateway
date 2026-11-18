@@ -62,21 +62,21 @@ func TestSubmissionLifecycle(t *testing.T) {
 	}
 	_, e = f.RunGetNote(ctx, cap, true, v.ID)
 	is(t, e, ErrNotFound)
-	rejected, e := f.ReviewSubmission(ctx, v.ID, false, "Needs work")
+	rejected, e := f.ReviewSubmission(ctx, v.ID, false, "Needs work", "")
 	f.ok(e)
 	if rejected.State != "rejected" {
 		t.Fatal(rejected)
 	}
-	_, e = f.ReviewSubmission(ctx, v.ID, true, "")
+	_, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	var inv ErrInvalid
 	if !errors.As(e, &inv) {
 		t.Fatal(e)
 	}
 	v, _, e = f.Submit(ctx, p, project, "second", in)
 	f.ok(e)
-	accepted, e := f.ReviewSubmission(ctx, v.ID, true, "")
+	accepted, e := f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	f.ok(e)
-	same, e := f.ReviewSubmission(ctx, v.ID, true, "")
+	same, e := f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	f.ok(e)
 	if same.NoteID != accepted.NoteID {
 		t.Fatal("double accept")
@@ -94,7 +94,7 @@ func TestSubmissionLifecycle(t *testing.T) {
 	if old.Body != in.Body {
 		t.Fatal("pending replacement published")
 	}
-	v, e = f.ReviewSubmission(ctx, v.ID, true, "")
+	v, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	f.ok(e)
 	n, e = f.GetNote(ctx, p, project, n.ID)
 	f.ok(e)
@@ -167,7 +167,7 @@ func TestSubmissionLimitsAndRevalidation(t *testing.T) {
 	is(t, e, ErrPendingLimit)
 	maxPendingProjectBytes = oldPB
 	for _, reason := range []string{strings.Repeat("x", 1025), "bad\nreason", "bad\x1breason"} {
-		_, e = f.ReviewSubmission(ctx, v.ID, false, reason)
+		_, e = f.ReviewSubmission(ctx, v.ID, false, reason, "")
 		var inv ErrInvalid
 		if !errors.As(e, &inv) {
 			t.Fatal(e)
@@ -180,7 +180,7 @@ func TestSubmissionLimitsAndRevalidation(t *testing.T) {
 		t.Fatal(e)
 	}
 	f.ok(f.SetMember(ctx, project, p.UserID, Reader))
-	_, e = f.ReviewSubmission(ctx, v.ID, true, "")
+	_, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	is(t, e, ErrForbidden)
 	in.Title = "t"
 	_, _, e = f.Submit(ctx, p, project, "k", in)
@@ -189,7 +189,7 @@ func TestSubmissionLimitsAndRevalidation(t *testing.T) {
 	f.ok(f.SetBinding(ctx, p.DeviceID, f.uid["bor"]))
 	_, _, e = f.Submit(ctx, p, project, "spoof", in)
 	is(t, e, ErrNoProjectAccess)
-	_, e = f.ReviewSubmission(ctx, v.ID, true, "")
+	_, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	is(t, e, ErrNoProjectAccess)
 }
 
@@ -222,10 +222,10 @@ func TestSubmissionInactiveAuthorCannotPublish(t *testing.T) {
 	v, _, err := f.Submit(ctx, p, project, "inactive", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Proposal", Body: "pending"}})
 	f.ok(err)
 	f.ok(f.SetUserActive(ctx, p.UserID, false))
-	_, err = f.ReviewSubmission(ctx, v.ID, true, "")
+	_, err = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	is(t, err, ErrNoProjectAccess)
 	// The owner can still reject content whose writer has lost access.
-	v, err = f.ReviewSubmission(ctx, v.ID, false, "Writer inactive")
+	v, err = f.ReviewSubmission(ctx, v.ID, false, "Writer inactive", "")
 	f.ok(err)
 	if v.State != "rejected" || v.NoteID != 0 {
 		t.Fatal(v)
@@ -243,7 +243,7 @@ func TestSubmissionStaleReplacement(t *testing.T) {
 	in.Body = "newer published"
 	_, e = f.UpdateNote(ctx, p, project, n.ID, n.Revision, in)
 	f.ok(e)
-	_, e = f.ReviewSubmission(ctx, v.ID, true, "")
+	_, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
 	var conflict ErrRevision
 	if !errors.As(e, &conflict) || conflict.Current != 2 {
 		t.Fatal(e)

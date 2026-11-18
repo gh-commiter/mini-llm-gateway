@@ -64,6 +64,9 @@ public final class ProjectEnv {
     public var send: Send
     public var sleep: (TimeInterval) -> Void
     public var zone = TimeZone.current
+    /// kb accept: is stdin a terminal, and the answer to its question (tests replace both).
+    public var isTerminal: () -> Bool = { isatty(0) != 0 }
+    public var readAnswer: () -> String? = { readLine() }
     /// The folder's raw remote.origin.url, "" = none; nil = ask git (tests inject it).
     public var origin: ((String) -> String)?
     /// Test seam, per instance so that parallel tests do not interfere: runs after the export destination is opened and checked; nil in production.
@@ -232,6 +235,9 @@ public final class ProjectEnv {
                 var line = ProjectText.pad(p["slug"]?.string ?? "", 24) + " " + ProjectText.pad(access, 28) + " " + ProjectText.clean(p["name"]?.string ?? "")
                 if p["archived"]?.bool == true { line += "  (archived)" }
                 if let h = here, h.state != .none, h.link.project == p["id"]?.int ?? 0 { line += "  (linked here)" }
+                let pending = p["pendingReview"]?.int ?? 0
+                if pending == 1 { line += "  (1 submission waits for review: minigw kb review \(p["slug"]?.string ?? ""))" }
+                else if pending > 1 { line += "  (\(pending) submissions wait for review: minigw kb review \(p["slug"]?.string ?? ""))" }
                 say(ProjectText.clean(line))
             }
             if list.isEmpty { say("no projects: ask the gateway owner to add you to one") }

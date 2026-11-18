@@ -619,7 +619,7 @@ private func panelKeys(_ d: PanelDescription) -> Set<String> {
 private let kbAnswers: [(String, Int, String)] = [
     ("GET /projects", 200, #"{"projects":[{"id":1,"slug":"acme","name":"Acme"},{"id":2,"slug":"shop","name":"Shop"}]}"#),
     ("GET /teams", 200, #"{"teams":[{"id":4,"name":"web","archived":false,"path":"","segment":1099511627780}]}"#),
-    ("GET /kb/submissions", 200, ##"{"submissions":[{"id":5,"title":"<script>alert(1)</script>","scopeName":"Acme","scopeKind":"project","class":"data","entryKind":"finding","authorName":"ana","received":"2026-11-17T10:00:00Z","isReplacement":false,"replaces":0},{"id":6,"title":"**b** [x](https://evil.example)","scopeName":"web","scopeKind":"team","class":"structure","entryKind":"faq","authorName":"a\u202eb","received":"2026-11-17T11:00:00Z","isReplacement":true,"replaces":77}],"next":0}"##),
+    ("GET /kb/submissions", 200, ##"{"submissions":[{"id":5,"title":"<script>alert(1)</script>","scopeName":"Acme","scopeKind":"project","class":"data","entryKind":"finding","authorName":"ana","received":"2026-11-17T10:00:00Z","isReplacement":false,"replaces":0,"reviewHash":"h5"},{"id":6,"title":"**b** [x](https://evil.example)","scopeName":"web","scopeKind":"team","class":"structure","entryKind":"faq","authorName":"a\u202eb","received":"2026-11-17T11:00:00Z","isReplacement":true,"replaces":77,"reviewHash":"h6"}],"next":0}"##),
     ("GET /kb/submissions/5", 200, #"{"id":5,"title":"t5","body":"text five","isReplacement":false}"#),
     ("GET /kb/submissions/6", 200, #"{"id":6,"title":"t6","body":"new text","isReplacement":true,"replaces":77}"#),
     ("GET /kb/notes/77", 200, #"{"id":77,"title":"old","class":"data","updated":"2026-11-01T10:00:00Z","body":"old text"}"#),
@@ -702,7 +702,7 @@ private let kbAnswers: [(String, Int, String)] = [
         let queue = m.panel.sections[1]
         let row = m.data("queue").rows[0]
         let accept = queue.rowActions![0], reject = queue.rowActions![1]
-        #expect(try m.request(accept, row: row).get() == CoreRequest(method: "POST", path: "/kb/submissions/5/accept", body: Data("{}".utf8)))
+        #expect(try m.request(accept, row: row).get() == CoreRequest(method: "POST", path: "/kb/submissions/5/accept", body: Data(#"{"reviewHash":"h5"}"#.utf8)))  // the version on screen
         #expect(m.confirmation(accept, row: row) == nil)  // accepting asks nothing
         #expect(m.defaults(reject, row: row) == ["reason": .string("")])
         #expect(try m.request(reject, row: row, values: ["reason": .string("a duplicate")]).get() == CoreRequest(method: "POST", path: "/kb/submissions/5/reject", body: Data(#"{"reason":"a duplicate"}"#.utf8)))
@@ -716,7 +716,7 @@ private let kbAnswers: [(String, Int, String)] = [
         await fake.set("POST /kb/submissions/5/accept", 200, "{}")
         #expect(await m.perform(accept, section: "queue", row: row))
         let log = await fake.log
-        #expect(log.first == "POST /kb/submissions/5/accept {}" && log.contains("GET /kb/submissions"))
+        #expect(log.first == #"POST /kb/submissions/5/accept {"reviewHash":"h5"}"# && log.contains("GET /kb/submissions"))
     }
 
     @Test(.enabled(if: haveFixtures)) func theDetailPageReadsTheSubmissionAndOnlyAReplacementsOldNote() async throws {

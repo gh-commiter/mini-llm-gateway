@@ -35,13 +35,14 @@ type ProjectJSON struct {
 	Role     core.Role               `json:"role,omitempty"`
 	Granted  []core.Class            `json:"granted"`
 	Origins  []core.MembershipOrigin `json:"origins,omitempty"`
+	Pending  int                     `json:"pendingReview,omitempty"` // project list, admins only: submissions waiting for their review
 }
 
 func toProject(p core.Project) ProjectJSON {
 	if p.Granted == nil {
 		p.Granted = []core.Class{}
 	}
-	return ProjectJSON{p.ID, p.Slug, p.Name, p.Archived, p.Role, p.Granted, p.Origins}
+	return ProjectJSON{p.ID, p.Slug, p.Name, p.Archived, p.Role, p.Granted, p.Origins, p.Pending}
 }
 
 type NoteJSON struct {
@@ -354,6 +355,15 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			return a.errResponse(err)
 		}
 		return resp(200, result)
+	case len(seg) >= 3 && seg[1] == "kb" && seg[2] == "review" && len(seg) <= 5:
+		pid, ok := posID(seg[0]) // 0: every project the caller reviews (list), the submission's own project (one submission)
+		if seg[0] == "0" {
+			pid, ok = 0, true
+		}
+		if !ok {
+			return a.errResponse(core.ErrInvalid{What: "project id"})
+		}
+		return a.reviewRoute(ctx, st, p, pid, seg[3:], q, r)
 	case len(seg) >= 3 && seg[1] == "kb" && seg[2] == "submissions" && len(seg) <= 4:
 		pid, ok := posID(seg[0])
 		if !ok {

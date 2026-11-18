@@ -158,7 +158,7 @@ func TestSegmentReadersAndWriters(t *testing.T) {
 	if v.Project != f.seg {
 		t.Fatal(v)
 	}
-	if v, e = f.ReviewSubmission(ctx, v.ID, true, ""); e != nil || v.NoteID == 0 {
+	if v, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID)); e != nil || v.NoteID == 0 {
 		t.Fatal(v, e)
 	}
 	// Without the roster entry the same admin of fakture would read nothing; the roster is the only door.

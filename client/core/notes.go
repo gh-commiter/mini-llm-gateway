@@ -627,6 +627,11 @@ func (s *Store) ListProjects(ctx context.Context, p Principal, includeArchived b
 				return err
 			}
 			out[i].Role = a.Role
+			if a.Role == Admin && !out[i].Archived {
+				if err = tx.QueryRow(`SELECT count(*) FROM kb_submissions WHERE state='pending' AND project_id=? AND user_id<>?`, out[i].ID, p.UserID).Scan(&out[i].Pending); err != nil {
+					return err
+				}
+			}
 			out[i].Origins, err = membershipOrigins(tx, out[i].ID, p.UserID)
 			if err != nil {
 				return err

@@ -129,7 +129,7 @@ func TestMarkdownFrontMatterAndSubmissionReceipt(t *testing.T) {
 	if again.Action != "merge" || again.SubmissionID != first.SubmissionID {
 		t.Fatal(again)
 	}
-	accepted, e := f.ReviewSubmission(ctx, first.SubmissionID, true, "")
+	accepted, e := f.ReviewSubmission(ctx, first.SubmissionID, true, "", f.seen(first.SubmissionID))
 	f.ok(e)
 	again, e = f.ImportMarkdown(ctx, p, pid, in)
 	f.ok(e)
@@ -148,7 +148,7 @@ func TestMarkdownFrontMatterAndSubmissionReceipt(t *testing.T) {
 	if published.Body != "changed pending" {
 		t.Fatal("published before review")
 	}
-	accepted2, e := f.ReviewSubmission(ctx, again.SubmissionID, true, "")
+	accepted2, e := f.ReviewSubmission(ctx, again.SubmissionID, true, "", f.seen(again.SubmissionID))
 	f.ok(e)
 	if accepted2.NoteID != accepted.NoteID {
 		t.Fatal("duplicate note")
@@ -470,7 +470,7 @@ func TestRejectedImportCanBeCorrected(t *testing.T) {
 	in := MarkdownInput{Markdown: "first", Path: "proposal.md", Class: Structure, Submit: true}
 	first, e := f.ImportMarkdown(ctx, p, pid, in)
 	f.ok(e)
-	_, e = f.ReviewSubmission(ctx, first.SubmissionID, false, "correct it")
+	_, e = f.ReviewSubmission(ctx, first.SubmissionID, false, "correct it", "")
 	f.ok(e)
 	same, e := f.ImportMarkdown(ctx, p, pid, in)
 	f.ok(e)
@@ -483,12 +483,12 @@ func TestRejectedImportCanBeCorrected(t *testing.T) {
 	if next.Action != "create" || next.SubmissionID == first.SubmissionID {
 		t.Fatal(next)
 	}
-	accepted, e := f.ReviewSubmission(ctx, next.SubmissionID, true, "")
+	accepted, e := f.ReviewSubmission(ctx, next.SubmissionID, true, "", f.seen(next.SubmissionID))
 	f.ok(e)
 	in.Markdown = "replacement"
 	proposal, e := f.ImportMarkdown(ctx, p, pid, in)
 	f.ok(e)
-	_, e = f.ReviewSubmission(ctx, proposal.SubmissionID, false, "correct again")
+	_, e = f.ReviewSubmission(ctx, proposal.SubmissionID, false, "correct again", "")
 	f.ok(e)
 	in.Markdown = "corrected replacement"
 	corrected, e := f.ImportMarkdown(ctx, p, pid, in)
@@ -496,7 +496,7 @@ func TestRejectedImportCanBeCorrected(t *testing.T) {
 	if corrected.Action != "create" || corrected.SubmissionID == proposal.SubmissionID {
 		t.Fatal(corrected)
 	}
-	approved, e := f.ReviewSubmission(ctx, corrected.SubmissionID, true, "")
+	approved, e := f.ReviewSubmission(ctx, corrected.SubmissionID, true, "", f.seen(corrected.SubmissionID))
 	f.ok(e)
 	if approved.NoteID != accepted.NoteID || countTable(t, f.Store, "notes") != 1 {
 		t.Fatal(approved)
@@ -505,7 +505,7 @@ func TestRejectedImportCanBeCorrected(t *testing.T) {
 	in.Markdown = "third proposal"
 	proposal, e = f.ImportMarkdown(ctx, p, pid, in)
 	f.ok(e)
-	_, e = f.ReviewSubmission(ctx, proposal.SubmissionID, false, "needs work")
+	_, e = f.ReviewSubmission(ctx, proposal.SubmissionID, false, "needs work", "")
 	f.ok(e)
 	n, e := f.GetNote(ctx, p, pid, accepted.NoteID)
 	f.ok(e)

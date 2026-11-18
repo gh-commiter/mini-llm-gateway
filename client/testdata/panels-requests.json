@@ -622,11 +622,12 @@
    "action": "accept",
    "row": {
     "id": 5,
-    "title": "<script>alert(1)</script>"
+    "title": "<script>alert(1)</script>",
+    "reviewHash": "h5"
    },
    "want": {
     "query": "",
-    "body": "{}",
+    "body": "{\"reviewHash\":\"h5\"}",
     "method": "POST",
     "path": "/kb/submissions/5/accept"
    },

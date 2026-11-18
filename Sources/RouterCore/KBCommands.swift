@@ -11,11 +11,14 @@ extension ProjectEnv {
         minigw kb faq [<project>|--team <team>] [--json]   the project's (or the team's) questions and answers
         minigw kb submissions [<project>|--team <team>] [--json]   your submissions (all projects and your teams' own notes if omitted)
         minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)
+        minigw kb review [<project>|--team <team>]   project admins: the pending submissions you may review (never your own), including bodies
+        minigw kb accept <id> [--version <tag>]   project admins: publish a submission of another member; --version: the tag kb review showed (without it: only in a terminal, after you confirm the text)
+        minigw kb reject <id> [--reason text]
         """
     public static let kbAdminHelp = """
         minigw gw kb rebuild-search
         minigw gw kb review [<project>|--team <team>]   pending submissions, including bodies
-        minigw gw kb accept <id>
+        minigw gw kb accept <id> [--version <tag>]   --version: the tag gw kb review showed (without it: only in a terminal, after you confirm the text)
         minigw gw kb reject <id> [--reason text]
         """
     static let teamProjectUsage = "usage: give either a project or --team <team>"
@@ -66,15 +69,16 @@ extension ProjectEnv {
         if agent { throw ProjectError(Self.agentRefusal) }
         if args.first == "faq" { try kbFAQ(Array(args.dropFirst())); return }
         let usage = ProjectError("usage:\n" + Self.kbHelp)
-        guard let fl = try? GoFlags.parse([("class", .string), ("kind", .string), ("title", .string), ("key", .string), ("replaces", .int), ("revision", .int), ("json", .bool), ("team", .string)], args) else { throw usage }
+        guard let fl = try? GoFlags.parse([("class", .string), ("kind", .string), ("title", .string), ("key", .string), ("replaces", .int), ("revision", .int), ("json", .bool), ("team", .string), ("reason", .string), ("version", .string)], args) else { throw usage }
         var pos = fl.positional
         let team = fl.string("team")
+        if pos.first == "accept" || pos.first == "reject" { try kbDecide(pos, team, fl.string("reason"), fl.string("version")); return }
         if !team.isEmpty {
-            guard pos.first == "submit" || pos.first == "submissions" else { throw usage }
+            guard pos.first == "submit" || pos.first == "submissions" || pos.first == "review" else { throw usage }
             guard pos[0] == "submit" ? pos.count == 2 : pos.count == 1 else { throw ProjectError(Self.teamProjectUsage) }
             if pos[0] == "submit" { pos = ["submit", "", pos[1]] }
         } else {
-            guard pos.count == 3 && pos[0] == "submit" || (1...2).contains(pos.count) && pos[0] == "submissions" else { throw usage }
+            guard pos.count == 3 && pos[0] == "submit" || (1...2).contains(pos.count) && (pos[0] == "submissions" || pos[0] == "review") else { throw usage }
         }
         let kind = fl.string("kind")
         if !kind.isEmpty && kind != "finding" && kind != "faq" { throw usage }
@@ -93,6 +97,7 @@ extension ProjectEnv {
             let b = try request("GET", Self.apiProjects + "/" + ProjectText.pathEscape(pos[1]))
             project = JSONValue.parse(b)?.dict["id"]?.int ?? 0
         }
+        if pos[0] == "review" { try kbReview(c, project, names); return }
         if pos[0] == "submit" {
             let body = try readInput(pos[2])
             let title = fl.string("title").isEmpty ? defaultTitle(body, pos[2]) : fl.string("title")
@@ -150,6 +155,81 @@ extension ProjectEnv {
         if all.isEmpty { say("no submissions") }
     }
 
+    /// The pending submissions a project admin may review (project 0: all of them), as gw kb review prints them.
+    func kbReview(_ c: ProjectConn, _ project: Int64, _ known: [Int64: String]) throws {
+        func request(_ path: String) throws -> JDict {
+            let r = send(c, "GET", path, [:], nil)
+            guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+            return JSONValue.parse(r.data)?.dict ?? JDict()
+        }
+        var names = known, teamsAsked = false, count = 0, after: Int64 = 0
+        repeat {
+            let pg = try request("\(Self.apiProjects)/\(project)/kb/review?after=\(after)")
+            for v in pg["submissions"]?.array ?? [] {
+                let full = try request("\(Self.apiProjects)/0/kb/review/\(v.dict["id"]?.int ?? 0)")
+                let pid = full["project"]?.int ?? 0
+                if pid > Self.segmentBase && (names[pid - Self.segmentBase] ?? "").isEmpty && !teamsAsked {
+                    teamsAsked = true  // the notes of a team print as "team <name>": the teams you are on, asked once
+                    let tr = send(c, "GET", "/minigw/v1/teams", [:], nil)
+                    if tr.status == 200, case .arr(let ts)? = JSONValue.parse(tr.data) {
+                        for t in ts {
+                            let id = t.dict["segment"]?.int ?? 0
+                            if id > Self.segmentBase { names[id - Self.segmentBase] = t.dict["name"]?.string ?? "" }
+                        }
+                    }
+                }
+                Self.printReview(say, full, names)
+                count += 1
+            }
+            after = pg["next"]?.int ?? 0
+        } while after != 0
+        if count == 0 { say("no submissions") }
+    }
+
+    /// One submission as gw kb review and kb review print it: its line, the writer, and the text.
+    static func printReview(_ say: (String) -> Void, _ full: JDict, _ names: [Int64: String]) {
+        say(submissionLine(full, names))
+        let hash = full["reviewHash"]?.string ?? ""
+        say(ProjectText.clean("writer \(full["authorName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? String(full["user"]?.int ?? 0))  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)" + (hash.isEmpty ? "" : "  version " + versionTag(hash))))
+        if let body = full["body"]?.string { say(ProjectText.clean(body)) }
+    }
+
+    /// The short name of a review hash that kb review prints and kb accept --version takes.
+    static func versionTag(_ hash: String) -> String { String(hash.prefix(12)) }
+    static let changedSinceRead = "the submission changed since you read it: review it again"
+    static let acceptNeedsTag = "not accepted: without a terminal, name the version you read: --version <tag> (kb review shows it)"
+    static let acceptDeclined = "not accepted"
+
+    /// confirmAccept of Go: with --version only when the hash starts with that whole tag; without it only in a terminal,
+    /// after a "y". nil = send; otherwise the refusal, and nothing is sent.
+    static func confirmAccept(_ hash: String, _ version: String, terminal: Bool, ask: (String) -> Void, answer: () -> String?) -> String? {
+        if !version.isEmpty { return version.count >= 12 && hash.hasPrefix(version) ? nil : changedSinceRead }
+        if !terminal { return acceptNeedsTag }
+        ask("Accept this text? [y/N] ")
+        let a = (answer() ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        return a == "y" || a == "yes" ? nil : acceptDeclined
+    }
+
+    /// A project admin's kb accept|reject <id>: the gateway finds the submission's project and decides who may. An accept
+    /// first reads the submission, prints what it accepts and sends the version it read (refused when the text changed).
+    func kbDecide(_ pos: [String], _ team: String, _ reason: String, _ version: String) throws {
+        guard pos.count == 2, team.isEmpty, let id = Int64(pos[1]), id > 0 else { throw ProjectError("usage:\n" + Self.kbHelp) }
+        let (c, _) = connect()
+        var fields: [String: Any] = ["reason": reason]
+        if pos[0] == "accept" {
+            let g = send(c, "GET", "\(Self.apiProjects)/0/kb/review/\(id)", [:], nil)
+            guard g.status == 200 else { throw Self.gatewayError(g.status, g.data, g.retryAfter) }
+            let full = JSONValue.parse(g.data)?.dict ?? JDict()
+            Self.printReview(say, full, [:])
+            let hash = full["reviewHash"]?.string ?? ""
+            if let refusal = Self.confirmAccept(hash, version, terminal: isTerminal(), ask: { out($0) }, answer: readAnswer) { throw ProjectError(refusal) }
+            fields["reviewHash"] = hash
+        }
+        let r = send(c, "POST", "\(Self.apiProjects)/0/kb/review/\(id)/\(pos[0])", [:], try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]))
+        guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+        say(Self.submissionResult(JSONValue.parse(r.data)?.dict ?? JDict()))
+    }
+
     func searchLine(_ d: JDict) -> String {
         ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  \(Self.subjectOf(d["project"]?.int ?? 0, d["team"]?.string ?? ""))  \(d["class"]?.string ?? "")  \(stamp(d["updated"]?.string.flatMap(ProjectText.parseTime)))\(Self.kindSuffix(d))\(d["from"]?.string.flatMap { $0.isEmpty ? nil : "  from " + $0 } ?? "")\n\(d["snippet"]?.string ?? "")")
     }
@@ -192,7 +272,7 @@ extension ProjectEnv {
 }
 
 extension AdminCommands {
-    func kb(_ pos: [String], reason: String, team: String = "") throws {
+    func kb(_ pos: [String], reason: String, team: String = "", version: String = "") throws {
         let usage = fail("usage:\n" + ProjectEnv.kbAdminHelp)
         guard pos.count >= 2 else { throw usage }
         if pos.count == 2 && pos[1] == "rebuild-search" { _ = try request("POST", "/kb/search/rebuild"); say("search index rebuilt"); return }
@@ -212,16 +292,22 @@ extension AdminCommands {
                 let pg = try request("GET", "/kb/submissions?project=\(project)&after=\(after)")
                 for v in pg["submissions"]?.array ?? [] {
                     let full = try request("GET", "/kb/submissions/\(v.dict["id"]?.int ?? 0)")
-                    say(ProjectEnv.submissionLine(full, (full["project"]?.int ?? 0) > ProjectEnv.segmentBase ? try teamNames() : [:]))
-                    say(clean("writer \(full["authorName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? String(full["user"]?.int ?? 0))  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)"))
-                    if let body = full["body"]?.string { say(clean(body)) }; count += 1
+                    ProjectEnv.printReview(say, full, (full["project"]?.int ?? 0) > ProjectEnv.segmentBase ? try teamNames() : [:]); count += 1
                 }
                 after = pg["next"]?.int ?? 0
             } while after != 0
             if count == 0 { say("no submissions") }; return
         }
         if pos.count == 3 && ["accept", "reject"].contains(pos[1]), let id = Int64(pos[2]), id > 0 {
-            let v = try request("POST", "/kb/submissions/\(id)/\(pos[1])", ["reason": reason])
+            var fields: [String: Any] = ["reason": reason]
+            if pos[1] == "accept" {  // what is accepted, and the version read: the gateway refuses a text changed since
+                let full = try request("GET", "/kb/submissions/\(id)")
+                ProjectEnv.printReview(say, full, [:])
+                let hash = full["reviewHash"]?.string ?? ""
+                if let refusal = ProjectEnv.confirmAccept(hash, version, terminal: isTerminal(), ask: { out($0) }, answer: readAnswer) { throw fail(refusal) }
+                fields["reviewHash"] = hash
+            }
+            let v = try request("POST", "/kb/submissions/\(id)/\(pos[1])", fields)
             say(ProjectEnv.submissionResult(v)); return
         }
         throw usage

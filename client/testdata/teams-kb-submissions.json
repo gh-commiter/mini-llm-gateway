@@ -15,11 +15,11 @@
         {
           "match": "GET /kb/submissions/7",
           "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\"}"
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
         }
       ],
       "want": {
-        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter 2  device   replaces 0  revision 0\nReview this\n",
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter 2  device   replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
         "err": "",
         "exit": 0,
         "requests": [
@@ -43,7 +43,15 @@
         "accept",
         "7"
       ],
+      "opts": {
+        "version": "3f9a0c1d2b7e"
+      },
       "responses": [
+        {
+          "match": "GET /kb/submissions/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        },
         {
           "match": "POST /kb/submissions/7/accept",
           "status": 200,
@@ -51,14 +59,92 @@
         }
       ],
       "want": {
-        "out": "submission 7 accepted\n",
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\nsubmission 7 accepted\n",
         "err": "",
         "exit": 0,
         "requests": [
           [
+            "GET",
+            "/kb/submissions/7",
+            ""
+          ],
+          [
             "POST",
             "/kb/submissions/7/accept",
-            "{\"reason\":\"\"}"
+            "{\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "accept without a terminal needs the version",
+      "args": [
+        "kb",
+        "accept",
+        "7"
+      ],
+      "responses": [
+        {
+          "match": "GET /kb/submissions/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        },
+        {
+          "match": "POST /kb/submissions/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"state\":\"accepted\"}"
+        }
+      ],
+      "want": {
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
+        "err": "minigw: not accepted: without a terminal, name the version you read: --version <tag> (kb review shows it)\n",
+        "exit": 1,
+        "requests": [
+          [
+            "GET",
+            "/kb/submissions/7",
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "accept in a terminal after yes",
+      "args": [
+        "kb",
+        "accept",
+        "7"
+      ],
+      "opts": {
+        "tty": true
+      },
+      "stdin": "y\n",
+      "responses": [
+        {
+          "match": "GET /kb/submissions/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        },
+        {
+          "match": "POST /kb/submissions/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"state\":\"accepted\"}"
+        }
+      ],
+      "want": {
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\nAccept this text? [y/N] submission 7 accepted\n",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/kb/submissions/7",
+            ""
+          ],
+          [
+            "POST",
+            "/kb/submissions/7/accept",
+            "{\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
           ]
         ]
       }
@@ -939,6 +1025,326 @@
     {"args": ["faq", "demo", "--team", "acme"], "error": "usage: give either a project or --team <team>"},
     {"args": ["submit", "demo", "--team", "acme", "-"], "error": "usage: give either a project or --team <team>"},
     {"args": ["export", "demo", "--team", "acme", "/nowhere"], "error": "usage: give either a project or --team <team>"},
-    {"args": ["import", "demo", "--team", "acme", "/nowhere"], "error": "usage: give either a project or --team <team>"}
+    {"args": ["import", "demo", "--team", "acme", "/nowhere"], "error": "usage: give either a project or --team <team>"},
+    {"args": ["review", "demo", "--team", "acme"], "error": "usage: give either a project or --team <team>"}
+  ],
+  "review": [
+    {
+      "args": [
+        "review",
+        "fakture"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/fakture",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/review?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\"}],\"next\":0}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/fakture",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/review?after=0",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "review"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":8,\"project\":1099511627777,\"user\":3,\"class\":\"data\",\"title\":\"Who deploys?\",\"state\":\"pending\",\"entryKind\":\"faq\"}],\"next\":0}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/8",
+          "status": 200,
+          "body": "{\"id\":8,\"project\":1099511627777,\"user\":3,\"class\":\"data\",\"title\":\"Who deploys?\",\"state\":\"pending\",\"entryKind\":\"faq\",\"replaces\":3,\"revision\":2,\"body\":\"The team lead.\",\"provenance\":{\"device\":\"dev-bor\"},\"authorName\":\"bor\",\"reviewHash\":\"9b9b9b9b9b9b1111111111111111111111111111111111111111111111111111\"}"
+        },
+        {
+          "match": "GET /minigw/v1/teams",
+          "status": 200,
+          "body": "[{\"id\":1,\"name\":\"acme\",\"segment\":1099511627777}]"
+        }
+      ],
+      "out": "submission 8  team acme  pending  data  Who deploys?  (faq)\nwriter bor  device dev-bor  replaces 3  revision 2  version 9b9b9b9b9b9b\nThe team lead.\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review?after=0",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/8",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/teams",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "review",
+        "--team",
+        "acme"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/teams/acme",
+          "status": 200,
+          "body": "{\"id\":1,\"name\":\"acme\",\"archived\":false,\"path\":\"\",\"segment\":1099511627777,\"members\":[],\"projects\":[]}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1099511627777/kb/review?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[],\"next\":0}"
+        }
+      ],
+      "out": "no submissions\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/teams/acme",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1099511627777/kb/review?after=0",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "accept",
+        "7",
+        "--version",
+        "3f9a0c1d2b7e"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\nsubmission 7 accepted\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/0/kb/review/7/accept",
+          "{\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        ]
+      ]
+    },
+    {
+      "args": [
+        "accept",
+        "7",
+        "--version",
+        "000000000000"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ]
+      ],
+      "error": "the submission changed since you read it: review it again"
+    },
+    {
+      "args": [
+        "accept",
+        "7",
+        "--version",
+        "3f9a"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ]
+      ],
+      "error": "the submission changed since you read it: review it again"
+    },
+    {
+      "args": [
+        "accept",
+        "7"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ]
+      ],
+      "error": "not accepted: without a terminal, name the version you read: --version <tag> (kb review shows it)",
+      "tty": false
+    },
+    {
+      "args": [
+        "accept",
+        "7"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\nAccept this text? [y/N] submission 7 accepted\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/0/kb/review/7/accept",
+          "{\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        ]
+      ],
+      "tty": true,
+      "input": "y\n"
+    },
+    {
+      "args": [
+        "accept",
+        "7"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\nAccept this text? [y/N] ",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ]
+      ],
+      "error": "not accepted",
+      "tty": true,
+      "input": "\n"
+    },
+    {
+      "args": [
+        "reject",
+        "7",
+        "--reason",
+        "Needs work"
+      ],
+      "responses": [
+        {
+          "match": "POST /minigw/v1/projects/0/kb/review/7/reject",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"rejected\",\"reason\":\"Needs work\"}"
+        }
+      ],
+      "out": "submission 7 rejected\n",
+      "requests": [
+        [
+          "POST",
+          "/minigw/v1/projects/0/kb/review/7/reject",
+          "{\"reason\":\"Needs work\"}"
+        ]
+      ]
+    }
   ]
 }

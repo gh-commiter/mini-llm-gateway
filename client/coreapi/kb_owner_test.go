@@ -111,7 +111,7 @@ func TestOwnerKBReads(t *testing.T) {
 			teamSub = sub
 		}
 	}
-	call(admin, "POST", fmt.Sprintf("/kb/submissions/%d/accept", teamSub.ID), "{}", 200)
+	call(admin, "POST", fmt.Sprintf("/kb/submissions/%d/accept", teamSub.ID), `{"reviewHash":"`+teamSub.ReviewHash+`"}`, 200) // the list row names the version
 	for _, path := range []string{
 		"/kb/notes?project=" + seg, fmt.Sprintf("/kb/notes/%d", teamNote.ID), "/kb/submissions", fmt.Sprintf("/kb/submissions/%d", teamSub.ID),
 		"/kb/faq?project=" + seg, "/kb/notes?project=" + seg + "&kind=faq",
@@ -132,7 +132,7 @@ func TestOwnerKBReads(t *testing.T) {
 	// accept the project faq: it now lists as an faq note, and the kind filter finds it
 	for _, s := range q.Submissions {
 		if s.Title == "Q?" {
-			call(admin, "POST", fmt.Sprintf("/kb/submissions/%d/accept", s.ID), "{}", 200)
+			call(admin, "POST", fmt.Sprintf("/kb/submissions/%d/accept", s.ID), `{"reviewHash":"`+s.ReviewHash+`"}`, 200)
 		}
 	}
 	if faq := string(call(admin, "GET", fmt.Sprintf("/kb/faq?project=%d", fk), "", 200).Body); !strings.Contains(faq, `"answer":"A."`) {

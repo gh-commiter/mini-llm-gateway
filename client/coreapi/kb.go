@@ -57,6 +57,54 @@ func (a *API) submissionRoute(ctx context.Context, st *core.Store, p core.Princi
 	}
 	return a.errResponse(core.ErrNotFound)
 }
+
+// reviewRoute: a project admin's review of the project's submissions (member API, member context only):
+// GET /kb/review?after=, GET /kb/review/{id}, POST /kb/review/{id}/accept|reject {"reason"}. The store decides who may.
+func (a *API) reviewRoute(ctx context.Context, st *core.Store, p core.Principal, project int64, rest []string, q url.Values, r Request) Response {
+	switch {
+	case len(rest) == 0 && r.Method == "GET":
+		after, e := submissionAfter(q)
+		if e != nil {
+			return a.errResponse(e)
+		}
+		vs, e := st.ListReview(ctx, p, project, after)
+		if e != nil {
+			return a.errResponse(e)
+		}
+		return submissionPage(vs)
+	case len(rest) == 1 && r.Method == "GET":
+		id, ok := posID(rest[0])
+		if !ok {
+			return a.errResponse(core.ErrNotFound)
+		}
+		v, writer, e := st.GetReview(ctx, p, project, id)
+		if e != nil {
+			return a.errResponse(e)
+		}
+		return resp(200, struct {
+			core.Submission
+			AuthorName string `json:"authorName"`
+		}{v, writer})
+	case len(rest) == 2 && r.Method == "POST" && (rest[1] == "accept" || rest[1] == "reject"):
+		id, ok := posID(rest[0])
+		if !ok {
+			return a.errResponse(core.ErrNotFound)
+		}
+		var b struct {
+			Reason     string `json:"reason"`
+			ReviewHash string `json:"reviewHash"`
+		}
+		if e := payload(r, &b); e != nil {
+			return a.errResponse(e)
+		}
+		v, e := st.MemberReview(ctx, p, project, id, rest[1] == "accept", b.Reason, b.ReviewHash)
+		if e != nil {
+			return a.errResponse(e)
+		}
+		return resp(200, v)
+	}
+	return a.errResponse(core.ErrNotFound)
+}
 func submissionAfter(q url.Values) (int64, error) {
 	if q.Get("after") == "" {
 		return 0, nil
@@ -122,12 +170,13 @@ func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []
 	}
 	if len(seg) == 4 && method == "POST" && (seg[3] == "accept" || seg[3] == "reject") {
 		var b struct {
-			Reason string `json:"reason"`
+			Reason     string `json:"reason"`
+			ReviewHash string `json:"reviewHash"`
 		}
 		if e := payload(Request{Body: body}, &b); e != nil {
 			return a.errResponse(e)
 		}
-		v, e := st.ReviewSubmission(ctx, id, seg[3] == "accept", b.Reason)
+		v, e := st.ReviewSubmission(ctx, id, seg[3] == "accept", b.Reason, b.ReviewHash)
 		if e != nil {
 			return a.errResponse(e)
 		}

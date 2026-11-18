@@ -14,7 +14,7 @@ func publishedWithPendingReplacement(t *testing.T, kind string) (f *fx, pid, not
 	in = MarkdownInput{Markdown: "---\nentry_kind: \"" + kind + "\"\n---\npublished", Path: "k.md", Class: Structure, Submit: true}
 	first, e := f.ImportMarkdown(ctx, p, pid, in)
 	f.ok(e)
-	acc, e := f.ReviewSubmission(ctx, first.SubmissionID, true, "")
+	acc, e := f.ReviewSubmission(ctx, first.SubmissionID, true, "", f.seen(first.SubmissionID))
 	f.ok(e)
 	noteID = acc.NoteID
 	if n, _ := f.GetNote(ctx, p, pid, noteID); n.EntryKind != kind {
@@ -31,7 +31,7 @@ func TestReimportOfPendingReplacementKeepsFindingKind(t *testing.T) {
 	in.Markdown = "---\nentry_kind: \"faq\"\n---\nshort answer"
 	_, e := f.ImportMarkdown(ctx, f.p("ana"), pid, in)
 	f.ok(e)
-	_, e = f.ReviewSubmission(ctx, prop.SubmissionID, true, "")
+	_, e = f.ReviewSubmission(ctx, prop.SubmissionID, true, "", f.seen(prop.SubmissionID))
 	f.ok(e)
 	n, _ := f.GetNote(ctx, f.p("ana"), pid, noteID)
 	if n.EntryKind != KindFinding {
@@ -48,7 +48,7 @@ func TestReimportOfPendingReplacementKeepsFAQKindAndLimits(t *testing.T) {
 	in.Markdown = "---\nentry_kind: \"finding\"\n---\nshort answer"
 	_, e := f.ImportMarkdown(ctx, f.p("ana"), pid, in)
 	f.ok(e)
-	_, e = f.ReviewSubmission(ctx, prop.SubmissionID, true, "")
+	_, e = f.ReviewSubmission(ctx, prop.SubmissionID, true, "", f.seen(prop.SubmissionID))
 	f.ok(e)
 	n, _ := f.GetNote(ctx, f.p("ana"), pid, noteID)
 	if n.EntryKind != KindFAQ {

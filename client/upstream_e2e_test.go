@@ -198,7 +198,7 @@ func TestUpstreamEndToEnd(t *testing.T) {
 	}
 	// the reviewers there accept both submissions of that note; the next change replaces the accepted note
 	for _, id := range []int{1, 3} {
-		if _, err := f.remote.core.ReviewSubmission(t0, int64(id), true, ""); err != nil {
+		if _, err := f.remote.core.ReviewSubmission(t0, int64(id), true, "", seenHash(f.remote.core, int64(id))); err != nil {
 			t.Fatal(id, err)
 		}
 	}
@@ -813,4 +813,10 @@ func TestUpstreamPublishModeBetweenTwoGateways(t *testing.T) {
 	if out, _ = f.cmd(coreOpts{}, "status", "shop"); !strings.Contains(out, "(deleted there)") {
 		t.Fatal(out)
 	}
+}
+
+// seenHash is the review hash of submission id as the owner reads it now.
+func seenHash(st *core.Store, id int64) string {
+	v, _ := st.GetSubmission(t0, core.Principal{}, 0, id, true)
+	return v.ReviewHash
 }

@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"minigw/core"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -25,10 +28,13 @@ minigw kb search [<project>|--team <team>] <query> [--json]   a project search a
 minigw kb submit <project>|--team <team> [--class structure|data] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB); private is for projects only
 minigw kb faq [<project>|--team <team>] [--json]   the project's (or the team's) questions and answers
 minigw kb submissions [<project>|--team <team>] [--json]   your submissions (all projects and your teams' own notes if omitted)
-minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)`
+minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)
+minigw kb review [<project>|--team <team>]   project admins: the pending submissions you may review (never your own), including bodies
+minigw kb accept <id> [--version <tag>]   project admins: publish a submission of another member; --version: the tag kb review showed (without it: only in a terminal, after you confirm the text)
+minigw kb reject <id> [--reason text]`
 const kbAdminHelp = `minigw gw kb rebuild-search
 minigw gw kb review [<project>|--team <team>]   pending submissions, including bodies
-minigw gw kb accept <id>
+minigw gw kb accept <id> [--version <tag>]   --version: the tag gw kb review showed (without it: only in a terminal, after you confirm the text)
 minigw gw kb reject <id> [--reason text]`
 
 // kindSuffix marks a faq at the end of the first line; a finding prints as before.
@@ -126,22 +132,27 @@ func (e *projectEnv) kb(args []string) error {
 	revision := fs.Int64("revision", 0, "")
 	asJSON := fs.Bool("json", false, "")
 	team := fs.String("team", "", "")
+	reason := fs.String("reason", "", "")
+	version := fs.String("version", "", "")
 	pos, err := parseFlags(fs, args)
 	usage := errors.New("usage:\n" + kbHelp)
 	if err != nil || len(pos) == 0 {
 		return usage
 	}
-	if pos[0] != "submit" && pos[0] != "submissions" {
+	if pos[0] == "accept" || pos[0] == "reject" {
+		return e.kbDecide(pos, *team, *reason, *version)
+	}
+	if pos[0] != "submit" && pos[0] != "submissions" && pos[0] != "review" {
 		return usage
 	}
 	if *team != "" {
-		if pos[0] == "submit" && len(pos) != 2 || pos[0] == "submissions" && len(pos) != 1 {
+		if pos[0] == "submit" && len(pos) != 2 || pos[0] != "submit" && len(pos) != 1 {
 			return errors.New(teamProjectUsage)
 		}
 		if pos[0] == "submit" {
 			pos = []string{"submit", "", pos[1]}
 		}
-	} else if pos[0] == "submit" && len(pos) != 3 || pos[0] == "submissions" && len(pos) > 2 {
+	} else if pos[0] == "submit" && len(pos) != 3 || pos[0] != "submit" && len(pos) > 2 {
 		return usage
 	}
 	if *kind != "" && *kind != "finding" && *kind != "faq" {
@@ -172,6 +183,9 @@ func (e *projectEnv) kb(args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if pos[0] == "review" {
+		return e.kbReview(c, project, names)
 	}
 	base := fmt.Sprintf("%s/%d/kb/submissions", apiProjects, project)
 	if pos[0] == "submit" {
@@ -287,6 +301,161 @@ func (e *projectEnv) kb(args []string) error {
 	if len(all) == 0 {
 		e.say("no submissions")
 	}
+	return nil
+}
+
+// kbReview prints the pending submissions a project admin may review (project 0: all of them), as gw kb review does.
+func (e *projectEnv) kbReview(c connection, project int64, names map[int64]string) error {
+	teamsAsked := false
+	count := 0
+	for after := int64(0); ; {
+		st, b, h := e.do(c, "GET", fmt.Sprintf("%s/%d/kb/review?after=%d", apiProjects, project, after), nil, nil)
+		if st != 200 {
+			return gatewayError(st, b, h)
+		}
+		var pg struct {
+			Submissions []core.Submission
+			Next        int64
+		}
+		if err := json.Unmarshal(b, &pg); err != nil {
+			return err
+		}
+		for _, v := range pg.Submissions {
+			st, b, h := e.do(c, "GET", fmt.Sprintf("%s/0/kb/review/%d", apiProjects, v.ID), nil, nil)
+			if st != 200 {
+				return gatewayError(st, b, h)
+			}
+			var full struct {
+				core.Submission
+				AuthorName string
+			}
+			if err := json.Unmarshal(b, &full); err != nil {
+				return err
+			}
+			if team, seg := core.SegmentTeam(full.Project); seg && names[team] == "" && !teamsAsked {
+				teamsAsked = true // the notes of a team print as "team <name>": the teams you are on, asked once
+				if st, b, _ := e.do(c, "GET", "/minigw/v1/teams", nil, nil); st == 200 {
+					var ts []struct {
+						Name    string
+						Segment int64
+					}
+					if json.Unmarshal(b, &ts) == nil {
+						for _, t := range ts {
+							if id, ok := core.SegmentTeam(t.Segment); ok {
+								names[id] = t.Name
+							}
+						}
+					}
+				}
+			}
+			printReview(e.say, full.Submission, full.AuthorName, names)
+			count++
+		}
+		if pg.Next == 0 {
+			break
+		}
+		after = pg.Next
+	}
+	if count == 0 {
+		e.say("no submissions")
+	}
+	return nil
+}
+
+// printReview prints one submission as gw kb review and kb review do: its line, the writer, and the text.
+func printReview(say func(string), v core.Submission, authorName string, names map[int64]string) {
+	say(submissionLine(v, names))
+	writer := strconv.FormatInt(v.User, 10)
+	if authorName != "" {
+		writer = authorName
+	}
+	line := fmt.Sprintf("writer %s  device %s  replaces %d  revision %d", writer, v.Provenance.Device, v.Replaces, v.Revision)
+	if v.ReviewHash != "" {
+		line += "  version " + versionTag(v.ReviewHash)
+	}
+	say(clean(line))
+	if v.Body != nil {
+		say(clean(*v.Body))
+	}
+}
+
+// versionTag is the short name of a review hash that kb review prints and kb accept --version takes.
+func versionTag(hash string) string {
+	if len(hash) > 12 {
+		return hash[:12]
+	}
+	return hash
+}
+
+const (
+	changedSinceRead = "the submission changed since you read it: review it again"
+	acceptNeedsTag   = "not accepted: without a terminal, name the version you read: --version <tag> (kb review shows it)"
+	acceptDeclined   = "not accepted"
+)
+
+// confirmAccept decides an accept of the text just printed, whose review hash is hash: with --version only when the hash
+// starts with it (a whole tag), without it only in a terminal after a "y". Nothing is sent unless it returns nil: the
+// person (or the script, by naming the version) accepts what was read, never what is there now unseen.
+func confirmAccept(hash, version string, terminal bool, in io.Reader, out io.Writer) error {
+	if version != "" {
+		if len(version) < 12 || !strings.HasPrefix(hash, version) {
+			return errors.New(changedSinceRead)
+		}
+		return nil
+	}
+	if !terminal {
+		return errors.New(acceptNeedsTag)
+	}
+	fmt.Fprint(out, "Accept this text? [y/N] ")
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	if a := strings.ToLower(strings.TrimSpace(line)); a == "y" || a == "yes" {
+		return nil
+	}
+	return errors.New(acceptDeclined)
+}
+
+// kbDecide is a project admin's kb accept|reject <id>: the gateway finds the submission's project and decides who may.
+// An accept first reads the submission, prints what it accepts and sends the version it read (the gateway refuses
+// when the text changed in between).
+func (e *projectEnv) kbDecide(pos []string, team, reason, version string) error {
+	if len(pos) != 2 || team != "" {
+		return errors.New("usage:\n" + kbHelp)
+	}
+	id, err := strconv.ParseInt(pos[1], 10, 64)
+	if err != nil || id < 1 {
+		return errors.New("usage:\n" + kbHelp)
+	}
+	c, _ := e.connect()
+	fields := map[string]any{"reason": reason}
+	if pos[0] == "accept" {
+		st, b, h := e.do(c, "GET", fmt.Sprintf("%s/0/kb/review/%d", apiProjects, id), nil, nil)
+		if st != 200 {
+			return gatewayError(st, b, h)
+		}
+		var full struct {
+			core.Submission
+			AuthorName string
+		}
+		if err := json.Unmarshal(b, &full); err != nil {
+			return err
+		}
+		printReview(e.say, full.Submission, full.AuthorName, nil)
+		terminal := e.tty == nil && stdinTerminal() || e.tty != nil && e.tty()
+		if err := confirmAccept(full.ReviewHash, version, terminal, e.in, e.out); err != nil {
+			return err
+		}
+		fields["reviewHash"] = full.ReviewHash
+	}
+	body, _ := json.Marshal(fields)
+	st, b, h := e.do(c, "POST", fmt.Sprintf("%s/0/kb/review/%d/%s", apiProjects, id, pos[0]), nil, body)
+	if st != 200 {
+		return gatewayError(st, b, h)
+	}
+	var v core.Submission
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	e.say(submissionResult(v))
 	return nil
 }
 
@@ -471,7 +640,11 @@ func (e *projectEnv) kbSearch(args []string) error {
 	return nil
 }
 
-func kbAdmin(a *adminClient, pos []string, reason, team string) {
+// adminTerminal: is the owner's standard input a terminal (tests replace it).
+var adminTerminal = stdinTerminal
+
+func kbAdmin(a *adminClient, pos []string, o coreOpts) {
+	reason, team := o.reason, o.team
 	usage := func() { fail("usage:\n" + kbAdminHelp) }
 	if len(pos) < 2 {
 		usage()
@@ -520,15 +693,7 @@ func kbAdmin(a *adminClient, pos []string, reason, team string) {
 				if _, seg := core.SegmentTeam(full.Project); seg {
 					known = teamNames()
 				}
-				say(submissionLine(full.Submission, known))
-				writer := strconv.FormatInt(full.User, 10)
-				if full.AuthorName != "" {
-					writer = full.AuthorName
-				}
-				say(clean(fmt.Sprintf("writer %s  device %s  replaces %d  revision %d", writer, full.Provenance.Device, full.Replaces, full.Revision)))
-				if full.Body != nil {
-					say(clean(*full.Body))
-				}
+				printReview(say, full.Submission, full.AuthorName, known)
 				count++
 			}
 			if pg.Next == 0 {
@@ -547,8 +712,22 @@ func kbAdmin(a *adminClient, pos []string, reason, team string) {
 			usage()
 			return
 		}
+		fields := map[string]any{"reason": reason}
+		if pos[1] == "accept" { // what is accepted, and the version read: the gateway refuses a text changed since
+			var full struct {
+				core.Submission
+				AuthorName string
+			}
+			a.do("GET", "/kb/submissions/"+strconv.FormatInt(id, 10), nil, &full)
+			printReview(say, full.Submission, full.AuthorName, nil)
+			if err := confirmAccept(full.ReviewHash, o.version, adminTerminal(), o.in, os.Stdout); err != nil {
+				fail(err.Error())
+				return
+			}
+			fields["reviewHash"] = full.ReviewHash
+		}
 		var v core.Submission
-		a.do("POST", fmt.Sprintf("/kb/submissions/%d/%s", id, pos[1]), map[string]any{"reason": reason}, &v)
+		a.do("POST", fmt.Sprintf("/kb/submissions/%d/%s", id, pos[1]), fields, &v)
 		say(submissionResult(v))
 		return
 	}

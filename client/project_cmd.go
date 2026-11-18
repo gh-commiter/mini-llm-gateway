@@ -68,6 +68,7 @@ type projectEnv struct {
 	gateway  func() string                          // the default profile's gateway id, "" = not connected
 	gitState func(dir string) (head, status string) // HEAD and the status hash of the linked folder
 	now      func() time.Time
+	tty      func() bool // kb accept: is stdin a terminal; nil = ask the real one
 }
 
 // projectMain, noteMain and usageMain are the entry points of main().
@@ -307,6 +308,7 @@ func (e *projectEnv) project(args []string) error {
 			Role     string
 			Origins  []cliOrigin
 			Granted  []string
+			Pending  int `json:"pendingReview"`
 		}
 		json.Unmarshal(data, &list)
 		ps, _ := e.state3()
@@ -328,6 +330,11 @@ func (e *projectEnv) project(args []string) error {
 			}
 			if here.State != noLink && here.Link.Project == p.ID {
 				line += "  (linked here)"
+			}
+			if p.Pending == 1 {
+				line += "  (1 submission waits for review: minigw kb review " + p.Slug + ")"
+			} else if p.Pending > 1 {
+				line += fmt.Sprintf("  (%d submissions wait for review: minigw kb review %s)", p.Pending, p.Slug)
 			}
 			e.say(clean(line))
 		}

@@ -149,7 +149,7 @@ func loadAccess(tx *sql.Tx, user, project int64) (a access, err error) {
 
 // loadSegmentAccess is the whole access rule of a team segment (memberships and grants are never read): nothing
 // unless the team is active and the user is on its roster; then read of structure and data, and admin when the user
-// is admin of at least one of the team's projects. Never private.
+// is admin of at least one of the team's projects that is not archived. Never private.
 func loadSegmentAccess(tx *sql.Tx, user, segment int64) (a access, err error) {
 	a.NoPrivate = true
 	team := segment - segmentBase
@@ -158,7 +158,8 @@ func loadSegmentAccess(tx *sql.Tx, user, segment int64) (a access, err error) {
 		return
 	}
 	a.Role, a.Grants = Reader, map[Class]bool{Structure: true, Data: true}
-	if err = tx.QueryRow(`SELECT count(*) FROM team_projects tp JOIN memberships m ON m.project_id=tp.project_id WHERE tp.team_id=? AND m.user_id=? AND m.role='admin'`, team, user).Scan(&n); err == nil && n > 0 {
+	// An archived project confers nothing: its admins write (and review) the team's notes only while it is active.
+	if err = tx.QueryRow(`SELECT count(*) FROM team_projects tp JOIN memberships m ON m.project_id=tp.project_id JOIN projects p ON p.id=tp.project_id AND p.archived=0 WHERE tp.team_id=? AND m.user_id=? AND m.role='admin'`, team, user).Scan(&n); err == nil && n > 0 {
 		a.Role = Admin
 	}
 	return
