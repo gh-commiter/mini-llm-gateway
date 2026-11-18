@@ -34,6 +34,10 @@ type gitState struct {
 	Partial   bool   `json:"partial"`
 	// Incomplete: end state only: what the check could not read in full (output over the limit, a git command that failed). Never a clean result: the report says so.
 	Incomplete []string `json:"incomplete"`
+	// Unreliable: end state only: a git read failed (or a request was still running), so Cached and Index cannot be trusted: no path is taken out of the index. A limit reached while every
+	// call succeeded (more than gitWatchMaxCommits new commits) leaves it false. IndexCut: the index listing or the staged list was cut or failed: protected paths may be staged that are not listed.
+	Unreliable bool `json:"unreliable"`
+	IndexCut   bool `json:"indexCut"`
 }
 
 type gitCommit struct {
@@ -55,6 +59,42 @@ func gitNames(l []string) string {
 		return strings.Join(l[:gitWatchNames], ", ") + fmt.Sprintf(" and %d more", len(l)-gitWatchNames)
 	}
 	return strings.Join(l, ", ")
+}
+
+// gitUnstageWarning: nothing was removed from the index; the literal command per path (the first five), no command for a name with a control character.
+func gitUnstageWarning(paths []string, indexCut bool) string {
+	var plain []string
+	for _, p := range paths {
+		if strings.IndexFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) < 0 {
+			plain = append(plain, p)
+		}
+	}
+	odd := len(paths) - len(plain)
+	m := "minigw: WARNING: "
+	if len(paths) == 0 {
+		return m + "protected paths may be staged that are not listed (the index listing was cut): look at git status before your next commit"
+	}
+	m += "a protected path looks staged: " + gitNames(slices.Clone(plain)) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit."
+	var cmds []string
+	for i, p := range plain {
+		if i < 5 {
+			cmds = append(cmds, "git --literal-pathspecs restore --staged -- '"+strings.ReplaceAll(p, "'", "'\\''")+"'")
+		}
+	}
+	if len(cmds) > 0 {
+		m += " To unstage by hand (this unstages your own staged change of that path too): " + strings.Join(cmds, "; ")
+		if len(plain) > 5 {
+			m += fmt.Sprintf(" and %d more", len(plain)-5)
+		}
+		m += "."
+	}
+	if odd > 0 {
+		m += fmt.Sprintf(" %d path(s) with a control character in the name: no command printed, use git status.", odd)
+	}
+	if indexCut {
+		m += " The index listing was cut: protected paths may be staged that are not listed."
+	}
+	return m
 }
 
 // gitWatchReport: the lines for the owner and the staged protected paths to reset. Pure: the fixture asserts it.
@@ -167,8 +207,8 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 		}
 	}
 	sort.Strings(reset)
-	if len(reset) > 0 && len(end.Incomplete) > 0 { // the staged paths come from a read that failed in part: the index is left alone
-		lines = append(lines, "minigw: WARNING: a protected path looks staged: "+gitNames(slices.Clone(reset))+" - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit")
+	if end.Unreliable && (len(reset) > 0 || end.IndexCut) { // the staged paths come from a read that failed: the index is left alone, the owner gets the command
+		lines = append(lines, gitUnstageWarning(reset, end.IndexCut))
 		reset = nil
 	} else if len(reset) > 0 {
 		lines = append(lines, "minigw: WARNING: the agent staged a protected path: "+gitNames(slices.Clone(reset))+" - removed from the index for you (your files were not touched)")
@@ -246,6 +286,7 @@ func gitWatchState(root string) (gitState, bool) {
 	}
 	if !ok {
 		st.Incomplete = append(st.Incomplete, "refs not read in full")
+		st.Unreliable = true
 	}
 	for _, l := range strings.Split(refs, "\n") {
 		if r, id, ok := strings.Cut(l, " "); ok {
@@ -261,6 +302,7 @@ func gitWatchState(root string) (gitState, bool) {
 	idx, ok := gitWatchRun(root, "", "ls-files", "-s", "-z")
 	if !ok {
 		st.Incomplete = append(st.Incomplete, "index not read in full")
+		st.Unreliable, st.IndexCut = true, true
 	}
 	sum := sha256.Sum256([]byte(idx))
 	st.IndexHash = hex.EncodeToString(sum[:])
@@ -274,6 +316,7 @@ func gitWatchState(root string) (gitState, bool) {
 	cached, ok := gitWatchRun(root, "", "diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z")
 	if !ok {
 		st.Incomplete = append(st.Incomplete, "staged paths not read in full")
+		st.Unreliable, st.IndexCut = true, true
 	}
 	st.Cached = []string{}
 	for _, p := range strings.Split(cached, "\x00") {
@@ -324,6 +367,9 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 			"): review the repository before git checkout, reset --hard, restore, stash pop or your next commit"}, false
 	}
 	end.Incomplete = append(end.Incomplete, incomplete...)
+	if len(incomplete) > 0 { // a request of the agent was still running: the index may be changing
+		end.Unreliable = true
+	}
 	tips, old := gitWatchTips(end), gitWatchTips(w.start)
 	var commits []gitCommit
 	if len(tips) > 0 {
@@ -336,6 +382,7 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 		out, ok := gitWatchRun(w.root, "", args...)
 		if !ok {
 			end.Incomplete = append(end.Incomplete, "history not read in full")
+			end.Unreliable = true
 		}
 		ids := strings.Fields(out)
 		if len(ids) > gitWatchMaxCommits {
@@ -347,6 +394,7 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 			raw, ok := gitWatchRun(w.root, "", "diff-tree", "-m", "-r", "-z", "--raw", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id)
 			if !ok {
 				end.Incomplete = append(end.Incomplete, "files of a commit not read in full")
+				end.Unreliable = true
 			}
 			files, modes := parseGitRaw(raw)
 			commits = append(commits, gitCommit{ID: id, Files: files, Modes: modes})
