@@ -634,7 +634,8 @@ full the event is counted as lost.
   the app's data folder, and the next start sends it to the helper as lost events. If the app **crashes** or is killed, the
   queued events are lost without a gap record.
 
-`minigw usage` and the usage routes show the gaps ("N events lost between A and B"). Events that were only *begun* in the
+`minigw gw usage-events` (the owner's usage route) shows the gaps ("N events lost between A and B"); a member's
+`minigw usage` never does, also not for a project admin, because gaps are gateway-wide. Events that were only *begun* in the
 core when the process died become `interrupted`.
 
 **Retention.** Detail rows older than 400 days are folded into daily totals (at start and once a day).

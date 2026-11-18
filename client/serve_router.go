@@ -311,7 +311,7 @@ func routerCommand(args []string, in io.Reader) {
 	upTheirs := fs.Bool("theirs", false, "upstream resolve: keep the upstream's version, forget our change")
 	upOurs := fs.Bool("ours", false, "upstream resolve: send our version as a submission")
 	upClass := fs.String("class", "", "upstream link: classes to send, comma-separated (default structure,data)")
-	upWithPrivate := fs.Bool("with-private", false, "upstream link: also send private notes (needs private in --class)")
+	upWithPrivate := fs.Bool("with-private", false, "upstream link: also the private notes of ALL members of the project (needs private in --class)")
 	upDryRun := fs.Bool("dry-run", false, "upstream push: only ask the upstream what exists; write nothing")
 	evTask := fs.String("task", "", "usage, usage-events, project-sessions: only this task")
 	explain := fs.Bool("explain", false, "member list: show membership origins")

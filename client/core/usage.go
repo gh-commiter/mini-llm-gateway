@@ -338,7 +338,8 @@ type UsageFilter struct {
 
 // Usage is what a member may see (section 2): project given: an admin sees all events of the project, a developer
 // the own ones, anyone else (reader, grant only, no role) gets ErrNotFound as for an invisible resource; no project:
-// the caller's own events over all projects.
+// the caller's own events over all projects. Lost-event records (gaps) are gateway-wide, not the project's: they are
+// never part of this answer, also not for a project admin; the owner has them through AdminUsage.
 // LabelQuery selects by label and splits rows by label (see UsageFilter); it never widens whose events are read.
 type LabelQuery struct {
 	Phase, Activity, Task string
@@ -364,7 +365,8 @@ func (s *Store) Usage(ctx context.Context, p Principal, project int64, days int,
 		if err := checkPrincipal(tx, p); err != nil {
 			return err
 		}
-		gaps := false // lost-event records are for project admins (their project's period) and the owner
+		// Lost-event records (gaps) are gateway-wide, not the project's: a member (any role) never sees them; the
+		// owner does through AdminUsage.
 		f := UsageFilter{User: p.UserID}
 		if project != 0 {
 			if isSegment(project) {
@@ -376,7 +378,7 @@ func (s *Store) Usage(ctx context.Context, p Principal, project int64, days int,
 			}
 			switch a.Role {
 			case Admin:
-				f, gaps = UsageFilter{Project: project}, true
+				f = UsageFilter{Project: project}
 			case Developer:
 				f = UsageFilter{Project: project, User: p.UserID}
 			default:
@@ -386,7 +388,7 @@ func (s *Store) Usage(ctx context.Context, p Principal, project int64, days int,
 		if lim != nil {
 			return lim
 		}
-		rep, err = s.usageRows(tx, days, q.apply(f), false, gaps)
+		rep, err = s.usageRows(tx, days, q.apply(f), false, false)
 		return err
 	})
 	return

@@ -149,11 +149,28 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 			return page, ErrInvalid{"after"}
 		}
 	}
-	// Edges are resolved only within authorized rows and frozen attribution.
-	q := `SELECT e.id,COALESCE(e.parent_id,''),e.device_id,e.model,e.outcome,COALESCE(u.name,''),e.cost_source,COALESCE(e.user_id,0),e.start,e.end,e.tokens_in,e.tokens_out,e.cache_read_tokens,e.cache_write_tokens,e.cost_usd_nanos,e.phase,e.activity,e.task,e.phase_source,e.activity_source,e.task_source,COALESCE(e.phase_score,0),COALESCE(e.activity_score,0) FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.project_id=?`
+	now := s.now().UTC()
+	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(f.Days - 1)).UnixMilli()
+	// Edges are resolved only within authorized rows and frozen attribution. Read the window (one day more, so a chain
+	// that began just before it is joined) and the ancestors of its rows: a chain can be older than that, and its root
+	// still decides whether the session is shown.
+	q := `WITH RECURSIVE scoped(id) AS (
+  SELECT id FROM usage_events WHERE project_id=?`
 	args := []any{project}
 	if user != 0 {
-		q += ` AND e.user_id=?`
+		q += ` AND user_id=?`
+		args = append(args, user)
+	}
+	scope := ` WHERE p.project_id=?`
+	if user != 0 {
+		scope += ` AND p.user_id=?`
+	}
+	q += ` AND start>=?
+  UNION
+  SELECT p.id FROM scoped s JOIN usage_events c ON c.id=s.id JOIN usage_events p ON p.id=c.parent_id` + scope + `)
+SELECT e.id,COALESCE(e.parent_id,''),e.device_id,e.model,e.outcome,COALESCE(u.name,''),e.cost_source,COALESCE(e.user_id,0),e.start,e.end,e.tokens_in,e.tokens_out,e.cache_read_tokens,e.cache_write_tokens,e.cost_usd_nanos,e.phase,e.activity,e.task,e.phase_source,e.activity_source,e.task_source FROM usage_events e JOIN scoped s ON s.id=e.id LEFT JOIN users u ON u.id=e.user_id`
+	args = append(args, from-86400000, project)
+	if user != 0 {
 		args = append(args, user)
 	}
 	q += ` LIMIT 100001`
@@ -213,8 +230,6 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 	for id, e := range events {
 		groups[roots[id]] = append(groups[roots[id]], e)
 	}
-	now := s.now().UTC()
-	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(f.Days - 1)).UnixMilli()
 	for id, chain := range groups {
 		root := events[id]
 		if root.start < from || f.Device != "" && root.device != f.Device {

@@ -941,8 +941,8 @@ minigw usage --json
 
 One line per day, model and user, with the totals. A developer sees the events of the project that are their own, a
 project admin sees all of them, readers and people who only have a grant see nothing (the project's usage is not
-visible to them). Without a project you see your own events over all your projects. If the gateway lost events
-(its project store was down for a long time), the output says `N events lost between A and B`.
+visible to them). Without a project you see your own events over all your projects. Lost-event records are not shown
+here (they are gateway-wide, not the project's): only the owner's `gw usage-events` shows `N events lost between A and B`.
 
 ### Project session history
 
@@ -979,7 +979,9 @@ Duration is chain wall time, latest end minus root start, rather than the sum of
 Interrupted or incomplete chains have unknown duration. Chains with any open event are excluded. Otherwise errors
 and interruptions take precedence (`failed`), then cancellation (`cancelled`), then `ok`. A missing or invalid parent
 produces an explicitly `incomplete` retained component, without revealing the parent ID or claiming complete totals.
-Only 400 days of detail are retained; folded daily totals cannot recreate sessions. Corrupt cycles, arithmetic
+Only 400 days of detail are retained; folded daily totals cannot recreate sessions. Only the window (one day more, so
+a chain that began just before it is joined) and the ancestors of its events are read; other older events cost nothing,
+however many a project holds. Corrupt cycles, arithmetic
 overflow and traversal bounds (100,000 authorized events or 10,000 ancestry steps) return an error, never partial pages.
 The Mac Settings Usage chart remains an aggregate report.
 
@@ -1382,12 +1384,13 @@ owner decides what it may do with the existing means.
    minigw gw upstream unlink <project> hub        # also: list, remove <name>
    ```
 
-   `private` notes go only when the link says `--with-private` (and names the class). `push --dry-run` only asks the upstream what
-   exists and writes nothing, there or here. `minigw gw upstream pull [<project>|--team <team>] --dry-run` shows the other direction:
+   `private` notes go only when the link says `--with-private` (and names the class); it then also sends the private notes of
+   ALL members of the project, not only your own. `push --dry-run` only asks the upstream what exists and writes nothing,
+   there or here. `minigw gw upstream pull [<project>|--team <team>] --dry-run` shows the other direction:
    what the upstream's device user could read of the linked project (per source: the project, its team's notes, what it depends on;
    counts per class and kind, never private, at most 5000 notes). It stores nothing and nothing runs it by itself; a real pull comes
-   in a later version. The author's name of a note travels as text in the submission (a line at its end, with
-   the gateway, the local note and its revision); the submission itself belongs to the bound user.
+   in a later version. Each note carries the name of its author in its text (a line at its end, with an opaque reference and, for
+   a replacement, the number of the earlier submission); the submission itself belongs to the bound user.
 
 **What leaves the gateway with a push**, exactly: for each note its title, class, kind (finding or faq) and body; one line at the end of the
 body with an opaque reference (a hash of this gateway, the link and the note: stable for the note, it says nothing about this gateway) and
