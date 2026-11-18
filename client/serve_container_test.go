@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -140,5 +144,180 @@ func TestShutdownStopsTheAutoPushBeforeTheDrain(t *testing.T) {
 	s.shutdown(srv, 5*time.Second)
 	if !<-stoppedDuringDrain {
 		t.Fatal("the automatic push was still running while requests drained")
+
+func fakeResolver(t *testing.T, m map[string]string) {
+	old := resolveHost
+	resolveHost = func(_ context.Context, h string) ([]net.IP, error) {
+		if a, ok := m[h]; ok {
+			return []net.IP{net.ParseIP(a)}, nil
+		}
+		return nil, errors.New("no such host")
+	}
+	t.Cleanup(func() { resolveHost = old })
+}
+
+// fakeResolverIPs: a name that resolves to several addresses (every one is checked).
+func fakeResolverIPs(t *testing.T, m map[string][]string) {
+	old := resolveHost
+	resolveHost = func(_ context.Context, h string) ([]net.IP, error) {
+		a, ok := m[h]
+		if !ok {
+			return nil, errors.New("no such host")
+		}
+		ips := make([]net.IP, len(a))
+		for i := range a {
+			ips[i] = net.ParseIP(a[i])
+		}
+		return ips, nil
+	}
+	t.Cleanup(func() { resolveHost = old })
+}
+
+// fakeDial: gwDial's real connect goes to a 127.0.0.1 listener; the address it was asked for (the checked IP) is recorded.
+func fakeDial(t *testing.T, port string) *[]string {
+	old := dialChecked
+	var got []string
+	dialChecked = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		got = append(got, addr)
+		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+	}
+	t.Cleanup(func() { dialChecked = old })
+	return &got
+}
+
+func TestSingleLabelProviderOnlyInContainerMode(t *testing.T) {
+	fakeResolver(t, map[string]string{"litellm": "172.22.0.3", "evil": "8.8.8.8"})
+	t.Setenv("MINIGW_CONTAINER", "")
+	if _, err := checkGatewayURL("http://litellm:4000", true); err == nil {
+		t.Fatal("single-label name accepted outside container mode")
+	}
+	t.Setenv("MINIGW_CONTAINER", "1")
+	for u, ok := range map[string]bool{"http://litellm:4000": true, "http://evil:4000": true /* shape; resolution is checked next */, "http://example.com": false,
+		"http://8.8.8.8": false, "http://user:pw@litellm:4000": false} {
+		if _, err := checkGatewayURL(u, true); (err == nil) != ok {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
+	if _, err := checkGatewayURL("http://litellm:4000", false); err == nil {
+		t.Error("http without --insecure accepted")
+	}
+	if err := checkGatewayName("http://litellm:4000"); err != nil {
+		t.Errorf("private name refused: %v", err)
+	}
+	if err := checkGatewayName("http://evil:4000"); err == nil || !strings.Contains(err.Error(), "public") {
+		t.Errorf("public name accepted at add: %v", err)
+	}
+	if err := checkGatewayName("http://nowhere:4000"); err == nil {
+		t.Error("unresolvable name accepted at add")
+	}
+}
+
+// A name that was private when added and later resolves to a public address is not dialled.
+func TestSingleLabelProviderRedialGuard(t *testing.T) {
+	t.Setenv("MINIGW_CONTAINER", "1")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	dialled := fakeDial(t, port)
+	fakeResolver(t, map[string]string{"litellm": "172.22.0.3"})
+	c, err := gwDial(context.Background(), "tcp", "litellm:"+port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	if want := "172.22.0.3:" + port; len(*dialled) != 1 || (*dialled)[0] != want {
+		t.Fatalf("dialled %v, want the checked address %s", *dialled, want)
+	}
+	fakeResolver(t, map[string]string{"litellm": "8.8.8.8"}) // later: public
+	if c, err := gwDial(context.Background(), "tcp", "litellm:"+port); err == nil || !strings.Contains(err.Error(), "public") {
+		if c != nil {
+			c.Close()
+		}
+		t.Fatalf("dialled a name that resolves to a public address: %v", err)
+	}
+	if len(*dialled) != 1 {
+		t.Fatalf("a connect was attempted for a public answer: %v", *dialled)
+	}
+}
+
+// B1: a service name may resolve only to private addresses. Link-local (a cloud metadata service), loopback,
+// unspecified, multicast and their IPv4-mapped forms are refused, at add time and at every dial; every address counts.
+func TestSingleLabelProviderRefusesNonPrivateAddresses(t *testing.T) {
+	t.Setenv("MINIGW_CONTAINER", "1")
+	fakeResolverIPs(t, map[string][]string{
+		"meta":    {"169.254.169.254"},
+		"meta6":   {"fe80::1"},
+		"mapped":  {"::ffff:169.254.169.254"},
+		"loop":    {"127.0.0.1"},
+		"loop6":   {"::ffff:127.0.0.1"},
+		"unset":   {"::"},
+		"unset4":  {"::ffff:0:0"},
+		"mcast":   {"224.0.0.1"},
+		"mixed":   {"172.22.0.3", "169.254.169.254"},
+		"private": {"172.22.0.3", "172.22.0.4"},
+	})
+	dialled := fakeDial(t, "1")
+	for _, name := range []string{"meta", "meta6", "mapped", "loop", "loop6", "unset", "unset4", "mcast", "mixed"} {
+		if err := checkGatewayName("http://" + name + ":4000"); err == nil {
+			t.Errorf("%s: accepted at add time", name)
+		}
+		if c, err := gwDial(context.Background(), "tcp", name+":4000"); err == nil {
+			c.Close()
+			t.Errorf("%s: dialled", name)
+		}
+	}
+	if err := checkGatewayName("http://private:4000"); err != nil {
+		t.Errorf("private addresses refused at add time: %v", err)
+	}
+	if len(*dialled) != 0 {
+		t.Errorf("a refused name reached the connect step: %v", *dialled)
+	}
+}
+
+// B2: a provider key must not go to the environment proxy for a single-label service name; the name is dialled
+// directly, so gwDial checks the address it resolves to.
+func TestServiceNameProviderBypassesEnvProxy(t *testing.T) {
+	t.Setenv("MINIGW_CONTAINER", "1")
+	var proxied atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxied.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxy.Close()
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+	t.Setenv("NO_PROXY", "")
+	fakeResolver(t, map[string]string{"litellm": "172.22.0.3"})
+
+	req, _ := http.NewRequest("GET", "http://litellm:4000/key/info", nil)
+	req.Header.Set("authorization", "Bearer k")
+	if p, err := quotaHTTP.Transport.(*http.Transport).Proxy(req); err != nil || p != nil {
+		t.Fatalf("quota client would use proxy %v for a service name: %v", p, err)
+	}
+	treq, _ := http.NewRequest("GET", "https://litellm:4000/v1/models", nil)
+	if p, err := gwClients[0].Transport.(*http.Transport).Proxy(treq); err != nil || p != nil {
+		t.Fatalf("provider client would use proxy %v for a service name: %v", p, err)
+	}
+
+	// The dial is refused by gwDial before any connection; the proxy must not have been asked at all.
+	fakeResolver(t, map[string]string{"litellm": "169.254.169.254"})
+	fakeDial(t, "1")
+	if _, err := quotaHTTP.Do(req); err == nil {
+		t.Fatal("request to a link-local provider name succeeded")
+	}
+	if n := proxied.Load(); n != 0 {
+		t.Fatalf("the provider request reached the environment proxy %d times", n)
 	}
 }

@@ -50,23 +50,38 @@ The key is kept in `gateway-keys.json` (mode 0600) in the config volume: protect
 
 ### LiteLLM in another container
 
-Inside the container `localhost` is the container itself. Put both services on one Docker network and give LiteLLM
-the network alias `litellm.local` (the gateway accepts plain `http` only for localhost, a private IP or a `.local`
-name, and only with `--insecure`):
+Inside the container `localhost` is the container itself. Put both services on one Docker network and use the service
+name: the gateway in container mode accepts a name without a dot (a Compose service name) for a provider, with
+`--insecure`, as long as it resolves to a private address. It checks this when you add the provider and again at every
+connection, so a name that later points to a public address is not followed. Link-local addresses (such as the cloud
+metadata address `169.254.169.254`), loopback, unspecified and multicast addresses are refused too. The name is dialled
+directly, not through `HTTP(S)_PROXY`, so the key is not sent to a proxy. Any container on that network can claim the
+service name and receive the key: put only trusted services on it. Outside a container such a name is refused.
 
 ```yaml
-# in your LiteLLM compose file
+# compose.override.yaml next to the gateway's compose.yaml: join the network your LiteLLM service is on
 services:
+  minigw:
+    networks: [default, litellm]
+networks:
   litellm:
-    networks: { default: { aliases: [litellm.local] } }
-# the gateway joins its network: docker network connect <litellm-network> minigw-minigw-1
+    external: true
+    name: <the network of your LiteLLM compose project>   # docker network ls
 ```
 
 ```sh
-docker compose exec minigw minigw gw provider add LiteLLM http://litellm.local:4000 --insecure
+docker compose exec minigw minigw gw provider add LiteLLM http://litellm:4000 --insecure   # asks for the key
 ```
 
-(To keep the connection over a reconnect, add the network to the `minigw` service in a `compose.override.yaml`.)
+If LiteLLM runs in the same Compose project, no extra network is needed. A name with a dot, `litellm.local` for example,
+keeps working as before.
+
+## amd64 and arm64
+
+The same files build for both: the build takes the release binary that matches the Docker platform (`TARGETARCH`).
+For the other one, for example on an Apple Silicon Mac that can emulate it: `DOCKER_DEFAULT_PLATFORM=linux/amd64
+docker compose up -d --build`. `scripts/compose-e2e.sh` runs the whole deployment test for both platforms and says SKIP
+when the machine cannot emulate one.
 
 ## Update
 
@@ -100,7 +115,7 @@ the folder name, or `COMPOSE_PROJECT_NAME`.) Restore into empty volumes the same
 
 A newer version may upgrade the project database schema, and an older program refuses a newer schema ("core database has
 a newer schema than this program"): the gateway then still serves models but project routes answer 503. To go back,
-restore the backup you took before the update (both volumes), then start the older version.
+restore the backup you took before the update (both volumes), then start the older version. The same goes for the config: a release without service-name providers refuses to start with a provider such as `http://litellm:4000` in `serve.json`.
 
 ## Hardening that is on
 
