@@ -190,7 +190,7 @@ the agent's changes back after it. Agents and builds work on the gateway's local
   files go (compared by size, time and SHA-256).
 - **Never copied back:** files the agent puts into a [protected path](how-it-works.md#protected-paths).
 - **Conflicts:** if you changed a file the agent also changed, yours stays and the agent's version is saved next to
-  it as `<name>.minigw-conflict`.
+  it as `<name>.minigw-conflict` (a later conflict on the same file: `-2`, `-3`, ...; copies are never overwritten).
 - **Read-only:** with `--minigw-ro` nothing comes back.
 - **Kept between requests:** the next sync and build are incremental. A copy that no session used for 14 days is
   deleted. At the synced-folder limit, the gateway also points the owner to `minigw gw sync remove`.

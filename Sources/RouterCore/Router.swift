@@ -105,12 +105,23 @@ public final class Router: Sendable {
         _ = checkedRoots  // M2: a folder that changed while the app was stopped is logged at start
     }
 
-    public static let defaultSession: URLSession = {
+    /// L1: provider requests never follow a redirect (the prompt body would go to a host the owner did not configure), as the Go clients.
+    public static let defaultSession: URLSession = URLSession(configuration: providerConfiguration(proxy: true), delegate: Profiles.NoRedirect(), delegateQueue: nil)
+    /// L2: for an http provider (private host, --insecure) the key must not pass through the system proxy in cleartext.
+    static let noProxySession: URLSession = URLSession(configuration: providerConfiguration(proxy: false), delegate: Profiles.NoRedirect(), delegateQueue: nil)
+
+    static func providerConfiguration(proxy: Bool) -> URLSessionConfiguration {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = 1800
         c.timeoutIntervalForResource = 3600
-        return URLSession(configuration: c)
-    }()
+        if !proxy { c.connectionProxyDictionary = [:] }
+        return c
+    }
+
+    /// The session for a request: the default one becomes the proxy-free one for an http URL; an injected session (tests) is kept.
+    static func session(_ s: URLSession, for url: URL) -> URLSession {
+        s === defaultSession && url.scheme?.lowercased() == "http" ? noProxySession : s
+    }
 
     public func handle(_ req: HTTPRequest, writer: ResponseWriter) async {
         let start = Date()
@@ -753,7 +764,7 @@ public final class Router: Sendable {
         var status = 502
         dispatched(r.provider.id, upstreamModel: r.upstream, price: r.price)  // the upstream request goes out (usage event)
         do {
-            let (bytes, resp) = try await session.bytes(for: up)
+            let (bytes, resp) = try await Self.session(session, for: url).bytes(for: up)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             status = http.statusCode
             Self.reqState?.upstreamStatus = status
@@ -1045,7 +1056,7 @@ public enum Discovery {
         if !key.isEmpty { r.setValue("Bearer \(key)", forHTTPHeaderField: "authorization") }
         let data: Data, resp: URLResponse
         do {
-            (data, resp) = try await session.data(for: r)
+            (data, resp) = try await Router.session(session, for: url).data(for: r)
         } catch {
             throw Failure(message: isLocal(url.host ?? "")
                 ? String(localized: "Cannot connect (\(error.localizedDescription)). Check that this Mac can reach the server (VPN, firewall). For a device on the same subnet, also allow Mini Gateway in System Settings → Privacy & Security → Local Network.")

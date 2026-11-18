@@ -269,6 +269,7 @@ enum QuotaHTTP {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = deadline
         cfg.timeoutIntervalForResource = deadline
+        if req.url?.scheme?.lowercased() == "http" { cfg.connectionProxyDictionary = [:] }  // L2: an http provider's key never goes to a proxy
         let body = Body(limit)
         let session = URLSession(configuration: cfg, delegate: body, delegateQueue: nil)
         defer { session.invalidateAndCancel() }  // also ends a transfer that was cut at the limit

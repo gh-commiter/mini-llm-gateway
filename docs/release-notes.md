@@ -9,6 +9,12 @@
 ### Security
 - Offline restore (`minigw gw core restore`, gateway stopped) accepted a crafted backup file that hid a trigger under the name of an automatic index, and one whose tables had lost their foreign keys, cascades or checks or whose unique index was not unique. Such a file could keep access that could not be revoked. It needed the owner to restore that file by hand: no network route restores. A restore now refuses any object that is not exactly what this program's migrations make for the backup's schema (no exemption by name), compares the definition of every table, index and the search table, refuses a backup with rows that break a foreign key, and refuses an epoch or project mark outside a sane range (a huge value overflowed the epoch and broke a later cleanup).
 - Repeated failing starts of an upgrade no longer push out the snapshot taken before the upgrade: the oldest snapshot from before an unfinished upgrade is kept besides the newest three, and a failed start on an unchanged file writes no new snapshot.
+- Mac: provider requests no longer follow HTTP redirects (as the Go clients), so a prompt is never sent to a host the owner did not configure.
+- An http provider (`--insecure`: private host, `.local`, container service name) is never reached through a proxy, in the provider and the quota requests of the Go client and the Mac app, so its key is not sent to a proxy in cleartext. https providers keep the proxy settings.
+- Mac: the helper's upstream callouts (connect, forget, do) are accepted only while the matching upstream route is running, and only for the upstream that route names.
+
+### Fixed
+- A second sync conflict on the same file no longer overwrites the first saved copy: further copies are `<name>.minigw-conflict-2`, `-3`, ... (up to 99; after that the file is not synced and the note says so).
 
 ### Known problems
 - The four admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base, Upstream gateways) have only been tried through tests, not in a real window. In the Teams and projects pane team notes (a team's own notes) are not shown, only in the Knowledge base pane; in the Knowledge base pane notes and questions are read, not edited, and a replacement shows both texts, not a line difference. The "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI.
@@ -21,6 +27,7 @@
 - Automatic push and publish mode, with a conflict and `resolve --ours`, were tried between two real gateways on 2026-11-18 (a Mac gateway to a Windows gateway; a test project with three notes; one push for five quick edits; a conflict was not overwritten). Replacements of accepted notes, team notes and `resolve --theirs` have only been tried in tests.
 - Only the owner reviews submissions; a project admin cannot. With one reviewer this is the main bottleneck of a team.
 - Team notes have no `private` class, and only a project admin of the team writes them; the owner has no write path to them (the owner reviews submissions and exports bundles).
+- Worktree mode runs the top repository's own git clean/smudge filters (intended for LFS): use sync for an untrusted repository.
 
 ## 0.7.25
 

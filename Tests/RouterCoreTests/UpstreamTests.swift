@@ -943,3 +943,37 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         #expect((await adm(h, "POST", "/upstream-auto")).status == 501)
     }
 }
+
+/// L3: a callout is accepted only for the route that is running, and for the upstream that route names.
+@Suite struct UpstreamCalloutsFollowTheRoute {
+    private func ok(_ method: String, _ path: String, _ op: String, _ up: String = "hub") -> Bool {
+        CoreHelper.calloutAllowed(CoreRequest(method: method, path: path), ["op": op, "upstream": up])
+    }
+
+    @Test func aCalloutOutsideAnUpstreamRouteIsRefused() {
+        for op in ["connect", "forget", "do", "info"] {
+            #expect(!ok("GET", "/users", op))
+            #expect(!ok("POST", "/internal/epoch", op))
+            #expect(!ok("GET", "/upstream-links/project-1-hub", op))
+        }
+        #expect(!CoreHelper.calloutAllowed(CoreRequest(method: "PUT", path: "/upstreams/hub"), ["op": "connect"]))  // no upstream named
+    }
+
+    @Test func insideTheRightRouteItWorks() {
+        #expect(ok("PUT", "/upstreams/hub", "connect") && ok("PUT", "/upstreams/hub", "forget") && ok("PUT", "/upstreams/hub", "do"))
+        #expect(ok("DELETE", "/upstreams/hub", "forget"))
+        #expect(ok("GET", "/upstreams", "info", "any") && ok("GET", "/upstreams/hub/probe", "do"))
+        #expect(ok("POST", "/upstream-push", "do", "any") && ok("POST", "/upstream-auto", "info", "any"))
+    }
+
+    @Test func aForgetOnlyDuringDeleteOrAFailedAddOfThatUpstream() {
+        #expect(!ok("GET", "/upstreams", "forget") && !ok("POST", "/upstream-push", "forget") && !ok("POST", "/upstream-auto", "forget"))
+        #expect(!ok("GET", "/upstreams/hub/probe", "forget"))
+        #expect(!ok("DELETE", "/upstreams/other", "forget"))  // the route removes "other", the helper asks for "hub"
+        #expect(!ok("DELETE", "/upstreams/hub", "do") && !ok("DELETE", "/upstreams/hub", "connect"))
+    }
+
+    @Test func connectOnlyDuringTheAddOfThatName() {
+        #expect(!ok("POST", "/upstream-auto", "connect") && !ok("GET", "/upstreams", "connect") && !ok("PUT", "/upstreams/other", "connect"))
+    }
+}

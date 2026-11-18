@@ -1369,3 +1369,45 @@ func TestCallReportsBodyReadError(t *testing.T) {
 		t.Fatalf("read error: status %d body %q", st, body)
 	}
 }
+
+// L5: a second (third …) conflict on the same file keeps every saved copy; after 99 the sync of that file is refused, nothing is lost.
+func TestSyncApplyConflictCopiesAreNeverOverwritten(t *testing.T) {
+	root := t.TempDir()
+	read := func(p string) string {
+		b, err := os.ReadFile(filepath.Join(root, p))
+		if err != nil {
+			return "<none>"
+		}
+		return string(b)
+	}
+	if err := os.WriteFile(filepath.Join(root, "c.txt"), []byte("user"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state, _ := syncScan(root, nil, true)
+	if err := os.WriteFile(filepath.Join(root, "c.txt"), []byte("user edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	apply := func(content string) []string {
+		ch := syncChanges{Changed: []syncEntry{{Path: "c.txt", Size: int64(len(content)), Mtime: 1, SHA256: sha256Hex([]byte(content))}}}
+		notes, _ := syncApply(ch, root, state, func(string) []byte { return []byte(content) })
+		return notes
+	}
+	for i, want := range []string{"c.txt.minigw-conflict", "c.txt.minigw-conflict-2", "c.txt.minigw-conflict-3"} {
+		n := apply("agent" + strconv.Itoa(i+1))
+		if len(n) != 1 || !strings.HasSuffix(n[0], "is in "+want) {
+			t.Fatalf("run %d: %v", i+1, n)
+		}
+	}
+	if read("c.txt") != "user edit" || read("c.txt.minigw-conflict") != "agent1" || read("c.txt.minigw-conflict-2") != "agent2" || read("c.txt.minigw-conflict-3") != "agent3" {
+		t.Fatalf("copies: %q %q %q %q", read("c.txt"), read("c.txt.minigw-conflict"), read("c.txt.minigw-conflict-2"), read("c.txt.minigw-conflict-3"))
+	}
+	for n := 4; n <= maxConflictCopies; n++ {
+		if err := os.WriteFile(filepath.Join(root, conflictName("c.txt", n)), []byte("old"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := apply("agent100")
+	if len(n) != 1 || !strings.Contains(n[0], "99 saved copies already exist") || read("c.txt.minigw-conflict-99") != "old" || read("c.txt") != "user edit" {
+		t.Fatalf("past the bound: %v", n)
+	}
+}

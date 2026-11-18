@@ -2180,3 +2180,27 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
     #expect(w.status == 429)
     #expect(w.text.contains("This device already has \(Sync.maxCopies) synced folders on the gateway; unused ones expire after 14 days; the owner can remove one with `minigw gw sync remove`"))
 }
+
+/// L5: a second (third …) conflict on the same file keeps every saved copy; after 99 the sync of that file is refused, nothing is lost.
+@Test func syncConflictCopiesAreNeverOverwritten() throws {
+    let client = FileManager.default.temporaryDirectory.appendingPathComponent("conflict-copies-\(UUID().uuidString)").cleanedAtExit()
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    func put(_ p: String, _ s: String) throws { try Data(s.utf8).write(to: client.appendingPathComponent(p)) }
+    func read(_ p: String) -> String? { (try? Data(contentsOf: client.appendingPathComponent(p))).map { String(decoding: $0, as: UTF8.self) } }
+    try put("c.txt", "user")
+    var state = Sync.scan(client).files
+    try put("c.txt", "user edit")
+    func apply(_ content: String) -> [String] {
+        let d = Data(content.utf8)
+        let e = Sync.Entry(path: "c.txt", size: Int64(d.count), mtime: 1, sha256: Sync.sha256(d))
+        return Sync.apply(Sync.Changes(changed: [e]), root: client, state: &state) { _ in d }.notes
+    }
+    for (i, want) in ["c.txt.minigw-conflict", "c.txt.minigw-conflict-2", "c.txt.minigw-conflict-3"].enumerated() {
+        let n = apply("agent\(i + 1)")
+        #expect(n.count == 1 && n[0].hasSuffix("is in " + want), Comment(rawValue: "\(n)"))
+    }
+    #expect(read("c.txt") == "user edit" && read("c.txt.minigw-conflict") == "agent1" && read("c.txt.minigw-conflict-2") == "agent2" && read("c.txt.minigw-conflict-3") == "agent3")
+    for n in 4...Sync.maxConflictCopies { try put(Sync.conflictName("c.txt", n), "old") }
+    let n = apply("agent100")
+    #expect(n.count == 1 && n[0].contains("99 saved copies already exist") && read("c.txt.minigw-conflict-99") == "old" && read("c.txt") == "user edit")
+}

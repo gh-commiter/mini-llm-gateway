@@ -33,7 +33,11 @@ public enum Sync {
     public static let maxFile = Int64(HTTPParser.maxBody)
     /// Nikoli se ne sinhronizira (poleg .gitignore): git, izhod gradnje, smeti macOS, spori.
     public static let defaultIgnore = [".git/", "target/", ".build/", "node_modules/", "build/", "dist/", "DerivedData/",
-                                       ".DS_Store", "._*", "*.minigw-conflict"]
+                                       ".DS_Store", "._*", "*.minigw-conflict", "*.minigw-conflict-*"]
+
+    /// How many <name>.minigw-conflict[-N] copies one file may have before its sync is refused (L5).
+    static let maxConflictCopies = 99
+    static func conflictName(_ path: String, _ n: Int) -> String { n <= 1 ? path + ".minigw-conflict" : path + ".minigw-conflict-\(n)" }
 
     /// Pravila .gitignore v korenu (podmnožica): ime, `dir/`, vzorci fnmatch (`*.ext`), `/` na začetku ali v sredini = od korena.
     /// ponytail: brez `!`, `**` in .gitignore v podmapah; dodaj, ko bo treba.
@@ -476,11 +480,23 @@ public enum Sync {
             guard let data = fetch(e.path), sha256(data) == e.sha256 else { notes.append("skipped \(e.path): download failed"); continue }
             let local = entry(rt, full, path: e.path, previous: state[e.path])  // znova tik pred pisanjem
             if local?.sha256 != base(e.path) {  // spremenjena (ali izbrisana) tudi tukaj
-                guard resolve(e.path + ".minigw-conflict", root: root) != nil, let c = target(e.path + ".minigw-conflict"),
-                      write(data, c, in: rt, mtime: e.mtime, exec: e.exec) == nil else {
-                    notes.append("conflict: \(e.path) changed here and on the gateway; the gateway's version could not be saved"); continue
+                // L5: a conflict copy that is already there is never overwritten: <name>.minigw-conflict, then -2, -3 … up to 99.
+                var saved: String?, tooMany = true
+                for n in 1...Self.maxConflictCopies {
+                    let name = Self.conflictName(e.path, n)
+                    guard resolve(name, root: root) != nil, let c = target(name) else { tooMany = false; break }
+                    if rt.lstat(c) != nil { continue }
+                    tooMany = false
+                    if write(data, c, in: rt, mtime: e.mtime, exec: e.exec) == nil { saved = name }
+                    break
                 }
-                notes.append("conflict: \(e.path) changed here and on the gateway; kept yours, the gateway's version is in \(e.path).minigw-conflict")
+                guard let saved else {
+                    notes.append(tooMany
+                        ? "conflict: \(e.path) changed here and on the gateway; \(Self.maxConflictCopies) saved copies already exist, remove some \(e.path).minigw-conflict* files; not synced"
+                        : "conflict: \(e.path) changed here and on the gateway; the gateway's version could not be saved")
+                    continue
+                }
+                notes.append("conflict: \(e.path) changed here and on the gateway; kept yours, the gateway's version is in \(saved)")
                 done.append(e.path)
                 continue
             }
