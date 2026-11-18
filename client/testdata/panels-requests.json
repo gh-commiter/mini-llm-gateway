@@ -1241,7 +1241,7 @@
     "method": "PUT",
     "path": "/upstreams/hub"
    },
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1255,7 +1255,7 @@
     "deviceName": ""
    },
    "want": "refused",
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1268,7 +1268,7 @@
     "deviceName": ""
    },
    "want": "refused",
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1282,7 +1282,7 @@
     "deviceName": ""
    },
    "want": "refused",
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1296,7 +1296,7 @@
     "deviceName": ""
    },
    "want": "refused",
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1310,7 +1310,7 @@
     "deviceName": ""
    },
    "want": "refused",
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1324,7 +1324,7 @@
     "deviceName": ""
    },
    "want": "refused",
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1465,7 +1465,7 @@
     "method": "POST",
     "path": "/upstream-push"
    },
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1488,7 +1488,7 @@
     "method": "POST",
     "path": "/upstream-push"
    },
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",

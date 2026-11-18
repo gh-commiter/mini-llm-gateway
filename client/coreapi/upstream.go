@@ -97,6 +97,8 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 			return failErr(err)
 		}
 		info := h.Info(u.Name)
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second) // the admin path has no deadline of its own: one slow upstream must not hold the panel
+		defer cancel()
 		text := ProbeUpstream(ctx, h, u.Name, "this gateway", info.Device)
 		return 200, map[string]any{"name": u.Name, "address": u.Address, "device": info.Device, "state": probeState(text), "probe": text}, true
 	case method == "PUT" && len(seg) == 2:

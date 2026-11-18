@@ -50,7 +50,10 @@ type PanelProvider struct {
 	// SecretRoutes: the registered routes that may receive the value of a secret field (in the body). A secret field in an action whose
 	// route is not listed here is refused.
 	SecretRoutes []string
-	Strings      map[string]map[string]string // locale -> {key: text}; "C" is the base and holds every key
+	// ConfirmRoutes: the registered routes on which every action must carry a confirm (a send that changes the other side): an action
+	// on such a route without one is refused, whatever its method.
+	ConfirmRoutes []string
+	Strings       map[string]map[string]string // locale -> {key: text}; "C" is the base and holds every key
 }
 
 //go:embed panels/*.json
@@ -59,6 +62,9 @@ var builtinPanelFiles embed.FS
 // BuiltinRoutes: the routes the built-in panels may use. The core's own routes plus the gateway's GET devices.
 // BuiltinSecretRoutes: the built-in routes that may receive a secret (the upstream's token, in the body of its add).
 var BuiltinSecretRoutes = []string{"PUT upstreams/{}"}
+
+// BuiltinConfirmRoutes: the built-in routes whose actions must carry a confirmation: the sends to an upstream and its removal.
+var BuiltinConfirmRoutes = []string{"POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}"}
 
 var BuiltinRoutes = []string{"GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices", "GET kb/submissions", "GET kb/submissions/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject", "GET kb/notes", "GET kb/notes/{}", "GET kb/faq", "GET projects", "GET teams", "POST teams", "PATCH teams/{}", "GET teams/{}/members", "PUT teams/{}/members/{}", "DELETE teams/{}/members/{}", "GET teams/{}/projects", "PUT teams/{}/projects/{}", "DELETE teams/{}/projects/{}", "GET teams/{}/assignments", "PUT teams/{}/assignments", "DELETE teams/{}/assignments", "POST projects", "PATCH projects/{}", "GET projects/{}/members", "PUT projects/{}/members/{}", "DELETE projects/{}/members/{}", "GET projects/{}/remotes", "POST projects/{}/remotes", "GET projects/{}/depends", "PUT projects/{}/depends/{}", "DELETE projects/{}/depends/{}", "PUT projects/{}/depends/teams/{}", "DELETE projects/{}/depends/teams/{}", "GET grants", "POST grants", "DELETE grants", "GET upstreams", "PUT upstreams/{}", "DELETE upstreams/{}", "GET upstreams/{}/probe", "PUT upstreams/{}/links/{}", "DELETE upstreams/{}/links/{}", "POST upstream-push"}
 
@@ -72,7 +78,7 @@ var builtinStringFiles embed.FS
 var builtinPanelOrder = []string{"builtin.users.json", "builtin.teams.json", "builtin.kb.json", "builtin.upstreams.json"}
 
 func builtinProvider() PanelProvider {
-	p := PanelProvider{ID: "builtin", Routes: BuiltinRoutes, SecretRoutes: BuiltinSecretRoutes, Strings: map[string]map[string]string{}}
+	p := PanelProvider{ID: "builtin", Routes: BuiltinRoutes, SecretRoutes: BuiltinSecretRoutes, ConfirmRoutes: BuiltinConfirmRoutes, Strings: map[string]map[string]string{}}
 	sents, _ := builtinStringFiles.ReadDir("panels/strings")
 	for _, e := range sents {
 		var t map[string]string
@@ -676,6 +682,9 @@ func (c *panelCheck) action(a pAction, t tpl) error {
 		if a.Confirm == nil {
 			return fmt.Errorf("a destructive action needs a confirmation")
 		}
+	}
+	if route := c.routeKey(a.Method, a.Path); a.Confirm == nil && slices.Contains(c.p.ConfirmRoutes, route) {
+		return fmt.Errorf("an action on %s needs a confirmation", route)
 	}
 	if cf := a.Confirm; cf != nil {
 		if err := firstErr(c.key("confirm.title", cf.Title, maxLabel), c.key("confirm.message", cf.Message, maxMessage), c.key("confirm.button", cf.Button, maxLabel)); err != nil {

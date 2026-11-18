@@ -913,6 +913,33 @@
     "/sections/1/actions/1/fields/0/type": "password"
    },
    "swift": "placeholder"
+  },
+  {
+   "name": "an action on a route that needs a confirmation, without one",
+   "confirmRoutes": [
+    "PATCH plugins/acme/orders/{}"
+   ],
+   "set": {},
+   "swift": "refuse"
+  },
+  {
+   "name": "a destructive action on a route that needs a confirmation, without one",
+   "confirmRoutes": [
+    "DELETE plugins/acme/orders/{}"
+   ],
+   "remove": [
+    "/sections/1/rowActions/1/confirm"
+   ],
+   "swift": "refuse"
+  },
+  {
+   "name": "a route that needs a confirmation, used with one",
+   "confirmRoutes": [
+    "DELETE plugins/acme/orders/{}"
+   ],
+   "set": {},
+   "swift": "accept",
+   "goAccepts": true
   }
  ]
 }

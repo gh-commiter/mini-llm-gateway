@@ -13,9 +13,9 @@ const confirm = text => { confirmLog.push(text); return confirmAnswer; };
 // ---- a DOM double: only the properties and tags the renderer is meant to use; anything else (innerHTML, href, style, setAttribute …) throws ----
 const ALLOWED_PROPS = new Set(["className", "textContent", "value", "type", "checked", "disabled", "placeholder", "autocomplete"]);
 const ALLOWED_TAGS = new Set(["div", "span", "button", "input", "select", "option", "label", "h3"]);
-const NODE_OWN = new Set(["tag", "children", "events", "append", "replaceChildren", "addEventListener", "focus", "setSelectionRange", "setAttribute"]);
+const NODE_OWN = new Set(["tag", "dataset", "children", "events", "append", "replaceChildren", "addEventListener", "focus", "setSelectionRange", "setAttribute"]);
 function makeEl(tag) {
-  const e = {tag, children: [], events: {}, className: "", textContent: "", value: "", disabled: false, checked: false};
+  const e = {tag, children: [], events: {}, className: "", textContent: "", value: "", disabled: false, checked: false, dataset: {}};
   e.append = (...c) => { for (const x of c) e.children.push(x); };
   e.replaceChildren = (...c) => { e.children = c; };
   e.addEventListener = (n, f) => { (e.events[n] ||= []).push(f); };
@@ -54,6 +54,7 @@ async function main() {
   // 1. the registry constant equals the one of Go and Swift
   assert.deepEqual(PANEL_ROUTES.builtin, registry);
   assert.deepEqual(PANEL_SECRET_ROUTES.builtin, json("panels-registry.json").builtinSecret);
+  assert.deepEqual(PANEL_CONFIRM_ROUTES.builtin, json("panels-registry.json").builtinConfirm);
 
   // 2. the Go answer loads, in the registry's order, with the texts of the chosen locale
   const sends = (locale, strs) => async req => (req.path === "/panels/strings" ? {status: 200, body: fixture("panels-strings-" + locale + ".json")} : {status: 200, body: strs || fixture("panels.json")});
@@ -107,7 +108,7 @@ async function main() {
     for (const ptr of c.remove || []) edit(doc, ptr, null, true);
     for (const [ptr, n] of Object.entries(c.grow || {})) edit(doc, ptr, a => { while (a.length < n) a.push(JSON.parse(JSON.stringify(a[0]))); return a; });
     for (const [ptr, n] of Object.entries(c.pad || {})) edit(doc, ptr, () => "x".repeat(n));
-    const r = panelParse(doc, "acme", f1.routes, f1.secretRoutes);
+    const r = panelParse(doc, "acme", f1.routes, f1.secretRoutes, c.confirmRoutes || []);
     if (c.swift === "refuse") assert.notEqual(r.state, "ready", "accepted: " + c.name);
     else if (c.swift === "accept") {
       assert.equal(r.state, "ready", "refused (this side ignores unknown keys): " + c.name + " " + r.reason);
@@ -459,6 +460,10 @@ async function main() {
       assert.deepEqual(e, want, message);
       assert.ok(!JSON.stringify(e).includes("1234") && !JSON.stringify(e).includes("5678"));
     }
+    // the server trims the token line: an echo of the trimmed value (no "#" in it) is scrubbed too
+    fu.answers["PUT /upstreams/hub"] = [400, {error: {message: "bad token plainsecret99"}}];
+    assert.equal(await um.perform(addAction, "upstreams", null, null, {...values, token: "  plainsecret99\n"}, true), false);
+    assert.deepEqual(um.actionError.get(pListKey("upstreams", "")), {kind: "http", status: 400});
     // a secret field is refused for a route that is not registered as taking one, in a path, in a query, with a default, or unused
     const base = descriptionOf("builtin.upstreams");
     const mut = f => { const d = JSON.parse(JSON.stringify(base)); f(d.sections[1].actions[0], d); return panelParse(d, "builtin"); };
@@ -478,7 +483,7 @@ async function main() {
     assert.equal(um.cell(stateCol, {id: "", values: conn}), "Waiting for approval there");
     // dry run and push: the report is shown; push asks first with the text of what leaves
     const links = um.panel.sections[2], link = um.data("links").rows[0];
-    assert.equal(um.confirmation(links.rowActions[0], link), null);
+    assert.ok(um.confirmation(links.rowActions[0], link).title.startsWith("Run a dry run for acme-web on hub"));  // every action on upstream-push confirms
     const pc = um.confirmation(links.rowActions[1], link);
     assert.ok(pc.title === "Push acme-web to hub?" && pc.message.includes("title, class, kind and text") && pc.message.includes("No note ids") && !pc.destructive);
     fu.answers["POST /upstream-push"] = [200, {pushes: [{label: "acme-web", upstream: "hub", created: 1, skipped: 0, replaced: 0, refused: 1, dryRun: true, more: false, linesText: "create <img src=x onerror=alert(1)>\nrefused not allowed"}]}];
@@ -494,7 +499,8 @@ async function main() {
     const find = (pred, root) => { const out = []; walk(root || hv, n => { if (pred(n)) out.push(n); }); return out; };
     await fire(find(n => n.tag === "button" && n.textContent === "Add Upstream…")[0], "click");
     const pw = find(n => n.tag === "input" && n.type === "password");
-    assert.equal(pw.length, 1); assert.equal(pw[0].autocomplete, "off"); assert.equal(pw[0].value, "");
+    assert.equal(pw.length, 1); assert.equal(pw[0].autocomplete, "one-time-code"); assert.equal(pw[0].value, "");
+    assert.equal(pw[0].dataset["1pIgnore"], ""); assert.equal(pw[0].dataset.lpignore, "true");  // no password manager or browser store
     const typed = find(n => n.tag === "input" && n.type === "text" && n.placeholder === undefined);
     typed[0].value = "hub"; await fire(typed[0], "input"); typed[1].value = "hub.example:8765"; await fire(typed[1], "input");
     pw[0].value = TOKEN; await fire(pw[0], "input");
@@ -506,6 +512,13 @@ async function main() {
     assert.ok(find(n => n.tag === "input" && n.type === "password").every(n => n.value === ""), "the password field still holds the token");
     assert.ok(uview.form && !JSON.stringify(uview.form.values).includes("tok-1234"), "the form state still holds the token after a failed send");
     assert.ok(texts(hv).includes("HTTP 400"));
+    // a redraw while the form is open draws the secret empty: what is not seen is not sent (OK follows the visible field)
+    const pw1 = find(n => n.tag === "input" && n.type === "password")[0]; pw1.value = TOKEN; await fire(pw1, "input");
+    assert.equal(find(n => n.tag === "button" && n.textContent === "pOk")[0].disabled, false);
+    await vm.load();
+    assert.equal(find(n => n.tag === "input" && n.type === "password")[0].value, "");
+    assert.equal(find(n => n.tag === "button" && n.textContent === "pOk")[0].disabled, true, "OK is enabled for a token that is no longer visible");
+    assert.ok(!JSON.stringify(uview.form.values).includes("tok-1234"));
     fv.answers["PUT /upstreams/hub"] = [200, {name: "hub", address: "x", device: "DEVICE-ID <b>", probe: "p"}];
     const pw2 = find(n => n.tag === "input" && n.type === "password")[0]; pw2.value = TOKEN; await fire(pw2, "input");
     await fire(find(n => n.tag === "button" && n.textContent === "pOk")[0], "click"); await sleep(30);

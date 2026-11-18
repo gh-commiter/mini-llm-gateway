@@ -466,7 +466,8 @@ public struct PanelConfirmText: Equatable, Sendable { public let title: String, 
     /// is replaced by the plain status.
     static func scrub(_ e: PanelError, status: Int, secrets: [String]) -> PanelError {
         guard case .server(let m) = e else { return e }
-        let parts = secrets.flatMap { s in [s] + s.split(separator: "#").map(String.init).filter { $0.count >= 4 } }
+        let values: [String] = secrets.flatMap { [$0, $0.trimmingCharacters(in: .whitespacesAndNewlines)] }  // the server trims the token line: the trimmed value too
+        let parts: [String] = values.flatMap { s in [s] + s.split(separator: "#").map(String.init).filter { $0.count >= 4 } }
         return parts.contains(where: { !$0.isEmpty && m.contains($0) }) ? .http(status) : e
     }
 

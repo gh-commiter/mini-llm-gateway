@@ -2112,6 +2112,11 @@
            "label": "builtin.upstreams.section.upstreams.action.add.result.column.probe"
           }
          ]
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.upstreams.action.add.confirm.title",
+         "message": "builtin.upstreams.section.upstreams.action.add.confirm.message",
+         "button": "builtin.upstreams.section.upstreams.action.add.confirm.button"
         }
        }
       ],
@@ -2479,6 +2484,11 @@
            "label": "builtin.upstreams.section.links.action.dry.result.column.linestext"
           }
          ]
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.dry.confirm.title",
+         "message": "builtin.upstreams.section.links.action.dry.confirm.message",
+         "button": "builtin.upstreams.section.links.action.dry.confirm.button"
         }
        },
        {

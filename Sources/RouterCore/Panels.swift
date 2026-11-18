@@ -226,6 +226,9 @@ public enum PanelRoutes {
         "POST upstream-push"]
     /// The routes that may receive the value of a secret field (in the body); a secret field in any other route is refused.
     public static let builtinSecret = ["PUT upstreams/{}"]
+    /// The routes whose every action must carry a confirm (the sends to an upstream and its removal); an action on one without it is refused.
+    public static let builtinConfirm = ["POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}"]
+    public static func registeredConfirm(for provider: String) -> [String] { provider == "builtin" ? builtinConfirm : [] }
     public static func registered(for provider: String) -> [String]? { provider == "builtin" ? builtin : nil }
     public static func registeredSecret(for provider: String) -> [String] { provider == "builtin" ? builtinSecret : [] }
 
@@ -263,7 +266,7 @@ public enum PanelValidator {
 
     /// Decodes and validates one description with the routes of the provider that the REGISTRY (the answer of GET /panels)
     /// names, never the provider field inside the description: that one must equal it.
-    public static func parse(_ data: Data, provider: String, routes: [String]? = nil, secretRoutes: [String]? = nil) -> PanelParse {
+    public static func parse(_ data: Data, provider: String, routes: [String]? = nil, secretRoutes: [String]? = nil, confirmRoutes: [String]? = nil) -> PanelParse {
         guard data.count <= PanelLimits.bytes else { return .refused("the description is larger than \(PanelLimits.bytes) bytes") }
         struct Probe: Decodable { let format: Int }
         guard let probe = try? JSONDecoder().decode(Probe.self, from: data) else { return .refused("not a JSON object with a format") }
@@ -273,7 +276,7 @@ public enum PanelValidator {
         do { d = try JSONDecoder().decode(PanelDescription.self, from: data) } catch { return .refused("cannot decode: \(error)") }
         guard d.provider == provider else { return .refused("the description says provider \(d.provider), the registry says \(provider)") }
         guard let routes = routes ?? PanelRoutes.registered(for: provider) else { return .refused("provider \(provider) is not known here") }
-        do { try Check(d: d, routes: routes, secretRoutes: secretRoutes ?? PanelRoutes.registeredSecret(for: provider)).panel(); return .ready(d) } catch let r as Refusal { return .refused(r.reason) } catch { return .refused("\(error)") }
+        do { try Check(d: d, routes: routes, secretRoutes: secretRoutes ?? PanelRoutes.registeredSecret(for: provider), confirmRoutes: confirmRoutes ?? PanelRoutes.registeredConfirm(for: provider)).panel(); return .ready(d) } catch let r as Refusal { return .refused(r.reason) } catch { return .refused("\(error)") }
     }
 
     struct Refusal: Error { let reason: String; init(_ r: String) { reason = r } }
@@ -298,6 +301,7 @@ public enum PanelValidator {
         let d: PanelDescription
         let routes: [String]
         let secretRoutes: [String]
+        let confirmRoutes: [String]
 
         /// A text of the description is a key of the panel's namespace: [a-z0-9._-], at most 120 characters, "<panel id>.…".
         func str(_ name: String, _ k: String?, _ max: Int = 0) throws {
@@ -437,6 +441,7 @@ public enum PanelValidator {
             }
             if let w = a.when { guard sc.row, isName(w.field), scalar(w.equals) else { throw Refusal("action \(a.id): when") } }
             if a.method == "DELETE" || a.destructive == true { guard a.confirm != nil else { throw Refusal("action \(a.id): a destructive action needs a confirmation") } }
+            if a.confirm == nil, let route = PanelTemplate.route(a.method, a.path), confirmRoutes.contains(route) { throw Refusal("action \(a.id): an action on \(route) needs a confirmation") }
             if let c = a.confirm { try str("confirm.title", c.title); try str("confirm.message", c.message); try str("confirm.button", c.button) }
         }
 

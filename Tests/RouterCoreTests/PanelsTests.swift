@@ -69,6 +69,7 @@ private let userAnswers: [(String, Int, String)] = [
         let reg = try object("panels-registry.json")
         #expect(reg["builtin"] as? [String] == PanelRoutes.builtin)
         #expect(reg["builtinSecret"] as? [String] == PanelRoutes.builtinSecret)
+        #expect(reg["builtinConfirm"] as? [String] == PanelRoutes.builtinConfirm)
     }
 
     @Test(.enabled(if: haveFixtures)) func builtinDescriptionDecodesAndValidates() throws {
@@ -104,7 +105,7 @@ private let userAnswers: [(String, Int, String)] = [
             for ptr in (c["remove"] as? [String] ?? []) { doc = edit(doc, ptr, remove: true) { $0 } }
             for (ptr, n) in (c["grow"] as? [String: Int] ?? [:]) { doc = edit(doc, ptr) { var a = $0 as! [Any]; while a.count < n { a.append(a[0]) }; return a } }
             for (ptr, n) in (c["pad"] as? [String: Int] ?? [:]) { doc = edit(doc, ptr) { _ in String(repeating: "x", count: n) } }
-            let parsed = PanelValidator.parse(data(doc), provider: "acme", routes: f["routes"] as? [String], secretRoutes: f["secretRoutes"] as? [String])
+            let parsed = PanelValidator.parse(data(doc), provider: "acme", routes: f["routes"] as? [String], secretRoutes: f["secretRoutes"] as? [String], confirmRoutes: c["confirmRoutes"] as? [String] ?? [])
             let name = c["name"] as! String
             switch c["swift"] as! String {
             case "refuse":
@@ -1072,6 +1073,10 @@ private let upstreamAnswers: [(String, Int, String)] = [
             for k in keys { #expect(st.table[k] != nil, "\(loc): no text for \(k)") }
         }
         #expect(PanelRoutes.builtinSecret == ["PUT upstreams/{}"] && PanelRoutes.builtin.contains("PUT upstreams/{}"))
+        // an action on a route that needs a confirmation has one: without its confirm the panel is refused
+        #expect(PanelRoutes.builtinConfirm == ["POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}"])
+        let bare = String(decoding: data(try description("builtin.upstreams")), as: UTF8.self).replacingOccurrences(of: "\"confirm\":", with: "\"confirmx\":")
+        if case .ready = PanelValidator.parse(Data(bare.utf8), provider: "builtin") { Issue.record("accepted without any confirm") }
         // without a registered secret route the panel is refused
         if case .ready = PanelValidator.parse(data(try description("builtin.upstreams")), provider: "builtin", secretRoutes: []) { Issue.record("accepted without a secret route") }
     }
@@ -1092,6 +1097,11 @@ private let upstreamAnswers: [(String, Int, String)] = [
             #expect(await !m.perform(add, section: "upstreams", values: values, confirmed: true))
             #expect(m.actionError[PanelListKey(path: "upstreams", parent: "")] == want, "\(message)")
         }
+        // the server trims the token line: an echo of the trimmed value (no "#" in it) is scrubbed too
+        await fake.set("PUT /upstreams/hub", 400, #"{"error":{"message":"bad token plainsecret99"}}"#)
+        var spaced = values; spaced["token"] = .string("  plainsecret99\n")
+        #expect(await !m.perform(add, section: "upstreams", values: spaced, confirmed: true))
+        #expect(m.actionError[PanelListKey(path: "upstreams", parent: "")] == .http(400))
         // success: the answer is shown (the device ID to approve, the probe text) until the view closes it
         await fake.set("PUT /upstreams/hub", 200, #"{"name":"hub","address":"hub.example:8765","device":"DEVICE-ID","probe":"waiting for approval"}"#)
         #expect(await m.perform(add, section: "upstreams", values: values, confirmed: true))
@@ -1118,7 +1128,7 @@ private let upstreamAnswers: [(String, Int, String)] = [
         let fake = Fake()
         let m = try await model(fake)
         let links = m.panel.sections[2], link = m.data("links").rows[0]
-        #expect(m.confirmation(links.rowActions![0], row: link) == nil)  // a dry run asks nothing
+        #expect(m.confirmation(links.rowActions![0], row: link)?.title == "Run a dry run for acme-web on hub?")  // every action on upstream-push asks
         let c = m.confirmation(links.rowActions![1], row: link)
         #expect(c?.title == "Push acme-web to hub?" && c?.destructive == false && c?.message.contains("title, class, kind and text") == true && c?.message.contains("No note ids") == true)
         await fake.set("POST /upstream-push", 200, #"{"pushes":[{"label":"acme-web","upstream":"hub","created":1,"skipped":0,"replaced":0,"refused":1,"dryRun":true,"more":false,"linesText":"create <img src=x onerror=alert(1)>\nrefused not allowed"}]}"#)

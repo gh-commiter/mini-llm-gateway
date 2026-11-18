@@ -810,6 +810,8 @@ const PANEL_ROUTES = {builtin: [
   "POST upstream-push"]};
 // The routes that may receive the value of a secret field (in the body); a secret field in any other route is refused.
 const PANEL_SECRET_ROUTES = {builtin: ["PUT upstreams/{}"]};
+// The routes whose every action must carry a confirm (the sends to an upstream and its removal); an action on one without it is refused.
+const PANEL_CONFIRM_ROUTES = {builtin: ["POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}"]};
 const PANEL_SYMBOLS = ["person.2", "person.3", "folder", "book", "tray", "gearshape", "doc.text", "key", "list.bullet"];
 class PanelRefusal extends Error {}
 const prefuse = m => { throw new PanelRefusal(m); };
@@ -998,7 +1000,7 @@ function pCheckQuery(q, sc) {
     } else if (!/^[A-Za-z0-9_.-]{0,64}$/.test(v)) prefuse("query: value " + v + " is neither plain nor exactly one placeholder");
   }
 }
-function pValidate(d, routes, secretRoutes) {
+function pValidate(d, routes, secretRoutes, confirmRoutes) {
   const key = (name, k) => pKey(d, name, k);
   const column = c => {
     if (!pIsName(c.field)) prefuse("column: bad field " + c.field);
@@ -1069,6 +1071,7 @@ function pValidate(d, routes, secretRoutes) {
     }
     if (a.when !== undefined && !(sc.row && pIsName(a.when.field) && pScalarOK(a.when.equals))) prefuse("action " + a.id + ": when");
     if ((a.method === "DELETE" || a.destructive === true) && a.confirm === undefined) prefuse("action " + a.id + ": a destructive action needs a confirmation");
+    if (a.confirm === undefined) { const route = pRouteOf(a.method, a.path); if (route !== null && confirmRoutes.includes(route)) prefuse("action " + a.id + ": an action on " + route + " needs a confirmation"); }
     if (a.confirm !== undefined) { key("confirm.title", a.confirm.title); key("confirm.message", a.confirm.message); key("confirm.button", a.confirm.button); }
   };
   const list = (s, nested) => {
@@ -1137,7 +1140,7 @@ function pValidate(d, routes, secretRoutes) {
 }
 // panelParse: {state: "ready", panel} | {state: "needsNewer", format} | {state: "refused", reason}. "provider" is the id the REGISTRY
 // (the answer of GET /panels) names, never the provider field inside the description: that one must equal it.
-function panelParse(raw, provider, routes, secretRoutes) {
+function panelParse(raw, provider, routes, secretRoutes, confirmRoutes) {
   try {
     if (!pObj(raw) || !Number.isInteger(raw.format)) return {state: "refused", reason: "not a JSON object with a format"};
     if (raw.format > 1) return {state: "needsNewer", format: raw.format};
@@ -1147,7 +1150,7 @@ function panelParse(raw, provider, routes, secretRoutes) {
     if (d.provider !== provider) return {state: "refused", reason: "the description says provider " + d.provider + ", the registry says " + provider};
     const rs = routes || pGet(PANEL_ROUTES, provider);
     if (!rs) return {state: "refused", reason: "provider " + provider + " is not known here"};
-    pValidate(d, rs, secretRoutes || pGet(PANEL_SECRET_ROUTES, provider) || []);
+    pValidate(d, rs, secretRoutes || pGet(PANEL_SECRET_ROUTES, provider) || [], confirmRoutes || pGet(PANEL_CONFIRM_ROUTES, provider) || []);
     return {state: "ready", panel: d};
   } catch (e) {
     return {state: "refused", reason: e instanceof PanelRefusal ? e.message : "internal error: " + pCut(String(e && e.message), 120)};
@@ -1416,7 +1419,7 @@ class PanelModel {
   // is replaced by the plain status.
   static scrub(e, status, secrets) {
     if (e.kind !== "server") return e;
-    const parts = secrets.flatMap(x => [x, ...x.split("#").filter(p => p.length >= 4)]);
+    const parts = secrets.flatMap(x => [x, x.trim()]).flatMap(x => [x, ...x.split("#").filter(p => p.length >= 4)]);  // the server trims the token line: the trimmed value too
     return parts.some(p => p !== "" && e.message.includes(p)) ? {kind: "http", status} : e;
   }
   static resultRows(bodyText, res) {
@@ -1561,7 +1564,9 @@ function panelView(model, host) {
       if (fld.type === "toggle") input = pswitch(pGet(f.values, fld.id) === true, v => { f.values[fld.id] = v; refresh(); });
       else if (fld.type === "text" || fld.type === "secret") {
         const secret = fld.type === "secret";  // a password field that is never filled in and never shown again
-        input = pe("input", "left"); input.type = secret ? "password" : "text"; if (secret) input.autocomplete = "off";
+        input = pe("input", "left"); input.type = secret ? "password" : "text";
+        // a token is never offered to a password manager or the browser's own store; and what is not drawn is not kept
+        if (secret) { input.autocomplete = "one-time-code"; input.dataset["1pIgnore"] = ""; input.dataset.lpignore = "true"; delete f.values[fld.id]; }
         input.value = !secret && typeof pGet(f.values, fld.id) === "string" ? pGet(f.values, fld.id) : "";
         input.addEventListener("input", () => { f.values[fld.id] = input.value; refresh(); });
         input.addEventListener("keydown", e => keys(e, true));

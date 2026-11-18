@@ -52,5 +52,11 @@
  ],
  "builtinSecret": [
   "PUT upstreams/{}"
+ ],
+ "builtinConfirm": [
+  "POST upstream-push",
+  "PUT upstreams/{}",
+  "DELETE upstreams/{}",
+  "DELETE upstreams/{}/links/{}"
  ]
 }
