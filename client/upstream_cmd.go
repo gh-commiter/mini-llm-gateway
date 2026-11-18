@@ -15,12 +15,14 @@ const upstreamHelp = `
   minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
   minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)
   minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
+  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run)
+  minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)
   minigw gw upstream unlink <project> <name> | --team <team> <name>
   minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
   minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
   minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
   minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
-  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)`
+  minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)`
 
 type upLink struct {
 	Project     int64
@@ -41,6 +43,17 @@ type upLink struct {
 	LastFail    *time.Time
 	FailCount   int
 	NextAttempt *time.Time
+
+	Read         bool
+	ReadClasses  []string
+	ReadSources  []string
+	ReadAccepted *time.Time
+	LastPull     *time.Time
+	LastPullOK   *time.Time
+	LastPullAge  int
+	PullError    string
+	Mirror       int
+	MirrorBytes  int64
 
 	NotPropagated []struct {
 		Note int64
@@ -117,6 +130,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		if u.auto && u.manual {
 			fail("--auto and --manual together: choose one")
 		}
+		if u.read && u.noRead {
+			fail("--read and --no-read together: choose one")
+		}
 		req := map[string]any{"team": isTeam, "remote": remote, "classes": u.class, "withPrivate": u.withPrivate}
 		if u.auto {
 			req["auto"] = true
@@ -126,7 +142,22 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		if u.mode != "" {
 			req["mode"] = u.mode
 		}
+		reading := u.read || u.noRead || u.readClass != "" || u.readSources != ""
+		pushFlags := u.class != "" || u.withPrivate || u.auto || u.manual || u.mode != "" || u.remoteProject != "" || u.remoteTeam != ""
+		if reading {
+			req["read"] = !u.noRead
+			req["readClasses"], req["readSources"], req["acceptReach"] = u.readClass, u.readSources, u.acceptReach
+			req["readOnly"] = !pushFlags // an existing link keeps its push settings
+		}
 		a.do("PUT", fmt.Sprintf("/upstreams/%s/links/%d", url.PathEscape(name), id), req, nil)
+		if reading && !pushFlags {
+			if u.noRead {
+				say(clean(fmt.Sprintf("%s -> %s: reading is off, the mirror was deleted", local, name)))
+			} else {
+				say(clean(fmt.Sprintf("%s -> %s: reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)", local, name)))
+			}
+			return
+		}
 		if u.auto {
 			say(clean(fmt.Sprintf("linked %s to %s as %s: changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)", local, name, remote)))
 		} else {
@@ -138,6 +169,13 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 				what = "team"
 			}
 			say(clean("also the private notes of ALL members of the " + what + " are sent"))
+		}
+		if reading {
+			if u.noRead {
+				say("reading is off, the mirror was deleted")
+			} else {
+				say("reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)")
+			}
 		}
 	case pos[1] == "status" && len(pos) <= 3:
 		q := ""
@@ -155,6 +193,10 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			say(clean(upstreamLinkLine(l)))
 			if s := upstreamSyncLine(l); s != "" {
 				say(clean("  " + s))
+			}
+			say(clean("  " + upstreamReadLine(l)))
+			if l.Read && l.PullError != "" {
+				say(clean("  last pull error: " + l.PullError))
 			}
 			if l.LastError != "" {
 				say(clean("  last refusal: " + l.LastError))
@@ -248,10 +290,7 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			}
 		}
 	case pos[1] == "pull" && len(pos) <= 3:
-		if !u.dryRun {
-			fail("pull: only --dry-run exists for now (it asks the upstream what could be read and stores nothing)")
-		}
-		body := map[string]any{"dryRun": true}
+		body := map[string]any{"dryRun": u.dryRun}
 		switch {
 		case team != "" && len(pos) == 2:
 			body["team"] = teamID(a, team)
@@ -260,17 +299,65 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		case len(pos) != 2:
 			usage()
 		}
-		var r struct{ Pulls []upPull }
-		a.do("POST", "/upstream-pull", body, &r)
-		for _, p := range r.Pulls {
-			say(clean(fmt.Sprintf("%s -> %s (%s)", p.Label, p.Upstream, p.Remote)))
-			for _, l := range p.Lines {
-				say(clean("  " + l))
+		if u.dryRun {
+			var r struct{ Pulls []upPull }
+			a.do("POST", "/upstream-pull", body, &r)
+			for _, p := range r.Pulls {
+				say(clean(fmt.Sprintf("%s -> %s (%s)", p.Label, p.Upstream, p.Remote)))
+				for _, l := range p.Lines {
+					say(clean("  " + l))
+				}
+				if p.Stopped != "" {
+					say(clean("  stopped: " + p.Stopped))
+				} else {
+					say(fmt.Sprintf("  dry run: %d notes could be read, nothing was stored", p.Total))
+				}
 			}
-			if p.Stopped != "" {
-				say(clean("  stopped: " + p.Stopped))
-			} else {
-				say(fmt.Sprintf("  dry run: %d notes could be read, nothing was stored", p.Total))
+			return
+		}
+		// A run reads a bounded number of notes (and a helper answers a call within 30 seconds): a pull that is not through comes back with
+		// "more" and its cursor; ask again for that link, as long as it gets further (or only waits for the upstream's read limit, a bounded
+		// number of times).
+		targets := []map[string]any{body}
+		lastNext, stalls := map[string]int64{}, map[string]int{}
+		for len(targets) > 0 {
+			var next []map[string]any
+			wait := 0
+			for _, tgt := range targets {
+				var r struct{ Pulls []upPull }
+				a.do("POST", "/upstream-pull", tgt, &r)
+				for _, p := range r.Pulls {
+					upstreamPullPrint(p)
+					if !p.More {
+						continue
+					}
+					key := fmt.Sprint(p.Project, "|", p.Upstream)
+					switch {
+					case p.Next > lastNext[key]:
+						lastNext[key], stalls[key] = p.Next, 0
+					case p.Wait > 0 && stalls[key] < 30:
+						stalls[key]++
+					default:
+						say(clean(fmt.Sprintf("  %s -> %s: no progress: run the pull again later", p.Label, p.Upstream)))
+						continue
+					}
+					nt := map[string]any{"upstream": p.Upstream, "dryRun": false}
+					if t, ok := core.SegmentTeam(p.Project); p.Team && ok {
+						nt["team"] = t
+					} else {
+						nt["project"] = p.Project
+					}
+					next = append(next, nt)
+					wait = max(wait, p.Wait)
+				}
+			}
+			targets = next
+			if wait > 0 && len(targets) > 0 {
+				pause := u.pause
+				if pause == nil {
+					pause = time.Sleep
+				}
+				pause(time.Duration(wait) * time.Second)
 			}
 		}
 	default:
@@ -283,6 +370,27 @@ type upPull struct {
 	Lines                   []string
 	Total                   int
 	Stopped                 string
+	Added, Updated          int
+	Removed, Skipped        int
+	Mirror                  int
+	Purged, More            bool
+	Wait                    int
+	Next, Project           int64
+	Team                    bool
+}
+
+func upstreamPullPrint(p upPull) {
+	say(clean(fmt.Sprintf("%s -> %s (%s)", p.Label, p.Upstream, p.Remote)))
+	for _, l := range p.Lines {
+		say(clean("  " + l))
+	}
+	say(fmt.Sprintf("  added %d, updated %d, removed %d, skipped %d, mirror %d notes", p.Added, p.Updated, p.Removed, p.Skipped, p.Mirror))
+	if p.Purged {
+		say("  the upstream withdrew the right to read: the mirror of this link was deleted")
+	}
+	if p.Stopped != "" {
+		say(clean("  stopped: " + p.Stopped))
+	}
 }
 
 type upPush struct {
@@ -335,6 +443,51 @@ func upstreamLinkLine(l upLink) string {
 		how += ", publish"
 	}
 	return fmt.Sprintf("%s -> %s (%s): %d of %d notes would go, %s, classes %s, %s", l.Label, l.Upstream, l.Remote, l.Pending, l.Total, last, cls, how)
+}
+
+// upstreamReadLine: whether the link reads, the reach the owner accepted, the mirror and how current it is.
+func upstreamReadLine(l upLink) string {
+	if !l.Read {
+		return "read: off"
+	}
+	src := "none"
+	if len(l.ReadSources) > 0 {
+		src = strings.Join(l.ReadSources, ",")
+	}
+	acc := ""
+	if l.ReadAccepted != nil {
+		acc = ", accepted " + l.ReadAccepted.Local().Format("2006-01-02 15:04")
+	}
+	pulled := ", never pulled"
+	if l.LastPullOK != nil {
+		pulled = ", last pull " + l.LastPullOK.Local().Format("2006-01-02 15:04") + " (" + upstreamAge(l.LastPullAge) + " old)"
+	}
+	if l.LastPull != nil && (l.LastPullOK == nil || l.LastPull.After(*l.LastPullOK)) {
+		pulled += ", last try " + l.LastPull.Local().Format("2006-01-02 15:04")
+	}
+	return fmt.Sprintf("read: on, classes %s, sources %s%s, mirror %d notes (%s)%s", strings.Join(l.ReadClasses, ","), src, acc, l.Mirror, upstreamSize(l.MirrorBytes), pulled)
+}
+
+func upstreamSize(b int64) string {
+	switch {
+	case b < 1024:
+		return fmt.Sprintf("%d B", b)
+	case b < 1<<20:
+		return fmt.Sprintf("%d.%d KiB", b/1024, b%1024*10/1024)
+	}
+	return fmt.Sprintf("%d.%d MiB", b>>20, b%(1<<20)*10/(1<<20))
+}
+
+func upstreamAge(sec int) string {
+	switch {
+	case sec < 60:
+		return "under a minute"
+	case sec < 3600:
+		return fmt.Sprintf("%d min", sec/60)
+	case sec < 86400:
+		return fmt.Sprintf("%d h", sec/3600)
+	}
+	return fmt.Sprintf("%d d", sec/86400)
 }
 
 // upstreamSyncLine: the state of the automatic push, when there is any to tell.

@@ -8,8 +8,9 @@ import (
 	"minigw/core"
 )
 
-// adminUpstreamPull serves POST /upstream-pull {project or team, upstream, dryRun}: the owner's explicit look at what the upstream would let
-// this gateway read. It asks the upstream for a manifest and writes nothing here; only dryRun is accepted for now.
+// adminUpstreamPull serves POST /upstream-pull {project or team, upstream, dryRun}: the owner's explicit pull. dryRun only asks the upstream
+// for a manifest and says what it would let this gateway read (nothing is written); a real pull fills the mirror of the links with reading
+// on (at most a bounded number of notes per call: it answers more:true and the caller asks again).
 func (a *API) adminUpstreamPull(ctx context.Context, st *core.Store, method string, body []byte, failErr func(error) (int, any, bool)) (int, any, bool) {
 	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
 	h := a.upstreamHost(ctx)

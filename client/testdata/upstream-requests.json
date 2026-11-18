@@ -205,6 +205,58 @@
   {
    "method": "PUT",
    "path": "/minigw/v1/projects/shop/notes/5"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/notes/5?x=1"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/notes/5/"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/../notes/5"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/notes/.."
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/notes/"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/notes/-1"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/notes/1234567890123456789"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/notes/5%2f.."
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/notes/5#x"
+  },
+  {
+   "method": "PATCH",
+   "path": "/minigw/v1/projects/7/notes/5"
+  },
+  {
+   "method": "HEAD",
+   "path": "/minigw/v1/projects/7/notes/5"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/shop/notes/5"
+  },
+  {
+   "method": "GET",
+   "path": "/minigw/v1/projects/7/notes/abc"
   }
  ]
 }

@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// Step C of the upstream gateway (reading the upstream's KB), part 1: the manifest a hub serves and the dry-run pull that shows what a
-// pull would reach. Nothing is stored here for it: no mirror, no setting, no schema.
+// Step C of the upstream gateway (reading the upstream's KB): the manifest a hub serves, the dry-run pull that shows what a pull would
+// reach (nothing stored), and the manual pull into the mirror (upstream_mirror, never `notes`).
 
 const (
 	// MaxManifest: notes in one manifest; more and the answer says Truncated (a reader then never infers a deletion from it).
@@ -117,8 +117,8 @@ func sourceLabel(tx *sql.Tx, id int64) (label string, err error) {
 	return
 }
 
-// UpstreamPull is the report of one link of a pull. In this version only a dry run exists: it asks the upstream for its manifest and says
-// what a pull would reach; nothing is written here.
+// UpstreamPull is the report of one link of a pull: a dry run only asks the upstream for its manifest and says what a pull would reach;
+// a real pull also fills the mirror (Added, Updated, Removed, Skipped count what it did to it).
 type UpstreamPull struct {
 	Label    string   `json:"label"`
 	Upstream string   `json:"upstream"`
@@ -131,28 +131,52 @@ type UpstreamPull struct {
 	DryRun    bool   `json:"dryRun"`
 	Project   int64  `json:"project"`
 	Team      bool   `json:"team"`
+	Added     int    `json:"added"`
+	Updated   int    `json:"updated"`
+	Removed   int    `json:"removed"`
+	Skipped   int    `json:"skipped"`
+	Mirror    int    `json:"mirror"` // notes in the link's mirror after the run
+	// Purged: the upstream withdrew the right to read (or the project is gone there): the mirror of this link was deleted.
+	Purged bool `json:"purged,omitempty"`
+	// More: the run used its budget (note GETs, time, or the upstream's read limit) and stopped without a fault: pull again (after Wait
+	// seconds). Next is the cursor, the id of the last upstream note dealt with, so that the next run goes on above it.
+	More bool  `json:"more,omitempty"`
+	Wait int   `json:"wait,omitempty"`
+	Next int64 `json:"next,omitempty"`
 }
 
-// PullUpstream (dry only for now) asks the upstream of each named link (project or team > 0: that one; both 0: every link; upstream
-// optional) for the manifest of the linked remote project and reports its sources and the counts per class and kind. It is an explicit
-// owner action: nothing calls it on a timer.
+// PullUpstream asks the upstream of each named link (project or team > 0: that one; both 0: every link; upstream optional) for the
+// manifest of the linked remote project. dry: only reports its sources and the counts per class and kind, nothing is written. A real pull
+// (only links with reading on) fetches what the manifest says is new or changed into the mirror, deletes what a complete manifest no longer
+// lists, and purges the mirror when the upstream withdraws the right. It is an explicit owner action: nothing calls it on a timer.
 func (s *Store) PullUpstream(ctx context.Context, tr UpstreamTransport, project, team int64, upstream string, dry bool, sleep func(time.Duration) bool) ([]UpstreamPull, error) {
-	if !dry {
-		return nil, ErrRefusal{"pull is only available as a dry run for now: minigw gw upstream pull <project> --dry-run"}
-	}
 	links, err := s.UpstreamLinks(ctx, project, team)
 	if err != nil {
 		return nil, err
 	}
 	var out []UpstreamPull
+	linked := false
 	for _, l := range links {
 		if upstream != "" && l.Upstream != upstream {
 			continue
 		}
-		out = append(out, s.pullDry(ctx, tr, l.UpstreamLink, l.Label, sleep))
+		linked = true
+		switch {
+		case dry:
+			out = append(out, s.pullDry(ctx, tr, l.UpstreamLink, l.Label, sleep))
+		case l.Read:
+			r, err := s.pullLink(ctx, tr, l.UpstreamLink, l.Label, sleep)
+			if err != nil {
+				return out, err
+			}
+			out = append(out, r)
+		}
 	}
-	if len(out) == 0 {
+	switch {
+	case !linked:
 		return nil, ErrRefusal{"no upstream link for this: minigw gw upstream link <project> <upstream>"}
+	case len(out) == 0:
+		return nil, ErrRefusal{"reading is off for this link: minigw gw upstream link <project> <upstream> --read --accept-reach (look first: pull <project> --dry-run)"}
 	}
 	return out, nil
 }

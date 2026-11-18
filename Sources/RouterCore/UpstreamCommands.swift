@@ -11,12 +11,14 @@ extension AdminCommands {
           minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
           minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)
           minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
+          minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run)
+          minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)
           minigw gw upstream unlink <project> <name> | --team <team> <name>
           minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
           minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
           minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
           minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
-          minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)
+          minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)
         """
 
     /// Go's readKey on the text it read: the secret must be printable ASCII without spaces (it goes into an HTTP header).
@@ -71,15 +73,29 @@ extension AdminCommands {
             }
             if remote.isEmpty { remote = local }
             if o.auto && o.manual { throw fail("--auto and --manual together: choose one") }
+            if o.read && o.noRead { throw fail("--read and --no-read together: choose one") }
             var req: [String: Any] = ["team": isTeam, "remote": remote, "classes": o.classes, "withPrivate": o.withPrivate]
             if o.auto { req["auto"] = true } else if o.manual { req["auto"] = false }
             if !o.mode.isEmpty { req["mode"] = o.mode }
+            let reading = o.read || o.noRead || !o.readClass.isEmpty || !o.readSources.isEmpty
+            let pushFlags = !o.classes.isEmpty || o.withPrivate || o.auto || o.manual || !o.mode.isEmpty || !o.remoteProject.isEmpty || !o.remoteTeam.isEmpty
+            if reading {
+                req["read"] = !o.noRead
+                req["readClasses"] = o.readClass; req["readSources"] = o.readSources; req["acceptReach"] = o.acceptReach
+                req["readOnly"] = !pushFlags  // an existing link keeps its push settings
+            }
             try request("PUT", path, req)
+            if reading && !pushFlags {
+                if o.noRead { say(clean("\(local) -> \(name): reading is off, the mirror was deleted")) }
+                else { say(clean("\(local) -> \(name): reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)")) }
+                return
+            }
             if o.auto { say(clean("linked \(local) to \(name) as \(remote): changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)")) }
             else { say(clean("linked \(local) to \(name) as \(remote): nothing is sent until minigw gw upstream push")) }
             if o.withPrivate {
                 say(clean("also the private notes of ALL members of the " + (isTeam ? "team" : "project") + " are sent"))
             }
+            if reading { say(o.noRead ? "reading is off, the mirror was deleted" : "reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)") }
         case ("status", 2...3):
             var q = ""
             if !team.isEmpty && pos.count == 2 { q = "?team=\(try teamID(team))" }
@@ -90,6 +106,8 @@ extension AdminCommands {
                 let d = l.dict
                 say(clean(Self.upstreamLinkLine(d, zone)))
                 if let s = Self.upstreamSyncLine(d, zone) { say(clean("  " + s)) }
+                say(clean("  " + Self.upstreamReadLine(d, zone)))
+                if d["read"]?.bool == true, let e = d["pullError"]?.string, !e.isEmpty { say(clean("  last pull error: " + e)) }
                 if let e = d["lastError"]?.string, !e.isEmpty { say(clean("  last refusal: " + e)) }
                 if let s = Self.upstreamNotPropagated(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
@@ -144,17 +162,50 @@ extension AdminCommands {
                 if wait > 0 && !targets.isEmpty { pause(Double(wait)) }
             }
         case ("pull", 2...3):
-            if !o.dryRun { throw fail("pull: only --dry-run exists for now (it asks the upstream what could be read and stores nothing)") }
-            var body: [String: Any] = ["dryRun": true]
+            var body: [String: Any] = ["dryRun": o.dryRun]
             if !team.isEmpty && pos.count == 2 { body["team"] = try teamID(team) }
             else if team.isEmpty && pos.count == 3 { body["project"] = try projectID(pos[2]) }
             else if pos.count != 2 { throw usage }
-            for p in try request("POST", "/upstream-pull", body)["pulls"]?.array ?? [] {
-                let d = p.dict
-                say(clean("\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? ""))"))
-                for l in d["lines"]?.array ?? [] { say(clean("  " + (l.string ?? ""))) }
-                if let s = d["stopped"]?.string, !s.isEmpty { say(clean("  stopped: " + s)) }
-                else { say("  dry run: \(d["total"]?.int ?? 0) notes could be read, nothing was stored") }
+            if o.dryRun {
+                for p in try request("POST", "/upstream-pull", body)["pulls"]?.array ?? [] {
+                    let d = p.dict
+                    say(clean("\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? ""))"))
+                    for l in d["lines"]?.array ?? [] { say(clean("  " + (l.string ?? ""))) }
+                    if let s = d["stopped"]?.string, !s.isEmpty { say(clean("  stopped: " + s)) }
+                    else { say("  dry run: \(d["total"]?.int ?? 0) notes could be read, nothing was stored") }
+                }
+                return
+            }
+            // A run reads a bounded number of notes (and a helper answers a call within 30 seconds): a pull that is not through comes back with
+            // "more" and its cursor; ask again for that link, as long as it gets further (or only waits for the upstream's read limit, a
+            // bounded number of times).
+            var targets: [[String: Any]] = [body]
+            var lastNext: [String: Int64] = [:], stalls: [String: Int] = [:]
+            while !targets.isEmpty {
+                var next: [[String: Any]] = []
+                var wait: Int64 = 0
+                for tgt in targets {
+                    for p in try request("POST", "/upstream-pull", tgt)["pulls"]?.array ?? [] {
+                        let d = p.dict
+                        say(clean("\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? ""))"))
+                        for l in d["lines"]?.array ?? [] { say(clean("  " + (l.string ?? ""))) }
+                        say("  added \(d["added"]?.int ?? 0), updated \(d["updated"]?.int ?? 0), removed \(d["removed"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), mirror \(d["mirror"]?.int ?? 0) notes")
+                        if d["purged"]?.bool == true { say("  the upstream withdrew the right to read: the mirror of this link was deleted") }
+                        if let s = d["stopped"]?.string, !s.isEmpty { say(clean("  stopped: " + s)) }
+                        guard d["more"]?.bool == true else { continue }
+                        let project = d["project"]?.int ?? 0, upstream = d["upstream"]?.string ?? "", nextID = d["next"]?.int ?? 0, w = d["wait"]?.int ?? 0
+                        let key = "\(project)|\(upstream)"
+                        if nextID > lastNext[key] ?? 0 { lastNext[key] = nextID; stalls[key] = 0 }
+                        else if w > 0 && (stalls[key] ?? 0) < 30 { stalls[key] = (stalls[key] ?? 0) + 1 }
+                        else { say(clean("  \(d["label"]?.string ?? "") -> \(upstream): no progress: run the pull again later")); continue }
+                        var nt: [String: Any] = ["upstream": upstream, "dryRun": false]
+                        if d["team"]?.bool == true { nt["team"] = project - ProjectEnv.segmentBase } else { nt["project"] = project }
+                        next.append(nt)
+                        wait = max(wait, w)
+                    }
+                }
+                targets = next
+                if wait > 0 && !targets.isEmpty { pause(Double(wait)) }
             }
         default: throw usage
         }
@@ -167,6 +218,32 @@ extension AdminCommands {
         var how = d["auto"]?.bool == true ? "auto" : "manual"
         if d["mode"]?.string == "publish" { how += ", publish" }
         return "\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? "")): \(d["pending"]?.int ?? 0) of \(d["total"]?.int ?? 0) notes would go, \(last), classes \(cls), \(how)"
+    }
+
+    /// Whether the link reads, the reach the owner accepted, the mirror and how current it is (as Go's upstreamReadLine).
+    static func upstreamReadLine(_ d: JDict, _ zone: TimeZone) -> String {
+        if d["read"]?.bool != true { return "read: off" }
+        let cls = (d["readClasses"]?.array ?? []).compactMap { $0.string }.joined(separator: ",")
+        let srcs = (d["readSources"]?.array ?? []).compactMap { $0.string }
+        func at(_ key: String) -> Date? { d[key]?.string.flatMap(ProjectText.parseTime) }
+        let acc = at("readAccepted").map { ", accepted " + ProjectText.stamp($0, zone) } ?? ""
+        var pulled = ", never pulled"
+        if let ok = at("lastPullOk") { pulled = ", last pull " + ProjectText.stamp(ok, zone) + " (" + upstreamAge(d["lastPullAge"]?.int ?? 0) + " old)" }
+        if let t = at("lastPull"), at("lastPullOk").map({ t > $0 }) ?? true { pulled += ", last try " + ProjectText.stamp(t, zone) }
+        return "read: on, classes \(cls), sources \(srcs.isEmpty ? "none" : srcs.joined(separator: ",") )\(acc), mirror \(d["mirror"]?.int ?? 0) notes (\(upstreamSize(Int64(d["mirrorBytes"]?.int ?? 0))))\(pulled)"
+    }
+
+    static func upstreamSize(_ b: Int64) -> String {
+        if b < 1024 { return "\(b) B" }
+        if b < 1 << 20 { return "\(b / 1024).\(b % 1024 * 10 / 1024) KiB" }
+        return "\(b >> 20).\(b % (1 << 20) * 10 / (1 << 20)) MiB"
+    }
+
+    static func upstreamAge(_ sec: Int64) -> String {
+        if sec < 60 { return "under a minute" }
+        if sec < 3600 { return "\(sec / 60) min" }
+        if sec < 86400 { return "\(sec / 3600) h" }
+        return "\(sec / 86400) d"
     }
 
     /// The state of the automatic push, when there is any to tell (as Go's upstreamSyncLine).

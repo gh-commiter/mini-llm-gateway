@@ -1,5 +1,15 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Reading an upstream's notes, step C2 (the mirror and the manual pull; schema 24, snapshot first): `minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>] --accept-reach` turns reading on for a link (refused without `--accept-reach`; the link's push settings stay), `--no-read` turns it off. `minigw gw upstream pull [<project>|--team <team>]` fills a local mirror from the upstream's manifest (at most 200 note requests per run, a per-link cursor, the Mac within the time of one helper call), applies deletions only from a manifest that was not cut, deletes the link's mirror at once when the upstream refuses the device or no longer knows the project or team, and stores nothing from an upstream that is too old. Everything the upstream sends is checked against its manifest and sanitised; the mirror holds at most 5000 notes per link and 64 MiB per gateway, is deleted on unlink, upstream removal and reading off, and is not in export bundles or pushes. `gw upstream status` shows read on/off, the accepted reach, the mirror, the last pull, its age and the last error. See [usage.md](usage.md#sending-a-projects-knowledge-to-another-gateway).
+
+### Known problems
+- Members do not see pulled notes yet: search, `note read`, FAQ and MCP do not include the mirror (step C3).
+- A pull is manual: there is no automatic pull and no panel (step C4).
+- Not tried between two real gateways, only with a scripted upstream.
+
 ## 0.7.27
 
 ### New

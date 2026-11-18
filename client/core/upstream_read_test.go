@@ -334,9 +334,9 @@ func TestPullDryRunReportsAndStoresNothing(t *testing.T) {
 	if up.count("GET") != len(up.calls) || len(up.calls) != 2 {
 		t.Fatalf("%+v", up.calls)
 	}
-	// a real pull does not exist yet
+	// a real pull needs reading turned on for the link (TestPullRefusedWithoutReadingOrLinkAndNotWhenBusy): nothing is contacted without it
 	_, err = f.PullUpstream(ctx, up, fk, 0, "", false, noSleep)
-	is(t, err, ErrRefusal{"pull is only available as a dry run for now: minigw gw upstream pull <project> --dry-run"})
+	is(t, err, ErrRefusal{"reading is off for this link: minigw gw upstream link <project> <upstream> --read --accept-reach (look first: pull <project> --dry-run)"})
 	if len(up.calls) != 2 {
 		t.Fatal("a refused pull contacted the upstream")
 	}

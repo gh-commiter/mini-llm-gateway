@@ -21,6 +21,8 @@ public struct AdminOpts {
     /// right: raw text from stdin or the terminal, checked by AdminCommands.secretLine)
     public var remoteProject = "", remoteTeam = "", classes = "", deviceName = "", mode = "", upstream = ""
     public var withPrivate = false, dryRun = false, auto = false, manual = false, theirs = false, ours = false
+    /// upstream link, reading (step C): --read, --no-read, --read-class, --read-sources, --accept-reach
+    public var read = false, noRead = false, acceptReach = false, readClass = "", readSources = ""
     public var tokenInput: (() throws -> String)?
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
                 provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "", by: String = "", phase: String = "", activity: String = "", task: String = "", labelSource: String = "") {

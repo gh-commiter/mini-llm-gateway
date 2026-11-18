@@ -98,6 +98,8 @@ type coreOpts struct {
 	auto, manual              bool
 	theirs, ours              bool
 	withPrivate, dryRun       bool
+	read, noRead, acceptReach bool
+	readClass, readSources    string
 	pause                     func(time.Duration) // between the calls of a long upstream push (nil: time.Sleep)
 }
 

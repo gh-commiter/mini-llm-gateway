@@ -103,6 +103,8 @@ type pusher struct {
 	secret []byte        // this gateway's key for what it sends (Store.upstreamKey)
 	more   bool          // set when a limit could not be waited out
 	wait   time.Duration // for how long
+	status int           // the HTTP status of the last call (0: no usable answer)
+	big    bool          // the last call's answer was over maxUpstreamAnswer
 }
 
 type upAnswer struct {
@@ -116,9 +118,11 @@ type upAnswer struct {
 func (p *pusher) call(method, path string, hdr map[string]string, body []byte) (a upAnswer) {
 	for i := 0; ; i++ {
 		st, data, retry, err := p.tr.Do(p.ctx, p.up, method, path, hdr, body)
+		p.status, p.big = 0, err == nil && len(data) > maxUpstreamAnswer
 		if err != nil || len(data) > maxUpstreamAnswer {
 			return upAnswer{status: 0, errMsg: "no usable answer from the upstream"}
 		}
+		p.status = st
 		a = upAnswer{status: st, data: data}
 		var e struct {
 			Error struct{ Type, Message string }
@@ -194,6 +198,7 @@ func (p *pusher) resolve(l UpstreamLink) (int64, string) {
 				return t.Segment, ""
 			}
 		}
+		p.status = 404 // not a failure of the upstream: the team is not (or no longer) ours to read
 		return 0, "this gateway is not on team " + upText(l.Remote, 64) + " on the upstream (or it does not exist there)"
 	}
 	a := p.call("GET", "/minigw/v1/projects/"+url.PathEscape(l.Remote), nil, nil)
@@ -237,10 +242,12 @@ func (p *pusher) trailer(project int64, n UpstreamNote, supersedes int64) string
 // maxReportLines: the lines of one report; the totals count everything, the rest of the lines is "... and K more".
 const maxReportLines = 200
 
-// errPushRunning: another push of this link is running; a manual push answers it as a refusal, the timer just comes back later.
+// errPushRunning: another push or pull of this link is running; a manual push answers it as a refusal, the timer just comes back later.
 type errPushRunning struct{}
 
-func (errPushRunning) Error() string   { return "a push of this link is running: try again in a moment" }
+func (errPushRunning) Error() string {
+	return "a push or pull of this link is running: try again in a moment"
+}
 func (e errPushRunning) Unwrap() error { return ErrRefusal{e.Error()} }
 
 func (s *Store) linkLock(project int64, upstream string) *sync.Mutex {

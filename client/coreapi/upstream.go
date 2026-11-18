@@ -172,9 +172,15 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 			WithPrivate bool   `json:"withPrivate"`
 			Auto        *bool  `json:"auto"` // nil: keep what the link has
 			Mode        string `json:"mode"`
+			// Step C, reading: Read nil keeps it; ReadOnly leaves the push settings of an existing link as they are
+			Read        *bool  `json:"read"`
+			ReadClasses string `json:"readClasses"`
+			ReadSources string `json:"readSources"`
+			AcceptReach bool   `json:"acceptReach"`
+			ReadOnly    bool   `json:"readOnly"`
 		}
 		if len(body) > 0 && decodeStrict(body, &b) != nil {
-			return fail(400, "bad JSON body (team, remote, classes, withPrivate, auto, mode)")
+			return fail(400, "bad JSON body (team, remote, classes, withPrivate, auto, mode, read, readClasses, readSources, acceptReach, readOnly)")
 		}
 		var project, team int64 = id, 0
 		if b.Team {
@@ -191,7 +197,8 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		}
 		var err error
 		if method == "PUT" {
-			err = st.LinkUpstreamWith(ctx, core.LinkSpec{Project: project, Team: team, Upstream: seg[1], Remote: b.Remote, Classes: b.Classes, WithPrivate: b.WithPrivate, Auto: b.Auto, Mode: b.Mode})
+			err = st.LinkUpstreamWith(ctx, core.LinkSpec{Project: project, Team: team, Upstream: seg[1], Remote: b.Remote, Classes: b.Classes, WithPrivate: b.WithPrivate, Auto: b.Auto, Mode: b.Mode,
+				Read: b.Read, ReadClasses: b.ReadClasses, ReadSources: b.ReadSources, AcceptReach: b.AcceptReach, ReadOnly: b.ReadOnly})
 		} else {
 			err = st.UnlinkUpstream(ctx, project, team, seg[1])
 		}
