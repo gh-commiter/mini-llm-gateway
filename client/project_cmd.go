@@ -68,6 +68,7 @@ type projectEnv struct {
 	gateway  func() string                          // the default profile's gateway id, "" = not connected
 	gitState func(dir string) (head, status string) // HEAD and the status hash of the linked folder
 	now      func() time.Time
+	tty      func() bool // kb accept: is stdin a terminal; nil = ask the real one
 }
 
 // projectMain, noteMain and usageMain are the entry points of main().

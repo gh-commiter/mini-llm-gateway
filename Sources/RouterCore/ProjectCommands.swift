@@ -64,6 +64,9 @@ public final class ProjectEnv {
     public var send: Send
     public var sleep: (TimeInterval) -> Void
     public var zone = TimeZone.current
+    /// kb accept: is stdin a terminal, and the answer to its question (tests replace both).
+    public var isTerminal: () -> Bool = { isatty(0) != 0 }
+    public var readAnswer: () -> String? = { readLine() }
     /// The folder's raw remote.origin.url, "" = none; nil = ask git (tests inject it).
     public var origin: ((String) -> String)?
     /// Test seam, per instance so that parallel tests do not interfere: runs after the export destination is opened and checked; nil in production.

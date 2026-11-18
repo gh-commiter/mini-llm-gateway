@@ -14,7 +14,7 @@ public struct AdminCLIError: Error, Equatable {
 
 /// The flags of the owner commands (Go's coreOpts).
 public struct AdminOpts {
-    public var reason = "", team = "", by = "", phase = "", activity = "", task = ""
+    public var reason = "", team = "", by = "", phase = "", activity = "", task = "", version = ""
     public var days = "7", user = "", project = "", model = "", claudeProbe = "", provider = "", device = "", folder = "", sort = ""
     public var json = false, csv = false, history = false, explain = false
     /// upstream commands: the link and push options, and what the token is read with (the command reads it only after its arguments are
@@ -34,7 +34,7 @@ public final class AdminCommands {
     public static let help = """
         minigw gw export --team <name> [--project slug ...] [--with-private] <file.zip>
           minigw gw import --source <name> <file.zip> [--dry-run] [--map old=new]
-          minigw gw kb review [<project>|--team <team>] | accept <id> | reject <id> [--reason text]
+          minigw gw kb review [<project>|--team <team>] | accept <id> [--version <tag>] | reject <id> [--reason text]
           minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>
           minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to
           minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
@@ -67,6 +67,9 @@ public final class AdminCommands {
     public var now: () -> Date = { Date() }
     /// Waits (seconds) between the calls of a long `upstream push`; tests give a fake.
     public var pause: (Double) -> Void = { Thread.sleep(forTimeInterval: $0) }
+    /// gw kb accept: is stdin a terminal, and the answer to its question (tests replace both).
+    public var isTerminal: () -> Bool = { isatty(0) != 0 }
+    public var readAnswer: () -> String? = { readLine() }
 
     public init(call: @escaping Call, out: @escaping (String) -> Void) { self.call = call; self.out = out }
 
@@ -117,7 +120,7 @@ public final class AdminCommands {
         func need(_ lo: Int, _ hi: Int) throws { if pos.count < lo || pos.count > hi { throw usage } }
         func s(_ n: Int64) -> String { String(n) }
         switch pos[0] {
-        case "kb": try kb(pos, reason: o.reason, team: o.team)
+        case "kb": try kb(pos, reason: o.reason, team: o.team, version: o.version)
         case "team": try team(pos)
         case "upstream": try upstream(pos, o)
         case "user":

@@ -14,9 +14,17 @@ import Testing
                 let r = responses.first { $0["match"] as? String == m + " " + p }!
                 return (r["status"] as! Int, Data((r["body"] as! String).utf8))
             }, out: { out += $0 })
-            try cmd.run(c["args"] as! [String], AdminOpts(reason: (c["opts"] as? [String: Any])?["reason"] as? String ?? ""))
+            let opts = c["opts"] as? [String: Any]
+            cmd.isTerminal = { opts?["tty"] as? Bool == true }
+            var answers = (c["stdin"] as? String ?? "").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            cmd.readAnswer = { answers.isEmpty ? nil : answers.removeFirst() }
+            var o = AdminOpts(reason: opts?["reason"] as? String ?? "")
+            o.version = opts?["version"] as? String ?? ""
+            var err = ""
+            do { try cmd.run(c["args"] as! [String], o) } catch let e as AdminCLIError { err = "minigw: " + e.message + "\n" }
             let w = c["want"] as! [String: Any]
             #expect(out == w["out"] as! String)
+            #expect(err == w["err"] as? String ?? "")
             #expect(requests == w["requests"] as! [[String]])
         }
         for c in f["member"] as! [[String: Any]] {
@@ -35,7 +43,7 @@ import Testing
             #expect(out == c["out"] as! String)
             #expect(requests == c["requests"] as! [[String]])
         }
-        for c in f["review"] as! [[String: Any]] {  // a project admin's review: no idempotency key
+        for c in f["review"] as! [[String: Any]] {  // a project admin's review: no idempotency key; accept needs the version or a "y"
             var out = "", requests: [[String]] = []
             let responses = c["responses"] as! [[String: Any]]
             let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { out += $0 }, err: { _ in }, agent: false, send: { _, m, p, _, b in
@@ -45,7 +53,12 @@ import Testing
                 let r = responses.first { $0["match"] as? String == m + " " + p }!
                 return ProjectReply(status: r["status"] as! Int, data: Data((r["body"] as! String).utf8))
             })
-            try env.kb(c["args"] as! [String])
+            env.isTerminal = { c["tty"] as? Bool == true }
+            var answers = (c["input"] as? String ?? "").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            env.readAnswer = { answers.isEmpty ? nil : answers.removeFirst() }
+            var err = ""
+            do { try env.kb(c["args"] as! [String]) } catch { err = String(describing: error) }
+            #expect(err == c["error"] as? String ?? "", "\(c["args"] as! [String])")
             #expect(out == c["out"] as! String)
             #expect(requests == c["requests"] as! [[String]])
         }

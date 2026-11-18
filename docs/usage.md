@@ -1275,9 +1275,10 @@ sees nothing of the review: the answer is the "not found" of a project they cann
 with a single admin therefore leaves that admin's submissions for the owner (or a second admin). Accepting also needs
 what the reviewer could write themselves (the class, and the note a replacement changes). The published note keeps the
 writer as its author; its provenance names the reviewing user, and the audit records accept and reject with that user.
-`kb accept` (and the owner's `gw kb accept`) first reads the submission, prints what it accepts and sends the version it
-read: if the writer changed the pending text after that read, the gateway refuses with "the submission changed since you
-read it: review it again". The panel's Accept is bound to the row on screen the same way. If the writer may no longer write
+`kb review` prints a `version <tag>` for each submission. Accept what you read with `minigw kb accept <id> --version <tag>`
+(the owner: `gw kb accept`): if the writer changed the pending text since, it is refused with "the submission changed since
+you read it: review it again" and nothing is published. Without `--version`, `kb accept` shows the text and asks
+"Accept this text? [y/N]", and only in a terminal; a script or an agent must give `--version`. The panel's Accept is bound to the row on screen the same way. If the writer may no longer write
 the note when you accept, you are told so ("the writer of this submission may no longer write it here"); reject it.
 An archived project or team is not reviewed; a deactivated user or an unbound device loses the ability at once. An archived
 project also no longer makes its admins writers of the team's own notes.

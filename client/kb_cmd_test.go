@@ -27,10 +27,11 @@ func TestKBCommandParity(t *testing.T) {
 			Requests   [][]string
 		}
 		Review []struct {
-			Args      []string
-			Out       string
-			Responses []cmdResp
-			Requests  [][]string
+			Args              []string
+			Out, Error, Input string
+			TTY               bool
+			Responses         []cmdResp
+			Requests          [][]string
 		}
 		NoteJSON, NoteJSONOut string
 		MemberErrors          []struct {
@@ -82,7 +83,8 @@ func TestKBCommandParity(t *testing.T) {
 	for _, c := range f.Review { // a project admin's review: no idempotency key
 		var out bytes.Buffer
 		var requests [][]string
-		env := &projectEnv{out: &out, connect: func() (connection, string) { return connection{}, "" }, do: func(_ connection, method, path string, _ map[string]string, b []byte) (int, []byte, http.Header) {
+		tty := c.TTY
+		env := &projectEnv{out: &out, in: strings.NewReader(c.Input), tty: func() bool { return tty }, connect: func() (connection, string) { return connection{}, "" }, do: func(_ connection, method, path string, _ map[string]string, b []byte) (int, []byte, http.Header) {
 			requests = append(requests, []string{method, path, string(b)})
 			for _, r := range c.Responses {
 				if r.Match == method+" "+path {
@@ -92,8 +94,8 @@ func TestKBCommandParity(t *testing.T) {
 			t.Fatalf("unexpected %s %s", method, path)
 			return 599, nil, nil
 		}}
-		if e := env.kb(c.Args); e != nil {
-			t.Fatal(e)
+		if e := env.kb(c.Args); c.Error == "" && e != nil || c.Error != "" && (e == nil || e.Error() != c.Error) {
+			t.Fatalf("%v: %v, want %q", c.Args, e, c.Error)
 		}
 		if out.String() != c.Out || !reflect.DeepEqual(requests, c.Requests) {
 			t.Fatalf("%v: %q %+v", c.Args, out.String(), requests)
@@ -143,11 +145,11 @@ func TestKBClientGatewayFlow(t *testing.T) {
 		t.Fatal("reader submitted")
 	}
 	owner := &adminClient{off: c.f.s}
-	review := stdout(t, func() { kbAdmin(owner, []string{"kb", "review"}, "", "") })
+	review := stdout(t, func() { kbAdmin(owner, []string{"kb", "review"}, coreOpts{}) })
 	if !strings.Contains(review, "Reviewed knowledge") {
 		t.Fatal(review)
 	}
-	accepted := stdout(t, func() { kbAdmin(owner, []string{"kb", "accept", "1"}, "", "") })
+	accepted := stdout(t, func() { kbAdmin(owner, []string{"kb", "accept", "1"}, coreOpts{version: versionIn(t, review)}) })
 	if !strings.HasSuffix(accepted, "Reviewed knowledge\nsubmission 1 accepted\n") { // the accept shows what it publishes first
 		t.Fatal(accepted)
 	}
@@ -389,10 +391,14 @@ func TestKBMemberReviewEndToEnd(t *testing.T) {
 	if out := c.must("fani", dir, "", "project", "list"); !strings.Contains(out, "1 submission waits for review") {
 		t.Fatal(out)
 	}
-	if out := c.must("fani", dir, "", "kb", "review"); !strings.Contains(out, "Reviewed by an admin") || !strings.Contains(out, "writer ana") {
-		t.Fatal(out)
+	review := c.must("fani", dir, "", "kb", "review")
+	if !strings.Contains(review, "Reviewed by an admin") || !strings.Contains(review, "writer ana") {
+		t.Fatal(review)
 	}
-	if out := c.must("fani", dir, "", "kb", "accept", "1"); !strings.HasSuffix(out, "Reviewed by an admin\nsubmission 1 accepted\n") {
+	if out, err := c.run("fani", dir, "", "kb", "accept", "1"); err == nil || !strings.Contains(err.Error(), "--version") { // no terminal here
+		t.Fatal("accepted without naming the version", out, err)
+	}
+	if out := c.must("fani", dir, "", "kb", "accept", "1", "--version", versionIn(t, review)); !strings.HasSuffix(out, "Reviewed by an admin\nsubmission 1 accepted\n") {
 		t.Fatal(out)
 	}
 	fani, _, _ := c.env("fani", dir, "Mine")
@@ -402,4 +408,14 @@ func TestKBMemberReviewEndToEnd(t *testing.T) {
 	if out, err := c.run("fani", dir, "", "kb", "reject", "2", "--reason", "x"); err == nil || !strings.Contains(err.Error(), "your own submission") {
 		t.Fatal(out, err)
 	}
+}
+
+// versionIn is the version tag kb review printed (the one submission of the listing).
+func versionIn(t *testing.T, review string) string {
+	t.Helper()
+	m := regexp.MustCompile(`  version ([0-9a-f]{12})`).FindStringSubmatch(review)
+	if m == nil {
+		t.Fatal("no version in", review)
+	}
+	return m[1]
 }
