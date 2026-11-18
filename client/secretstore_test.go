@@ -223,8 +223,12 @@ func TestStatusCarriesSecretsLine(t *testing.T) {
 	keySet(s.cfgDir, "probe-name", secretTestValue)
 	_, st := s.adminDo("GET", "/status", nil)
 	sb, _ := json.Marshal(st)
-	if !strings.Contains(string(sb), `"secrets":"file `+keyFile(s.cfgDir)) || strings.Contains(string(sb), secretTestValue) {
-		t.Fatalf("status: %s", sb)
+	var got struct{ Secrets string }
+	if err := json.Unmarshal(sb, &got); err != nil { // decoded: a Windows path has its backslashes doubled in the JSON text
+		t.Fatal(err)
+	}
+	if want := "file " + keyFile(s.cfgDir) + " (forced by MINIGW_SECRETS=file)"; got.Secrets != want || strings.Contains(got.Secrets, secretTestValue) {
+		t.Fatalf("status secrets: %q, want %q", got.Secrets, want)
 	}
 	out := stdout(t, func() { routerCommand([]string{"status", "--config", cfg}, strings.NewReader("")) })
 	if !strings.Contains(out, "secrets: file "+keyFile(s.cfgDir)+" (forced by MINIGW_SECRETS=file)") || strings.Contains(out, secretTestValue) {
