@@ -175,6 +175,7 @@ public final class CoreHelper: @unchecked Sendable {
     public private(set) var lastFailure = ""
     /// Set before start(): the helper is told in the handshake that this app answers callouts (the upstream routes need it).
     public var callouts: CoreCalloutHandler?
+    private var calloutRefusalLogged = false  // L3: one log line, not one per refused callout (only the lane's serial queue touches it)
 
     public init(binary: URL?, store: URL, ownerName: String = NSUserName(), marks: CoreRevocationMarks,
                 versions: ClosedRange<Int> = CoreHelper.protocolVersion...CoreHelper.protocolVersion,
@@ -277,10 +278,16 @@ public final class CoreHelper: @unchecked Sendable {
             try sendFrame(fd, ["v": Self.protocolVersion, "id": id, "context": cx.json, "request": rq.json])
             var f = try recvFrame(fd)
             while let q = f["callout"] as? [String: Any] {  // the helper asks the app for something while it handles this request
-                guard let handler = callouts, f["v"] as? Int == Self.protocolVersion, (f["id"] as? NSNumber)?.uint64Value == id else {
+                guard lane, let handler = callouts, f["v"] as? Int == Self.protocolVersion, (f["id"] as? NSNumber)?.uint64Value == id else {
                     throw CoreError.unavailable("the helper asked for something this app does not do")
                 }
-                var answer = handler.callout(q)
+                var answer: [String: Any]
+                if Self.calloutAllowed(rq, q) {
+                    answer = handler.callout(q)
+                } else {  // L3: a callout the running route never makes (a compromised helper asking for the network or for a credential's removal)
+                    answer = ["error": "the callout is not part of this request"]
+                    if !calloutRefusalLogged { calloutRefusalLogged = true; Self.log.error("refused an upstream callout the running route does not make (\(q["op"] as? String ?? "?", privacy: .public) during \(rq.method, privacy: .public) \(rq.path, privacy: .public))") }
+                }
                 answer["seq"] = q["seq"] ?? 0  // the number of the callout this answers: the helper drops any other
                 try sendFrame(fd, ["v": Self.protocolVersion, "id": id, "callout_result": answer])
                 setTimeout(fd, requestTimeout)
@@ -301,6 +308,29 @@ public final class CoreHelper: @unchecked Sendable {
             cond.lock(); lastFailure = "\(error)"; ready = false; kill(c.pid, SIGKILL); cond.unlock()
             Self.log.error("helper request failed, restarting it: \(error.localizedDescription, privacy: .public)")
             return .unavailable
+        }
+    }
+
+    /// L3: which callouts a running upstream route may make. The app accepts a callout only while it waits for the answer of the request it sent
+    /// (the frame id is the app's own per-request number, echoed by the helper and checked above) and only one this route makes, for its upstream:
+    /// `PUT /upstreams/{n}` connects, forgets after a failed add and probes; `DELETE /upstreams/{n}` only forgets; `GET /upstreams/{n}/probe` probes;
+    /// `GET /upstreams` reads the device of each upstream; the push and the automatic push contact the upstreams their links name.
+    static func calloutAllowed(_ rq: CoreRequest, _ q: [String: Any]) -> Bool {
+        guard let op = q["op"] as? String, let up = q["upstream"] as? String else { return false }
+        let seg = rq.path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map { $0.split(separator: "/").map(String.init) } ?? []
+        switch (rq.method, seg.first ?? "") {
+        case ("POST", "upstream-push"), ("POST", "upstream-auto"):
+            return seg.count == 1 && (op == "do" || op == "info")
+        case ("GET", "upstreams") where seg.count == 1:
+            return op == "info"
+        case ("GET", "upstreams") where seg.count == 3 && seg[2] == "probe":
+            return (op == "do" || op == "info") && up == seg[1]
+        case ("PUT", "upstreams") where seg.count == 2:
+            return ["connect", "forget", "do", "info"].contains(op) && up == seg[1]
+        case ("DELETE", "upstreams") where seg.count == 2:
+            return op == "forget" && up == seg[1]
+        default:
+            return false
         }
     }
 
