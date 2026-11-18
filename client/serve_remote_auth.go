@@ -72,6 +72,14 @@ func loadRemotePassword(path string) (remotePassword, [32]byte, error) {
 	return p, sha256.Sum256(b), p.validate()
 }
 
+func remotePasswordConfirmation(enabled bool) string {
+	listener := "the remote settings listener is off: see docs/gateway.md"
+	if enabled {
+		listener = "the remote settings listener is on in this config"
+	}
+	return "remote settings password set; remote sessions are signed out; " + listener
+}
+
 func remotePasswordCommand(config string, args []string, in io.Reader) error {
 	if len(args) != 0 {
 		return errors.New("usage: minigw gw settings password (password on stdin or hidden terminal input)")

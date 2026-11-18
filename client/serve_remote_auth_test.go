@@ -440,8 +440,13 @@ func TestRemotePasswordCLIWhileStopped(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "gw", "settings", "password", "--config", config)
 	cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "MINIGW_AGENT_URL=", "MINIGW_AGENT_AUTH_FILE=", "HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(), "MINIGW_REMOTE_PASSWORD=wrong environment password")
 	cmd.Stdin = strings.NewReader(remoteTestPassword + "\n")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("stopped CLI: %v %s", err, out)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("stopped CLI: %v", err)
+	}
+	want := "remote settings password set; remote sessions are signed out; the remote settings listener is off: see docs/gateway.md\n"
+	if string(out) != want || strings.Contains(string(out), remoteTestPassword) {
+		t.Fatal("unexpected password confirmation")
 	}
 	a, err := newRemoteAuth(config, nil)
 	if err != nil {
@@ -452,6 +457,66 @@ func TestRemotePasswordCLIWhileStopped(t *testing.T) {
 	}
 	if _, _, err := a.login("192.0.2.2", "", "wrong environment password"); err != errRemoteLogin {
 		t.Fatal("accepted environment password")
+	}
+}
+
+func TestRemotePasswordCLIOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name, config, password, want string
+		code                         int
+	}{
+		{"on", `{"remoteSettings":{"enabled":true}}`, remoteTestPassword, "remote settings password set; remote sessions are signed out; the remote settings listener is on in this config\n", 0},
+		{"off", `{}`, remoteTestPassword, "remote settings password set; remote sessions are signed out; the remote settings listener is off: see docs/gateway.md\n", 0},
+		{"short", `{}`, "short", "minigw: password must contain 12 to 1024 bytes\n", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := filepath.Join(t.TempDir(), "serve.json")
+			if err := os.WriteFile(config, []byte(tc.config), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(os.Args[0], "gw", "settings", "password", "--config", config)
+			cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "MINIGW_AGENT_URL=", "MINIGW_AGENT_AUTH_FILE=")
+			cmd.Stdin = strings.NewReader(tc.password + "\n")
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			out, err := cmd.Output()
+			code := 0
+			if err != nil {
+				if e, ok := err.(*exec.ExitError); ok {
+					code = e.ExitCode()
+				} else {
+					t.Fatal(err)
+				}
+			}
+			if code != tc.code || string(out)+stderr.String() != tc.want || strings.Contains(string(out)+stderr.String(), tc.password) {
+				t.Fatalf("unexpected confirmation or exit code %d", code)
+			}
+			if tc.code == 0 && stderr.Len() != 0 || tc.code != 0 && len(out) != 0 {
+				t.Fatal("output on the wrong stream")
+			}
+			if tc.code != 0 {
+				if _, err := os.Stat(remotePasswordPath(config)); !os.IsNotExist(err) {
+					t.Fatal("refusal wrote a credential", err)
+				}
+			}
+		})
+	}
+}
+
+func TestRemotePasswordCLIInvalidConfig(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "serve.json")
+	if err := os.WriteFile(config, []byte(`{"remoteSettings":`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "gw", "settings", "password", "--config", config)
+	cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "MINIGW_AGENT_URL=", "MINIGW_AGENT_AUTH_FILE=")
+	cmd.Stdin = strings.NewReader(remoteTestPassword + "\n")
+	out, err := cmd.Output()
+	if e, ok := err.(*exec.ExitError); !ok || e.ExitCode() != 1 || len(out) != 0 {
+		t.Fatal("invalid config was not refused")
+	}
+	if _, err := os.Stat(remotePasswordPath(config)); !os.IsNotExist(err) {
+		t.Fatal("invalid config wrote a credential", err)
 	}
 }
 

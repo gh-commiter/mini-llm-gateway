@@ -181,6 +181,8 @@ Every `minigw gw` command also takes `--config FILE` (default: the `minigw serve
 
 The password command prepares remote authentication; it does not open a remote settings listener. Use a terminal
 prompt, or pipe a password from your secret manager into `minigw gw settings password --config /path/to/serve.json`.
+On success, stdout confirms `remote settings password set`, says remote sessions are signed out, and reports
+whether the remote settings listener is on or off in this config (with `docs/gateway.md` guidance when off).
 Passwords contain 12–1024 bytes. The command atomically replaces `remote-settings.password.json` next to the config,
 with a fresh salt and Argon2id (64 MiB, three iterations, one lane). On Unix the record is mode 0600; on Windows
 the config directory uses the existing owner/SYSTEM ACL protection. There is no default password.
