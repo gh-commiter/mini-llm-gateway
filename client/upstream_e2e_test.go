@@ -826,8 +826,10 @@ func seenHash(st *core.Store, id int64) string {
 func TestPullCommandStopsAfterItsRunsAndItsTime(t *testing.T) {
 	for name, c := range map[string]struct {
 		wall time.Duration
+		tick time.Duration // how far the fake clock moves at each reading
 		want int
-	}{"runs": {0, maxPullRuns}, "time": {time.Nanosecond, 1}} {
+	}{"runs": {0, 0, maxPullRuns}, "time": {time.Minute, 2 * time.Minute, 1}} {
+		clock := time.Unix(1e9, 0)
 		calls := 0
 		a := &adminClient{fake: func(method, path string, b []byte) (int, []byte) {
 			if path == "/projects" {
@@ -837,7 +839,7 @@ func TestPullCommandStopsAfterItsRunsAndItsTime(t *testing.T) {
 			return 200, []byte(fmt.Sprintf(`{"pulls":[{"label":"shop","upstream":"hub","remote":"shop","project":3,"lines":[],"more":true,"next":%d}]}`, calls*200))
 		}}
 		out, _, _ := captured(func() {
-			coreCommand(a, []string{"upstream", "pull", "shop"}, coreOpts{pause: func(time.Duration) {}, pullWall: c.wall})
+			coreCommand(a, []string{"upstream", "pull", "shop"}, coreOpts{pause: func(time.Duration) {}, pullWall: c.wall, now: func() time.Time { clock = clock.Add(c.tick); return clock }})
 		})
 		if calls != c.want || !strings.Contains(out, "more remains: run the pull again") {
 			t.Fatalf("%s: %d calls: %s", name, calls, out)

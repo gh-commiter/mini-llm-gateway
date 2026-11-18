@@ -329,7 +329,11 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		if wall == 0 {
 			wall = pullWallDefault
 		}
-		deadline := time.Now().Add(wall)
+		now := u.now
+		if now == nil {
+			now = time.Now
+		}
+		deadline := now().Add(wall)
 		for len(targets) > 0 {
 			var next []map[string]any
 			wait := 0
@@ -344,7 +348,7 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 					key := fmt.Sprint(p.Project, "|", p.Upstream)
 					runs[key]++
 					switch {
-					case runs[key] >= maxPullRuns || time.Now().After(deadline):
+					case runs[key] >= maxPullRuns || now().After(deadline):
 						say(clean(fmt.Sprintf("  %s -> %s: more remains: run the pull again", p.Label, p.Upstream)))
 						continue
 					case p.Next > lastNext[key]:

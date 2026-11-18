@@ -102,6 +102,7 @@ type coreOpts struct {
 	readClass, readSources    string
 	pullWall                  time.Duration       // the time of one pull command (0: pullWallDefault)
 	pause                     func(time.Duration) // between the calls of a long upstream push (nil: time.Sleep)
+	now                       func() time.Time    // the clock of one pull command (nil: time.Now); a test gives a fake, as Windows' clock ticks about every 15 ms
 }
 
 func coreCommand(a *adminClient, pos []string, o coreOpts) {
