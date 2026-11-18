@@ -1,5 +1,37 @@
 # Release notes
 
+## Unreleased
+
+### Changed
+- Documentation brought up to date with beta 0.7.25: four admin panels (not three) in the README, `usage.md` and `gateway.md`; the Compose admin setup is no longer listed as unsupported in `docker.md`; a new parity table of macOS app, Windows, Linux and Docker per feature group ([parity.md](parity.md); the control-by-control list stays in [windows-parity.md](windows-parity.md)); a one-page [team onboarding guide](team-onboarding.md).
+- The plugin's skills describe the current commands: upstream `--auto|--manual`, `--mode submit|publish` and `upstream resolve`, the four panes, `gw settings password`, `kb mcp`, `kb export`/`kb import`, team commands, `project remote`, `project depends` and `project sessions`. The plugin version is not raised here: users get the new skill text with the next plugin release.
+
+### Known problems
+- The four admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base, Upstream gateways) have only been tried through tests, not in a real window. In the Teams and projects pane team notes (a team's own notes) are not shown, only in the Knowledge base pane; in the Knowledge base pane notes and questions are read, not edited, and a replacement shows both texts, not a line difference. The "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI.
+- The panels on the settings page of `minigw serve`, the Upstream gateways pane and `gw settings password` were tried on one Windows gateway in a headless Chromium browser (they work; no Content Security Policy error); not in Edge or Firefox, and not on Linux. A detail page opens in place of the panel with a Back button. The Mac app does not use this page. Opening an upstream's detail page contacts it.
+- Remote settings have no team, project or knowledge base administration: the listener serves providers, models and devices only, so a Docker team gateway has no web page for teams, projects or review (use `docker compose exec ... minigw gw`).
+- The remote settings password record is a file in the gateway's config folder (also on a signed-in Windows gateway), not an entry in the credential store.
+- The Mac app has no remote settings listener and no `gw settings password`, by design: on the Mac the admin UI is the native app.
+- Docker Compose: the admin setup (`compose.admin.yaml`) was tried only with its test script (`scripts/compose-admin-e2e.sh`) on one Mac through Docker, not on the team server. The default HTTPS port 443 and a host port other than 443 for a real certificate name are not covered by the test (it uses a high port). On Docker Desktop and rootless Docker the proxy sees the Docker gateway address for every browser, so `allowedSourceCIDRs` and the per-source lockout do not tell browsers apart there; real source filtering needs rootful Docker on Linux. The gateway itself was tried on arm64 and, through emulation, on amd64 on one Mac. Any container on the same Docker network can take a service name's alias and would then receive that provider's key: put only trusted containers on that network.
+- Upstream gateway: one way. Nothing is pulled from an upstream: reads there are local only. Deletions and notes that became private are not propagated (status lists them).
+- Automatic push and publish mode, with a conflict and `resolve --ours`, were tried between two real gateways on 2026-11-18 (a Mac gateway to a Windows gateway; a test project with three notes; one push for five quick edits; a conflict was not overwritten). Replacements of accepted notes, team notes and `resolve --theirs` have only been tried in tests.
+- Only the owner reviews submissions; a project admin cannot. With one reviewer this is the main bottleneck of a team.
+- Archived projects and teams cannot be chosen in the Knowledge base pickers any more; read their notes with `minigw`.
+- Labels are data, never permissions: a member sees them only on sessions and usage already visible to them, and a label filter never widens whose events are read. A call made by hand gets labels only when the caller sets them (or the branch fills the task); classifying unlabelled calls is not done yet.
+- A role of the form `<phase>.<activity>` set by older scripts is not read as labels.
+- A project linked to a subfolder of another project's folder gets no automatic dependency; the owner sets it with `gw project depends add`.
+- Team notes have no `private` class, and only a project admin of the team writes them; the owner has no write path to them (the owner reviews submissions and exports bundles).
+- The hooks ask after a commit or a compaction, not at the end of a session: Claude Code gives a hook no way to talk to the model then. A failed hand-in is not retried. Checked by tests of both clients and of the plugin script, but not yet tried in a real Claude Code session (neither on a Mac nor on Windows).
+- Project git identity, team path labels and entry kinds are new and not yet in daily use. `minigw project link` without a slug needs `git` on the computer; on Windows it has only been built, not tried.
+- A replacement of a `faq` entry keeps the kind `faq`, and an import never changes the kind of an existing note: to change a kind, remove the entry and hand it in again.
+- `minigw gw import`: an `INDEX.md` inside a bundle has no size limit of its own (only the 100 MiB total). Import only bundles you made yourself.
+- `minigw kb export` on Windows: the protection of each exported file is still set by path after the file is created through the opened folder; not tested on Windows yet.
+- Copying a team to another gateway (`minigw gw export --team`, `minigw gw import`) is new and has not been used between two real gateways yet; try `--dry-run` first. The file is not signed: the gateway cannot prove where it came from, the owner names the source with `--source`.
+- `minigw kb mcp` and `minigw project sessions` are new and not yet in daily use.
+- `--minigw-tools=edit`: a modified client can declare a lower tool level than it uses; the folder is protected by the client's own rules. Not available on Windows clients.
+- The Mac permission to commit through a mount is a snapshot taken when the share is registered. Linux: an agent with write access to an allowed folder can still plant or alter git metadata there (as in 0.7.0).
+- Agents started by the gateway inherit the gateway's environment variables. Grok as an agent is not supported on the Mac gateway (xAI works as a provider).
+
 ## 0.7.25
 
 ### New

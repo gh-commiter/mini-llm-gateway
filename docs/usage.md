@@ -684,7 +684,7 @@ for any surviving direct access. Note classes and explicit one-hop grants behave
 ### Projects in 10 minutes
 
 The commands are the same on a Mac gateway (the app) and on `minigw serve` (Windows, Linux). Steps 1 to 4 are the
-owner's, on the gateway computer; steps 5 to 8 are on the client of a member.
+owner's, on the gateway computer; steps 5 to 8 are on the client of a member. A one-page guide for a team that starts on the shared knowledge base: [team-onboarding.md](team-onboarding.md).
 
 ```sh
 # 1. on the gateway computer: create a user (the owner's own user exists already, named after the OS account)
@@ -764,8 +764,8 @@ What differs on the Mac app:
 - **The helper.** The Mac app keeps the database in the helper `minigw-core`. While it is not running, project routes
   and every request that carries a project answer `503 core_unavailable`; plain model requests work as before.
   `minigw gw status` and Settings → General say whether the project database works.
-- **Admin panes.** The Mac app's Settings window has the three admin panes (Users and devices, Teams and projects,
-  Knowledge base); the `minigw serve` settings page draws the same three. `minigw gw …` still does everything on both gateways.
+- **Admin panes.** The Mac app's Settings window has the four admin panes (Users and devices, Teams and projects,
+  Knowledge base, Upstream gateways); the `minigw serve` settings page draws the same four. `minigw gw …` still does everything on both gateways.
 - **Agents.** On the Mac the Claude CLI agent reads notes only with **Allow local tools**, Codex only with its network
   switch on ([gateway.md](gateway.md#the-mac-app-agents-with-a-project)). A Windows or Linux gateway without a sandbox
   keeps projects off until the owner accepts that agents can read all notes

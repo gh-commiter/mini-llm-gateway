@@ -135,7 +135,7 @@ with `--team`). `minigw kb search [<project>|--team <team>] <query>` searches pu
 permissions; `minigw kb mcp [--project slug]` exposes read-only search and note tools over stdio, and
 `--print-config` prints a credential-free MCP configuration (see [KB tools over MCP](docs/usage.md#read-only-kb-tools-over-mcp)).
 
-The three admin panels — Users and devices, Teams and projects, Knowledge base — are in the Mac app's Settings
+The four admin panels — Users and devices, Teams and projects, Knowledge base, Upstream gateways — are in the Mac app's Settings
 window and on the `minigw serve` settings page; the commands remain `minigw gw`. Usage labels
 (`--minigw-phase|activity|task`, or `MINIGW_PHASE|ACTIVITY|TASK`) say what a run was for, and
 `minigw gw usage --by phase|activity|task` reads them. The owner can send a project's or team's published notes to
@@ -158,7 +158,9 @@ It works on the Mac app and on `minigw serve`; the Mac app keeps the database in
 | [docs/docker.md](docs/docker.md) | Linux gateway in Docker Compose (providers only): install, providers, update, backup |
 | [docs/admin-api.md](docs/admin-api.md) | The gateway's admin API |
 | [docs/core-adapter.md](docs/core-adapter.md) | What a gateway must do itself for projects: the contract between a gateway and the core |
-| [docs/windows-parity.md](docs/windows-parity.md) | Every Mac setting and its Windows/Linux counterpart |
+| [docs/team-onboarding.md](docs/team-onboarding.md) | One page for a small team starting on the shared knowledge base |
+| [docs/parity.md](docs/parity.md) | What the macOS app, Windows, Linux and Docker each have, by feature group |
+| [docs/windows-parity.md](docs/windows-parity.md) | Every Mac setting and its Windows/Linux counterpart, control by control |
 | [docs/release-notes.md](docs/release-notes.md) | What changed in each release |
 
 ## Disclaimer
