@@ -1,5 +1,18 @@
 # Release notes
 
+## Unreleased
+
+### Security
+- Mac: provider requests no longer follow HTTP redirects (as the Go clients), so a prompt is never sent to a host the owner did not configure.
+- An http provider (`--insecure`: private host, `.local`, container service name) is never reached through a proxy, in the provider and the quota requests of the Go client and the Mac app, so its key is not sent to a proxy in cleartext. https providers keep the proxy settings.
+- Mac: the helper's upstream callouts (connect, forget, do) are accepted only while the matching upstream route is running, and only for the upstream that route names.
+
+### Fixed
+- A second sync conflict on the same file no longer overwrites the first saved copy: further copies are `<name>.minigw-conflict-2`, `-3`, ... (up to 99; after that the file is not synced and the note says so).
+
+### Known problems
+- Worktree mode runs the top repository's own git clean/smudge filters (intended for LFS): use sync for an untrusted repository.
+
 ## 0.7.25
 
 ### New
