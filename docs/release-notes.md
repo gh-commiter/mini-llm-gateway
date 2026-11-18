@@ -8,6 +8,7 @@
 
 ### Fixed
 - A new client against an older gateway now says `this gateway is 0.7.5; kb needs 0.7.10 or newer: update the gateway` for the kb and team commands, instead of "not found or not visible" (the `gw upstream` and labels commands talk to the gateway on the same computer and are not covered).
+- The core database keeps, besides its newest three snapshots, the oldest snapshot of the lowest schema for 30 days, so that after an upgrade over many schemas and a few later steps there is still a way back to the version you came from.
 
 ## 0.7.36
 

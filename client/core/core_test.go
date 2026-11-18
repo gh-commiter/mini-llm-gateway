@@ -122,8 +122,11 @@ func TestMigrationSnapshotAndPrune(t *testing.T) {
 		s.Close()
 	}
 	got := snapshots(dir)
-	if len(got) != keepSnaps {
+	if len(got) != keepSnaps+1 { // the newest three and the oldest one, the way back to the version the user came from
 		t.Fatalf("snapshots %v", got)
+	}
+	if want := fmt.Sprintf("core-%d-", len(base)); !strings.HasPrefix(got[0], want) {
+		t.Fatalf("the oldest snapshot of the lowest schema is not kept: %v", got)
 	}
 	if !strings.Contains(auditLog(t, dir), `"action":"migrate"`) {
 		t.Fatal("no migrate line in the audit file")

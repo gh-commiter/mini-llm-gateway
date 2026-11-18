@@ -70,6 +70,8 @@ var snapRe = regexp.MustCompile(`^core-(\d+)-(\d{8}T\d{6}\.\d{3}Z)\.db$`)
 
 const partialSuffix = ".partial"
 
+const keepOldestFor = 30 * 24 * time.Hour
+
 var partialRe = regexp.MustCompile(`^core-\d+-\d{8}T\d{6}\.\d{3}Z\.db\.partial(-wal|-shm|-journal)?$`)
 
 // removeStalePartials removes the unfinished snapshot copies of a killed earlier start: only files of exactly the name this code gives them.
@@ -156,7 +158,9 @@ func failedSeriesSince(dir string) (since time.Time, ok bool) {
 // pruneSnapshots keeps the newest keepSnaps files (by the time in the name). A snapshot made by a restore is
 // subject to the same rule. While an upgrade has failed and not completed, the oldest snapshot of the lowest schema made
 // since the last completed migration (the file from before the upgrade) is kept in addition: repeated failing
-// starts must not push it out. Best effort.
+// starts must not push it out. One more is kept always: the oldest snapshot of the lowest schema present, while it is under
+// keepOldestFor old: after a jump over many schemas and a few later upgrade steps it is the way back to the version the user came
+// from (the newest keepSnaps alone would all be of the newer schemas). Best effort.
 func pruneSnapshots(dir string) {
 	type snap struct {
 		name, at string
@@ -181,6 +185,17 @@ func pruneSnapshots(dir string) {
 			if low < 0 || sn.schema < low { // strictly lower: the oldest of equal schemas stays
 				low, keep = sn.schema, sn.name
 			}
+		}
+	}
+	if keep == "" && len(all) > 0 { // the failed-upgrade rule above has its own file
+		low := all[0]
+		for _, sn := range all {
+			if sn.schema < low.schema {
+				low = sn
+			}
+		}
+		if t, err := time.Parse("20060102T150405.000Z", low.at); err == nil && time.Since(t) < keepOldestFor {
+			keep = low.name
 		}
 	}
 	for len(all) > keepSnaps {
