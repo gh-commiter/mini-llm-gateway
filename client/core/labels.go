@@ -105,8 +105,8 @@ var PhaseWords = []string{"plan", "do", "check", "act"}
 var DefaultActivities = []string{"feature", "bugfix", "security", "refactor", "docs", "test", "release", "research", "ops"}
 
 // FinishLabelDecision is for the gateway's own direct backend calls, never client-supplied events.
-func (s *Store) FinishLabelDecision(ctx context.Context, id, model string, start, end time.Time, in, out int64, failed bool) error {
-	e := UsageEvent{ID: id, Start: start, End: end, DeviceID: "gateway", Provider: "foundry", Model: model, BillingMode: "local", TokensIn: in, TokensOut: out, TokenSource: "estimated", Activity: "ops", Task: "usage-labels", Outcome: OutcomeOK}
+func (s *Store) FinishLabelDecision(ctx context.Context, id, provider, model string, start, end time.Time, in, out int64, failed bool) error {
+	e := UsageEvent{ID: id, Start: start, End: end, DeviceID: "gateway", Provider: provider, Model: model, BillingMode: "local", TokensIn: in, TokensOut: out, TokenSource: "estimated", Activity: "ops", Task: "usage-labels", Outcome: OutcomeOK}
 	if failed {
 		e.Outcome = OutcomeError
 		e.ErrorKind = "other"

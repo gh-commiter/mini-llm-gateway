@@ -478,10 +478,10 @@ caller gave is never replaced by a model's, and a label never gives access to an
 Totals older than 400 days are folded without labels. A topic project is the place for a task of its own: link its subfolder and the branch
 names the task.
 
-**Model labels (beta, Windows gateway only for now).** The owner can enable Foundry Local, choose an installed model,
+**Model labels (beta: Windows gateway with Foundry Local, Mac with Apple Foundation Models).** The owner can enable Foundry Local, choose an installed model,
 then use the owner admin API `PUT /usage/labels/settings` with `{"backend":"foundry:<model>","enabled":true}`.
 The Model labels pane edits the same settings; the Windows/Linux gateway has no native panel renderer yet.
-Nothing runs by default. The Linux worker reports an unavailable backend in `lastError`; the Mac classifier is a later step.
+Nothing runs by default. The Linux worker reports an unavailable backend in `lastError`; the Mac is described below.
 Only root `/v1/messages` events are considered. The first user message, with system reminders stripped, plus the task/branch
 label if present, is capped to 2000 Unicode code points and sent directly to the selected Foundry Local model on this computer.
 No remote provider is used. The classifier never chooses a task. Its input is kept only in memory, never in the database,
@@ -512,6 +512,21 @@ With `shadow` enabled (the default), every fourth root call carrying explicit la
 The owner can read the counters at `GET /usage/labels/agreement`; unknown decisions count as disagreements.
 A decision using the model records one internal usage event (`gateway`, `ops`, `usage-labels`), with estimated tokens and
 no user, so it consumes no user's quota and never classifies itself. Cache hits create no model usage event.
+
+**Model labels on the Mac (on-device model).** The Mac app's worker uses Apple Foundation Models, the on-device model of the gateway Mac:
+choose `apple-fm` as the backend (Model labels pane, or `PUT /usage/labels/settings` with `{"backend":"apple-fm","enabled":true}`). The Mac
+settings route refuses any other backend with "choose apple-fm". Nothing leaves the Mac: the first prompt is classified in the app by the
+on-device model, directly (never through the gateway's own `/v1/messages` route), with no network call and no other provider. If the model
+cannot be used (macOS or Apple Intelligence off, model still downloading) the worker does nothing and `lastError` says "on-device model
+unavailable"; it never falls back to another model. Everything else is as above: same input and cap, same three samples (the answers are
+limited to the list of phases or activities by guided generation, and still parsed strictly), same thresholds and stored scores (667 or
+1000 per mille), same shadow counters and cache, one decision at a time, a queue of 8, 20 seconds per decision, `maxPerHour`. The worker
+starts only after the request was dispatched and never delays it. It also yields to the user: while a request for an on-device model
+(`claude-apple-fm`) runs through this gateway no sample starts, a sample that is running is cancelled, and the decision is retried at most
+once, then left unknown. The worker stops when the app quits. **What *agreement* means:** the share of three independent samples that gave
+the same answer; it says how steady the small model is, not how often it is right (that is what the shadow counters, compared with explicit
+labels, are for). **Privacy limit:** the gateway never stores, logs or reports the classified text, but the on-device model runtime and the
+operating system (their own logs, crash dumps, Apple's diagnostics) are outside the gateway's control.
 
 `MINIGW_SHARE=0` turns folder sharing off; `MINIGW_SHARE=1` shares a folder that is not shared automatically, for
 one run.

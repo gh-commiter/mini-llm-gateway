@@ -76,6 +76,9 @@ final class RequestState: @unchecked Sendable {
     private var _upstreamStatus = 0
     private var _errKind = ""
     private var _clientGone = false
+    private var _labelBody: Data?
+    /// The request body for the label worker (a reference, never copied here; set at admission, read at dispatch).
+    var labelBody: Data? { get { lock.withLock { _labelBody } } set { lock.withLock { _labelBody = newValue } } }
     var project: ProjectRun? { get { lock.withLock { _project } } set { lock.withLock { _project = newValue } } }
     var event: UsageEvent? { lock.withLock { _event } }
     var tokenSource: String { get { lock.withLock { _tokenSource } } set { lock.withLock { _tokenSource = newValue } } }
@@ -196,7 +199,7 @@ final class UsageGapJournal: @unchecked Sendable {
 /// when the app quits.
 public enum UsageLoss {
     public static func attach(file: URL) { UsageGapJournal.attached = UsageGapJournal(file: file); UsageGapJournal.quotaAttached = UsageGapJournal(file: file.appendingPathExtension("quota")) }
-    public static func persistPendingAtQuit() { UsageSender.persistPendingAtQuit() }
+    public static func persistPendingAtQuit() { UsageSender.persistPendingAtQuit(); LabelWorker.stopAll() }
 }
 
 /// Sends events to the helper off the request path. One instance per Router; its task outlives a Router restart until the queue is empty.
@@ -351,12 +354,16 @@ extension Router {
             (e.phase, e.activity, e.task, e.taskSource) = run.labels
         }
         state.admit(e)
+        if labels != nil { state.labelBody = req.body }
     }
 
     /// The moment execution or the upstream request really begins (a provider request, an agent process, a Foundry request): the event
     /// is sent as begun, with its project (an interrupted run keeps it).
     func dispatched(_ provider: String, upstreamModel: String = "", price: PriceSnapshot? = nil) {
-        if let e = Self.reqState?.dispatch(provider: provider, upstreamModel: upstreamModel, price: price) { usageSender.begin(e) }
+        if let e = Self.reqState?.dispatch(provider: provider, upstreamModel: upstreamModel, price: price) {
+            usageSender.begin(e)
+            labels?.enqueue(e, body: Self.reqState?.labelBody)  // after dispatch, never waits: a bounded copy of the first prompt is made on the worker's side
+        }
     }
 
     /// Completes the event of a request that was dispatched; any status then is an outcome (an upstream 4xx is an error event). A request that

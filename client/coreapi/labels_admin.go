@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"minigw/core"
 )
@@ -33,6 +34,9 @@ func (a *API) adminLabels(ctx context.Context, st *core.Store, method, name stri
 		if decodeStrict(body, &p) != nil {
 			return bad("settings: enabled, backend, threshold, maxPerHour, shadow, shadowRate, activities")
 		}
+		if msg := a.labelBackendRefusal(p.Backend); msg != "" {
+			return bad(msg)
+		}
 		l, err := st.SetLabelSettings(ctx, p)
 		if err != nil {
 			return failErr(err)
@@ -57,4 +61,20 @@ func (a *API) adminLabels(ctx context.Context, st *core.Store, method, name stri
 		return 200, map[string]any{"agreement": rows}, true
 	}
 	return 404, errorBody(404, "Not found: "+method+" usage/labels/"+name), true
+}
+
+// labelBackendRefusal: why the backend chosen is not available on this host ("" = fine, or no restriction).
+func (a *API) labelBackendRefusal(backend *string) string {
+	if backend == nil || *backend == "" || a.o.LabelBackends == nil {
+		return ""
+	}
+	for _, ok := range a.o.LabelBackends {
+		if *backend == ok || strings.HasSuffix(ok, ":") && strings.HasPrefix(*backend, ok) {
+			return ""
+		}
+	}
+	if len(a.o.LabelBackends) == 0 {
+		return "backend: this system has no on-device model for labels"
+	}
+	return "backend: not available on this system; choose " + strings.Join(a.o.LabelBackends, " or ")
 }

@@ -55,6 +55,7 @@ public final class Router: Sendable {
     let core: CoreHelper?  // 0.6.0: the helper that hosts the project core (CoreForward.swift); nil = every project route answers 503
     let quotaSender: UsageSender
     let usageSender: UsageSender  // 0.6.0: usage events to the helper, off the request path (UsageEvents.swift)
+    let labels: LabelWorker?  // usage labels chosen by the on-device model (LabelWorker.swift); nil without a core. Idle unless the owner turned it on.
     let catalog: Catalog
     let probes = Probes()
     /// Zgodovina naprav in sej: Router.history (aplikacija); testi dajo svojo, da jih vzporedni testi ne motijo.
@@ -72,6 +73,12 @@ public final class Router: Sendable {
         self.core = core
         usageSender = UsageSender(core: core)
         quotaSender = UsageSender(core: core, quota: true)
+        let sender = usageSender
+        labels = core.map { c in
+            LabelWorker(call: { name, body in let r = await c.internalCall(name, body); return (r.status, r.body) }, available: { AppleFM.isAvailable() },
+                        backend: { system, user, ids in try await AppleFM.classify(system: system, user: user, ids: ids) },
+                        beforeStore: { _ = await sender.flush(timeout: .seconds(2)) })
+        }
         self.allowedFolders = allowedFolders
         allowedFolders.record(config.claudeCLI.allowedRoots, records: config.claudeCLI.allowedRecords)
         self.config = config
@@ -104,6 +111,8 @@ public final class Router: Sendable {
         }
         _ = checkedRoots  // M2: a folder that changed while the app was stopped is logged at start
     }
+
+    deinit { labels?.stop() }
 
     /// L1: provider requests never follow a redirect (the prompt body would go to a host the owner did not configure), as the Go clients.
     public static let defaultSession: URLSession = URLSession(configuration: providerConfiguration(proxy: true), delegate: Profiles.NoRedirect(), delegateQueue: nil)
