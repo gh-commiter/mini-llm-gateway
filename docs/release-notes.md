@@ -3,10 +3,10 @@
 ## Unreleased
 
 ### New
-- Docker Compose: an optional `admin` profile puts the remote settings listener behind an HTTPS-only Caddy reverse proxy (digest-pinned, mutual TLS to the gateway, forwarding headers replaced, only the settings page, login/logout and the permitted admin paths proxied), with `deploy/docker/admin-certs.sh` for the certificates; see [docker.md](docker.md#remote-settings-from-a-browser-admin-profile).
+- Docker Compose: an optional admin setup (`deploy/docker/compose.admin.yaml`, added to `COMPOSE_FILE`; adding it recreates the gateway container once) puts the remote settings listener behind an HTTPS-only Caddy reverse proxy (digest-pinned, mutual TLS to the gateway, forwarding headers replaced, only the settings page, login/logout and the permitted admin paths proxied), with `deploy/docker/admin-certs.sh` (link and browser certificates, a name-constrained browser CA, `renew`) for the certificates; see [docker.md](docker.md#remote-settings-from-a-browser-admin-profile).
 
 ### Known problems
-- The admin profile has been tried only with its test script (`scripts/compose-admin-e2e.sh`) on one Mac through Docker, not on the team server and not with a real browser. The default HTTPS port 443 and a host port other than 443 for a real certificate name are not covered by the test (it uses a high port).
+- The admin profile has been tried only with its test script (`scripts/compose-admin-e2e.sh`) on one Mac through Docker, not on the team server and not with a real browser. The default HTTPS port 443 and a host port other than 443 for a real certificate name are not covered by the test (it uses a high port). On Docker Desktop and rootless Docker the proxy sees the Docker gateway address for every browser, so `allowedSourceCIDRs` and the per-source lockout do not tell browsers apart there; real source filtering needs rootful Docker on Linux.
 
 ## 0.7.24
 

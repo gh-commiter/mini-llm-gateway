@@ -8,7 +8,16 @@
 	admin off
 	auto_https off
 	https_port 8443
+	# Caddy logs the request headers on an upstream error; it redacts Cookie/Authorization only, so the remote session
+	# header is removed here (no password is ever in a header or logged: bodies are not logged)
+	log default {
+		format filter {
+			request>headers>X-Minigw-Remote-Session delete
+			wrap json
+		}
+	}
 	servers {
+		protocols h1 h2
 		max_header_size 16KB
 		timeouts {
 			read_header 10s
@@ -54,6 +63,13 @@ https://{$MINIGW_ADMIN_NAME}:8443 {
 	header Strict-Transport-Security "max-age=31536000"
 	request_body {
 		max_size 1MB
+	}
+
+	# The routes below match the cleaned path, but the raw path is forwarded: refuse anything that is not already clean
+	# (dot segments, doubled slashes, any percent-encoding, backslash), so the proxy never forwards what it did not check.
+	@dirty expression {http.request.orig_uri.path}.matches("(^|/)[.][.]?(/|$)|//|%|\\\\") || {http.request.orig_uri}.contains("%")
+	handle @dirty {
+		respond "Not found" 404
 	}
 
 	@get {
