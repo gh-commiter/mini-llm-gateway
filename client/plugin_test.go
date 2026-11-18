@@ -613,6 +613,8 @@ type installRun struct {
 	envOld    bool   // CLAUDE_ENV_FILE already holds the line an older plugin version appended
 	freshOwn  bool   // the release's SHA256SUMS lists the plugin's own copy (nothing to download)
 	serveNew  string // the release has this body as the client asset (and its SHA256SUMS lists it): the plugin downloads it
+	badCp     bool   // cp fails for .sums.new (full disk) ...
+	oldNew    bool   // ... while an OLD .sums.new/.sig.new that lists the installed (substituted) client is already there
 	fresh     bool   // the release's SHA256SUMS (served by the fake curl) lists the installed client; nothing cached
 }
 
@@ -736,6 +738,15 @@ case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig
 		}
 		h := sha256.Sum256([]byte(body))
 		write("sums", "VERSION 0.7.99\n"+hex.EncodeToString(h[:])+"  "+asset+"\n")
+	}
+	if o.badCp {
+		realCp, _ := exec.LookPath("cp")
+		write("fb/cp", "#!/bin/sh\ncase \"$*\" in *.sums.new*) exit 1 ;; esac\nexec "+realCp+" \"$@\"\n")
+	}
+	if o.oldNew {
+		h := sha256.Sum256([]byte(instBody))
+		write(dn+"/bin/.sums.new", "VERSION 0.7.99\n"+hex.EncodeToString(h[:])+"  "+asset+"\n")
+		write(dn+"/bin/.sig.new", "sig\n")
 	}
 	if o.envOld {
 		write("envfile", "export PATH=\"$PATH\":'"+data+"/bin'\n")
@@ -1087,5 +1098,24 @@ func TestInstallScriptCodesignsEachFileOnce(t *testing.T) {
 				t.Errorf("%+v: %q more than once:\n%s", o, line, r.counts)
 			}
 		}
+	}
+}
+
+// A failed copy of the verified sums must not leave a positive verdict for an old .sums.new that lists a substituted client.
+func TestInstallScriptFailedSumsCopyGivesNoVerdict(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		r := runInstallScript(t, installRun{goos: goos, installed: "minigw 0.7.99", latest: "0.7.99", fresh: false, badCp: true, oldNew: true, sums: "VERSION 0.7.99\n" + strings.Repeat("d", 64) + "  other\n"})
+		if r.ran() {
+			t.Errorf("%s: the substituted client was run:\n%s", goos, r.out)
+		}
+		if goos == "linux" && r.linked() {
+			t.Errorf("linux: the substituted client was linked:\n%s", r.out)
+		}
+		if goos == "windows" {
+			if _, err := os.Stat(r.exe); err == nil {
+				t.Errorf("windows: a shim for the substituted client:\n%s", r.out)
+			}
+		}
+		r.mustSay(t, "the minigw installed at ")
 	}
 }

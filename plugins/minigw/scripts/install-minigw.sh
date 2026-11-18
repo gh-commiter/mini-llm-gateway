@@ -123,7 +123,10 @@ keepsums() { [ -f "$BIN/.sums.new" ] && [ -f "$BIN/.sig.new" ] && mv -f "$BIN/.s
 sums="" unsigned=""
 st=$(mktemp -d) && if curl -fsSL --max-time 8 -o "$st/s" "$base/SHA256SUMS" 2>/dev/null && curl -fsSL --max-time 8 -o "$st/sig" "$base/SHA256SUMS.sig" 2>/dev/null; then
   verify_sums "$st/s" "$st/sig"; case $? in
-    0) sums=$(cat "$st/s"); cp "$st/s" "$BIN/.sums.new"; cp "$st/sig" "$BIN/.sig.new" && vn=0 ;;  # iste bajti, preverjeni zgoraj
+    0) sums=$(cat "$st/s"); vn=""
+      # kopija v bin/: pozitiven izid le, če sta OBE kopiji uspeli in sta enaki preverjenima; sicer brez obeh datotek (kot brez svežih vsot)
+      if cp "$st/s" "$BIN/.sums.new" && cp "$st/sig" "$BIN/.sig.new" && cmp -s "$st/s" "$BIN/.sums.new" && cmp -s "$st/sig" "$BIN/.sig.new"; then vn=0
+      else rm -f "$BIN/.sums.new" "$BIN/.sig.new"; fi ;;
     2) unsigned="cannot check the release signature: install OpenSSH (ssh-keygen)" ;;
     *) unsigned="the release's SHA256SUMS is not signed by Mini Gateway" ;;
   esac
@@ -243,7 +246,7 @@ else
     else
       fetch "$asset" || { authexe && [ -x "$EXE" ]; } || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {
         if [ -n "$instx" ] || [ -e "$EXE" ] || [ -L "$EXE" ]; then
-          rm -f "$EXE"
+          rm -f "$EXE"; forget  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
           if [ -n "$unsigned" ]; then why="$unsigned; gateway skills are unavailable until the release can be verified"
           elif [ -n "$sums" ]; then why="the download failed or did not match the signed checksum; gateway skills are unavailable until it works"
           else why="github.com/$REPO could not be reached; gateway skills are unavailable until the network is back"; fi
