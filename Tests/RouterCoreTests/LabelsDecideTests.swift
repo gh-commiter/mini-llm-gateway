@@ -151,7 +151,7 @@ private func answering(_ phase: String = "do", _ activity: String = "bugfix", co
 }
 
 private func worker(_ core: FakeCore, available: Bool = true, backend: @escaping Decide.Backend, foreground: FMForeground = FMForeground(),
-                    budget: Duration = .seconds(20), ttl: Duration = .milliseconds(1), limits: LabelLimits = LabelLimits()) -> LabelWorker {
+                    budget: Duration = .seconds(3600), ttl: Duration = .milliseconds(1), limits: LabelLimits = LabelLimits()) -> LabelWorker {
     LabelWorker(call: core.call, available: { available }, backend: backend, foreground: foreground, settingsTTL: ttl, budget: budget,
                 retryDelays: [.milliseconds(5)], waitStep: .milliseconds(5), limits: limits)
 }
@@ -472,7 +472,7 @@ private final class Gate: @unchecked Sendable {
             boom.inc()
             if boom.value > 6 { throw Leak(text: user) }  // the second prompt: an error that carries the prompt
             return ids.contains("plan") ? "do" : "bugfix"
-        }, foreground: FMForeground(), settingsTTL: .milliseconds(1), retryDelays: [.milliseconds(50), .milliseconds(200), .milliseconds(500)], waitStep: .milliseconds(5))
+        }, foreground: FMForeground(), settingsTTL: .milliseconds(1), budget: .seconds(3600), retryDelays: [.milliseconds(50), .milliseconds(200), .milliseconds(500)], waitStep: .milliseconds(5))
         await w.fetchSettings()
         w.enqueue(e, body: body("Fix the crash. \(marker)"))
         #expect(await until(timeout: 20) { w.done == 1 })
@@ -543,7 +543,7 @@ private final class Gate: @unchecked Sendable {
         let core = FakeCore(); core.eventLabelsStatus = 404
         // the injected retry pause: reports that the worker is in it, then lasts until the worker's task is cancelled (stop) – no wall time involved
         let entered = AsyncStream<Void>.makeStream(), left = AsyncStream<Void>.makeStream()
-        let w = LabelWorker(call: core.call, available: { true }, backend: answering(), foreground: FMForeground(), settingsTTL: .milliseconds(1),
+        let w = LabelWorker(call: core.call, available: { true }, backend: answering(), foreground: FMForeground(), settingsTTL: .milliseconds(1), budget: .seconds(3600),
                             retryDelays: [.milliseconds(400), .milliseconds(400)], waitStep: .milliseconds(5),
                             sleep: { _ in entered.continuation.yield(); try? await Task.sleep(for: .seconds(3600)); left.continuation.yield() })
         await primed(w)
