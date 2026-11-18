@@ -153,6 +153,28 @@ type EventRequest struct {
 	Event core.UsageEvent `json:"event"`
 }
 
+// EventLabelsRequest: the labels a model chose for the root event ID (the Mac router's label worker, B3). Scores are per mille of
+// agreement (667 or 1000). The core stores only what the rules of SetModelLabels allow: never over a label that has a source.
+type EventLabelsRequest struct {
+	ID            string `json:"id"`
+	Phase         string `json:"phase"`
+	Activity      string `json:"activity"`
+	PhaseScore    int    `json:"phaseScore"`
+	ActivityScore int    `json:"activityScore"`
+}
+
+// LabelAgreementRequest: one shadow comparison (counters only): kind phase|activity, bucket 667|1000|unknown, agree.
+type LabelAgreementRequest struct {
+	Kind   string `json:"kind"`
+	Bucket string `json:"bucket"`
+	Agree  bool   `json:"agree"`
+}
+
+// LabelErrorRequest: why the label worker idles (an error class, never prompt text); "" clears it.
+type LabelErrorRequest struct {
+	Message string `json:"message"`
+}
+
 // LostRequest: events the adapter could not deliver (its own queue overflowed while the helper was down); the core shows
 // them as a gap, as for events its own queue drops.
 type LostRequest struct {
@@ -264,6 +286,62 @@ func (a *API) internal(ctx context.Context, r Request) Response {
 			a.EventFinish(in.Event)
 		}
 		return Response{Status: 202, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"queued":true}`)}
+	case "event-labels":
+		var in EventLabelsRequest
+		if decodeStrict(r.Body, &in) != nil || in.ID == "" {
+			return bad
+		}
+		if st == nil {
+			return unavailable()
+		}
+		n, err := st.SetModelLabels(ctx, in.ID, in.Phase, in.Activity, in.PhaseScore, in.ActivityScore)
+		switch {
+		case errors.Is(err, core.ErrNotFound):
+			return jsonErr(404, "not_found", "no such root event")
+		case err != nil:
+			a.o.Log("event-labels: %v", err)
+			return jsonErr(500, "internal", "Internal error")
+		}
+		return resp(200, map[string]any{"updated": n})
+	case "label-agreement":
+		var in LabelAgreementRequest
+		if decodeStrict(r.Body, &in) != nil {
+			return bad
+		}
+		if st == nil {
+			return unavailable()
+		}
+		if err := st.RecordAgreement(ctx, in.Kind, in.Bucket, in.Agree); err != nil {
+			if errors.Is(err, core.ErrInvalid{What: "agreement"}) {
+				return bad
+			}
+			a.o.Log("label-agreement: %v", err)
+			return jsonErr(500, "internal", "Internal error")
+		}
+		return resp(200, map[string]any{"ok": true})
+	case "label-settings":
+		if st == nil {
+			return unavailable()
+		}
+		l, err := st.LabelSettings(ctx)
+		if err != nil {
+			a.o.Log("label-settings: %v", err)
+			return jsonErr(500, "internal", "Internal error")
+		}
+		return resp(200, l)
+	case "label-error":
+		var in LabelErrorRequest
+		if decodeStrict(r.Body, &in) != nil {
+			return bad
+		}
+		if st == nil {
+			return unavailable()
+		}
+		if err := st.SetLabelError(ctx, in.Message); err != nil {
+			a.o.Log("label-error: %v", err)
+			return jsonErr(500, "internal", "Internal error")
+		}
+		return resp(200, map[string]any{"ok": true})
 	case "event-lost", "quota-lost":
 		var in LostRequest
 		if decodeStrict(r.Body, &in) != nil || in.Count < 1 {

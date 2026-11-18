@@ -300,6 +300,7 @@ func routerCommand(args []string, in io.Reader) {
 	evTeam := fs.String("team", "", "kb review: only the notes of this team")
 	evBy := fs.String("by", "", "usage: group by phase, activity, task, project or model (one or two, comma separated)")
 	evPhase := fs.String("phase", "", "usage, usage-events, project-sessions: only this phase")
+	evLabelSource := fs.String("label-source", "", "usage, usage-events: only events with a label from this source (given, branch or model)")
 	evActivity := fs.String("activity", "", "usage, usage-events, project-sessions: only this activity")
 	upRemoteProject := fs.String("remote-project", "", "upstream link: the project's short name on the upstream (default: the same)")
 	upRemoteTeam := fs.String("remote-team", "", "upstream link --team: the team's name on the upstream (default: the same)")
@@ -546,10 +547,10 @@ func routerCommand(args []string, in io.Reader) {
 
 	case "usage":
 		if !*legacy {
-			coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, provider: *evProvider, device: *device, folder: *folder, sort: *evSort, json: *asJSON, csv: *asCSV, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask})
+			coreCommand(a, pos, coreOpts{days: *days, user: *evUser, project: *evProject, model: *evModel, provider: *evProvider, device: *device, folder: *folder, sort: *evSort, json: *asJSON, csv: *asCSV, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
 			break
 		}
-		if len(pos) != 1 || *asJSON || *asCSV || *evModel != "" || *evProvider != "" || *evSort != "" || *evUser != "" || *evProject != "" || *evBy != "" || *evPhase != "" || *evActivity != "" || *evTask != "" {
+		if len(pos) != 1 || *asJSON || *asCSV || *evModel != "" || *evProvider != "" || *evSort != "" || *evUser != "" || *evProject != "" || *evBy != "" || *evPhase != "" || *evActivity != "" || *evTask != "" || *evLabelSource != "" {
 			fail(usageReportHelp)
 		}
 		var r struct{ Usage []projectUse }
@@ -847,7 +848,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota", "upstream":
-		coreCommand(a, pos, coreOpts{in: in, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask})
+		coreCommand(a, pos, coreOpts{in: in, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

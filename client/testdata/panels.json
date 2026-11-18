@@ -668,7 +668,7 @@
            "label": "builtin.teams.section.teams.detail.section.assignments.action.remove",
            "method": "DELETE",
            "path": "/teams/{parent.id}/assignments",
-           "query": "project={row.project}\u0026user={row.user}",
+           "query": "project={row.project}&user={row.user}",
            "confirm": {
             "title": "builtin.teams.section.teams.detail.section.assignments.action.remove.confirm.title",
             "message": "builtin.teams.section.teams.detail.section.assignments.action.remove.confirm.message",
@@ -1371,7 +1371,7 @@
         "label": "builtin.teams.section.grants.action.remove",
         "method": "DELETE",
         "path": "/grants",
-        "query": "source={row.source}\u0026reader={row.reader}\u0026class={row.class}",
+        "query": "source={row.source}&reader={row.reader}&class={row.class}",
         "confirm": {
          "title": "builtin.teams.section.grants.action.remove.confirm.title",
          "message": "builtin.teams.section.grants.action.remove.confirm.message",
@@ -3065,6 +3065,189 @@
         }
        ]
       }
+     }
+    ]
+   }
+  },
+  {
+   "provider": "builtin",
+   "description": {
+    "format": 1,
+    "id": "builtin.labels",
+    "provider": "builtin",
+    "title": "builtin.labels.title",
+    "about": "builtin.labels.about",
+    "symbol": "gearshape",
+    "refs": {},
+    "sections": [
+     {
+      "kind": "text",
+      "id": "intro",
+      "body": "builtin.labels.section.intro.body"
+     },
+     {
+      "kind": "list",
+      "id": "settings",
+      "title": "builtin.labels.section.settings.title",
+      "source": {
+       "path": "/usage/labels/settings",
+       "items": "settings"
+      },
+      "key": "id",
+      "columns": [
+       {
+        "field": "enabled",
+        "kind": "bool",
+        "label": "builtin.labels.section.settings.column.enabled",
+        "yes": "builtin.labels.section.settings.column.enabled.yes",
+        "no": "builtin.labels.section.settings.column.enabled.no"
+       },
+       {
+        "field": "backend",
+        "kind": "text",
+        "label": "builtin.labels.section.settings.column.backend"
+       },
+       {
+        "field": "threshold",
+        "kind": "enum",
+        "label": "builtin.labels.section.settings.column.threshold",
+        "values": {
+         "1.0": "builtin.labels.section.settings.column.threshold.v10",
+         "0.67": "builtin.labels.section.settings.column.threshold.v067"
+        }
+       },
+       {
+        "field": "maxPerHour",
+        "kind": "text",
+        "label": "builtin.labels.section.settings.column.maxperhour"
+       },
+       {
+        "field": "shadow",
+        "kind": "bool",
+        "label": "builtin.labels.section.settings.column.shadow",
+        "yes": "builtin.labels.section.settings.column.shadow.yes",
+        "no": "builtin.labels.section.settings.column.shadow.no"
+       },
+       {
+        "field": "shadowRate",
+        "kind": "text",
+        "label": "builtin.labels.section.settings.column.shadowrate"
+       },
+       {
+        "field": "activitiesText",
+        "kind": "text",
+        "label": "builtin.labels.section.settings.column.activitiestext"
+       },
+       {
+        "field": "lastError",
+        "kind": "text",
+        "label": "builtin.labels.section.settings.column.lasterror"
+       }
+      ],
+      "empty": "builtin.labels.section.settings.empty",
+      "rowActions": [
+       {
+        "id": "edit",
+        "label": "builtin.labels.section.settings.action.edit",
+        "method": "PUT",
+        "path": "/usage/labels/settings",
+        "fields": [
+         {
+          "id": "enabled",
+          "type": "toggle",
+          "label": "builtin.labels.section.settings.action.edit.field.enabled",
+          "default": {
+           "row": "enabled"
+          }
+         },
+         {
+          "id": "backend",
+          "type": "text",
+          "label": "builtin.labels.section.settings.action.edit.field.backend",
+          "maxLength": 100,
+          "default": {
+           "row": "backend"
+          }
+         },
+         {
+          "id": "threshold",
+          "type": "choice",
+          "label": "builtin.labels.section.settings.action.edit.field.threshold",
+          "options": [
+           {
+            "value": "1.0",
+            "label": "builtin.labels.section.settings.action.edit.field.threshold.v10"
+           },
+           {
+            "value": "0.67",
+            "label": "builtin.labels.section.settings.action.edit.field.threshold.v067"
+           }
+          ],
+          "default": {
+           "row": "threshold"
+          }
+         },
+         {
+          "id": "maxPerHour",
+          "type": "text",
+          "label": "builtin.labels.section.settings.action.edit.field.maxperhour",
+          "maxLength": 4,
+          "default": {
+           "row": "maxPerHour"
+          }
+         },
+         {
+          "id": "shadow",
+          "type": "toggle",
+          "label": "builtin.labels.section.settings.action.edit.field.shadow",
+          "default": {
+           "row": "shadow"
+          }
+         },
+         {
+          "id": "shadowRate",
+          "type": "text",
+          "label": "builtin.labels.section.settings.action.edit.field.shadowrate",
+          "maxLength": 3,
+          "default": {
+           "row": "shadowRate"
+          }
+         },
+         {
+          "id": "activities",
+          "type": "text",
+          "label": "builtin.labels.section.settings.action.edit.field.activities",
+          "maxLength": 600,
+          "default": {
+           "row": "activitiesText"
+          }
+         }
+        ],
+        "body": {
+         "enabled": {
+          "field": "enabled"
+         },
+         "backend": {
+          "field": "backend"
+         },
+         "threshold": {
+          "field": "threshold"
+         },
+         "maxPerHour": {
+          "field": "maxPerHour"
+         },
+         "shadow": {
+          "field": "shadow"
+         },
+         "shadowRate": {
+          "field": "shadowRate"
+         },
+         "activities": {
+          "field": "activities"
+         }
+        }
+       }
+      ]
      }
     ]
    }

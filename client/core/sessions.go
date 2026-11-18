@@ -61,7 +61,10 @@ type SessionRow struct {
 	Task           string `json:"task,omitempty"`
 	PhaseSource    string `json:"phaseSource,omitempty"`
 	ActivitySource string `json:"activitySource,omitempty"`
-	TaskSource     string `json:"taskSource,omitempty"`
+	// Agreement of a model-chosen label, per mille (667 or 1000); absent for any other source.
+	PhaseScore    int    `json:"phaseScore,omitempty"`
+	ActivityScore int    `json:"activityScore,omitempty"`
+	TaskSource    string `json:"taskSource,omitempty"`
 }
 type SessionPage struct {
 	Sessions []SessionRow `json:"sessions"`
@@ -116,6 +119,7 @@ func (s *Store) AdminSessions(ctx context.Context, project int64, f SessionFilte
 type sessionEvent struct {
 	id, parent, device, model, outcome, name, source string
 	labels                                           [6]string
+	scores                                           [2]int
 	user, start                                      int64
 	end, in, out, read, write, cost                  sql.NullInt64
 }
@@ -146,7 +150,7 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 		}
 	}
 	// Edges are resolved only within authorized rows and frozen attribution.
-	q := `SELECT e.id,COALESCE(e.parent_id,''),e.device_id,e.model,e.outcome,COALESCE(u.name,''),e.cost_source,COALESCE(e.user_id,0),e.start,e.end,e.tokens_in,e.tokens_out,e.cache_read_tokens,e.cache_write_tokens,e.cost_usd_nanos,e.phase,e.activity,e.task,e.phase_source,e.activity_source,e.task_source FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.project_id=?`
+	q := `SELECT e.id,COALESCE(e.parent_id,''),e.device_id,e.model,e.outcome,COALESCE(u.name,''),e.cost_source,COALESCE(e.user_id,0),e.start,e.end,e.tokens_in,e.tokens_out,e.cache_read_tokens,e.cache_write_tokens,e.cost_usd_nanos,e.phase,e.activity,e.task,e.phase_source,e.activity_source,e.task_source,COALESCE(e.phase_score,0),COALESCE(e.activity_score,0) FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.project_id=?`
 	args := []any{project}
 	if user != 0 {
 		q += ` AND e.user_id=?`
@@ -160,7 +164,7 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 	events := map[string]*sessionEvent{}
 	for rows.Next() {
 		e := new(sessionEvent)
-		if err = rows.Scan(&e.id, &e.parent, &e.device, &e.model, &e.outcome, &e.name, &e.source, &e.user, &e.start, &e.end, &e.in, &e.out, &e.read, &e.write, &e.cost, &e.labels[0], &e.labels[1], &e.labels[2], &e.labels[3], &e.labels[4], &e.labels[5]); err != nil {
+		if err = rows.Scan(&e.id, &e.parent, &e.device, &e.model, &e.outcome, &e.name, &e.source, &e.user, &e.start, &e.end, &e.in, &e.out, &e.read, &e.write, &e.cost, &e.labels[0], &e.labels[1], &e.labels[2], &e.labels[3], &e.labels[4], &e.labels[5], &e.scores[0], &e.scores[1]); err != nil {
 			rows.Close()
 			return page, err
 		}
@@ -222,7 +226,7 @@ func (s *Store) sessionRows(tx *sql.Tx, project, user int64, f SessionFilter) (S
 		if f.After != "" && (root.start > cursor.Start || root.start == cursor.Start && id >= cursor.ID) {
 			continue
 		}
-		r := SessionRow{ID: id, ProjectID: project, UserID: root.user, UserName: root.name, DeviceID: root.device, DeviceName: root.device, Start: fromMs(root.start), Outcome: "ok", Incomplete: root.parent != "", Models: []string{}, Phase: root.labels[0], Activity: root.labels[1], Task: root.labels[2], PhaseSource: root.labels[3], ActivitySource: root.labels[4], TaskSource: root.labels[5]}
+		r := SessionRow{ID: id, ProjectID: project, UserID: root.user, UserName: root.name, DeviceID: root.device, DeviceName: root.device, Start: fromMs(root.start), Outcome: "ok", Incomplete: root.parent != "", Models: []string{}, Phase: root.labels[0], Activity: root.labels[1], Task: root.labels[2], PhaseSource: root.labels[3], ActivitySource: root.labels[4], TaskSource: root.labels[5], PhaseScore: root.scores[0], ActivityScore: root.scores[1]}
 		open, match, interrupted := false, f.Model == "", false
 		models := map[string]bool{}
 		var cost, reported, estimated SessionMetric

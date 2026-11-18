@@ -31,7 +31,7 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
                                                               provider: o["provider"] as? String ?? "", device: o["device"] as? String ?? "",
                                                               folder: o["folder"] as? String ?? "", sort: o["sort"] as? String ?? "", json: o["json"] as? Bool ?? false,
                                                               csv: o["csv"] as? Bool ?? false, by: o["by"] as? String ?? "", phase: o["phase"] as? String ?? "",
-                                                              activity: o["activity"] as? String ?? "", task: o["task"] as? String ?? ""))
+                                                              activity: o["activity"] as? String ?? "", task: o["task"] as? String ?? "", labelSource: o["labelSource"] as? String ?? ""))
             } catch let e as AdminCLIError { exit = e.code; errText = "minigw: " + e.message + "\n" }
             let want = c["want"] as! [String: Any]
             #expect(outText == want["out"] as! String, "\(name): stdout")

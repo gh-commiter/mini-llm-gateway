@@ -1,5 +1,14 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Model labels, the storage and the settings (nothing fills labels yet): a phase or activity that a model chose is stored with its source `model` and an agreement score, and shown in `minigw gw usage --by phase|activity` as its own row (`do (model)`); `--label-source given|branch|model` on `gw usage` and `gw usage-events` keeps the events that have a label from that source. An explicit label is never replaced by a model's, and a label never gives access to anything. Schema 21 (a snapshot of the old database is kept; an older program refuses the newer file).
+- A new Model Labels pane (settings page and Mac app) with the owner's settings, off by default: backend, agreement needed (all three samples or two of three), most decisions per hour, a shadow check against explicit labels and the list of activities a model may choose. Owner only.
+
+### Known problems
+- Nothing fills labels yet: the model step comes in the next betas, so turning the setting on changes nothing in the reports today.
+
 ## 0.7.25
 
 ### New

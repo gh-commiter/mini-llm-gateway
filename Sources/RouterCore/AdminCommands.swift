@@ -14,7 +14,7 @@ public struct AdminCLIError: Error, Equatable {
 
 /// The flags of the owner commands (Go's coreOpts).
 public struct AdminOpts {
-    public var reason = "", team = "", by = "", phase = "", activity = "", task = ""
+    public var reason = "", team = "", by = "", phase = "", activity = "", task = "", labelSource = ""
     public var days = "7", user = "", project = "", model = "", claudeProbe = "", provider = "", device = "", folder = "", sort = ""
     public var json = false, csv = false, history = false, explain = false
     /// upstream commands: the link and push options, and what the token is read with (the command reads it only after its arguments are
@@ -23,8 +23,8 @@ public struct AdminOpts {
     public var withPrivate = false, dryRun = false, auto = false, manual = false, theirs = false, ours = false
     public var tokenInput: (() throws -> String)?
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
-                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "", by: String = "", phase: String = "", activity: String = "", task: String = "") {
-        self.reason = reason; self.team = team; self.by = by; self.phase = phase; self.activity = activity; self.task = task
+                provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "", by: String = "", phase: String = "", activity: String = "", task: String = "", labelSource: String = "") {
+        self.reason = reason; self.team = team; self.by = by; self.phase = phase; self.activity = activity; self.task = task; self.labelSource = labelSource
         self.days = days; self.user = user; self.project = project; self.model = model; self.claudeProbe = claudeProbe
         self.provider = provider; self.device = device; self.folder = folder; self.sort = sort; self.json = json; self.csv = csv; self.history = history; self.explain = explain
     }
@@ -52,7 +52,7 @@ public final class AdminCommands {
           minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups
           minigw gw core audit                                  the audit trail of the core
           minigw gw project-sessions --project <p> [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]
-          minigw gw usage-events [--days n] [--user u] [--project p] [--model m] [--phase p] [--activity a] [--task t]   model invocations per day, model and user (core; all of them)
+          minigw gw usage-events [--days n] [--user u] [--project p] [--model m] [--phase p] [--activity a] [--task t] [--label-source given|branch|model]   model invocations per day, model and user (core; all of them)
           minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
           minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
         (<user> and <project>: the name or slug, or the number.)
@@ -249,6 +249,7 @@ public final class AdminCommands {
             if !o.provider.isEmpty { q["provider"] = o.provider }
             if !o.model.isEmpty { q["model"] = o.model }
             addLabelFilters(&q, o)
+            addLabelSource(&q, o)
             if UsageReport.byLabels(by) { q["labels"] = "1" }
             let r = call("GET", "/usage/events" + ProjectText.query(q), nil)
             guard r.status != 0 else { throw fail("lost the connection to Mini Gateway") }
@@ -282,6 +283,7 @@ public final class AdminCommands {
             if !o.project.isEmpty { q["project"] = s(try projectID(o.project)) }
             if !o.model.isEmpty { q["model"] = o.model }
             addLabelFilters(&q, o)
+            addLabelSource(&q, o)
             printUsage(try request("GET", "/usage/events" + ProjectText.query(q)))
         case "quota":
             try need(1, 1)
@@ -367,6 +369,11 @@ public final class AdminCommands {
     /// The label filters of the owner's usage commands (they select events; they never widen access).
     func addLabelFilters(_ q: inout [String: String], _ o: AdminOpts) {
         for (k, v) in [("phase", o.phase), ("activity", o.activity), ("task", o.task)] where !v.isEmpty { q[k] = v }
+    }
+
+    /// --label-source (given|branch|model): only usage and usage-events take it; like the other filters it narrows, never widens.
+    func addLabelSource(_ q: inout [String: String], _ o: AdminOpts) {
+        if !o.labelSource.isEmpty { q["label_source"] = o.labelSource }
     }
 
     func printUsage(_ r: JDict) {
