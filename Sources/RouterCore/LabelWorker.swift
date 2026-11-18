@@ -79,6 +79,7 @@ final class LabelWorker: @unchecked Sendable {
     private let retryDelays: [Duration]
     private let beforeStore: @Sendable () async -> Void  // the usage events queued so far reached the helper (the root event must exist)
     private let waitStep: Duration
+    private let sleep: @Sendable (Duration) async -> Void  // the retry pause (a test controls when it ends)
 
     private let lock = NSCondition()
     private var inflight = 0
@@ -116,9 +117,9 @@ final class LabelWorker: @unchecked Sendable {
     init(call: @escaping Call, available: @escaping @Sendable () -> Bool, backend: @escaping Decide.Backend,
          foreground: FMForeground = .shared, settingsTTL: Duration = .seconds(10), budget: Duration = .seconds(20),
          retryDelays: [Duration] = [.milliseconds(300), .seconds(1), .seconds(3)], waitStep: Duration = .milliseconds(25),
-         beforeStore: @escaping @Sendable () async -> Void = {}) {
+         beforeStore: @escaping @Sendable () async -> Void = {}, sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }) {
         self.rawCall = call; self.available = available; self.backend = backend; self.foreground = foreground
-        self.settingsTTL = settingsTTL; self.budget = budget; self.retryDelays = retryDelays; self.waitStep = waitStep; self.beforeStore = beforeStore
+        self.settingsTTL = settingsTTL; self.budget = budget; self.retryDelays = retryDelays; self.waitStep = waitStep; self.beforeStore = beforeStore; self.sleep = sleep
         Self.liveLock.withLock { Self.live = Self.live.filter { $0.worker != nil } + [Weak(worker: self)] }
     }
 
@@ -450,7 +451,7 @@ final class LabelWorker: @unchecked Sendable {
                                        "activityScore": score(results[1]), "revision": s.revision]
             var r = await call("event-labels", body)
             for d in retryDelays where (r.status == 404 || r.status == 503) && !isClosed() {  // the root event may not be stored yet
-                try? await Task.sleep(for: d)
+                await sleep(d)
                 r = await call("event-labels", body)
             }
             ok = r.status == 200

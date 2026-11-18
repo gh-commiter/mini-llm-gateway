@@ -606,7 +606,7 @@ func TestMirrorOverItsBudgetIsLeftOutNotTheLocalHits(t *testing.T) {
 	f.ok(e)
 	old := mirrorBudget
 	defer func() { mirrorBudget = old }()
-	mirrorBudget = time.Nanosecond
+	mirrorBudget = -time.Second // a deadline already in the past: the hub's context is expired before the query starts, whatever the clock's resolution
 	pg, err := f.SearchNotes(ctx, f.p("ana"), fk, "orbit")
 	f.ok(err)
 	if len(pg.Hits) != 1 || isMirrorID(pg.Hits[0].ID) || pg.Note != MirrorLeftOut {

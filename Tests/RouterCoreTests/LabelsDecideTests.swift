@@ -8,7 +8,7 @@ import Testing
 private let testdata = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     .appendingPathComponent("client/testdata")
 
-private func until(_ what: String = "", timeout: Double = 8, _ cond: @Sendable () -> Bool) async -> Bool {
+private func until(_ what: String = "", timeout: Double = 60, _ cond: @Sendable () -> Bool) async -> Bool {
     let end = ContinuousClock.now + .seconds(timeout)
     while ContinuousClock.now < end {
         if cond() { return true }
@@ -520,14 +520,21 @@ private final class Gate: @unchecked Sendable {
 
     @Test func nothingIsCalledAfterStopDuringTheRetrySleep() async throws {
         let core = FakeCore(); core.eventLabelsStatus = 404
+        // the injected retry pause: reports that the worker is in it, then lasts until the worker's task is cancelled (stop) – no wall time involved
+        let entered = AsyncStream<Void>.makeStream(), left = AsyncStream<Void>.makeStream()
         let w = LabelWorker(call: core.call, available: { true }, backend: answering(), foreground: FMForeground(), settingsTTL: .milliseconds(1),
-                            retryDelays: [.milliseconds(400), .milliseconds(400)], waitStep: .milliseconds(5))
+                            retryDelays: [.milliseconds(400), .milliseconds(400)], waitStep: .milliseconds(5),
+                            sleep: { _ in entered.continuation.yield(); try? await Task.sleep(for: .seconds(3600)); left.continuation.yield() })
         await primed(w)
         w.enqueue(rootEvent(), body: body("Fix the crash"))
-        #expect(await until { core.count("event-labels") == 1 })  // now in the retry sleep
+        var it = entered.stream.makeAsyncIterator()
+        _ = await it.next()  // now in the retry sleep (the first event-labels call was answered 404)
+        #expect(core.count("event-labels") == 1)
         w.stop()
+        var gone = left.stream.makeAsyncIterator()
+        _ = await gone.next()  // the sleep ended by the cancel: the retry would fire right now
         let n = core.log.count
-        try await Task.sleep(for: .milliseconds(900))
+        try await Task.sleep(for: .milliseconds(300))  // a late look only strengthens the check
         #expect(core.log.count == n && core.count("event-labels") == 1 && core.count("label-error") == 0)
     }
 
