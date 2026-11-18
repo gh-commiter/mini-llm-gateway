@@ -595,7 +595,7 @@ func TestPluginHooksFile(t *testing.T) {
 // unless the file says UNSIGNED), curl (answers the releases/latest redirect and, with sums, SHA256SUMS(.sig); nothing
 // else is ever downloaded), ssh-keygen (accepts), plutil (no app version), stat and claude.
 type installRun struct {
-	goos      string // "" = Darwin
+	goos      string // "" = Darwin, "linux", "windows" (fake uname and cygpath)
 	installed string // what a fake client on PATH (Linux: ~/.local/bin) prints for --version; "-" = none
 	latest    string
 	min       string // MIN_CLIENT content; "" = 0.7.32, "-" = no file
@@ -647,6 +647,10 @@ func runInstallScript(t *testing.T, o installRun) installResult {
 	if o.goos == "linux" {
 		osName = "Linux"
 	}
+	if o.goos == "windows" {
+		osName = "MINGW64_NT-10.0"
+		write("fb/cygpath", "#!/bin/sh\ncase $1 in -u) printf '%s\\n' \"$2\" ;; -m) printf 'C:%s\\n' \"$2\" ;; esac\n")
+	}
 	write("fb/uname", "#!/bin/sh\n[ \"$1\" = -s ] && echo "+osName+" || echo arm64\n")
 	write("fb/codesign", "#!/bin/sh\nfor a; do l=$a; done\ngrep -q UNSIGNED \"$l\" 2>/dev/null && exit 1\ncase $l in "+tmp+"/*) exit 0 ;; esac\nexit 1\n")
 	write("fb/ssh-keygen", "#!/bin/sh\nexit 0\n")
@@ -667,6 +671,10 @@ case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig
 	if o.goos == "linux" {
 		inst = filepath.Join(home, ".local", "bin", "minigw")
 	}
+	lad := filepath.Join(tmp, "lad")
+	if o.goos == "windows" {
+		inst = filepath.Join(lad, "Programs", "Mini Gateway", "minigw.exe")
+	}
 	if o.installed != "-" {
 		write(strings.TrimPrefix(inst, tmp+"/"), "#!/bin/sh\ncase $1 in --version) echo '"+o.installed+"' ;; status) exit 0 ;; esac\n")
 	}
@@ -685,7 +693,7 @@ case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig
 		write("data/bin/minigw", "#!/bin/sh\n# UNSIGNED\ntouch "+marker+"\necho '"+o.ownCopy+"'\n")
 	}
 	cmd := exec.Command(sh, script)
-	cmd.Env = []string{"HOME=" + home, "CLAUDE_PLUGIN_DATA=" + data,
+	cmd.Env = []string{"LOCALAPPDATA=" + lad, "APPDATA=" + filepath.Join(tmp, "roaming"), "HOME=" + home, "CLAUDE_PLUGIN_DATA=" + data,
 		"PATH=" + filepath.Join(tmp, "fb") + string(os.PathListSeparator) + filepath.Join(tmp, "inst") + string(os.PathListSeparator) + "/usr/bin:/bin"}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -782,6 +790,14 @@ func TestInstallScriptLinuxOldClientOffline(t *testing.T) {
 	r := runInstallScript(t, installRun{goos: "linux", installed: "minigw 0.7.0", latest: "0.7.32"})
 	if !r.linked() {
 		t.Errorf("not linked:\n%s", r.out)
+	}
+	r.mustSay(t, "using the installed minigw 0.7.0, older than 0.7.32")
+}
+
+func TestInstallScriptWindowsOldClientOffline(t *testing.T) {
+	r := runInstallScript(t, installRun{goos: "windows", installed: "minigw 0.7.0", latest: "0.7.32"})
+	if _, err := os.Stat(r.exe); err != nil { // the shim bin/minigw
+		t.Errorf("no shim for the installed client:\n%s", r.out)
 	}
 	r.mustSay(t, "using the installed minigw 0.7.0, older than 0.7.32")
 }

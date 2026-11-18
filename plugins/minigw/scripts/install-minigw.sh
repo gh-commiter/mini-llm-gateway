@@ -142,7 +142,7 @@ if [ "$os" = darwin ]; then
            "/Applications/Mini Gateway.app/Contents/Helpers/minigw"; do
     [ -n "$c" ] && [ "$c" != "$EXE" ] && valid "$c" || continue
     cv=$(ver "$c")
-    goodver "$cv" && ! older "$cv" "$MIN" && { other=$c; break; }  # neznana ali prestara različica: prenos
+    goodver "$cv" && ! older "$cv" "$MIN" && { other=$c; stale=""; break; }  # neznana ali prestara različica: prenos
     [ -n "$stale" ] || stale=$c  # overjen, a prestar: le če prenos ne uspe
   done
   if [ -n "$other" ]; then
@@ -156,21 +156,27 @@ else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
   # Nameščen minigw: Linux povezava; Windows lupini kot minigw plugin install (Git Bash najde bin/minigw brez pripone,
   # ne .cmd; minigw.cmd za cmd/PowerShell), kopija vtičnika (minigw.exe) gre.
-  if [ -n "$inst" ] && [ "$os" = linux ]; then
-    [ "$(readlink "$EXE" 2>/dev/null)" = "$inst" ] || { rm -f "$EXE"; ln -s "$inst" "$EXE"; } ||
-      echo "minigw plugin: could not link $EXE to $inst."
-  elif [ -n "$inst" ]; then
-    # minigw.cmd: brez zakasnjene razširitve, pot MSI kot %LOCALAPPDATA%\… (ASCII; enako kot shimCmd v client/plugin.go)
-    q=$(cygpath -m "$inst" | sed "s/'/'\\\\''/g")
-    { printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec '$q' \"\$@\"" > "$BIN/minigw.new" &&
-      printf '@setlocal DisableDelayedExpansion\r\n@"%%LOCALAPPDATA%%\\Programs\\Mini Gateway\\minigw.exe" %%*\r\n' > "$BIN/minigw.cmd" &&
-      mv -f "$BIN/minigw.new" "$BIN/minigw"; } ||
-      echo "minigw plugin: could not point $BIN/minigw at $inst."
-    rm -f "$EXE" 2>/dev/null  # prejšnja kopija; v rabi ostane, a bin/minigw ima prednost
-    EXE=$inst
+  linkinst() {  # $inst: nameščen minigw (overjen, ali edini, ki ga je mogoče uporabiti)
+    if [ "$os" = linux ]; then
+      [ "$(readlink "$EXE" 2>/dev/null)" = "$inst" ] || { rm -f "$EXE"; ln -s "$inst" "$EXE"; } ||
+        echo "minigw plugin: could not link $EXE to $inst."
+    else
+      # minigw.cmd: brez zakasnjene razširitve, pot MSI kot %LOCALAPPDATA%\… (ASCII; enako kot shimCmd v client/plugin.go)
+      q=$(cygpath -m "$inst" | sed "s/'/'\\\\''/g")
+      { printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec '$q' \"\$@\"" > "$BIN/minigw.new" &&
+        printf '@setlocal DisableDelayedExpansion\r\n@"%%LOCALAPPDATA%%\\Programs\\Mini Gateway\\minigw.exe" %%*\r\n' > "$BIN/minigw.cmd" &&
+        mv -f "$BIN/minigw.new" "$BIN/minigw"; } ||
+        echo "minigw plugin: could not point $BIN/minigw at $inst."
+      rm -f "$EXE" 2>/dev/null  # prejšnja kopija; v rabi ostane, a bin/minigw ima prednost
+      EXE=$inst
+    fi
+    return 0
+  }
+  if [ -n "$inst" ]; then
+    linkinst
   elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
     [ "$os" = windows ] && rm -f "$BIN/minigw" "$BIN/minigw.cmd"  # brez namestitve: lupini na odstranjeni minigw gresta
-    fetch "$asset" || [ -x "$EXE" ] || { [ "$os" = linux ] && [ -n "$stale" ] && rm -f "$EXE" && ln -s "$stale" "$EXE"; } || {
+    fetch "$asset" || [ -x "$EXE" ] || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {
       echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; }
   fi
 fi
@@ -178,10 +184,12 @@ fi
 # Izbran minigw (že overjen na macOS) je lahko prestar (brez prenosa, zadnja izdaja starejša, ali ga namestitev še ni posodobila):
 # nikoli tiho, ena vrstica iz dejanskega izida. Različica le v strogi obliki.
 cur=$(ver "$EXE")
-if goodver "$cur"; then
-  older "$cur" "$MIN" && echo "minigw plugin: using the installed minigw $cur, older than $MIN which this plugin's commands need; some commands will not work until it is updated ($(how))"
-else
+if ! goodver "$cur"; then
   echo "minigw plugin: using the installed minigw, whose version could not be read; this plugin's commands need $MIN or newer and may not work until it is updated ($(how))"
+elif older "$cur" "$MIN"; then
+  echo "minigw plugin: using the installed minigw $cur, older than $MIN which this plugin's commands need; some commands will not work until it is updated ($(how))"
+elif [ -n "$stale" ]; then
+  echo "minigw plugin: using its own minigw $cur; the installed minigw is older than $MIN or its version could not be read: update it ($(how))"
 fi
 
 # L4 (0.5.17): posodobitev zavrnjena (podpis), obstoječa ostane: povej, zakaj.
