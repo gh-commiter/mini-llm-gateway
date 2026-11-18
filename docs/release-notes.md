@@ -1,5 +1,16 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Mac: a long upgrade of the project database (a very large database or a slow disk) is waited for. The helper says "upgrading the database (schema A to B)" before the long step, the app shows it where it shows "starting" and no longer stops the helper after 5 seconds. A snapshot is written under a temporary name and renamed when complete, so a helper stopped in the middle leaves no snapshot that counts; the next start removes such leftover files.
+- `minigw gw upstream remove` and the same action in the panels: when the secret store cannot delete the stored credentials, the answer now says so (the link is removed, the credentials could not be, with the store and the item name, never a value) instead of reporting them gone.
+- Mac: a settings change no longer starts a second label worker beside the old one. The old worker is stopped first, and the hourly cap and the one-sample-at-a-time rule belong to the app, so they hold across settings changes.
+- Settings page of `minigw serve`: opening the Foundry Local pane on a computer without Foundry Local no longer logs a console error. The models route answers 200 with `installed: false` and the pane says "Foundry Local is not installed on this computer"; a real failure is still an error.
+
+### Security
+- Restoring a backup hides every reading link's upstream mirror from members until a pull completes after the restore (as a mirror with no recent pull is hidden); nothing is deleted. `status` and the panel show "restored: waiting for a pull". If the hub had revoked this gateway after the backup, the next pull is refused and purges the mirror as usual.
+
 ## 0.7.31
 
 A candidate for the next stable release: no new features.
