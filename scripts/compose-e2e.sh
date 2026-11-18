@@ -127,4 +127,5 @@ negative badsig $V "is not signed by Mini Gateway"
 negative noasset $V "exit code: 22"
 negative real 0.0.9 "exit code: 22"      # no such version: nothing to download
 negative wrongver 0.0.1 "signed version"
+$ROOT/scripts/compose-admin-e2e.sh || fail "admin profile e2e (scripts/compose-admin-e2e.sh)"
 (( $#SKIPPED )) && print "DONE with SKIPPED: $SKIPPED (not tested)" || print "DONE: all platforms and cases passed"

@@ -1,0 +1,99 @@
+# Reverse proxy of the Compose "admin" profile (docs/docker.md, "Remote settings from a browser").
+# HTTPS only, no HTTP listener at all (no redirect: only 443 is published, and HSTS tells browsers to stay on https).
+# Environment: MINIGW_ADMIN_NAME = the external DNS name (no port; the gateway's remoteSettings.origin must match).
+# Certificates (mounted read-only at /certs): browser.pem/.key (the name above), proxy-client.pem/.key (presented to the
+# gateway), link-ca.pem (verifies the gateway's server certificate). The proxy listens on 8443 in the container, as an
+# unprivileged user; compose.yaml publishes it as host port 443 (MINIGW_ADMIN_PORT).
+{
+	admin off
+	auto_https off
+	https_port 8443
+	# Caddy logs the request headers on an upstream error; it redacts Cookie/Authorization only, so the remote session
+	# header is removed here (no password is ever in a header or logged: bodies are not logged)
+	log default {
+		format filter {
+			request>headers>X-Minigw-Remote-Session delete
+			wrap json
+		}
+	}
+	servers {
+		protocols h1 h2
+		max_header_size 16KB
+		timeouts {
+			read_header 10s
+			read_body 15s
+			write 40s
+			idle 60s
+		}
+	}
+}
+
+# Only these routes reach the gateway: the settings page, login/logout and the admin API paths that the gateway's remote
+# path policy (remoteAdminAllowed, client/serve_remote_settings.go) permits, per method. Everything else is 404 here
+# too. The gateway checks the same again; this list is a second wall, not the only one.
+(gateway) {
+	reverse_proxy https://minigw:8766 {
+		transport http {
+			versions 2 1.1
+			tls_trust_pool file /certs/link-ca.pem
+			tls_server_name minigw
+			tls_client_auth /certs/proxy-client.pem /certs/proxy-client.key
+			dial_timeout 5s
+			response_header_timeout 30s
+		}
+		# The single client-address header, set from the real TCP peer; Set replaces anything the browser sent.
+		header_up X-Minigw-Client-IP {remote_host}
+		# Caddy would otherwise send the upstream's own name as Host; the gateway requires the exact external Host
+		header_up Host {http.request.hostport}
+		# Nothing else about the caller's route is passed on.
+		header_up -Forwarded
+		header_up -X-Real-IP
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Host
+		header_up -X-Forwarded-Proto
+		header_up -X-Forwarded-Port
+		header_up -X-Forwarded-Prefix
+	}
+}
+
+https://{$MINIGW_ADMIN_NAME}:8443 {
+	tls /certs/browser.pem /certs/browser.key {
+		protocols tls1.2 tls1.3
+	}
+	header Strict-Transport-Security "max-age=31536000"
+	request_body {
+		max_size 1MB
+	}
+
+	# The routes below match the cleaned path, but the raw path is forwarded: refuse anything that is not already clean
+	# (dot segments, doubled slashes, any percent-encoding, backslash), so the proxy never forwards what it did not check.
+	@dirty expression {http.request.orig_uri.path}.matches("(^|/)[.][.]?(/|$)|//|%|\\\\") || {http.request.orig_uri}.contains("%")
+	handle @dirty {
+		respond "Not found" 404
+	}
+
+	@get {
+		method GET
+		path_regexp ^/minigw/(settings|admin/v1/(providers|devices)|admin/v1/providers/[^/]+/models|admin/v1/devices/[^/]+/history)$
+	}
+	@post {
+		method POST
+		path_regexp ^/minigw/(settings/(login|logout)|admin/v1/(providers|devices)|admin/v1/providers/[^/]+/models)$
+	}
+	@change {
+		method PATCH DELETE
+		path_regexp ^/minigw/admin/v1/(providers|devices)/[^/]+$
+	}
+	handle @get {
+		import gateway
+	}
+	handle @post {
+		import gateway
+	}
+	handle @change {
+		import gateway
+	}
+	handle {
+		respond "Not found" 404
+	}
+}

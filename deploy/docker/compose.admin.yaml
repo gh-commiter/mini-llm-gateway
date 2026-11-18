@@ -1,0 +1,42 @@
+# Optional: remote settings from a browser (docs/docker.md, "Remote settings from a browser (admin profile)").
+# Enable by adding this file: put COMPOSE_FILE=compose.yaml:compose.admin.yaml in .env, or pass -f compose.yaml -f compose.admin.yaml.
+# It is a separate file so that a plain `docker compose up -d` without it never changes or recreates the gateway
+# container, and no certificate folder is mounted (or created on the host) unless you opt in.
+services:
+  minigw:
+    volumes:
+      - ${MINIGW_ADMIN_CERTS:-./admin-certs}/gateway:/admin-tls:ro   # the gateway's half of the certificates
+    # Port 8766 (remote settings) is never published. It listens on every network the gateway joins, so any container
+    # on a network shared with it (default, litellm, ...) can connect; mutual TLS refuses all but the proxy.
+    networks: [default, admin]
+
+  # caddy 2.11.9 (current stable 2.x when this was written); the digest is the multi-arch index
+  admin-proxy:
+    image: caddy:2.11.9@sha256:4851e54a46b206517c574821bb5cc67f170d2156041e9fbc4c9193b45e84a75b
+    # a clear startup error instead of Caddy parsing an empty site address
+    command: ["sh", "-c", "[ -n \"$$MINIGW_ADMIN_NAME\" ] || { echo 'set MINIGW_ADMIN_NAME to the external DNS name (docs/docker.md)' >&2; exit 1; }; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
+    environment:
+      MINIGW_ADMIN_NAME: ${MINIGW_ADMIN_NAME:-}
+      XDG_DATA_HOME: /tmp/caddy-data
+      XDG_CONFIG_HOME: /tmp/caddy-config
+    init: true
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 256m
+    ports:
+      # MINIGW_ADMIN_BIND: the host address (a LAN address) to publish HTTPS on; loopback until you set it.
+      # (A required variable would break every compose command, so the default is the safe one.)
+      - "${MINIGW_ADMIN_BIND:-127.0.0.1}:${MINIGW_ADMIN_PORT:-443}:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${MINIGW_ADMIN_CERTS:-./admin-certs}/proxy:/certs:ro
+    networks: [admin]                    # reaches only the gateway's remote settings listener
+
+networks:
+  admin:                                 # the dedicated proxy-to-gateway network

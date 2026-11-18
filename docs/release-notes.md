@@ -4,9 +4,11 @@
 
 ### New
 - Upstream gateways panel: per link it now shows automatic or manual, the mode (submit or publish), the sync state (changed here since, last push, last automatic success, last failure, next attempt, last refusal) and the number of conflicts. It can switch a link between automatic and manual (turning automatic on asks first), switch its mode (the gateway refuses once the link has sent notes, and the panel shows its message), link a project or team in publish mode (with a confirmation that notes are then written on the upstream without its review), and list a link's conflicts (note title; changed there or deleted there) and settle each with "Keep Theirs" or "Send Ours as Proposal", both after a confirmation. New owner-only read route `GET /upstream-links/{id}`; `PUT upstreams/{}/links/{}` and `POST upstream-resolve` now need a confirmation in every panel.
+- Docker Compose: an optional admin setup (`deploy/docker/compose.admin.yaml`, added to `COMPOSE_FILE`; adding it recreates the gateway container once) puts the remote settings listener behind an HTTPS-only Caddy reverse proxy (digest-pinned, mutual TLS to the gateway, forwarding headers replaced, only the settings page, login/logout and the permitted admin paths proxied), with `deploy/docker/admin-certs.sh` (link and browser certificates, a name-constrained browser CA, `renew`) for the certificates; see [docker.md](docker.md#remote-settings-from-a-browser-admin-profile).
 
 ### Known problems
 - The Upstream gateways panel additions (automatic push, publish mode, conflicts) have only been tried through tests.
+- The admin profile has been tried only with its test script (`scripts/compose-admin-e2e.sh`) on one Mac through Docker, not on the team server and not with a real browser. The default HTTPS port 443 and a host port other than 443 for a real certificate name are not covered by the test (it uses a high port). On Docker Desktop and rootless Docker the proxy sees the Docker gateway address for every browser, so `allowedSourceCIDRs` and the per-source lockout do not tell browsers apart there; real source filtering needs rootful Docker on Linux.
 
 ## 0.7.24
 
