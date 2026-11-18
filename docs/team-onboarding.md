@@ -14,7 +14,7 @@ minigw gw team add acme
 minigw gw project add shop "Shop"
 minigw gw team member add acme ana
 minigw gw team project add acme shop
-minigw gw team access set acme shop ana developer     # roles: reader, developer, admin
+minigw gw team access set acme shop ana developer     # roles: reader, developer, admin (admin = reviewer, see below)
 minigw gw project depends add shop --team acme         # shop's searches also cover the team notes of acme
 minigw gw token                                        # the connect line for colleagues (contains the token)
 ```
@@ -26,15 +26,17 @@ minigw gw devices allow <device id> --name ana-laptop
 minigw gw bind <device id> ana                          # a device belongs to one user
 ```
 
-Submissions from colleagues wait for you: `minigw gw kb review shop` (or `--team acme`), then `minigw gw kb accept <id>` or `minigw gw kb reject <id> --reason "..."`. Only the owner reviews; a project admin cannot. A team's notes are written by a project admin of the team.
+Submissions from colleagues wait for you: `minigw gw kb review shop` (or `--team acme`), then `minigw gw kb accept <id>` or `minigw gw kb reject <id> --reason "..."`. You can review everything. A project admin reviews the submissions of their project too, with `minigw kb review|accept|reject` (never their own submission; `accept` names the version that was read), so giving someone the role `admin` makes them a reviewer of that project's knowledge base: give `developer` when that is not wanted. A team's notes are written, and reviewed, by a project admin of the team.
 
 The same things are in the Settings window of the Mac app and on the settings page of `minigw serve` (`minigw gw settings link` prints a one-time link): four panes, Users and devices, Teams and projects, Knowledge base and Upstream gateways. Remote settings (`minigw gw settings password`) show providers and devices only, not teams or review.
 
 ## 2. Colleague
 
-1. Install Claude Code, then the plugin: `/plugin marketplace add gh-commiter/mini-llm-gateway#release` and `/plugin install minigw@mini-gateway` (the plugin fetches `minigw`; other installers: [install.md](install.md)). You do not need `/minigw:gw install`: that sets up a gateway.
-2. Connect with the line the owner gave you: `/minigw:connect <gateway> <token>`, or `minigw connect <gateway> --token -`. Send the owner your device ID (`minigw status`), wait for the approval, then connect again.
-3. In your repository: `minigw project link shop` (without a slug the project is found by the repository's git remote, once an admin registered it with `minigw project remote add --here`). `minigw project show` says what applies.
+1. Install Claude Code, then the plugin: `/plugin marketplace add gh-commiter/mini-llm-gateway#release` and `/plugin install minigw@mini-gateway`. You do not need `/minigw:gw install`: that sets up a gateway.
+   **Where `minigw` runs.** The plugin keeps its own `minigw` and puts it on the PATH of Claude Code's shell only, so in a normal terminal `minigw` is "command not found". Either run every `minigw …` below inside a Claude Code session as `! minigw …` (the `!` runs it in the session's shell), or install the client for your terminal: macOS or Linux `curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh`, macOS also `brew install --cask gh-commiter/mini-gateway/minigw`, Windows the MSI ([install.md](install.md)). Only `minigw connect … --token -` needs a real terminal (the token is typed hidden); inside Claude Code use `/minigw:connect` instead. Everything else works as `! minigw …` too.
+   A plugin prefers its own newer copy to an installed `minigw` that is older than the plugin itself (for example an old Homebrew one), and when it must use the old one (offline) the session start says so; it also says how to update (`brew upgrade --cask gh-commiter/mini-gateway/minigw`).
+2. Connect with the line the owner gave you: `/minigw:connect <gateway> <token>` in Claude Code, or `minigw connect <gateway> --token -` in a terminal with the client installed. Send the owner your device ID (`! minigw status`), wait for the approval, then connect again.
+3. In your repository: `! minigw project link shop` (without a slug the project is found by the repository's git remote, once an admin registered it with `minigw project remote add --here`). `minigw project show` says what applies.
 4. Read:
    ```sh
    minigw kb search "invoice import"            # also covers the team notes and what shop depends on
@@ -45,7 +47,7 @@ The same things are in the Settings window of the Mac app and on the settings pa
 5. Hand in:
    ```sh
    minigw note push --class structure --title "Order states" notes.md     # you may write
-   minigw kb submit shop --kind finding --title "..." finding.md          # proposal, the owner reviews
+   minigw kb submit shop --kind finding --title "..." finding.md          # proposal, a reviewer of the project accepts it
    minigw kb submit shop --kind faq --title "How do I ...?" answer.md
    ```
    `private` is visible to you and the project admins only. Never put secrets, customer data or personal data in a note.
@@ -54,4 +56,4 @@ The same things are in the Settings window of the Mac app and on the settings pa
 
 ## What is new and little tried
 
-Teams, the knowledge base, `kb mcp` and the hooks are recent and not yet in daily use. The panes have been tried through tests, and the settings page on one Windows gateway in a headless Chromium browser; the hooks not in a real Claude Code session. Review is a one-person step. The current list is under Known problems in the [release notes](release-notes.md). More: [usage.md](usage.md#projects-in-10-minutes), [parity.md](parity.md).
+Teams, the knowledge base, `kb mcp` and the hooks are recent and not yet in daily use. The panes have been tried through tests, and the settings page on one Windows gateway in a headless Chromium browser; the hooks not in a real Claude Code session. Review is by the owner and the project's admins (four eyes: not their own). The current list is under Known problems in the [release notes](release-notes.md). More: [usage.md](usage.md#projects-in-10-minutes), [parity.md](parity.md).

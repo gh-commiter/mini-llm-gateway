@@ -1,3 +1,5 @@
 # Test goldens and fixtures byte-exact on every OS (Windows CI checks out with autocrlf; embedded testdata must not change).
 client/testdata/** -text
 client/cmd/minigw-tui/testdata/** -text
+plugins/minigw/scripts/*.sh text eol=lf
+plugins/minigw/scripts/MIN_CLIENT text eol=lf
