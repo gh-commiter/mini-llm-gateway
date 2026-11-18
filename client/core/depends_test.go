@@ -443,3 +443,42 @@ func TestDependsPrivateNoteByIDRefused(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// An archived project confers nothing: a grant whose READER project is archived no longer gives its members access to the source.
+func TestGrantThroughAnArchivedReaderConfersNothing(t *testing.T) {
+	f := newFx(t)
+	fk, eu := f.pid["fakture"], f.pid["eureko"]
+	n := f.mk("ana", "fakture", Structure)
+	f.ok(f.AddDepends(ctx, eu, fk))
+	cene := f.p("cene") // member of eureko only: eureko -> fakture is her only path
+	reads := func() (list, search, manifest, depends bool) {
+		pg, e := f.ListNotes(ctx, cene, fk, "", "", 10)
+		list = e == nil && len(pg.Notes) == 1 && pg.Notes[0].ID == n.ID
+		if sp, e := f.SearchNotes(ctx, cene, fk, "body"); e == nil {
+			search = len(sp.Hits) > 0
+		}
+		if m, e := f.Manifest(ctx, cene, eu); e == nil {
+			for _, x := range m.Notes {
+				manifest = manifest || x.Source == fk
+			}
+		}
+		if ds, e := f.ListDepends(ctx, cene, eu); e == nil {
+			depends = len(ds) == 1
+		}
+		return
+	}
+	if l, s, m, d := reads(); !l || !s || !m || !d {
+		t.Fatal("active reader: list/search/manifest/depends", l, s, m, d)
+	}
+	f.ok(f.SetProjectArchived(ctx, eu, true))
+	if l, s, m, d := reads(); l || s || m || d {
+		t.Fatal("archived reader still confers access: list/search/manifest/depends", l, s, m, d)
+	}
+	if _, err := f.GetNote(ctx, cene, fk, n.ID); err == nil {
+		t.Fatal("note readable through an archived reader")
+	}
+	f.ok(f.SetProjectArchived(ctx, eu, false))
+	if l, _, _, _ := reads(); !l {
+		t.Fatal("unarchived reader lost the grant")
+	}
+}
