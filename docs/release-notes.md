@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- The Claude Code plugin no longer keeps an old `minigw` that is installed on the computer (Homebrew, the app, the installer): with a client older than the plugin needs it uses its own copy and the session start says which one is old and how to update it. Before, `minigw kb ...` and `minigw team ...` could run through the gateway as a question to Claude, and the hooks stayed off without a message.
+- On a Mac without the app, the session start now also tells when the installed `minigw` is older than the latest release.
+- The team onboarding page says where `minigw` runs after installing only the plugin, and that a project `admin` is a reviewer of that project's knowledge base (the page and the parity table said only the owner reviews).
+
 ## 0.7.32
 
 A candidate for the next stable release.

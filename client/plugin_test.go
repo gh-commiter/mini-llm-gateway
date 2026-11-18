@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -587,5 +588,86 @@ func TestPluginHooksFile(t *testing.T) {
 	}
 	if !scripts["kb-hook.sh"] || !scripts["install-minigw.sh"] {
 		t.Errorf("scripts %v", scripts)
+	}
+}
+
+// runInstallScript runs install-minigw.sh as on a Mac, with fake uname, codesign (valid only inside the temp dir), curl
+// (never downloads; answers only the releases/latest redirect), plutil (no app version) and claude. installed is the
+// version of a fake client on PATH ("" = none). Returns the script's output and the plugin's bin/minigw path.
+func runInstallScript(t *testing.T, installed, latest, pluginVersion string) (string, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("needs sh")
+	}
+	// The Linux Docker gate and the Windows suite get only client/: the plugin folder is checked where the whole repository is.
+	if _, err := os.Stat("../plugins"); os.IsNotExist(err) {
+		t.Skip("needs the repository tree (../plugins)")
+	}
+	body := srcFile(t, "../plugins/minigw/scripts/install-minigw.sh")
+	tmp := t.TempDir()
+	if r, err := filepath.EvalSymlinks(tmp); err == nil {
+		tmp = r
+	}
+	write := func(rel, content string) string {
+		p := filepath.Join(tmp, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	script := write("plugin/scripts/install-minigw.sh", string(body))
+	write("plugin/.claude-plugin/plugin.json", "{\n  \"name\": \"minigw\",\n  \"version\": \""+pluginVersion+"\",\n  \"x\": 1\n}\n")
+	write("fb/uname", "#!/bin/sh\n[ \"$1\" = -s ] && echo Darwin || echo arm64\n")
+	write("fb/codesign", "#!/bin/sh\nfor a; do l=$a; done\ncase $l in "+tmp+"/*) exit 0 ;; esac\nexit 1\n")
+	write("fb/curl", "#!/bin/sh\ncase \"$*\" in *redirect_url*) echo \"https://github.com/x/releases/tag/v"+latest+"\"; exit 0 ;; esac\nexit 22\n")
+	write("fb/plutil", "#!/bin/sh\nexit 1\n")
+	write("fb/claude", "#!/bin/sh\nexit 0\n")
+	if installed != "" {
+		write("inst/minigw", "#!/bin/sh\ncase $1 in --version) echo minigw "+installed+" ;; status) exit 0 ;; esac\n")
+	}
+	data := filepath.Join(tmp, "data")
+	cmd := exec.Command(sh, script)
+	cmd.Env = []string{"HOME=" + filepath.Join(tmp, "home"), "CLAUDE_PLUGIN_DATA=" + data,
+		"PATH=" + filepath.Join(tmp, "fb") + string(os.PathListSeparator) + filepath.Join(tmp, "inst") + string(os.PathListSeparator) + "/usr/bin:/bin"}
+	out, _ := cmd.CombinedOutput()
+	return string(out), filepath.Join(data, "bin", "minigw")
+}
+
+func TestInstallScriptOldInstalledClientIsNotUsed(t *testing.T) {
+	out, exe := runInstallScript(t, "0.7.0", "0.7.32", "0.7.32")
+	if _, err := os.Lstat(exe); err == nil {
+		t.Errorf("the plugin linked the old client:\n%s", out)
+	}
+	for _, want := range []string{"installed minigw 0.7.0 is older than 0.7.32", "brew upgrade --cask"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestInstallScriptCurrentInstalledClientIsLinked(t *testing.T) {
+	out, exe := runInstallScript(t, "0.7.32", "0.7.32", "0.7.32")
+	if l, err := os.Readlink(exe); err != nil || !strings.HasSuffix(l, "/inst/minigw") {
+		t.Errorf("not linked (%q, %v):\n%s", l, err, out)
+	}
+	if strings.Contains(out, "older") || strings.Contains(out, "available") {
+		t.Errorf("unexpected message:\n%s", out)
+	}
+}
+
+func TestInstallScriptMacWithoutAppHintsAtNewerRelease(t *testing.T) {
+	out, exe := runInstallScript(t, "0.7.32", "0.7.33", "0.7.32")
+	if _, err := os.Readlink(exe); err != nil {
+		t.Errorf("not linked: %v\n%s", err, out)
+	}
+	if want := "minigw 0.7.32 is installed, 0.7.33 is available: brew upgrade --cask"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
 	}
 }

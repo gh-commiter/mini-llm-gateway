@@ -26,7 +26,22 @@ mkdir -p "$BIN"
 
 
 ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //'; }
-MIN=0.5.20  # najnižji minigw za ta vtičnik (profili, samo za branje z lokalnim prehodom, obseg veje le agenta)
+MIN=0.7.30  # najnižji minigw za ta vtičnik; skilli in kljuke rabijo kb, team, upstream (0.7.30) ...: sicer različica vtičnika
+pv=$(sed -n 's/^  "version": "\([0-9][0-9.]*\)".*/\1/p' "${0%/*}/../.claude-plugin/plugin.json" 2>/dev/null | head -1)  # bump-version.sh jo piše ob izdaji
+[ -n "$pv" ] && MIN=$pv
+# Nameščen minigw, starejši od MIN: vtičnik ga ne uporabi; ob izhodu eno vrstico, kaj uporablja in kako ga posodobiti.
+stale="" sv="" clientonly=""
+staleline() {
+  [ -n "$stale" ] || return 0
+  case $os in
+    darwin) upd="brew upgrade --cask gh-commiter/mini-gateway/minigw, or run the installer again (docs/install.md)" ;;
+    windows) upd="run the installer https://github.com/$REPO/releases/latest/download/minigw-windows-$arch.msi (docs/install.md)" ;;
+    *) upd="curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sh" ;;
+  esac
+  if [ -x "$EXE" ] && [ ! -L "$EXE" ]; then use="the plugin uses its own copy"; else use="the plugin cannot use it"; fi
+  echo "minigw plugin: the installed minigw ${sv:+$sv }is older than $MIN, which this plugin needs; $use. Update the installed one: $upd"
+}
+trap staleline EXIT
 # older a b: a < b po številskih poljih (awk; BusyBox nima sort -V)
 older() { [ -n "$1" ] && [ -n "$2" ] && awk -v a="$1" -v b="$2" 'BEGIN { n = split(a, x, "."); m = split(b, y, "."); if (m > n) n = m
   for (i = 1; i <= n; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }; exit 1 }'; }
@@ -93,7 +108,7 @@ if [ "$os" = linux ] && [ -e "$inst" ] && ! { mine "$inst" && mine "${inst%/*}" 
 fi
 [ -n "$inst" ] && [ -x "$inst" ] && iv=$(ver "$inst")
 case $iv in *[!0-9.]*) iv="" ;; esac
-if [ -n "$iv" ] && ! older "$iv" "$MIN"; then :; else inst=""; fi
+if [ -n "$iv" ] && ! older "$iv" "$MIN"; then :; else [ -n "$iv" ] && stale=$inst sv=$iv; inst=""; fi
 if [ -z "$inst" ] && [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ]; then
   have=$(ver "$EXE"); case $have in *[!0-9.]*) have="" ;; esac
   if older "$rel" "$have" && [ "${1:-}" != --allow-downgrade ] && [ "${MINIGW_ALLOW_DOWNGRADE:-}" != 1 ]; then
@@ -124,7 +139,10 @@ if [ "$os" = darwin ]; then
   other=""
   for c in "$(command -v minigw 2>/dev/null || true)" /opt/homebrew/bin/minigw /usr/local/bin/minigw \
            "/Applications/Mini Gateway.app/Contents/Helpers/minigw"; do
-    [ -n "$c" ] && [ "$c" != "$EXE" ] && valid "$c" && ! older "$(ver "$c")" "$MIN" && { other=$c; break; }  # prestar: prenos
+    [ -n "$c" ] && [ "$c" != "$EXE" ] && valid "$c" || continue
+    cv=$(ver "$c"); case $cv in *[!0-9.]*) cv="" ;; esac
+    older "$cv" "$MIN" || { other=$c; stale=""; break; }  # prestar: prenos in vrstica ob izhodu
+    [ -n "$stale" ] || { stale=$c sv=$cv; }
   done
   if [ -n "$other" ]; then
     [ "$(readlink "$EXE" 2>/dev/null)" = "$other" ] || { rm -f "$EXE"; ln -s "$other" "$EXE"; }
@@ -158,7 +176,7 @@ fi
 # Prestar minigw (zadnja izdaja ali nameščen ga še ne more zamenjati): skilli s profili tega ne smejo uporabiti.
 cur=$(ver "$EXE")
 case $cur in *[!0-9.]*) cur="" ;; esac
-older "$cur" "$MIN" && echo "minigw plugin: minigw $cur is older than $MIN, which this plugin needs (profiles, read-only enforcement with a local gateway, the agent-only branch range): run /minigw:gw update."
+older "$cur" "$MIN" && echo "minigw plugin: minigw $cur is older than $MIN, which this plugin needs: run /minigw:gw update."
 
 # L4 (0.5.17): posodobitev zavrnjena (podpis), obstoječa ostane: povej, zakaj.
 [ -n "$unsigned" ] && [ -z "$inst" ] && [ -x "$EXE" ] && echo "minigw plugin: not updated: $unsigned; the installed minigw stays."
@@ -168,6 +186,8 @@ old=""; new=$(ver "$EXE")
 case "$os" in
   darwin) app="/Applications/Mini Gateway.app"
     [ -d "$app" ] && old=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist" 2>/dev/null)
+    # brez aplikacije: nameščeni odjemalec, na katerega kaže vtičnik (brew)
+    [ -z "$old" ] && [ -n "$other" ] && { old=$(ver "$other"); clientonly=1; }
     # minigw vtičnika je tu lahko kar minigw aplikacije: zadnja izdaja iz preusmeritve releases/latest
     new=$(curl -fsS -o /dev/null --max-time 5 -w '%{redirect_url}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's|.*/tag/v||p') ;;
   # M1: nameščeni minigw (ne $EXE, ki je povezava nanj) proti podpisani izdaji, tudi brez enote systemd
@@ -184,6 +204,8 @@ if [ "$os" = linux ] && [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/m
   older "$old" "$new" && echo "minigw $old is installed, $new is available: run curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sh (or replace $HOME/.local/bin/minigw with $asset from the latest release; check it first: docs/install.md, Check a download)"
 elif [ "$os" = windows ] && [ ! -f "$wcfg" ]; then
   older "$old" "$new" && echo "minigw $old is installed, $new is available: run the installer https://github.com/$REPO/releases/latest/download/minigw-windows-$arch.msi (check it first: docs/install.md, Check a download)"
+elif [ -n "$clientonly" ]; then
+  older "$old" "$new" && echo "minigw $old is installed, $new is available: brew upgrade --cask gh-commiter/mini-gateway/minigw, or run the installer again (docs/install.md)"
 else
   older "$old" "$new" && echo "Mini Gateway $old is installed, $new is available: /minigw:gw update"
 fi
