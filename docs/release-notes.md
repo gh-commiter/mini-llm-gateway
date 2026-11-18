@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### New
+- A note edited by someone other than its author now shows who changed it: `minigw note read` prints "by A, last changed by B", `minigw note list` ends such a row with "(edited: B)", the Knowledge base panel has a "Last changed by" column, and the member and admin note answers carry an additive `editor` field (absent when the author last changed it). No schema change; the Markdown export and the upstream push are unchanged.
+
 ## 0.7.25
 
 ### New

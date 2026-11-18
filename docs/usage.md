@@ -811,7 +811,7 @@ minigw project list --path acme         only the projects of your teams whose pa
 
 ```
 minigw note list [--class data] [--limit 20]      newest first; --json for scripts
-minigw note read 12
+minigw note read 12                              by A, last changed by B  when someone other than the author edited it (list: "(edited: B)")
 minigw note push --class structure notes.md       "-" reads standard input; the title is the first line
 minigw note edit 12 --title "New title" notes.md  reads the current revision first (or --revision n)
 minigw note rm 12

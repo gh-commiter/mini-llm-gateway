@@ -293,6 +293,11 @@
      "label": "builtin.kb.section.notes-project.column.author"
     },
     {
+     "field": "editor",
+     "kind": "text",
+     "label": "builtin.kb.section.notes-project.column.editor"
+    },
+    {
      "field": "updated",
      "kind": "time",
      "label": "builtin.kb.section.notes-project.column.updated"
@@ -346,6 +351,11 @@
         "field": "author",
         "kind": "text",
         "label": "builtin.kb.section.notes-project.detail.section.note.column.author"
+       },
+       {
+        "field": "editor",
+        "kind": "text",
+        "label": "builtin.kb.section.notes-project.detail.section.note.column.editor"
        },
        {
         "field": "updated",
@@ -407,6 +417,11 @@
      "label": "builtin.kb.section.notes-team.column.author"
     },
     {
+     "field": "editor",
+     "kind": "text",
+     "label": "builtin.kb.section.notes-team.column.editor"
+    },
+    {
      "field": "updated",
      "kind": "time",
      "label": "builtin.kb.section.notes-team.column.updated"
@@ -460,6 +475,11 @@
         "field": "author",
         "kind": "text",
         "label": "builtin.kb.section.notes-team.detail.section.note.column.author"
+       },
+       {
+        "field": "editor",
+        "kind": "text",
+        "label": "builtin.kb.section.notes-team.detail.section.note.column.editor"
        },
        {
         "field": "updated",
