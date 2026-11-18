@@ -135,11 +135,14 @@ func cloneProblem(wt, repo string, nested []*wtNested) string {
 	if why := nestedProblem(wt, repo, nested); why != "" {
 		return why
 	}
-	return cloneTooLarge(wt)
+	return cloneTooLarge(wt, 0)
 }
 
-// cloneTooLarge (L5): klon presega meje kopije sync; "" = v redu.
-func cloneTooLarge(wt string) string {
+// cloneTooLarge (L5): klon presega meje kopije sync; "" = v redu. maxFiles 0 = maxSyncFiles (a test of the limit gives a small one).
+func cloneTooLarge(wt string, maxFiles int) string {
+	if maxFiles == 0 {
+		maxFiles = maxSyncFiles
+	}
 	files, bytes := 0, int64(0)
 	filepath.WalkDir(wt, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -154,13 +157,13 @@ func cloneTooLarge(wt string) string {
 				bytes += fi.Size()
 			}
 		}
-		if files > maxSyncFiles || bytes > maxSyncBytes {
+		if files > maxFiles || bytes > maxSyncBytes {
 			return filepath.SkipAll
 		}
 		return nil
 	})
-	if files > maxSyncFiles || bytes > maxSyncBytes {
-		return fmt.Sprintf("the agent's clone is too large to return (more than %d files or %d GB); add build output to .gitignore", maxSyncFiles, maxSyncBytes>>30)
+	if files > maxFiles || bytes > maxSyncBytes {
+		return fmt.Sprintf("the agent's clone is too large to return (more than %d files or %d GB); add build output to .gitignore", maxFiles, maxSyncBytes>>30)
 	}
 	return ""
 }
@@ -1554,7 +1557,7 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) string {
 	defer os.Remove(out)
 	why, tip, big := nestedProblem(slot.wt, t.repo, slot.nested), "", false
 	if why == "" {
-		why = cloneTooLarge(slot.wt)
+		why = cloneTooLarge(slot.wt, h.cloneMaxFiles)
 		big = why != "" // M1: prevelik klon se ne ohrani (disk)
 	}
 	type changed struct {
