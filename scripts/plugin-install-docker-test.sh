@@ -65,9 +65,9 @@ print '#!/bin/sh\ncase $1 in -u) printf "%s\\n" "$2" ;; -m) printf "C:%s\\n" "$2
 print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0" > "$W/Programs/Mini Gateway/minigw.exe"
 chmod +x $T/win/fake/* "$W/Programs/Mini Gateway/minigw.exe"; print old > $T/win/data/bin/minigw.exe
 # Linux in Windows zaženeta le datoteko, ki je v preverjenih SHA256SUMS ob kopiji (podpis testnega ključa): wtrust jo vpiše
-wtrust() { { print "VERSION 0.5.1"; print "$(shasum -a 256 "$1" | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > $T/win/data/bin/SHA256SUMS
+wtrust() { { print "VERSION $2"; print "$(shasum -a 256 "$1" | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > $T/win/data/bin/SHA256SUMS
   ssh-keygen -Y sign -q -f $T/key -n minigw-release < $T/win/data/bin/SHA256SUMS > $T/win/data/bin/SHA256SUMS.sig }
-wtrust "$W/Programs/Mini Gateway/minigw.exe"
+wtrust "$W/Programs/Mini Gateway/minigw.exe" $MINV
 winrun() { CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE= LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
 out=$(winrun newer); print -r -- $out
 [[ $out == *"minigw $MINV is installed, 0.99.0 is available: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi (check it first: docs/install.md, Check a download)"* && $out != *"/minigw:gw update"* ]] ||
@@ -82,7 +82,7 @@ exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\''"
 rm "$exe"; out=$(winrun); print -r -- $out
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd ]] || fail "10: shims kept without an installed minigw"
 # 10b: stari MSI minigw (0.5.20) in prenos ne uspe (ni izdaje): stari ostane, a glasno (enako kot macOS in Linux)
-print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.20; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe"
+print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.20; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" 0.5.20
 out=$(winrun); print -r -- $out
 [[ $out == *"using the installed minigw 0.5.20, older than $MINV which this plugin's commands need; some commands will not work until it is updated (run the installer"* && -e $T/win/data/bin/minigw && -e $T/win/data/bin/minigw.cmd ]] ||
   fail "10b: an authentic old MSI client is not kept offline, or silently"
@@ -99,7 +99,7 @@ fail() { echo "FAIL: $*"; exit 1; }
 run() { CLAUDE_PLUGIN_DATA=$1 CLAUDE_ENV_FILE= MINIGW_RELEASE_BASE=file:///t/rel/$2 HOME=/tmp/home PATH=/tmp/home/bin:$PATH sh /t/$3.sh; }
 cp -r /t/home /tmp/home
 # trust DIR FILE: SHA256SUMS ob kopiji v DIR/bin s hashem FILE, podpisan s testnim ključem (potem ko je nameščen ssh-keygen)
-trust() { mkdir -p $1/bin; { echo "VERSION 0.5.19"; echo "$(sha256sum $2 | cut -d" " -f1)  minigw-linux-arm64"; } > $1/bin/SHA256SUMS
+trust() { mkdir -p $1/bin; { echo "VERSION ${3:-0.5.19}"; echo "$(sha256sum $2 | cut -d" " -f1)  minigw-linux-arm64"; } > $1/bin/SHA256SUMS
   ssh-keygen -Y sign -q -f /t/key -n minigw-release < $1/bin/SHA256SUMS > $1/bin/SHA256SUMS.sig; }
 MINV=$(cat /t/minv)
 
@@ -186,7 +186,7 @@ out=$(run /tmp/d9 good testkey); echo "$out"
 rm -rf /tmp/home/.local
 echo "ok 9: installed minigw (verified, not older than MIN) linked, never downloaded; 9c: a substituted one never run"
 
-mkdir -p /tmp/home/.local/bin /tmp/d11/bin; printf "#!/bin/sh\necho minigw $MINV\n" > /tmp/home/.local/bin/minigw; chmod +x /tmp/home/.local/bin/minigw; trust /tmp/d11 /tmp/home/.local/bin/minigw
+mkdir -p /tmp/home/.local/bin /tmp/d11/bin; printf "#!/bin/sh\necho minigw $MINV\n" > /tmp/home/.local/bin/minigw; chmod +x /tmp/home/.local/bin/minigw; trust /tmp/d11 /tmp/home/.local/bin/minigw $MINV
 out=$(run /tmp/d11 newer testkey); echo "$out"
 [ "$(readlink /tmp/d11/bin/minigw)" = /tmp/home/.local/bin/minigw ] || fail "11: not linked to the installed minigw"
 echo "$out" | grep -q "minigw $MINV is installed, 0.99.0 is available: run curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh (or replace /tmp/home/.local/bin/minigw with minigw-linux-arm64 from the latest release" || fail "11: no client-only update hint (M1)"
@@ -208,7 +208,7 @@ for bad in file-gw dir-ow owner up-ow up-foreign-sticky; do
   [ ! -e /tmp/ran13 ] && [ ! -L /tmp/d13/bin/minigw ] && echo "$out" | grep -q "not using /tmp/home/.local/bin/minigw" || fail "13: unsafe installed minigw used ($bad)"
   rm -rf /tmp/home/.local
 done
-mkdir -p /tmp/home/.local/bin /tmp/d13/bin; printf "#!/bin/sh\necho minigw $MINV\n" > /tmp/home/.local/bin/minigw; chmod 755 /tmp/home/.local/bin/minigw; trust /tmp/d13 /tmp/home/.local/bin/minigw
+mkdir -p /tmp/home/.local/bin /tmp/d13/bin; printf "#!/bin/sh\necho minigw $MINV\n" > /tmp/home/.local/bin/minigw; chmod 755 /tmp/home/.local/bin/minigw; trust /tmp/d13 /tmp/home/.local/bin/minigw $MINV
 chmod 1777 /tmp/home/.local; rm -f /tmp/d13/bin/minigw
 out=$(run /tmp/d13 nonexistent testkey); echo "$out"
 [ "$(readlink /tmp/d13/bin/minigw)" = /tmp/home/.local/bin/minigw ] || fail "13: root-owned sticky folder above refused"

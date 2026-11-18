@@ -7,6 +7,8 @@
 - When the installed `minigw` is older than the plugin needs and there is nothing newer to use (offline), the plugin keeps using the old one and says so in one line at the start of the session.
 
 ### Fixed
+- On a Mac, a `minigw` in the plugin's folder that fails the signature check and cannot be replaced is moved aside to `minigw.rejected`, so no skill can run it.
+- On Linux and Windows without `ssh-keygen` the plugin says in one line at the start of the session that its `minigw` could not be verified against the release signature.
 - The Claude Code plugin no longer keeps an old `minigw` that is installed on the computer (Homebrew, the app, the installer): with a client older than the plugin needs it uses its own copy and the session start says which one is old and how to update it. Before, `minigw kb ...` and `minigw team ...` could run through the gateway as a question to Claude, and the hooks stayed off without a message.
 - On a Mac without the app, the session start now also tells when the installed `minigw` is older than the latest release.
 - The team onboarding page says where `minigw` runs after installing only the plugin, and that a project `admin` is a reviewer of that project's knowledge base (the page and the parity table said only the owner reviews).

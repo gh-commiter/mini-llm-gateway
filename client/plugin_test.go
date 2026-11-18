@@ -607,9 +607,12 @@ type installRun struct {
 	cache     bool   // bin/SHA256SUMS(.sig) of an earlier verified install exist (ssh-keygen is faked: any signature verifies)
 	trustInst bool   // ... and list the installed client's SHA-256 (Linux and Windows trust only what is listed)
 	trustOwn  bool   // ... and the plugin's own copy's
+	entry     string // the name the sums list the hash under; "" = the asset's name
+	noSSH     bool   // no ssh-keygen on PATH
+	dataName  string // data folder name; "" = data
 }
 
-type installResult struct{ out, exe, marker, data string }
+type installResult struct{ out, exe, marker, data, envFile string }
 
 func runInstallScript(t *testing.T, o installRun) installResult {
 	t.Helper()
@@ -658,7 +661,9 @@ func runInstallScript(t *testing.T, o installRun) installResult {
 	}
 	write("fb/uname", "#!/bin/sh\n[ \"$1\" = -s ] && echo "+osName+" || echo arm64\n")
 	write("fb/codesign", "#!/bin/sh\nfor a; do l=$a; done\ngrep -q UNSIGNED \"$l\" 2>/dev/null && exit 1\ncase $l in "+tmp+"/*) exit 0 ;; esac\nexit 1\n")
-	write("fb/ssh-keygen", "#!/bin/sh\nexit 0\n")
+	if !o.noSSH {
+		write("fb/ssh-keygen", "#!/bin/sh\nexit 0\n")
+	}
 	write("fb/stat", "#!/bin/sh\necho \"$(id -u) 755\"\n")
 	write("fb/curl", `#!/bin/sh
 case "$*" in *redirect_url*) echo "https://github.com/x/releases/tag/v`+o.latest+`"; exit 0 ;; esac
@@ -681,11 +686,16 @@ case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig
 		inst = filepath.Join(lad, "Programs", "Mini Gateway", "minigw.exe")
 	}
 	marker := filepath.Join(tmp, "marker")
-	instBody := "#!/bin/sh\ntouch " + marker + "\ncase $1 in --version) echo '" + o.installed + "' ;; status) exit 0 ;; esac\n"
+	instBody := "#!/bin/sh\ncase $1 in --version) touch " + marker + "; echo '" + o.installed + "' ;; status) exit 0 ;; esac\n"
 	if o.installed != "-" {
 		write(strings.TrimPrefix(inst, tmp+"/"), instBody)
 	}
-	data := filepath.Join(tmp, "data")
+	dn := o.dataName
+	if dn == "" {
+		dn = "data"
+	}
+	data := filepath.Join(tmp, dn)
+	envFile := filepath.Join(tmp, "envfile")
 	exe := filepath.Join(data, "bin", "minigw")
 	if o.preLink {
 		if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
@@ -702,31 +712,45 @@ case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig
 	}
 	ownBody := "#!/bin/sh\n# UNSIGNED\ntouch " + marker + "\necho '" + o.ownCopy + "'\n"
 	if o.ownCopy != "" {
-		write("data/bin/"+ownName, ownBody)
+		write(dn+"/bin/"+ownName, ownBody)
 	}
 	if o.cache || o.trustInst || o.trustOwn {
+		name := asset
+		if o.entry != "" {
+			name = o.entry
+		}
 		sum := func(b string) string {
 			h := sha256.Sum256([]byte(b))
-			return hex.EncodeToString(h[:]) + "  " + asset + "\n"
+			return hex.EncodeToString(h[:]) + "  " + name + "\n"
 		}
-		sums := "VERSION 0.7.1\n" + strings.Repeat("c", 64) + "  other\n"
+		// the signed VERSION line names the release the hashes belong to: the plugin takes the version from it
+		sums := "VERSION " + strings.TrimPrefix(o.installed+o.ownCopy, "minigw ") + "\n" + strings.Repeat("c", 64) + "  other\n"
 		if o.trustInst {
 			sums += sum(instBody)
 		}
 		if o.trustOwn {
 			sums += sum(ownBody)
 		}
-		write("data/bin/SHA256SUMS", sums)
-		write("data/bin/SHA256SUMS.sig", "sig\n")
+		write(dn+"/bin/SHA256SUMS", sums)
+		write(dn+"/bin/SHA256SUMS.sig", "sig\n")
 	}
 	cmd := exec.Command(sh, script)
-	cmd.Env = []string{"LOCALAPPDATA=" + lad, "APPDATA=" + filepath.Join(tmp, "roaming"), "HOME=" + home, "CLAUDE_PLUGIN_DATA=" + data,
-		"PATH=" + filepath.Join(tmp, "fb") + string(os.PathListSeparator) + filepath.Join(tmp, "inst") + string(os.PathListSeparator) + "/usr/bin:/bin"}
+	path := filepath.Join(tmp, "fb") + string(os.PathListSeparator) + filepath.Join(tmp, "inst") + string(os.PathListSeparator) + "/usr/bin:/bin"
+	if o.noSSH { // only the tools the script needs, so a real ssh-keygen is not found
+		for _, c := range []string{"awk", "sed", "grep", "cut", "head", "tr", "mktemp", "readlink", "ln", "rm", "cat", "mkdir", "shasum", "sha256sum", "id", "touch", "mv", "cp", "dirname", "sleep", "wc", "date"} {
+			if lp, err := exec.LookPath(c); err == nil {
+				_ = os.MkdirAll(filepath.Join(tmp, "tools"), 0o755)
+				_ = os.Symlink(lp, filepath.Join(tmp, "tools", c))
+			}
+		}
+		path = filepath.Join(tmp, "fb") + string(os.PathListSeparator) + filepath.Join(tmp, "inst") + string(os.PathListSeparator) + filepath.Join(tmp, "tools")
+	}
+	cmd.Env = []string{"CLAUDE_ENV_FILE=" + envFile, "LOCALAPPDATA=" + lad, "APPDATA=" + filepath.Join(tmp, "roaming"), "HOME=" + home, "CLAUDE_PLUGIN_DATA=" + data, "PATH=" + path}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Errorf("the script must exit 0: %v\n%s", err, out)
 	}
-	return installResult{string(out), exe, marker, data}
+	return installResult{string(out), exe, marker, data, envFile}
 }
 
 func (r installResult) linked() bool { _, err := os.Readlink(r.exe); return err == nil }
@@ -813,6 +837,12 @@ func TestInstallScriptCachedUnsignedCopyIsNeverExecuted(t *testing.T) {
 	if _, err := os.Stat(r.marker); err == nil {
 		t.Errorf("an unsigned cached binary was executed offline:\n%s", r.out)
 	}
+	if _, err := os.Lstat(r.exe); err == nil {
+		t.Errorf("the rejected copy is still where skills run it:\n%s", r.out)
+	}
+	if _, err := os.Lstat(r.exe + ".rejected"); err != nil {
+		t.Errorf("the rejected copy was not moved aside: %v", err)
+	}
 }
 
 func TestInstallScriptLinuxOldClientOffline(t *testing.T) {
@@ -887,5 +917,59 @@ func TestInstallScriptVerifiedCandidateIsUsed(t *testing.T) {
 		if !r.ran() || strings.Contains(r.out, "cannot verify") {
 			t.Errorf("%s: the verified cached copy is not used:\n%s", goos, r.out)
 		}
+	}
+}
+
+func TestInstallScriptMinimumFileWithCRLF(t *testing.T) {
+	r := runInstallScript(t, installRun{installed: "minigw 0.7.32", latest: "0.7.32", min: "0.7.32\r\n"})
+	if strings.Contains(r.out, "MIN_CLIENT") || strings.Contains(r.out, "older") {
+		t.Errorf("a CRLF MIN_CLIENT must read as 0.7.32:\n%s", r.out)
+	}
+}
+
+// The manifest entry is matched as a whole name: no regex dot, but the binary marker "*" is accepted.
+func TestInstallScriptManifestNameIsExact(t *testing.T) {
+	r := runInstallScript(t, installRun{goos: "windows", installed: "minigw 0.7.99", latest: "0.7.99", trustInst: true, entry: "minigw-windows-arm64Xexe"})
+	if r.ran() {
+		t.Errorf("a near name (Xexe) in the sums was trusted:\n%s", r.out)
+	}
+	r = runInstallScript(t, installRun{goos: "windows", installed: "minigw 0.7.99", latest: "0.7.99", trustInst: true, entry: "*minigw-windows-arm64.exe"})
+	if strings.Contains(r.out, "cannot verify") {
+		t.Errorf("the binary marker * must match:\n%s", r.out)
+	}
+}
+
+// The signed VERSION line of the sums that authenticated a candidate gives its version: it is not run just to ask.
+func TestInstallScriptVersionComesFromTheSignedLine(t *testing.T) {
+	r := runInstallScript(t, installRun{goos: "linux", installed: "minigw 0.7.99", latest: "0.7.99", trustInst: true})
+	if r.ran() {
+		t.Errorf("the installed client was run for --version although the signed sums state it:\n%s", r.out)
+	}
+}
+
+func TestInstallScriptNoSSHKeygenIsSaid(t *testing.T) {
+	r := runInstallScript(t, installRun{goos: "linux", installed: "-", latest: "0.7.99", ownCopy: "minigw 0.7.99", noSSH: true})
+	r.mustSay(t, "minigw plugin: ssh-keygen is not installed, so the plugin's minigw could not be verified against the release signature; install OpenSSH to enable the check")
+}
+
+func TestInstallScriptNameOfTheFailure(t *testing.T) {
+	r := runInstallScript(t, installRun{goos: "linux", installed: "minigw 0.7.99", latest: "0.7.99", cache: true})
+	r.mustSay(t, "the network is back")
+	// release reachable, signature not verifiable by this machine: say that, not "network"
+	r = runInstallScript(t, installRun{goos: "linux", installed: "minigw 0.7.99", latest: "0.7.99", cache: true, sums: "VERSION 0.7.99\n", noSSH: true})
+	if strings.Contains(r.out, "the network is back") {
+		t.Errorf("a verifier failure is not a network failure:\n%s", r.out)
+	}
+}
+
+func TestInstallScriptEnvFileQuotesThePath(t *testing.T) {
+	r := runInstallScript(t, installRun{installed: "minigw 0.7.32", latest: "0.7.32", dataName: "it's \"a\" $HOME `x` dir"})
+	b, err := os.ReadFile(r.envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("sh", "-c", "PATH=/x; . \"$1\"; printf %s \"$PATH\"", "sh", r.envFile).Output()
+	if want := "/x:" + filepath.Join(r.data, "bin"); err != nil || string(out) != want {
+		t.Errorf("PATH after sourcing %q = %q (%v), want %q", b, out, err, want)
 	}
 }
