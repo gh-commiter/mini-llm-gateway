@@ -132,6 +132,12 @@ func TestMemberReviewRoutes(t *testing.T) {
 			}
 		}
 	}
+	if r := f.api.Handle(bg, Context{Kind: KindAdmin}, get(fmt.Sprintf("/kb/submissions/%d/versions/%s", v.ID, seenHash(f.st, v.ID)))); r.Status != 200 || !strings.Contains(string(r.Body), `"body":"body"`) {
+		t.Fatal("the owner's versioned read", r.Status, string(r.Body))
+	}
+	if r := f.api.Handle(bg, Context{Kind: KindAdmin}, get(fmt.Sprintf("/kb/submissions/%d/versions/%s", v.ID, strings.Repeat("0", 64)))); r.Status != 400 || !strings.Contains(string(r.Body), "changed since you read it") {
+		t.Fatal("another version must not be shown", r.Status, string(r.Body))
+	}
 	if r := f.api.Handle(bg, Context{Kind: KindAdmin}, accept); r.Status == 200 { // a member path is never an admin route
 		t.Fatal("admin context served a member path", r.Status)
 	}

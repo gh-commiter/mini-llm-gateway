@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Member review: only a project admin (direct or through a team assignment) reviews, never their own submission.
@@ -390,4 +391,43 @@ func TestArchivedProjectConfersNoTeamRights(t *testing.T) {
 	f.ok(f.SetProjectArchived(ctx, pid, false))
 	_, _, e = f.CreateNote(ctx, f.p("fani"), f.seg, "w2", NoteInput{Class: Data, Title: "t", Body: "b"})
 	f.ok(e)
+}
+
+// M1' and L2': the gateway compares the whole hash (a 12-hex prefix of the current one is refused), and the hash covers
+// the stored provenance: the same text sent again from another device (A, B, A) is not the version that was read.
+func TestReviewHashWholeAndCoversProvenance(t *testing.T) {
+	f := newFx(t)
+	pid := f.pid["fakture"]
+	first, e := f.ImportMarkdown(ctx, f.p("ana"), pid, MarkdownInput{Markdown: "text A", Path: "p.md", Class: Data, Submit: true})
+	f.ok(e)
+	read, _, e := f.GetReview(ctx, f.p("fani"), 0, first.SubmissionID)
+	f.ok(e)
+	_, e = f.MemberReview(ctx, f.p("fani"), 0, first.SubmissionID, true, "", read.ReviewHash[:12])
+	is(t, e, ErrSubmissionChanged)
+	f.clock = f.clock.Add(time.Second)
+	_, e = f.ImportMarkdown(ctx, f.p("ana"), pid, MarkdownInput{Markdown: "text B", Path: "p.md", Class: Data, Submit: true})
+	f.ok(e)
+	f.clock = f.clock.Add(time.Second)
+	other, e := f.Principal(ctx, "dev-ana2", true)
+	f.ok(e)
+	back, e := f.ImportMarkdown(ctx, other, pid, MarkdownInput{Markdown: "text A", Path: "p.md", Class: Data, Submit: true})
+	f.ok(e)
+	if back.SubmissionID != first.SubmissionID {
+		t.Fatal(back)
+	}
+	now, _, e := f.GetReview(ctx, f.p("fani"), 0, first.SubmissionID)
+	f.ok(e)
+	if now.Body == nil || *now.Body != *read.Body || now.Provenance.Device == read.Provenance.Device || now.ReviewHash == read.ReviewHash {
+		t.Fatal("same text, other device: the version must differ", now.Provenance.Device, read.Provenance.Device)
+	}
+	_, e = f.MemberReview(ctx, f.p("fani"), 0, first.SubmissionID, true, "", read.ReviewHash)
+	is(t, e, ErrSubmissionChanged)
+	// the owner's versioned read (the panel's detail) answers only for the current version
+	_, e = f.GetSubmissionVersion(ctx, first.SubmissionID, read.ReviewHash)
+	is(t, e, ErrSubmissionChanged)
+	v, e := f.GetSubmissionVersion(ctx, first.SubmissionID, now.ReviewHash)
+	f.ok(e)
+	if v.ID != first.SubmissionID {
+		t.Fatal(v)
+	}
 }

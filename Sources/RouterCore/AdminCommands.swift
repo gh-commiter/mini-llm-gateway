@@ -34,7 +34,7 @@ public final class AdminCommands {
     public static let help = """
         minigw gw export --team <name> [--project slug ...] [--with-private] <file.zip>
           minigw gw import --source <name> <file.zip> [--dry-run] [--map old=new] [--adopt project:<slug>,team:<name>,user:<name>]
-          minigw gw kb review [<project>|--team <team>] | accept <id> [--version <tag>] | reject <id> [--reason text]
+          minigw gw kb review [<project>|--team <team>] | accept <id> [--version <hash>] | reject <id> [--reason text]
           minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>
           minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to
           minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>

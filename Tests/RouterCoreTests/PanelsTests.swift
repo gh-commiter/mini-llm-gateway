@@ -620,8 +620,8 @@ private let kbAnswers: [(String, Int, String)] = [
     ("GET /projects", 200, #"{"projects":[{"id":1,"slug":"acme","name":"Acme"},{"id":2,"slug":"shop","name":"Shop"}]}"#),
     ("GET /teams", 200, #"{"teams":[{"id":4,"name":"web","archived":false,"path":"","segment":1099511627780}]}"#),
     ("GET /kb/submissions", 200, ##"{"submissions":[{"id":5,"title":"<script>alert(1)</script>","scopeName":"Acme","scopeKind":"project","class":"data","entryKind":"finding","authorName":"ana","received":"2026-11-17T10:00:00Z","isReplacement":false,"replaces":0,"reviewHash":"h5"},{"id":6,"title":"**b** [x](https://evil.example)","scopeName":"web","scopeKind":"team","class":"structure","entryKind":"faq","authorName":"a\u202eb","received":"2026-11-17T11:00:00Z","isReplacement":true,"replaces":77,"reviewHash":"h6"}],"next":0}"##),
-    ("GET /kb/submissions/5", 200, #"{"id":5,"title":"t5","body":"text five","isReplacement":false}"#),
-    ("GET /kb/submissions/6", 200, #"{"id":6,"title":"t6","body":"new text","isReplacement":true,"replaces":77}"#),
+    ("GET /kb/submissions/5/versions/h5", 200, #"{"id":5,"title":"t5","body":"text five","isReplacement":false}"#),
+    ("GET /kb/submissions/6/versions/h6", 200, #"{"id":6,"title":"t6","body":"new text","isReplacement":true,"replaces":77}"#),
     ("GET /kb/notes/77", 200, #"{"id":77,"title":"old","class":"data","updated":"2026-11-01T10:00:00Z","body":"old text"}"#),
     ("GET /kb/notes", 200, #"{"notes":[{"id":9,"title":"n9","class":"private","entryKind":"finding","author":"ana","updated":"2026-11-01T10:00:00Z"}],"next":"c2"}"#),
     ("GET /kb/faq", 200, #"{"entries":[{"id":3,"title":"Q?","answer":"A.","class":"data","updated":"2026-11-01T10:00:00Z"}],"next":""}"#),
@@ -726,13 +726,13 @@ private let kbAnswers: [(String, Int, String)] = [
         let plain = m.data("queue").rows[0], replacement = m.data("queue").rows[1]
         await fake.clear()
         await m.openDetail(queue, row: plain)
-        #expect(await fake.log == ["GET /kb/submissions/5"])  // not a replacement: the old note is not requested
+        #expect(await fake.log == ["GET /kb/submissions/5/versions/h5"])  // the version of the row: what its Accept publishes  // not a replacement: the old note is not requested
         #expect(m.record("queue/replaced", parent: plain).values == nil)
         let sub = queue.detail!.sections[0], old = queue.detail!.sections[1]
         #expect(!m.recordVisible(old, parent: plain) && m.recordVisible(old, parent: replacement))
         await fake.clear()
         await m.openDetail(queue, row: replacement)
-        #expect(await fake.log == ["GET /kb/submissions/6", "GET /kb/notes/77"])
+        #expect(await fake.log == ["GET /kb/submissions/6/versions/h6", "GET /kb/notes/77"])
         let text = PanelRow(id: "", values: m.record("queue/submission", parent: replacement).values!)
         let oldText = PanelRow(id: "", values: m.record("queue/replaced", parent: replacement).values!)
         #expect(sub.columns!.last.map { m.cell($0, text) } == "new text" && old.columns!.last.map { m.cell($0, oldText) } == "old text")
@@ -767,10 +767,10 @@ private let kbAnswers: [(String, Int, String)] = [
 
     @Test func theTransportPassesTheKnowledgeBaseRoutesAndNothingNearThem() async {
         let fake = Fake()
-        for (k, st, b) in [("GET /kb/notes", 200, "{}"), ("GET /kb/notes/3", 200, "{}"), ("GET /kb/faq", 200, "{}"), ("GET /kb/submissions", 200, "{}"), ("GET /kb/submissions/3", 200, "{}"),
+        for (k, st, b) in [("GET /kb/notes", 200, "{}"), ("GET /kb/notes/3", 200, "{}"), ("GET /kb/faq", 200, "{}"), ("GET /kb/submissions", 200, "{}"), ("GET /kb/submissions/3", 200, "{}"), ("GET /kb/submissions/3/versions/ab", 200, "{}"),
                            ("POST /kb/submissions/3/accept", 200, "{}"), ("POST /kb/submissions/3/reject", 200, "{}"), ("GET /projects", 200, "{}"), ("GET /teams", 200, "{}")] { await fake.set(k, st, b) }
         let send = PanelTransport.send(admin: { await fake.handle($0) }, devices: { [] })
-        for ok in [("GET", "/kb/notes"), ("GET", "/kb/notes/3"), ("GET", "/kb/faq"), ("GET", "/kb/submissions"), ("GET", "/kb/submissions/3"), ("POST", "/kb/submissions/3/accept"),
+        for ok in [("GET", "/kb/notes"), ("GET", "/kb/notes/3"), ("GET", "/kb/faq"), ("GET", "/kb/submissions"), ("GET", "/kb/submissions/3"), ("GET", "/kb/submissions/3/versions/ab"), ("POST", "/kb/submissions/3/accept"),
                    ("POST", "/kb/submissions/3/reject"), ("GET", "/projects"), ("GET", "/teams")] {
             #expect(await send(CoreRequest(method: ok.0, path: ok.1)).status == 200, "\(ok)")
         }

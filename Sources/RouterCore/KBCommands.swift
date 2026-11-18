@@ -12,13 +12,13 @@ extension ProjectEnv {
         minigw kb submissions [<project>|--team <team>] [--json]   your submissions (all projects and your teams' own notes if omitted)
         minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)
         minigw kb review [<project>|--team <team>]   project admins: the pending submissions you may review (never your own), including bodies
-        minigw kb accept <id> [--version <tag>]   project admins: publish a submission of another member; --version: the tag kb review showed (without it: only in a terminal, after you confirm the text)
+        minigw kb accept <id> [--version <hash>]   project admins: publish a submission of another member; --version: the whole version line kb review showed (without it: only in a terminal, after you confirm the text)
         minigw kb reject <id> [--reason text]
         """
     public static let kbAdminHelp = """
         minigw gw kb rebuild-search
         minigw gw kb review [<project>|--team <team>]   pending submissions, including bodies
-        minigw gw kb accept <id> [--version <tag>]   --version: the tag gw kb review showed (without it: only in a terminal, after you confirm the text)
+        minigw gw kb accept <id> [--version <hash>]   --version: the whole version line gw kb review showed (without it: only in a terminal, after you confirm the text)
         minigw gw kb reject <id> [--reason text]
         """
     static let teamProjectUsage = "usage: give either a project or --team <team>"
@@ -190,20 +190,20 @@ extension ProjectEnv {
     static func printReview(_ say: (String) -> Void, _ full: JDict, _ names: [Int64: String]) {
         say(submissionLine(full, names))
         let hash = full["reviewHash"]?.string ?? ""
-        say(ProjectText.clean("writer \(full["authorName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? String(full["user"]?.int ?? 0))  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)" + (hash.isEmpty ? "" : "  version " + versionTag(hash))))
+        say(ProjectText.clean("writer \(full["authorName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? String(full["user"]?.int ?? 0))  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)"))
+        if !hash.isEmpty { say(ProjectText.clean("version " + hash)) }  // on its own line, to copy whole into kb accept --version
         if let body = full["body"]?.string { say(ProjectText.clean(body)) }
     }
 
-    /// The short name of a review hash that kb review prints and kb accept --version takes.
-    static func versionTag(_ hash: String) -> String { String(hash.prefix(12)) }
     static let changedSinceRead = "the submission changed since you read it: review it again"
-    static let acceptNeedsTag = "not accepted: without a terminal, name the version you read: --version <tag> (kb review shows it)"
+    static let acceptNeedsTag = "not accepted: without a terminal, name the version you read: --version <hash> (kb review shows it)"
+    static let versionWhole = "--version takes the whole version line of kb review (64 hex characters), not a part of it"
     static let acceptDeclined = "not accepted"
 
-    /// confirmAccept of Go: with --version only when the hash starts with that whole tag; without it only in a terminal,
+    /// confirmAccept of Go: with --version only when it is exactly the hash (all 64 hex); without it only in a terminal,
     /// after a "y". nil = send; otherwise the refusal, and nothing is sent.
     static func confirmAccept(_ hash: String, _ version: String, terminal: Bool, ask: (String) -> Void, answer: () -> String?) -> String? {
-        if !version.isEmpty { return version.count >= 12 && hash.hasPrefix(version) ? nil : changedSinceRead }
+        if !version.isEmpty { return version.count != 64 ? versionWhole : version == hash ? nil : changedSinceRead }
         if !terminal { return acceptNeedsTag }
         ask("Accept this text? [y/N] ")
         let a = (answer() ?? "").trimmingCharacters(in: .whitespaces).lowercased()

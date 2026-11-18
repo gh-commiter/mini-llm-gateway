@@ -1330,13 +1330,25 @@ sees nothing of the review: the answer is the "not found" of a project they cann
 with a single admin therefore leaves that admin's submissions for the owner (or a second admin). Accepting also needs
 what the reviewer could write themselves (the class, and the note a replacement changes). The published note keeps the
 writer as its author; its provenance names the reviewing user, and the audit records accept and reject with that user.
-`kb review` prints a `version <tag>` for each submission. Accept what you read with `minigw kb accept <id> --version <tag>`
-(the owner: `gw kb accept`): if the writer changed the pending text since, it is refused with "the submission changed since
-you read it: review it again" and nothing is published. Without `--version`, `kb accept` shows the text and asks
-"Accept this text? [y/N]", and only in a terminal; a script or an agent must give `--version`. The panel's Accept is bound to the row on screen the same way. If the writer may no longer write
+`kb review` prints a line `version <hash>` for each submission: the whole SHA-256 (64 hex characters) of what an accept
+publishes and attributes (text, class, kind, replacement, and the stored provenance such as device and source). Accept
+what you read with `minigw kb accept <id> --version <hash>` (the owner: `gw kb accept`), copying the whole line: if the
+writer changed the pending submission since (also the same text sent again from another device), it is refused with "the
+submission changed since you read it: review it again" and nothing is published; a shortened hash is refused outright.
+Without `--version`, `kb accept` shows the text and asks "Accept this text? [y/N]", and only in a real terminal.
+
+What this protects and what it does not: it guarantees that what is published is exactly the version that was read, so a
+text CHANGED after the review is never published by mistake. It does not prove that a person read it: `--version` is how
+scripts and agents accept, and nothing technical makes an agent show you the text first (the minigw skill tells it to);
+four eyes means a second admin's credentials, and the care of the person who holds them.
+
+In the owner's Knowledge base panel, Accept sends the version of its row, and the row's detail page shows exactly that
+version (or says that it changed since the list was loaded), so what the detail showed is what Accept publishes. An Accept
+straight from the list, without opening the detail, publishes the row's version unread. If the writer may no longer write
 the note when you accept, you are told so ("the writer of this submission may no longer write it here"); reject it.
 An archived project or team is not reviewed; a deactivated user or an unbound device loses the ability at once. An archived
-project also no longer makes its admins writers of the team's own notes.
+project also no longer makes its admins writers of the team's own notes: if every project of a team is archived, only the
+gateway owner can write or review the team's notes.
 `private` submissions follow the private rule: their author and the project admins see them. Submissions an upstream
 gateway sends are reviewed the same way. `minigw project list` shows "N submissions wait for review" on the projects
 you review. Member review is command-line only: there is no panel for it.

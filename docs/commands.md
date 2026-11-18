@@ -39,7 +39,7 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw kb submit <project>\|--team <team> [--class structure\|data\|private] [--kind finding\|faq] [--title t] [--key k] [--replaces id --revision n] <file\|->` | Propose a note for review (by the owner or an admin of the project) instead of publishing it; `private` is for projects only; `--kind faq`: the title is the question, the text a short answer |
 | `minigw kb submissions [<project>\|--team <team>] [--json]` | Your submissions; without a project or team: all projects and your teams' own notes |
 | `minigw kb review [<project>\|--team <team>]` | Project admins: the pending submissions you may review (never your own), including bodies; without a project or team: every project and team you review |
-| `minigw kb accept <id> [--version <tag>]` / `reject <id> [--reason text]` | Project admins: publish or reject another member's submission. Accept needs the `version` tag `kb review` printed (or, in a terminal, your "y" to the text it shows) and is refused when the text changed since (see [usage.md](usage.md#review-by-project-admins)) |
+| `minigw kb accept <id> [--version <hash>]` / `reject <id> [--reason text]` | Project admins: publish or reject another member's submission. Accept needs the whole `version` line `kb review` printed (or, in a terminal, your "y" to the text it shows) and is refused when the submission changed since (see [usage.md](usage.md#review-by-project-admins)) |
 | `minigw kb faq [<project>\|--team <team>] [--json]` | The published questions and answers (faqs), newest first |
 | `minigw kb hooks on\|off\|status [<project>]` | The Claude Code plugin's hooks that ask a session to hand findings in (off by default; per project, gateway and user; stored on this computer) |
 | `minigw note push [--class structure\|data\|private] [--title t] [--key k] [--team <team>] <file\|->` | Create a note (default class `data`); `--key` repeats a push whose answer was lost; `--team`: push to the team's own notes |
@@ -288,18 +288,19 @@ minigw kb submissions [<project>|--team <team>] [--json]
 minigw kb faq [<project>|--team <team>] [--json]
 minigw kb hooks on|off|status [<project>]
 minigw kb review [<project>|--team <team>]
-minigw kb accept <id> [--version <tag>]
+minigw kb accept <id> [--version <hash>]
 minigw kb reject <id> [--reason text]
 minigw gw kb review [<project>|--team <team>]
 minigw gw project depends list <project> | add <project> <other> | remove <project> <other>
 minigw gw project depends add|remove <project> --team <team>
 minigw project depends [<project>]
-minigw gw kb accept <id> [--version <tag>]
+minigw gw kb accept <id> [--version <hash>]
 minigw gw kb reject <id> [--reason text]
 ```
 
-`kb review` and `gw kb review` print a `version <tag>` (12 hex characters) on each submission's writer line. `kb accept`
-and `gw kb accept` read the submission again and accept only what was read: with `--version <tag>` only when the
+`kb review` and `gw kb review` print a line `version <hash>` (the whole review hash, 64 hex characters) for each
+submission. `kb accept` and `gw kb accept` read the submission again and accept only what was read: with `--version <hash>`
+(the whole value; a shortened one is refused) only when the
 submission still is that version (else "the submission changed since you read it: review it again", and nothing is sent);
 without it only in a terminal, after they show the text and you answer `y` to "Accept this text? [y/N]". Without a
 terminal and without `--version` they refuse: scripts and agents must name the version.

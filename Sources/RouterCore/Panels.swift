@@ -184,6 +184,7 @@ public enum PanelRoutes {
         "GET devices",
         "GET kb/submissions",
         "GET kb/submissions/{}",
+        "GET kb/submissions/{}/versions/{}",
         "POST kb/submissions/{}/accept",
         "POST kb/submissions/{}/reject",
         "GET kb/notes",

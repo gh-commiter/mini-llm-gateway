@@ -641,6 +641,7 @@ Owner routes use the existing owner admin authentication and base URL:
 |---|---|---|
 | GET | `/kb/submissions?project=0&after=0` | Pending metadata; project 0 means all |
 | GET | `/kb/submissions/{id}` | Submission with body |
+| GET | `/kb/submissions/{id}/versions/{reviewHash}` | The same, only while the submission is that version (400 "the submission changed since you read it" otherwise): the panel's detail of a list row |
 | POST | `/kb/submissions/{id}/accept` | Publish; JSON `{"reviewHash":"…"}`, the `reviewHash` of the list row or the read (required) |
 | POST | `/kb/submissions/{id}/reject` | Reject; JSON `{"reason":"text"}` |
 | GET | `/kb/notes?project={id}&class=&kind=&after=&limit=` | The notes of a project or of a team's own notes, every class (`private` too), 50 per page by default, `{notes, next}` (`next` absent on the last page) |
@@ -682,7 +683,8 @@ version you read", and when the author changed the pending submission since (a `
 submission changed since you read it: review it again". The Knowledge base panel sends the hash of the row it shows.
 When the writer may no longer write the note at accept time (deactivated, device unbound, role or note changed), the
 answer is 409 `writer_lost`, never the writer's own 403 or 404. An admin of an archived project does not write or review
-the team's own notes.
+the team's own notes (when every project of a team is archived, only the owner does). `reviewHash` is the whole SHA-256 of
+the submission id, class, title, kind, body, replaces, revision and its stored provenance, compared whole.
 
 Acceptance rechecks the authenticated writer binding, current project permissions,
 archive status, note limits and replacement revision. Pending entries are separate

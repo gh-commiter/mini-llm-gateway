@@ -30,11 +30,11 @@ minigw kb faq [<project>|--team <team>] [--json]   the project's (or the team's)
 minigw kb submissions [<project>|--team <team>] [--json]   your submissions (all projects and your teams' own notes if omitted)
 minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude Code session to hand findings in (off by default, per project, on this computer)
 minigw kb review [<project>|--team <team>]   project admins: the pending submissions you may review (never your own), including bodies
-minigw kb accept <id> [--version <tag>]   project admins: publish a submission of another member; --version: the tag kb review showed (without it: only in a terminal, after you confirm the text)
+minigw kb accept <id> [--version <hash>]   project admins: publish a submission of another member; --version: the whole version line kb review showed (without it: only in a terminal, after you confirm the text)
 minigw kb reject <id> [--reason text]`
 const kbAdminHelp = `minigw gw kb rebuild-search
 minigw gw kb review [<project>|--team <team>]   pending submissions, including bodies
-minigw gw kb accept <id> [--version <tag>]   --version: the tag gw kb review showed (without it: only in a terminal, after you confirm the text)
+minigw gw kb accept <id> [--version <hash>]   --version: the whole version line gw kb review showed (without it: only in a terminal, after you confirm the text)
 minigw gw kb reject <id> [--reason text]`
 
 // kindSuffix marks a faq at the end of the first line; a finding prints as before.
@@ -369,36 +369,32 @@ func printReview(say func(string), v core.Submission, authorName string, names m
 	if authorName != "" {
 		writer = authorName
 	}
-	line := fmt.Sprintf("writer %s  device %s  replaces %d  revision %d", writer, v.Provenance.Device, v.Replaces, v.Revision)
-	if v.ReviewHash != "" {
-		line += "  version " + versionTag(v.ReviewHash)
+	say(clean(fmt.Sprintf("writer %s  device %s  replaces %d  revision %d", writer, v.Provenance.Device, v.Replaces, v.Revision)))
+	if v.ReviewHash != "" { // on its own line, to copy whole into kb accept --version
+		say(clean("version " + v.ReviewHash))
 	}
-	say(clean(line))
 	if v.Body != nil {
 		say(clean(*v.Body))
 	}
 }
 
-// versionTag is the short name of a review hash that kb review prints and kb accept --version takes.
-func versionTag(hash string) string {
-	if len(hash) > 12 {
-		return hash[:12]
-	}
-	return hash
-}
-
 const (
 	changedSinceRead = "the submission changed since you read it: review it again"
-	acceptNeedsTag   = "not accepted: without a terminal, name the version you read: --version <tag> (kb review shows it)"
+	acceptNeedsTag   = "not accepted: without a terminal, name the version you read: --version <hash> (kb review shows it)"
 	acceptDeclined   = "not accepted"
+	versionWhole     = "--version takes the whole version line of kb review (64 hex characters), not a part of it"
 )
 
-// confirmAccept decides an accept of the text just printed, whose review hash is hash: with --version only when the hash
-// starts with it (a whole tag), without it only in a terminal after a "y". Nothing is sent unless it returns nil: the
+// confirmAccept decides an accept of the text just printed, whose review hash is hash: with --version only when it is
+// exactly that hash (all 64 hex: a prefix could be made to collide by the author, who writes both texts), without it
+// only in a terminal after a "y". Nothing is sent unless it returns nil: the
 // person (or the script, by naming the version) accepts what was read, never what is there now unseen.
 func confirmAccept(hash, version string, terminal bool, in io.Reader, out io.Writer) error {
 	if version != "" {
-		if len(version) < 12 || !strings.HasPrefix(hash, version) {
+		if len(version) != 64 {
+			return errors.New(versionWhole)
+		}
+		if version != hash {
 			return errors.New(changedSinceRead)
 		}
 		return nil
@@ -440,7 +436,7 @@ func (e *projectEnv) kbDecide(pos []string, team, reason, version string) error 
 			return err
 		}
 		printReview(e.say, full.Submission, full.AuthorName, nil)
-		terminal := e.tty == nil && stdinTerminal() || e.tty != nil && e.tty()
+		terminal := e.tty == nil && stdinIsTTY() || e.tty != nil && e.tty()
 		if err := confirmAccept(full.ReviewHash, version, terminal, e.in, e.out); err != nil {
 			return err
 		}
@@ -641,7 +637,7 @@ func (e *projectEnv) kbSearch(args []string) error {
 }
 
 // adminTerminal: is the owner's standard input a terminal (tests replace it).
-var adminTerminal = stdinTerminal
+var adminTerminal = stdinIsTTY
 
 func kbAdmin(a *adminClient, pos []string, o coreOpts) {
 	reason, team := o.reason, o.team
