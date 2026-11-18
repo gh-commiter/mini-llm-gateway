@@ -53,14 +53,20 @@ func TestQuotaRecorderSpoolReplayAndOwnerHistory(t *testing.T) {
 	a.QuotaProbe(p)
 	a.FlushRecorder()
 	r := a.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/quota/history", RawQuery: "days=7&provider=openrouter"})
-	if r.Status != 200 || strings.Contains(string(r.Body), "accountScope") || strings.Contains(string(r.Body), "source") || strings.Contains(string(r.Body), "observedAt") || strings.Contains(string(r.Body), "999") {
+	if r.Status != 200 || strings.Contains(string(r.Body), "accountScope") || strings.Contains(string(r.Body), "source") || strings.Contains(string(r.Body), "observedAt") {
 		t.Fatal(r.Status, string(r.Body))
 	}
 	var body struct {
-		Probes []any
-		Gaps   []any
+		Probes []struct {
+			Values []struct{ Value float64 }
+		}
+		Gaps []any
 	}
 	if json.Unmarshal(r.Body, &body) != nil || len(body.Probes) != 1 || body.Gaps == nil {
+		t.Fatal(string(r.Body))
+	}
+	// the replayed probe keeps its first value (the timestamp may end in .999Z: look at the decoded field, not the text)
+	if v := body.Probes[0].Values; len(v) != 1 || v[0].Value == 999 {
 		t.Fatal(string(r.Body))
 	}
 	for _, cx := range []Context{{}, {Kind: KindMember, DeviceID: "dev", Approved: true}, {Kind: KindRun}} {
