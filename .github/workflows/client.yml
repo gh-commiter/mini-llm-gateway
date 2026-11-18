@@ -31,7 +31,7 @@ jobs:
         run: |
           sudo apt-get install -y -qq bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-      - run: go test ./...
+      - run: go test -timeout 30m ./...  # the default 10 min per package is what the Windows runner needs for package minigw (520-580 s measured on 0.7.23 and 0.7.24; 0.7.25 hit the limit)
       - name: Cross-build (Windows, Linux, macOS)
         run: |
           for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/arm64; do
@@ -53,4 +53,4 @@ jobs:
         with:
           go-version-file: client/go.mod
           cache-dependency-path: client/go.sum
-      - run: go test ./...
+      - run: go test -timeout 30m ./...  # the default 10 min per package is what the Windows runner needs for package minigw (520-580 s measured on 0.7.23 and 0.7.24; 0.7.25 hit the limit)
