@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- `minigw gw core restore` refused a snapshot or backup made at schema 17 or older (`no such table: project_team_depends`; schema 12 also failed on the search index). Every restore check now reads only the tables that schema has; a test restores a backup of every schema from 8 on.
+
 ## 0.7.27
 
 ### New

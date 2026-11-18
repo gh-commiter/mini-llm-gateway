@@ -139,3 +139,45 @@ func TestRepeatedFailingMigrationsKeepThePreUpgradeSnapshot(t *testing.T) {
 		})
 	}
 }
+
+// A backup of every schema the program can migrate from (8 to the current one) restores, opens (migrates to the
+// current schema) and keeps its rows. Each database is built by running the migrations up to that version.
+func TestRestoreAcceptsABackupOfEverySchemaVersion(t *testing.T) {
+	base := migrations
+	t.Cleanup(func() { migrations = base })
+	for v := 8; v <= len(base); v++ {
+		t.Run(fmt.Sprint("schema", v), func(t *testing.T) {
+			dir := t.TempDir()
+			migrations = base[:v]
+			openT(t, dir).Close()
+			raw, err := sql.Open("sqlite", dsn(filepath.Join(dir, dbFile), ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = raw.Exec(`INSERT OR REPLACE INTO meta VALUES('marker','survives')`)
+			raw.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := openT(t, dir)
+			bak := filepath.Join(t.TempDir(), "b.db")
+			if err := s.Backup(ctx, bak); err != nil {
+				t.Fatal(err)
+			}
+			s.Close()
+			migrations = base
+			if err := Restore(dir, bak); err != nil {
+				t.Fatal(err)
+			}
+			s = openT(t, dir)
+			defer s.Close()
+			var got string
+			if err := s.DB().QueryRow(`SELECT value FROM meta WHERE key='marker'`).Scan(&got); err != nil || got != "survives" {
+				t.Fatal(got, err)
+			}
+			if n, err := schemaVersion(ctx, s.DB()); err != nil || n != len(base) {
+				t.Fatal("schema after open", n, err)
+			}
+		})
+	}
+}

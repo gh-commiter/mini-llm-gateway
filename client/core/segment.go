@@ -90,15 +90,25 @@ CREATE TRIGGER segment_no_` + t + `_upd BEFORE UPDATE OF project_id ON ` + t + `
 
 // checkSegments: every team has its row and no segment row lacks a team. Fails loudly (a team created by a path
 // that forgot ensureSegment would otherwise be silently unreadable).
-func checkSegments(tx *sql.Tx) error {
+func checkSegments(tx *sql.Tx) error { return checkSegmentsIn(tx, nil) }
+
+// checkSegmentsIn counts only the tables the schema has: want is expectedObjects of the checked database's version (nil: the current one).
+func checkSegmentsIn(tx *sql.Tx, want map[string]string) error {
+	has := func(table string) bool { _, ok := want["table "+table]; return want == nil || ok }
+	zero := func(table, cond string) string {
+		if !has(table) {
+			return "0"
+		}
+		return "(SELECT count(*) FROM " + table + " WHERE " + cond + ")"
+	}
 	var n int
 	err := tx.QueryRow(`SELECT (SELECT count(*) FROM teams t WHERE NOT EXISTS(SELECT 1 FROM projects p WHERE p.id=?1+t.id AND p.slug='@team-'||t.id AND p.archived=0))
  + (SELECT count(*) FROM projects p WHERE p.id>?1 AND NOT EXISTS(SELECT 1 FROM teams t WHERE ?1+t.id=p.id))
  + (SELECT count(*) FROM memberships WHERE project_id>?1) + (SELECT count(*) FROM direct_memberships WHERE project_id>?1)
  + (SELECT count(*) FROM team_assignments WHERE project_id>?1) + (SELECT count(*) FROM team_projects WHERE project_id>?1)
  + (SELECT count(*) FROM project_remotes WHERE project_id>?1) + (SELECT count(*) FROM grants WHERE source_id>?1 OR reader_id>?1)
- + (SELECT count(*) FROM project_depends WHERE project_id>?1 OR depends_on>?1)
- + (SELECT count(*) FROM project_team_depends WHERE project_id>?1 OR team_id NOT IN (SELECT id FROM teams))`, segmentBase).Scan(&n)
+ + `+zero("project_depends", "project_id>?1 OR depends_on>?1")+`
+ + `+zero("project_team_depends", "project_id>?1 OR team_id NOT IN (SELECT id FROM teams)"), segmentBase).Scan(&n)
 	if err != nil {
 		return err
 	}

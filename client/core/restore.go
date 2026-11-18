@@ -312,7 +312,10 @@ func validateAs(ctx context.Context, path, shown, gateway string) (state, error)
 		}
 		err = checkMemberships(tx)
 		if err == nil && v >= 15 {
-			err = checkSegments(tx)
+			var want map[string]string
+			if want, err = expectedObjects(ctx, v); err == nil {
+				err = checkSegmentsIn(tx, want)
+			}
 		}
 		tx.Rollback()
 		if err != nil {
@@ -389,7 +392,7 @@ func stamp(ctx context.Context, path string, st state, src string) error {
 			return err
 		}
 	}
-	if version >= 12 { // older backups get the index from the migration
+	if version >= 13 { // older backups get the index from the migration (and notes.imported exists from schema 13)
 		if err = rebuildSearch(tx); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("the search index could not be rebuilt: %w", err)
