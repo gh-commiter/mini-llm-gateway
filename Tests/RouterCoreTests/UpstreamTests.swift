@@ -374,13 +374,14 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
             var wire = Data()
             for k in 0..<n { wire += Noise.frames(Data([UInt8(k & 0xff)]), send) }
             var buf = wire
-            let t = Date()
+            let t = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)  // this thread's CPU time: a preemption under load does not count (#150)
             let plain = try Noise.unframe(&buf, receive)
+            let cpu = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - t) / 1e9
             #expect(plain.count == n && buf.isEmpty)
-            return (Date().timeIntervalSince(t), plain.count)
+            return (cpu, plain.count)
         }
-        // The fastest of several runs for each size: one timing measures the machine's busy moment as much as the code (in a full
-        // parallel run a single pair gave 27x); a quadratic walk raises the minimum too.
+        // CPU time of the walking thread, the fastest of several runs for each size: wall time measures the machine's busy moment as much
+        // as the code (a full parallel run gave 27x; 5 of 17 runs under 36 busy loops gave 12-27x even with the fastest of 5); a quadratic walk raises CPU time too.
         func fastest(_ n: Int) throws -> Double { try (0..<5).map { _ in try run(n).0 }.min() ?? 0 }
         let small = try fastest(20_000), big = try fastest(80_000)
         #expect(big < 3, "80000 frames took \(big) s")

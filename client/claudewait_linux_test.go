@@ -1,12 +1,20 @@
 package main
 
 import (
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
 )
 
-func init() { fakeStop = syscall.SIGSTOP }
+// #150: SIGSTOP je v niti, ki ga pošlje (tgkill): ustavi se, preden se kill vrne. Signal procesu (kill) obdela poljubna nit, klicoča
+// nit pa lahko že izstopi z os.Exit(0): lažni claude je potem končal z 0, ne da bi se ustavil (v Dockerju ~1-2 % zagonov).
+func init() {
+	fakeStop = func() {
+		runtime.LockOSThread()
+		syscall.Tgkill(syscall.Getpid(), syscall.Gettid(), syscall.SIGSTOP)
+	}
+}
 
 // L-b: claude se ustavi (Ctrl+Z) → minigw se ustavi za njim; po SIGCONT minigw nadaljuje claude, oba končata z 0.
 func TestClaudeStopFollowed(t *testing.T) {
