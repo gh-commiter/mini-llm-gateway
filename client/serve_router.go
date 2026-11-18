@@ -353,9 +353,14 @@ func routerCommand(args []string, in io.Reader) {
 		return
 	}
 	if len(pos) >= 2 && pos[0] == "settings" && pos[1] == "password" {
+		c, err := loadServeConfig(*cfgPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			fail(err.Error())
+		}
 		if err := remotePasswordCommand(*cfgPath, pos[2:], in); err != nil {
 			fail(err.Error())
 		}
+		say(remotePasswordConfirmation(c.RemoteSettings.Enabled))
 		return
 	}
 	a := openAdmin(*cfgPath)
