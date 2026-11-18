@@ -188,3 +188,30 @@ func TestPanelReadActionsNeedTheConfirmationAndRecordTheCLIsAcceptance(t *testin
 	call("PUT", link, `{"team":false,"remote":"shop","readOnly":true,"read":true,"readClasses":"structure","readSources":""}`, 400)
 	call("PUT", link, `{"team":false,"remote":"shop","readOnly":true,"readClasses":"structure,data","readSources":""}`, 400)
 }
+
+// sec-upc4 1 on the route: an omitted readSources keeps the sources, an empty string clears them, reading off forgets them.
+func TestReadSourcesOmittedKeepsEmptyClearsOffForgets(t *testing.T) {
+	_, _, call, link := autoPullAPI(t)
+	text := func() string {
+		var st struct {
+			Links []struct{ ReadSourcesText string }
+		}
+		json.Unmarshal(call("GET", "/upstreams", "", 200), &st)
+		return st.Links[0].ReadSourcesText
+	}
+	call("PUT", link, `{"readOnly":true,"read":true,"acceptReach":true,"readSources":"team:acme"}`, 200)
+	call("PUT", link, `{"readOnly":true,"read":true,"acceptReach":true}`, 200)
+	if got := text(); got != "team:acme" {
+		t.Fatal("omitted must keep:", got)
+	}
+	call("PUT", link, `{"readOnly":true,"read":true,"acceptReach":true,"readSources":""}`, 200)
+	if got := text(); got != "-" {
+		t.Fatal("empty must clear:", got)
+	}
+	call("PUT", link, `{"readOnly":true,"read":true,"acceptReach":true,"readSources":"team:acme"}`, 200)
+	call("PUT", link, `{"readOnly":true,"read":false}`, 200)
+	call("PUT", link, `{"readOnly":true,"read":true,"acceptReach":true}`, 200)
+	if got := text(); got != "-" {
+		t.Fatal("off must forget:", got)
+	}
+}

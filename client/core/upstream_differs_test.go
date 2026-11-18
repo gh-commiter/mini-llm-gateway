@@ -47,14 +47,15 @@ func TestMirrorShowsAHubCopyThatMovedAwayFromOurPush(t *testing.T) {
 	if n.Body != want || n.Text != "the hub's text\nsecond line" {
 		t.Fatalf("%q", n.Body)
 	}
+	mine := f.mk("ana", "fakture", Structure)
 	faqCopy := rawMirror(f, fk, "hub", 41, Structure, KindFAQ, "project:shop", "orbit question?", "answer")
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev) VALUES(?,'hub',?,'h',1,0,41,1,1)`, fk, local.ID+1000)
+		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev) VALUES(?,'hub',?,'h',1,0,41,1,1)`, fk, mine.ID)
 		return e
 	}))
 	faq, e := f.ListFAQ(ctx, f.p("ana"), fk, "")
 	f.ok(e)
-	if len(faq.Entries) != 1 || faq.Entries[0].ID != faqCopy || !strings.Contains(faq.Entries[0].Answer, "[differs from the local note "+strconv.FormatInt(local.ID+1000, 10)+":") {
+	if len(faq.Entries) != 1 || faq.Entries[0].ID != faqCopy || !strings.Contains(faq.Entries[0].Answer, "[differs from the local note "+strconv.FormatInt(mine.ID, 10)+":") {
 		t.Fatalf("%+v", faq)
 	}
 	// a hub note that was never ours has no such line

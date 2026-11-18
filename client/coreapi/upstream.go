@@ -173,11 +173,11 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 			Auto        *bool  `json:"auto"` // nil: keep what the link has
 			Mode        string `json:"mode"`
 			// Step C, reading: Read nil keeps it; ReadOnly leaves the push settings of an existing link as they are
-			Read        *bool  `json:"read"`
-			ReadClasses string `json:"readClasses"`
-			ReadSources string `json:"readSources"`
-			AcceptReach bool   `json:"acceptReach"`
-			ReadOnly    bool   `json:"readOnly"`
+			Read        *bool   `json:"read"`
+			ReadClasses string  `json:"readClasses"`
+			ReadSources *string `json:"readSources"` // omitted: keep; "": no extra sources
+			AcceptReach bool    `json:"acceptReach"`
+			ReadOnly    bool    `json:"readOnly"`
 			// the interval of the automatic pull, in minutes (a number, or a number in a string as a panel's choice sends it); nil keeps it
 			PullEvery *flexMinutes `json:"pullEvery"`
 		}

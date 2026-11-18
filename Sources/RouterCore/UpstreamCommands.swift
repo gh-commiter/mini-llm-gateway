@@ -11,7 +11,7 @@ extension AdminCommands {
           minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
           minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)
           minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
-          minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run)
+          minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>|none] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run; no --read-sources keeps the ones it reads now, none clears them)
           minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)
           minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)
           minigw gw upstream unlink <project> <name> | --team <team> <name>
@@ -90,7 +90,8 @@ extension AdminCommands {
             let pushFlags = !o.classes.isEmpty || o.withPrivate || o.auto || o.manual || !o.mode.isEmpty || !o.remoteProject.isEmpty || !o.remoteTeam.isEmpty
             if reading {
                 req["read"] = !o.noRead
-                req["readClasses"] = o.readClass; req["readSources"] = o.readSources; req["acceptReach"] = o.acceptReach
+                req["readClasses"] = o.readClass; req["acceptReach"] = o.acceptReach
+                if !o.readSources.isEmpty { req["readSources"] = o.readSources == "none" ? "" : o.readSources }  // omitted keeps; "none" = no extra sources
             }
             if reading || pulling { req["readOnly"] = !pushFlags }  // an existing link keeps its push settings
             let linked = try request("PUT", path, req)
@@ -125,6 +126,7 @@ extension AdminCommands {
                 if let e = d["lastError"]?.string, !e.isEmpty { say(clean("  last refusal: " + e)) }
                 if let s = Self.upstreamNotPropagated(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
+                if let s = Self.upstreamBackwards(d) { say(clean("  " + s)) }
             }
             if links.isEmpty { say("no upstream links (minigw gw upstream link <project> <name>)") }
         case ("resolve", 4) where team.isEmpty, ("resolve", 3) where !team.isEmpty:
@@ -292,6 +294,12 @@ extension AdminCommands {
     static func upstreamConflicts(_ d: JDict) -> String? {
         let parts = (d["conflicts"]?.array ?? []).map { c in "note \(c.dict["note"]?.int ?? 0) (" + (c.dict["gone"]?.bool == true ? "deleted there" : "changed there") + ")" }
         return parts.isEmpty ? nil : "CONFLICT: " + parts.joined(separator: ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
+    }
+
+    /// Published notes whose copy on the upstream has a lower revision than our push recorded (as Go's upstreamBackwards).
+    static func upstreamBackwards(_ d: JDict) -> String? {
+        let ids = (d["revisionBackwards"]?.array ?? []).map { String($0.int ?? 0) }
+        return ids.isEmpty ? nil : "revision went backwards on the upstream: note " + ids.joined(separator: ", ") + " (its copy there was replaced by an older one; members see it when its text differs from what we sent)"
     }
 
     /// Sent notes that were deleted or made private here (as Go's upstreamNotPropagated).

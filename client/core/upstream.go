@@ -188,7 +188,10 @@ func migrate25(tx *sql.Tx) error {
 ALTER TABLE upstream_links ADD COLUMN pull_fail_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_links ADD COLUMN pull_next INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE upstream_links ADD COLUMN last_pull_audit TEXT NOT NULL DEFAULT '';
-ALTER TABLE upstream_links ADD COLUMN pull_timer INTEGER NOT NULL DEFAULT 1 CHECK(pull_timer IN(0,1));`)
+ALTER TABLE upstream_links ADD COLUMN pull_timer INTEGER NOT NULL DEFAULT 1 CHECK(pull_timer IN(0,1));
+ALTER TABLE upstream_links ADD COLUMN pull_failed INTEGER NOT NULL DEFAULT 0 CHECK(pull_failed IN(0,1)); -- a slice of the traversal in progress failed: the traversal never ends fresh
+ALTER TABLE upstream_links ADD COLUMN pull_audit_n INTEGER NOT NULL DEFAULT 0; -- audit rows written in the current failure episode (at most 5)
+ALTER TABLE upstream_sent ADD COLUMN sent_content TEXT NOT NULL DEFAULT ''; -- publish mode: hash of the content we sent (sentContentHash); '' = none recorded, revisions decide`)
 	return err
 }
 
@@ -284,6 +287,9 @@ type UpstreamLinkInfo struct {
 	PullNext      *time.Time `json:"pullNext,omitempty"`
 	PullFailCount int        `json:"pullFailCount,omitempty"`
 	PullTimerOff  bool       `json:"pullTimerOff,omitempty"`
+	// RevisionBackwards: local notes this link published whose copy on the upstream has a LOWER revision than the one our push recorded
+	// (the upstream's copy was replaced by an older one: a revision number is no proof of the text, so such a copy is judged by its content).
+	RevisionBackwards []int64 `json:"revisionBackwards,omitempty"`
 }
 
 func parseClasses(csv string, withPrivate bool) ([]Class, error) {
@@ -331,9 +337,10 @@ type LinkSpec struct {
 	// Step C: Read nil keeps what the link has; true (or any of the two lists) needs AcceptReach: the owner has seen what the upstream's
 	// user may read (pull --dry-run) and accepts it for this link. false turns reading off and deletes the mirror. ReadOnly: an existing
 	// link keeps its push settings (remote, classes, private, auto, mode) untouched.
-	Read                     *bool
-	ReadClasses, ReadSources string
-	AcceptReach, ReadOnly    bool
+	Read                  *bool
+	ReadClasses           string
+	ReadSources           *string // nil keeps the sources the link reads; a pointer to "" means NO extra sources
+	AcceptReach, ReadOnly bool
 	// PullEvery: the interval of the automatic pull in seconds (MinPullEvery to MaxPullEvery); nil keeps it. It is not part of the reach.
 	PullEvery *int
 }
@@ -367,8 +374,9 @@ func (s *Store) LinkUpstreamReport(ctx context.Context, sp LinkSpec) (turnedOff 
 		return false, ErrRefusal{fmt.Sprintf("pull interval: %d minutes to %d hours", MinPullEvery/60, MaxPullEvery/3600)}
 	}
 	readOn, readOff := sp.Read != nil && *sp.Read, sp.Read != nil && !*sp.Read
-	readLists := sp.ReadClasses != "" || sp.ReadSources != ""
-	var readCls, readSrc string
+	readLists := sp.ReadClasses != "" || sp.ReadSources != nil
+	var readCls string
+	var readSrc *string
 	switch {
 	case readOff && readLists:
 		return false, ErrRefusal{"--no-read with --read-class or --read-sources: choose one"}
@@ -385,13 +393,28 @@ func (s *Store) LinkUpstreamReport(ctx context.Context, sp LinkSpec) (turnedOff 
 		}
 		readCls = classesCSV(rc)
 	}
-	if sp.ReadSources != "" {
-		var err error
-		if readSrc, err = parseReadSources(sp.ReadSources); err != nil {
-			return false, err
+	if sp.ReadSources != nil {
+		csv := ""
+		if *sp.ReadSources != "" {
+			var err error
+			if csv, err = parseReadSources(*sp.ReadSources); err != nil {
+				return false, err
+			}
 		}
+		readSrc = &csv
 	}
 	detail := map[string]any{"pullEvery": sp.PullEvery, "project": project, "team": team, "remote": remote, "classes": classesCSV(cls), "withPrivate": withPrivate, "auto": sp.Auto, "mode": sp.Mode, "read": sp.Read, "readClasses": readCls, "readSources": readSrc, "readOnly": sp.ReadOnly}
+	// A link update never overlaps a running push or pull of the link (they read the link's reach and acceptance once, under this lock):
+	// it is refused, as an unlink is, and the owner tries again.
+	lockID := project
+	if team > 0 {
+		lockID = segmentID(team)
+	}
+	mu := s.linkLock(lockID, upstream)
+	if !mu.TryLock() {
+		return false, errPushRunning{}
+	}
+	defer mu.Unlock()
 	err = s.adminWrite(ctx, "upstream.link", upstream, detail, func(tx *sql.Tx) (string, error) {
 		if e := tx.QueryRow(`SELECT name FROM upstreams WHERE name=?`, upstream).Scan(new(string)); e != nil {
 			return "", notFound(e)
@@ -495,7 +518,7 @@ ON CONFLICT(project_id,upstream) DO UPDATE SET remote=excluded.remote, remote_te
 		}
 		return "", setLinkRead(tx, s.now(), local, upstream, sp, readOn, readOff, readCls, readSrc, detail)
 	})
-	if readOn || sp.ReadClasses != "" || sp.ReadSources != "" { // the same command accepted the new reach: reading is on again
+	if readOn || sp.ReadClasses != "" || sp.ReadSources != nil { // the same command accepted the new reach: reading is on again
 		turnedOff = false
 	}
 	return turnedOff, err
@@ -523,15 +546,15 @@ func enforceReach(tx *sql.Tx, project int64, upstream string, detail map[string]
 		return false, e
 	}
 	detail["readTurnedOff"] = map[string]any{"accepted": reach, "now": reachOf(upstream, remote, team, cls, src), "mirrorNotes": n}
-	_, e = tx.Exec(`UPDATE upstream_links SET read=0,read_accepted=0,read_reach='',pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0,pull_timer=1,pull_fail_count=0,pull_next=0,last_pull_audit='' WHERE project_id=? AND upstream=?`, project, upstream)
+	_, e = tx.Exec(`UPDATE upstream_links SET read=0,read_classes='structure',read_sources='',read_accepted=0,read_reach='',pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0,pull_timer=1,pull_fail_count=0,pull_next=0,last_pull_audit='',pull_failed=0,pull_audit_n=0 WHERE project_id=? AND upstream=?`, project, upstream)
 	return e == nil, e
 }
 
 // setLinkRead applies the reading part of a link spec. Any change of what is read (on, off, classes, sources) deletes the mirror of the
 // link in the same transaction: what stays is never more than what the owner has accepted. The acceptance stores the exact reach and the
 // audit row names it (the effective classes and sources, not only the flags that were given).
-func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp LinkSpec, readOn, readOff bool, classes, sources string, detail map[string]any) error {
-	if sp.Read == nil && sp.ReadClasses == "" && sp.ReadSources == "" {
+func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp LinkSpec, readOn, readOff bool, classes string, sourcesArg *string, detail map[string]any) error {
+	if sp.Read == nil && sp.ReadClasses == "" && sp.ReadSources == nil {
 		return nil
 	}
 	var cur, team int
@@ -543,8 +566,12 @@ func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp L
 	if classes == "" {
 		classes = curC
 	}
-	if sources == "" {
-		sources = curS
+	sources := curS
+	if sourcesArg != nil { // explicit, also when empty: NO extra sources
+		sources = *sourcesArg
+	}
+	if !on { // turning reading off forgets what was read: turning it on again starts from the default reach (structure, no extra sources)
+		classes, sources = "structure", ""
 	}
 	reach := ""
 	if on {
@@ -565,7 +592,7 @@ func setLinkRead(tx *sql.Tx, now time.Time, project int64, upstream string, sp L
 	if on {
 		accepted, o = ms(now), 1
 	}
-	_, e := tx.Exec(`UPDATE upstream_links SET read=?,read_classes=?,read_sources=?,read_accepted=?,read_reach=?,pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0,pull_timer=1,pull_fail_count=0,pull_next=0,last_pull_audit='' WHERE project_id=? AND upstream=?`, o, classes, sources, accepted, reach, project, upstream)
+	_, e := tx.Exec(`UPDATE upstream_links SET read=?,read_classes=?,read_sources=?,read_accepted=?,read_reach=?,pull_cursor=0,pull_error='',last_pull=0,last_pull_ok=0,pull_timer=1,pull_fail_count=0,pull_next=0,last_pull_audit='',pull_failed=0,pull_audit_n=0 WHERE project_id=? AND upstream=?`, o, classes, sources, accepted, reach, project, upstream)
 	return e
 }
 
@@ -924,7 +951,7 @@ func (s *Store) upstreamRecordSent(ctx context.Context, project int64, upstream 
 	return s.write(ctx, func(tx *sql.Tx) error {
 		// a submission leaves no baseline of the upstream note (remote_rev 0) and no conflict: a later publish update compares again
 		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=0, conflict=0, conflict_rev=0`,
+ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=0, sent_content='', conflict=0, conflict_rev=0`,
 			project, upstream, n.ID, n.Hash, n.Revision, sub, remoteNote, ms(s.now()))
 		return e
 	})
@@ -934,9 +961,9 @@ ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revis
 // baseline the next update compares with.
 func (s *Store) upstreamRecordPublished(ctx context.Context, project int64, upstream string, n UpstreamNote, remoteNote, remoteRev int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev) VALUES(?,?,?,?,?,0,?,?,?)
-ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=0, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=excluded.remote_rev, conflict=0, conflict_rev=0`,
-			project, upstream, n.ID, n.Hash, n.Revision, remoteNote, ms(s.now()), remoteRev)
+		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev,sent_content) VALUES(?,?,?,?,?,0,?,?,?,?)
+ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=0, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=excluded.remote_rev, sent_content=excluded.sent_content, conflict=0, conflict_rev=0`,
+			project, upstream, n.ID, n.Hash, n.Revision, remoteNote, ms(s.now()), remoteRev, sentContentHash(n.Class, n.EntryKind, n.Title, n.Body))
 		return e
 	})
 }
@@ -1014,7 +1041,7 @@ func (s *Store) ResolveUpstream(ctx context.Context, project, team, note int64, 
 			case gone: // gone here too: nothing left to settle
 				_, e = tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, local, x.up, note)
 			default:
-				_, e = tx.Exec(`UPDATE upstream_sent SET hash=?, remote_rev=?, conflict=0, conflict_rev=0 WHERE project_id=? AND upstream=? AND note_id=?`, upstreamHash(n), x.rev, local, x.up, note)
+				_, e = tx.Exec(`UPDATE upstream_sent SET hash=?, remote_rev=?, sent_content='', conflict=0, conflict_rev=0 WHERE project_id=? AND upstream=? AND note_id=?`, upstreamHash(n), x.rev, local, x.up, note)
 			}
 			if e != nil {
 				return "", e

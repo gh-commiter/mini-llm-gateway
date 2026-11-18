@@ -1512,7 +1512,7 @@ mirror stays fresh with no command typed; the Upstream gateways panel has a Read
 
 ```text
 minigw gw upstream pull <project> --dry-run      # first look: what the upstream's user could read (sources, classes, counts)
-minigw gw upstream link <project> hub --read [--read-class structure,data] [--read-sources team:acme,project:eureko] --accept-reach
+minigw gw upstream link <project> hub --read [--read-class structure,data] [--read-sources team:acme,project:eureko|none] --accept-reach
 minigw gw upstream pull [<project>|--team <team>]   # fills the mirror; asks again until it is through
 minigw gw upstream status                           # read on/off, accepted reach, mirror notes and size, last pull and its age, last error
 minigw gw upstream link <project> hub --pull-every 30   # how often a link with reading on is pulled by itself (minutes, 5 to 1440; default 15)
@@ -1524,7 +1524,7 @@ upstream's **device user** may read in the project, by their local class rights,
 that has the reader role only in the projects meant for that gateway. The default is the `structure` class of the linked project itself;
 `data` only with `--read-class structure,data`; the project's team notes and what it depends on only when named with `--read-sources`
 (the labels `pull --dry-run` prints). `private` notes are never read. An existing link keeps its push settings when only the reading is
-changed; changing what is read deletes the mirror (the next pull fills it again). The acceptance covers the exact **reach**: the upstream, the remote project or team, the classes and the sources (shown by `status` as "accepted ... for <remote>"; the audit row of the link names them). A link that is changed to reach another remote project or team (for example `link <project> <name> --auto`, which defaults the remote to the local name) turns reading off and deletes its mirror until you repeat `--read --accept-reach`. The mirror is deleted by `--no-read`, `unlink` and
+changed; changing what is read deletes the mirror (the next pull fills it again). Without `--read-sources` the sources the link reads now are kept, `--read-sources none` clears them, and turning reading **off forgets** the classes and sources of the link, so turning it on again starts from the default (structure, no extra sources): an acceptance never brings back a reach you did not see. A link update (`link ...`) is refused while a push or pull of that link is running. The acceptance covers the exact **reach**: the upstream, the remote project or team, the classes and the sources (shown by `status` as "accepted ... for <remote>"; the audit row of the link names them). A link that is changed to reach another remote project or team (for example `link <project> <name> --auto`, which defaults the remote to the local name) turns reading off and deletes its mirror until you repeat `--read --accept-reach`. The mirror is deleted by `--no-read`, `unlink` and
 `upstream remove`, is not part of an export bundle and is never pushed.
 
 A pull asks the upstream for a **manifest** (ids and revisions only), fetches at most 200 new or changed notes per run (the command repeats
@@ -1565,9 +1565,9 @@ pushed back or exported. A page of 20 hits keeps the local notes first: up to 15
 does not use go to the other; FAQ entries of the mirror come on the first page after the local ones (at most 20). A note this gateway
 pushed shows once (the local note), not again as the upstream's copy, **as long as the upstream's copy is the version we sent**: when a
 note this gateway published (publish mode) was then changed on the upstream (a conflict, or simply someone edited it there), the
-revision there has moved past the one our push recorded, and members see the upstream's version too, marked and quoted like any
+text there differs from the text our push recorded (a hash of class, kind, title and body without our trailer, recorded when the note is published; a receipt from before that has none and falls back to the revision: its copy is hidden while the revision is not past the recorded one), and members see the upstream's version too, marked and quoted like any
 mirrored note, with one more line under the marker: `[differs from the local note 12: the hub's copy was changed there after this gateway sent it]`.
-The owner's `gw upstream status` keeps listing the conflict, and `resolve --theirs` (the recorded revision becomes the upstream's: the
+The line names the local note only to a member who may read that note (otherwise it says `[differs from the local note: ...]` without a number). The same text at a higher revision is not a second copy, and other text at a lower revision is shown: `gw upstream status` also says "revision went backwards on the upstream: note N" when the upstream's revision is below the recorded one. The owner's status keeps listing the conflict, and `resolve --theirs` (the recorded revision becomes the upstream's: the
 copy is hidden again) and `resolve --ours` (our version goes as a submission; the copy stays visible meanwhile) work as before. A copy of
 a note sent as a submission (no note id there is known here) is still recognised by the trailer at the end of its text and hidden. A mirror without a complete pull for **7 days** is hidden from
 members (not deleted) and `gw upstream status` says "stale" until a pull goes through. Reading never contacts the upstream: an
@@ -1579,14 +1579,14 @@ Windows and Linux the gateway's timer does it; on the Mac the app's timer asks t
 when the next one is due) and never while the app is shutting down. A step is one link, pushed or pulled: the two are tried in turn, so
 neither starves the other. A pull is the same run as `pull` by hand (the same bounds per run: 200 notes, a few seconds on the Mac); a run
 that is not through ends with "more" and continues at the next tick from its cursor. A successful pull schedules the next one an interval
-ahead. A failure backs off from a minute, doubling up to an hour, with jitter, and a run that made no progress counts as a failure. If the
+ahead. A traversal (from the first note to the last, over as many runs as it takes) that had a failed note fetch in any run never ends fresh: it records progress, goes on, then ends as a failure (back-off, no new "last complete pull") and the next traversal starts from the beginning and fetches what is still missing. A failure backs off from a minute, doubling up to an hour, with jitter, and a run that made no progress counts as a failure. If the
 upstream **refuses** the device (401/403) or no longer knows the project, the mirror is deleted at once, as in a pull by hand, and the
-**timer for that link is switched off** with the error left visible in `status` and the panel; it is switched on again by accepting the
-reach again (`--read --accept-reach`) or by a pull by hand that goes through. A pull never runs at the same time as a push of the same
+**timer for that link is switched off** with the error left visible in `status` and the panel; it is switched on again only by accepting the
+reach again (`--read --accept-reach`); a pull by hand never changes the timer. A pull (by hand or by the timer) reads the link, its remote and its accepted reach together and refuses ("the link's reach is not the one you accepted") when they do not match, so it never contacts one remote with another's acceptance. A pull never runs at the same time as a push of the same
 link: whichever comes second is refused and tries again a second later, and one automatic pull holds the link for at most 45 seconds, so a
 push is never kept waiting for the 5 minutes of a long pull. `gw upstream status` shows the interval, the next attempt, the failures in a
-row and, when the timer is off, why. The audit log gets one row (`upstream.auto-pull`: counts only, never a title) for a run that added,
-changed or removed something, and otherwise one per change of outcome. With the timer on the mirror stays fresh, so the 7-day
+row and, when the timer is off, why. The audit log gets one row (`upstream.auto-pull`: counts only, never a title) for every run that added,
+changed or removed something, and otherwise one per change of outcome, at most five in all per failure episode (from the first run that was not a complete success to the next one that was). With the timer on the mirror stays fresh, so the 7-day
 "stale" state only happens when the upstream cannot be reached for a week (or the timer was switched off). The timer contacts only an
 upstream you added and a link whose reach you accepted (never one of an archived project or team); no member can start or change it. It has been tried only in tests, not between
 two real gateways.
@@ -1598,7 +1598,7 @@ mirror, the last try, the failures in a row, whether the automatic pull is off, 
 Actions: **Dry Run** (asks the upstream what its user for this gateway may read and shows the sources and counts; writes nothing),
 **Turn Reading On…** and **Turn Reading On With Data…** (a confirmation names the upstream, the project or team there, the classes and
 the extra sources you typed, says that members of the local project will find it, and that confirming records that you accept this
-reach: the same acceptance as `--read --accept-reach`), **Change What Is Read…** (new classes and sources; a new confirmation, the mirror
+reach: the same acceptance as `--read --accept-reach`), **Change What Is Read…** (new classes and sources, an empty list meaning none; a new confirmation, the mirror
 is deleted and refilled), **Turn Reading Off** (deletes the mirror at once), **Set Pull Interval…** and **Pull Now** (one bounded run; the
 report says when it is not finished: press it again). Every action that contacts the upstream or changes what is read asks first.
 

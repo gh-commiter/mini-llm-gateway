@@ -15,7 +15,7 @@ const upstreamHelp = `
   minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
   minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)
   minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
-  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run)
+  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>|none] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run; no --read-sources keeps the ones it reads now, none clears them)
   minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)
   minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)
   minigw gw upstream unlink <project> <name> | --team <team> <name>
@@ -49,6 +49,8 @@ type upLink struct {
 	PullNext      *time.Time
 	PullFailCount int
 	PullTimerOff  bool
+
+	RevisionBackwards []int64
 
 	Read         bool
 	ReadClasses  []string
@@ -161,7 +163,13 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		pushFlags := u.class != "" || u.withPrivate || u.auto || u.manual || u.mode != "" || u.remoteProject != "" || u.remoteTeam != ""
 		if reading {
 			req["read"] = !u.noRead
-			req["readClasses"], req["readSources"], req["acceptReach"] = u.readClass, u.readSources, u.acceptReach
+			req["readClasses"], req["acceptReach"] = u.readClass, u.acceptReach
+			if u.readSources != "" { // omitted keeps the sources; "none" is an explicit empty list: no extra sources
+				req["readSources"] = u.readSources
+				if u.readSources == "none" {
+					req["readSources"] = ""
+				}
+			}
 		}
 		if reading || pulling {
 			req["readOnly"] = !pushFlags // an existing link keeps its push settings
@@ -230,6 +238,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 				say(clean("  " + s))
 			}
 			if s := upstreamConflicts(l); s != "" {
+				say(clean("  " + s))
+			}
+			if s := upstreamBackwards(l); s != "" {
 				say(clean("  " + s))
 			}
 		}
@@ -610,4 +621,16 @@ func upstreamConflicts(l upLink) string {
 		return ""
 	}
 	return "CONFLICT: " + strings.Join(parts, ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
+}
+
+// upstreamBackwards: published notes whose copy on the upstream has a lower revision than our push recorded (replaced by an older one there).
+func upstreamBackwards(l upLink) string {
+	var ids []string
+	for _, n := range l.RevisionBackwards {
+		ids = append(ids, strconv.FormatInt(n, 10))
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	return "revision went backwards on the upstream: note " + strings.Join(ids, ", ") + " (its copy there was replaced by an older one; members see it when its text differs from what we sent)"
 }

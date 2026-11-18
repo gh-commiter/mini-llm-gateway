@@ -105,7 +105,11 @@ func readFx(t *testing.T) (*fx, int64) {
 func readOn(f *fx, project int64, classes, sources string) {
 	f.t.Helper()
 	yes := true
-	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: project, Upstream: "hub", Remote: "shop", Read: &yes, ReadClasses: classes, ReadSources: sources, AcceptReach: true, ReadOnly: true}))
+	var src *string
+	if sources != "" {
+		src = &sources
+	}
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: project, Upstream: "hub", Remote: "shop", Read: &yes, ReadClasses: classes, ReadSources: src, AcceptReach: true, ReadOnly: true}))
 }
 
 func structNote(id int64, title string) hubNote {
@@ -230,7 +234,7 @@ func TestReadNeedsAcceptanceAndNeverTouchesPushSettings(t *testing.T) {
 	for name, sp := range map[string]LinkSpec{
 		"read":         {Read: &yes},
 		"classes only": {ReadClasses: "data"},
-		"sources only": {ReadSources: "team:acme"},
+		"sources only": {ReadSources: ptr("team:acme")},
 	} {
 		sp.Project, sp.Upstream, sp.Remote, sp.ReadOnly = fk, "hub", "shop", true
 		e := f.LinkUpstreamWith(ctx, sp)
@@ -248,7 +252,7 @@ func TestReadNeedsAcceptanceAndNeverTouchesPushSettings(t *testing.T) {
 		}
 	}
 	for _, sr := range []string{"shop", "project:", "project:a,project:a", "team:x\ny", strings.Repeat("project:a,", 17) + "project:b"} {
-		if e := f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Read: &yes, ReadSources: sr, AcceptReach: true, ReadOnly: true}); e == nil {
+		if e := f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Read: &yes, ReadSources: &sr, AcceptReach: true, ReadOnly: true}); e == nil {
 			t.Fatalf("source list %q accepted", sr)
 		}
 	}
@@ -261,7 +265,7 @@ func TestReadNeedsAcceptanceAndNeverTouchesPushSettings(t *testing.T) {
 	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Classes: "structure", Mode: "publish", Auto: &auto}))
 	before := linkOf(f, fk)
 	f.clock = f.clock.Add(time.Minute)
-	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "other-name", Classes: "data", Read: &yes, ReadClasses: "structure,data", ReadSources: "team:acme", AcceptReach: true, ReadOnly: true}))
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "other-name", Classes: "data", Read: &yes, ReadClasses: "structure,data", ReadSources: ptr("team:acme"), AcceptReach: true, ReadOnly: true}))
 	after := linkOf(f, fk)
 	if !after.Read || after.Remote != "shop" || after.Mode != "publish" || !after.Auto || len(after.Classes) != 1 || after.Classes[0] != Structure || after.WithPrivate != before.WithPrivate ||
 		classesCSV(after.ReadClasses) != "structure,data" || strings.Join(after.ReadSources, ",") != "team:acme" || after.ReadAccepted == nil || !after.ReadAccepted.Equal(f.clock) {
@@ -1066,7 +1070,7 @@ func TestAcceptanceIsBoundToTheReach(t *testing.T) {
 	}
 	// classes and sources can only change WITH the acceptance: without it the command is refused and the accepted reach stays
 	f, fk = filled()
-	for _, sp := range []LinkSpec{{ReadClasses: "structure,data"}, {ReadSources: "team:acme"}} {
+	for _, sp := range []LinkSpec{{ReadClasses: "structure,data"}, {ReadSources: ptr("team:acme")}} {
 		sp.Project, sp.Upstream, sp.Remote, sp.ReadOnly = fk, "hub", "shop", true
 		if e := f.LinkUpstreamWith(ctx, sp); e == nil {
 			t.Fatal("a change of what is read without the acceptance")
@@ -1084,7 +1088,7 @@ func TestAcceptanceIsBoundToTheReach(t *testing.T) {
 		}
 	}
 	// the audit row names what is in effect, not only the flags that were given
-	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Read: &yes, ReadSources: "team:acme", AcceptReach: true, ReadOnly: true}))
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Read: &yes, ReadSources: ptr("team:acme"), AcceptReach: true, ReadOnly: true}))
 	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Read: &yes, AcceptReach: true, ReadOnly: true})) // no lists given
 	evs, e2 := f.AuditEvents(ctx, 0, 500)
 	f.ok(e2)
@@ -1099,19 +1103,48 @@ func TestAcceptanceIsBoundToTheReach(t *testing.T) {
 	}
 }
 
-// A pull that is running while the link is changed stores nothing of what it fetched from the old reach.
-func TestPullRunningWhileTheLinkChangesStoresNothing(t *testing.T) {
+// A link update waits for a running pull (it is refused, as an unlink is): the run reads the link, its remote and its acceptance together and
+// contacts the remote it was accepted for. (sec-upc4 7)
+func TestLinkUpdateIsRefusedWhileThePullRuns(t *testing.T) {
 	f, fk := readFx(t)
 	h := &hub{notes: []hubNote{structNote(1, "One"), structNote(2, "Two")}}
+	var refused error
 	h.note = func(id int64, def string) (int, string, time.Duration) {
-		if id == 1 { // the owner re-links to another project while the pull waits for the upstream
+		if id == 1 {
 			auto := true
-			f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "fakture", Auto: &auto}))
+			refused = f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "fakture", Auto: &auto})
 		}
 		return 200, def, 0
 	}
 	res := pull(f, fk, h.up())
-	if len(mirror(f)) != 0 || res.Added != 0 || !strings.Contains(res.Stopped, "changed during the pull") {
+	var busy errPushRunning
+	if !errors.As(refused, &busy) || res.Added != 2 {
+		t.Fatalf("%v %+v", refused, res)
+	}
+	if l := linkOf(f, fk); l.Remote != "shop" || !l.Read {
+		t.Fatalf("%+v", l)
+	}
+}
+
+// Whatever got past the lock (a restored or edited database), a run never uses one remote with another remote's acceptance: before the first
+// request and again where it writes.
+func TestPullRefusesAnAcceptanceThatIsNotForTheLinksReach(t *testing.T) {
+	f, fk := readFx(t)
+	h := &hub{notes: []hubNote{structNote(1, "One")}}
+	f.ok(f.write(ctx, func(tx *sql.Tx) error { _, e := tx.Exec(`UPDATE upstream_links SET remote='elsewhere'`); return e }))
+	up := h.up()
+	res := pull(f, fk, up)
+	if len(up.calls) != 0 || len(mirror(f)) != 0 || !strings.Contains(res.Stopped, "not the one you accepted") {
+		t.Fatalf("%+v %v", res, up.calls)
+	}
+	// the same change while the run is in flight: nothing stored
+	f.ok(f.write(ctx, func(tx *sql.Tx) error { _, e := tx.Exec(`UPDATE upstream_links SET remote='shop'`); return e }))
+	h.note = func(id int64, def string) (int, string, time.Duration) {
+		f.ok(f.write(ctx, func(tx *sql.Tx) error { _, e := tx.Exec(`UPDATE upstream_links SET remote='elsewhere'`); return e }))
+		return 200, def, 0
+	}
+	res = pull(f, fk, h.up())
+	if len(mirror(f)) != 0 || res.Added != 0 {
 		t.Fatalf("%+v %v", res, mirror(f))
 	}
 }
@@ -1259,3 +1292,5 @@ func TestPullAllLinksKeepsTheReportsWhenTheBudgetIsUsed(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 }
+
+func ptr(s string) *string { return &s }

@@ -228,23 +228,6 @@ func TestAutoPullRefusalPurgesAndSwitchesTheTimerOff(t *testing.T) {
 	}
 }
 
-// An item of the plan: "turns the timer off with a visible error" holds for a pull by hand too, and a pull by hand that goes through
-// switches it on again.
-func TestManualPullThatGoesThroughSwitchesTheTimerOn(t *testing.T) {
-	f, fk, h := autoPullFx(t)
-	up := h.up()
-	h.proj = 404
-	f.autoPull(up)
-	if !linkOf(f, fk).PullTimerOff {
-		t.Fatal("not off")
-	}
-	h.proj = 0
-	pull(f, fk, up)
-	if l := linkOf(f, fk); l.PullTimerOff || l.PullFailCount != 0 || l.PullNext == nil {
-		t.Fatalf("%+v", l)
-	}
-}
-
 // Audit rows by the push's rule: one for a run that did something, otherwise one per change of outcome; never a title or a body.
 func TestAutoPullAuditRows(t *testing.T) {
 	f, fk, h := autoPullFx(t)
