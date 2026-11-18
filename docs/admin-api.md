@@ -334,7 +334,8 @@ work without the core. On the Mac app the quota routes are in the app (Codex ses
 Claude probe); the Claude probe is also the Settings → Claude CLI switch "Show the subscription quota".
 
 Members read their own usage on the member route `GET /minigw/v1/usage?project=<id or slug>&days=<1-400>` (same
-shape; a reader, a grant-only user or a stranger gets 404).
+shape; a reader, a grant-only user or a stranger gets 404; `gaps` is always empty there: lost-event records concern the
+whole gateway, not a project, and are shown only on the owner's `GET /usage/events`).
 
 ### Team directory (both gateways)
 

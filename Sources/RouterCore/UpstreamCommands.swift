@@ -9,6 +9,7 @@ extension AdminCommands {
         minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin
           minigw gw upstream list | remove <name>
           minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
+          minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)
           minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
           minigw gw upstream unlink <project> <name> | --team <team> <name>
           minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
@@ -75,6 +76,9 @@ extension AdminCommands {
             try request("PUT", path, req)
             if o.auto { say(clean("linked \(local) to \(name) as \(remote): changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)")) }
             else { say(clean("linked \(local) to \(name) as \(remote): nothing is sent until minigw gw upstream push")) }
+            if o.withPrivate {
+                say(clean("also the private notes of ALL members of the " + (isTeam ? "team" : "project") + " are sent"))
+            }
         case ("status", 2...3):
             var q = ""
             if !team.isEmpty && pos.count == 2 { q = "?team=\(try teamID(team))" }

@@ -13,6 +13,7 @@ const upstreamHelp = `
   minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin
   minigw gw upstream list | remove <name>
   minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
+  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)
   minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
   minigw gw upstream unlink <project> <name> | --team <team> <name>
   minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
@@ -129,6 +130,13 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			say(clean(fmt.Sprintf("linked %s to %s as %s: changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)", local, name, remote)))
 		} else {
 			say(clean(fmt.Sprintf("linked %s to %s as %s: nothing is sent until minigw gw upstream push", local, name, remote)))
+		}
+		if u.withPrivate {
+			what := "project"
+			if isTeam {
+				what = "team"
+			}
+			say(clean("also the private notes of ALL members of the " + what + " are sent"))
 		}
 	case pos[1] == "status" && len(pos) <= 3:
 		q := ""

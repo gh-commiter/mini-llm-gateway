@@ -370,12 +370,12 @@ func TestUsageSpoolReplayExactlyOnceAndGaps(t *testing.T) {
 	if !strings.Contains(out.String(), "events lost between") || strings.Count(out.String(), "events lost between") != len(rep.Gaps) {
 		t.Fatalf("usage output: %s", out.String())
 	}
-	// the member route says so too
-	rr := f.call("fani", "GET", "/minigw/v1/usage?project=fakture", "") // a project admin sees gaps (review L5) ...
-	if !strings.Contains(rr.body, `"gaps":[{`) {
-		t.Fatalf("project admin without the gap: %s", rr.body)
+	// Lost-event records are gateway-wide: the member route, also for a project admin, does not show them; only the owner's does.
+	rr := f.call("fani", "GET", "/minigw/v1/usage?project=fakture", "") // a project admin no longer sees them (review L5 fix)
+	if !strings.Contains(rr.body, `"gaps":[]`) {
+		t.Fatalf("project admin sees gaps: %s", rr.body)
 	}
-	if rr := f.call("ana", "GET", "/minigw/v1/usage", ""); !strings.Contains(rr.body, `"gaps":[]`) { // ... an ordinary member does not
+	if rr := f.call("ana", "GET", "/minigw/v1/usage", ""); !strings.Contains(rr.body, `"gaps":[]`) { // ... nor an ordinary member
 		t.Fatalf("member sees gaps: %s", rr.body)
 	}
 }

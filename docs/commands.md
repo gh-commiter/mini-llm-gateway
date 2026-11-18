@@ -166,11 +166,11 @@ only on the gateway computer.
 | `minigw gw quota --history [--days N] [--provider P] [--json]` | Existing probes only, default 7 days, range 1–400; exact provider filter. One line per probe with windows, values, units and resets, or failure kind. JSON preserves the API response. Capped results warn on stderr. Cannot combine with `--claude-probe`. |
 | `minigw gw upstream add <name> <address> [--device-name <text>]` | Another gateway to send knowledge to (`host[:port]`); its Copy Token on stdin; `--device-name`: how this gateway appears on the upstream's device list (default `gateway <id>`) |
 | `minigw gw upstream list` \| `remove <name>` | The upstreams of this gateway, or remove one with its links and credentials (what was sent stays there) |
-| `minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]` | Send a project's published notes there as submissions (`--remote-project`: its name there, default the same); `--class`: classes to send (default `structure,data`); private notes need `--with-private` and `private` in `--class` |
+| `minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]` | Send a project's published notes there as submissions (`--remote-project`: its name there, default the same); `--class`: classes to send (default `structure,data`); `--with-private`: also the private notes of ALL members of the project, and `private` must be in `--class` |
 | `minigw gw upstream link --team <team> <name> [--remote-team <name>]` | The same for a team's own notes |
 | `minigw gw upstream unlink <project> <name>` \| `--team <team> <name>` | Remove a link (what was already sent stays there) |
 | `minigw gw upstream status [<project>\|--team <team>]` | Per link: how many notes would go, when it last went, and the last refusal |
-| `minigw gw upstream push [<project>\|--team <team>] [--dry-run]` | Send the published notes as submissions; `--dry-run` only asks the upstream what exists and writes nothing |
+| `minigw gw upstream push [<project>\|--team <team>] [--dry-run]` | Send the published notes as submissions (each note carries the name of its author in its text); `--dry-run` only asks the upstream what exists and writes nothing |
 | `minigw gw kb rebuild-search` | Rebuild the published-note index (repairs search; grants no search access) |
 | `minigw gw kb review [<project>\|--team <team>]` | Pending submissions of a project (or a team's own notes), including bodies |
 | `minigw gw kb accept <id>` | Publish a pending submission as a note or replacement revision |

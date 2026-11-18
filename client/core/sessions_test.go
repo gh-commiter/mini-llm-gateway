@@ -214,3 +214,61 @@ func TestSessionsUTCRetentionAndOutcomes(t *testing.T) {
 		}
 	}
 }
+
+// Events older than the window are not read: a project with more than the traversal limit of them still answers.
+func TestSessionsReadOnlyTheWindow(t *testing.T) {
+	f := newFx(t)
+	pid := f.pid["fakture"]
+	uid := f.uid["ana"]
+	at := f.now()
+	old := at.AddDate(0, 0, -10)
+	exec(t, f.Store, `WITH RECURSIVE seq(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x<100001)
+INSERT INTO usage_events(id,start,end,user_id,device_id,project_id,provider,model,outcome,token_source)
+SELECT 'old-'||x, ?, ?, ?, 'dev', ?, 'codex', 'm', 'ok', 'unknown' FROM seq`, ms(old), ms(old.Add(time.Second)), uid, pid)
+	f.event("now", "", uid, pid, "m", "ok", 1, 1, at)
+	page, err := f.Sessions(ctx, f.p("ana"), pid, SessionFilter{Days: 1})
+	f.ok(err)
+	if len(page.Sessions) != 1 || page.Sessions[0].ID != "now" {
+		t.Fatal(page)
+	}
+}
+
+// Chains are read whole or not at all: a chain that began just before the window (or older than the one-day margin,
+// with a later request inside it) never surfaces as an orphan of its first in-window request.
+func TestSessionsChainAcrossTheWindowStart(t *testing.T) {
+	f := newFx(t)
+	pid := f.pid["fakture"]
+	uid := f.uid["ana"]
+	at := f.now()
+	midnight := time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.UTC)
+	// A chain that began a few hours before the day's window and continued inside it.
+	f.event("near", "", uid, pid, "m", "ok", 1, 1, midnight.Add(-3*time.Hour))
+	f.event("near-child", "near", uid, pid, "m", "ok", 2, 2, midnight.Add(time.Hour))
+	// A chain older than the one-day margin: its later request is in every window, its root is not.
+	f.event("far", "", uid, pid, "m", "ok", 4, 4, at.AddDate(0, 0, -3))
+	f.event("far-child", "far", uid, pid, "m", "ok", 8, 8, at)
+
+	page, err := f.Sessions(ctx, f.p("ana"), pid, SessionFilter{Days: 1})
+	f.ok(err)
+	if len(page.Sessions) != 0 { // no chain starts in this window: no child may surface as a session of its own
+		t.Fatalf("%+v", page.Sessions)
+	}
+
+	page, err = f.Sessions(ctx, f.p("ana"), pid, SessionFilter{Days: 2})
+	f.ok(err)
+	if len(page.Sessions) != 1 || page.Sessions[0].ID != "near" || page.Sessions[0].Requests != 2 ||
+		page.Sessions[0].TokensIn.Value == nil || *page.Sessions[0].TokensIn.Value != 3 {
+		t.Fatalf("%+v", page.Sessions) // the near chain is whole; the far one stays out
+	}
+
+	page, err = f.Sessions(ctx, f.p("ana"), pid, SessionFilter{Days: 4})
+	f.ok(err)
+	if len(page.Sessions) != 2 {
+		t.Fatalf("%+v", page.Sessions)
+	}
+	for _, r := range page.Sessions {
+		if r.Requests != 2 || r.Incomplete { // both chains are joined to their roots
+			t.Fatalf("%+v", r)
+		}
+	}
+}

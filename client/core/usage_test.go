@@ -203,16 +203,15 @@ func TestUsageGapsAreListedAndIdempotent(t *testing.T) {
 	if len(rep.Gaps) != 1 || rep.Gaps[0].Count != 7 || !rep.Gaps[0].From.Equal(a.Truncate(time.Millisecond)) {
 		t.Fatalf("%+v", rep.Gaps)
 	}
-	// review L5: members see gaps only as admin of the project they asked about
+	// Lost-event records are gateway-wide: no member, also a project admin, sees them; only the owner does (AdminUsage above).
 	for _, c := range []struct {
 		user    string
 		project int64
-		want    int
-	}{{"ana", 0, 0}, {"ana", f.pid["fakture"], 0}, {"bor", f.pid["fakture"], 0}, {"fani", f.pid["fakture"], 1}} {
+	}{{"ana", 0}, {"ana", f.pid["fakture"]}, {"bor", f.pid["fakture"]}, {"fani", f.pid["fakture"]}} {
 		r, err := f.Usage(ctx, f.p(c.user), c.project, 7)
 		f.ok(err)
-		if len(r.Gaps) != c.want {
-			t.Errorf("%s project %d: %d gaps, want %d", c.user, c.project, len(r.Gaps), c.want)
+		if len(r.Gaps) != 0 {
+			t.Errorf("%s project %d: %d gaps, want none", c.user, c.project, len(r.Gaps))
 		}
 	}
 }
