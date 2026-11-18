@@ -601,11 +601,12 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		return nil, err
 	}
 	var remote *remoteAuth
+	var remoteErr error
 	if c.RemoteSettings.Enabled {
 		var err error
 		remote, err = newRemoteAuth(cfgPath, nil)
-		if err != nil {
-			return nil, err
+		if err != nil { // fail closed for remote login only; the gateway itself keeps running
+			remoteErr, remote = err, nil
 		}
 	}
 	k, err := c.privateKey()
@@ -700,6 +701,9 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		sessions: sessionRegistry{m: map[string]string{}}, procs: make(chan struct{}, 6),
 		gwSlots: make(chan struct{}, 16), state: loadState(filepath.Join(cfgDir, "state.json"))}
 	s.remoteAuth = remote
+	if remoteErr != nil {
+		s.log.Printf("WARNING: remote settings are off: %v (fix or remove %s, then restart)", remoteErr, filepath.Join(cfgDir, "remote-settings.lockouts.json"))
+	}
 	s.api = s.newAPI()
 	cleanStaleTempRoots(tempBase())
 	s.state.prune(c.Devices)

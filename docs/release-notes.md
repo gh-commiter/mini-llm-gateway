@@ -1,5 +1,18 @@
 # Release notes
 
+## Unreleased
+
+### New
+
+- `minigw gw settings password` sets the password for remote settings.
+- Opt-in remote settings listener behind mutual TLS and a password login, off by default. The remote scope is limited
+  to providers/models and devices; changes that carry an API key's destination (`baseURL`, `insecure`) or raise tool
+  levels need the key again or must be made locally. The Compose reverse-proxy profile comes later.
+
+### Known problems
+
+- Remote settings are not tried in a real browser or on Windows yet.
+
 ## 0.7.22
 
 ### Fixed

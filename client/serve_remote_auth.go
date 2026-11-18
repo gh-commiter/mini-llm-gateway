@@ -24,6 +24,8 @@ import (
 
 const remoteSessionCap = 50
 const remoteSourceCap = 1024
+const remoteTrustedCap = 16
+const remoteTrustFor = 8 * time.Hour
 const remoteSessionHeader = "X-Minigw-Remote-Session"
 
 var errRemoteLogin = errors.New("Sign in failed")
@@ -59,11 +61,6 @@ func loadRemotePassword(path string) (remotePassword, [32]byte, error) {
 	st, err := f.Stat()
 	if err != nil || !st.Mode().IsRegular() || runtime.GOOS != "windows" && st.Mode().Perm()&0077 != 0 {
 		return p, [32]byte{}, errors.New("remote password record must be private")
-	}
-	if runtime.GOOS == "windows" {
-		if err := protectDir(filepath.Dir(path)); err != nil {
-			return p, [32]byte{}, err
-		}
 	}
 	b, err := io.ReadAll(io.LimitReader(f, 4097))
 	if err != nil || len(b) > 4096 {
@@ -134,6 +131,7 @@ type remoteSource struct {
 }
 type remoteLocks struct {
 	Sources        map[string]remoteSource `json:"sources"`
+	Trusted        map[string]time.Time    `json:"trusted,omitempty"` // sources (IPv6: /64) with a good sign-in in the last 8 h; skip only the global lockout
 	GlobalUntil    time.Time               `json:"globalUntil"`
 	GlobalWindow   time.Time               `json:"globalWindow"`
 	GlobalFailures int                     `json:"globalFailures"`
@@ -157,6 +155,11 @@ func newRemoteAuth(config string, now func() time.Time) (*remoteAuth, error) {
 		now = time.Now
 	}
 	a := &remoteAuth{now: now, dir: filepath.Dir(config), sessions: map[[32]byte]remoteSession{}}
+	if runtime.GOOS == "windows" { // once here and in the password command, not on every request
+		if err := protectDir(a.dir); err != nil {
+			return nil, err
+		}
+	}
 	a.derive = func(password []byte, p remotePassword) []byte {
 		return argon2.IDKey(password, p.Salt, p.Iterations, p.Memory, p.Parallelism, 32)
 	}
@@ -181,16 +184,32 @@ func newRemoteAuth(config string, now func() time.Time) (*remoteAuth, error) {
 	if len(a.locks.Sources) > remoteSourceCap || a.locks.GlobalFailures < 0 || a.locks.GlobalFailures > 20 {
 		return nil, errors.New("invalid remote lockouts")
 	}
-	if a.locks.GlobalUntil.After(now().Add(time.Minute)) || a.locks.GlobalWindow.After(now()) {
-		return nil, errors.New("invalid remote lockouts")
+	// A clock stepped backwards leaves timestamps in the future: clamp them, do not refuse.
+	t := now()
+	clamp := func(v *time.Time, max time.Time) {
+		if v.After(max) {
+			*v = max
+		}
 	}
+	clamp(&a.locks.GlobalUntil, t.Add(time.Minute))
+	clamp(&a.locks.GlobalWindow, t)
 	for ip, s := range a.locks.Sources {
 		if _, err := netip.ParseAddr(ip); err != nil || s.Attempts < 0 || s.Attempts > 5 || s.Failures < 0 || s.Failures > 5 {
 			return nil, errors.New("invalid remote lockouts")
 		}
-		if s.Locked.After(now().Add(15*time.Minute)) || s.Window.After(now()) {
+		clamp(&s.Locked, t.Add(15*time.Minute))
+		clamp(&s.Window, t)
+		a.locks.Sources[ip] = s
+	}
+	if len(a.locks.Trusted) > remoteTrustedCap {
+		return nil, errors.New("invalid remote lockouts")
+	}
+	for ip, v := range a.locks.Trusted {
+		if _, err := netip.ParseAddr(ip); err != nil {
 			return nil, errors.New("invalid remote lockouts")
 		}
+		clamp(&v, t)
+		a.locks.Trusted[ip] = v
 	}
 	if a.locks.Sources == nil {
 		a.locks.Sources = map[string]remoteSource{}
@@ -279,6 +298,35 @@ func (a *remoteAuth) purge(now time.Time) {
 			delete(a.locks.Sources, ip)
 		}
 	}
+	for ip, v := range a.locks.Trusted {
+		if !now.Before(v.Add(remoteTrustFor)) {
+			delete(a.locks.Trusted, ip)
+		}
+	}
+}
+
+// remoteSourceKey: IPv4 as is (IPv4-mapped unmapped), IPv6 by its /64 so one network cannot mint endless sources.
+func remoteSourceKey(addr netip.Addr) string {
+	addr = addr.Unmap()
+	if addr.Is6() {
+		return netip.PrefixFrom(addr, 64).Masked().Addr().String()
+	}
+	return addr.String()
+}
+
+// evictSource makes room: the oldest unlocked source goes first, then the one locked longest ago.
+func (a *remoteAuth) evictSource(now time.Time) {
+	victim, locked, at := "", true, time.Time{}
+	for k, s := range a.locks.Sources {
+		l, t := now.Before(s.Locked), s.Window
+		if l {
+			t = s.Locked
+		}
+		if victim == "" || locked && !l || locked == l && t.Before(at) {
+			victim, locked, at = k, l, t
+		}
+	}
+	delete(a.locks.Sources, victim)
 }
 func (a *remoteAuth) revoke() {
 	if a == nil {
@@ -320,7 +368,7 @@ func (a *remoteAuth) login(ip, rid, password string) (token string, retry time.D
 	if e != nil || addr.Zone() != "" {
 		return "", 0, errRemoteLogin
 	}
-	ip = addr.Unmap().String()
+	ip = remoteSourceKey(addr)
 	a.mu.Lock()
 	if a.disabled {
 		a.mu.Unlock()
@@ -330,7 +378,7 @@ func (a *remoteAuth) login(ip, rid, password string) (token string, retry time.D
 	a.purge(now)
 	s, exists := a.locks.Sources[ip]
 	until := s.Locked
-	if a.locks.GlobalUntil.After(until) {
+	if a.locks.GlobalUntil.After(until) && !a.locks.Trusted[ip].After(now.Add(-remoteTrustFor)) { // trusted: only its own limit applies
 		until = a.locks.GlobalUntil
 	}
 	if now.Before(until) {
@@ -338,9 +386,12 @@ func (a *remoteAuth) login(ip, rid, password string) (token string, retry time.D
 		a.mu.Unlock()
 		return "", until.Sub(now), errRemoteLogin
 	}
-	if !exists && len(a.locks.Sources) >= remoteSourceCap || a.hashing >= 2 {
+	if a.hashing >= 2 {
 		a.mu.Unlock()
 		return "", time.Minute, errRemoteLogin
+	}
+	if !exists && len(a.locks.Sources) >= remoteSourceCap {
+		a.evictSource(now)
 	}
 	if !now.Before(s.Window.Add(time.Minute)) {
 		s.Window = now
@@ -417,6 +468,19 @@ func (a *remoteAuth) login(ip, rid, password string) (token string, retry time.D
 	}
 	s.Failures = 0
 	a.locks.Sources[ip] = s
+	if a.locks.Trusted == nil {
+		a.locks.Trusted = map[string]time.Time{}
+	}
+	if _, ok := a.locks.Trusted[ip]; !ok && len(a.locks.Trusted) >= remoteTrustedCap {
+		oldest := ""
+		for k, v := range a.locks.Trusted {
+			if oldest == "" || v.Before(a.locks.Trusted[oldest]) {
+				oldest = k
+			}
+		}
+		delete(a.locks.Trusted, oldest)
+	}
+	a.locks.Trusted[ip] = now
 	if a.saveLocks() != nil {
 		return "", 0, errRemoteLogin
 	}

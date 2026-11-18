@@ -124,8 +124,8 @@ func TestRemoteLimiterBounds(t *testing.T) {
 	for i := 0; i < remoteSourceCap; i++ {
 		a.locks.Sources[fmt.Sprintf("198.51.%d.%d", i/256, i%256)] = remoteSource{Window: *now}
 	}
-	if _, retry, err := a.login("203.0.113.1", "", remoteTestPassword); retry == 0 || err == nil {
-		t.Fatal("source cap bypassed")
+	if token, _, err := a.login("203.0.113.1", "", remoteTestPassword); err != nil || token == "" {
+		t.Fatal("a full table must evict, not refuse")
 	}
 	if len(a.locks.Sources) != remoteSourceCap {
 		t.Fatal("source map grew")
@@ -277,7 +277,7 @@ func TestRemoteAuditSecretsAndRotation(t *testing.T) {
 
 func TestRemoteMalformedLockoutsFailClosed(t *testing.T) {
 	a, config, now := remoteFixture(t)
-	for _, data := range []string{`{"sources":{"not-ip":{}}}`, `{"globalFailures":21}`, `{"sources":{},"globalUntil":"2099-01-01T00:00:00Z"}`, `{"sources":{},"unknown":true}`, `{"globalFailures":-1}`, `{"sources":{"192.0.2.1":{"attempts":6}}}`, `{"sources":{"192.0.2.1":{"failures":-1}}}`, strings.Repeat("x", 256<<10)} {
+	for _, data := range []string{`{"sources":{"not-ip":{}}}`, `{"globalFailures":21}`, `{"sources":{},"unknown":true}`, `{"globalFailures":-1}`, `{"sources":{"192.0.2.1":{"attempts":6}}}`, `{"sources":{"192.0.2.1":{"failures":-1}}}`, strings.Repeat("x", 256<<10)} {
 		if err := writeFileAtomic(a.lockPath(), []byte(data)); err != nil {
 			t.Fatal(err)
 		}
@@ -468,5 +468,90 @@ func TestRemoteMissingCredentialDoesNotFloodAudit(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(a.dir, "remote-settings.audit.jsonl")); !os.IsNotExist(err) {
 		t.Fatal("missing credential flooded audit", err)
+	}
+}
+
+func TestRemoteLimiterIPv6GroupAndEviction(t *testing.T) {
+	a, _, now := remoteFixture(t)
+	for i := 1; i <= 5; i++ {
+		a.login(fmt.Sprintf("2001:db8:1:2::%x", i), "", "wrong")
+	}
+	if _, retry, _ := a.login("2001:db8:1:2:ffff::9", "", remoteTestPassword); retry == 0 {
+		t.Fatal("addresses of one /64 must share a limit")
+	}
+	if token, _, err := a.login("2001:db8:1:3::1", "", remoteTestPassword); err != nil || token == "" {
+		t.Fatal("another /64 must be separate")
+	}
+	if _, ok := a.locks.Sources["::ffff:192.0.2.9"]; ok {
+		t.Fatal("mapped key")
+	}
+	// Full table of locked and unlocked sources: the unlocked oldest goes, locked ones stay.
+	a.locks.Sources = map[string]remoteSource{}
+	for i := 0; i < remoteSourceCap; i++ {
+		a.locks.Sources[fmt.Sprintf("198.51.%d.%d", i/256, i%256)] = remoteSource{Window: now.Add(time.Duration(i) * time.Millisecond), Locked: now.Add(10 * time.Minute)}
+	}
+	a.locks.Sources["198.51.100.1"] = remoteSource{Window: *now}
+	a.locks.Sources["198.51.100.2"] = remoteSource{Window: now.Add(-time.Second)}
+	delete(a.locks.Sources, "198.51.0.0")
+	delete(a.locks.Sources, "198.51.0.1")
+	a.locks.GlobalUntil = time.Time{}
+	if token, _, err := a.login("203.0.113.9", "", remoteTestPassword); err != nil || token == "" {
+		t.Fatal("login failed")
+	}
+	if _, ok := a.locks.Sources["198.51.100.2"]; ok {
+		t.Fatal("oldest unlocked source kept")
+	}
+	if _, ok := a.locks.Sources["198.51.100.1"]; !ok {
+		t.Fatal("wrong source evicted")
+	}
+}
+
+func TestRemoteTrustedSourceSkipsOnlyGlobalLockout(t *testing.T) {
+	a, config, now := remoteFixture(t)
+	remoteLogin(t, a) // 192.0.2.1 is now trusted
+	a.locks.GlobalUntil = now.Add(time.Minute)
+	if token, _, err := a.login("203.0.113.7", "", remoteTestPassword); token != "" || err == nil {
+		t.Fatal("global lockout must hold for others")
+	}
+	if token, _, err := a.login("192.0.2.1", "", remoteTestPassword); token == "" || err != nil {
+		t.Fatal("trusted source locked out by the global lockout")
+	}
+	a.locks.Sources["192.0.2.1"] = remoteSource{Window: *now, Attempts: 5}
+	if _, retry, _ := a.login("192.0.2.1", "", remoteTestPassword); retry == 0 {
+		t.Fatal("its own limit must still apply")
+	}
+	b, err := newRemoteAuth(config, a.now)
+	if err != nil || len(b.locks.Trusted) != 1 {
+		t.Fatal("trust not persisted", err)
+	}
+	*now = now.Add(remoteTrustFor)
+	b.locks.GlobalUntil = now.Add(time.Minute)
+	b.locks.Sources = map[string]remoteSource{}
+	if token, _, _ := b.login("192.0.2.1", "", remoteTestPassword); token != "" {
+		t.Fatal("trust must expire after 8 h")
+	}
+	for i := 0; i < remoteTrustedCap+5; i++ {
+		b.locks.GlobalUntil = time.Time{}
+		b.login(fmt.Sprintf("192.0.2.%d", 10+i), "", remoteTestPassword)
+	}
+	if len(b.locks.Trusted) > remoteTrustedCap {
+		t.Fatal("trusted set unbounded")
+	}
+}
+
+func TestRemoteClockStepClampsInsteadOfFailing(t *testing.T) {
+	a, config, now := remoteFixture(t)
+	future := now.Add(48 * time.Hour).Format(time.RFC3339)
+	data := `{"sources":{"192.0.2.1":{"window":"` + future + `","locked":"` + future + `","attempts":5,"failures":5}},"globalUntil":"` + future + `","globalWindow":"` + future + `","globalFailures":20}`
+	if err := writeFileAtomic(a.lockPath(), []byte(data)); err != nil {
+		t.Fatal(err)
+	}
+	b, err := newRemoteAuth(config, func() time.Time { return *now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := b.locks.Sources["192.0.2.1"]
+	if s.Window.After(*now) || s.Locked.After(now.Add(15*time.Minute)) || b.locks.GlobalWindow.After(*now) || b.locks.GlobalUntil.After(now.Add(time.Minute)) {
+		t.Fatal("timestamps not clamped", s, b.locks)
 	}
 }

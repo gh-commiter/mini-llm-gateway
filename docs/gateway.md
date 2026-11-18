@@ -218,6 +218,10 @@ attempts lock a source out for 15 minutes; bounded global backoff also limits di
 survive restart. Wait for expiry for recovery; resetting the password does not bypass lockouts. Sessions expire after
 30 minutes idle or eight hours total, and end on logout, password reset, gateway-token rotation, disabling the listener
 or restart. A password/session authenticates its holder; it does not prove that the caller is a person.
+A request accepted a moment before a session is revoked still finishes. A source that signed in within the last 8 hours
+(an IPv6 source counts by its /64) is not shut out by the global backoff, only by its own limit; the listener holds at
+most 64 connections. Remote provider changes cannot carry `baseURL`, `insecure`, `tools` or `model` (they would send
+the stored API key elsewhere or raise what agents may do): make them locally, or add the provider again with its key.
 
 Example `serve.json` block (paths name existing PEM files; restart after configuration or certificate changes):
 

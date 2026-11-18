@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -18,6 +20,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -169,6 +172,9 @@ func (s *server) startRemoteSettings() (*http.Server, error) {
 	if !c.Enabled {
 		return nil, nil
 	}
+	if s.remoteAuth == nil { // the lockout state was unusable at startup (see newServer): remote login stays off
+		return nil, nil
+	}
 	tc, err := c.tlsConfig(s.cfgPath)
 	if err != nil {
 		return nil, err
@@ -179,11 +185,76 @@ func (s *server) startRemoteSettings() (*http.Server, error) {
 	}
 	srv := &http.Server{Handler: s.remoteSettingsHandler(c), TLSConfig: tc, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: remoteBodyTimeout, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	go func() {
-		if err := srv.Serve(tls.NewListener(ln, tc)); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(tls.NewListener(limitListener(ln, remoteMaxConns), tc)); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.log.Printf("remote settings stopped: %v", err)
 		}
 	}()
 	return srv, nil
+}
+
+const remoteMaxConns = 64
+
+type limitedListener struct {
+	net.Listener
+	slots chan struct{}
+}
+
+// limitListener allows n open connections at once; Accept waits for a free slot.
+func limitListener(l net.Listener, n int) net.Listener {
+	return &limitedListener{l, make(chan struct{}, n)}
+}
+
+func (l *limitedListener) Accept() (net.Conn, error) {
+	l.slots <- struct{}{}
+	c, err := l.Listener.Accept()
+	if err != nil {
+		<-l.slots
+		return nil, err
+	}
+	return &limitedConn{Conn: c, release: func() { <-l.slots }}, nil
+}
+
+type limitedConn struct {
+	net.Conn
+	once    sync.Once
+	release func()
+}
+
+func (c *limitedConn) Close() error {
+	defer c.once.Do(c.release)
+	return c.Conn.Close()
+}
+
+// remoteProviderPatchRefusal: a remote PATCH of a provider may only carry name, enabled and aliases, each once with
+// exactly this spelling (the shared handler matches keys case-insensitively and lets the last duplicate win). baseURL
+// and insecure would send the stored API key to another host; tools and model raise what agents may do.
+func remoteProviderPatchRefusal(body []byte) string {
+	d := json.NewDecoder(bytes.NewReader(body))
+	if t, err := d.Token(); err != nil || t != json.Delim('{') {
+		return "The request body must be a JSON object."
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		t, err := d.Token()
+		key, ok := t.(string)
+		if err != nil || !ok {
+			return "The request body must be a JSON object."
+		}
+		var skip json.RawMessage
+		if d.Decode(&skip) != nil {
+			return "The request body must be a JSON object."
+		}
+		if seen[key] {
+			return "Duplicate key " + strconv.Quote(key) + " in the request body."
+		}
+		seen[key] = true
+		switch key {
+		case "name", "enabled", "aliases":
+		default:
+			return "Changing " + strconv.Quote(key) + " is not allowed remotely: it needs the API key again, so add the provider again with its key, or make the change locally."
+		}
+	}
+	return ""
 }
 
 // Keep core, agents, host actions and loopback link creation outside this listener.
@@ -275,7 +346,7 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 		}
 		for key := range r.Header {
 			k := strings.ToLower(key)
-			if k == "authorization" || k == "proxy-authorization" || k == "cookie" || strings.HasPrefix(k, "x-claude-") || strings.HasPrefix(k, "x-minigw-") && k != strings.ToLower(remoteSessionHeader) && k != strings.ToLower(remoteClientHeader) && k != strings.ToLower(remoteCSRFHeader) {
+			if k == "authorization" || k == "proxy-authorization" || strings.HasPrefix(k, "x-claude-") || strings.HasPrefix(k, "x-minigw-") && k != strings.ToLower(remoteSessionHeader) && k != strings.ToLower(remoteClientHeader) && k != strings.ToLower(remoteCSRFHeader) {
 				deny(401)
 				return
 			}
@@ -360,6 +431,12 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 			}
 			writeJSON(w, rid, 200, map[string]bool{"ok": true})
 			return
+		}
+		if mutation && r.Method == "PATCH" && strings.HasPrefix(path, adminPrefix+"/providers/") {
+			if msg := remoteProviderPatchRefusal(body); msg != "" {
+				writeError(w, rid, 403, msg)
+				return
+			}
 		}
 		// Audit intent before dispatch, so a broken audit log prevents mutations.
 		operation := ""

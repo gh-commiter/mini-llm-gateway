@@ -194,7 +194,7 @@ func TestRemoteSettingsAlternateCredentials(t *testing.T) {
 	local, _ := f.s.settings.login(f.s.settings.newLogin())
 	for _, tc := range []struct{ key, value string }{
 		{"Authorization", "Bearer gateway-token"}, {"Authorization", adminScheme + "proof"}, {"Authorization", "Basic abc"}, {"Authorization", ""},
-		{settingsHeader, local}, {"X-Minigw-Device", "paired"}, {agentChainHeader, "agent"}, {projectHeader, "1"}, {"X-Claude-Mini-Role", "agent"}, {"Cookie", "session=" + f.token}, {"Proxy-Authorization", "Bearer token"},
+		{settingsHeader, local}, {"X-Minigw-Device", "paired"}, {agentChainHeader, "agent"}, {projectHeader, "1"}, {"X-Claude-Mini-Role", "agent"}, {"Proxy-Authorization", "Bearer token"},
 	} {
 		t.Run(tc.key+tc.value, func(t *testing.T) {
 			r := f.request("GET", adminPrefix+"/providers", "")
@@ -673,5 +673,123 @@ func TestRemoteSettingsStartup(t *testing.T) {
 	}
 	if srv.ReadTimeout != remoteBodyTimeout || srv.ReadHeaderTimeout == 0 || srv.WriteTimeout == 0 || srv.IdleTimeout == 0 || srv.MaxHeaderBytes > 16<<10 {
 		t.Fatal("listener deadlines or header bound missing")
+	}
+}
+
+func TestRemoteSettingsIgnoresCookie(t *testing.T) {
+	f := remoteTransport(t)
+	r := f.request("GET", adminPrefix+"/providers", "")
+	r.Header.Set("Cookie", "sso=parent-domain")
+	if w := f.run(r); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	r = f.request("GET", adminPrefix+"/providers", "")
+	r.Header.Del(remoteSessionHeader)
+	r.Header.Set("Cookie", "session="+f.token)
+	if w := f.run(r); w.Code != 401 {
+		t.Fatal("cookie accepted as session", w.Code)
+	}
+}
+
+func TestRemoteProviderPatchCannotRedirectKey(t *testing.T) {
+	f := remoteTransport(t)
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.Gateways = []serveGateway{{Name: "lite", BaseURL: "https://good.example/v1"}}
+	})
+	s.cfg.RemoteSettings = f.c
+	s.remoteAuth = f.s.remoteAuth
+	if err := writeServeConfig(s.cfgPath, s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.s = s
+	orig, _ := findGateway(s.conf(), "lite")
+	for _, body := range []string{
+		`{"baseURL":"https://evil.example/v1"}`, `{"BaseURL":"https://evil.example/v1"}`, `{"BASEURL":"https://evil.example/v1"}`,
+		`{"baseURL":"https://evil.example/v1","baseURL":null}`, `{"enabled":true,"enabled":false}`,
+		`{"insecure":true}`, `{"Insecure":true}`, `{"tools":"edit"}`, `{"model":"x","tools":"edit"}`, `{"key":"k","baseURL":"https://evil.example/v1"}`,
+		`{"aliases":"a","nested":{"baseURL":"https://evil.example/v1"}}`,
+		`[]`, `"baseURL"`, `null`, `{"baseURL"`, ``,
+	} {
+		w := f.run(f.request("PATCH", adminPrefix+"/providers/lite", body))
+		if w.Code < 400 || w.Code >= 500 || !strings.Contains(w.Body.String(), "remote") && !strings.Contains(w.Body.String(), "JSON object") && !strings.Contains(w.Body.String(), "Duplicate") {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	if g, _ := findGateway(s.conf(), "lite"); g.BaseURL != orig.BaseURL || g.Tools != "" || g.Insecure || g.Disabled {
+		t.Fatal("provider changed", g)
+	}
+	// Name, enabled and aliases still work remotely.
+	if w := f.run(f.request("PATCH", adminPrefix+"/providers/lite", `{"enabled":false,"aliases":"fast=x"}`)); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	// Re-adding an existing provider needs the key.
+	if w := f.run(f.request("POST", adminPrefix+"/providers", `{"name":"lite","baseURL":"https://evil.example/v1"}`)); w.Code != 400 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if g, _ := findGateway(s.conf(), "lite"); g.BaseURL != orig.BaseURL {
+		t.Fatal("provider URL changed without the key")
+	}
+}
+
+func TestRemoteLimitListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	l := limitListener(ln, 2)
+	var dialed []net.Conn
+	for i := 0; i < 3; i++ {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		dialed = append(dialed, c)
+	}
+	var open []net.Conn
+	for i := 0; i < 2; i++ {
+		c, err := l.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		open = append(open, c)
+	}
+	got := make(chan net.Conn, 1)
+	go func() { c, _ := l.Accept(); got <- c }()
+	select {
+	case <-got:
+		t.Fatal("third connection accepted above the limit")
+	case <-time.After(200 * time.Millisecond):
+	}
+	open[0].Close()
+	open[0].Close() // a double close frees one slot only
+	select {
+	case c := <-got:
+		c.Close()
+	case <-time.After(3 * time.Second):
+		t.Fatal("slot not released")
+	}
+}
+
+func TestRemoteBrokenLockoutsDisableOnlyRemote(t *testing.T) {
+	f := remoteTransport(t)
+	local, _ := testServer(t, nil)
+	c := local.conf()
+	c.RemoteSettings = f.c
+	password, _ := os.ReadFile(remotePasswordPath(f.config))
+	if err := os.WriteFile(remotePasswordPath(local.cfgPath), password, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(local.cfgPath), "remote-settings.lockouts.json"), []byte(`{"sources":{"not-ip":{}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := newServer(c, local.cfgPath)
+	if err != nil || s.remoteAuth != nil {
+		t.Fatal("gateway must start with remote login off", err)
+	}
+	s.log = log.New(io.Discard, "", 0)
+	if srv, err := s.startRemoteSettings(); srv != nil || err != nil {
+		t.Fatal("remote listener started without lockout state")
 	}
 }
