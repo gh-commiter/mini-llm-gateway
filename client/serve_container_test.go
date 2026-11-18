@@ -149,29 +149,16 @@ func fakeResolverIPs(t *testing.T, m map[string][]string) {
 	t.Cleanup(func() { resolveHost = old })
 }
 
-// privateListener: a listener on a private address of this computer (a service name may no longer resolve to loopback,
-// and a test can only listen on an address the computer has).
-func privateListener(t *testing.T) (net.IP, net.Listener) {
-	t.Helper()
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		t.Fatal(err)
+// fakeDial: gwDial's real connect goes to a 127.0.0.1 listener; the address it was asked for (the checked IP) is recorded.
+func fakeDial(t *testing.T, port string) *[]string {
+	old := dialChecked
+	var got []string
+	dialChecked = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		got = append(got, addr)
+		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
 	}
-	for _, a := range addrs {
-		n, ok := a.(*net.IPNet)
-		if !ok {
-			continue
-		}
-		ip := n.IP.To4()
-		if ip == nil || !privateIP(ip) {
-			continue
-		}
-		if ln, err := net.Listen("tcp", net.JoinHostPort(ip.String(), "0")); err == nil {
-			return ip, ln
-		}
-	}
-	t.Skip("no private IPv4 address to listen on")
-	return nil, nil
+	t.Cleanup(func() { dialChecked = old })
+	return &got
 }
 
 func TestSingleLabelProviderOnlyInContainerMode(t *testing.T) {
@@ -204,7 +191,10 @@ func TestSingleLabelProviderOnlyInContainerMode(t *testing.T) {
 // A name that was private when added and later resolves to a public address is not dialled.
 func TestSingleLabelProviderRedialGuard(t *testing.T) {
 	t.Setenv("MINIGW_CONTAINER", "1")
-	ip, ln := privateListener(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer ln.Close()
 	go func() {
 		for {
@@ -216,18 +206,25 @@ func TestSingleLabelProviderRedialGuard(t *testing.T) {
 		}
 	}()
 	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-	fakeResolver(t, map[string]string{"litellm": ip.String()})
+	dialled := fakeDial(t, port)
+	fakeResolver(t, map[string]string{"litellm": "172.22.0.3"})
 	c, err := gwDial(context.Background(), "tcp", "litellm:"+port)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.Close()
+	if want := "172.22.0.3:" + port; len(*dialled) != 1 || (*dialled)[0] != want {
+		t.Fatalf("dialled %v, want the checked address %s", *dialled, want)
+	}
 	fakeResolver(t, map[string]string{"litellm": "8.8.8.8"}) // later: public
 	if c, err := gwDial(context.Background(), "tcp", "litellm:"+port); err == nil || !strings.Contains(err.Error(), "public") {
 		if c != nil {
 			c.Close()
 		}
 		t.Fatalf("dialled a name that resolves to a public address: %v", err)
+	}
+	if len(*dialled) != 1 {
+		t.Fatalf("a connect was attempted for a public answer: %v", *dialled)
 	}
 }
 
@@ -241,12 +238,14 @@ func TestSingleLabelProviderRefusesNonPrivateAddresses(t *testing.T) {
 		"mapped":  {"::ffff:169.254.169.254"},
 		"loop":    {"127.0.0.1"},
 		"loop6":   {"::ffff:127.0.0.1"},
-		"unset":   {"0.0.0.0"},
+		"unset":   {"::"},
+		"unset4":  {"::ffff:0:0"},
 		"mcast":   {"224.0.0.1"},
 		"mixed":   {"172.22.0.3", "169.254.169.254"},
 		"private": {"172.22.0.3", "172.22.0.4"},
 	})
-	for _, name := range []string{"meta", "meta6", "mapped", "loop", "loop6", "unset", "mcast", "mixed"} {
+	dialled := fakeDial(t, "1")
+	for _, name := range []string{"meta", "meta6", "mapped", "loop", "loop6", "unset", "unset4", "mcast", "mixed"} {
 		if err := checkGatewayName("http://" + name + ":4000"); err == nil {
 			t.Errorf("%s: accepted at add time", name)
 		}
@@ -257,6 +256,9 @@ func TestSingleLabelProviderRefusesNonPrivateAddresses(t *testing.T) {
 	}
 	if err := checkGatewayName("http://private:4000"); err != nil {
 		t.Errorf("private addresses refused at add time: %v", err)
+	}
+	if len(*dialled) != 0 {
+		t.Errorf("a refused name reached the connect step: %v", *dialled)
 	}
 }
 
@@ -287,6 +289,7 @@ func TestServiceNameProviderBypassesEnvProxy(t *testing.T) {
 
 	// The dial is refused by gwDial before any connection; the proxy must not have been asked at all.
 	fakeResolver(t, map[string]string{"litellm": "169.254.169.254"})
+	fakeDial(t, "1")
 	if _, err := quotaHTTP.Do(req); err == nil {
 		t.Fatal("request to a link-local provider name succeeded")
 	}

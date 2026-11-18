@@ -208,14 +208,20 @@ func checkGatewayName(base string) error {
 // gwDial: every connection to a provider. A single-label name (container mode) is resolved again here and followed only
 // while it resolves to private addresses: a name that later points to a public address is not dialled.
 func gwDial(ctx context.Context, network, addr string) (net.Conn, error) {
-	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	if host, port, err := net.SplitHostPort(addr); err == nil && containerMode() && singleLabel(strings.ToLower(host)) {
 		ip, err := privateHost(ctx, strings.ToLower(host))
 		if err != nil {
 			return nil, err
 		}
-		return d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		return dialChecked(ctx, network, net.JoinHostPort(ip.String(), port))
 	}
+	return dialChecked(ctx, network, addr)
+}
+
+// dialChecked: the one real connect of gwDial (the address is already an IP that passed the check); tests replace it
+// so that no test needs a listener on a private address.
+var dialChecked = func(ctx context.Context, network, addr string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	return d.DialContext(ctx, network, addr)
 }
 
