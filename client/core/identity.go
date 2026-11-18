@@ -394,6 +394,10 @@ type FAQEntry struct {
 	Class   Class
 	Answer  string
 	Updated time.Time
+	// From, Upstream and AsOf: an entry of another gateway's mirror (Answer then starts with the marker line).
+	From     string
+	Upstream string
+	AsOf     *time.Time
 }
 
 // FAQPage is a page of FAQ entries; Next is "" for the last page.
@@ -417,7 +421,12 @@ func (s *Store) ListFAQ(ctx context.Context, p Principal, project int64, after s
 		if lim != nil {
 			return lim
 		}
-		pg, e = faqPage(tx, p.UserID, project, []readable{a.readable(project, false)}, after)
+		rs := []readable{a.readable(project, false)}
+		if pg, e = faqPage(tx, p.UserID, project, rs, after); e != nil || after != "" {
+			return e
+		}
+		hub, e := mirrorFAQ(ctx, tx, s.now(), p.UserID, project, rs) // the first page only, after the local entries
+		pg.Entries = append(pg.Entries, hub...)
 		return e
 	})
 	return

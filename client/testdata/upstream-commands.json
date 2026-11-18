@@ -961,7 +961,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub: reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)\n",
+    "out": "shop -> hub: reading is on; minigw gw upstream pull fills the mirror, which the members then see in kb search, kb faq and note read (marked from hub)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1005,7 +1005,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub: reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)\n",
+    "out": "shop -> hub: reading is on; minigw gw upstream pull fills the mirror, which the members then see in kb search, kb faq and note read (marked from hub)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1089,7 +1089,7 @@
     }
    ],
    "want": {
-    "out": "linked shop to hub as shop: nothing is sent until minigw gw upstream push\nreading is on; minigw gw upstream pull fills the mirror (members do not see it yet)\n",
+    "out": "linked shop to hub as shop: nothing is sent until minigw gw upstream push\nreading is on; minigw gw upstream pull fills the mirror, which the members then see in kb search, kb faq and note read (marked from hub)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1433,6 +1433,33 @@
    ],
    "want": {
     "out": "shop -> hub (shop): 0 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, manual\n  read: on, classes structure,data, sources team:acme,project:eureko, accepted 2026-11-17 09:00 for shop, mirror 12 notes (3.1 KiB), last pull 2026-11-17 10:30 (3 h old), last try 2026-11-17 10:45\n  last pull error: the upstream says: down\nweb -> hub (web): 0 of 0 notes would go, never pushed, classes structure, manual\n  read: on, classes structure, sources none, accepted 2026-11-17 09:00 for web, mirror 0 notes (0 B), never pulled\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/upstreams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "status reading stale",
+   "args": [
+    "upstream",
+    "status"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /upstreams",
+     "status": 200,
+     "body": "{\"links\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"project\": 3, \"classes\": [\"structure\"], \"pending\": 0, \"total\": 0, \"mode\": \"submit\", \"auto\": false, \"read\": true, \"readClasses\": [\"structure\"], \"readAccepted\": \"2026-11-01T09:00:00Z\", \"lastPull\": \"2026-11-09T10:30:00Z\", \"lastPullOk\": \"2026-11-09T10:30:00Z\", \"lastPullAge\": 691200, \"mirror\": 5, \"mirrorBytes\": 900, \"stale\": true}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 0 of 0 notes would go, never pushed, classes structure, manual\n  read: on, classes structure, sources none, accepted 2026-11-01 09:00 for shop, mirror 5 notes (900 B), last pull 2026-11-09 10:30 (8 d old), stale: members do not see the mirror until a pull completes (none in the last 7 days)\n",
     "err": "",
     "exit": 0,
     "requests": [

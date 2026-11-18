@@ -6,7 +6,7 @@ extension ProjectEnv {
         minigw kb export <project>|--team <team> <dir>
         minigw kb import <project>|--team <team> <dir|file.md> [--class c] [--submit]
         minigw kb mcp [--project slug] [--print-config]
-        minigw kb search [<project>|--team <team>] <query> [--json]   a project search also covers its team's notes (as far as you may read them); a hit from there ends with "from team:<name>"
+        minigw kb search [<project>|--team <team>] <query> [--json]   a project search also covers its team's notes (as far as you may read them); a hit from there ends with "from team:<name>", a read-only copy from an upstream gateway with "from hub:<name> project:<slug>"
         minigw kb submit <project>|--team <team> [--class structure|data] [--kind finding|faq] [--title t] [--key k] [--replaces id --revision n] <file|->   faq: the title is the question, the text a short answer (up to 2 KiB); private is for projects only
         minigw kb faq [<project>|--team <team>] [--json]   the project's (or the team's) questions and answers
         minigw kb submissions [<project>|--team <team>] [--json]   your submissions (all projects and your teams' own notes if omitted)

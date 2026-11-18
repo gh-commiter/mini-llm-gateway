@@ -61,6 +61,10 @@ type NoteJSON struct {
 	EntryKind        string           `json:"entryKind"`
 	Team             string           `json:"team,omitempty"` // the team of a note in a team's own notes (Project is then a hidden id)
 	Origin           string           `json:"origin,omitempty"`
+	// From, Upstream and AsOf: a note of another gateway's mirror (read-only here; the body starts with the marker line).
+	From     string     `json:"from,omitempty"`
+	Upstream string     `json:"upstream,omitempty"`
+	AsOf     *time.Time `json:"asOf,omitempty"`
 }
 
 func toNote(n core.Note, withBody bool) NoteJSON {
@@ -68,9 +72,15 @@ func toNote(n core.Note, withBody bool) NoteJSON {
 	if j.EntryKind == "" { // an old idempotency receipt
 		j.EntryKind = core.KindFinding
 	}
+	if n.Upstream != "" {
+		at := n.AsOf
+		j.From, j.Upstream, j.AsOf = n.From, n.Upstream, &at
+	}
 	if withBody {
 		j.Body = &n.Body
-		j.Provenance = &n.Provenance
+		if n.Upstream == "" { // a mirrored note has no provenance here: its origin is From
+			j.Provenance = &n.Provenance
+		}
 		if n.UnverifiedSource != "" && json.Valid([]byte(n.UnverifiedSource)) {
 			j.UnverifiedSource = json.RawMessage(n.UnverifiedSource)
 		}
@@ -438,7 +448,9 @@ func (a *API) noteRoute(ctx context.Context, st *core.Store, p core.Principal, p
 		if err != nil {
 			return a.errResponse(err)
 		}
-		n.Origin = st.NoteOrigin(n.ProjectID) // the export writes it into the file
+		if n.Upstream == "" { // a mirrored note does not live here: no origin of this gateway
+			n.Origin = st.NoteOrigin(n.ProjectID) // the export writes it into the file
+		}
 		return resp(200, toNote(n, true))
 	case "PUT":
 		var b noteBody
@@ -566,17 +578,20 @@ type remotesBody struct {
 }
 
 type faqEntryJSON struct {
-	ID      int64      `json:"id"`
-	Title   string     `json:"title"`
-	Class   core.Class `json:"class"`
-	Answer  string     `json:"answer"`
-	Updated time.Time  `json:"updated"`
+	ID       int64      `json:"id"`
+	Title    string     `json:"title"`
+	Class    core.Class `json:"class"`
+	Answer   string     `json:"answer"`
+	Updated  time.Time  `json:"updated"`
+	From     string     `json:"from,omitempty"`
+	Upstream string     `json:"upstream,omitempty"`
+	AsOf     *time.Time `json:"asOf,omitempty"`
 }
 
 func faqJSON(pg core.FAQPage) map[string]any {
 	out := []faqEntryJSON{}
 	for _, e := range pg.Entries {
-		out = append(out, faqEntryJSON{e.ID, e.Title, e.Class, e.Answer, e.Updated})
+		out = append(out, faqEntryJSON{e.ID, e.Title, e.Class, e.Answer, e.Updated, e.From, e.Upstream, e.AsOf})
 	}
 	return map[string]any{"entries": out, "next": pg.Next}
 }

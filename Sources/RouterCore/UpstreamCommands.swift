@@ -91,7 +91,7 @@ extension AdminCommands {
             defer { if linked["readOff"]?.bool == true { say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach")) } }
             if reading && !pushFlags {
                 if o.noRead { say(clean("\(local) -> \(name): reading is off, the mirror was deleted")) }
-                else { say(clean("\(local) -> \(name): reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)")) }
+                else { say(clean("\(local) -> \(name): reading is on; minigw gw upstream pull fills the mirror, which the members then see in kb search, kb faq and note read (marked from hub)")) }
                 return
             }
             if o.auto { say(clean("linked \(local) to \(name) as \(remote): changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)")) }
@@ -99,7 +99,7 @@ extension AdminCommands {
             if o.withPrivate {
                 say(clean("also the private notes of ALL members of the " + (isTeam ? "team" : "project") + " are sent"))
             }
-            if reading { say(o.noRead ? "reading is off, the mirror was deleted" : "reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)") }
+            if reading { say(o.noRead ? "reading is off, the mirror was deleted" : "reading is on; minigw gw upstream pull fills the mirror, which the members then see in kb search, kb faq and note read (marked from hub)") }
         case ("status", 2...3):
             var q = ""
             if !team.isEmpty && pos.count == 2 { q = "?team=\(try teamID(team))" }
@@ -238,6 +238,7 @@ extension AdminCommands {
         var pulled = ", never pulled"
         if let ok = at("lastPullOk") { pulled = ", last pull " + ProjectText.stamp(ok, zone) + " (" + upstreamAge(d["lastPullAge"]?.int ?? 0) + " old)" }
         if let t = at("lastPull"), at("lastPullOk").map({ t > $0 }) ?? true { pulled += ", last try " + ProjectText.stamp(t, zone) }
+        if d["stale"]?.bool == true { pulled += ", stale: members do not see the mirror until a pull completes (none in the last 7 days)" }
         return "read: on, classes \(cls), sources \(srcs.isEmpty ? "none" : srcs.joined(separator: ",") )\(acc), mirror \(d["mirror"]?.int ?? 0) notes (\(upstreamSize(Int64(d["mirrorBytes"]?.int ?? 0))))\(pulled)"
     }
 

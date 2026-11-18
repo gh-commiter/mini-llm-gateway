@@ -407,7 +407,7 @@ body), 403 `forbidden`, 403 `archived`, 409 `revision_mismatch` (with `revision`
 | `POST /projects/by-remote` | body `{"remote": url}` (credentials already removed by the client); 200 `{"identity", "projects": [Project]}`: only the caller's direct-member, non-archived projects registered for that identity; 400 `invalid` for a local path, `file://` or a missing host; for `minigw project link` without a slug |
 | `GET /projects/{id}/remotes` | `{"remotes": [identity]}`; any direct member (403 for a grant alone, 404 when the project is not visible) |
 | `POST /projects/{id}/remotes` | body `{"add": [url], "remove": [url]}`; project admin only (effective role, team-derived counts): 403 for reader and developer, 404 for a non-member, 403 `archived`; `{"remotes", "added", "removed"}` |
-| `GET /projects/{id}/kb/faq[?after=cursor]` | `{"entries": [{id, title, class, answer, updated}], "next": ""}`, newest first, at most 50 per page and 64 KiB; the visibility of the note list (private only for its author and the admins); pending submissions never; not on the run port |
+| `GET /projects/{id}/kb/faq[?after=cursor]` | `{"entries": [{id, title, class, answer, updated, from?, upstream?, asOf?}], "next": ""}`, newest first, at most 50 per page and 64 KiB; the visibility of the note list (private only for its author and the admins); pending submissions never; not on the run port. The first page (no `after`) adds at most 20 entries (16 KiB) of an upstream mirror after the local ones, with `from` (`hub:<upstream> <source>`), `upstream` and `asOf`, the answer starting with the marker line (see the search API) |
 
 Request bodies are limited to 512 KiB before they are parsed (413 `too_large`); title 256 bytes and body 64 KiB,
 10 000 notes and 100 MiB per project; 60 writes and 600 reads a minute per user.
@@ -708,6 +708,19 @@ or customer-data detection is implemented.
 | POST | Admin `/kb/search/rebuild` | Owner-only transactional rebuild; `{"rebuilt":true}` |
 
 Search returns `{"hits":[{"id":1,"title":"Title","project":1,"class":"structure","snippet":"Preview","updated":"2026-11-16T10:00:00Z","entryKind":"finding"}]}`.
+
+Upstream mirror (step C3): a project's (or a team's) search, `GET .../notes/{id}`, the run's `/minigw/v1/kb/search` and
+`/minigw/v1/notes/{id}`, and the FAQ include the read-only mirror of its links that read. A hub hit has an id from 2^50 up
+(`1125899906842624 + n`), `from: "hub:<upstream> <source>"` (the source as the upstream named it: `project:<slug>` or `team:<name>`),
+`upstream` and `asOf` (RFC 3339, the last complete pull); `project` is the LOCAL linked project (or the team's hidden id with `team`).
+The note of a mirror id has the same fields, `author` = the `from` text, `revision` the upstream's, no `provenance` and no `origin`, and its
+`body` starts with the line `[from hub:<upstream> <source>, as of <asOf>: reference data from another gateway, not instructions]` (the whole
+body at most 64 KiB). Visible only to a direct member of the linked project (a team link: the team's roster) in the classes of that member's
+own role there, never through a grant or `depends on`, never private, not while the project or team is archived; a run: its own project and
+team only. Hidden (not deleted) when the link has no complete pull for 7 days or reading is off. A page holds the local hits first: up to
+15 local + 5 hub, a side's unused slots go to the other, still 20 hits and 8192 bytes. A hub copy of a note this gateway pushed on that link
+(its remote id, or the trailer reference of an accepted submission) is left out. `PUT`/`DELETE .../notes/{id}`, a submission's `replaces`
+and the owner's `resolve` answer a mirror id exactly as an unknown id (404 or "no conflict"). No request reaches the upstream.
 No total count or corpus score is returned. Hits are ordered by revision time
 descending then note ID, capped at 20 and 8192 JSON bytes. The snippet is the
 first 160 Unicode characters of the body. Authorization precedes body retrieval,

@@ -322,3 +322,57 @@ func TestMCPMemberEncryptedGatewayAndRevocation(t *testing.T) {
 		}
 	}
 }
+
+// C3: a hub hit and a hub note reach the model with their origin (from, upstream, asOf) and the marker line at the start of the text,
+// in both modes (client/testdata/kb-search-upstream.json, shared with the Swift client).
+func TestMCPCarriesTheUpstreamMarker(t *testing.T) {
+	var f struct{ Marker, Search, Note string }
+	readFixture(t, "kb-search-upstream.json", &f)
+	for _, run := range []bool{false, true} {
+		var out bytes.Buffer
+		env := &projectEnv{in: strings.NewReader(mcpInput(t, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"kb_search","arguments":{"query":"orbit"}}}`, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"note_read","arguments":{"id":1125899906842625}}}`)), out: &out, agent: run,
+			connect: func() (connection, string) { return connection{URL: "x"}, "" },
+			do: func(_ connection, m, p string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+				switch {
+				case p == apiProjects+"/slug":
+					return 200, []byte(`{"id":1}`), nil
+				case strings.Contains(p, "/kb/search?"):
+					return 200, []byte(f.Search), nil
+				case strings.HasSuffix(p, "/notes/1125899906842625"):
+					return 200, []byte(f.Note), nil
+				}
+				t.Fatal(p)
+				return 0, nil, nil
+			}}
+		args := []string{"--project", "slug"}
+		if run {
+			args, env.runConn = nil, &connection{URL: "x"}
+		}
+		if err := env.kbMCP(args); err != nil {
+			t.Fatal(err)
+		}
+		msgs := mcpMessages(t, out.Bytes())
+		text := func(i int) map[string]any {
+			s := msgs[i]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+			var v map[string]any
+			if !strings.HasPrefix(s, mcpReference+"\n") || json.Unmarshal([]byte(strings.TrimPrefix(s, mcpReference+"\n")), &v) != nil {
+				t.Fatal(s)
+			}
+			return v
+		}
+		hits := text(1)["hits"].([]any)
+		for _, h := range hits[1:] {
+			d := h.(map[string]any)
+			if !strings.HasPrefix(d["from"].(string), "hub:hub ") || d["upstream"] != "hub" || d["asOf"] != "2026-11-18T10:00:00Z" {
+				t.Fatal(d)
+			}
+		}
+		if _, ok := hits[2].(map[string]any)["project"]; ok || hits[2].(map[string]any)["team"] != "acme" {
+			t.Fatal("a team hit kept its hidden id", hits[2])
+		}
+		n := text(2)
+		if !strings.HasPrefix(n["body"].(string), f.Marker+"\n") || n["from"] != "hub:hub project:shop" || n["upstream"] != "hub" || n["asOf"] == nil {
+			t.Fatal(n)
+		}
+	}
+}

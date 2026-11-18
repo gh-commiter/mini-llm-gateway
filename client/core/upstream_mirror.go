@@ -59,7 +59,11 @@ func readInfo(tx *sql.Tx, now int64, i *UpstreamLinkInfo) error {
 	if ok > 0 { // the owner's status says how old the mirror is; the age is the gateway's own clock, not the reader's
 		i.LastPullAge = max(0, int((now-ok)/1000))
 	}
-	return tx.QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM upstream_mirror WHERE project_id=? AND upstream=?`, i.Project, i.Upstream).Scan(&i.Mirror, &i.MirrorBytes)
+	if e := tx.QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM upstream_mirror WHERE project_id=? AND upstream=?`, i.Project, i.Upstream).Scan(&i.Mirror, &i.MirrorBytes); e != nil {
+		return e
+	}
+	i.Stale = i.Read && i.Mirror > 0 && ok <= now-mirrorStale.Milliseconds() // members do not see it (search and read hide it)
+	return nil
 }
 
 // pullSettings: what the owner accepted for the link, as the run starts. A run that finds these changed when it writes stores nothing.

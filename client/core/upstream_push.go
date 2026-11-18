@@ -240,6 +240,14 @@ func (p *pusher) mac(parts ...any) []byte {
 	return m.Sum(nil)
 }
 
+// upstreamRefMark starts the trailer; upstreamRef is the opaque reference in it (12 hex digits). The read side uses both to know a hub's copy
+// of a note this gateway sent (upstream_mirror_read.go).
+const upstreamRefMark = "<!-- minigw upstream ref "
+
+func upstreamRef(secret []byte, up string, project, note int64) string {
+	return hex.EncodeToString((&pusher{secret: secret}).mac("ref|", up, "|", project, "|", note)[:6])
+}
+
 func (p *pusher) submissionKey(project int64, n UpstreamNote, supersedes int64) string {
 	return "up-" + hex.EncodeToString(p.mac("idem|", p.up, "|", project, "|", n.ID, "|", n.Hash, "|", supersedes)[:16])
 }
@@ -249,7 +257,7 @@ func (p *pusher) submissionKey(project int64, n UpstreamNote, supersedes int64) 
 // gateway id, note id or revision leaves with it. It carries no identity: that is the bound device.
 func (p *pusher) trailer(project int64, n UpstreamNote, supersedes int64) string {
 	author := strings.ReplaceAll(upText(n.Author, 64), "-", "\u2010") // never "-->"
-	t := "\n\n<!-- minigw upstream ref " + hex.EncodeToString(p.mac("ref|", p.up, "|", project, "|", n.ID)[:6]) + ", author " + author
+	t := "\n\n" + upstreamRefMark + upstreamRef(p.secret, p.up, project, n.ID) + ", author " + author
 	if supersedes > 0 {
 		t += fmt.Sprintf("; supersedes submission %d", supersedes)
 	}

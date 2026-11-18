@@ -34,6 +34,10 @@ type Note struct {
 	// Origin names the gateway and project the note lives in ("<gateway id>:<project id>"): the export writes it into the front
 	// matter so that a re-import into the same project knows its own file. Set by the API when a note is read, never stored.
 	Origin string `json:",omitempty"`
+	// Upstream, AsOf and From: a note read from the mirror of another gateway (its id is mirrorBase and up; it is never stored here).
+	Upstream string    `json:"-"`
+	AsOf     time.Time `json:"-"`
+	From     string    `json:"-"`
 }
 
 // NoteInput is the payload of create and update.
@@ -222,6 +226,9 @@ func checkListArgs(class Class, limit int) (int, error) {
 }
 
 func getNote(tx *sql.Tx, id int64) (Note, error) {
+	if isMirrorID(id) { // a mirrored note is never a local one: every route by note id answers it as unknown
+		return Note{}, ErrNotFound
+	}
 	n, err := scanNote(tx.QueryRow(`SELECT `+noteCols+` FROM notes n JOIN users u ON u.id=n.author_id WHERE n.id=?`, id), true)
 	if err == nil {
 		err = noteProvenance(tx, &n)
@@ -255,6 +262,9 @@ func fillTeam(tx *sql.Tx, n *Note, names map[int64]string) error {
 
 // noteMetadata never selects the body.
 func noteMetadata(tx *sql.Tx, id int64) (Note, error) {
+	if isMirrorID(id) {
+		return Note{}, ErrNotFound
+	}
 	n, err := scanNote(tx.QueryRow(`SELECT `+listCols+` FROM notes n JOIN users u ON u.id=n.author_id WHERE n.id=?`, id), false)
 	return n, notFound(err)
 }
@@ -314,6 +324,12 @@ func (s *Store) GetNote(ctx context.Context, p Principal, project, id int64) (n 
 		}
 		rs, err := noteSources(tx, p.UserID, project, a)
 		if err != nil {
+			return err
+		}
+		if isMirrorID(id) {
+			if n, err = readMirrorNote(ctx, tx, s.now(), p.UserID, project, rs, id); err == nil && lim != nil {
+				return lim
+			}
 			return err
 		}
 		if _, err = visibleNote(tx, p.UserID, id, rs); err != nil {
@@ -788,6 +804,12 @@ func (s *Store) RunGetNote(ctx context.Context, c RunCap, approved bool, id int6
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		rs, err := s.runScope(tx, c, approved, true)
 		if err != nil {
+			return err
+		}
+		if isMirrorID(id) {
+			if n, err = readMirrorNote(ctx, tx, s.now(), c.UserID, c.ProjectID, rs, id); err == nil && lim != nil {
+				return lim
+			}
 			return err
 		}
 		if _, err := visibleNote(tx, c.UserID, id, rs); err != nil {

@@ -131,3 +131,38 @@ import Testing
     }
 }
 
+
+/// C3: what members and runs see of another gateway's mirror (client/testdata/kb-search-upstream.json, shared with Go's
+/// TestKBUpstreamMirrorOutput): every hub hit and entry names its origin; a read's text starts with the marker line.
+@Suite struct KBUpstreamMirrorOutput {
+    @Test func sharedOutput() throws {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let f = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("client/testdata/kb-search-upstream.json"))) as! [String: Any]
+        for c in f["member"] as! [[String: Any]] {
+            var out = "", requests: [[String]] = []
+            let responses = c["responses"] as! [[String: Any]]
+            let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { out += $0 }, err: { _ in }, agent: false, send: { _, m, p, _, _ in
+                requests.append([m, p, ""])
+                let r = responses.first { $0["match"] as? String == m + " " + p }!
+                return ProjectReply(status: r["status"] as! Int, data: Data((r["body"] as! String).utf8))
+            })
+            env.zone = TimeZone(identifier: "UTC")!
+            try env.kb(c["args"] as! [String])
+            #expect(out == c["out"] as! String, "\(c["args"] as! [String])")
+            #expect(requests == c["requests"] as! [[String]])
+        }
+        for key in ["read", "readJSON"] {
+            let c = f[key] as! [String: Any]
+            var out = ""
+            let conn = ProjectConn(url: "", token: "")
+            let env = ProjectEnv(connect: { (conn, "") }, state: "", cwd: "", stdin: { Data() }, out: { out += $0 }, err: { _ in }, agent: true, runConn: conn, send: { _, m, p, _, _ in
+                #expect(m == "GET" && p == c["path"] as! String)
+                return ProjectReply(status: 200, data: Data((c["body"] as! String).utf8))
+            })
+            env.zone = TimeZone(identifier: "UTC")!
+            try env.note(c["args"] as! [String])
+            #expect(out == c["out"] as! String, "\(key)")
+            #expect(out.contains(f["marker"] as! String))
+        }
+    }
+}

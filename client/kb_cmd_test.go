@@ -436,3 +436,65 @@ func TestConfirmAcceptNeedsTheWholeVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// C3: what members and runs see of another gateway's mirror, as text and JSON (client/testdata/kb-search-upstream.json, shared with
+// the Swift client): every hub hit and entry names its origin; a read's text starts with the marker line.
+func TestKBUpstreamMirrorOutput(t *testing.T) {
+	saved := time.Local
+	time.Local = time.UTC
+	defer func() { time.Local = saved }()
+	var f struct {
+		Marker string
+		Member []struct {
+			Args      []string
+			Out       string
+			Responses []cmdResp
+			Requests  [][]string
+		}
+		Read, ReadJSON struct {
+			Args            []string
+			Path, Body, Out string
+		}
+	}
+	if e := json.Unmarshal(srcFile(t, "testdata/kb-search-upstream.json"), &f); e != nil {
+		t.Fatal(e)
+	}
+	for _, c := range f.Member {
+		var out bytes.Buffer
+		var requests [][]string
+		env := &projectEnv{out: &out, connect: func() (connection, string) { return connection{}, "" }, do: func(_ connection, method, path string, _ map[string]string, b []byte) (int, []byte, http.Header) {
+			requests = append(requests, []string{method, path, string(b)})
+			for _, r := range c.Responses {
+				if r.Match == method+" "+path {
+					return r.Status, []byte(r.Body), nil
+				}
+			}
+			t.Fatalf("unexpected %s %s", method, path)
+			return 599, nil, nil
+		}}
+		if e := env.kb(c.Args); e != nil {
+			t.Fatal(e)
+		}
+		if out.String() != c.Out || !reflect.DeepEqual(requests, c.Requests) {
+			t.Fatalf("%v: %q %+v", c.Args, out.String(), requests)
+		}
+	}
+	for _, c := range []struct {
+		Args            []string
+		Path, Body, Out string
+	}{f.Read, f.ReadJSON} {
+		var out bytes.Buffer
+		e := &projectEnv{out: &out, agent: true, runConn: &connection{}, do: func(_ connection, m, p string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+			if m != "GET" || p != c.Path {
+				t.Fatal(m, p)
+			}
+			return 200, []byte(c.Body), nil
+		}}
+		if err := e.note(c.Args); err != nil {
+			t.Fatal(err)
+		}
+		if out.String() != c.Out || !strings.Contains(out.String(), f.Marker) {
+			t.Fatalf("%v: %q", c.Args, out.String())
+		}
+	}
+}

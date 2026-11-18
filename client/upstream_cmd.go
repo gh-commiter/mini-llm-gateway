@@ -51,6 +51,7 @@ type upLink struct {
 	LastPull     *time.Time
 	LastPullOK   *time.Time
 	LastPullAge  int
+	Stale        bool
 	PullError    string
 	Mirror       int
 	MirrorBytes  int64
@@ -158,7 +159,7 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			if u.noRead {
 				say(clean(fmt.Sprintf("%s -> %s: reading is off, the mirror was deleted", local, name)))
 			} else {
-				say(clean(fmt.Sprintf("%s -> %s: reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)", local, name)))
+				say(clean(fmt.Sprintf("%s -> %s: reading is on; minigw gw upstream pull fills the mirror, which the members then see in kb search, kb faq and note read (marked from hub)", local, name)))
 			}
 			return
 		}
@@ -178,7 +179,7 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			if u.noRead {
 				say("reading is off, the mirror was deleted")
 			} else {
-				say("reading is on; minigw gw upstream pull fills the mirror (members do not see it yet)")
+				say("reading is on; minigw gw upstream pull fills the mirror, which the members then see in kb search, kb faq and note read (marked from hub)")
 			}
 		}
 	case pos[1] == "status" && len(pos) <= 3:
@@ -484,6 +485,9 @@ func upstreamReadLine(l upLink) string {
 	}
 	if l.LastPull != nil && (l.LastPullOK == nil || l.LastPull.After(*l.LastPullOK)) {
 		pulled += ", last try " + l.LastPull.Local().Format("2006-01-02 15:04")
+	}
+	if l.Stale {
+		pulled += ", stale: members do not see the mirror until a pull completes (none in the last 7 days)"
 	}
 	return fmt.Sprintf("read: on, classes %s, sources %s%s, mirror %d notes (%s)%s", strings.Join(l.ReadClasses, ","), src, acc, l.Mirror, upstreamSize(l.MirrorBytes), pulled)
 }
