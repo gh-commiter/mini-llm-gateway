@@ -302,7 +302,7 @@ const S = {
   foundryMissing: ["Foundry Local is not installed. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Then download a model, e.g. foundry model download phi-4-mini.",
     "Foundry Local ni nameščen. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Nato prenesi model, npr. foundry model download phi-4-mini."],
   foundryRunning: ["Running", "Teče"], foundryStopped: ["Found; it starts with the first request", "Najden; zažene se ob prvi zahtevi"],
-  instructions: ["Instructions", "Navodila"], foundryInstallFirst: ["Install Foundry Local first (see above).", "Najprej namesti Foundry Local (glej zgoraj)."], foundryNoModels: ["No downloaded models: foundry model download <model>", "Ni prenesenih modelov: foundry model download <model>"],
+  instructions: ["Instructions", "Navodila"], foundryNotInstalled: ["Foundry Local is not installed on this computer", "Foundry Local ni nameščen na tem računalniku"], foundryInstallFirst: ["Install Foundry Local first (see above).", "Najprej namesti Foundry Local (glej zgoraj)."], foundryNoModels: ["No downloaded models: foundry model download <model>", "Ni prenesenih modelov: foundry model download <model>"],
   foundryFooter: ["The claude-foundry models run on this computer with Foundry Local: conversation only, no tools; images only for models that take them. Claude Code's long system prompt is not sent; the instructions above are. Downloaded models appear here (foundry model download …).",
     "Modeli claude-foundry tečejo na tem računalniku s Foundry Local: le pogovor, brez orodij; slike le za modele, ki jih sprejmejo. Dolga sistemska navodila Claude Code se ne pošljejo, navodila zgoraj pa. Tu so preneseni modeli (foundry model download …)."],
   grokFooter: ["The claude-grok models run “grok -p” as an agent in the synced copy of the client's folder. Grok's sandbox (workspace) lets it write only to that folder. Devices that use Grok can read every file this user can read. Without writing it runs read-only. Sign in once with “grok login”.",
@@ -1780,7 +1780,7 @@ const pages = {
     };
     const list = group(models.length ? models.map(x => row(labelSub(x.name, x.vision ? "text · images" : "text"),
         toggle(x.enabled, (v, i) => save(n1, async () => { try { await setModel(x.name, v); } catch (e) { i.checked = !v; throw e; } }))))
-      : [row(el("span", {class: "label sub", textContent: !f.found ? t("foundryInstallFirst") : (m.error || t("foundryNoModels"))}))]);
+      : [row(el("span", {class: "label sub", textContent: !f.found || m.installed === false ? t("foundryNotInstalled") : (m.error || t("foundryNoModels"))}))]);
     const bulk = on => save(n1, async () => { await patch({models: on ? null : []}); show("foundry"); });
     return [
       card(...ICON.foundry, "Foundry Local", t("foundryDesc")),
