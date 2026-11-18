@@ -377,7 +377,7 @@ func printReview(say func(string), v core.Submission, authorName string, names m
 		say(fmt.Sprintf(hiddenLine, v.Hidden))
 	}
 	if v.Body != nil {
-		say(cleanKeepTab(*v.Body))
+		say(core.ReviewText(*v.Body))
 	}
 }
 

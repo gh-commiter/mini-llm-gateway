@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"minigw/core"
 	"net/http"
+	"os"
 	"reflect"
 	"regexp"
 	"strings"
@@ -565,5 +566,39 @@ func TestOlderGatewayNamesTheVersionForKBAndTeam(t *testing.T) {
 		})}
 	if err := env.team([]string{"list"}); err == nil || !strings.Contains(err.Error(), "this gateway is 0.7.0; team needs 0.7.1 or newer") {
 		t.Fatal(err)
+	}
+}
+
+// What the reviewer is shown is exactly the stored text when nothing is hidden (emoji sequences byte for byte), and nothing hidden is printed.
+func TestKBReviewPrintsEmojiByteForByte(t *testing.T) {
+	c := newClientFx(t)
+	dir := t.TempDir()
+	body := "\U0001F469\u200d\U0001F4BB \u26a0\ufe0f 1\ufe0f\u20e3 \U0001F44D\U0001F3FD \U0001F1F8\U0001F1EE\tx"
+	c.must("ana", dir, body+"\n", "kb", "submit", "fakture", "--key", "e1", "--title", "T", "-")
+	if review := c.must("fani", dir, "", "kb", "review"); !strings.HasSuffix(review, "\n"+body+"\n\n") {
+		t.Fatalf("%q", review)
+	}
+	var lines []string
+	b := "a\u202eb\u200dc"
+	printReview(func(s string) { lines = append(lines, s) }, core.Submission{Body: &b}, "", nil) // a gateway that did not clean it
+	if lines[len(lines)-1] != "abc" {
+		t.Fatalf("%q", lines)
+	}
+}
+
+// The shared fixture of the review printers (the Swift client reads the same file).
+func TestReviewTextFixture(t *testing.T) {
+	data, err := os.ReadFile("testdata/review-text.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct{ Name, In, Out string }
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		if got := core.ReviewText(c.In); got != c.Out {
+			t.Errorf("%s: %q, want %q", c.Name, got, c.Out)
+		}
 	}
 }

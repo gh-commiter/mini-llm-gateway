@@ -180,8 +180,26 @@ func emojiBase(r rune) bool {
 	return false
 }
 
+// pictograph: what a joiner may join, narrower than emojiBase: the pictograph blocks only (no arrows, technical symbols, (c) (r) and the like).
+func pictograph(r rune) bool { return r >= 0x1F000 && r <= 0x1FAFF || r >= 0x2600 && r <= 0x27BF }
+
+// maxZWJ: joiners in one sequence (the longest real family sequences have fewer).
+const maxZWJ = 7
+
+// zwjLeft: the index of the pictograph left of the joiner at z (skipping one U+FE0F and one skin-tone modifier), or -1.
+func zwjLeft(rs []rune, z int) int {
+	j := z - 1
+	for k := 0; k < 2 && j >= 0 && (rs[j] == 0xFE0F || rs[j] >= 0x1F3FB && rs[j] <= 0x1F3FF); k++ {
+		j--
+	}
+	if j >= 0 && pictograph(rs[j]) {
+		return j
+	}
+	return -1
+}
+
 // invisibleAt: whether rs[i] is invisible in the text rs. As invisibleRune, except that U+FE0F is visible right after an emoji base (or
-// in a keycap: # * 0-9, FE0F, U+20E3) and U+200D is visible between two emoji (a base, optionally FE0F or a skin-tone modifier, ZWJ, a base).
+// in a keycap: # * 0-9, FE0F, U+20E3) and U+200D is visible between two pictographs (optionally FE0F or a skin-tone modifier before it), at most maxZWJ in a row.
 // A ZWJ between letters, a lone FE0F after a letter, zero-width spaces, bidi controls and the tag characters (so an emoji TAG sequence such as
 // a subdivision flag) stay invisible.
 func invisibleAt(rs []rune, i int) bool {
@@ -193,11 +211,18 @@ func invisibleAt(rs []rune, i int) bool {
 		p := rs[i-1]
 		return !(emojiBase(p) || (p == '#' || p == '*' || p >= '0' && p <= '9') && i+1 < len(rs) && rs[i+1] == 0x20E3)
 	case 0x200D:
-		j := i - 1
-		for j >= 0 && (rs[j] == 0xFE0F || rs[j] >= 0x1F3FB && rs[j] <= 0x1F3FF) {
-			j--
+		n := 1 // this joiner's place in its sequence
+		for z := i; ; n++ {
+			p := zwjLeft(rs, z)
+			if p < 0 || z+1 >= len(rs) || !pictograph(rs[z+1]) {
+				return true
+			}
+			if p == 0 || rs[p-1] != 0x200D {
+				break
+			}
+			z = p - 1
 		}
-		return !(j >= 0 && emojiBase(rs[j]) && i+1 < len(rs) && emojiBase(rs[i+1]))
+		return n > maxZWJ
 	}
 	return invisibleRune(rs[i])
 }

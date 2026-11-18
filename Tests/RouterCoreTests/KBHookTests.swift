@@ -108,6 +108,18 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         #expect(lines.last == "a\tbc")  // the tab stays in place, the invisible character goes
     }
 
+    /// The review printers of both clients on the shared fixture (client/testdata/review-text.json); an emoji sequence comes out as it went in.
+    @Test func reviewTextFixture() throws {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let cases = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("client/testdata/review-text.json"))) as! [[String: String]]
+        #expect(!cases.isEmpty)
+        for c in cases { #expect(ProjectText.reviewText(c["in"]!) == c["out"]!, "\(c["name"]!)") }
+        var lines: [String] = []
+        let full = try #require(JSONValue.parse(Data(#"{"id":1,"project":1,"state":"pending","class":"data","title":"T","body":"\ud83d\udc69\u200d\ud83d\udcbb \u26a0\ufe0f 1\ufe0f\u20e3\ta\u202eb","reviewHash":"h"}"#.utf8))).dict
+        ProjectEnv.printReview({ lines.append($0) }, full, [:])
+        #expect(lines.last == "\u{1F469}\u{200D}\u{1F4BB} \u{26A0}\u{FE0F} 1\u{FE0F}\u{20E3}\tab")
+    }
+
     @Test func olderGatewayNamesTheVersionForKBAndTeam() throws {
         func send(_ version: String, _ path: String) -> String {
             let s = ProjectEnv.olderRouteHint { _, _, p, _, _ in

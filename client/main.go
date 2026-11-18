@@ -75,16 +75,6 @@ func clean(s string) string {
 	}, s)
 }
 
-// cleanKeepTab: clean for a text a person decides on (a submission under review): a tab stays, in place, so that what is shown is what is published.
-func cleanKeepTab(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r != '\t' && isTerminalControl(r) {
-			return -1
-		}
-		return r
-	}, s)
-}
-
 // jsonText: the gateway's JSON with those characters escaped (\uXXXX) inside every string: the JSON stays valid and a
 // program that parses it gets the text as sent, while a person's terminal sees only ASCII.
 func jsonText(s string) string {
