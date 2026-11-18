@@ -511,3 +511,13 @@ func upstreamLines(t *testing.T, rule, out string) {
 		}
 	}
 }
+
+// A tab in a submission is shown to the reviewer where it is: the text on screen is the text that is published.
+func TestKBReviewShowsATab(t *testing.T) {
+	c := newClientFx(t)
+	dir := t.TempDir()
+	c.must("ana", dir, "a\tb\n", "kb", "submit", "fakture", "--key", "p1", "--title", "Proposal", "-")
+	if review := c.must("fani", dir, "", "kb", "review"); !strings.Contains(review, "a\tb") {
+		t.Fatalf("%q", review)
+	}
+}

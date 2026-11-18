@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Security
+- Restoring a backup taken in the middle of a pull from an upstream gateway no longer resumes that pull: the first pull after a restore reads everything again, so a note the upstream changed meanwhile is not shown in its old form.
+- A tab in a submission is now shown in the review (where it is), so the text a reviewer reads is the text that is published.
+
+### Fixed
+- A note pulled from an upstream gateway with a lone carriage return keeps a line break there instead of losing the character, as in every other place.
+
 ## 0.7.35
 
 The plugin's session start after a round on a real Windows computer.

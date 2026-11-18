@@ -1295,3 +1295,16 @@ func TestPullAllLinksKeepsTheReportsWhenTheBudgetIsUsed(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// A pulled body gets the canonical line endings (CRLF and a lone CR become LF) before the invisible characters are cut: a CR is not lost.
+func TestPullKeepsALoneCRAsALineBreak(t *testing.T) {
+	f, fk := readFx(t)
+	n := structNote(1, "Endings")
+	n.body = "a\rb\r\nc"
+	pull(f, fk, (&hub{notes: []hubNote{n}}).up())
+	var body string
+	f.ok(f.DB().QueryRow(`SELECT body FROM upstream_mirror WHERE remote_note=1`).Scan(&body))
+	if body != "a\nb\nc" {
+		t.Fatalf("%q", body)
+	}
+}

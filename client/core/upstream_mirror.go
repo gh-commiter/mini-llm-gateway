@@ -673,7 +673,7 @@ func checkMirrorNote(data []byte, want ManifestNote, label string) (mirrorRow, s
 	case kind == KindFAQ && (len(n.Title) > maxFAQTitle || len(body) > maxFAQBody):
 		return mirrorRow{}, "too large for a FAQ"
 	}
-	title, text := upText(n.Title, maxTitle), mirrorBody(body)
+	title, text := upText(n.Title, maxTitle), mirrorBody(lineEndings(body)) // CRLF and a lone CR are line endings, as in every canonical form, not invisible characters
 	if title == "" {
 		return mirrorRow{}, "no title"
 	}

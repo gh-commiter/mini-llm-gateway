@@ -585,6 +585,11 @@ enum ProjectText {
         String(String.UnicodeScalarView(s.unicodeScalars.filter { !isTerminalControl($0) }))
     }
 
+    /// clean for a text a person decides on (a submission under review): a tab stays, in place, so that what is shown is what is published.
+    static func cleanKeepTab(_ s: String) -> String {
+        String(String.UnicodeScalarView(s.unicodeScalars.filter { $0 == "\t" || !isTerminalControl($0) }))
+    }
+
     /// The gateway's JSON with those characters escaped (\uXXXX) inside every string: the JSON stays valid and a program
     /// that parses it gets the text as sent, while a person's terminal sees only ASCII.
     static func jsonText(_ s: String) -> String {

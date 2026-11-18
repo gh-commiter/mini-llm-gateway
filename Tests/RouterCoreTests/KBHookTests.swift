@@ -101,6 +101,13 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         }
     }
 
+    @Test func reviewShowsATabWhereItIs() throws {
+        let full = try #require(JSONValue.parse(Data(#"{"id":1,"project":1,"state":"pending","class":"data","title":"T","body":"a\tb\u200bc","reviewHash":"h"}"#.utf8))).dict
+        var lines: [String] = []
+        ProjectEnv.printReview({ lines.append($0) }, full, [:])
+        #expect(lines.last == "a\tbc")  // the tab stays in place, the invisible character goes
+    }
+
     @Test func pruneKeepsFreshAndTheNewest200() throws {
         let w = try HookWorld(stdin: Data())
         try w.link("gw1", 7, "acme-shop")
