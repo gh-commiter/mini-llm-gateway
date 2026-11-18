@@ -108,6 +108,14 @@ type Upstream struct {
 	Address string `json:"address"`
 }
 
+// migrate21 restarts old cursors: they have no generation or remembered refusals.
+func migrate21(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE upstream_links ADD COLUMN push_generation INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE upstream_links ADD COLUMN push_failed INTEGER NOT NULL DEFAULT 0 CHECK(push_failed IN(0,1));
+UPDATE upstream_links SET push_cursor=0;`)
+	return err
+}
+
 func (s *Store) AddUpstream(ctx context.Context, name, address string) error {
 	if !ValidUpstreamName(name) {
 		return ErrRefusal{"upstream name: lowercase letters, digits and -, up to 32"}
@@ -134,6 +142,11 @@ func (s *Store) AddUpstream(ctx context.Context, name, address string) error {
 
 // RemoveUpstream removes the upstream with its links and receipts (the notes already sent stay where they are).
 func (s *Store) RemoveUpstream(ctx context.Context, name string) error {
+	mu := s.upstreamLock(name)
+	if !mu.TryLock() {
+		return errPushRunning{}
+	}
+	defer mu.Unlock()
 	return s.adminWrite(ctx, "upstream.remove", name, nil, func(tx *sql.Tx) (string, error) {
 		for _, q := range []string{`DELETE FROM upstream_sent WHERE upstream=?`, `DELETE FROM upstream_links WHERE upstream=?`} {
 			if _, e := tx.Exec(q, name); e != nil {
@@ -358,9 +371,9 @@ ON CONFLICT(project_id,upstream) DO UPDATE SET remote=excluded.remote, remote_te
 			return "", e
 		}
 		if sp.Auto != nil && *sp.Auto { // switching it on: what is already unsent goes with the next push after the debounce
-			_, e = tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN dirty_since=0 THEN ?1 ELSE dirty_since END, last_change=?1 WHERE project_id=?2 AND upstream=?3`, ms(s.now()), local, upstream)
+			_, e = tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN dirty_since=0 THEN ?1 ELSE dirty_since END, last_change=max(?1,last_change+1) WHERE project_id=?2 AND upstream=?3`, ms(s.now()), local, upstream)
 		} else if sp.Auto != nil { // switching it off: no outbox, no back-off
-			_, e = tx.Exec(`UPDATE upstream_links SET dirty_since=0, last_change=0, fail_count=0, next_attempt=0 WHERE project_id=? AND upstream=?`, local, upstream)
+			_, e = tx.Exec(`UPDATE upstream_links SET dirty_since=0, last_change=0, fail_count=0, next_attempt=0, push_cursor=0, push_generation=0, push_failed=0 WHERE project_id=? AND upstream=?`, local, upstream)
 		}
 		return "", e
 	})
@@ -381,6 +394,11 @@ func (s *Store) UnlinkUpstream(ctx context.Context, project, team int64, upstrea
 	if team > 0 {
 		local = segmentID(team)
 	}
+	mu := s.linkLock(local, upstream)
+	if !mu.TryLock() {
+		return errPushRunning{}
+	}
+	defer mu.Unlock()
 	return s.adminWrite(ctx, "upstream.unlink", upstream, map[string]any{"project": local}, func(tx *sql.Tx) (string, error) {
 		if _, e := tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=?`, local, upstream); e != nil {
 			return "", e
@@ -677,16 +695,23 @@ func (s *Store) upstreamRecordConflict(ctx context.Context, project int64, upstr
 	})
 }
 
-// ResolveUpstream settles the conflicts of one note on every upstream that has one. "theirs": our change is forgotten for the revision on
+// ResolveUpstream settles one link's conflict. Without an upstream, exactly one conflict must exist. "theirs": our change is forgotten for the revision on
 // the upstream (the receipt takes the note as it is here now and the upstream's revision as the baseline); "ours": the next push sends our
 // version as a SUBMISSION for the upstream's reviewers (never an overwrite).
-func (s *Store) ResolveUpstream(ctx context.Context, project, team, note int64, ours bool) error {
+func (s *Store) ResolveUpstream(ctx context.Context, project, team, note int64, ours bool, upstream ...string) error {
+	up := ""
+	if len(upstream) > 0 {
+		up = upstream[0]
+	}
+	if up != "" && !ValidUpstreamName(up) {
+		return ErrRefusal{"invalid upstream name"}
+	}
 	local := project
 	if team > 0 {
 		local = segmentID(team)
 	}
-	return s.adminWrite(ctx, "upstream.resolve", "", map[string]any{"project": local, "note": note, "ours": ours}, func(tx *sql.Tx) (string, error) {
-		rows, e := tx.Query(`SELECT upstream, conflict_rev FROM upstream_sent WHERE project_id=? AND note_id=? AND conflict=1 ORDER BY upstream`, local, note)
+	return s.adminWrite(ctx, "upstream.resolve", up, map[string]any{"project": local, "note": note, "ours": ours}, func(tx *sql.Tx) (string, error) {
+		rows, e := tx.Query(`SELECT upstream, conflict_rev FROM upstream_sent WHERE project_id=? AND note_id=? AND conflict=1 AND (?='' OR upstream=?) ORDER BY upstream`, local, note, up, up)
 		if e != nil {
 			return "", e
 		}
@@ -704,8 +729,18 @@ func (s *Store) ResolveUpstream(ctx context.Context, project, team, note int64, 
 			cs = append(cs, x)
 		}
 		rows.Close()
+		if e := rows.Err(); e != nil {
+			return "", e
+		}
 		if len(cs) == 0 {
 			return "", ErrRefusal{"no conflict on this note"}
+		}
+		if len(cs) > 1 {
+			names := make([]string, len(cs))
+			for i, x := range cs {
+				names[i] = x.up
+			}
+			return "", ErrRefusal{"conflicts on upstreams " + strings.Join(names, ", ") + ": choose --upstream <name>"}
 		}
 		var n Note
 		gone := false
@@ -732,7 +767,8 @@ func (s *Store) ResolveUpstream(ctx context.Context, project, team, note int64, 
 			}
 		}
 		if ours {
-			return "", s.markUpstreamDirty(tx, local) // an auto link sends it soon
+			_, e = tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN dirty_since=0 THEN ?1 ELSE dirty_since END, last_change=max(?1,last_change+1) WHERE project_id=?2 AND upstream=?3 AND auto=1`, ms(s.now()), local, cs[0].up)
+			return "", e
 		}
 		return "", nil
 	})

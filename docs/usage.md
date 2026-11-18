@@ -1383,9 +1383,12 @@ changes (two timestamps in the database, never a queue of notes: a restart loses
 for a minute, and no later than ten minutes after the first change, so a burst of edits (or a member editing again and again) is one push, and a
 member can never cause more than one push per window. One link at a time. If the push fails, the next attempt is after a minute, then two, four and
 so on up to an hour (with up to 20 % jitter either way), a limit of the upstream's writes is waited out and is not a failure, and a push that has
-unsent changes arriving while it runs leaves the link marked. `minigw gw upstream status` shows per link whether it is auto or manual, since when it
+unsent changes arriving while it runs leaves the link marked. A traversal may span several batches: changes below its cursor are sent by
+a new traversal from the beginning afterwards, and a refusal in any batch keeps the link dirty with back-off. Its generation and failure
+state survive a restart. `minigw gw upstream status` shows per link whether it is auto or manual, since when it
 has unsent changes, the last success, the last failure and how many in a row, the reason and the next attempt, and lists sent notes that were deleted
 here ("deleted here") or made private here ("now private here"): neither is propagated, the copy stays on the upstream until you remove it there.
+Unlink and upstream removal are refused while a push of that link is running; try again after the push finishes.
 Each automatic run leaves one audit row (the link and the counts, never a title or a text). **The gateway never calls an outside host on its own
 account:** the automatic push contacts only an upstream you added with `upstream add` and only for a link you set to `--auto`. On the Mac the app's
 timer asks the core's upstream lane every few seconds (`POST /upstream-auto`, at most one link per request), because the helper cannot call out by itself.
@@ -1396,7 +1399,9 @@ there, later pushes update that same note. Before updating, the gateway reads th
 changed it on the upstream, or deleted it) the change is **not** written. The note is a conflict: it is listed in `upstream status` (and in the
 push report) as `CONFLICT: note N (changed there)` and is skipped until you decide with `minigw gw upstream resolve <project> <note> --theirs`
 (keep the upstream's version; our change is forgotten for it) or `--ours` (our version is sent as a submission for the upstream's reviewers,
-never as an overwrite). The mode cannot be changed once the link has sent notes: unlink and link again (what was sent stays there). Deleting a
+never as an overwrite). Add `--upstream <name>` to resolve only that link; it is required when the note conflicts on several upstreams.
+Without it, a single conflict is still resolved as before; an ambiguous request lists the upstreams and changes nothing. The mode cannot
+be changed once the link has sent notes: unlink and link again (what was sent stays there). Deleting a
 note here or making it private is not propagated in either mode; `status` lists it.
 
 A repeated push sends only what changed: every note is remembered by its content (class, kind, title, text). A changed note is sent

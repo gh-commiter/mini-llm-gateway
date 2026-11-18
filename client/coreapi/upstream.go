@@ -148,6 +148,9 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		a.upMu.Lock()
 		defer a.upMu.Unlock()
 		err := st.RemoveUpstream(ctx, seg[1])
+		if err != nil && !errors.Is(err, core.ErrNotFound) {
+			return failErr(err)
+		}
 		// The credentials go whatever the database said (a row that is gone must not leave a secret behind); a failure to remove them is
 		// reported, not swallowed.
 		if ferr := h.Forget(seg[1]); ferr != nil {
@@ -323,22 +326,23 @@ func (a *API) adminUpstreamAuto(ctx context.Context, st *core.Store, method stri
 	return 200, run, true
 }
 
-// adminUpstreamResolve settles a publish-mode conflict of one note (POST {project or team, note, ours}).
+// adminUpstreamResolve settles one link's conflict (POST {project or team, note, ours, upstream?}).
 func (a *API) adminUpstreamResolve(ctx context.Context, st *core.Store, method string, body []byte, failErr func(error) (int, any, bool)) (int, any, bool) {
 	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
 	if method != "POST" {
 		return fail(404, "not found")
 	}
 	var b struct {
-		Project int64 `json:"project"`
-		Team    int64 `json:"team"`
-		Note    int64 `json:"note"`
-		Ours    bool  `json:"ours"`
+		Project  int64  `json:"project"`
+		Team     int64  `json:"team"`
+		Note     int64  `json:"note"`
+		Ours     bool   `json:"ours"`
+		Upstream string `json:"upstream"`
 	}
-	if decodeStrict(body, &b) != nil || b.Note <= 0 || (b.Project > 0) == (b.Team > 0) {
-		return fail(400, "bad JSON body (project or team, note, ours)")
+	if decodeStrict(body, &b) != nil || b.Note <= 0 || (b.Project > 0) == (b.Team > 0) || b.Upstream != "" && !core.ValidUpstreamName(b.Upstream) {
+		return fail(400, "bad JSON body (project or team, note, ours, upstream)")
 	}
-	if err := st.ResolveUpstream(ctx, b.Project, b.Team, b.Note, b.Ours); err != nil {
+	if err := st.ResolveUpstream(ctx, b.Project, b.Team, b.Note, b.Ours, b.Upstream); err != nil {
 		return failErr(err)
 	}
 	return 200, map[string]any{"ok": true}, true
@@ -382,6 +386,7 @@ type adminLinkDetailJSON struct {
 }
 
 type adminConflictJSON struct {
+	Upstream  string `json:"upstream"`
 	Note      int64  `json:"note"`
 	Title     string `json:"title"`
 	What      string `json:"what"` // "changed" or "deleted" (there)
@@ -419,7 +424,7 @@ func (a *API) adminUpstreamLink(ctx context.Context, st *core.Store, method stri
 		}
 		out := adminLinkDetailJSON{adminLinkJSON: j, ConflictRows: []adminConflictJSON{}}
 		for _, c := range l.Conflicts {
-			r := adminConflictJSON{Note: c.Note, What: "changed", ProjectID: j.ProjectID, TeamID: j.TeamID}
+			r := adminConflictJSON{Note: c.Note, What: "changed", ProjectID: j.ProjectID, TeamID: j.TeamID, Upstream: l.Upstream}
 			if c.Gone {
 				r.What = "deleted"
 			}

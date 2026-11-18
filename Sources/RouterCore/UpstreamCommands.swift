@@ -11,8 +11,8 @@ extension AdminCommands {
           minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
           minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
           minigw gw upstream unlink <project> <name> | --team <team> <name>
-          minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
-          minigw gw upstream resolve --team <team> <note> --theirs|--ours
+          minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
+          minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
           minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
           minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
         """
@@ -93,7 +93,8 @@ extension AdminCommands {
         case ("resolve", 4) where team.isEmpty, ("resolve", 3) where !team.isEmpty:
             if o.theirs == o.ours { throw fail("resolve: choose --theirs or --ours") }
             guard let note = Int64(pos[pos.count - 1]), note > 0 else { throw fail("resolve: the note is its number") }
-            let body: [String: Any] = ["note": note, "ours": o.ours, team.isEmpty ? "project" : "team": team.isEmpty ? try projectID(pos[2]) : try teamID(team)]
+            var body: [String: Any] = ["note": note, "ours": o.ours, team.isEmpty ? "project" : "team": team.isEmpty ? try projectID(pos[2]) : try teamID(team)]
+            if !o.upstream.isEmpty { body["upstream"] = o.upstream }
             try request("POST", "/upstream-resolve", body)
             if o.ours { say("note \(note): our version goes to the upstream as a submission at the next push") }
             else { say("note \(note): the upstream's version stays, our change is forgotten for it") }

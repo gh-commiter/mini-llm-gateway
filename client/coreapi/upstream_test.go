@@ -14,6 +14,53 @@ import (
 
 type noHost struct{}
 
+func TestBusyUpstreamRemovalKeepsCredentials(t *testing.T) {
+	f := newFixture(t)
+	inside, release := make(chan struct{}), make(chan struct{})
+	h := &methodHost{secretHost: secretHost{secrets: map[string]string{}}}
+	first := true
+	h.answer = func(method, path string) (int, string) {
+		if path == "/minigw/v1/projects/shop" {
+			return 200, `{"id":7,"slug":"shop"}`
+		}
+		if method == "POST" {
+			if first {
+				first = false
+				close(inside)
+				<-release
+			}
+			return 201, `{"id":55}`
+		}
+		return 404, `{}`
+	}
+	api := New(Options{Store: func() *core.Store { return f.st }, Upstream: h})
+	call := func(method, path, body string) Response {
+		return api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: method, Path: path, Body: []byte(body)})
+	}
+	if r := call("PUT", "/upstreams/hub", `{"address":"127.0.0.1:8766","token":"tok#key"}`); r.Status != 200 {
+		t.Fatal(r.Status)
+	}
+	fk := f.pid["fakture"]
+	if r := call("PUT", fmt.Sprintf("/upstreams/hub/links/%d", fk), `{"remote":"shop"}`); r.Status != 200 {
+		t.Fatal(r.Status)
+	}
+	done := make(chan Response, 1)
+	go func() { done <- call("POST", "/upstream-push", fmt.Sprintf(`{"project":%d}`, fk)) }()
+	<-inside
+	r := call("DELETE", "/upstreams/hub", "")
+	close(release)
+	pushed := <-done
+	if r.Status != 400 || !strings.Contains(string(r.Body), "is running") || pushed.Status != 200 {
+		t.Fatalf("remove: %d %s; push: %d %s", r.Status, r.Body, pushed.Status, pushed.Body)
+	}
+	if len(h.forgets) != 0 || h.secrets["hub"] == "" {
+		t.Fatal("busy removal deleted credentials")
+	}
+	if r := call("DELETE", "/upstreams/hub", ""); r.Status != 200 {
+		t.Fatal(r.Status, string(r.Body))
+	}
+}
+
 func (noHost) Do(context.Context, string, string, string, map[string]string, []byte) (int, []byte, time.Duration, error) {
 	return 0, nil, 0, nil
 }

@@ -1044,6 +1044,9 @@
         "method": "POST",
         "path": "/upstream-resolve",
         "body": {
+         "upstream": {
+          "row": "upstream"
+         },
          "project": {
           "row": "projectId"
          },
@@ -1069,6 +1072,9 @@
         "method": "POST",
         "path": "/upstream-resolve",
         "body": {
+         "upstream": {
+          "row": "upstream"
+         },
          "project": {
           "row": "projectId"
          },
