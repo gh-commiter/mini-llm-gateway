@@ -1,5 +1,13 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Docker Compose: an optional `admin` profile puts the remote settings listener behind an HTTPS-only Caddy reverse proxy (digest-pinned, mutual TLS to the gateway, forwarding headers replaced, only the settings page, login/logout and the permitted admin paths proxied), with `deploy/docker/admin-certs.sh` for the certificates; see [docker.md](docker.md#remote-settings-from-a-browser-admin-profile).
+
+### Known problems
+- The admin profile has been tried only with its test script (`scripts/compose-admin-e2e.sh`) on one Mac through Docker, not on the team server and not with a real browser. The default HTTPS port 443 and a host port other than 443 for a real certificate name are not covered by the test (it uses a high port).
+
 ## 0.7.24
 
 ### New

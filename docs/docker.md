@@ -132,3 +132,85 @@ on the host, once, not recursively from a container).
 - Agents (Claude CLI, Codex, Grok, Copilot, Foundry Local) in the container.
 - The remote settings reverse-proxy profile, `minigw serve install` and updates from inside the container (`gw` administration works).
 - Pre-built images in a registry, automatic updates, Kubernetes or Swarm, several gateways on one database.
+
+## Remote settings from a browser (admin profile)
+
+An optional second service, a [Caddy](https://caddyserver.com) reverse proxy (image pinned by digest), makes the
+[remote settings listener](gateway.md#remote-settings-listener) reachable from a browser on your LAN. Without
+`--profile admin` nothing of it runs and the gateway's port 8766 is not even configured.
+
+**Prerequisites:** a DNS name for the page that your browsers resolve to the Docker host (`settings.example.net`
+below), a LAN address of the host to publish on, `openssl`, and the gateway already running. A port other than 443
+works too, but it becomes part of the origin (`https://settings.example.net:8443`).
+
+**1. Certificates.** From `deploy/docker`:
+
+```sh
+sh admin-certs.sh link ./admin-certs --origin https://settings.example.net     # prints the serve.json block
+sh admin-certs.sh browser ./admin-certs settings.example.net                   # optional, see below
+```
+
+`link` creates a private CA for the proxy-gateway link (ECDSA P-256, 10 years), the gateway's server certificate
+(SAN `minigw`, the Compose service name) and the proxy's client certificate (SAN `settings-proxy.internal`, the
+`proxyIdentity`), both for 1 year. Files are 0600 in a 0700 folder, nothing is overwritten (it stops and names the
+file), no secret is printed. The CA keys stay in `ca/` and are never mounted: the gateway sees only `gateway/`, the
+proxy only `proxy/`. On a Linux host give each folder to its container user once, as the script prints (`chown
+10001:10001` for `gateway/`, `65532:65532` for `proxy/`, not recursive).
+
+`browser` is separate: a private CA and a 397-day certificate for the name browsers use. A certificate from your
+team's CA or ACME is the better choice: put its chain and key at `admin-certs/proxy/browser.pem` and `browser.key` and
+skip this command. With the private one, install `admin-certs/ca/browser-ca.pem` as a trusted root in each browser.
+
+**2. Password**, typed inside the container (it works while the gateway is stopped):
+
+```sh
+docker compose exec minigw minigw gw settings password
+```
+
+**3. Configuration.** Add the block that step 1 printed to `serve.json` (in the config volume; edit it with the same
+care as any config) and set `origin` and `allowedSourceCIDRs` (the browsers' networks, as the proxy sees them) to your
+values; `proxyIdentity`, the three `/admin-tls/…` paths and `0.0.0.0:8766` stay as printed. Then `docker compose restart minigw`.
+
+**4. Start the proxy.** In `.env` (next to `compose.yaml`):
+
+```
+MINIGW_ADMIN_NAME=settings.example.net     # the external name, required (no port)
+MINIGW_ADMIN_BIND=192.168.10.5             # the host address to publish on; loopback if unset
+MINIGW_ADMIN_PORT=443                      # the host port
+```
+
+```sh
+docker compose --profile admin up -d
+```
+
+Open `https://settings.example.net`, sign in. Passwords and sessions follow the gateway's rules (lockout, 30 minutes
+idle, audit file `remote-settings.audit.jsonl` in the config volume).
+
+**What is reachable:** only the settings page, login and logout, and the provider, model and device routes that the
+gateway allows remotely; everything else, including inference, projects, sync and the other admin routes, answers 404
+at the proxy and is refused again by the gateway. Port 8766 is never published; only HTTPS is, no HTTP port exists
+(no redirect: a redirect would invite typing a password on an `http://` address; HSTS keeps browsers on HTTPS). The
+proxy talks to the gateway over mutual TLS on the dedicated `admin` network, checks the gateway's certificate and
+name, and replaces the client-address header with the real peer address of the connection; it deletes
+`X-Forwarded-*`, `Forwarded`, `X-Real-IP` and any `X-Minigw-Client-IP` the browser sent. Request bodies are capped at
+1 MB. The proxy is a middlebox of the page: it sees the traffic after TLS, so keep it on the host you trust.
+
+**Trust statement:** the gateway cannot see the browser's connection. It trusts the authenticated proxy to attest it:
+the client address and that the browser used HTTPS. That is why the HTTPS-only proxy configuration, HSTS and the
+header replacement are part of the supported boundary: do not change the Caddyfile to accept plain HTTP or to trust
+forwarding headers, and do not give any other service the proxy's key.
+
+**Turn it off:** `docker compose --profile admin down` stops the proxy (the gateway keeps running); to also close the
+listener set `remoteSettings.enabled` to `false` and restart the gateway, which discards all remote sessions.
+
+**Renewal:** the link certificates last 1 year, the browser certificate 397 days (an ACME or team certificate has its
+own). Move the expired files away (never delete the CA key before its certificates are replaced), run the script again,
+and `docker compose --profile admin restart` plus `docker compose restart minigw`. An expired certificate makes the
+connection fail closed: the page does not load; there is no HTTP fallback.
+
+**Rollback:** `docker compose --profile admin down`, remove the `remoteSettings` block (or set `enabled` to `false`) and
+restart the gateway. Nothing else changed: the volumes and the provider configuration are the same.
+
+The deployment test is `scripts/compose-admin-e2e.sh` (also run by `scripts/compose-e2e.sh`): login over HTTPS, wrong
+password, session, out-of-scope routes, spoofed forwarding headers, plain HTTP, port 8766, mutual TLS and the source
+network check, all on `127.0.0.1` with a high port.

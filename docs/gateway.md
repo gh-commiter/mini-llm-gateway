@@ -257,8 +257,8 @@ the exact external Host and, for login, logout and mutations, the exact Origin, 
 There is no CORS. The remote session header is `X-Minigw-Remote-Session`; neither passwords nor sessions go in URLs.
 
 Keep port 8766 private to the proxy network. Upstream mutual TLS does not prove the browser used HTTPS: an HTTPS-only
-proxy virtual host, HSTS and forwarding-header replacement are part of the required boundary. The Compose proxy profile
-and certificate provisioning guide are a later step; this listener alone is not the supported Compose admin deployment.
+proxy virtual host, HSTS and forwarding-header replacement are part of the required boundary. The supported Compose
+deployment is the `admin` profile ([docker.md](docker.md#remote-settings-from-a-browser-admin-profile)); this listener alone is not.
 Trust, origin and listener changes require restart. Setting `enabled` to false and restarting stops the listener and
 discards its sessions. Startup rejects missing credentials/material, noncanonical origins, invalid CIDRs and incomplete
 proxy trust; expired proxy certificates fail the handshake. Replace renewed files and restart; there is no HTTP fallback.
