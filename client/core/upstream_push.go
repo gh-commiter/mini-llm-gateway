@@ -85,7 +85,7 @@ func (s *Store) PushUpstream(ctx context.Context, tr UpstreamTransport, project,
 	}
 	var out []UpstreamPush
 	for _, l := range links {
-		r, err := s.pushLink(ctx, tr, l.UpstreamLink, l.Label, after, dry, sleep)
+		r, err := s.pushLink(ctx, tr, l.UpstreamLink, l.Label, after, dry, sleep, false)
 		if err != nil {
 			return out, err
 		}
@@ -256,18 +256,40 @@ func (s *Store) linkLock(project int64, upstream string) *sync.Mutex {
 	return s.linkMu[k]
 }
 
-func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, after int64, dry bool, sleep func(time.Duration) bool) (UpstreamPush, error) {
+func (s *Store) upstreamLock(upstream string) *sync.RWMutex {
+	s.autoMu.Lock()
+	defer s.autoMu.Unlock()
+	if s.upMu == nil {
+		s.upMu = map[string]*sync.RWMutex{}
+	}
+	if s.upMu[upstream] == nil {
+		s.upMu[upstream] = &sync.RWMutex{}
+	}
+	return s.upMu[upstream]
+}
+
+func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, after int64, dry bool, sleep func(time.Duration) bool, auto bool) (UpstreamPush, error) {
 	if !dry { // one real push of a link at a time: two would both write with the same revision and one would record a false conflict
+		upMu := s.upstreamLock(l.Upstream)
+		if !upMu.TryRLock() {
+			return UpstreamPush{}, errPushRunning{}
+		}
+		defer upMu.RUnlock()
 		mu := s.linkLock(l.Project, l.Upstream)
 		if !mu.TryLock() {
 			return UpstreamPush{}, errPushRunning{}
 		}
 		defer mu.Unlock()
+		if err := s.beginTraversal(ctx, l, after); err != nil {
+			return UpstreamPush{}, err
+		}
 	}
-	started := ms(s.now())
 	res, err := s.pushLinkRun(ctx, tr, l, label, after, dry, sleep)
 	if err == nil && !dry && !res.archived { // the outbox: cleared by a success, a back-off after a failure
-		if e := s.afterRun(context.WithoutCancel(ctx), l, res, started); e != nil {
+		err = s.afterRun(context.WithoutCancel(ctx), l, res)
+	}
+	if auto && (err == nil || res.Created+res.Replaced > 0) {
+		if e := s.auditAutoRun(context.WithoutCancel(ctx), l, label, res); e != nil {
 			return res, e
 		}
 	}

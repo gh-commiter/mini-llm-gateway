@@ -33,6 +33,7 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
             var opts = AdminOpts(team: o["team"] as? String ?? "")
             opts.deviceName = o["deviceName"] as? String ?? ""; opts.mode = o["mode"] as? String ?? ""; opts.auto = o["auto"] as? Bool ?? false; opts.manual = o["manual"] as? Bool ?? false; opts.theirs = o["theirs"] as? Bool ?? false; opts.ours = o["ours"] as? Bool ?? false; opts.remoteProject = o["remoteProject"] as? String ?? ""; opts.remoteTeam = o["remoteTeam"] as? String ?? ""; opts.classes = o["class"] as? String ?? ""
             opts.withPrivate = o["withPrivate"] as? Bool ?? false; opts.dryRun = o["dryRun"] as? Bool ?? false
+            opts.upstream = o["upstream"] as? String ?? ""
             let stdin = c["stdin"] as? String ?? ""
             opts.tokenInput = { stdin }
             var exit: Int32 = 0, errText = ""

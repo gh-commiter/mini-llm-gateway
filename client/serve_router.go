@@ -309,6 +309,7 @@ func routerCommand(args []string, in io.Reader) {
 	upAuto := fs.Bool("auto", false, "upstream link: push changes automatically (a minute after the last change)")
 	upManual := fs.Bool("manual", false, "upstream link: turn the automatic push off")
 	upTheirs := fs.Bool("theirs", false, "upstream resolve: keep the upstream's version, forget our change")
+	upName := fs.String("upstream", "", "upstream resolve: choose the link by upstream name (required with several conflicts)")
 	upOurs := fs.Bool("ours", false, "upstream resolve: send our version as a submission")
 	upClass := fs.String("class", "", "upstream link: classes to send, comma-separated (default structure,data)")
 	upWithPrivate := fs.Bool("with-private", false, "upstream link: also the private notes of ALL members of the project (needs private in --class)")
@@ -856,7 +857,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota", "upstream":
-		coreCommand(a, pos, coreOpts{in: in, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
+		coreCommand(a, pos, coreOpts{in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

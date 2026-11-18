@@ -26,6 +26,10 @@
 ### Fixed
 - A second sync conflict on the same file no longer overwrites the first saved copy: further copies are `<name>.minigw-conflict-2`, `-3`, ... (up to 99; after that the file is not synced and the note says so).
 
+- Automatic push: an edit made between two batches of a large link, or notes refused in an earlier batch, could be left unsent or forgotten. The link now stays marked until a full pass finds nothing left. Schema 23 restarts old push cursors once.
+- Resolving a conflict now names the upstream (`minigw gw upstream resolve ... --upstream <name>`; the panel sends it): resolving on one upstream no longer settles the same note on the others.
+- Unlinking or removing an upstream while a push of it runs now waits or is refused, and the push's audit row is always written.
+
 ### Known problems
 - The four admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base, Upstream gateways) have only been tried through tests, not in a real window. In the Teams and projects pane team notes (a team's own notes) are not shown, only in the Knowledge base pane; in the Knowledge base pane notes and questions are read, not edited, and a replacement shows both texts, not a line difference. The "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI.
 - The panels on the settings page of `minigw serve`, the Upstream gateways pane and `gw settings password` were tried on one Windows gateway in a headless Chromium browser (they work; no Content Security Policy error); not in Edge or Firefox, and not on Linux. A detail page opens in place of the panel with a Back button. The Mac app does not use this page. Opening an upstream's detail page contacts it.

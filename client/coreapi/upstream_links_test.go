@@ -23,6 +23,80 @@ func (h *methodHost) Do(_ context.Context, _ string, method string, path string,
 	return st, []byte(body), 0, nil
 }
 
+func TestResolveSelectsOnlyTheNamedUpstream(t *testing.T) {
+	for _, ours := range []bool{false, true} {
+		t.Run(fmt.Sprint(ours), func(t *testing.T) {
+			f := newFixture(t)
+			changed := false
+			h := &methodHost{secretHost: secretHost{secrets: map[string]string{}}}
+			h.answer = func(method, path string) (int, string) {
+				if path == "/minigw/v1/projects/shop" {
+					return 200, `{"id":7,"slug":"shop"}`
+				}
+				if method == "POST" {
+					return 201, `{"id":55,"revision":1}`
+				}
+				if changed {
+					return 200, `{"revision":9}`
+				}
+				return 200, `{"revision":1}`
+			}
+			api := New(Options{Store: func() *core.Store { return f.st }, Upstream: h})
+			call := func(method, path, body string, want int) []byte {
+				t.Helper()
+				r := api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: method, Path: path, Body: []byte(body)})
+				if r.Status != want {
+					t.Fatalf("%s %s: %d %s", method, path, r.Status, r.Body)
+				}
+				return r.Body
+			}
+			fk := f.pid["fakture"]
+			for _, up := range []string{"hub", "other"} {
+				call("PUT", "/upstreams/"+up, `{"address":"127.0.0.1:8766","token":"tok#key"}`, 200)
+				call("PUT", fmt.Sprintf("/upstreams/%s/links/%d", up, fk), `{"remote":"shop","mode":"publish","auto":true}`, 200)
+			}
+			call("POST", "/upstream-push", fmt.Sprintf(`{"project":%d}`, fk), 200)
+			p := core.Principal{UserID: f.uid["ana"], DeviceID: "dev-ana"}
+			n, e := f.st.GetNote(bg, p, fk, f.nid["structure"])
+			if e != nil {
+				t.Fatal(e)
+			}
+			_, e = f.st.UpdateNote(bg, p, fk, n.ID, n.Revision, core.NoteInput{Class: n.Class, Title: n.Title, Body: "edited"})
+			if e != nil {
+				t.Fatal(e)
+			}
+			changed = true
+			call("POST", "/upstream-push", fmt.Sprintf(`{"project":%d}`, fk), 200)
+			b := call("POST", "/upstream-resolve", fmt.Sprintf(`{"project":%d,"note":%d,"ours":%t}`, fk, n.ID, ours), 400)
+			if !strings.Contains(string(b), "hub") || !strings.Contains(string(b), "other") {
+				t.Fatal(string(b))
+			}
+			var detail map[string]any
+			json.Unmarshal(call("GET", fmt.Sprintf("/upstream-links/project-%d-hub", fk), "", 200), &detail)
+			rows := detail["conflictRows"].([]any)
+			if rows[0].(map[string]any)["upstream"] != "hub" {
+				t.Fatal("conflict row does not name its upstream")
+			}
+			call("POST", "/upstream-resolve", fmt.Sprintf(`{"project":%d,"note":%d,"ours":%t,"upstream":"hub"}`, fk, n.ID, ours), 200)
+			ls, e := f.st.UpstreamLinks(bg, fk, 0)
+			if e != nil {
+				t.Fatal(e)
+			}
+			for _, l := range ls {
+				want := 0
+				if l.Upstream == "other" {
+					want = 1
+				}
+				if len(l.Conflicts) != want {
+					t.Fatalf("%s: %+v", l.Upstream, l.Conflicts)
+				}
+			}
+			// The old request remains valid once only one conflict is left.
+			call("POST", "/upstream-resolve", fmt.Sprintf(`{"project":%d,"note":%d,"ours":false}`, fk, n.ID), 200)
+		})
+	}
+}
+
 // GET /upstream-links/{id}: one link with its conflicts as rows (the note's title and what happened there), what the panel's detail
 // page lists and resolves; the count is also in the list.
 func TestUpstreamLinkDetailListsConflicts(t *testing.T) {

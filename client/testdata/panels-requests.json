@@ -1806,7 +1806,8 @@
     "title": "Plan",
     "what": "changed",
     "projectId": 1,
-    "teamId": 0
+    "teamId": 0,
+    "upstream": "hub"
    },
    "parent": {
     "label": "acme-web",
@@ -1824,7 +1825,7 @@
    },
    "want": {
     "query": "",
-    "body": "{\"note\":7,\"ours\":false,\"project\":1,\"team\":0}",
+    "body": "{\"note\":7,\"ours\":false,\"project\":1,\"team\":0,\"upstream\":\"hub\"}",
     "method": "POST",
     "path": "/upstream-resolve"
    },
@@ -1840,7 +1841,8 @@
     "title": "Rules",
     "what": "deleted",
     "projectId": 0,
-    "teamId": 4
+    "teamId": 4,
+    "upstream": "hub"
    },
    "parent": {
     "label": "team web",
@@ -1858,7 +1860,7 @@
    },
    "want": {
     "query": "",
-    "body": "{\"note\":9,\"ours\":true,\"project\":0,\"team\":4}",
+    "body": "{\"note\":9,\"ours\":true,\"project\":0,\"team\":4,\"upstream\":\"hub\"}",
     "method": "POST",
     "path": "/upstream-resolve"
    },
@@ -1873,7 +1875,8 @@
     "note": 9,
     "title": "Rules",
     "what": "deleted",
-    "projectId": 0
+    "projectId": 0,
+    "upstream": "hub"
    },
    "parent": {
     "label": "team web",
@@ -1885,6 +1888,35 @@
     "team": true,
     "remote": "web",
     "classesText": "structure",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit"
+   },
+   "want": "refused",
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links/conflicts",
+   "kind": "rowActions",
+   "action": "keep-theirs",
+   "row": {
+    "note": 7,
+    "title": "Plan",
+    "what": "changed",
+    "projectId": 1,
+    "teamId": 0
+   },
+   "parent": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
     "withPrivate": false,
     "auto": false,
     "mode": "submit"

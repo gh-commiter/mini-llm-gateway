@@ -151,7 +151,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)\n",
     "exit": 1,
     "requests": []
    }
@@ -945,7 +945,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)\n",
     "exit": 1,
     "requests": []
    }
@@ -960,7 +960,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n  minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)\n",
     "exit": 1,
     "requests": []
    }
@@ -1185,14 +1185,16 @@
    }
   },
   {
-   "name": "pull dry run",
+   "name": "resolve theirs named upstream",
    "args": [
     "upstream",
-    "pull",
-    "shop"
+    "resolve",
+    "shop",
+    "12"
    ],
    "opts": {
-    "dryRun": true
+    "theirs": true,
+    "upstream": "hub"
    },
    "responses": [
     {
@@ -1201,13 +1203,13 @@
      "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
     },
     {
-     "match": "POST /upstream-pull",
+     "match": "POST /upstream-resolve",
      "status": 200,
-     "body": "{\"pulls\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"source project:shop: 5 notes (structure faq 1, structure finding 3, data finding 1)\", \"source team:acme: 2 notes (structure finding 2)\"], \"total\": 7, \"truncated\": false, \"dryRun\": true, \"project\": 3, \"team\": false}]}"
+     "body": "{\"ok\": true}"
     }
    ],
    "want": {
-    "out": "shop -> hub (shop)\n  source project:shop: 5 notes (structure faq 1, structure finding 3, data finding 1)\n  source team:acme: 2 notes (structure finding 2)\n  dry run: 7 notes could be read, nothing was stored\n",
+    "out": "note 12: the upstream's version stays, our change is forgotten for it\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1218,21 +1220,64 @@
      ],
      [
       "POST",
-      "/upstream-pull",
-      "{\"dryRun\":true,\"project\":3}"
+      "/upstream-resolve",
+      "{\"note\":12,\"ours\":false,\"project\":3,\"upstream\":\"hub\"}"
      ]
     ]
    }
   },
   {
-   "name": "pull dry run truncated",
+   "name": "resolve ours team named upstream",
    "args": [
     "upstream",
-    "pull",
-    "shop"
+    "resolve",
+    "12"
    ],
    "opts": {
-    "dryRun": true
+    "team": "acme",
+    "ours": true,
+    "upstream": "hub"
+   },
+   "responses": [
+    {
+     "match": "GET /teams",
+     "status": 200,
+     "body": "{\"teams\": [{\"ID\": 6, \"Name\": \"acme\"}]}"
+    },
+    {
+     "match": "POST /upstream-resolve",
+     "status": 200,
+     "body": "{\"ok\": true}"
+    }
+   ],
+   "want": {
+    "out": "note 12: our version goes to the upstream as a submission at the next push\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/teams",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-resolve",
+      "{\"note\":12,\"ours\":true,\"team\":6,\"upstream\":\"hub\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "resolve ambiguous upstreams",
+   "args": [
+    "upstream",
+    "resolve",
+    "shop",
+    "12"
+   ],
+   "opts": {
+    "theirs": true
    },
    "responses": [
     {
@@ -1241,83 +1286,27 @@
      "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
     },
     {
-     "match": "POST /upstream-pull",
-     "status": 200,
-     "body": "{\"pulls\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"source project:shop: 5000 notes (structure finding 5000)\", \"the upstream's list stops at 5000 notes: more exist, and a pull would delete nothing\"], \"total\": 5000, \"truncated\": true, \"dryRun\": true, \"project\": 3, \"team\": false}]}"
+     "match": "POST /upstream-resolve",
+     "status": 400,
+     "body": "{\"error\":{\"message\":\"conflicts on upstreams hub, other: choose --upstream <name>\"}}"
     }
    ],
-   "want": {
-    "out": "shop -> hub (shop)\n  source project:shop: 5000 notes (structure finding 5000)\n  the upstream's list stops at 5000 notes: more exist, and a pull would delete nothing\n  dry run: 5000 notes could be read, nothing was stored\n",
-    "err": "",
-    "exit": 0,
-    "requests": [
-     [
-      "GET",
-      "/projects",
-      ""
-     ],
-     [
-      "POST",
-      "/upstream-pull",
-      "{\"dryRun\":true,\"project\":3}"
-     ]
-    ]
-   }
-  },
-  {
-   "name": "pull dry run stopped",
-   "args": [
-    "upstream",
-    "pull",
-    "shop"
-   ],
-   "opts": {
-    "dryRun": true
-   },
-   "responses": [
-    {
-     "match": "GET /projects",
-     "status": 200,
-     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
-    },
-    {
-     "match": "POST /upstream-pull",
-     "status": 200,
-     "body": "{\"pulls\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [], \"total\": 0, \"truncated\": false, \"stopped\": \"the upstream does not support reading (or the project is gone there)\", \"dryRun\": true, \"project\": 3, \"team\": false}]}"
-    }
-   ],
-   "want": {
-    "out": "shop -> hub (shop)\n  stopped: the upstream does not support reading (or the project is gone there)\n",
-    "err": "",
-    "exit": 0,
-    "requests": [
-     [
-      "GET",
-      "/projects",
-      ""
-     ],
-     [
-      "POST",
-      "/upstream-pull",
-      "{\"dryRun\":true,\"project\":3}"
-     ]
-    ]
-   }
-  },
-  {
-   "name": "pull without dry run",
-   "args": [
-    "upstream",
-    "pull",
-    "shop"
-   ],
-   "opts": {},
-   "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: pull: only --dry-run exists for now (it asks the upstream what could be read and stores nothing)\n",
+    "err": "minigw: conflicts on upstreams hub, other: choose --upstream <name>\n",
     "exit": 1,
-    "requests": []
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-resolve",
+      "{\"note\":12,\"ours\":false,\"project\":3}"
+     ]
+    ]
    }
   }
  ]

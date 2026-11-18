@@ -70,7 +70,7 @@ func (t AutoTiming) backoff(failures int, jitter func() float64) time.Duration {
 // project (or team) that are set to auto get their outbox flag. It is the only effect a member's edit has on an upstream: a flag, and so
 // at most one push per debounce window however many edits there are.
 func (s *Store) markUpstreamDirty(tx *sql.Tx, project int64) error {
-	_, err := tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN dirty_since=0 THEN ?1 ELSE dirty_since END, last_change=?1 WHERE project_id=?2 AND auto=1`, ms(s.now()), project)
+	_, err := tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN dirty_since=0 THEN ?1 ELSE dirty_since END, last_change=max(?1,last_change+1) WHERE project_id=?2 AND auto=1`, ms(s.now()), project)
 	return err
 }
 
@@ -125,7 +125,7 @@ func (s *Store) AutoPush(ctx context.Context, tr UpstreamTransport, sleep func(t
 		if l.Project != project || l.Upstream != upstream {
 			continue
 		}
-		res, err := s.pushLink(ctx, tr, l.UpstreamLink, l.Label, cursor, false, sleep) // records the outcome (afterRun) too
+		res, err := s.pushLink(ctx, tr, l.UpstreamLink, l.Label, cursor, false, sleep, true) // records the outcome (afterRun) too
 		var busy errPushRunning
 		if errors.As(err, &busy) { // a manual push of this link is running: it records the outcome; the timer comes back
 			run.Next = s.autoNext(ctx, t, ms(s.now()))
@@ -136,26 +136,6 @@ func (s *Store) AutoPush(ctx context.Context, tr UpstreamTransport, sleep func(t
 			return run, err
 		}
 		run.Ran, run.Push = true, &res
-		wctx := context.WithoutCancel(ctx)
-		// One audit row per run that sent notes, and otherwise one per CHANGE of outcome (the failure count is part of it, so a back-off step writes one): a link that keeps being
-		// refused, or limited, does not fill the audit table.
-		if e := s.write(wctx, func(tx *sql.Tx) error {
-			var fails int
-			var last string
-			if e := tx.QueryRow(`SELECT fail_count,last_audit FROM upstream_links WHERE project_id=? AND upstream=?`, project, upstream).Scan(&fails, &last); e != nil {
-				return notFound(e)
-			}
-			sig := fmt.Sprintf("%v/%v/%v/%d", res.Created+res.Replaced > 0, res.Refused > 0, res.More, fails)
-			if sig == last && res.Created+res.Replaced == 0 { // a run that sent notes is always recorded: the audit says what left
-				return nil
-			}
-			if _, e := tx.Exec(`UPDATE upstream_links SET last_audit=? WHERE project_id=? AND upstream=?`, sig, project, upstream); e != nil {
-				return e
-			}
-			return Audit(tx, "gateway", "upstream.auto-push", upstream, map[string]any{"project": l.Label, "created": res.Created, "replaced": res.Replaced, "skipped": res.Skipped, "refused": res.Refused, "more": res.More, "stopped": res.Stopped != ""})
-		}); e != nil {
-			return run, e
-		}
 		break
 	}
 	run.Next = s.autoNext(ctx, t, ms(s.now()))
@@ -179,39 +159,82 @@ func (s *Store) autoNext(ctx context.Context, t AutoTiming, now int64) time.Dura
 	return d
 }
 
+// beginTraversal remembers the dirty generation before the first batch sends anything.
+func (s *Store) beginTraversal(ctx context.Context, l UpstreamLink, after int64) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		if after == 0 {
+			_, e := tx.Exec(`UPDATE upstream_links SET push_generation=last_change, push_failed=0, push_cursor=0 WHERE project_id=? AND upstream=?`, l.Project, l.Upstream)
+			return e
+		}
+		// An unknown continuation cannot prove that the start of this traversal was clean.
+		_, e := tx.Exec(`UPDATE upstream_links SET push_generation=0, push_failed=1 WHERE project_id=? AND upstream=? AND push_cursor<>?`, l.Project, l.Upstream, after)
+		return e
+	})
+}
+
 // afterRun records the outcome of a real run on the link: success (the outbox is cleared unless a change arrived while it ran), a failure
 // (the back-off), or "more". A "more" that waits for the upstream's write limit is not a failure and comes back no sooner than the wait;
 // a "more" that got somewhere (a note sent) goes on soon; a "more" that got nowhere (every note refused, a time budget used for nothing)
 // is a failure, so the back-off applies. A "more" keeps the cursor (the last note dealt with) for the next run; any other end resets it.
-func (s *Store) afterRun(ctx context.Context, l UpstreamLink, res UpstreamPush, started int64) error {
+func (s *Store) afterRun(ctx context.Context, l UpstreamLink, res UpstreamPush) error {
 	t := s.autoTiming()
 	now := ms(s.now())
-	failed := res.Refused > 0 || (res.Stopped != "" && !res.More)
-	var cursor int64
-	if res.More {
-		cursor = res.Next
-		failed = res.Wait == 0 && res.Created+res.Replaced == 0
-	}
 	return s.write(ctx, func(tx *sql.Tx) error {
-		switch {
-		case res.More && !failed:
+		var generation int64
+		var priorFailed, n int
+		if e := tx.QueryRow(`SELECT push_generation,push_failed,fail_count FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&generation, &priorFailed, &n); e != nil {
+			return notFound(e)
+		}
+		traversalFailed := priorFailed != 0 || res.Refused > 0 || (res.Stopped != "" && !res.More)
+		failed := traversalFailed
+		var cursor int64
+		if res.More {
+			cursor = res.Next
+			// Preserve the traversal failure, but continue a batch that made progress or waits for a write limit.
+			failed = res.Wait == 0 && res.Created+res.Replaced == 0
+		}
+		savedFailure := 0
+		if res.More && traversalFailed {
+			savedFailure = 1
+		}
+		if !res.More {
+			generation = 0
+		}
+		if res.More && !failed {
 			wait := time.Duration(res.Wait) * time.Second
 			if wait < time.Second {
 				wait = time.Second
 			}
-			_, e := tx.Exec(`UPDATE upstream_links SET next_attempt=?, push_cursor=? WHERE project_id=? AND upstream=?`, now+wait.Milliseconds(), cursor, l.Project, l.Upstream)
-			return e
-		case failed:
-			var n int
-			if e := tx.QueryRow(`SELECT fail_count FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&n); e != nil {
-				return notFound(e)
-			}
-			n++
-			_, e := tx.Exec(`UPDATE upstream_links SET fail_count=?, last_fail=?, next_attempt=?, push_cursor=? WHERE project_id=? AND upstream=?`, n, now, now+t.backoff(n, s.jitterFn()).Milliseconds(), cursor, l.Project, l.Upstream)
+			_, e := tx.Exec(`UPDATE upstream_links SET next_attempt=?,push_cursor=?,push_failed=? WHERE project_id=? AND upstream=?`, now+wait.Milliseconds(), cursor, savedFailure, l.Project, l.Upstream)
 			return e
 		}
-		_, e := tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN last_change>? THEN dirty_since ELSE 0 END, last_ok=?, fail_count=0, next_attempt=0, push_cursor=0 WHERE project_id=? AND upstream=?`, started, now, l.Project, l.Upstream)
+		if failed {
+			n++
+			_, e := tx.Exec(`UPDATE upstream_links SET fail_count=?,last_fail=?,next_attempt=?,push_cursor=?,push_generation=?,push_failed=? WHERE project_id=? AND upstream=?`, n, now, now+t.backoff(n, s.jitterFn()).Milliseconds(), cursor, generation, savedFailure, l.Project, l.Upstream)
+			return e
+		}
+		_, e := tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN last_change=push_generation THEN 0 ELSE dirty_since END,last_ok=?,fail_count=0,next_attempt=0,push_cursor=0,push_generation=0,push_failed=0 WHERE project_id=? AND upstream=?`, now, l.Project, l.Upstream)
 		return e
+	})
+}
+
+// auditAutoRun runs before the push lock is released. A send always writes a row, even if the link disappeared.
+func (s *Store) auditAutoRun(ctx context.Context, l UpstreamLink, label string, res UpstreamPush) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		var fails int
+		var last string
+		e := tx.QueryRow(`SELECT fail_count,last_audit FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&fails, &last)
+		if e != nil && e != sql.ErrNoRows {
+			return e
+		}
+		sig := fmt.Sprintf("%v/%v/%v/%d", res.Created+res.Replaced > 0, res.Refused > 0, res.More, fails)
+		if e == nil && sig == last && res.Created+res.Replaced == 0 {
+			return nil
+		}
+		if _, e := tx.Exec(`UPDATE upstream_links SET last_audit=? WHERE project_id=? AND upstream=?`, sig, l.Project, l.Upstream); e != nil {
+			return e
+		}
+		return Audit(tx, "gateway", "upstream.auto-push", l.Upstream, map[string]any{"project": label, "created": res.Created, "replaced": res.Replaced, "skipped": res.Skipped, "refused": res.Refused, "more": res.More, "stopped": res.Stopped != ""})
 	})
 }
 

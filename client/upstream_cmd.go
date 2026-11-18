@@ -16,8 +16,8 @@ const upstreamHelp = `
   minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)
   minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
   minigw gw upstream unlink <project> <name> | --team <team> <name>
-  minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
-  minigw gw upstream resolve --team <team> <note> --theirs|--ours
+  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
+  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
   minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
   minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
   minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)`
@@ -178,6 +178,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			fail("resolve: the note is its number")
 		}
 		body := map[string]any{"note": note, "ours": u.ours}
+		if u.upstream != "" {
+			body["upstream"] = u.upstream
+		}
 		if team != "" {
 			body["team"] = teamID(a, team)
 		} else {

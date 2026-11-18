@@ -9,6 +9,234 @@ import (
 	"time"
 )
 
+func TestAutoTraversalRetainsEditBelowCursor(t *testing.T) {
+	old := maxPushNotes
+	maxPushNotes = 1
+	t.Cleanup(func() { maxPushNotes = old })
+	f, fk, notes := autoFx(t)
+	f.clock = f.clock.Add(61 * time.Second)
+	up := okUp()
+	r, e := f.AutoPush(ctx, up, noSleep)
+	f.ok(e)
+	if !r.Push.More {
+		t.Fatal("expected a continuation")
+	}
+	reopenAutoFixture(f)
+	f.edit("ana", fk, notes["Structure one"], "edited below cursor")
+	f.clock = f.clock.Add(61 * time.Second)
+	r, e = f.AutoPush(ctx, up, noSleep)
+	f.ok(e)
+	if r.Push.More || f.link(fk).DirtySince == nil {
+		t.Fatal("continuation forgot the edit below its cursor")
+	}
+	f.clock = f.clock.Add(61 * time.Second)
+	r, e = f.AutoPush(ctx, up, noSleep)
+	f.ok(e)
+	if !r.Ran || r.Push.Created+r.Push.Replaced != 1 {
+		t.Fatalf("edit was not sent: %+v", r)
+	}
+}
+
+func TestAutoTraversalRetainsEarlierRefusal(t *testing.T) {
+	old := maxPushNotes
+	maxPushNotes = 2
+	t.Cleanup(func() { maxPushNotes = old })
+	f, fk, _ := autoFx(t)
+	keySeq++
+	_, _, e := f.CreateNote(ctx, f.p("ana"), fk, fmt.Sprint("uk", keySeq), NoteInput{Class: Structure, Title: "Last batch", Body: "body"})
+	f.ok(e)
+	f.clock = f.clock.Add(61 * time.Second)
+	up := okUp()
+	good := up.handler
+	up.handler = func(c upCall) (int, string, time.Duration) {
+		if c.method == "POST" && c.body["title"] == "Structure one" {
+			return 400, `{"error":{"message":"no"}}`, 0
+		}
+		return good(c)
+	}
+	r, e := f.AutoPush(ctx, up, noSleep)
+	f.ok(e)
+	if !r.Push.More || r.Push.Refused != 1 || r.Push.Created != 1 || f.link(fk).FailCount != 0 {
+		t.Fatalf("%+v", r)
+	}
+	reopenAutoFixture(f)
+	f.clock = f.clock.Add(time.Minute)
+	r, e = f.AutoPush(ctx, up, noSleep)
+	f.ok(e)
+	l := f.link(fk)
+	if r.Push.Refused != 0 || l.DirtySince == nil || l.FailCount == 0 || l.NextAttempt == nil || !l.NextAttempt.After(f.clock) {
+		t.Fatalf("forgot earlier refusal: %+v %+v", r, l)
+	}
+	count := up.count("POST")
+	for i := 0; i < 5; i++ {
+		r, e = f.AutoPush(ctx, up, noSleep)
+		f.ok(e)
+		if r.Ran {
+			t.Fatal("retried without back-off")
+		}
+	}
+	if up.count("POST") != count {
+		t.Fatal("resent in a tight loop")
+	}
+}
+
+func reopenAutoFixture(f *fx) {
+	f.t.Helper()
+	dir := f.Store.dir
+	f.ok(f.Close())
+	s, e := Open(dir, Options{})
+	f.ok(e)
+	f.Store = s
+	f.Store.now = func() time.Time { return f.clock }
+	f.Store.jitter = func() float64 { return 0.5 }
+}
+
+func TestAutoTraversalSeesChangeInSameMillisecond(t *testing.T) {
+	f, fk, notes := autoFx(t)
+	f.clock = f.clock.Add(61 * time.Second)
+	// The generation and the edit have the same wall-clock timestamp.
+	f.ok(f.write(ctx, func(tx *sql.Tx) error { return f.markUpstreamDirty(tx, fk) }))
+	f.SetAutoTiming(AutoTiming{Debounce: time.Millisecond, MaxWait: time.Millisecond})
+	f.clock = f.clock.Add(time.Millisecond)
+	up := okUp()
+	good := up.handler
+	edited := false
+	up.handler = func(c upCall) (int, string, time.Duration) {
+		if c.method == "POST" && !edited {
+			edited = true
+			n := notes["Structure one"]
+			f.clock = f.clock.Add(-time.Millisecond)
+			_, e := f.UpdateNote(ctx, f.p("ana"), fk, n.ID, n.Revision, NoteInput{Class: n.Class, Title: n.Title, Body: "same millisecond edit"})
+			f.ok(e)
+			f.clock = f.clock.Add(time.Millisecond)
+		}
+		return good(c)
+	}
+	_, e := f.AutoPush(ctx, up, noSleep)
+	f.ok(e)
+	if f.link(fk).DirtySince == nil {
+		t.Fatal("same millisecond edit was forgotten")
+	}
+}
+
+func TestAutoAuditDoesNotRequireLinkRow(t *testing.T) {
+	f, fk, _ := autoFx(t)
+	l := f.link(fk)
+	f.ok(f.UnlinkUpstream(ctx, fk, 0, "hub"))
+	f.ok(f.auditAutoRun(ctx, l.UpstreamLink, l.Label, UpstreamPush{Created: 1}))
+	if autoAudits(f) != 1 {
+		t.Fatal("missing audit for a sent note")
+	}
+}
+
+func TestTraversalMigrationRestartsOldCursor(t *testing.T) {
+	saved := migrations
+	migrations = saved[:22]
+	t.Cleanup(func() { migrations = saved })
+	f, fk, _ := autoFx(t)
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`UPDATE upstream_links SET push_cursor=1000,fail_count=2,next_attempt=123 WHERE project_id=?`, fk)
+		return e
+	}))
+	migrations = saved
+	reopenAutoFixture(f)
+	var cursor, generation, failed int64
+	f.ok(f.read(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRow(`SELECT push_cursor,push_generation,push_failed FROM upstream_links WHERE project_id=?`, fk).Scan(&cursor, &generation, &failed)
+	}))
+	if cursor != 0 || generation != 0 || failed != 0 || f.link(fk).DirtySince == nil || f.link(fk).FailCount != 2 {
+		t.Fatalf("unsafe migrated traversal: %d %d %d %+v", cursor, generation, failed, f.link(fk))
+	}
+}
+
+func TestDisablingAutoDiscardsTraversal(t *testing.T) {
+	old := maxPushNotes
+	maxPushNotes = 1
+	t.Cleanup(func() { maxPushNotes = old })
+	f, fk, notes := autoFx(t)
+	f.clock = f.clock.Add(61 * time.Second)
+	r, e := f.AutoPush(ctx, okUp(), noSleep)
+	f.ok(e)
+	if !r.Push.More {
+		t.Fatal("expected continuation")
+	}
+	no, yes := false, true
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Auto: &no}))
+	f.edit("ana", fk, notes["Structure one"], "edited while manual")
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Auto: &yes}))
+	f.clock = f.clock.Add(61 * time.Second)
+	up := okUp()
+	r, e = f.AutoPush(ctx, up, noSleep)
+	f.ok(e)
+	var title any
+	for _, c := range up.calls {
+		if c.method == "POST" {
+			title = c.body["title"]
+			break
+		}
+	}
+	if !r.Ran || title != "Structure one" {
+		t.Fatal("auto resumed a discarded traversal")
+	}
+}
+
+func TestUnknownManualContinuationKeepsOutbox(t *testing.T) {
+	f, fk, notes := autoFx(t)
+	_, e := f.PushUpstream(ctx, okUp(), fk, 0, "hub", notes["Structure one"].ID, false, noSleep)
+	f.ok(e)
+	l := f.link(fk)
+	if l.DirtySince == nil || l.FailCount != 1 {
+		t.Fatalf("partial traversal cleared the outbox: %+v", l)
+	}
+}
+
+func TestUnlinkAndRemoveRefuseDuringAutoPushAndAuditSurvives(t *testing.T) {
+	for _, remove := range []bool{false, true} {
+		t.Run(fmt.Sprint(remove), func(t *testing.T) {
+			f, fk, _ := autoFx(t)
+			f.clock = f.clock.Add(61 * time.Second)
+			inside, release := make(chan struct{}), make(chan struct{})
+			up := okUp()
+			good := up.handler
+			first := true
+			up.handler = func(c upCall) (int, string, time.Duration) {
+				if c.method == "POST" && first {
+					first = false
+					close(inside)
+					<-release
+				}
+				return good(c)
+			}
+			done := make(chan error, 1)
+			go func() { _, e := f.AutoPush(ctx, up, noSleep); done <- e }()
+			<-inside
+			var e error
+			if remove {
+				e = f.RemoveUpstream(ctx, "hub")
+			} else {
+				e = f.UnlinkUpstream(ctx, fk, 0, "hub")
+			}
+			close(release)
+			pushErr := <-done
+			if e == nil || !strings.Contains(e.Error(), "is running") {
+				t.Fatalf("removal during send was not refused: %v (push: %v)", e, pushErr)
+			}
+			f.ok(pushErr)
+			if n := autoAudits(f); n != 1 {
+				t.Fatalf("%d audits", n)
+			}
+			if remove {
+				f.ok(f.RemoveUpstream(ctx, "hub"))
+			} else {
+				f.ok(f.UnlinkUpstream(ctx, fk, 0, "hub"))
+			}
+			if n := autoAudits(f); n != 1 {
+				t.Fatalf("lost audit after removal: %d", n)
+			}
+		})
+	}
+}
+
 func autoFx(t *testing.T) (*fx, int64, map[string]Note) {
 	f, notes := upFx(t)
 	f.Store.jitter = func() float64 { return 0.5 } // no jitter: the back-off is exact

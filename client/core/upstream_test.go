@@ -21,6 +21,52 @@ type upCall struct {
 	key          string
 }
 
+func TestResolveUpstreamRefusesAmbiguousNote(t *testing.T) {
+	for _, ours := range []bool{false, true} {
+		t.Run(fmt.Sprint(ours), func(t *testing.T) {
+			f, notes := upFx(t)
+			fk := f.pid["fakture"]
+			n := notes["Structure one"]
+			f.ok(f.AddUpstream(ctx, "other", "127.0.0.1:8766"))
+			yes := true
+			for _, up := range []string{"hub", "other"} {
+				f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: up, Remote: "shop", Mode: "publish", Auto: &yes}))
+				f.ok(f.upstreamRecordPublished(ctx, fk, up, UpstreamNote{ID: n.ID, Hash: upstreamHash(n), Revision: n.Revision}, 55, 1))
+				f.ok(f.upstreamRecordConflict(ctx, fk, up, n.ID, 2))
+			}
+			f.ok(f.write(ctx, func(tx *sql.Tx) error {
+				_, e := tx.Exec(`UPDATE upstream_links SET dirty_since=0 WHERE project_id=?`, fk)
+				return e
+			}))
+			e := f.ResolveUpstream(ctx, fk, 0, n.ID, ours)
+			if e == nil || !strings.Contains(e.Error(), "hub") || !strings.Contains(e.Error(), "other") {
+				t.Fatalf("ambiguous resolve: %v", e)
+			}
+			ls, e := f.UpstreamLinks(ctx, fk, 0)
+			f.ok(e)
+			for _, l := range ls {
+				if len(l.Conflicts) != 1 {
+					t.Fatalf("resolved %s", l.Upstream)
+				}
+			}
+			f.ok(f.ResolveUpstream(ctx, fk, 0, n.ID, ours, "hub"))
+			ls, e = f.UpstreamLinks(ctx, fk, 0)
+			f.ok(e)
+			for _, l := range ls {
+				if l.Upstream == "other" {
+					if len(l.Conflicts) != 1 || l.DirtySince != nil {
+						t.Fatalf("changed other link: %+v", l)
+					}
+				} else {
+					if len(l.Conflicts) != 0 || (l.DirtySince != nil) != ours {
+						t.Fatalf("selected link: %+v", l)
+					}
+				}
+			}
+		})
+	}
+}
+
 // fakeUp is a scripted upstream: handler answers (status, body, retry-after). It records what was asked.
 type fakeUp struct {
 	calls   []upCall
