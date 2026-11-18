@@ -92,8 +92,11 @@ public struct GitWatch: Sendable {
         var committed: [String] = []
         for c in commits { for f in c.files where isProtected(f) && !committed.contains(f) { committed.append(f) } }
         if !committed.isEmpty { lines.append("minigw: WARNING: the agent committed a protected path: " + list(committed) + " - review before git checkout, reset --hard, restore, stash pop or your next commit") }
-        let reset = staged.filter(isProtected).sorted()
-        if !reset.isEmpty { lines.append("minigw: WARNING: the agent staged a protected path: " + list(reset) + " - removed from the index for you (your files were not touched)") }
+        var reset = staged.filter(isProtected).sorted()
+        if !reset.isEmpty, !end.incomplete.isEmpty {  // the staged paths come from a read that failed in part: the index is left alone
+            lines.append("minigw: WARNING: a protected path looks staged: " + list(reset) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit")
+            reset = []
+        } else if !reset.isEmpty { lines.append("minigw: WARNING: the agent staged a protected path: " + list(reset) + " - removed from the index for you (your files were not touched)") }
         let dashed = end.refs.filter { r, id in start.refs[r] != id && r.split(separator: "/").contains { $0.hasPrefix("-") } }.keys.map { $0 }
         if !dashed.isEmpty {  // the guard refuses them as loose refs, packed-refs is writable: a script of yours could read such a name as an option
             lines.append("minigw: WARNING: the agent created a ref with a name that starts with \"-\" (" + list(dashed) + "): a script of yours could take it for an option - review it, then git update-ref -d <name>")

@@ -436,7 +436,7 @@ func TestGitWatchDrainTimeoutRestoresNothing(t *testing.T) {
 	os.WriteFile(filepath.Join(root, ".envrc"), []byte("echo hi"), 0o644)
 	gitIn(t, root, "add", ".envrc")
 	out := captureStderr(t, s.unregister)
-	wantAll(t, out, "INCOMPLETE", "requests of the agent were still running", "staged a protected path: .envrc", "NOT removed from the index")
+	wantAll(t, out, "INCOMPLETE", "requests of the agent were still running", "a protected path looks staged: .envrc", "NOT removed from the index")
 	if gitIn(t, root, "ls-files", "-s", ".envrc") == "" {
 		t.Error("the index was restored without the lock")
 	}

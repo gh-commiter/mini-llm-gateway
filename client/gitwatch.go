@@ -167,7 +167,10 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 		}
 	}
 	sort.Strings(reset)
-	if len(reset) > 0 {
+	if len(reset) > 0 && len(end.Incomplete) > 0 { // the staged paths come from a read that failed in part: the index is left alone
+		lines = append(lines, "minigw: WARNING: a protected path looks staged: "+gitNames(slices.Clone(reset))+" - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit")
+		reset = nil
+	} else if len(reset) > 0 {
 		lines = append(lines, "minigw: WARNING: the agent staged a protected path: "+gitNames(slices.Clone(reset))+" - removed from the index for you (your files were not touched)")
 	}
 	var dashed []string
