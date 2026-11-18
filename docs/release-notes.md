@@ -2,12 +2,50 @@
 
 ## Unreleased
 
+## 0.7.36
+
+Fixes from a second review of the changes made in 0.7.32.
+
 ### Security
 - Restoring a backup taken in the middle of a pull from an upstream gateway no longer resumes that pull: the first pull after a restore reads everything again, so a note the upstream changed meanwhile is not shown in its old form.
 - A tab in a submission is now shown in the review (where it is), so the text a reviewer reads is the text that is published.
 
 ### Fixed
 - A note pulled from an upstream gateway with a lone carriage return keeps a line break there instead of losing the character, as in every other place.
+
+### Known problems
+- A note that came from another gateway is recognised by the line the sending gateway adds at its end. Someone who may edit that note can change the line, and the note is then pushed onward as a new one; `upstream status` counts the recognised ones as foreign. There is no loop on its own: each further copy needs another edit.
+- The hidden characters that a review refuses do not include the no-break space and the other special spaces.
+- How the Mac app's Knowledge base pane shows a tab in a submission was not checked; the command-line review shows it.
+- The Mac app waits up to an hour for its helper's database upgrade and then tries again, with no overall limit; the status says "upgrading".
+- The plugin's session start on Windows takes about 4.5 seconds on the test computer (0.7.0: 2.6): it fetches the release's signed checksums and checks its `minigw` and the installed one every time.
+- With no network and nothing cached (the first session after installing the plugin), a Linux or Windows computer whose installed `minigw` is not the current release has no `minigw` for the plugin: an unverified program is not run.
+- The plugin changes since 0.7.33 were tried on a real Windows computer by running the install script by hand next to an installed 0.7.31; not yet as an installed plugin, and not yet on a Mac with only the Homebrew client.
+- Whether a command typed as `! minigw ...` in Claude Code uses the plugin's copy was not tried on a computer with an older installed `minigw`: check `! minigw --version` first (the onboarding page says so).
+- On Windows the plugin's own `minigw.exe` stays in its folder when an installed client is used, and is not updated while that is so: an MCP configuration that points at it keeps running that older copy.
+- The plugin's install script cannot defend against someone who can already write to the plugin's data folder as you (they could replace a file between the check and the run, or put back an older signed pair): the checks are against a wrong or tampered download and a wrong installed client, not against code already running under your account.
+- On Linux and Windows without `ssh-keygen` the plugin's own `minigw` is used unverified (the session start says so); the tools the check itself uses (`ssh-keygen`, `curl`, `shasum`, `codesign`) are taken from `PATH`.
+- The plugin's scripts themselves are not signed: they come from the plugin's `release` branch on GitHub.
+- The automatic pull, a member's search and read of a mirrored note, and the "differs" line of a note changed on the upstream were tried between two real gateways on 2026-11-18 (a Mac gateway reading a Windows gateway on an older beta, one test project); a team link, the other direction (a Windows gateway reading a Mac gateway) and the panel in a real window were not.
+- The panel additions (the Reading section and its actions) were tried through the shared fixtures and the renderers' tests, not in a real window.
+- A hub that changes what we sent (its own trailer, other sanitising) makes a pushed note show twice (the local note and the hub's copy with the "differs" line); receipts written before this version, and after `resolve --theirs`, are compared by revision only.
+- Reading off now forgets the link's classes and sources, an explicit empty list (`--read-sources none`, an empty panel field) means no extra sources, and only an omitted list keeps the current ones: an acceptance never brings back a reach that was not shown.
+- Member review is command-line only: the Knowledge base panel is the owner's, and members have no panel for it.
+- A project with a single admin leaves that admin's own submissions for the owner.
+- The four admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base, Upstream gateways) have only been tried through tests, not in a real window. In the Teams and projects pane team notes (a team's own notes) are not shown, only in the Knowledge base pane; in the Knowledge base pane notes and questions are read, not edited, and a replacement shows both texts, not a line difference. The "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI.
+- The panels on the settings page of `minigw serve`, the Upstream gateways pane and `gw settings password` were tried on one Windows gateway in a headless Chromium browser (they work; no Content Security Policy error); not in Edge or Firefox, and not on Linux. A detail page opens in place of the panel with a Back button. The Mac app does not use this page. Opening an upstream's detail page contacts it.
+- Remote settings have no team, project or knowledge base administration: the listener serves providers, models and devices only, so a Docker team gateway has no web page for teams, projects or review (use `docker compose exec ... minigw gw`).
+- The remote settings password record is still a file in the config folder, also where the other secrets are in the credential store; this step only reports where it is.
+- The Mac app has no remote settings listener and no `gw settings password`, by design: on the Mac the admin UI is the native app.
+- Docker Compose: the admin setup (`compose.admin.yaml`) was tried only with its test script (`scripts/compose-admin-e2e.sh`) on one Mac through Docker, not on the team server. The default HTTPS port 443 and a host port other than 443 for a real certificate name are not covered by the test (it uses a high port). On Docker Desktop and rootless Docker the proxy sees the Docker gateway address for every browser, so `allowedSourceCIDRs` and the per-source lockout do not tell browsers apart there; real source filtering needs rootful Docker on Linux. The gateway itself was tried on arm64 and, through emulation, on amd64 on one Mac. Any container on the same Docker network can take a service name's alias and would then receive that provider's key: put only trusted containers on that network.
+- Upstream gateway: one way. Deletions and notes that became private are not propagated (status lists them).
+- Automatic push and publish mode, with a conflict and `resolve --ours`, were tried between two real gateways on 2026-11-18 (a Mac gateway to a Windows gateway; a test project with three notes; one push for five quick edits; a conflict was not overwritten). Replacements of accepted notes, team notes and `resolve --theirs` have only been tried in tests.
+- Team notes have no `private` class, and only a project admin of the team writes them; the owner has no write path to them (the owner reviews submissions and exports bundles).
+- Worktree mode runs the top repository's own git clean/smudge filters (intended for LFS): use sync for an untrusted repository.
+- Labels can be filled on Windows and Linux with Foundry Local and on the Mac with the on-device model (Apple Foundation Models) when the owner turns it on. Not tried with a real model on either (the Mac worker was tried with a fake model in tests, not in a real session). `gw labels eval` was tried only with fake models.
+- Agreement and eval numbers are agreement with explicit labels, a biased sample, not calibrated accuracy.
+- A model of a provider (LiteLLM, OpenRouter, xAI) with `--minigw-tools` reads your folder with the tools of your own Claude Code on your computer: nothing is synced for it, so the root `.gitignore` does not limit what it can read (the line "syncing ... for agent models" is about agent models only). Use `--minigw-tools none`, or run it in a folder without secrets.
+- Sync copies were checked for the root `.gitignore`: every sync mode on both clients leaves the listed entries out of what is sent (the same shared test fixture on both). But a file that was already copied before it was added to `.gitignore` stays in the gateway's copy (kept up to 14 days) until the owner removes the copy (`minigw gw sync remove <copy id> --device ID`).
 
 ## 0.7.35
 
