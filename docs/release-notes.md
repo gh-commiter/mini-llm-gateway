@@ -17,10 +17,21 @@
 - Waits for an upstream's rate limit on Windows and Linux end with the request instead of holding the link's lock.
 
 ### Known problems
-- The Mac label worker was tried with a fake model in tests, not with the real on-device model in a real session.
-- Members do not see pulled notes yet: search, `note read`, FAQ and MCP do not include the mirror (step C3).
+- Member review is command-line only: the Knowledge base panel is the owner's, and members have no panel for it.
+- A project with a single admin leaves that admin's own submissions for the owner.
+- The four admin panes of the Mac app (Users and devices, Teams and projects, Knowledge base, Upstream gateways) have only been tried through tests, not in a real window. In the Teams and projects pane team notes (a team's own notes) are not shown, only in the Knowledge base pane; in the Knowledge base pane notes and questions are read, not edited, and a replacement shows both texts, not a line difference. The "through teams" column shows the role names of the API in English (`acme (reader)`) also in the Slovenian UI.
+- The panels on the settings page of `minigw serve`, the Upstream gateways pane and `gw settings password` were tried on one Windows gateway in a headless Chromium browser (they work; no Content Security Policy error); not in Edge or Firefox, and not on Linux. A detail page opens in place of the panel with a Back button. The Mac app does not use this page. Opening an upstream's detail page contacts it.
+- Remote settings have no team, project or knowledge base administration: the listener serves providers, models and devices only, so a Docker team gateway has no web page for teams, projects or review (use `docker compose exec ... minigw gw`).
+- The remote settings password record is a file in the gateway's config folder (also on a signed-in Windows gateway), not an entry in the credential store.
+- The Mac app has no remote settings listener and no `gw settings password`, by design: on the Mac the admin UI is the native app.
+- Docker Compose: the admin setup (`compose.admin.yaml`) was tried only with its test script (`scripts/compose-admin-e2e.sh`) on one Mac through Docker, not on the team server. The default HTTPS port 443 and a host port other than 443 for a real certificate name are not covered by the test (it uses a high port). On Docker Desktop and rootless Docker the proxy sees the Docker gateway address for every browser, so `allowedSourceCIDRs` and the per-source lockout do not tell browsers apart there; real source filtering needs rootful Docker on Linux. The gateway itself was tried on arm64 and, through emulation, on amd64 on one Mac. Any container on the same Docker network can take a service name's alias and would then receive that provider's key: put only trusted containers on that network.
+- Upstream gateway: one way. Deletions and notes that became private are not propagated (status lists them).
+- Automatic push and publish mode, with a conflict and `resolve --ours`, were tried between two real gateways on 2026-11-18 (a Mac gateway to a Windows gateway; a test project with three notes; one push for five quick edits; a conflict was not overwritten). Replacements of accepted notes, team notes and `resolve --theirs` have only been tried in tests.
+- Team notes have no `private` class, and only a project admin of the team writes them; the owner has no write path to them (the owner reviews submissions and exports bundles).
+- Worktree mode runs the top repository's own git clean/smudge filters (intended for LFS): use sync for an untrusted repository.
+- A manual pull stores a bounded local copy of an upstream's notes, but members do not see it yet: search, `note read`, FAQ and MCP do not include the mirror (step C3). A hub must run this version before a local gateway can read it (an older hub answers "does not support reading"). Not tried between two real gateways, only with a scripted upstream.
+- Labels can be filled on Windows and Linux with Foundry Local and on the Mac with the on-device model (Apple Foundation Models) when the owner turns it on. Not tried with a real model on either (the Mac worker was tried with a fake model in tests, not in a real session).
 - A pull is manual: there is no automatic pull and no panel (step C4).
-- Not tried between two real gateways, only with a scripted upstream.
 
 ## 0.7.27
 
