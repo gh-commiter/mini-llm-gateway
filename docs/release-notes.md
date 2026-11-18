@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.29
 
 ### New
 - Model Labels panel: the agreement list. The shadow counters (kind, the agreement of the model, agree %, number of checks, the day range of the last 30 days) are listed under the settings, read through `GET /usage/labels/agreement`, now registered for panels in the Go provider, the Mac renderer and the settings page. The panel says in plain words that agreement is not calibrated accuracy and what shadow mode measures. The answer of the route gains `id`, `percent`, `count` and `days` beside the counters (text for the panel).
