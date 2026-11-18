@@ -144,6 +144,7 @@ only on the gateway computer.
 | `minigw gw token [rotate]` | Print the connect line for clients; `rotate` makes a new token |
 | `minigw gw settings` | The settings in this terminal, also over SSH: the pages General, Devices, Providers, Agents, Folders, Sessions, Activity (`minigw-tui`) |
 | `minigw gw settings link` | Print a one-time link (60 s) to the settings page (`minigw serve` only) |
+| `minigw gw settings password` | Set or reset the remote settings password, including while stopped. Read from hidden terminal input or stdin; never pass a password as an argument or environment variable. |
 | `minigw gw api GET\|POST\|PATCH\|DELETE <path>` | One [admin API](admin-api.md) request: JSON body on stdin, JSON answer on stdout (`minigw-tui` uses it) |
 | `minigw gw user list` \| `add <name>` \| `rename <user> <name>` \| `activate <user>` \| `deactivate <user>` | The users of the project database (0.6.0; also on the Mac). `<user>`: name or number. Deactivating ends the user's access to projects and notes at once; an agent run that is already going is not stopped, but its notes capability stops working (next read: `no_project_access`) |
 | `minigw gw bind list` \| `<device id> <user>` \| `remove <device id>` | Which user a device belongs to; binding a device that is not on the device list warns (`minigw gw devices allow <device id>` fixes it) |
@@ -177,6 +178,18 @@ only on the gateway computer.
 
 Every `minigw gw` command also takes `--config FILE` (default: the `minigw serve` config). `minigw serve allow`, `deny`, `devices`,
 `provider` and `status` are older names for the same commands.
+
+The password command prepares remote authentication; it does not open a remote settings listener. Use a terminal
+prompt, or pipe a password from your secret manager into `minigw gw settings password --config /path/to/serve.json`.
+Passwords contain 12–1024 bytes. The command atomically replaces `remote-settings.password.json` next to the config,
+with a fresh salt and Argon2id (64 MiB, three iterations, one lane). On Unix the record is mode 0600; on Windows
+the config directory uses the existing owner/SYSTEM ACL protection. There is no default password.
+Resetting the password invalidates remote sessions on their next check. Lockouts survive password reset and restart:
+wait up to 15 minutes before retrying. Distributed failures can trigger a one-minute account-wide backoff; repeated
+traffic can temporarily deny new logins. Local settings access remains available for recovery. Private, rotating
+`remote-settings.audit.jsonl` and `remote-settings.lockouts.json` records sit next to the config; audit retains one
+previous segment and rotates at 1 MiB. Keep this directory private. These files contain no password or session token.
+The source table is shared and capped at 1024 IPs; filling it temporarily denies login from new sources.
 
 Examples:
 

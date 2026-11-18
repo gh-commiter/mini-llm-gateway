@@ -44,6 +44,8 @@ type serveDevice struct {
 }
 
 type serveConfig struct {
+	RemoteSettings remoteSettingsConfig `json:"remoteSettings,omitempty"`
+
 	Token          string        `json:"token"`
 	Key            string        `json:"key"` // zasebni ključ routerja (X25519, base64url); javni del gre v žeton
 	Port           int           `json:"port"`
@@ -565,6 +567,7 @@ type server struct {
 	startRefused            sync.Map // M2: mapa → razlog; mapa se je od zapisa spremenila, ko je prehod bil ustavljen
 	runRefused              sync.Map // A1, A7: mapa → razlog; zavrnjena ob zadnjem zagonu agenta (prava pot, istovetnost)
 	settings                settingsState
+	remoteAuth              *remoteAuth
 	pick                    atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
 	picking                 atomic.Bool              // eno okno naenkrat
 	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
@@ -597,6 +600,18 @@ type server struct {
 }
 
 func newServer(c serveConfig, cfgPath string) (*server, error) {
+	if _, err := c.RemoteSettings.tlsConfig(cfgPath); err != nil {
+		return nil, err
+	}
+	var remote *remoteAuth
+	var remoteErr error
+	if c.RemoteSettings.Enabled {
+		var err error
+		remote, err = newRemoteAuth(cfgPath, nil)
+		if err != nil { // fail closed for remote login only; the gateway itself keeps running
+			remoteErr, remote = err, nil
+		}
+	}
 	k, err := c.privateKey()
 	if err != nil || c.Token == "" {
 		return nil, errors.New("config needs token and key: run minigw serve init")
@@ -688,6 +703,10 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	s := &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, admin: secret, key: k, log: log.New(out, "", log.LstdFlags), hub: newShareHub(),
 		sessions: sessionRegistry{m: map[string]string{}}, procs: make(chan struct{}, 6),
 		gwSlots: make(chan struct{}, 16), state: loadState(filepath.Join(cfgDir, "state.json"))}
+	s.remoteAuth = remote
+	if remoteErr != nil {
+		s.log.Printf("WARNING: remote settings are off: %v (fix or remove %s, then restart)", remoteErr, filepath.Join(cfgDir, "remote-settings.lockouts.json"))
+	}
 	s.api = s.newAPI()
 	cleanStaleTempRoots(tempBase())
 	s.state.prune(c.Devices)
@@ -1078,6 +1097,7 @@ func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 	defer s.mu.Unlock()
 	defer lockServeConfig(s.cfgPath)() // A5: load-modify-write of serve.json, also against other minigw processes
 	clone := func(c serveConfig) serveConfig {
+		c.RemoteSettings.AllowedSourceCIDRs = slices.Clone(c.RemoteSettings.AllowedSourceCIDRs)
 		c.Devices = slices.Clone(c.Devices)
 		c.Gateways = slices.Clone(c.Gateways)
 		c.PendingRevocations = slices.Clone(c.PendingRevocations)
@@ -1089,6 +1109,9 @@ func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 	live := clone(s.cfg)
 	if err := f(&live); err != nil {
 		return err
+	}
+	if remoteTrustChanged(s.cfg.RemoteSettings, live.RemoteSettings) || !s.cfg.RemoteSettings.Enabled && live.RemoteSettings.Enabled {
+		return errors.New("remote settings changes require restart")
 	}
 	if err := containerCheck(live); err != nil {
 		return err
@@ -1111,8 +1134,14 @@ func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 	if f(&file) != nil {
 		return errors.New("serve.json differs from the running gateway: restart minigw serve")
 	}
+	if remoteTrustChanged(file.RemoteSettings, live.RemoteSettings) || file.RemoteSettings.Enabled != live.RemoteSettings.Enabled {
+		return errors.New("remote settings changes require restart")
+	}
 	if err := writeServeConfig(s.cfgPath, file); err != nil {
 		return err
+	}
+	if s.cfg.RemoteSettings.Enabled && !live.RemoteSettings.Enabled {
+		s.remoteAuth.disable()
 	}
 	s.cfg = live
 	if s.state != nil {
@@ -1125,6 +1154,13 @@ func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 }
 
 func (s *server) serve(ln net.Listener) error {
+	remote, err := s.startRemoteSettings()
+	if err != nil {
+		return err
+	}
+	if remote != nil {
+		defer remote.Close()
+	}
 	// Brez ReadTimeout/WriteTimeout: prekinila bi dolge odgovore agenta (telo ima rok v handle).
 	srv := &http.Server{Handler: s, ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 64 << 10,
 		ErrorLog: log.New(io.Discard, "", 0),
@@ -1139,10 +1175,14 @@ func (s *server) serve(ln net.Listener) error {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGTERM, os.Interrupt)
 		<-sig
+		if remote != nil {
+			remote.Close()
+			s.remoteAuth.disable()
+		}
 		s.shutdown(srv, shutdownDeadline)
 		os.Exit(0)
 	}()
-	err := srv.Serve(l)
+	err = srv.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
 		select {} // SIGTERM: shutdown() is draining and then exits the process; Serve returns at once, the process must not
 	}

@@ -7,8 +7,9 @@ toolchain go1.27.4
 require (
 	dev.trojar/minigw-tui-quiet v0.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
-	golang.org/x/sys v0.49.0
-	golang.org/x/text v0.39.0
+	golang.org/x/crypto v0.59.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/text v0.44.0
 	modernc.org/sqlite v1.62.0
 )
 

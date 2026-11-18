@@ -8,12 +8,19 @@
 - Upstream gateway, step B (fixes): an automatic run that ends with "more" now remembers where it got to and goes on from there (it restarted at the first note), counts a run that sent nothing as a failure (the normal back-off), waits out a write limit's Retry-After and writes an audit row only when the outcome changes; the automatic push stops when the shutdown starts, not after the drain; one push of a link at a time (a second is refused with a clear answer, the timer skips it); after `resolve --ours` later edits of the note go on as submissions (no repeated conflict, no duplicate note).
 - Docker Compose: in container mode a provider can be given by a Compose service name without a dot (`http://litellm:4000`, with `--insecure`). The name must resolve to a private address when the provider is added and at every connection (a name that later resolves to a public address is not followed); outside a container such a name is still refused.
 - Docker Compose: the build and the deployment test (`scripts/compose-e2e.sh`) cover linux/amd64 as well as linux/arm64, and the test checks that the image build fails for a binary that does not match `SHA256SUMS`, a bad signature, a changed `SHA256SUMS`, a missing release and a signed version that is not the one asked for.
+- `minigw gw settings password` sets the password for remote settings.
+- Opt-in remote settings listener behind mutual TLS and a password login, off by default. The remote scope is limited
+  to providers/models and devices; changes that carry an API key's destination (`baseURL`, `insecure`) or raise tool
+  levels need the key again or must be made locally. The Compose reverse-proxy profile comes later.
 
 ### Security
 - Docker Compose: a provider given by a service name must resolve only to private addresses; link-local (such as the cloud metadata address `169.254.169.254`), loopback, unspecified and multicast addresses are refused at add time and at every connection. Such a name is dialled directly, not through `HTTP(S)_PROXY`, so the provider key is not sent to a proxy.
 
 ### Fixed
 - The Mac gateway reads a provider's quota answer in chunks and stops at the 1 MB limit without waiting for the rest of the body, so a refresh on a busy machine no longer takes about a minute.
+
+### Known problems
+- Remote settings are not tried in a real browser or on Windows yet.
 
 ## 0.7.23
 

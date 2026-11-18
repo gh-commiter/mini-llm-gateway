@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html data-remote="{{REMOTE}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -120,11 +120,19 @@ a.btn { text-decoration: none; text-align: center; display: inline-block; }
 "use strict";
 // Seja: enkratni žeton iz fragmenta (#t=…, strežnik ga ne vidi) → POST login → ID v sessionStorage; vsak klic ga pošlje
 // v glavi X-Minigw-Session. Brez piškotkov. Vse spremembe se uveljavijo same (kot nastavitve na Macu).
+const REMOTE = document.documentElement.dataset.remote === "true";
+const SESSION_KEY = REMOTE ? "minigw-remote-session" : "minigw-session";
 let SESSION = "";
-try { SESSION = sessionStorage.getItem("minigw-session") || ""; } catch (e) {}
+try { SESSION = sessionStorage.getItem(SESSION_KEY) || ""; } catch (e) {}
 const PICKER = {{PICKER}};  // pladenj na Windows: okno za izbiro mape ali programa (POST /minigw/settings/pick)
 let START = ["general", ""];  // #p=<pano>&g=<prehod>: povezava naravnost v pano
 async function signIn() {
+  if (REMOTE) {
+    history.replaceState(null, "", location.pathname);
+    START = ["remoteHome", ""];
+    if (!SESSION) await remoteSignIn();
+    return;
+  }
   const q = new URLSearchParams(location.hash.slice(1)), tok = q.get("t");
   if (q.get("p")) START = [q.get("p"), q.get("g") || ""];
   history.replaceState(null, "", location.pathname);
@@ -133,7 +141,56 @@ async function signIn() {
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error((j.error && j.error.message) || ("HTTP " + r.status));
   SESSION = j.session;
-  try { sessionStorage.setItem("minigw-session", SESSION); } catch (e) {}
+  try { sessionStorage.setItem(SESSION_KEY, SESSION); } catch (e) {}
+}
+
+function settingsRequestHeaders() {
+  return REMOTE ? {"X-Minigw-Remote-Session": SESSION, "X-Minigw-Remote-Request": "1", "Content-Type": "application/json"}
+                : {"X-Minigw-Session": SESSION, "Content-Type": "application/json"};
+}
+let remotePrompt = null;
+function remoteSignIn() {
+  if (remotePrompt) return remotePrompt;
+  remotePrompt = new Promise(resolve => {
+    const password = el("input", {id: "remote-password", type: "password", autocomplete: "current-password", maxLength: 1024, required: true});
+    const message = el("div", {class: "note", role: "status"});
+    const submit = el("button", {type: "submit", class: "btn primary", textContent: SL ? "Prijava" : "Sign in"});
+    const form = el("form", {onsubmit: async event => {
+      event.preventDefault();
+      submit.disabled = true;
+      message.textContent = "";
+      try {
+        const value = password.value;
+        password.value = "";
+        const r = await fetch("/minigw/settings/login", {method: "POST", credentials: "omit", redirect: "error",
+          headers: {"X-Minigw-Remote-Request": "1", "Content-Type": "application/json"}, body: JSON.stringify({password: value})});
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error((j.error && j.error.message) || ("HTTP " + r.status));
+        if (typeof j.session !== "string" || !/^[0-9a-f]{64}$/.test(j.session)) throw new Error("Sign in failed");
+        SESSION = j.session;
+        try { sessionStorage.setItem(SESSION_KEY, SESSION); } catch (e) {}
+        remotePrompt = null;
+        resolve();
+      } catch (e) { message.textContent = e.message; password.focus(); }
+      finally { submit.disabled = false; }
+    }}, el("h2", {textContent: "Mini Gateway"}), el("label", {htmlFor: "remote-password", textContent: SL ? "Geslo" : "Password"}), password, submit, message);
+    document.getElementById("nav").replaceChildren();
+    document.getElementById("page").replaceChildren(form);
+    password.focus();
+  });
+  return remotePrompt;
+}
+function remoteExpired() {
+  SESSION = "";
+  try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+  remoteSignIn().then(() => show("remoteHome"));
+}
+async function remoteLogout() {
+  try {
+    const r = await fetch("/minigw/settings/logout", {method: "POST", credentials: "omit", redirect: "error", headers: settingsRequestHeaders(), body: "{}"});
+    if (!r.ok && r.status !== 401) throw new Error("Sign out failed");
+    remoteExpired();
+  } catch (e) { toast(e.message); }
 }
 
 const SL = (navigator.language || "").toLowerCase().startsWith("sl");
@@ -442,15 +499,16 @@ function toast(text) {
 
 async function api(method, path, body) {
   const r = await fetch("/minigw/admin/v1" + path, {method, credentials: "omit", keepalive: true,  // tudi ob zapiranju strani
-    headers: {"X-Minigw-Session": SESSION, "Content-Type": "application/json"}, body: body === undefined ? undefined : JSON.stringify(body)});
+    redirect: "error", headers: settingsRequestHeaders(), body: body === undefined ? undefined : JSON.stringify(body)});
   const j = await r.json().catch(() => ({}));
-  if (r.status === 401) throw new Error(t("signin"));
+  if (r.status === 401) { if (REMOTE) remoteExpired(); throw new Error(REMOTE ? "Sign in again" : t("signin")); }
   if (!r.ok) throw new Error((j.error && j.error.message) || ("HTTP " + r.status));
   return j;
 }
 
 // pick: okno za izbiro na računalniku prehoda (kind "folder" ali "exe"); "" ob preklicu.
 async function pick(kind) {
+  if (REMOTE) throw new Error("File dialogs are unavailable remotely");
   const r = await fetch("/minigw/settings/pick", {method: "POST", credentials: "omit",
     headers: {"X-Minigw-Session": SESSION, "Content-Type": "application/json"}, body: JSON.stringify({kind})});
   const j = await r.json().catch(() => ({}));
@@ -1591,6 +1649,7 @@ function panelView(model, host) {
 // --- panoji ---
 
 const pages = {
+  remoteHome: () => [el("h2", {textContent: "Mini Gateway"}), note(SL ? "Izberi ponudnika ali Naprave v meniju." : "Select a provider or Devices in the menu."), button(SL ? "Odjava" : "Sign out", remoteLogout)],
   panel: id => panelPage(id),
   usage: () => usagePane(),
   codex: () => agentPane("codex"),
@@ -1714,7 +1773,7 @@ const pages = {
   // devices: enako kot podokno Devices na Macu: vsaka naprava z žetonom in naslovi odjemalcev, čakajoče (Allow, Reject),
   // dovoljene (ime, ID, zadnji stik; Copy ID, Remove).
   async devices() {
-    const [d, g] = await Promise.all([api("GET", "/devices"), api("GET", "/general")]);
+    const [d, g] = await Promise.all([api("GET", "/devices"), REMOTE ? Promise.resolve({}) : api("GET", "/general")]);
     // Zgodovina povezav odprtih naprav (razširjena vrstica, kot razkritje na Macu)
     const histories = await Promise.all(d.devices.map(x => openHistory.has(x.id)
       ? api("GET", "/devices/" + encodeURIComponent(x.id) + "/history").then(r => r.history, () => []) : null));
@@ -1743,9 +1802,9 @@ const pages = {
       : group(row(el("span", {class: "label sub", textContent: t("noWaiting")})));
     return [
       card(...ICON.devices, t("devices"), t("devicesDesc")),
-      group(row(labelSub(t("anyDevice"), t("anyDeviceHelp")), toggle(g.allowAnyDevice && !d.devices.length, v => save(n2, () => api("PATCH", "/general", {allowAnyDevice: v})), d.devices.length > 0)),
+      !REMOTE ? group(row(labelSub(t("anyDevice"), t("anyDeviceHelp")), toggle(g.allowAnyDevice && !d.devices.length, v => save(n2, () => api("PATCH", "/general", {allowAnyDevice: v})), d.devices.length > 0)),
         row(t("allowedClients"), clients),
-        row(labelSub(t("plainRemote"), t("plainRemoteHelp")), toggle(g.allowPlainRemote, v => save(n2, () => api("PATCH", "/general", {allowPlainRemote: v}))))),
+        row(labelSub(t("plainRemote"), t("plainRemoteHelp")), toggle(g.allowPlainRemote, v => save(n2, () => api("PATCH", "/general", {allowPlainRemote: v}))))) : null,
       n2,
       section(t("waiting")), waiting,
       section(t("allowed")),
@@ -1981,12 +2040,13 @@ const PANELS = {entries: [], strings: {locale: "C", table: {}}, error: null, loa
 async function panelFetch(req) {
   try {
     const r = await fetch("/minigw/admin/v1" + req.path + (req.query ? "?" + req.query : ""), {method: req.method, credentials: "omit", keepalive: true, redirect: "error",  // a redirect must not carry the session header elsewhere
-      headers: {"X-Minigw-Session": SESSION, "Content-Type": "application/json"}, body: req.body ? req.body : undefined});
+      headers: settingsRequestHeaders(), body: req.body ? req.body : undefined});
     if (r.status === 401) return {status: 401, body: JSON.stringify({error: {message: t("signin")}})};
     return {status: r.status, body: await r.text()};
   } catch (e) { return {status: 0, body: ""}; }  // its own state, not a made-up service error
 }
 async function ensurePanels(force) {
+  if (REMOTE) return;
   if (PANELS.loaded && !force && !PANELS.error) return;
   const r = await panelCatalogLoad(panelFetch, panelLocale(navigator.language));
   Object.assign(PANELS, r, {loaded: true});
@@ -2016,7 +2076,11 @@ async function nav() {
   const item = (page, label, [color, glyph], arg) => el("button", {class: "item" + (current === page && currentArg === (arg || "") ? " sel" : ""),
     onclick: () => show(page, arg)}, el("span", {class: "ico", style: "background:" + color}, glyphNode(glyph)), label);
   const sel = current === "gateway" ? currentArg : "";
-  const items = [
+  const items = (REMOTE ? [
+    ["remoteHome", t("general"), ICON.general],
+    ...gateways.map(g => ["gateway", g.name, gwIcon(g), g.name]),
+    ["devices", t("devices"), ICON.devices],
+  ] : [
     ["general", t("general"), ICON.general],
     ...gateways.map(g => ["gateway", g.name, gwIcon(g), g.name]),
     ["foundry", "Foundry Local", ICON.foundry],  // vrstni red kot na Macu (brez Siri AI in Apple FM)
@@ -2028,11 +2092,12 @@ async function nav() {
     ["sessions", t("sessions"), ICON.sessions],
     ["usage", t("usage"), ICON.usage],
     ...(PANELS.entries.length ? PANELS.entries.map(e => ["panel", panelTitle(e), [PCOLOR, panelGlyph(e.symbol)], e.id]) : PANELS.error ? [["panel", t("pPanels"), [PCOLOR, "▢"], ""]] : []),
-  ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
+  ]).filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
   const find = el("input", {type: "text", class: "left search", placeholder: t("search"), value: search});
   find.addEventListener("input", () => { search = find.value; nav().then(() => { const f = document.querySelector("nav .search"); f.focus(); f.setSelectionRange(search.length, search.length); }); });
   const menu = el("div", {class: "menu hidden"},
     ...Object.keys(PRESETS).map(k => el("button", {textContent: k === "other" ? t("otherGateway") : PRESETS[k][0], onclick: () => { menu.classList.add("hidden"); show("addGateway", k); }})));
+  if (REMOTE && !SESSION) return;
   document.getElementById("nav").replaceChildren(
     find,
     ...items.map(x => item(x[0], x[1], x[2], x[3])),
@@ -2047,8 +2112,10 @@ async function nav() {
 }
 
 async function show(page, arg) {
+  if (REMOTE && !["remoteHome", "gateway", "addGateway", "devices"].includes(page)) page = "remoteHome";
   current = page; currentArg = arg || "";
   await nav();
+  if (REMOTE && !SESSION) return;
   try {
     document.getElementById("page").replaceChildren(...(await pages[page](arg)).filter(k => k !== null && k !== undefined && k !== false));  // kot el(): replaceChildren bi null izpisal kot »null«
   } catch (e) { toast(e.message); }
