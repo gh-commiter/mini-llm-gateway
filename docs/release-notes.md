@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Security
+- `gw core restore` of an older backup now migrates the staged copy itself and validates it as a current-schema database (segments, memberships, objects, foreign keys) before it replaces the live one; a failure leaves the previous database in place. A pre-schema-15 backup with a project in the id range (from 2^40) or name range (`@...`) reserved for team segments is refused (it would have let a team read that project's notes). The search index is rebuilt after that migration, for every schema.
 - A grant no longer gives read access while the READER project is archived: an archived project confers nothing. This only removes access (reads, search, `depends on`, the upstream manifest, a run's grant reads and the project lists follow the same rule).
 
 ### Fixed

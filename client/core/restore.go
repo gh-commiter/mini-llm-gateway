@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -108,6 +109,15 @@ func Restore(dir, src string) (err error) {
 	in, err := validateAs(ctx, tmp, src, cur.GatewayID)
 	if err != nil {
 		return err
+	}
+	// An older backup is migrated HERE, in the staged copy, and then validated again as a current-schema database (objects, foreign
+	// keys, memberships, segments): what a current-schema restore would refuse is refused too, and a failure in either step leaves the
+	// previous database in place (the staged copy is removed). The live database is replaced only by a file that is already current.
+	if err := migrateStaged(ctx, tmp); err != nil {
+		return fmt.Errorf("%s: %w", src, err)
+	}
+	if in, err = validateAs(ctx, tmp, src, cur.GatewayID); err != nil {
+		return fmt.Errorf("after migrating the backup to the current schema: %w", err)
 	}
 	next := state{
 		GatewayID:   in.GatewayID,
@@ -370,8 +380,51 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// stamp writes the new state and the restore event into the copy, folds its WAL into the file, and, for a database
-// of schema 12 or newer, rebuilds the search index from the notes so a damaged index in the backup is not installed.
+// migrateStaged runs the missing migrations on the staged copy (one transaction each, as Open does) and folds its WAL into the file.
+// Before a pre-15 file is migrated, ids in the range reserved from schema 15 on (team segments) are refused: migration 15 would
+// otherwise keep an ordinary project that sits on a team's segment id (INSERT OR IGNORE) and the team would read its notes.
+func migrateStaged(ctx context.Context, path string) error {
+	db, err := openDB(path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	v, err := schemaVersion(ctx, db)
+	if err != nil {
+		return err
+	}
+	if v < 15 && v < len(migrations) {
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id>=? OR slug LIKE '@%'`, segmentBase).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return errors.New("the backup has a project in the id or name range reserved for team segments (id from 2^40 or a name starting with @): refused")
+		}
+	}
+	for i := v; i < len(migrations); i++ {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if err = migrations[i](tx); err == nil {
+			err = setMeta(tx, "schema", strconv.Itoa(i+1))
+		}
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+		if err != nil {
+			return fmt.Errorf("migration %d of the backup: %w", i+1, err)
+		}
+	}
+	_, err = db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
+	return err
+}
+
+// stamp writes the new state and the restore event into the copy, folds its WAL into the file, and rebuilds the search index
+// from the notes (the copy is current by now) so a damaged or stale index in the backup is not installed.
 func stamp(ctx context.Context, path string, st state, src string) error {
 	db, err := openDB(path)
 	if err != nil {
@@ -392,7 +445,7 @@ func stamp(ctx context.Context, path string, st state, src string) error {
 			return err
 		}
 	}
-	if version >= 13 { // older backups get the index from the migration (and notes.imported exists from schema 13)
+	if version >= 13 { // notes.imported exists from schema 13 (only a program with fewer migrations, as in tests, meets less)
 		if err = rebuildSearch(tx); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("the search index could not be rebuilt: %w", err)
