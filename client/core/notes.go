@@ -349,6 +349,12 @@ func (s *Store) GetNote(ctx context.Context, p Principal, project, id int64) (n 
 	return
 }
 
+// lineEndings: CRLF and lone CR line endings as LF, the form every note and submission body is stored in (text from Windows
+// terminals and editors), so that a line ending is never taken for a hidden character.
+func lineEndings(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
+}
+
 func checkInput(in NoteInput) error {
 	switch {
 	case !validClass(in.Class):
@@ -426,6 +432,7 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 	if key == "" || len(key) > 64 {
 		return n, false, ErrInvalid{"idempotency key"}
 	}
+	in.Body = lineEndings(in.Body) // before the idempotency hash
 	if err = checkInput(in); err != nil {
 		return
 	}
@@ -519,6 +526,7 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 // checked against the transition table and always bumps the epoch (also private -> shared: the author may be only a reader by now).
 func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revision int64, in NoteInput) (n Note, err error) {
 	lim := s.rate(p.UserID, true)
+	in.Body = lineEndings(in.Body)
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		a, old, err := writeAccess(tx, p, project, id) // visible first: an invisible note is 404 whatever the payload
 		if err != nil {

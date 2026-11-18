@@ -1,7 +1,9 @@
 package core
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -434,22 +436,23 @@ func TestReviewHashWholeAndCoversProvenance(t *testing.T) {
 
 // L1: a review read shows the text without what a reviewer cannot see and says how much was left out; an accept is refused while the
 // stored text has any (the hash stays over the stored text); a body longer than the owner's panel shows is marked "long" and is still
-// accepted by its version (gw kb review prints all of it).
+// accepted by its version (gw kb review prints all of it). CRLF is a line ending: stored as LF from now on, and accepted (published
+// with LF) in a row stored before; a lone CR inside a line of such a row is hidden.
 func TestReviewReadShowsHiddenCharactersAndAcceptRefusesThem(t *testing.T) {
 	f := newFx(t)
 	project := f.pid["fakture"]
-	in := SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Pay ‮to‬", Body: "line one\nsend​ to\tX\r\n"}}
+	in := SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Pay \u202eto\u202c", Body: "line one\r\nsend\u200b to\tX\r\n"}}
 	v, _, e := f.Submit(ctx, f.p("ana"), project, "hidden", in)
 	f.ok(e)
 	r, e := f.GetSubmission(ctx, Principal{}, 0, v.ID, true)
 	f.ok(e)
-	if r.Title != "Pay to" || r.Body == nil || *r.Body != "line one\nsend to\tX\n" || r.Hidden != 4 || r.ReviewCheck != "hidden" {
+	if r.Title != "Pay to" || r.Body == nil || *r.Body != "line one\nsend to\tX\n" || r.Hidden != 3 || r.ReviewCheck != "hidden" {
 		t.Fatalf("%q %q %d %q", r.Title, *r.Body, r.Hidden, r.ReviewCheck)
 	}
 	var stored string
 	f.ok(f.DB().QueryRow(`SELECT body FROM kb_submissions WHERE id=?`, v.ID).Scan(&stored))
-	if stored != in.Body {
-		t.Fatalf("stored text changed: %q", stored)
+	if stored != "line one\nsend\u200b to\tX\n" { // line endings normalised, nothing else
+		t.Fatalf("stored text: %q", stored)
 	}
 	rows, e := f.ListSubmissions(ctx, Principal{}, project, 0, true)
 	f.ok(e)
@@ -457,7 +460,7 @@ func TestReviewReadShowsHiddenCharactersAndAcceptRefusesThem(t *testing.T) {
 		t.Fatalf("%+v", rows)
 	}
 	_, e = f.ReviewSubmission(ctx, v.ID, true, "", r.ReviewHash)
-	if e == nil || !strings.Contains(e.Error(), "contains 4 hidden characters") {
+	if e == nil || !strings.Contains(e.Error(), "contains 3 hidden characters") {
 		t.Fatal(e)
 	}
 	if _, e = f.ReviewSubmission(ctx, v.ID, false, "hidden characters", ""); e != nil { // reject stays possible
@@ -473,5 +476,52 @@ func TestReviewReadShowsHiddenCharactersAndAcceptRefusesThem(t *testing.T) {
 	}
 	if _, e = f.ReviewSubmission(ctx, v.ID, true, "", r.ReviewHash); e != nil {
 		t.Fatal(e)
+	}
+	// a new CRLF submission is stored, accepted and published with LF
+	v, _, e = f.Submit(ctx, f.p("ana"), project, "crlf", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Windows", Body: "one\r\ntwo\r\n"}})
+	f.ok(e)
+	a, e := f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
+	f.ok(e)
+	var published string
+	f.ok(f.DB().QueryRow(`SELECT body FROM notes WHERE id=?`, a.NoteID).Scan(&published))
+	if published != "one\ntwo\n" {
+		t.Fatalf("%q", published)
+	}
+	// rows stored before (CRLF, or a lone CR inside a line): the version line stays the hash of the stored text
+	old := func(key, body string) (int64, string) {
+		t.Helper()
+		v, _, e := f.Submit(ctx, f.p("ana"), project, key, SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: key, Body: "x"}})
+		f.ok(e)
+		f.ok(f.write(ctx, func(tx *sql.Tx) error {
+			_, e := tx.Exec(`UPDATE kb_submissions SET body=? WHERE id=?`, body, v.ID)
+			return e
+		}))
+		var class, title, kind, b, prov string
+		var replaces, revision int64
+		f.ok(f.DB().QueryRow(`SELECT class,title,entry_kind,body,replaces,revision,provenance FROM kb_submissions WHERE id=?`, v.ID).Scan(&class, &title, &kind, &b, &replaces, &revision, &prov))
+		j, _ := json.Marshal([]any{v.ID, class, title, kind, b, replaces, revision, prov})
+		h := sha256.Sum256(j)
+		return v.ID, fmt.Sprintf("%x", h)
+	}
+	id, want := old("old-crlf", "a\r\nb\r\n")
+	r, e = f.GetSubmission(ctx, Principal{}, 0, id, true)
+	f.ok(e)
+	if r.ReviewHash != want || r.ReviewCheck != "ok" || r.Hidden != 0 || *r.Body != "a\nb\n" {
+		t.Fatalf("%q %q %d %q", r.ReviewHash, r.ReviewCheck, r.Hidden, *r.Body)
+	}
+	a, e = f.ReviewSubmission(ctx, id, true, "", want)
+	f.ok(e)
+	f.ok(f.DB().QueryRow(`SELECT body FROM notes WHERE id=?`, a.NoteID).Scan(&published))
+	if published != "a\nb\n" {
+		t.Fatalf("%q", published)
+	}
+	id, want = old("old-cr", "a\rb")
+	r, e = f.GetSubmission(ctx, Principal{}, 0, id, true)
+	f.ok(e)
+	if r.ReviewHash != want || r.ReviewCheck != "hidden" || r.Hidden != 1 {
+		t.Fatalf("%q %d", r.ReviewCheck, r.Hidden)
+	}
+	if _, e = f.ReviewSubmission(ctx, id, true, "", want); e == nil {
+		t.Fatal("a lone CR inside a line was accepted")
 	}
 }

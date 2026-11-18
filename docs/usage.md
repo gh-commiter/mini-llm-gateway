@@ -1383,7 +1383,8 @@ four eyes means a second admin's credentials, and the care of the person who hol
 
 Text a reviewer cannot see is never published: the review reads (`kb review`, `gw kb review` and the owner's Knowledge base panel) show
 the title and text without invisible and direction-changing characters (bidi overrides, zero-width characters, the tag block, line and
-paragraph separators, carriage returns and the other controls except newline and tab: the rule the mirror uses) and say how many were left out
+paragraph separators, a carriage return inside a line and the other controls except newline and tab: the rule the mirror uses; Windows line
+endings are stored as plain line ends in every note and submission, and a CRLF in a submission stored before that is a line end too) and say how many were left out
 ("contains hidden characters: N removed"). Such a submission cannot be accepted; reject it and ask the writer to submit the text without
 them. A text longer than the panel shows (20,000 characters) has no Accept in the panel ("too long to review here"): review it with
 `minigw gw kb review`, which prints all of it, and accept it with `--version`.

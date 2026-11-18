@@ -204,8 +204,9 @@ func hiddenIn(title, body string) (t, b string, n int) {
 		}
 		return r
 	}, title)
-	b = mirrorBody(body)
-	return t, b, utf8.RuneCountInString(title) - utf8.RuneCountInString(t) + utf8.RuneCountInString(body) - utf8.RuneCountInString(b)
+	lf := strings.ReplaceAll(body, "\r\n", "\n") // CRLF is a line ending (rows stored before lineEndings); a lone CR stays hidden
+	b = mirrorBody(lf)
+	return t, b, utf8.RuneCountInString(title) - utf8.RuneCountInString(t) + utf8.RuneCountInString(lf) - utf8.RuneCountInString(b)
 }
 
 // reviewRead: a review read of v (stored text from the table, whatever v carries): the text shown, Hidden and ReviewCheck.
@@ -230,7 +231,7 @@ func reviewRead(tx *sql.Tx, v *Submission) error {
 
 // ErrHiddenCharacters: an accept of a submission whose stored text has characters a reviewer cannot see.
 func ErrHiddenCharacters(n int) error {
-	return ErrRefusal{fmt.Sprintf("the submission contains %d hidden characters (invisible or direction-changing ones, or carriage returns) that a reviewer cannot see: it cannot be accepted; reject it and ask the writer to submit the text without them", n)}
+	return ErrRefusal{fmt.Sprintf("the submission contains %d hidden characters (invisible or direction-changing ones, or a carriage return inside a line) that a reviewer cannot see: it cannot be accepted; reject it and ask the writer to submit the text without them", n)}
 }
 
 const submissionCols = `id,project_id,user_id,class,title,replaces,revision,state,provenance,reason,note_id,entry_kind`
@@ -270,6 +271,7 @@ func submissionAccess(tx *sql.Tx, p Principal, project int64, in SubmissionInput
 
 func (s *Store) Submit(ctx context.Context, p Principal, project int64, key string, in SubmissionInput) (v Submission, replay bool, err error) {
 	lim := s.rate(p.UserID, true)
+	in.Body = lineEndings(in.Body) // before the idempotency hash: a retry of the same text is the same submission
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		if err := submissionAccess(tx, p, project, SubmissionInput{NoteInput: in.NoteInput}, false); err != nil {
 			return err
@@ -728,6 +730,7 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 			if e = tx.QueryRow(`SELECT body FROM kb_submissions WHERE id=?`, id).Scan(&body); e != nil {
 				return e
 			}
+			body = lineEndings(body) // a submission stored before line endings were normalised is published with LF
 			if e = checkInput(NoteInput{Class: v.Class, Title: v.Title, Body: body, EntryKind: v.EntryKind}); e != nil {
 				return e // backstop: the stored kind's limits
 			}
