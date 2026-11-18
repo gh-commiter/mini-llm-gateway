@@ -221,6 +221,7 @@ func TestReviewForegroundPreemptsSampleAndRetryBound(t *testing.T) {
 	if foregroundLoads.Load() != 2 {
 		t.Fatal("foreground reused a potentially evicted model", foregroundLoads.Load())
 	}
+	s.api.FlushRecorder()
 	if p, a := labelsOf(t, s, root.event.ID); p != "" || a != "" {
 		t.Fatal(p, a)
 	}
