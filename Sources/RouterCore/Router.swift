@@ -69,7 +69,7 @@ public final class Router: Sendable {
                 onLog: @escaping @Sendable (RequestLog) -> Void = { _ in },
                 onDevice: @escaping @Sendable (Noise.Device) -> Void = { _ in },
                 onActivity: @escaping @Sendable (Activity) -> Void = { _ in },
-                admin: AdminHooks? = nil, core: CoreHelper? = nil, history: GatewayHistory = Router.history, copilotConfig: URL = Copilot.userConfig, allowedFolders: AllowedFolders = AllowedFolders()) {
+                admin: AdminHooks? = nil, core: CoreHelper? = nil, history: GatewayHistory = Router.history, copilotConfig: URL = Copilot.userConfig, allowedFolders: AllowedFolders = AllowedFolders(), labelLimits: LabelLimits = LabelLimits()) {
         self.core = core
         usageSender = UsageSender(core: core)
         quotaSender = UsageSender(core: core, quota: true)
@@ -77,7 +77,7 @@ public final class Router: Sendable {
         labels = core.map { c in
             LabelWorker(call: { name, body in let r = await c.internalCall(name, body); return (r.status, r.body) }, available: { AppleFM.isAvailable() },
                         backend: { system, user, ids in try await AppleFM.classify(system: system, user: user, ids: ids) },
-                        beforeStore: { _ = await sender.flush(timeout: .seconds(2)) })
+                        beforeStore: { _ = await sender.flush(timeout: .seconds(2)) }, limits: labelLimits)
         }
         self.allowedFolders = allowedFolders
         allowedFolders.record(config.claudeCLI.allowedRoots, records: config.claudeCLI.allowedRecords)
@@ -113,6 +113,9 @@ public final class Router: Sendable {
     }
 
     deinit { labels?.stop() }
+
+    /// A settings change replaces the Router: the app stops and drains the old one's label worker before the new Router (and worker) exists.
+    public func stopLabels() { labels?.stop() }
 
     /// L1: provider requests never follow a redirect (the prompt body would go to a host the owner did not configure), as the Go clients.
     public static let defaultSession: URLSession = URLSession(configuration: providerConfiguration(proxy: true), delegate: Profiles.NoRedirect(), delegateQueue: nil)

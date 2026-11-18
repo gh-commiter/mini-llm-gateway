@@ -41,6 +41,25 @@ final class FMForeground: @unchecked Sendable {
 ///
 /// Privacy: the classified text lives only in memory here (the queue, the cache key is a hash). Nothing of it reaches a log, an error, a
 /// helper call or an answer; this file has no logging at all and every failure is a fixed class.
+/// The hourly cap and the one-sample-at-a-time slot. They belong to the app, not to a worker: a settings change makes a new Router and with
+/// it a new worker, and the old worker may still be finishing its sample, so both must outlive the worker (AppState owns one).
+public final class LabelLimits: @unchecked Sendable {
+    private let lock = NSLock()
+    private var starts: [Date] = []
+    private var busy = false
+    public init() {}
+    func takeStart(now: Date, max: Int) -> Bool {
+        lock.withLock {
+            starts.removeAll { now.timeIntervalSince($0) >= 3600 }
+            guard starts.count < max else { return false }
+            starts.append(now)
+            return true
+        }
+    }
+    func takeSlot() -> Bool { lock.withLock { if busy { return false }; busy = true; return true } }
+    func freeSlot() { lock.withLock { busy = false } }
+}
+
 final class LabelWorker: @unchecked Sendable {
     struct Settings: Equatable, Sendable {
         var enabled = false, shadow = true
@@ -95,8 +114,7 @@ final class LabelWorker: @unchecked Sendable {
     private var cancelCurrent: (@Sendable () -> Void)?
     private var cache: [String: (results: [Decide.Result], at: Date)] = [:]
     private var cacheRevision: UInt64 = 0
-    private var starts: [Date] = []
-    private var sampleBusy = false  // one on-device sample at a time, whether the worker or an evaluation asks (tryTakeSlot)
+    private let limits: LabelLimits  // the hourly cap and the one-sample-at-a-time slot (a worker or an evaluation asks), shared by every worker of the app
     private var evaluating = false
     private var evalTask: Task<(Int, Data), Never>?  // the running evaluation: part of the worker's lifecycle (stop() cancels it and waits)
     private var errorRevision: UInt64?
@@ -117,9 +135,9 @@ final class LabelWorker: @unchecked Sendable {
     init(call: @escaping Call, available: @escaping @Sendable () -> Bool, backend: @escaping Decide.Backend,
          foreground: FMForeground = .shared, settingsTTL: Duration = .seconds(10), budget: Duration = .seconds(20),
          retryDelays: [Duration] = [.milliseconds(300), .seconds(1), .seconds(3)], waitStep: Duration = .milliseconds(25),
-         beforeStore: @escaping @Sendable () async -> Void = {}, sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }) {
+         beforeStore: @escaping @Sendable () async -> Void = {}, limits: LabelLimits = LabelLimits(), sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }) {
         self.rawCall = call; self.available = available; self.backend = backend; self.foreground = foreground
-        self.settingsTTL = settingsTTL; self.budget = budget; self.retryDelays = retryDelays; self.waitStep = waitStep; self.beforeStore = beforeStore; self.sleep = sleep
+        self.settingsTTL = settingsTTL; self.budget = budget; self.retryDelays = retryDelays; self.waitStep = waitStep; self.beforeStore = beforeStore; self.limits = limits; self.sleep = sleep
         Self.liveLock.withLock { Self.live = Self.live.filter { $0.worker != nil } + [Weak(worker: self)] }
     }
 
@@ -319,12 +337,7 @@ final class LabelWorker: @unchecked Sendable {
             }
             var results: [Decide.Result]
             if let hit { results = hit } else {
-                let allowed = lock.withLock { () -> Bool in
-                    starts.removeAll { now.timeIntervalSince($0) >= 3600 }
-                    guard starts.count < s.maxPerHour else { return false }
-                    starts.append(now)
-                    return true
-                }
+                let allowed = limits.takeStart(now: now, max: s.maxPerHour)
                 guard allowed else { return skip() }
                 let outcome = await decision(job.input, s, threshold: s.threshold)
                 guard !isClosed() else { return }
@@ -377,8 +390,8 @@ final class LabelWorker: @unchecked Sendable {
         func add(output n: Int) { lock.withLock { o += n } }
     }
 
-    private func takeSlot() -> Bool { lock.withLock { if sampleBusy { return false }; sampleBusy = true; return true } }
-    private func freeSlot() { lock.withLock { sampleBusy = false } }
+    private func takeSlot() -> Bool { limits.takeSlot() }
+    private func freeSlot() { limits.freeSlot() }
 
     /// Phase, then activity: three samples each, every sample only while no user request runs on the on-device model. The worker asks for both
     /// and registers its cancel (a settings change ends it); an evaluation (`evaluate`) asks only for the kinds it has hand labels for.

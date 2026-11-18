@@ -151,9 +151,9 @@ private func answering(_ phase: String = "do", _ activity: String = "bugfix", co
 }
 
 private func worker(_ core: FakeCore, available: Bool = true, backend: @escaping Decide.Backend, foreground: FMForeground = FMForeground(),
-                    budget: Duration = .seconds(20), ttl: Duration = .milliseconds(1)) -> LabelWorker {
+                    budget: Duration = .seconds(20), ttl: Duration = .milliseconds(1), limits: LabelLimits = LabelLimits()) -> LabelWorker {
     LabelWorker(call: core.call, available: { available }, backend: backend, foreground: foreground, settingsTTL: ttl, budget: budget,
-                retryDelays: [.milliseconds(5)], waitStep: .milliseconds(5))
+                retryDelays: [.milliseconds(5)], waitStep: .milliseconds(5), limits: limits)
 }
 
 /// The settings are read asynchronously (never on the request path): the first admission after start only triggers the read.
@@ -296,6 +296,27 @@ private func primed(_ w: LabelWorker) async { await w.fetchSettings() }
         w.enqueue(rootEvent("ev_root00000004"), body: body("a third prompt"))  // the cap of 2 decisions per hour is used up
         #expect(await until { w.skipped == 1 })
         #expect(samples.value == 12)
+    }
+
+    /// A settings change replaces the Router and its worker: the hourly cap and the sample slot belong to the app (LabelLimits), so N changes
+    /// in a row never give a fresh cap or a second slot.
+    @Test func settingsChangesInARowKeepOneCapAndOneSampleSlot() async throws {
+        let limits = LabelLimits()
+        let core = FakeCore(maxPerHour: 2)
+        let samples = Tally()
+        for i in 1...4 {
+            let w = worker(core, backend: answering(count: samples), limits: limits)  // the new worker of the new Router
+            await primed(w)
+            w.enqueue(rootEvent("ev_root0000000\(i)"), body: body("prompt number \(i)"))
+            #expect(await until { w.done + w.skipped == 1 })
+            w.stop()  // the old worker is stopped before the next one starts
+        }
+        #expect(samples.value == 12, "the cap of 2 decisions per hour holds across workers: \(samples.value) samples")
+        let a = LabelWorker(call: core.call, available: { true }, backend: answering(count: samples), limits: limits)
+        let b = LabelWorker(call: core.call, available: { true }, backend: answering(count: samples), limits: limits)
+        _ = (a, b)
+        #expect(limits.takeSlot() && !limits.takeSlot(), "one sample at a time for the whole app")
+        limits.freeSlot()
     }
 
     @Test func aUserRequestIsNeverDelayedByTheWorker() async throws {

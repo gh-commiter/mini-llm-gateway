@@ -298,7 +298,7 @@ final class AppState: ObservableObject {
                 case .finished(let id): self.inflight.removeAll { $0.id == id }
                 }
             }
-        }, admin: adminHooks(), core: core, allowedFolders: allowedFolders)
+        }, admin: adminHooks(), core: core, allowedFolders: allowedFolders, labelLimits: labelLimits)
         writeAdminItem()
         Task { await router.checkClaudeSandbox() }  // 0.6.0: the kernel layer under Claude CLI without local tools: checked now, not at the first request
         ownGateway.set(key: routerKey?.publicKey.rawRepresentation, port: UInt16(clamping: config.port))
@@ -340,8 +340,12 @@ final class AppState: ObservableObject {
         NSApp.terminate(nil)
     }
 
+    /// The label worker's hourly cap and sample slot: one per app, so that a new Router (a settings change) does not get a fresh cap.
+    let labelLimits = LabelLimits()
+
     func restart() {
         server?.stop()
+        server?.router.stopLabels()  // the old worker is stopped and drained (stop waits for its calls) BEFORE the new one exists
         server = nil
         start()
     }
