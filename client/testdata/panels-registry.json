@@ -48,7 +48,9 @@
   "GET upstreams/{}/probe",
   "PUT upstreams/{}/links/{}",
   "DELETE upstreams/{}/links/{}",
-  "POST upstream-push"
+  "GET upstream-links/{}",
+  "POST upstream-push",
+  "POST upstream-resolve"
  ],
  "builtinSecret": [
   "PUT upstreams/{}"
@@ -57,6 +59,8 @@
   "POST upstream-push",
   "PUT upstreams/{}",
   "DELETE upstreams/{}",
-  "DELETE upstreams/{}/links/{}"
+  "DELETE upstreams/{}/links/{}",
+  "PUT upstreams/{}/links/{}",
+  "POST upstream-resolve"
  ]
 }

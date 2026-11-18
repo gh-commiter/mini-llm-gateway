@@ -1373,7 +1373,7 @@
     "method": "PUT",
     "path": "/upstreams/hub/links/1"
    },
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1393,7 +1393,7 @@
     "method": "PUT",
     "path": "/upstreams/hub/links/1"
    },
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1413,7 +1413,7 @@
     "method": "PUT",
     "path": "/upstreams/hub/links/4"
    },
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1428,7 +1428,7 @@
     "withPrivate": false
    },
    "want": "refused",
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1442,7 +1442,7 @@
     "withPrivate": false
    },
    "want": "refused",
-   "confirm": "none"
+   "confirm": "plain"
   },
   {
    "panel": "builtin.upstreams",
@@ -1599,6 +1599,298 @@
    },
    "want": "refused",
    "confirm": "destructive"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "actions",
+   "action": "link-project-publish",
+   "values": {
+    "upstream": "hub",
+    "target": 1,
+    "remote": "",
+    "classes": "structure,data",
+    "withPrivate": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"classes\":\"structure,data\",\"mode\":\"publish\",\"remote\":\"\",\"team\":false,\"withPrivate\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "actions",
+   "action": "link-team-publish",
+   "values": {
+    "upstream": "hub",
+    "target": 4,
+    "remote": "",
+    "classes": "structure",
+    "withPrivate": false
+   },
+   "want": {
+    "query": "",
+    "body": "{\"classes\":\"structure\",\"mode\":\"publish\",\"remote\":\"\",\"team\":true,\"withPrivate\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/4"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "auto-on",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"auto\":true,\"classes\":\"structure, data\",\"remote\":\"acme-web\",\"team\":false,\"withPrivate\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "auto-on",
+   "row": {
+    "label": "team web",
+    "place": "team",
+    "upstream": "hub",
+    "linkId": 4,
+    "projectId": 0,
+    "teamId": 4,
+    "team": true,
+    "remote": "web",
+    "classesText": "structure",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"auto\":true,\"classes\":\"structure\",\"remote\":\"web\",\"team\":true,\"withPrivate\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/4"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "auto-off",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": true,
+    "mode": "submit"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"auto\":false,\"classes\":\"structure, data\",\"remote\":\"acme-web\",\"team\":false,\"withPrivate\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "mode-publish",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"classes\":\"structure, data\",\"mode\":\"publish\",\"remote\":\"acme-web\",\"team\":false,\"withPrivate\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "mode-submit",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "publish"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"classes\":\"structure, data\",\"mode\":\"submit\",\"remote\":\"acme-web\",\"team\":false,\"withPrivate\":false}",
+    "method": "PUT",
+    "path": "/upstreams/hub/links/1"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links",
+   "kind": "rowActions",
+   "action": "auto-on",
+   "row": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit"
+   },
+   "want": "refused",
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links/conflicts",
+   "kind": "rowActions",
+   "action": "keep-theirs",
+   "row": {
+    "note": 7,
+    "title": "Plan",
+    "what": "changed",
+    "projectId": 1,
+    "teamId": 0
+   },
+   "parent": {
+    "label": "acme-web",
+    "place": "project",
+    "upstream": "hub",
+    "linkId": 1,
+    "projectId": 1,
+    "teamId": 0,
+    "team": false,
+    "remote": "acme-web",
+    "classesText": "structure, data",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"note\":7,\"ours\":false,\"project\":1,\"team\":0}",
+    "method": "POST",
+    "path": "/upstream-resolve"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links/conflicts",
+   "kind": "rowActions",
+   "action": "send-ours",
+   "row": {
+    "note": 9,
+    "title": "Rules",
+    "what": "deleted",
+    "projectId": 0,
+    "teamId": 4
+   },
+   "parent": {
+    "label": "team web",
+    "place": "team",
+    "upstream": "hub",
+    "linkId": 4,
+    "projectId": 0,
+    "teamId": 4,
+    "team": true,
+    "remote": "web",
+    "classesText": "structure",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit"
+   },
+   "want": {
+    "query": "",
+    "body": "{\"note\":9,\"ours\":true,\"project\":0,\"team\":4}",
+    "method": "POST",
+    "path": "/upstream-resolve"
+   },
+   "confirm": "plain"
+  },
+  {
+   "panel": "builtin.upstreams",
+   "section": "links/conflicts",
+   "kind": "rowActions",
+   "action": "send-ours",
+   "row": {
+    "note": 9,
+    "title": "Rules",
+    "what": "deleted",
+    "projectId": 0
+   },
+   "parent": {
+    "label": "team web",
+    "place": "team",
+    "upstream": "hub",
+    "linkId": 4,
+    "projectId": 0,
+    "teamId": 4,
+    "team": true,
+    "remote": "web",
+    "classesText": "structure",
+    "withPrivate": false,
+    "auto": false,
+    "mode": "submit"
+   },
+   "want": "refused",
+   "confirm": "plain"
   }
  ],
  "confirmations": [

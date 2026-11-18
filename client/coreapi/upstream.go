@@ -355,6 +355,8 @@ type adminLinkJSON struct {
 	ProjectID   int64  `json:"projectId"`
 	TeamID      int64  `json:"teamId"`
 	ClassesText string `json:"classesText"`
+	// ConflictCount: how many publish-mode notes are in conflict (the list itself is in GET /upstream-links/{id}).
+	ConflictCount int `json:"conflictCount"`
 }
 
 func toAdminLink(l core.UpstreamLinkInfo) adminLinkJSON {
@@ -368,7 +370,67 @@ func toAdminLink(l core.UpstreamLinkInfo) adminLinkJSON {
 		cs = append(cs, string(c))
 	}
 	j.ClassesText = strings.Join(cs, ", ")
+	j.ConflictCount = len(l.Conflicts)
 	return j
+}
+
+// adminLinkDetailJSON is one link with its conflicts as rows a panel can list and resolve: the note's title (read like the owner's
+// own note read; empty when the note cannot be read here), what happened there, and the ids a resolve body needs.
+type adminLinkDetailJSON struct {
+	adminLinkJSON
+	ConflictRows []adminConflictJSON `json:"conflictRows"`
+}
+
+type adminConflictJSON struct {
+	Note      int64  `json:"note"`
+	Title     string `json:"title"`
+	What      string `json:"what"` // "changed" or "deleted" (there)
+	ProjectID int64  `json:"projectId"`
+	TeamID    int64  `json:"teamId"`
+}
+
+// adminUpstreamLink serves GET /upstream-links/{id}, the id being the link's `id` of GET /upstreams ("project-3-hub", "team-2-hub").
+// It reads only this gateway's store: it makes no call to the upstream, so it needs no host.
+func (a *API) adminUpstreamLink(ctx context.Context, st *core.Store, method string, seg []string, failErr func(error) (int, any, bool)) (int, any, bool) {
+	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
+	if method != "GET" || len(seg) != 2 {
+		return fail(404, "not found")
+	}
+	parts := strings.SplitN(seg[1], "-", 3)
+	if len(parts) != 3 || parts[0] != "project" && parts[0] != "team" {
+		return fail(400, "bad link id")
+	}
+	n, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || n <= 0 {
+		return fail(400, "bad link id")
+	}
+	var project, team int64 = n, 0
+	if parts[0] == "team" {
+		project, team = 0, n
+	}
+	ls, err := st.UpstreamLinks(ctx, project, team)
+	if err != nil {
+		return failErr(err)
+	}
+	for _, l := range ls {
+		j := toAdminLink(l)
+		if j.ID != seg[1] {
+			continue
+		}
+		out := adminLinkDetailJSON{adminLinkJSON: j, ConflictRows: []adminConflictJSON{}}
+		for _, c := range l.Conflicts {
+			r := adminConflictJSON{Note: c.Note, What: "changed", ProjectID: j.ProjectID, TeamID: j.TeamID}
+			if c.Gone {
+				r.What = "deleted"
+			}
+			if note, e := st.OwnerGetNote(ctx, c.Note); e == nil {
+				r.Title = note.Title
+			}
+			out.ConflictRows = append(out.ConflictRows, r)
+		}
+		return 200, out, true
+	}
+	return failErr(core.ErrNotFound)
 }
 
 // adminPushJSON is a push report with its lines as one text (a panel shows a text block, not a list of strings).

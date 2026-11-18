@@ -668,7 +668,7 @@
            "label": "builtin.teams.section.teams.detail.section.assignments.action.remove",
            "method": "DELETE",
            "path": "/teams/{parent.id}/assignments",
-           "query": "project={row.project}&user={row.user}",
+           "query": "project={row.project}\u0026user={row.user}",
            "confirm": {
             "title": "builtin.teams.section.teams.detail.section.assignments.action.remove.confirm.title",
             "message": "builtin.teams.section.teams.detail.section.assignments.action.remove.confirm.message",
@@ -1371,7 +1371,7 @@
         "label": "builtin.teams.section.grants.action.remove",
         "method": "DELETE",
         "path": "/grants",
-        "query": "source={row.source}&reader={row.reader}&class={row.class}",
+        "query": "source={row.source}\u0026reader={row.reader}\u0026class={row.class}",
         "confirm": {
          "title": "builtin.teams.section.grants.action.remove.confirm.title",
          "message": "builtin.teams.section.grants.action.remove.confirm.message",
@@ -2208,11 +2208,6 @@
         "label": "builtin.upstreams.section.links.column.upstream"
        },
        {
-        "field": "remote",
-        "kind": "text",
-        "label": "builtin.upstreams.section.links.column.remote"
-       },
-       {
         "field": "classesText",
         "kind": "text",
         "label": "builtin.upstreams.section.links.column.classestext"
@@ -2228,9 +2223,25 @@
         "label": "builtin.upstreams.section.links.column.total"
        },
        {
-        "field": "lastPush",
-        "kind": "time",
-        "label": "builtin.upstreams.section.links.column.lastpush"
+        "field": "auto",
+        "kind": "bool",
+        "label": "builtin.upstreams.section.links.column.auto",
+        "yes": "builtin.upstreams.section.links.column.auto.yes",
+        "no": "builtin.upstreams.section.links.column.auto.no"
+       },
+       {
+        "field": "mode",
+        "kind": "enum",
+        "label": "builtin.upstreams.section.links.column.mode",
+        "values": {
+         "submit": "builtin.upstreams.section.links.column.mode.value.submit",
+         "publish": "builtin.upstreams.section.links.column.mode.value.publish"
+        }
+       },
+       {
+        "field": "conflictCount",
+        "kind": "text",
+        "label": "builtin.upstreams.section.links.column.conflictcount"
        },
        {
         "field": "lastError",
@@ -2322,6 +2333,11 @@
          "withPrivate": {
           "field": "withPrivate"
          }
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.link-submit.confirm.title",
+         "message": "builtin.upstreams.section.links.action.link-submit.confirm.message",
+         "button": "builtin.upstreams.section.links.action.link-submit.confirm.button"
         }
        },
        {
@@ -2402,6 +2418,187 @@
          "withPrivate": {
           "field": "withPrivate"
          }
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.link-submit.confirm.title",
+         "message": "builtin.upstreams.section.links.action.link-submit.confirm.message",
+         "button": "builtin.upstreams.section.links.action.link-submit.confirm.button"
+        }
+       },
+       {
+        "id": "link-project-publish",
+        "label": "builtin.upstreams.section.links.action.link-project-publish",
+        "method": "PUT",
+        "path": "/upstreams/{field.upstream}/links/{field.target}",
+        "fields": [
+         {
+          "id": "upstream",
+          "type": "ref",
+          "ref": "upstreams",
+          "required": true,
+          "label": "builtin.upstreams.section.links.action.link-project.field.upstream"
+         },
+         {
+          "id": "target",
+          "type": "ref",
+          "ref": "projects",
+          "required": true,
+          "label": "builtin.upstreams.section.links.action.link-project.field.target"
+         },
+         {
+          "id": "remote",
+          "type": "text",
+          "label": "builtin.upstreams.section.links.action.link-project.field.remote",
+          "maxLength": 128,
+          "default": {
+           "const": ""
+          }
+         },
+         {
+          "id": "classes",
+          "type": "choice",
+          "required": true,
+          "options": [
+           {
+            "value": "structure,data",
+            "label": "builtin.upstreams.section.links.action.link-project.field.classes.option.structure-data"
+           },
+           {
+            "value": "structure",
+            "label": "builtin.upstreams.section.links.action.link-project.field.classes.option.structure"
+           },
+           {
+            "value": "data",
+            "label": "builtin.upstreams.section.links.action.link-project.field.classes.option.data"
+           },
+           {
+            "value": "structure,data,private",
+            "label": "builtin.upstreams.section.links.action.link-project.field.classes.option.structure-data-private"
+           }
+          ],
+          "default": {
+           "const": "structure,data"
+          },
+          "label": "builtin.upstreams.section.links.action.link-project.field.classes"
+         },
+         {
+          "id": "withPrivate",
+          "type": "toggle",
+          "default": {
+           "const": false
+          },
+          "label": "builtin.upstreams.section.links.action.link-project.field.withprivate"
+         }
+        ],
+        "body": {
+         "team": {
+          "const": false
+         },
+         "remote": {
+          "field": "remote"
+         },
+         "classes": {
+          "field": "classes"
+         },
+         "withPrivate": {
+          "field": "withPrivate"
+         },
+         "mode": {
+          "const": "publish"
+         }
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.link-publish.confirm.title",
+         "message": "builtin.upstreams.section.links.action.link-publish.confirm.message",
+         "button": "builtin.upstreams.section.links.action.link-publish.confirm.button"
+        }
+       },
+       {
+        "id": "link-team-publish",
+        "label": "builtin.upstreams.section.links.action.link-team-publish",
+        "method": "PUT",
+        "path": "/upstreams/{field.upstream}/links/{field.target}",
+        "fields": [
+         {
+          "id": "upstream",
+          "type": "ref",
+          "ref": "upstreams",
+          "required": true,
+          "label": "builtin.upstreams.section.links.action.link-team.field.upstream"
+         },
+         {
+          "id": "target",
+          "type": "ref",
+          "ref": "teams",
+          "required": true,
+          "label": "builtin.upstreams.section.links.action.link-team.field.target"
+         },
+         {
+          "id": "remote",
+          "type": "text",
+          "label": "builtin.upstreams.section.links.action.link-team.field.remote",
+          "maxLength": 128,
+          "default": {
+           "const": ""
+          }
+         },
+         {
+          "id": "classes",
+          "type": "choice",
+          "required": true,
+          "options": [
+           {
+            "value": "structure,data",
+            "label": "builtin.upstreams.section.links.action.link-team.field.classes.option.structure-data"
+           },
+           {
+            "value": "structure",
+            "label": "builtin.upstreams.section.links.action.link-team.field.classes.option.structure"
+           },
+           {
+            "value": "data",
+            "label": "builtin.upstreams.section.links.action.link-team.field.classes.option.data"
+           },
+           {
+            "value": "structure,data,private",
+            "label": "builtin.upstreams.section.links.action.link-team.field.classes.option.structure-data-private"
+           }
+          ],
+          "default": {
+           "const": "structure,data"
+          },
+          "label": "builtin.upstreams.section.links.action.link-team.field.classes"
+         },
+         {
+          "id": "withPrivate",
+          "type": "toggle",
+          "default": {
+           "const": false
+          },
+          "label": "builtin.upstreams.section.links.action.link-team.field.withprivate"
+         }
+        ],
+        "body": {
+         "team": {
+          "const": true
+         },
+         "remote": {
+          "field": "remote"
+         },
+         "classes": {
+          "field": "classes"
+         },
+         "withPrivate": {
+          "field": "withPrivate"
+         },
+         "mode": {
+          "const": "publish"
+         }
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.link-publish.confirm.title",
+         "message": "builtin.upstreams.section.links.action.link-publish.confirm.message",
+         "button": "builtin.upstreams.section.links.action.link-publish.confirm.button"
         }
        }
       ],
@@ -2577,6 +2774,134 @@
         }
        },
        {
+        "id": "auto-on",
+        "label": "builtin.upstreams.section.links.action.auto-on",
+        "method": "PUT",
+        "path": "/upstreams/{row.upstream}/links/{row.linkId}",
+        "body": {
+         "team": {
+          "row": "team"
+         },
+         "remote": {
+          "row": "remote"
+         },
+         "classes": {
+          "row": "classesText"
+         },
+         "withPrivate": {
+          "row": "withPrivate"
+         },
+         "auto": {
+          "const": true
+         }
+        },
+        "when": {
+         "field": "auto",
+         "equals": false
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.auto-on.confirm.title",
+         "message": "builtin.upstreams.section.links.action.auto-on.confirm.message",
+         "button": "builtin.upstreams.section.links.action.auto-on.confirm.button"
+        }
+       },
+       {
+        "id": "auto-off",
+        "label": "builtin.upstreams.section.links.action.auto-off",
+        "method": "PUT",
+        "path": "/upstreams/{row.upstream}/links/{row.linkId}",
+        "body": {
+         "team": {
+          "row": "team"
+         },
+         "remote": {
+          "row": "remote"
+         },
+         "classes": {
+          "row": "classesText"
+         },
+         "withPrivate": {
+          "row": "withPrivate"
+         },
+         "auto": {
+          "const": false
+         }
+        },
+        "when": {
+         "field": "auto",
+         "equals": true
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.auto-off.confirm.title",
+         "message": "builtin.upstreams.section.links.action.auto-off.confirm.message",
+         "button": "builtin.upstreams.section.links.action.auto-off.confirm.button"
+        }
+       },
+       {
+        "id": "mode-publish",
+        "label": "builtin.upstreams.section.links.action.mode-publish",
+        "method": "PUT",
+        "path": "/upstreams/{row.upstream}/links/{row.linkId}",
+        "body": {
+         "team": {
+          "row": "team"
+         },
+         "remote": {
+          "row": "remote"
+         },
+         "classes": {
+          "row": "classesText"
+         },
+         "withPrivate": {
+          "row": "withPrivate"
+         },
+         "mode": {
+          "const": "publish"
+         }
+        },
+        "when": {
+         "field": "mode",
+         "equals": "submit"
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.mode-publish.confirm.title",
+         "message": "builtin.upstreams.section.links.action.mode-publish.confirm.message",
+         "button": "builtin.upstreams.section.links.action.mode-publish.confirm.button"
+        }
+       },
+       {
+        "id": "mode-submit",
+        "label": "builtin.upstreams.section.links.action.mode-submit",
+        "method": "PUT",
+        "path": "/upstreams/{row.upstream}/links/{row.linkId}",
+        "body": {
+         "team": {
+          "row": "team"
+         },
+         "remote": {
+          "row": "remote"
+         },
+         "classes": {
+          "row": "classesText"
+         },
+         "withPrivate": {
+          "row": "withPrivate"
+         },
+         "mode": {
+          "const": "submit"
+         }
+        },
+        "when": {
+         "field": "mode",
+         "equals": "publish"
+        },
+        "confirm": {
+         "title": "builtin.upstreams.section.links.action.mode-submit.confirm.title",
+         "message": "builtin.upstreams.section.links.action.mode-submit.confirm.message",
+         "button": "builtin.upstreams.section.links.action.mode-submit.confirm.button"
+        }
+       },
+       {
         "id": "unlink",
         "label": "builtin.upstreams.section.links.action.unlink",
         "method": "DELETE",
@@ -2589,7 +2914,157 @@
          "destructive": true
         }
        }
-      ]
+      ],
+      "detail": {
+       "title": "label",
+       "sections": [
+        {
+         "kind": "record",
+         "id": "sync",
+         "title": "builtin.upstreams.section.links.detail.section.sync.title",
+         "source": {
+          "path": "/upstream-links/{parent.id}"
+         },
+         "columns": [
+          {
+           "field": "remote",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.column.remote"
+          },
+          {
+           "field": "auto",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.links.column.auto",
+           "yes": "builtin.upstreams.section.links.column.auto.yes",
+           "no": "builtin.upstreams.section.links.column.auto.no"
+          },
+          {
+           "field": "mode",
+           "kind": "enum",
+           "label": "builtin.upstreams.section.links.column.mode",
+           "values": {
+            "submit": "builtin.upstreams.section.links.column.mode.value.submit",
+            "publish": "builtin.upstreams.section.links.column.mode.value.publish"
+           }
+          },
+          {
+           "field": "dirtySince",
+           "kind": "time",
+           "label": "builtin.upstreams.section.links.column.dirtysince"
+          },
+          {
+           "field": "lastPush",
+           "kind": "time",
+           "label": "builtin.upstreams.section.links.column.lastpush"
+          },
+          {
+           "field": "lastOk",
+           "kind": "time",
+           "label": "builtin.upstreams.section.links.column.lastok"
+          },
+          {
+           "field": "lastFail",
+           "kind": "time",
+           "label": "builtin.upstreams.section.links.column.lastfail"
+          },
+          {
+           "field": "nextAttempt",
+           "kind": "time",
+           "label": "builtin.upstreams.section.links.column.nextattempt"
+          },
+          {
+           "field": "lastError",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.column.lasterror"
+          },
+          {
+           "field": "conflictCount",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.column.conflictcount"
+          }
+         ]
+        },
+        {
+         "kind": "list",
+         "id": "conflicts",
+         "title": "builtin.upstreams.section.links.detail.section.conflicts.title",
+         "source": {
+          "path": "/upstream-links/{parent.id}",
+          "items": "conflictRows"
+         },
+         "key": "note",
+         "columns": [
+          {
+           "field": "title",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.detail.section.conflicts.column.title"
+          },
+          {
+           "field": "what",
+           "kind": "enum",
+           "label": "builtin.upstreams.section.links.detail.section.conflicts.column.what",
+           "values": {
+            "changed": "builtin.upstreams.section.links.detail.section.conflicts.column.what.value.changed",
+            "deleted": "builtin.upstreams.section.links.detail.section.conflicts.column.what.value.deleted"
+           }
+          }
+         ],
+         "empty": "builtin.upstreams.section.links.detail.section.conflicts.empty",
+         "rowActions": [
+          {
+           "id": "keep-theirs",
+           "label": "builtin.upstreams.section.links.detail.section.conflicts.action.keep-theirs",
+           "method": "POST",
+           "path": "/upstream-resolve",
+           "body": {
+            "project": {
+             "row": "projectId"
+            },
+            "team": {
+             "row": "teamId"
+            },
+            "note": {
+             "row": "note"
+            },
+            "ours": {
+             "const": false
+            }
+           },
+           "confirm": {
+            "title": "builtin.upstreams.section.links.detail.section.conflicts.action.keep-theirs.confirm.title",
+            "message": "builtin.upstreams.section.links.detail.section.conflicts.action.keep-theirs.confirm.message",
+            "button": "builtin.upstreams.section.links.detail.section.conflicts.action.keep-theirs.confirm.button"
+           }
+          },
+          {
+           "id": "send-ours",
+           "label": "builtin.upstreams.section.links.detail.section.conflicts.action.send-ours",
+           "method": "POST",
+           "path": "/upstream-resolve",
+           "body": {
+            "project": {
+             "row": "projectId"
+            },
+            "team": {
+             "row": "teamId"
+            },
+            "note": {
+             "row": "note"
+            },
+            "ours": {
+             "const": true
+            }
+           },
+           "confirm": {
+            "title": "builtin.upstreams.section.links.detail.section.conflicts.action.send-ours.confirm.title",
+            "message": "builtin.upstreams.section.links.detail.section.conflicts.action.send-ours.confirm.message",
+            "button": "builtin.upstreams.section.links.detail.section.conflicts.action.send-ours.confirm.button"
+           }
+          }
+         ]
+        }
+       ]
+      }
      }
     ]
    }

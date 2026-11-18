@@ -1,5 +1,13 @@
 # Release notes
 
+## Unreleased
+
+### New
+- Upstream gateways panel: per link it now shows automatic or manual, the mode (submit or publish), the sync state (changed here since, last push, last automatic success, last failure, next attempt, last refusal) and the number of conflicts. It can switch a link between automatic and manual (turning automatic on asks first), switch its mode (the gateway refuses once the link has sent notes, and the panel shows its message), link a project or team in publish mode (with a confirmation that notes are then written on the upstream without its review), and list a link's conflicts (note title; changed there or deleted there) and settle each with "Keep Theirs" or "Send Ours as Proposal", both after a confirmation. New owner-only read route `GET /upstream-links/{id}`; `PUT upstreams/{}/links/{}` and `POST upstream-resolve` now need a confirmation in every panel.
+
+### Known problems
+- The Upstream gateways panel additions (automatic push, publish mode, conflicts) have only been tried through tests.
+
 ## 0.7.24
 
 ### New
