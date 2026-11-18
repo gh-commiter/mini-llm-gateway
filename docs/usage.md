@@ -472,11 +472,36 @@ repository, an empty task becomes the current branch name (marked `branch`; the 
 A role such as `plan.feature` is not parsed into labels. The labels are data, not permissions. Read them with `minigw gw usage --by phase`
 (also `activity`, `task`, `project`, `model`, or two of them: `--by project,phase`), filter with `--phase`, `--activity`, `--task` on
 `gw usage`, `gw usage-events`, `gw project-sessions` and `minigw project sessions`. Usage without a label is its own row, `(unlabelled)`.
-A phase or activity that a model chose (off by default, set in the Model labels pane; nothing fills labels yet) is a row of its own, `do (model)`
+A phase or activity that a model chose (off by default; see below) is a row of its own, `do (model)`
 next to `do`; `--label-source given|branch|model` on `gw usage` and `gw usage-events` keeps the events that have a label from that source. A label a
 caller gave is never replaced by a model's, and a label never gives access to anything.
 Totals older than 400 days are folded without labels. A topic project is the place for a task of its own: link its subfolder and the branch
 names the task.
+
+**Model labels (beta, Windows gateway only for now).** The owner can enable Foundry Local, choose an installed model,
+then use the owner admin API `PUT /usage/labels/settings` with `{"backend":"foundry:<model>","enabled":true}`.
+The Model labels pane edits the same settings; the Windows/Linux gateway has no native panel renderer yet.
+Nothing runs by default. The Linux worker reports an unavailable backend in `lastError`; the Mac classifier is a later step.
+Only root `/v1/messages` events are considered. The first user message, with system reminders stripped, plus the task/branch
+label if present, is capped to 2000 Unicode code points and sent directly to the selected Foundry Local model on this computer.
+No remote provider is used. The classifier never chooses a task. Its input is kept only in memory, never in the database,
+audit trail, logs or error text. Attached Read content is retained as in the on-device chat adapter.
+
+Phase and activity each use three samples at temperature 0.7. The default threshold `1.0` needs all three to agree;
+`0.67` accepts two of three (stored as 667 per mille). These scores mean **agreement**, not calibrated confidence or probability.
+An invalid answer casts no vote; insufficient agreement leaves that label empty. Explicit labels always win.
+The background worker starts after dispatch, runs one decision at a time, queues at most eight inputs, and allows 20 seconds
+for both labels together. Queued request bodies also have an 8 MiB total memory budget; an oversized body or a full queue
+skips classification. Parsing runs on the worker, so large inputs cannot hold dispatch. `maxPerHour` defaults to 120
+decisions in a rolling hour; reaching the rate limit also skips work.
+Up to 500 decisions are reused for six hours for the same device, first message, task and settings. Classification failures
+leave the user's call and its labels alone; `lastError` contains only an error class.
+
+With `shadow` enabled (the default), every fourth root call carrying explicit labels is compared with the model;
+`shadowRate` changes that interval. That sampled call only updates agreement counters for its explicit labels, never labels.
+The owner can read the counters at `GET /usage/labels/agreement`; unknown decisions count as disagreements.
+A decision using the model records one internal usage event (`gateway`, `ops`, `usage-labels`), with estimated tokens and
+no user, so it consumes no user's quota and never classifies itself. Cache hits create no model usage event.
 
 `MINIGW_SHARE=0` turns folder sharing off; `MINIGW_SHARE=1` shares a folder that is not shared automatically, for
 one run.

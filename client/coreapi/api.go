@@ -66,10 +66,11 @@ type Response struct {
 
 // Options of an API.
 type Options struct {
-	Store       func() *core.Store // the store, nil while it is not usable
-	Unavailable func() string      // why it is not usable (for the admin 503 text)
-	Dir         string             // private folder for the usage spool
-	Log         func(format string, args ...any)
+	LabelsChanged func(core.LabelSettings) // owner settings changed; adapters cache these off the request path
+	Store         func() *core.Store       // the store, nil while it is not usable
+	Unavailable   func() string            // why it is not usable (for the admin 503 text)
+	Dir           string                   // private folder for the usage spool
+	Log           func(format string, args ...any)
 	// AfterAdmission is a test hook: called after a member request has its principal and before the route runs.
 	AfterAdmission func(ctx context.Context, c Context, r Request)
 	// PanelProviders are the panel providers besides the built-in one (the id "builtin" is reserved).
@@ -83,9 +84,10 @@ type Options struct {
 
 // API is the core's request handler.
 type API struct {
-	o    Options
-	rec  *Recorder
-	upMu sync.Mutex // adding and removing an upstream (its secret and its row) one at a time
+	o        Options
+	rec      *Recorder
+	upMu     sync.Mutex // adding and removing an upstream (its secret and its row) one at a time
+	labelsMu sync.Mutex // keep committed owner changes and adapter notifications in order
 }
 
 // New makes an API. Start the usage recorder with StartRecorder when the process runs long (not for tests of routes).

@@ -34,6 +34,12 @@ The gateway runs on one computer and serves every client. Install it with `/mini
 Both speak the same protocol and the same [admin API](admin-api.md), so every client works with both.
 [windows-parity.md](windows-parity.md) lists every setting on both, control by control.
 
+Model-filled usage labels are a beta exception: the Go gateway has a background worker on Windows/Linux, with Foundry Local
+available only on Windows in this step; the Mac worker comes later. The feature is off by default. The owner must enable
+Foundry Local and select `foundry:<model>` through `PUT /usage/labels/settings` before turning labels on. It sends only the
+bounded first user message and task label to that local model, without storing the text. See [usage labels](usage.md)
+for sampling, limits and the meaning of agreement, and [the admin API](admin-api.md) for settings.
+
 ## Network and firewall
 
 - **Mac app:** it listens only on `127.0.0.1` at first, so only the Mac itself can use it. For other computers set

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -50,6 +51,66 @@ var (
 	foundryCommand     = runFoundryCLI // testi: lažen CLI
 	errFoundryNotFound = errors.New("Foundry Local is not installed (Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal)")
 )
+
+// foundryComplete calls Foundry directly, without the message handler or response body logging.
+func (s *server) foundryComplete(ctx context.Context, model, system, user string) (string, error) {
+	fc := s.conf().Foundry
+	if !fc.Enabled || !fc.modelEnabled(model) || !foundryValidModel(model) {
+		return "", errors.New("foundry unavailable")
+	}
+	base, err := s.foundryEndpoint(ctx)
+	if err != nil {
+		return "", errors.New("foundry unavailable")
+	}
+	return foundryLabelCompletion(ctx, base, model, system, user)
+}
+
+func foundryLabelCompletion(ctx context.Context, base, model, system, user string) (string, error) {
+	// Numeric loopback only: no DNS, credentials, query, proxy or redirects.
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Port() == "" {
+		return "", errors.New("foundry endpoint refused")
+	}
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil || !ip.IsLoopback() {
+		return "", errors.New("foundry endpoint refused")
+	}
+	if !foundryValidModel(model) {
+		return "", errors.New("foundry model refused")
+	}
+	if err := foundryGet(ctx, base+"/openai/load/"+url.PathEscape(model), 20*time.Second, nil); err != nil {
+		return "", errors.New("foundry load failed")
+	}
+	b, _ := json.Marshal(map[string]any{"model": model, "messages": []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": user}}, "temperature": 0.7, "max_completion_tokens": 16, "stream": false})
+	r, err := http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", bytes.NewReader(b))
+	if err != nil {
+		return "", errors.New("foundry request failed")
+	}
+	r.Header.Set("Content-Type", "application/json")
+	resp, err := foundryClient.Do(r)
+	if err != nil {
+		return "", errors.New("foundry completion failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", errors.New("foundry completion failed")
+	}
+	b, err = io.ReadAll(io.LimitReader(resp.Body, 4097))
+	if err != nil || len(b) > 4096 {
+		return "", errors.New("foundry response refused")
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(b, &out) != nil || len(out.Choices) != 1 {
+		return "", errors.New("foundry response refused")
+	}
+	return out.Choices[0].Message.Content, nil
+}
 
 func (f foundryConfig) modelEnabled(m string) bool {
 	return f.Models == nil || containsStr(f.Models, m)

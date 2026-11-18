@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Labels of a run for usage reports: the phase (plan, do, check, act), the activity (feature, bugfix, ...) and a task
@@ -102,6 +103,34 @@ var PhaseWords = []string{"plan", "do", "check", "act"}
 
 // DefaultActivities: the activities a model may choose until the owner changes the list.
 var DefaultActivities = []string{"feature", "bugfix", "security", "refactor", "docs", "test", "release", "research", "ops"}
+
+// FinishLabelDecision is for the gateway's own direct backend calls, never client-supplied events.
+func (s *Store) FinishLabelDecision(ctx context.Context, id, model string, start, end time.Time, in, out int64, failed bool) error {
+	e := UsageEvent{ID: id, Start: start, End: end, DeviceID: "gateway", Provider: "foundry", Model: model, BillingMode: "local", TokensIn: in, TokensOut: out, TokenSource: "estimated", Activity: "ops", Task: "usage-labels", Outcome: OutcomeOK}
+	if failed {
+		e.Outcome = OutcomeError
+		e.ErrorKind = "other"
+	}
+	e.DurationMs = new(end.Sub(start).Milliseconds())
+	return s.write(ctx, func(tx *sql.Tx) error {
+		if err := finishEvent(tx, e); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`UPDATE usage_events SET phase_source='internal', activity_source='internal', task_source='internal' WHERE id=? AND user_id IS NULL AND device_id='gateway'`, id)
+		return err
+	})
+}
+
+// A root finishing after the decision also covers children admitted later.
+func propagateModelLabels(tx *sql.Tx, id string) error {
+	for _, col := range []string{"phase", "activity"} {
+		_, err := tx.Exec(`UPDATE usage_events SET `+col+`=(SELECT `+col+` FROM usage_events WHERE id=?), `+col+`_source='model', `+col+`_score=(SELECT `+col+`_score FROM usage_events WHERE id=?) WHERE parent_id=? AND `+col+`='' AND `+col+`_source='' AND 'internal' NOT IN(phase_source,activity_source,task_source) AND EXISTS(SELECT 1 FROM usage_events WHERE id=? AND parent_id IS NULL AND `+col+`_source='model')`, id, id, id, id)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 const maxActivities = 16
 

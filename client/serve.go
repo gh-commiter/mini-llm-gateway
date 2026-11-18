@@ -575,6 +575,7 @@ type server struct {
 	scratchGate   sync.RWMutex // zahteve odjemalcev bralno, premik Scratch pisalno (serve_scratchmove.go)
 	scratchOther  atomic.Bool  // N4: Scratch je mapa drugega prehoda: brez agentov in čiščenja (serve_scratchowner.go)
 	foundry       foundryState // Foundry Local: vrata, modeli
+	labels        labelState
 	key           *ecdh.PrivateKey
 	log           *log.Logger
 	hub           *shareHub

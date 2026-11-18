@@ -118,6 +118,30 @@ func (a *API) StopRecorder() {
 // FlushRecorder waits until everything enqueued so far is processed (tests, shutdown).
 func (a *API) FlushRecorder() { a.rec.flush() }
 
+// FlushRecorderContext is the background worker's cancellable barrier before applying labels.
+func (a *API) FlushRecorderContext(ctx context.Context) bool {
+	u := a.rec
+	if u == nil {
+		return true
+	}
+	c := make(chan struct{})
+	select {
+	case u.ch <- recMsg{kind: evFlush, flush: c}:
+	case <-ctx.Done():
+		return false
+	case <-u.stopped:
+		return false
+	}
+	select {
+	case <-c:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-u.stopped:
+		return false
+	}
+}
+
 // enqueue never blocks: when the queue is full a lost FINISH is counted as a lost event (a lost begin whose finish is
 // stored loses nothing: the finish carries the whole event) and shows up as a gap.
 func (u *Recorder) enqueue(m recMsg) {
