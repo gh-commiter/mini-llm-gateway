@@ -493,8 +493,9 @@ func TestArchivedReaderGrantInRunScopeProjectListAndTeamProjects(t *testing.T) {
 	f.ok(f.AddTeamMember(ctx, team.ID, f.uid["cene"]))
 	f.ok(f.AddTeamProject(ctx, team.ID, fk))
 	cene := f.p("cene")
-	run := func() bool { // a run of eureko (cap issued before the archive is reused: only the reader's state changes)
-		hits, e := f.RunSearchNotes(ctx, RunCap{UserID: cene.UserID, DeviceID: cene.DeviceID, ProjectID: eu, Epoch: f.epoch.Load()}, true, "body")
+	cap := RunCap{UserID: cene.UserID, DeviceID: cene.DeviceID, ProjectID: eu, Epoch: f.epoch.Load()} // issued BEFORE the archive, reused after it
+	run := func() bool {
+		hits, e := f.RunSearchNotes(ctx, cap, true, "body")
 		if e != nil {
 			return false
 		}
