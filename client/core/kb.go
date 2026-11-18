@@ -204,23 +204,23 @@ func hiddenIn(title, body string) (t, b string, n int) {
 	return t, b, utf8.RuneCountInString(title) - utf8.RuneCountInString(t) + utf8.RuneCountInString(lf) - utf8.RuneCountInString(b)
 }
 
-var hiddenNames = map[rune]string{0x200B: "ZERO WIDTH SPACE", 0x200C: "ZERO WIDTH NON-JOINER", 0x200D: "ZERO WIDTH JOINER", 0x00AD: "SOFT HYPHEN",
+var hiddenNames = map[rune]string{0x09: "CHARACTER TABULATION", 0x0A: "LINE FEED", 0x200B: "ZERO WIDTH SPACE", 0x200C: "ZERO WIDTH NON-JOINER", 0x200D: "ZERO WIDTH JOINER", 0x00AD: "SOFT HYPHEN",
 	0xFEFF: "ZERO WIDTH NO-BREAK SPACE", 0xFE0F: "VARIATION SELECTOR-16", 0x202E: "RIGHT-TO-LEFT OVERRIDE", 0x202D: "LEFT-TO-RIGHT OVERRIDE",
 	0x202A: "LEFT-TO-RIGHT EMBEDDING", 0x202B: "RIGHT-TO-LEFT EMBEDDING", 0x202C: "POP DIRECTIONAL FORMATTING", 0x2060: "WORD JOINER"}
 
 // hiddenRefusal: a submission is refused at once when its text or title has characters a reviewer could not see (it could never be accepted),
-// with the place of the first three so that the writer can remove them. what is "title" or "text".
-func hiddenRefusal(what, s string) error {
+// with the place of the first three so that the writer can remove them. what is "title" or "text"; ws: tab and newline are allowed (a body), not in a title.
+func hiddenRefusal(what, s string, ws bool) error {
 	rs := []rune(s)
 	var where []string
 	n, line, col := 0, 1, 0
 	for i, r := range rs {
 		col++
-		if r == '\n' {
+		if ws && r == '\n' {
 			line, col = line+1, 0
 			continue
 		}
-		if r == '\t' || !invisibleAt(rs, i) {
+		if ws && r == '\t' || !invisibleAt(rs, i) && r != '\n' && r != '\t' {
 			continue
 		}
 		if n++; n <= 3 {
@@ -323,10 +323,10 @@ func (s *Store) Submit(ctx context.Context, p Principal, project int64, key stri
 		if err := checkSize(in.NoteInput); err != nil {
 			return err
 		}
-		if e := hiddenRefusal("title", in.Title); e != nil {
+		if e := hiddenRefusal("title", in.Title, false); e != nil {
 			return e
 		}
-		if e := hiddenRefusal("text", in.Body); e != nil {
+		if e := hiddenRefusal("text", in.Body, true); e != nil {
 			return e
 		}
 		if key == "" || len(key) > 64 {

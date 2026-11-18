@@ -681,6 +681,10 @@ func checkMirrorNote(data []byte, want ManifestNote, label string) (mirrorRow, s
 	return mirrorRow{source: want.Source, label: label, note: want.ID, rev: want.Rev, class: want.Class, kind: kind, title: title, body: text, updated: t, bytes: len(title) + len(text)}, ""
 }
 
+// ReviewText is what the command line clients print of a submission's review text: the same rule as the mirror's (one definition), so that
+// the text shown is exactly the text the gateway's review read already cleaned.
+func ReviewText(s string) string { return mirrorBody(s) }
+
 // mirrorBody: what a person or an agent may read of a pulled body: newline and tab, and nothing invisible (invisibleRune).
 func mirrorBody(s string) string {
 	return dropInvisible(s, -1, true)

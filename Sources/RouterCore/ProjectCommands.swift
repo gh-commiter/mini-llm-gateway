@@ -613,9 +613,61 @@ enum ProjectText {
         String(String.UnicodeScalarView(s.unicodeScalars.filter { !isTerminalControl($0) }))
     }
 
-    /// clean for a text a person decides on (a submission under review): a tab stays, in place, so that what is shown is what is published.
-    static func cleanKeepTab(_ s: String) -> String {
-        String(String.UnicodeScalarView(s.unicodeScalars.filter { $0 == "\t" || !isTerminalControl($0) }))
+    /// The text a reviewer is shown (a submission under review): the same rule as the gateway's review read and the Go client's core.ReviewText
+    /// (shared fixture client/testdata/review-text.json): controls except newline and tab, format characters and the other invisible ones are
+    /// removed, but an emoji's own U+FE0F and U+200D stay, so that the text shown is exactly the stored text when nothing is hidden.
+    static func reviewText(_ s: String) -> String {
+        let rs = Array(s.unicodeScalars).map { $0.value }
+        var out = String.UnicodeScalarView()
+        for (i, v) in rs.enumerated() where v == 0x0A || v == 0x09 || !invisibleAt(rs, i) { out.append(Unicode.Scalar(v)!) }
+        return String(out)
+    }
+
+    private static func invisibleRune(_ v: UInt32) -> Bool {
+        guard let u = Unicode.Scalar(v) else { return true }
+        if u.properties.generalCategory == .control || u.properties.generalCategory == .format || v == 0x2028 || v == 0x2029 { return true }
+        switch v {
+        case 0xFE00...0xFE0F, 0xE0100...0xE01EF, 0x180B...0x180F, 0xE0000...0xE007F, 0x034F, 0x115F, 0x1160, 0x3164, 0xFFA0: return true
+        default: return false
+        }
+    }
+
+    private static func emojiBase(_ v: UInt32) -> Bool {
+        switch v {
+        case 0x1F000...0x1FAFF, 0x2600...0x27BF, 0x2190...0x21FF, 0x2300...0x23FF, 0x2B00...0x2BFF,
+             0xA9, 0xAE, 0x203C, 0x2049, 0x2122, 0x2139, 0x3030, 0x303D, 0x3297, 0x3299: return true
+        default: return false
+        }
+    }
+
+    private static func pictograph(_ v: UInt32) -> Bool { (0x1F000...0x1FAFF).contains(v) || (0x2600...0x27BF).contains(v) }
+
+    /// The index of the pictograph left of the joiner at z (skipping one U+FE0F and one skin-tone modifier), or -1.
+    private static func zwjLeft(_ rs: [UInt32], _ z: Int) -> Int {
+        var j = z - 1, k = 0
+        while k < 2, j >= 0, rs[j] == 0xFE0F || (0x1F3FB...0x1F3FF).contains(rs[j]) { j -= 1; k += 1 }
+        return j >= 0 && pictograph(rs[j]) ? j : -1
+    }
+
+    /// invisibleAt of the Go core (client/core/upstream_push.go): one rule, ported; the fixture keeps the two in step.
+    private static func invisibleAt(_ rs: [UInt32], _ i: Int) -> Bool {
+        switch rs[i] {
+        case 0xFE0F:
+            if i == 0 { return true }
+            let p = rs[i - 1]
+            let keycap = (p == 0x23 || p == 0x2A || (0x30...0x39).contains(p)) && i + 1 < rs.count && rs[i + 1] == 0x20E3
+            return !(emojiBase(p) || keycap)
+        case 0x200D:
+            var n = 1, z = i
+            while true {
+                let p = zwjLeft(rs, z)
+                if p < 0 || z + 1 >= rs.count || !pictograph(rs[z + 1]) { return true }
+                if p == 0 || rs[p - 1] != 0x200D { break }
+                z = p - 1; n += 1
+            }
+            return n > 7
+        default: return invisibleRune(rs[i])
+        }
     }
 
     /// The gateway's JSON with those characters escaped (\uXXXX) inside every string: the JSON stays valid and a program

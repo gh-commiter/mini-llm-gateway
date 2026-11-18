@@ -1,0 +1,92 @@
+[
+ {
+  "name": "woman technologist",
+  "in": "\ud83d\udc69\u200d\ud83d\udcbb",
+  "out": "\ud83d\udc69\u200d\ud83d\udcbb"
+ },
+ {
+  "name": "warning",
+  "in": "\u26a0\ufe0f Pitfall",
+  "out": "\u26a0\ufe0f Pitfall"
+ },
+ {
+  "name": "keycap",
+  "in": "1\ufe0f\u20e3",
+  "out": "1\ufe0f\u20e3"
+ },
+ {
+  "name": "skin tone",
+  "in": "\ud83d\udc4d\ud83c\udffd",
+  "out": "\ud83d\udc4d\ud83c\udffd"
+ },
+ {
+  "name": "flag",
+  "in": "\ud83c\uddf8\ud83c\uddee",
+  "out": "\ud83c\uddf8\ud83c\uddee"
+ },
+ {
+  "name": "tab and newline",
+  "in": "x\ty\nz",
+  "out": "x\ty\nz"
+ },
+ {
+  "name": "bidi override",
+  "in": "a\u202eb",
+  "out": "ab"
+ },
+ {
+  "name": "joiner between letters",
+  "in": "a\u200db",
+  "out": "ab"
+ },
+ {
+  "name": "lone selector",
+  "in": "a\ufe0fb",
+  "out": "ab"
+ },
+ {
+  "name": "zero width space",
+  "in": "a\u200bb",
+  "out": "ab"
+ },
+ {
+  "name": "escape",
+  "in": "\u001b[31mred",
+  "out": "[31mred"
+ },
+ {
+  "name": "c1 control",
+  "in": "a\u009bb",
+  "out": "ab"
+ },
+ {
+  "name": "line separator",
+  "in": "a\u2028b",
+  "out": "ab"
+ },
+ {
+  "name": "arrows are not joined",
+  "in": "\u2192\u200d\u2192",
+  "out": "\u2192\u2192"
+ },
+ {
+  "name": "digit and selector without keycap",
+  "in": "1\ufe0f",
+  "out": "1"
+ },
+ {
+  "name": "seven joiners",
+  "in": "\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00",
+  "out": "\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00"
+ },
+ {
+  "name": "nine joiners",
+  "in": "\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00",
+  "out": "\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\u200d\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+ },
+ {
+  "name": "tag sequence",
+  "in": "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc7f",
+  "out": "\ud83c\udff4"
+ }
+]
