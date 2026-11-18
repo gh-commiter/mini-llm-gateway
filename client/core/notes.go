@@ -38,6 +38,8 @@ type Note struct {
 	Upstream string    `json:"-"`
 	AsOf     time.Time `json:"-"`
 	From     string    `json:"-"`
+	Source   string    `json:"-"` // the source as the upstream named it
+	Text     string    `json:"-"` // the sanitised text itself (Body is then the framed, quoted rendering)
 }
 
 // NoteInput is the payload of create and update.

@@ -138,6 +138,13 @@ import Testing
     @Test func sharedOutput() throws {
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let f = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("client/testdata/kb-search-upstream.json"))) as! [String: Any]
+        let rule = try NSRegularExpression(pattern: f["lineRule"] as! String)
+        /// Every line carries the origin of its hit or note, or is quoted, or is the gateway's own frame or hint.
+        func lines(_ out: String) {
+            for l in out.split(separator: "\n").map(String.init) {
+                #expect(rule.firstMatch(in: l, range: NSRange(l.startIndex..., in: l)) != nil, "a line of hub text passes for something else: \(l)")
+            }
+        }
         for c in f["member"] as! [[String: Any]] {
             var out = "", requests: [[String]] = []
             let responses = c["responses"] as! [[String: Any]]
@@ -150,6 +157,7 @@ import Testing
             try env.kb(c["args"] as! [String])
             #expect(out == c["out"] as! String, "\(c["args"] as! [String])")
             #expect(requests == c["requests"] as! [[String]])
+            lines(out)
         }
         for key in ["read", "readJSON"] {
             let c = f[key] as! [String: Any]
@@ -163,6 +171,7 @@ import Testing
             try env.note(c["args"] as! [String])
             #expect(out == c["out"] as! String, "\(key)")
             #expect(out.contains(f["marker"] as! String))
+            lines(out)
         }
     }
 }

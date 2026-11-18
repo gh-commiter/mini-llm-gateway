@@ -209,8 +209,8 @@ extension ProjectEnv {
             }
             if name == "note_read" { v = KBMCP.teamNotID(v) }
             v = KBMCP.sanitize(v) as! [String: Any]
-            if let body = v["body"] as? String, body.utf8.count > 16 << 10 {
-                v["body"] = KBMCP.text(body, limit: 16 << 10); v["truncated"] = true
+            for k in ["body", "text"] {  // text: the plain text of another gateway's note (body is its quoted rendering)
+                if let body = v[k] as? String, body.utf8.count > 16 << 10 { v[k] = KBMCP.text(body, limit: 16 << 10); v["truncated"] = true }
             }
             return v
         }

@@ -397,6 +397,8 @@ type FAQEntry struct {
 	// From, Upstream and AsOf: an entry of another gateway's mirror (Answer then starts with the marker line).
 	From     string
 	Upstream string
+	Source   string
+	Text     string // the sanitised answer itself (Answer is then the framed, quoted rendering)
 	AsOf     *time.Time
 }
 

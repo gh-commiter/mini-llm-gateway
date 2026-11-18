@@ -326,7 +326,7 @@ func TestMCPMemberEncryptedGatewayAndRevocation(t *testing.T) {
 // C3: a hub hit and a hub note reach the model with their origin (from, upstream, asOf) and the marker line at the start of the text,
 // in both modes (client/testdata/kb-search-upstream.json, shared with the Swift client).
 func TestMCPCarriesTheUpstreamMarker(t *testing.T) {
-	var f struct{ Marker, Search, Note string }
+	var f struct{ Marker, End, Search, Note, Text string }
 	readFixture(t, "kb-search-upstream.json", &f)
 	for _, run := range []bool{false, true} {
 		var out bytes.Buffer
@@ -371,8 +371,15 @@ func TestMCPCarriesTheUpstreamMarker(t *testing.T) {
 			t.Fatal("a team hit kept its hidden id", hits[2])
 		}
 		n := text(2)
-		if !strings.HasPrefix(n["body"].(string), f.Marker+"\n") || n["from"] != "hub:hub project:shop" || n["upstream"] != "hub" || n["asOf"] == nil {
+		body := n["body"].(string)
+		if !strings.HasPrefix(body, f.Marker+"\n") || !strings.HasSuffix(body, "\n"+f.End) || n["text"] != f.Text || n["from"] != "hub:hub (there: project:shop)" || n["source"] != "project:shop" || n["upstream"] != "hub" || n["asOf"] == nil {
 			t.Fatal(n)
+		}
+		lines := strings.Split(body, "\n")
+		for _, l := range lines[1 : len(lines)-1] { // the text content: nothing of the hub's starts a line
+			if l != ">" && !strings.HasPrefix(l, "> ") {
+				t.Fatalf("an unquoted line %q", l)
+			}
 		}
 	}
 }

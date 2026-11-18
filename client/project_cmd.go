@@ -510,6 +510,7 @@ type noteView struct {
 	Editor   string
 	Updated  time.Time
 	Revision int64
+	Upstream string // a note of another gateway's mirror: its title is quoted like its text
 }
 
 // editedBy formats the editor of a note that someone other than its author last changed ("" otherwise).
@@ -717,7 +718,11 @@ func (e *projectEnv) note(args []string) error {
 			if n.Body != nil {
 				body = *n.Body
 			}
-			e.say(clean(fmt.Sprintf("note %d  %s  revision %d  by %s%s  %s\n%s\n", n.ID, n.Class, n.Revision, n.Author, editedBy(n, ", last changed by %s"), noteTime(n.Updated), n.Title)))
+			quote := ""
+			if n.Upstream != "" {
+				quote = "> "
+			}
+			e.say(clean(fmt.Sprintf("note %d  %s  revision %d  by %s%s  %s\n%s%s\n", n.ID, n.Class, n.Revision, n.Author, editedBy(n, ", last changed by %s"), noteTime(n.Updated), quote, n.Title)))
 			fmt.Fprint(e.out, clean(strings.ReplaceAll(body, "\t", "    ")))
 			if !strings.HasSuffix(body, "\n") {
 				e.say("")

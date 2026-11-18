@@ -64,6 +64,8 @@ type NoteJSON struct {
 	// From, Upstream and AsOf: a note of another gateway's mirror (read-only here; the body starts with the marker line).
 	From     string     `json:"from,omitempty"`
 	Upstream string     `json:"upstream,omitempty"`
+	Source   string     `json:"source,omitempty"`
+	Text     *string    `json:"text,omitempty"` // the sanitised text itself; body is the framed, quoted rendering
 	AsOf     *time.Time `json:"asOf,omitempty"`
 }
 
@@ -74,7 +76,10 @@ func toNote(n core.Note, withBody bool) NoteJSON {
 	}
 	if n.Upstream != "" {
 		at := n.AsOf
-		j.From, j.Upstream, j.AsOf = n.From, n.Upstream, &at
+		j.From, j.Upstream, j.Source, j.AsOf = n.From, n.Upstream, n.Source, &at
+		if withBody {
+			j.Text = &n.Text
+		}
 	}
 	if withBody {
 		j.Body = &n.Body
@@ -585,13 +590,15 @@ type faqEntryJSON struct {
 	Updated  time.Time  `json:"updated"`
 	From     string     `json:"from,omitempty"`
 	Upstream string     `json:"upstream,omitempty"`
+	Source   string     `json:"source,omitempty"`
+	Text     string     `json:"text,omitempty"`
 	AsOf     *time.Time `json:"asOf,omitempty"`
 }
 
 func faqJSON(pg core.FAQPage) map[string]any {
 	out := []faqEntryJSON{}
 	for _, e := range pg.Entries {
-		out = append(out, faqEntryJSON{e.ID, e.Title, e.Class, e.Answer, e.Updated, e.From, e.Upstream, e.AsOf})
+		out = append(out, faqEntryJSON{e.ID, e.Title, e.Class, e.Answer, e.Updated, e.From, e.Upstream, e.Source, e.Text, e.AsOf})
 	}
 	return map[string]any{"entries": out, "next": pg.Next}
 }

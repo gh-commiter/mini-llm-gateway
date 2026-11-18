@@ -444,8 +444,8 @@ func TestKBUpstreamMirrorOutput(t *testing.T) {
 	time.Local = time.UTC
 	defer func() { time.Local = saved }()
 	var f struct {
-		Marker string
-		Member []struct {
+		Marker, LineRule string
+		Member           []struct {
 			Args      []string
 			Out       string
 			Responses []cmdResp
@@ -478,6 +478,7 @@ func TestKBUpstreamMirrorOutput(t *testing.T) {
 		if out.String() != c.Out || !reflect.DeepEqual(requests, c.Requests) {
 			t.Fatalf("%v: %q %+v", c.Args, out.String(), requests)
 		}
+		upstreamLines(t, f.LineRule, out.String())
 	}
 	for _, c := range []struct {
 		Args            []string
@@ -495,6 +496,18 @@ func TestKBUpstreamMirrorOutput(t *testing.T) {
 		}
 		if out.String() != c.Out || !strings.Contains(out.String(), f.Marker) {
 			t.Fatalf("%v: %q", c.Args, out.String())
+		}
+		upstreamLines(t, f.LineRule, out.String())
+	}
+}
+
+// upstreamLines: every line of a text output carries the origin of its hit or note, or is quoted, or is the gateway's own frame or hint.
+func upstreamLines(t *testing.T, rule, out string) {
+	t.Helper()
+	re := regexp.MustCompile(rule)
+	for _, l := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		if l != "" && !re.MatchString(l) {
+			t.Fatalf("a line of hub text passes for something else: %q in\n%s", l, out)
 		}
 	}
 }

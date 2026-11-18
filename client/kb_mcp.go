@@ -149,9 +149,11 @@ func (e *projectEnv) kbMCP(args []string) error {
 			v["hits"] = visible
 		}
 		mcpSanitize(v)
-		if body, ok := v["body"].(string); ok && len(body) > 16<<10 {
-			v["body"] = mcpText(body, 16<<10)
-			v["truncated"] = true
+		for _, k := range []string{"body", "text"} { // text: the plain text of another gateway's note (body is its quoted rendering)
+			if body, ok := v[k].(string); ok && len(body) > 16<<10 {
+				v[k] = mcpText(body, 16<<10)
+				v["truncated"] = true
+			}
 		}
 		return v, nil
 	})

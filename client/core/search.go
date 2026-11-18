@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -67,10 +68,13 @@ type SearchHit struct {
 	// Upstream and AsOf: a hit from the mirror of another gateway (From is then "hub:<upstream> <source>"), and the time of the last
 	// complete pull of that mirror.
 	Upstream string     `json:"upstream,omitempty"`
+	Source   string     `json:"source,omitempty"` // the source as the upstream named it (project:<slug> or team:<name> THERE)
 	AsOf     *time.Time `json:"asOf,omitempty"`
 }
 type SearchPage struct {
 	Hits []SearchHit `json:"hits"`
+	// Note: the hub's hits were left out (MirrorLeftOut): they took longer than their part of the deadline.
+	Note string `json:"note,omitempty"`
 }
 
 // Only literal words, combined with AND. Operators and prefixes never reach FTS.
@@ -192,7 +196,13 @@ func searchNotes(ctx context.Context, tx *sql.Tx, now time.Time, user, home int6
 	if err != nil {
 		return SearchPage{}, err
 	}
-	hub, err := mirrorSearch(ctx, tx, now, scope, query, 20)
+	// The hub's part has a budget of its own: over it the hub's hits are left out and said so, the local hits are never delayed or lost.
+	mctx, cancel := context.WithTimeout(ctx, mirrorBudget)
+	hub, err := mirrorSearch(mctx, tx, now, scope, query, 20)
+	cancel()
+	if err != nil && ctx.Err() == nil && (mctx.Err() != nil || errors.Is(err, context.DeadlineExceeded)) {
+		hub, err, out.Note = nil, nil, MirrorLeftOut
+	}
 	if err != nil {
 		return SearchPage{}, err
 	}

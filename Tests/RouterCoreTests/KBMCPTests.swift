@@ -148,8 +148,10 @@ private func mcpRun(_ input: String, call: (String, [String: Any]) throws -> Any
             }
             #expect(hits[2]["project"] == nil && hits[2]["team"] as? String == "acme")
             let note = try payload(2)
-            #expect((note["body"] as? String ?? "").hasPrefix(marker + "\n"))
-            #expect(note["from"] as? String == "hub:hub project:shop" && note["upstream"] as? String == "hub" && note["asOf"] != nil)
+            let body = note["body"] as? String ?? "", lines = body.components(separatedBy: "\n")
+            #expect(body.hasPrefix(marker + "\n") && lines.last == f["end"] as? String && note["text"] as? String == f["text"] as? String)
+            #expect(lines.dropFirst().dropLast().allSatisfy { $0 == ">" || $0.hasPrefix("> ") })
+            #expect(note["from"] as? String == "hub:hub (there: project:shop)" && note["source"] as? String == "project:shop" && note["upstream"] as? String == "hub" && note["asOf"] != nil)
         }
     }
 }

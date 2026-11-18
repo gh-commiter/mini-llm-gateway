@@ -631,6 +631,9 @@ func (e *projectEnv) kbSearch(args []string) error {
 	for _, v := range pg.Hits {
 		e.say(searchLine(v))
 	}
+	if pg.Note != "" {
+		e.say(clean(pg.Note))
+	}
 	if len(pg.Hits) == 0 {
 		e.say("no hits")
 	} else if *team != "" {
