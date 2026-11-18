@@ -13,7 +13,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # the suite needs about 16 minutes on the Windows runner (0.7.28: 946 s for package minigw) and a failed run prints its summary after go test (-timeout 30m);
+    # 20 minutes was the real limit and nearly reached, so the job gets room above go test's own limit
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: client
@@ -39,13 +41,9 @@ jobs:
           code=0
           go test -timeout 30m -json ./... > gotest.json || code=$?
           jq -Rr 'fromjson? // empty' gotest.json > gotest.events
-          echo "== failed tests, with output =="
-          jq -rs 'map(select(.Test != null and .Action == "fail")) | .[] | .Package + " " + .Test' gotest.events | while read -r pkg name; do
-            echo "--- FAIL $pkg $name"
-            jq -rs --arg p "$pkg" --arg n "$name" '.[] | select(.Package == $p and .Test == $n and .Action == "output") | .Output' gotest.events
-          done
-          echo "== failed packages (build errors, timeouts) =="
-          jq -rs '[.[] | select(.Test == null and .Action == "fail") | .Package] | .[]' gotest.events
+          # a jq program, not a shell loop: on Windows jq writes CRLF, so the old `read` loop got names ending in \r and matched no output (0.7.28)
+          echo "== failed tests and packages, with output =="
+          jq -rs -f ../.github/workflows/gotest-failures.jq gotest.events
           echo "== 40 slowest tests per package (seconds) =="
           jq -rs '[.[] | select(.Test != null and (.Action == "pass" or .Action == "fail"))] | group_by(.Package)[] | (.[0].Package), (sort_by(-.Elapsed) | .[:40][] | "  \(.Elapsed)  \(.Test)")' gotest.events
           exit $code
@@ -67,7 +65,9 @@ jobs:
   # TestMain (runIsolated) loči tek od profila izvajalca in konča z 2, če ga ne more.
   windows:
     runs-on: windows-latest
-    timeout-minutes: 20
+    # the suite needs about 16 minutes on the Windows runner (0.7.28: 946 s for package minigw) and a failed run prints its summary after go test (-timeout 30m);
+    # 20 minutes was the real limit and nearly reached, so the job gets room above go test's own limit
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: client
@@ -85,13 +85,9 @@ jobs:
           code=0
           go test -timeout 30m -json ./... > gotest.json || code=$?
           jq -Rr 'fromjson? // empty' gotest.json > gotest.events
-          echo "== failed tests, with output =="
-          jq -rs 'map(select(.Test != null and .Action == "fail")) | .[] | .Package + " " + .Test' gotest.events | while read -r pkg name; do
-            echo "--- FAIL $pkg $name"
-            jq -rs --arg p "$pkg" --arg n "$name" '.[] | select(.Package == $p and .Test == $n and .Action == "output") | .Output' gotest.events
-          done
-          echo "== failed packages (build errors, timeouts) =="
-          jq -rs '[.[] | select(.Test == null and .Action == "fail") | .Package] | .[]' gotest.events
+          # a jq program, not a shell loop: on Windows jq writes CRLF, so the old `read` loop got names ending in \r and matched no output (0.7.28)
+          echo "== failed tests and packages, with output =="
+          jq -rs -f ../.github/workflows/gotest-failures.jq gotest.events
           echo "== 40 slowest tests per package (seconds) =="
           jq -rs '[.[] | select(.Test != null and (.Action == "pass" or .Action == "fail"))] | group_by(.Package)[] | (.[0].Package), (sort_by(-.Elapsed) | .[:40][] | "  \(.Elapsed)  \(.Test)")' gotest.events
           exit $code
