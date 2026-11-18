@@ -26,7 +26,7 @@ func fakeKeys(t *testing.T) map[string]string {
 	g, s, d := keyGet, keySet, keyDel
 	keyGet = func(_, n string) (string, string) { mu.Lock(); defer mu.Unlock(); return m[n], "test" }
 	keySet = func(_, n, k string) (string, error) { mu.Lock(); defer mu.Unlock(); m[n] = k; return "test", nil }
-	keyDel = func(_, n string) { mu.Lock(); defer mu.Unlock(); delete(m, n) }
+	keyDel = func(_, n string) error { mu.Lock(); defer mu.Unlock(); delete(m, n); return nil }
 	t.Cleanup(func() { keyGet, keySet, keyDel = g, s, d })
 	return m
 }

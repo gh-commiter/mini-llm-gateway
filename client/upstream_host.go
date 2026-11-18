@@ -99,9 +99,12 @@ func (h upstreamHost) Info(name string) coreapi.UpstreamInfo {
 func (h upstreamHost) Available() bool { return true }
 
 func (h upstreamHost) Forget(name string) error {
-	keyDel(h.s.cfgDir, upstreamKeyName(name))
-	if v, _ := keyGet(h.s.cfgDir, upstreamKeyName(name)); v != "" {
-		return errors.New("still in " + storeName)
+	item := upstreamKeyName(name)
+	if err := keyDel(h.s.cfgDir, item); err != nil { // the store said no: the token and the device key are still in it
+		return errors.New("still in the secret store, item " + item + ": " + err.Error())
+	}
+	if v, where := keyGet(h.s.cfgDir, item); v != "" {
+		return errors.New("still in " + where + ", item " + item)
 	}
 	return nil
 }

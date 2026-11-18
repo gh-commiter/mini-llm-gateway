@@ -260,10 +260,10 @@ func secretsFor(cfgDir string) secretStore {
 }
 
 // The names keyGet, keySet and keyDel stay the seam of the code and of the tests (they replace them).
-// A failed read is "" (as before: "no key"); callers that must tell the two apart use secretsFor(cfgDir).Get.
+// keyDel returns the store's error; most callers ignore it, Forget does not. A failed read is "" (as before: "no key"); callers that must tell the two apart use secretsFor(cfgDir).Get.
 var keyGet = func(cfgDir, name string) (string, string) {
 	v, where, _ := secretsFor(cfgDir).Get(name)
 	return v, where
 }
 var keySet = func(cfgDir, name, value string) (string, error) { return secretsFor(cfgDir).Set(name, value) }
-var keyDel = func(cfgDir, name string) { secretsFor(cfgDir).Delete(name) }
+var keyDel = func(cfgDir, name string) error { return secretsFor(cfgDir).Delete(name) }

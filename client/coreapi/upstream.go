@@ -154,7 +154,7 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		// The credentials go whatever the database said (a row that is gone must not leave a secret behind); a failure to remove them is
 		// reported, not swallowed.
 		if ferr := h.Forget(seg[1]); ferr != nil {
-			return fail(500, "upstream "+seg[1]+": the credentials could not be removed ("+ferr.Error()+"): remove them by hand")
+			return fail(500, "upstream "+seg[1]+": the link is removed, but the stored credentials could NOT be removed ("+ferr.Error()+"): remove them by hand")
 		}
 		if err != nil {
 			return failErr(err)

@@ -424,7 +424,7 @@ func TestScratchOverlapAndProviderRename(t *testing.T) {
 	og, os2, od := keyGet, keySet, keyDel
 	keyGet = func(_, n string) (string, string) { return keys[n], "" }
 	keySet = func(_, n, v string) (string, error) { keys[n] = v; return "", nil }
-	keyDel = func(_, n string) { delete(keys, n) }
+	keyDel = func(_, n string) error { delete(keys, n); return nil }
 	t.Cleanup(func() { keyGet, keySet, keyDel = og, os2, od })
 	keySet(s.cfgDir, "Bar", "key-bar")
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/providers/Bar", `{"name":"foo"}`); st != 400 || !strings.Contains(b, "already exists") {
