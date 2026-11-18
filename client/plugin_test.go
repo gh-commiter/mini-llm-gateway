@@ -610,6 +610,8 @@ type installRun struct {
 	entry     string // the name the sums list the hash under; "" = the asset's name
 	noSSH     bool   // no ssh-keygen on PATH
 	dataName  string // data folder name; "" = data
+	envOld    bool   // CLAUDE_ENV_FILE already holds the line an older plugin version appended
+	fresh     bool   // the release's SHA256SUMS (served by the fake curl) lists the installed client; nothing cached
 }
 
 type installResult struct{ out, exe, marker, data, envFile string }
@@ -713,6 +715,13 @@ case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig
 	ownBody := "#!/bin/sh\n# UNSIGNED\ntouch " + marker + "\necho '" + o.ownCopy + "'\n"
 	if o.ownCopy != "" {
 		write(dn+"/bin/"+ownName, ownBody)
+	}
+	if o.fresh {
+		h := sha256.Sum256([]byte(instBody))
+		write("sums", "VERSION 0.7.99\n"+hex.EncodeToString(h[:])+"  "+asset+"\n")
+	}
+	if o.envOld {
+		write("envfile", "export PATH=\"$PATH\":'"+data+"/bin'\n")
 	}
 	if o.cache || o.trustInst || o.trustOwn {
 		name := asset
@@ -885,7 +894,7 @@ func TestInstallScriptUnverifiedCandidatesAreNeverRun(t *testing.T) {
 		if _, err := os.Lstat(r.exe); err == nil {
 			t.Errorf("%s: a substituted installed client was linked:\n%s", goos, r.out)
 		}
-		r.mustSay(t, "cannot verify the installed minigw and cannot download a verified one")
+		r.mustSay(t, "cannot verify the installed minigw and cannot download a verified one", "the minigw installed at ", "is not the current release")
 
 		r = runInstallScript(t, installRun{goos: goos, installed: "-", latest: "0.7.99", cache: true, ownCopy: "minigw 0.7.99"})
 		if r.ran() {
@@ -969,7 +978,32 @@ func TestInstallScriptEnvFileQuotesThePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := exec.Command("sh", "-c", "PATH=/x; . \"$1\"; printf %s \"$PATH\"", "sh", r.envFile).Output()
-	if want := "/x:" + filepath.Join(r.data, "bin"); err != nil || string(out) != want {
+	if want := filepath.Join(r.data, "bin") + ":/x"; err != nil || string(out) != want {
 		t.Errorf("PATH after sourcing %q = %q (%v), want %q", b, out, err, want)
+	}
+}
+
+// The plugin's copy comes first on PATH, also when an older plugin version appended its line to the same file.
+func TestInstallScriptEnvFilePrepends(t *testing.T) {
+	r := runInstallScript(t, installRun{installed: "minigw 0.7.32", latest: "0.7.32", envOld: true})
+	out, err := exec.Command("sh", "-c", "PATH=/x; . \"$1\"; printf %s \"$PATH\"", "sh", r.envFile).Output()
+	if err != nil || !strings.HasPrefix(string(out), filepath.Join(r.data, "bin")+":/x") {
+		t.Errorf("PATH after sourcing = %q (%v): the plugin's bin must come first", out, err)
+	}
+}
+
+// An installed client that is current for the release verified in this run is trusted: no cached sums needed.
+func TestInstallScriptInstalledCurrentClientIsTrustedByFreshSums(t *testing.T) {
+	r := runInstallScript(t, installRun{goos: "linux", installed: "minigw 0.7.99", latest: "0.7.99", fresh: true})
+	if !r.linked() || strings.Contains(r.out, "not the current release") || strings.Contains(r.out, "cannot verify") {
+		t.Errorf("the current installed client must be used:\n%s", r.out)
+	}
+}
+
+// Windows: the plugin's verified minigw.exe stays when shims point at the installed client (a printed kb mcp config uses its path).
+func TestInstallScriptWindowsKeepsTheOwnExe(t *testing.T) {
+	r := runInstallScript(t, installRun{goos: "windows", installed: "minigw 0.7.99", latest: "0.7.99", trustInst: true, ownCopy: "minigw 0.7.99", trustOwn: true})
+	if _, err := os.Stat(filepath.Join(r.data, "bin", "minigw.exe")); err != nil {
+		t.Errorf("the plugin's minigw.exe was deleted:\n%s", r.out)
 	}
 }

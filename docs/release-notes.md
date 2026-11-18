@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- Inside Claude Code a plain `minigw` is now the plugin's own copy: the plugin puts its folder first on the PATH, not last, so an old `minigw` from Homebrew or the installer no longer answers instead of it. `/minigw:gw update` on a Mac also upgrades the `minigw` client cask when it is installed.
+- On Linux and Windows the session start again tells you when the `minigw` installed on the computer is not the current release, and how to update it (it is not run to find out). A `minigw` that is the current release is now trusted in the first session, without a download.
+- On Windows the plugin no longer deletes its own `minigw.exe` when shims point at an installed `minigw`, so a `kb mcp --print-config` made earlier keeps working.
+- The notes skill says that proposals are reviewed by the owner or an admin of the project.
+
 ## 0.7.33
 
 A candidate for the next stable release: the plugin's install script and the onboarding page, after a pass that asked how the release fails for a real new user.

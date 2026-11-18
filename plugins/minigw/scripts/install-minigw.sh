@@ -74,14 +74,18 @@ verify_sums() {
 # Neoverjene datoteke (nameščen minigw drugje, kopija v bin/ brez vsot) se ne zaženejo, niti za --version: veljajo za odsotne.
 # hashof <ime>: SHA-256 vnosa »<64 šestnajstiških> [*]<ime>« iz stdin; ime celo, brez regularnega izraza.
 hashof() { awk -v n="$1" 'length($1) == 64 && ($2 == n || $2 == "*" n) { print $1; exit }'; }
-trusted() {
-  [ -f "$BIN/SHA256SUMS" ] && [ -f "$BIN/SHA256SUMS.sig" ] && command -v ssh-keygen >/dev/null 2>&1 &&
-    verify_sums "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig" && h=$(sha "$1") && [ -n "$h" ] && [ "$(hashof "$asset" < "$BIN/SHA256SUMS")" = "$h" ]
+# trustedby <vsote> <podpis> <datoteka>: tsums = vsote, ki so datoteko overile.
+tsums=""
+trustedby() {
+  [ -f "$1" ] && [ -f "$2" ] && command -v ssh-keygen >/dev/null 2>&1 && verify_sums "$1" "$2" &&
+    h=$(sha "$3") && [ -n "$h" ] && [ "$(hashof "$asset" < "$1")" = "$h" ] && tsums=$1
 }
+# Shranjene vsote ali vsote, preverjene v tem zagonu (.sums.new): nameščen minigw, ki je ta izdaja, je overjen že v prvi seji.
+trusted() { trustedby "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig" "$1" || trustedby "$BIN/.sums.new" "$BIN/.sig.new" "$1"; }
 # exever <datoteka>: različica overjene datoteke je v podpisani vrstici VERSION vsot, ki so jo overile (zaženemo --version le brez nje).
 exever() {
   xv=""
-  [ "$os" != darwin ] && trusted "$1" && xv=$(sed -n 's/^VERSION \([0-9][0-9.]*\)$/\1/p' "$BIN/SHA256SUMS" | head -1)
+  [ "$os" != darwin ] && trusted "$1" && xv=$(sed -n 's/^VERSION \([0-9][0-9.]*\)$/\1/p' "$tsums" | head -1)
   [ -n "$xv" ] || xv=$(ver "$1")
   printf '%s\n' "$xv"
 }
@@ -135,8 +139,14 @@ above() {
 if [ "$os" = linux ] && [ -e "$inst" ] && ! { mine "$inst" && mine "${inst%/*}" && above "${inst%/*}"; }; then
   echo "minigw plugin: not using $(san "$inst"): it or a folder above it is not yours or is writable by others."; inst=""
 fi
-instx=""; [ -n "$inst" ] && [ -x "$inst" ] && instx=1
-instok=""; [ -n "$instx" ] && trusted "$inst" && { instok=1; iv=$(exever "$inst"); }  # neoverjen: odsoten, ne zažene se
+isums=""; instx=""; [ -n "$inst" ] && [ -x "$inst" ] && instx=1
+instok=""; [ -n "$instx" ] && trusted "$inst" && { instok=1; isums=$tsums; iv=$(exever "$inst"); }  # neoverjen: odsoten, ne zažene se
+if [ -n "$instx" ] && [ -z "$instok" ]; then  # ne zaženemo ga, a posodobitev ponudimo (prej je to povedala vrstica »X is installed«)
+  u=$(how)
+  [ "$os" = linux ] && [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/minigw-serve.service" ] && u="/minigw:gw update"
+  [ "$os" = windows ] && [ -n "${APPDATA:-}" ] && [ -f "$(cygpath -u "$APPDATA")/minigw/serve.json" ] && u="/minigw:gw update"
+  echo "minigw plugin: the minigw installed at $(san "$inst") is not the current release${rel:+ $rel} (or could not be verified); update it: $u"
+fi
 case $iv in *[!0-9.]*) iv="" ;; esac
 if [ -n "$instok" ] && goodver "$iv" && ! older "$iv" "$MIN"; then :; else [ -n "$instok" ] && stale=$inst; inst=""; fi
 if [ -z "$inst" ] && [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ] && authexe; then
@@ -197,13 +207,14 @@ else
         printf '@setlocal DisableDelayedExpansion\r\n@"%%LOCALAPPDATA%%\\Programs\\Mini Gateway\\minigw.exe" %%*\r\n' > "$BIN/minigw.cmd" &&
         mv -f "$BIN/minigw.new" "$BIN/minigw"; } ||
         echo "minigw plugin: could not point $(san "$BIN")/minigw at $(san "$inst")."
-      rm -f "$EXE" 2>/dev/null  # prejšnja kopija; v rabi ostane, a bin/minigw ima prednost
+      # kopija vtičnika (minigw.exe) ostane: pot vanjo je lahko v nastavitvi »kb mcp --print-config«; bin/minigw ima prednost
       EXE=$inst
     fi
     return 0
   }
   if [ -n "$inst" ]; then
     linkinst
+    [ "$isums" = "$BIN/.sums.new" ] && keepsums  # overjen z vsotami tega zagona: shrani jih za brez omrežja
   elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || ! authexe || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
     [ "$os" = windows ] && rm -f "$BIN/minigw" "$BIN/minigw.cmd"  # brez namestitve: lupini na odstranjeni minigw gresta
     if [ -n "$sums" ] && [ ! -L "$EXE" ] && [ -x "$EXE" ] && [ "$(sha "$EXE")" = "$(want "$asset")" ]; then
@@ -270,7 +281,7 @@ fi
 
 # Claudov Bash najde »minigw« tudi brez poti.
 qb=$(printf '%s' "$BIN" | sed "s/'/'\\\\''/g")
-line="export PATH=\"\$PATH\":'$qb'"  # ena vrstica, tudi ob resume/clear/compact
+line="export PATH='$qb':\"\$PATH\""  # ena vrstica, tudi ob resume/clear/compact
 [ -n "${CLAUDE_ENV_FILE:-}" ] && { grep -qxF "$line" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "$line" >> "$CLAUDE_ENV_FILE"; }
 # Povezava: izhod »minigw status« (izhodna koda in vrstici Status/Device privzetega profila); v kontekst le fiksni nizi in
 # ID naprave (43 znakov base64url), nikoli prosto besedilo prehoda (F6). Skupaj z omejitvami zgoraj v 60 s kljuke.

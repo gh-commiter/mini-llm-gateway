@@ -78,7 +78,7 @@ out=$(winrun newer); print -r -- $out
 exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\''"
 [[ "$(<$T/win/data/bin/minigw)" == "#!/bin/sh"$'\n'"# Mini Gateway: the installed minigw"$'\n'"exec 'C:${exe//$sq/$rep}' \"\$@\"" ]] || fail "10: sh shim: $(<$T/win/data/bin/minigw)"
 [[ "$(<$T/win/data/bin/minigw.cmd)" == "@setlocal DisableDelayedExpansion"$'\r\n'"@\"%LOCALAPPDATA%\\Programs\\Mini Gateway\\minigw.exe\" %*"$'\r' ]] || fail "10: cmd shim: $(<$T/win/data/bin/minigw.cmd)"
-[[ ! -e $T/win/data/bin/minigw.exe && $out == *"connected to Mini Gateway"* ]] || fail "10: plugin copy kept or status not read"
+[[ -e $T/win/data/bin/minigw.exe && $out == *"connected to Mini Gateway"* ]] || fail "10: the plugin copy was deleted (a kb mcp config points at it) or status not read"
 rm "$exe"; out=$(winrun); print -r -- $out
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd ]] || fail "10: shims kept without an installed minigw"
 # 10b: stari MSI minigw (0.5.20) in prenos ne uspe (ni izdaje): stari ostane, a glasno (enako kot macOS in Linux)
@@ -90,6 +90,12 @@ out=$(winrun); print -r -- $out
 print '#!/bin/sh\ntouch '$T'/ran10\necho minigw 9.9.9' > "$exe"; chmod +x "$exe"; rm -f $T/ran10
 out=$(winrun); print -r -- $out
 [[ ! -e $T/ran10 && ! -e $T/win/data/bin/minigw && $out == *"cannot verify the installed minigw and cannot download a verified one"* ]] || fail "10c: a substituted MSI minigw was run or linked"
+# 10d: BREZ vnaprej vpisanih vsot (stanje prave naprave): nameščen minigw.exe z neznanim hashem se ne zažene, a vrstica ponudi posodobitev
+print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.7.0; exit 0' > "$exe"; chmod +x "$exe"; rm -f $T/win/data/bin/SHA256SUMS $T/win/data/bin/SHA256SUMS.sig
+out=$(winrun newer); print -r -- $out
+[[ $out == *"the minigw installed at "*"is not the current release 0.99.0 (or could not be verified); update it: /minigw:gw update"* ]] || fail "10d: no update line for an untrusted installed gateway client"
+rm $T/win/roaming/minigw/serve.json; out=$(winrun newer)
+[[ $out == *"is not the current release 0.99.0 (or could not be verified); update it: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi"* ]] || fail "10d: no MSI line for an untrusted client-only install"
 print "ok 10: Windows shims point at the installed minigw; client-only MSI gets the MSI hint"
 
 docker run --rm -v $T:/t:ro debian:stable-slim sh -c '
@@ -194,6 +200,16 @@ mkdir -p /tmp/home/.config/systemd/user; : > /tmp/home/.config/systemd/user/mini
 out=$(run /tmp/d11 newer testkey); echo "$out"
 echo "$out" | grep -q "Mini Gateway $MINV is installed, 0.99.0 is available: /minigw:gw update" || fail "11: no gateway update hint"
 rm -rf /tmp/home/.config/systemd
+# 11b: BREZ vnaprej vpisanih vsot: nameščen 0.7.0-podoben minigw (neznan hash) se ne zažene, vrstica ponudi posodobitev, plugin prenese svojega
+printf "#!/bin/sh\ntouch /tmp/ran11b\necho minigw 0.7.0\n" > /tmp/home/.local/bin/minigw; rm -f /tmp/ran11b
+out=$(run /tmp/d11b newer testkey); echo "$out"
+echo "$out" | grep -q "the minigw installed at /tmp/home/.local/bin/minigw is not the current release 0.99.0 (or could not be verified); update it: curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh" || fail "11b: no update line for an untrusted installed client"
+[ ! -e /tmp/ran11b ] && [ ! -L /tmp/d11b/bin/minigw ] && cmp -s /t/rel/newer/minigw-linux-arm64 /tmp/d11b/bin/minigw || fail "11b: the untrusted client was run or linked, or no own copy"
+# 11c: nameščen je prav ta izdaja (hash v vsotah, preverjenih v tem zagonu): overjen že v prvi seji, brez vrstice
+rm -f /tmp/home/.local/bin/minigw; cp /t/rel/good/minigw-linux-arm64 /tmp/home/.local/bin/minigw
+out=$(run /tmp/d11c good testkey); echo "$out"
+[ "$(readlink /tmp/d11c/bin/minigw)" = /tmp/home/.local/bin/minigw ] && ! echo "$out" | grep -q "not the current release" || fail "11c: the current installed client is not trusted in the first session"
+[ -f /tmp/d11c/bin/SHA256SUMS ] || fail "11c: the verified sums were not kept"
 rm -rf /tmp/home/.local
 echo "ok 11: newer signed release than the installed minigw: hint, no download"
 
