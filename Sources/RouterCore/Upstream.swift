@@ -45,6 +45,8 @@ public enum UpstreamRequest {
         ("GET", "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions/[0-9]{1,18}$"),
         ("POST", "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions$"),
         ("GET", "^/minigw/v1/projects/[0-9]{1,18}/notes/[0-9]{1,18}$"),
+        ("POST", "^/minigw/v1/projects/[0-9]{1,18}/notes$"),  // publish mode: a note written on the upstream ...
+        ("PUT", "^/minigw/v1/projects/[0-9]{1,18}/notes/[0-9]{1,18}$"),  // ... and updated in place (the upstream checks the revision)
     ]
 
     static func admits(method: String, path: String) -> Bool {
@@ -56,7 +58,7 @@ public enum UpstreamRequest {
 
     /// The checked idempotency key ("" = none), or nil when the request is refused.
     public static func check(method: String, path: String, headers: [String: String], body: Data?) -> String? {
-        guard admits(method: method, path: path), (body?.count ?? 0) <= maxBody, method == "POST" || body == nil else { return nil }
+        guard admits(method: method, path: path), (body?.count ?? 0) <= maxBody, method == "POST" || method == "PUT" || body == nil else { return nil }
         let key = headers.first { $0.key.lowercased() == "idempotency-key" }?.value ?? ""
         let keyChars = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
         guard key.utf8.count <= 64, key.unicodeScalars.allSatisfy({ keyChars.contains($0) }) else { return nil }

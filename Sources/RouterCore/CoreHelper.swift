@@ -249,7 +249,7 @@ public final class CoreHelper: @unchecked Sendable {
 
     /// The owner's upstream routes (client/coreapi/upstream.go): the only requests that may wait for the app.
     static func isUpstreamRoute(_ context: CoreContext, _ request: CoreRequest) -> Bool {
-        context.kind == .admin && (request.path == "/upstream-push" || request.path == "/upstreams" || request.path.hasPrefix("/upstreams/"))
+        context.kind == .admin && (request.path == "/upstream-push" || request.path == "/upstream-auto" || request.path == "/upstreams" || request.path.hasPrefix("/upstreams/"))
     }
 
     /// An internal call (POST /internal/<name>, docs/core-adapter.md).

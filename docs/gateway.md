@@ -514,9 +514,11 @@ it (one per upstream, made when the upstream is added), is kept as the provider 
 credential store (Windows Credential Manager, Secret Service), else a private file next to `serve.json` (mode 0600). It never
 appears in the database, a backup, the log, an API answer or an argument. Each request opens its own encrypted connection in memory
 (Noise, the upstream's key pinned), so there is no local listener to borrow; redirects are not followed and an answer is read up to 8
-MiB (up to 1 MiB of it is parsed). The routes are the owner's (`/upstreams`, `/upstream-push`, admin-api.md); the push uses only the
+MiB (up to 1 MiB of it is parsed). The routes are the owner's (`/upstreams`, `/upstream-push`, `/upstream-auto`, `/upstream-resolve`, admin-api.md); the push uses only the
 upstream's existing member routes (`GET /minigw/v1/projects/<slug>`, `GET /minigw/v1/teams`, `POST .../kb/submissions` with an
 idempotency key, `GET` of a submission and of a note to learn what exists). The panel for it is a later step.
+
+Publish mode on the Mac: the app admits `POST /notes` and `PUT /notes/{id}` on an upstream for the helper (it cannot see link modes), so it allows them for every upstream, also one with only submit-mode links. What is enforced today is the core's own rule (those two requests are sent only for a link in publish mode) and the role of the device on the upstream; a compromised helper could still write notes directly as far as that role allows. Bind the device of a submit-only gateway to a role that cannot write notes there.
 
 On the Mac app the helper has no network and no Keychain, so the app does that work for it: the core asks through callouts
 (core-adapter.md), the app keeps the secret as the Keychain item `upstream:<name>` of the provider keys' service (the helper never sees

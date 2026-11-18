@@ -151,7 +151,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
     "exit": 1,
     "requests": []
    }
@@ -273,6 +273,167 @@
       "PUT",
       "/upstreams/hub/links/3",
       "{\"classes\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link publish",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "auto": true,
+    "mode": "publish"
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\": true}"
+    }
+   ],
+   "want": {
+    "out": "linked shop to hub as shop: changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"auto\":true,\"classes\":\"\",\"mode\":\"publish\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link auto and manual",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "auto": true,
+    "manual": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: --auto and --manual together: choose one\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link manual",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "manual": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "linked shop to hub as shop: nothing is sent until minigw gw upstream push\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"auto\":false,\"classes\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link auto",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "auto": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\":true}"
+    }
+   ],
+   "want": {
+    "out": "linked shop to hub as shop: changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"auto\":true,\"classes\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -527,7 +688,34 @@
     }
    ],
    "want": {
-    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data\nteam Engineering -> hub (eng): 2 of 2 notes would go, never pushed, classes structure,data\n  last refusal: the upstream says: not allowed: your role in this project does not permit it\n",
+    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, manual\nteam Engineering -> hub (eng): 2 of 2 notes would go, never pushed, classes structure,data, manual\n  last refusal: the upstream says: not allowed: your role in this project does not permit it\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/upstreams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "status with the automatic push",
+   "args": [
+    "upstream",
+    "status"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /upstreams",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"lastPush\": \"2026-11-17T10:30:00Z\", \"label\": \"shop\", \"pending\": 1, \"total\": 3, \"auto\": true, \"mode\": \"submit\", \"dirtySince\": \"2026-11-17T11:00:00Z\", \"lastOk\": \"2026-11-17T10:30:00Z\", \"lastFail\": \"2026-11-17T11:05:00Z\", \"failCount\": 3, \"nextAttempt\": \"2026-11-17T11:13:00Z\", \"lastError\": \"the upstream says: down\", \"notPropagated\": [{\"note\": 12, \"why\": \"deleted here\"}, {\"note\": 15, \"why\": \"deleted here\"}, {\"note\": 7, \"why\": \"now private here\"}]}, {\"project\": 4, \"team\": false, \"upstream\": \"hub\", \"remote\": \"web\", \"classes\": [\"structure\"], \"withPrivate\": false, \"label\": \"web\", \"pending\": 0, \"total\": 2, \"auto\": false, \"mode\": \"submit\"}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, auto\n  sync: dirty since 2026-11-17 11:00; last success 2026-11-17 10:30; last failure 2026-11-17 11:05 (3 in a row); next attempt 2026-11-17 11:13\n  last refusal: the upstream says: down\n  not propagated: deleted here: note 12, 15; now private here: note 7 (the copy stays on the upstream until you remove it there)\nweb -> hub (web): 0 of 2 notes would go, never pushed, classes structure, manual\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -560,7 +748,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data\n",
+    "out": "shop -> hub (shop): 1 of 3 notes would go, last push 2026-11-17 10:30, classes structure,data, manual\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -757,7 +945,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
     "exit": 1,
     "requests": []
    }
@@ -772,9 +960,228 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)\n",
     "exit": 1,
     "requests": []
+   }
+  },
+  {
+   "name": "resolve theirs",
+   "args": [
+    "upstream",
+    "resolve",
+    "shop",
+    "12"
+   ],
+   "opts": {
+    "theirs": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-resolve",
+     "status": 200,
+     "body": "{\"ok\": true}"
+    }
+   ],
+   "want": {
+    "out": "note 12: the upstream's version stays, our change is forgotten for it\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-resolve",
+      "{\"note\":12,\"ours\":false,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "resolve ours team",
+   "args": [
+    "upstream",
+    "resolve",
+    "12"
+   ],
+   "opts": {
+    "team": "acme",
+    "ours": true
+   },
+   "responses": [
+    {
+     "match": "GET /teams",
+     "status": 200,
+     "body": "{\"teams\": [{\"ID\": 6, \"Name\": \"acme\"}]}"
+    },
+    {
+     "match": "POST /upstream-resolve",
+     "status": 200,
+     "body": "{\"ok\": true}"
+    }
+   ],
+   "want": {
+    "out": "note 12: our version goes to the upstream as a submission at the next push\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/teams",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-resolve",
+      "{\"note\":12,\"ours\":true,\"team\":6}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "resolve both",
+   "args": [
+    "upstream",
+    "resolve",
+    "shop",
+    "12"
+   ],
+   "opts": {
+    "theirs": true,
+    "ours": true
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: resolve: choose --theirs or --ours\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "resolve none to settle",
+   "args": [
+    "upstream",
+    "resolve",
+    "shop",
+    "12"
+   ],
+   "opts": {
+    "ours": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-resolve",
+     "status": 400,
+     "body": "{\"error\": {\"message\": \"no conflict on this note\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no conflict on this note\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-resolve",
+      "{\"note\":12,\"ours\":true,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "status with a conflict",
+   "args": [
+    "upstream",
+    "status",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"label\": \"shop\", \"pending\": 0, \"total\": 3, \"auto\": true, \"mode\": \"publish\", \"conflicts\": [{\"note\": 12, \"remoteRev\": 4}, {\"note\": 14, \"remoteRev\": 0, \"gone\": true}]}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure,data, auto, publish\n  CONFLICT: note 12 (changed there), note 14 (deleted there): not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstreams?project=3",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "push publish with a conflict",
+   "args": [
+    "upstream",
+    "push",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-push",
+     "status": 200,
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"create 12 Invoice numbering: published as note 90 on the upstream\", \"conflict 13 Reset steps: changed on the upstream since our last write (revision 4), not overwritten: minigw gw upstream resolve <project> 13 --theirs|--ours\"], \"created\": 1, \"skipped\": 0, \"replaced\": 0, \"refused\": 0, \"conflicts\": 1, \"dryRun\": false}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  create 12 Invoice numbering: published as note 90 on the upstream\n  conflict 13 Reset steps: changed on the upstream since our last write (revision 4), not overwritten: minigw gw upstream resolve <project> 13 --theirs|--ours\n  created 1, replaced 0, skipped 0, refused 0, conflicts 1\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-push",
+      "{\"dryRun\":false,\"project\":3}"
+     ]
+    ]
    }
   }
  ]

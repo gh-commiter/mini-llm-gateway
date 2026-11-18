@@ -103,7 +103,7 @@ hits its deadline (perhaps inside a frame) closes the connection (the lane): the
 admits only the requests a push makes (method and path patterns, `client/testdata/upstream-requests.json`, asserted by Go and Swift).
 
 **The lane.** A callout waits for the network and the Keychain, and a connection serves one request at a time. So the upstream routes
-(`/upstreams...`, `/upstream-push`) have a connection of their own: the app starts the helper with `-lane` and a second socketpair on fd
+(`/upstreams...`, `/upstream-push`, `/upstream-auto`, `/upstream-resolve`) have a connection of their own: the app starts the helper with `-lane` and a second socketpair on fd
 5, handshakes both with the same secret, says `callouts` only on the second, and sends the upstream routes there (their own queue,
 `CoreHelper.laneIO`). A slow upstream can then never hold up a member read, a KB read or a device revocation on the first connection. The
 host of a connection is passed to the API with the request (`coreapi.WithUpstream`), so an upstream route that arrives on the first

@@ -474,6 +474,9 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 		if err = syncSearch(tx, id); err != nil {
 			return err
 		}
+		if err = s.markUpstreamDirty(tx, project); err != nil {
+			return err
+		}
 		if err = saveProvenance(tx, id, 1, writerProvenance(p, project, in, fromMs(now))); err != nil {
 			return err
 		}
@@ -527,6 +530,9 @@ func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revisi
 			return err
 		}
 		if _, err := tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1 WHERE id=?`, in.Class, in.Title, in.Body, size, ms(s.now()), id); err != nil {
+			return err
+		}
+		if err := s.markUpstreamDirty(tx, project); err != nil {
 			return err
 		}
 		if err := Audit(tx, actor(p), "note.update", strconv.FormatInt(id, 10), map[string]any{"project": project, "class": in.Class, "from": old.Class}); err != nil {

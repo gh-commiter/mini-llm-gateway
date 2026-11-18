@@ -57,9 +57,11 @@ func (s *server) openCore() {
 		return // no recorder and no spool file while the core is not open (#106 S3: nothing is written next to protected data)
 	}
 	s.api.StartRecorder()
+	s.startUpstreamAuto()
 }
 
 func (s *server) closeCore() {
+	s.stopUpstreamAuto() // before the store closes: a push in flight is cancelled and waited for
 	s.api.StopRecorder() // drain the usage queue while the core is still open
 	if s.core != nil {
 		s.core.Close()

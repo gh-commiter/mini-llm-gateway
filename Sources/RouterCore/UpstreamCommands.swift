@@ -8,9 +8,11 @@ extension AdminCommands {
     public static let upstreamHelp = """
         minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin
           minigw gw upstream list | remove <name>
-          minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]
-          minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes
+          minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
+          minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
           minigw gw upstream unlink <project> <name> | --team <team> <name>
+          minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
+          minigw gw upstream resolve --team <team> <note> --theirs|--ours
           minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
           minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
         """
@@ -66,8 +68,13 @@ extension AdminCommands {
                 return
             }
             if remote.isEmpty { remote = local }
-            try request("PUT", path, ["team": isTeam, "remote": remote, "classes": o.classes, "withPrivate": o.withPrivate])
-            say(clean("linked \(local) to \(name) as \(remote): nothing is sent until minigw gw upstream push"))
+            if o.auto && o.manual { throw fail("--auto and --manual together: choose one") }
+            var req: [String: Any] = ["team": isTeam, "remote": remote, "classes": o.classes, "withPrivate": o.withPrivate]
+            if o.auto { req["auto"] = true } else if o.manual { req["auto"] = false }
+            if !o.mode.isEmpty { req["mode"] = o.mode }
+            try request("PUT", path, req)
+            if o.auto { say(clean("linked \(local) to \(name) as \(remote): changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)")) }
+            else { say(clean("linked \(local) to \(name) as \(remote): nothing is sent until minigw gw upstream push")) }
         case ("status", 2...3):
             var q = ""
             if !team.isEmpty && pos.count == 2 { q = "?team=\(try teamID(team))" }
@@ -77,9 +84,19 @@ extension AdminCommands {
             for l in links {
                 let d = l.dict
                 say(clean(Self.upstreamLinkLine(d, zone)))
+                if let s = Self.upstreamSyncLine(d, zone) { say(clean("  " + s)) }
                 if let e = d["lastError"]?.string, !e.isEmpty { say(clean("  last refusal: " + e)) }
+                if let s = Self.upstreamNotPropagated(d) { say(clean("  " + s)) }
+                if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
             }
             if links.isEmpty { say("no upstream links (minigw gw upstream link <project> <name>)") }
+        case ("resolve", 4) where team.isEmpty, ("resolve", 3) where !team.isEmpty:
+            if o.theirs == o.ours { throw fail("resolve: choose --theirs or --ours") }
+            guard let note = Int64(pos[pos.count - 1]), note > 0 else { throw fail("resolve: the note is its number") }
+            let body: [String: Any] = ["note": note, "ours": o.ours, team.isEmpty ? "project" : "team": team.isEmpty ? try projectID(pos[2]) : try teamID(team)]
+            try request("POST", "/upstream-resolve", body)
+            if o.ours { say("note \(note): our version goes to the upstream as a submission at the next push") }
+            else { say("note \(note): the upstream's version stays, our change is forgotten for it") }
         case ("push", 2...3):
             var body: [String: Any] = ["dryRun": o.dryRun]
             if !team.isEmpty && pos.count == 2 { body["team"] = try teamID(team) }
@@ -100,7 +117,7 @@ extension AdminCommands {
                         say(clean("\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? ""))"))
                         for l in d["lines"]?.array ?? [] { say(clean("  " + (l.string ?? ""))) }
                         let verb = d["dryRun"]?.bool == true ? "would be " : ""
-                        say("  \(verb)created \(d["created"]?.int ?? 0), replaced \(d["replaced"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), refused \(d["refused"]?.int ?? 0)")
+                        say("  \(verb)created \(d["created"]?.int ?? 0), replaced \(d["replaced"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), refused \(d["refused"]?.int ?? 0)" + ((d["conflicts"]?.int ?? 0) > 0 ? ", conflicts \(d["conflicts"]?.int ?? 0)" : ""))
                         if let s = d["stopped"]?.string, !s.isEmpty { say(clean("  stopped: " + s)) }
                     }
                     for p in r["pushes"]?.array ?? [] {
@@ -128,6 +145,34 @@ extension AdminCommands {
         var last = "never pushed"
         if let t = d["lastPush"]?.string.flatMap(ProjectText.parseTime) { last = "last push " + ProjectText.stamp(t, zone) }
         let cls = (d["classes"]?.array ?? []).compactMap { $0.string }.joined(separator: ",")
-        return "\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? "")): \(d["pending"]?.int ?? 0) of \(d["total"]?.int ?? 0) notes would go, \(last), classes \(cls)"
+        var how = d["auto"]?.bool == true ? "auto" : "manual"
+        if d["mode"]?.string == "publish" { how += ", publish" }
+        return "\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? "")): \(d["pending"]?.int ?? 0) of \(d["total"]?.int ?? 0) notes would go, \(last), classes \(cls), \(how)"
+    }
+
+    /// The state of the automatic push, when there is any to tell (as Go's upstreamSyncLine).
+    static func upstreamSyncLine(_ d: JDict, _ zone: TimeZone) -> String? {
+        var parts: [String] = []
+        func at(_ label: String, _ key: String) {
+            if let t = d[key]?.string.flatMap(ProjectText.parseTime) { parts.append(label + " " + ProjectText.stamp(t, zone)) }
+        }
+        at("dirty since", "dirtySince"); at("last success", "lastOk"); at("last failure", "lastFail")
+        if (d["failCount"]?.int ?? 0) > 1, !parts.isEmpty, d["lastFail"]?.string != nil { parts[parts.count - 1] += " (\(d["failCount"]?.int ?? 0) in a row)" }
+        at("next attempt", "nextAttempt")
+        return parts.isEmpty ? nil : "sync: " + parts.joined(separator: "; ")
+    }
+
+    /// Publish notes that changed on the upstream and were not overwritten (as Go's upstreamConflicts).
+    static func upstreamConflicts(_ d: JDict) -> String? {
+        let parts = (d["conflicts"]?.array ?? []).map { c in "note \(c.dict["note"]?.int ?? 0) (" + (c.dict["gone"]?.bool == true ? "deleted there" : "changed there") + ")" }
+        return parts.isEmpty ? nil : "CONFLICT: " + parts.joined(separator: ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
+    }
+
+    /// Sent notes that were deleted or made private here (as Go's upstreamNotPropagated).
+    static func upstreamNotPropagated(_ d: JDict) -> String? {
+        var by: [String: [String]] = [:]
+        for n in d["notPropagated"]?.array ?? [] { by[n.dict["why"]?.string ?? "", default: []].append(String(n.dict["note"]?.int ?? 0)) }
+        let parts = ["deleted here", "now private here"].compactMap { why in by[why].map { why + ": note " + $0.joined(separator: ", ") } }
+        return parts.isEmpty ? nil : "not propagated: " + parts.joined(separator: "; ") + " (the copy stays on the upstream until you remove it there)"
     }
 }

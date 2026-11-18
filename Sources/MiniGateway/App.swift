@@ -128,6 +128,8 @@ final class AppState: ObservableObject {
     /// Its store is <Application Support>/Mini Gateway/core (0700); missing binary = project routes answer 503.
     let core: CoreHelper
     nonisolated(unsafe) static var coreHelper: CoreHelper?  // for applicationWillTerminate
+    /// The timer of the automatic upstream push (docs/gateway.md): asks the helper's upstream lane for the next due link; stopped when the app quits.
+    nonisolated(unsafe) static var upstreamAuto: UpstreamAutoDriver?
     /// The transport of the admin panels (docs/plans/plugin-panels-design.md): the core's admin routes through the helper in the owner's
     /// context, GET /devices from the app's own device list. Nothing else.
     var panelSend: PanelSend {
@@ -144,6 +146,9 @@ final class AppState: ObservableObject {
         // The upstream gateway (docs/gateway.md): the helper has no network and no Keychain, so this app does the work for it. The
         // Keychain items are the provider keys' service; the own key and port are filled in by start() (a thread-safe box).
         let own = ownGateway
+        let helper = core
+        let driver = UpstreamAutoDriver(call: { await helper.call(context: .admin, request: CoreRequest(method: "POST", path: "/upstream-auto")) })
+        Self.upstreamAuto = driver
         core.callouts = UpstreamHost(secrets: keychain, ownKey: { own.get().key }, ownPort: { own.get().port }, clientInfo: "gateway, minigw " + MenuView.version)
         for (folder, real) in config.claudeCLI.recordFolders() {  // M2: stara nastavitev brez zapisov: enkrat zapiši trenutno stanje
             log.notice("recorded \(folder, privacy: .public) -> \(real, privacy: .public)")
@@ -164,7 +169,7 @@ final class AppState: ObservableObject {
         }
         UsageLoss.attach(file: Self.logsFile.deletingLastPathComponent().appendingPathComponent("usage-lost.json"))  // events lost with the app: a gap at the next ready
         ShareHub.cleanupStale()
-        do { try CoreHelper.prepareStoreFolder(CoreHelper.defaultStore); core.start() } catch {
+        do { try CoreHelper.prepareStoreFolder(CoreHelper.defaultStore); core.start(); Self.upstreamAuto?.start() } catch {
             log.error("core folder: \(error.localizedDescription, privacy: .public): project routes answer 503")  // no helper without its private folder
         }
         keychain.delete("copilot-token")  // #81 L1: žeton Copilot do 0.5.24 se ne uporablja več
@@ -608,6 +613,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         UsageLoss.persistPendingAtQuit()  // events still queued are lost with the app: the next start reports them as a gap
+        AppState.upstreamAuto?.stop()  // no automatic push while the app is shutting down
         AppState.coreHelper?.stop()  // the helper sees EOF and exits; it also exits by itself when the app dies
     }
 

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -43,7 +44,10 @@ type UpstreamPush struct {
 	// (after Wait seconds). The notes done so far are remembered, so the next run goes on where this one ended.
 	More bool `json:"more,omitempty"`
 	Wait int  `json:"wait,omitempty"`
-	more int  // lines left out of Lines (see maxReportLines)
+	// Conflicts: publish mode, notes that changed (or are gone) on the upstream since our last write; they are not overwritten.
+	Conflicts int  `json:"conflicts,omitempty"`
+	more      int  // lines left out of Lines (see maxReportLines)
+	archived  bool // the link's project or team is archived: nothing was tried
 	// Next: with More, the id of the last local note this run has dealt with; the next call names it as `after` (with Project or Team and
 	// Upstream) and goes on with the notes above it, so the run always gets further, whatever happened to a note that was refused.
 	Next    int64 `json:"next,omitempty"`
@@ -233,8 +237,40 @@ func (p *pusher) trailer(project int64, n UpstreamNote, supersedes int64) string
 // maxReportLines: the lines of one report; the totals count everything, the rest of the lines is "... and K more".
 const maxReportLines = 200
 
+// errPushRunning: another push of this link is running; a manual push answers it as a refusal, the timer just comes back later.
+type errPushRunning struct{}
+
+func (errPushRunning) Error() string   { return "a push of this link is running: try again in a moment" }
+func (e errPushRunning) Unwrap() error { return ErrRefusal{e.Error()} }
+
+func (s *Store) linkLock(project int64, upstream string) *sync.Mutex {
+	s.autoMu.Lock()
+	defer s.autoMu.Unlock()
+	k := fmt.Sprintf("%d|%s", project, upstream)
+	if s.linkMu == nil {
+		s.linkMu = map[string]*sync.Mutex{}
+	}
+	if s.linkMu[k] == nil {
+		s.linkMu[k] = &sync.Mutex{}
+	}
+	return s.linkMu[k]
+}
+
 func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, after int64, dry bool, sleep func(time.Duration) bool) (UpstreamPush, error) {
+	if !dry { // one real push of a link at a time: two would both write with the same revision and one would record a false conflict
+		mu := s.linkLock(l.Project, l.Upstream)
+		if !mu.TryLock() {
+			return UpstreamPush{}, errPushRunning{}
+		}
+		defer mu.Unlock()
+	}
+	started := ms(s.now())
 	res, err := s.pushLinkRun(ctx, tr, l, label, after, dry, sleep)
+	if err == nil && !dry && !res.archived { // the outbox: cleared by a success, a back-off after a failure
+		if e := s.afterRun(context.WithoutCancel(ctx), l, res, started); e != nil {
+			return res, e
+		}
+	}
 	if res.more > 0 {
 		res.Lines = append(res.Lines, fmt.Sprintf("... and %d more", res.more))
 	}
@@ -253,7 +289,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 	if archived { // linked before it was archived: nothing is sent for an archived project or team
 		_, isT := SegmentTeam(l.Project)
 		return UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, DryRun: dry, Project: l.Project, Team: isT,
-			Stopped: label + " is archived: nothing is sent until it is unarchived"}, nil
+			Stopped: label + " is archived: nothing is sent until it is unarchived", archived: true}, nil
 	}
 	notes := scan.Notes
 	wctx := context.WithoutCancel(ctx) // a receipt is written even when the time budget of the call is used up meanwhile
@@ -313,9 +349,137 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			line("skip", n, "unchanged since the last push")
 			continue
 		}
+		if n.Conflicted {
+			res.Conflicts++
+			line("conflict", n, "changed on the upstream since our last write, not overwritten: minigw gw upstream resolve <project> "+strconv.FormatInt(n.ID, 10)+" --theirs|--ours")
+			continue
+		}
+		if l.Mode == "publish" && n.EntryKind != "faq" && !(n.Sent != nil && (n.Sent.Conflict == 2 || n.Sent.RemoteSub > 0)) { // a note sent as a submission ("ours") stays on the submission path
+			// publish mode: the note is written on the upstream directly (a note, not a submission)
+			notesBase := fmt.Sprintf("/minigw/v1/projects/%d/notes", remote)
+			waitMsg := func() (UpstreamPush, error) {
+				return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+			}
+			// refused: counts a refusal; done=true ends the run (nothing else would be accepted either)
+			refused := func(a upAnswer) (r UpstreamPush, done bool, e error) {
+				if p.more {
+					r, e = waitMsg()
+					return r, true, e
+				}
+				res.Refused++
+				line("refused", n, refusal(a))
+				if a.status == 0 || a.status == 401 || a.status == 403 || a.status == 404 || a.errType == "pending_limit" || a.status == 429 {
+					r, e = stop(refusal(a))
+					return r, true, e
+				}
+				return res, false, nil
+			}
+			conflict := func(rev int64) error {
+				res.Conflicts++
+				why := "changed on the upstream since our last write (revision " + strconv.FormatInt(rev, 10) + "), not overwritten"
+				if rev == 0 {
+					why = "deleted on the upstream, not recreated"
+				}
+				if dry {
+					line("would conflict", n, why)
+					return nil
+				}
+				if e := s.upstreamRecordConflict(wctx, l.Project, l.Upstream, n.ID, rev); e != nil {
+					return e
+				}
+				line("conflict", n, why+": minigw gw upstream resolve <project> "+strconv.FormatInt(n.ID, 10)+" --theirs|--ours")
+				return nil
+			}
+			text := n.Body + p.trailer(l.Project, n, 0)
+			if n.Sent != nil && n.Sent.RemoteNote > 0 { // an update of the note we wrote: only when it is still as we left it
+				a := p.call("GET", fmt.Sprintf("%s/%d", notesBase, n.Sent.RemoteNote), nil, nil)
+				if p.more {
+					return waitMsg()
+				}
+				var cur struct{ Revision int64 }
+				switch {
+				case a.status == 404:
+					if e := conflict(0); e != nil {
+						return res, e
+					}
+				case a.status == 200 && json.Unmarshal(a.data, &cur) == nil && cur.Revision > 0:
+					if cur.Revision != n.Sent.RemoteRev {
+						if e := conflict(cur.Revision); e != nil {
+							return res, e
+						}
+						continue
+					}
+					if dry {
+						res.Replaced++
+						line("would replace", n, "updates the note "+strconv.FormatInt(n.Sent.RemoteNote, 10)+" on the upstream")
+						continue
+					}
+					payload, _ := json.Marshal(map[string]any{"revision": cur.Revision, "class": n.Class, "title": n.Title, "body": text})
+					u := p.call("PUT", fmt.Sprintf("%s/%d", notesBase, n.Sent.RemoteNote), nil, payload)
+					if p.more {
+						return waitMsg()
+					}
+					if u.status == 409 { // it moved between our look and our write
+						rev := cur.Revision + 1
+						var er struct{ Error struct{ Revision int64 } }
+						if json.Unmarshal(u.data, &er) == nil && er.Error.Revision > 0 {
+							rev = er.Error.Revision
+						}
+						if e := conflict(rev); e != nil {
+							return res, e
+						}
+						continue
+					}
+					var out struct{ Revision int64 }
+					if u.status != 200 || json.Unmarshal(u.data, &out) != nil || out.Revision <= 0 {
+						if r, done, e := refused(u); done {
+							return r, e
+						}
+						continue
+					}
+					if e := s.upstreamRecordPublished(wctx, l.Project, l.Upstream, n, n.Sent.RemoteNote, out.Revision); e != nil {
+						return res, e
+					}
+					res.Replaced++
+					line("replace", n, "updated the note "+strconv.FormatInt(n.Sent.RemoteNote, 10)+" on the upstream")
+				default:
+					if r, done, e := refused(a); done {
+						return r, e
+					}
+				}
+				continue
+			}
+			if dry {
+				res.Created++
+				line("would create", n, "published as a note")
+				continue
+			}
+			payload, _ := json.Marshal(map[string]any{"class": n.Class, "title": n.Title, "body": text})
+			a := p.call("POST", notesBase, map[string]string{"Idempotency-Key": p.submissionKey(l.Project, n, 0)}, payload)
+			var out struct{ ID, Revision int64 }
+			if a.status != 201 || json.Unmarshal(a.data, &out) != nil || out.ID <= 0 || out.Revision <= 0 {
+				if r, done, e := refused(a); done {
+					return r, e
+				}
+				continue
+			}
+			if e := s.upstreamRecordPublished(wctx, l.Project, l.Upstream, n, out.ID, out.Revision); e != nil {
+				return res, e
+			}
+			res.Created++
+			line("create", n, "published as note "+strconv.FormatInt(out.ID, 10)+" on the upstream")
+			continue
+		}
 		var replaces, revision, supersedes int64
 		action, detail := "create", ""
-		if n.Sent != nil { // changed since it was sent: a replacement where the upstream's routes allow it
+		if n.Sent != nil && n.Sent.Conflict == 2 { // the owner chose "ours": our version goes as a submission, never as an overwrite
+			action = "replace"
+			supersedes = n.Sent.RemoteSub
+			if n.Sent.RemoteNote > 0 && n.Sent.ConflictRev > 0 {
+				replaces, revision = n.Sent.RemoteNote, n.Sent.ConflictRev
+			}
+			detail = "resolved as ours: sent as a submission for the upstream's reviewers"
+		} else if n.Sent != nil { // changed since it was sent: a replacement where the upstream's routes allow it
 			action = "replace"
 			supersedes = n.Sent.RemoteSub
 			a := p.call("GET", fmt.Sprintf("%s/%d", base, n.Sent.RemoteSub), nil, nil)

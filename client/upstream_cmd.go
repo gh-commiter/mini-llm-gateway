@@ -12,9 +12,11 @@ import (
 const upstreamHelp = `
   minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin
   minigw gw upstream list | remove <name>
-  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private]
-  minigw gw upstream link --team <team> <name> [--remote-team <name>]   a team's own notes
+  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]
+  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes
   minigw gw upstream unlink <project> <name> | --team <team> <name>
+  minigw gw upstream resolve <project> <note> --theirs|--ours   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
+  minigw gw upstream resolve --team <team> <note> --theirs|--ours
   minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
   minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)`
 
@@ -30,6 +32,23 @@ type upLink struct {
 	Label       string
 	Pending     int
 	Total       int
+	Auto        bool
+	Mode        string
+	DirtySince  *time.Time
+	LastOK      *time.Time
+	LastFail    *time.Time
+	FailCount   int
+	NextAttempt *time.Time
+
+	NotPropagated []struct {
+		Note int64
+		Why  string
+	}
+	Conflicts []struct {
+		Note      int64
+		RemoteRev int64
+		Gone      bool
+	}
 }
 
 func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
@@ -93,8 +112,24 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		if remote == "" {
 			remote = local // the same name there, unless told
 		}
-		a.do("PUT", fmt.Sprintf("/upstreams/%s/links/%d", url.PathEscape(name), id), map[string]any{"team": isTeam, "remote": remote, "classes": u.class, "withPrivate": u.withPrivate}, nil)
-		say(clean(fmt.Sprintf("linked %s to %s as %s: nothing is sent until minigw gw upstream push", local, name, remote)))
+		if u.auto && u.manual {
+			fail("--auto and --manual together: choose one")
+		}
+		req := map[string]any{"team": isTeam, "remote": remote, "classes": u.class, "withPrivate": u.withPrivate}
+		if u.auto {
+			req["auto"] = true
+		} else if u.manual {
+			req["auto"] = false
+		}
+		if u.mode != "" {
+			req["mode"] = u.mode
+		}
+		a.do("PUT", fmt.Sprintf("/upstreams/%s/links/%d", url.PathEscape(name), id), req, nil)
+		if u.auto {
+			say(clean(fmt.Sprintf("linked %s to %s as %s: changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)", local, name, remote)))
+		} else {
+			say(clean(fmt.Sprintf("linked %s to %s as %s: nothing is sent until minigw gw upstream push", local, name, remote)))
+		}
 	case pos[1] == "status" && len(pos) <= 3:
 		q := ""
 		switch {
@@ -109,12 +144,41 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		a.do("GET", "/upstreams"+q, nil, &r)
 		for _, l := range r.Links {
 			say(clean(upstreamLinkLine(l)))
+			if s := upstreamSyncLine(l); s != "" {
+				say(clean("  " + s))
+			}
 			if l.LastError != "" {
 				say(clean("  last refusal: " + l.LastError))
+			}
+			if s := upstreamNotPropagated(l); s != "" {
+				say(clean("  " + s))
+			}
+			if s := upstreamConflicts(l); s != "" {
+				say(clean("  " + s))
 			}
 		}
 		if len(r.Links) == 0 {
 			say("no upstream links (minigw gw upstream link <project> <name>)")
+		}
+	case pos[1] == "resolve" && (len(pos) == 4 && team == "" || len(pos) == 3 && team != ""):
+		if u.theirs == u.ours {
+			fail("resolve: choose --theirs or --ours")
+		}
+		note, err := strconv.ParseInt(pos[len(pos)-1], 10, 64)
+		if err != nil || note <= 0 {
+			fail("resolve: the note is its number")
+		}
+		body := map[string]any{"note": note, "ours": u.ours}
+		if team != "" {
+			body["team"] = teamID(a, team)
+		} else {
+			body["project"] = projectID(a, pos[2])
+		}
+		a.do("POST", "/upstream-resolve", body, nil)
+		if u.ours {
+			say(fmt.Sprintf("note %d: our version goes to the upstream as a submission at the next push", note))
+		} else {
+			say(fmt.Sprintf("note %d: the upstream's version stays, our change is forgotten for it", note))
 		}
 	case pos[1] == "push" && len(pos) <= 3:
 		body := map[string]any{"dryRun": u.dryRun}
@@ -181,6 +245,7 @@ type upPush struct {
 	Lines                   []string
 	Created, Skipped        int
 	Replaced, Refused       int
+	Conflicts               int
 	Stopped                 string
 	DryRun                  bool
 	More                    bool
@@ -200,7 +265,11 @@ func upstreamPrint(pushes []upPush) {
 		if p.DryRun {
 			verb = "would be "
 		}
-		say(fmt.Sprintf("  %screated %d, replaced %d, skipped %d, refused %d", verb, p.Created, p.Replaced, p.Skipped, p.Refused))
+		tail := ""
+		if p.Conflicts > 0 {
+			tail = fmt.Sprintf(", conflicts %d", p.Conflicts)
+		}
+		say(fmt.Sprintf("  %screated %d, replaced %d, skipped %d, refused %d%s", verb, p.Created, p.Replaced, p.Skipped, p.Refused, tail))
 		if p.Stopped != "" {
 			say(clean("  stopped: " + p.Stopped))
 		}
@@ -213,5 +282,67 @@ func upstreamLinkLine(l upLink) string {
 		last = "last push " + l.LastPush.Local().Format("2006-01-02 15:04")
 	}
 	cls := strings.Join(l.Classes, ",")
-	return fmt.Sprintf("%s -> %s (%s): %d of %d notes would go, %s, classes %s", l.Label, l.Upstream, l.Remote, l.Pending, l.Total, last, cls)
+	how := "manual"
+	if l.Auto {
+		how = "auto"
+	}
+	if l.Mode == "publish" {
+		how += ", publish"
+	}
+	return fmt.Sprintf("%s -> %s (%s): %d of %d notes would go, %s, classes %s, %s", l.Label, l.Upstream, l.Remote, l.Pending, l.Total, last, cls, how)
+}
+
+// upstreamSyncLine: the state of the automatic push, when there is any to tell.
+func upstreamSyncLine(l upLink) string {
+	var parts []string
+	at := func(label string, t *time.Time) {
+		if t != nil {
+			parts = append(parts, label+" "+t.Local().Format("2006-01-02 15:04"))
+		}
+	}
+	at("dirty since", l.DirtySince)
+	at("last success", l.LastOK)
+	at("last failure", l.LastFail)
+	if l.FailCount > 1 {
+		parts[len(parts)-1] += fmt.Sprintf(" (%d in a row)", l.FailCount)
+	}
+	at("next attempt", l.NextAttempt)
+	if len(parts) == 0 {
+		return ""
+	}
+	return "sync: " + strings.Join(parts, "; ")
+}
+
+// upstreamNotPropagated: sent notes that were deleted or made private here, which stay on the upstream until removed there.
+func upstreamNotPropagated(l upLink) string {
+	by := map[string][]string{}
+	for _, n := range l.NotPropagated {
+		by[n.Why] = append(by[n.Why], strconv.FormatInt(n.Note, 10))
+	}
+	var parts []string
+	for _, why := range []string{"deleted here", "now private here"} {
+		if ids := by[why]; len(ids) > 0 {
+			parts = append(parts, why+": note "+strings.Join(ids, ", "))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "not propagated: " + strings.Join(parts, "; ") + " (the copy stays on the upstream until you remove it there)"
+}
+
+// upstreamConflicts: publish notes that changed on the upstream and were not overwritten.
+func upstreamConflicts(l upLink) string {
+	var parts []string
+	for _, c := range l.Conflicts {
+		what := "changed there"
+		if c.Gone {
+			what = "deleted there"
+		}
+		parts = append(parts, fmt.Sprintf("note %d (%s)", c.Note, what))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "CONFLICT: " + strings.Join(parts, ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
 }

@@ -31,7 +31,7 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
             cmd.pause = { _ in }
             let o = c["opts"] as! [String: Any]
             var opts = AdminOpts(team: o["team"] as? String ?? "")
-            opts.deviceName = o["deviceName"] as? String ?? ""; opts.remoteProject = o["remoteProject"] as? String ?? ""; opts.remoteTeam = o["remoteTeam"] as? String ?? ""; opts.classes = o["class"] as? String ?? ""
+            opts.deviceName = o["deviceName"] as? String ?? ""; opts.mode = o["mode"] as? String ?? ""; opts.auto = o["auto"] as? Bool ?? false; opts.manual = o["manual"] as? Bool ?? false; opts.theirs = o["theirs"] as? Bool ?? false; opts.ours = o["ours"] as? Bool ?? false; opts.remoteProject = o["remoteProject"] as? String ?? ""; opts.remoteTeam = o["remoteTeam"] as? String ?? ""; opts.classes = o["class"] as? String ?? ""
             opts.withPrivate = o["withPrivate"] as? Bool ?? false; opts.dryRun = o["dryRun"] as? Bool ?? false
             let stdin = c["stdin"] as? String ?? ""
             opts.tokenInput = { stdin }
@@ -306,6 +306,42 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
             #expect(h.callout(["op": "connect", "deviceName": "gw test", "upstream": "x", "address": bad, "token": line])["error"] != nil, Comment(rawValue: bad))
         }
         #expect(s.all.isEmpty)
+    }
+}
+
+/// The timer of the automatic push on the Mac: one request at a time, a pause that follows the helper's answer, async sleeps, a clean stop.
+@Suite struct UpstreamAutoDriverTests {
+    func answer(_ json: String, _ status: Int = 200) -> CoreResponse { CoreResponse(status: status, body: Data(json.utf8)) }
+
+    @Test func thePauseFollowsTheHelpersAnswer() {
+        #expect(UpstreamAutoDriver.pause(after: answer(#"{"ran":true,"next":3}"#)) == 1)           // a push ran: look again at once, more may be due
+        #expect(UpstreamAutoDriver.pause(after: answer(#"{"ran":false,"next":42}"#)) == 42)
+        #expect(UpstreamAutoDriver.pause(after: answer(#"{"ran":false,"next":1}"#)) == 5)          // never faster than 5 s
+        #expect(UpstreamAutoDriver.pause(after: answer(#"{"ran":false,"next":99999}"#)) == 60)     // never slower than a minute when something is dirty
+        #expect(UpstreamAutoDriver.pause(after: answer(#"{"ran":false,"next":0}"#)) == 30)         // nothing dirty: a slow look
+        #expect(UpstreamAutoDriver.pause(after: answer("{}", 501)) == 60 && UpstreamAutoDriver.pause(after: .unavailable) == 60 && UpstreamAutoDriver.pause(after: answer("junk")) == 60)
+    }
+
+    @Test func oneRequestAtATimeAsyncSleepsAndAStop() async throws {
+        final class Probe: @unchecked Sendable {
+            let lock = NSLock(); var inflight = 0, maxInflight = 0, calls = 0, sleeps: [Double] = []
+            func enter() { lock.lock(); inflight += 1; maxInflight = max(maxInflight, inflight); calls += 1; lock.unlock() }
+            func leave() { lock.lock(); inflight -= 1; lock.unlock() }
+        }
+        let p = Probe()
+        let driver = UpstreamAutoDriver(call: {
+            p.enter(); defer { p.leave() }
+            try? await Task.sleep(nanoseconds: 2_000_000)
+            return CoreResponse(status: 200, body: Data(#"{"ran":false,"next":20}"#.utf8))
+        }, sleep: { s in p.lock.lock(); p.sleeps.append(s); p.lock.unlock(); try? await Task.sleep(nanoseconds: 1_000_000) })
+        driver.start(); driver.start()  // a second start is nothing
+        for _ in 0..<200 where p.calls < 5 { try await Task.sleep(for: .milliseconds(10)) }
+        driver.stop()
+        let seen = p.calls
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(seen >= 5 && p.maxInflight == 1, "calls \(seen), in flight at once: \(p.maxInflight)")
+        #expect(p.calls <= seen + 1, "it kept asking after stop()")
+        #expect(p.sleeps.first == 10 && p.sleeps.dropFirst().allSatisfy { $0 == 20 })  // the first wait lets the helper come up, then the helper's own pace
     }
 }
 
@@ -819,11 +855,91 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         #expect((await adm(h, "GET", "/users")).status == 200)
     }
 
+    /// Step B on the Mac: the app's timer asks the helper's lane for the next due link. Through the real helper: switching auto on marks the
+    /// outbox, the answer says when the link can be due; a manual link has nothing due; a member cannot reach the route.
+    @Test func theAutoRouteTellsWhenTheNextLinkIsDueAndOnlyTheOwnerCanAskForIt() async throws {
+        let secrets = MemorySecrets(), t = fakeUpstream()
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let (h, _) = try await start(callouts: UpstreamHost(secrets: secrets, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac"))
+        defer { h.stop() }
+        _ = await adm(h, "PUT", "/upstreams/hub", #"{"address":"hub.example","token":"tok#\#(Noise.base64url(Noise.newKey().publicKey.rawRepresentation))"}"#)
+        _ = await adm(h, "PUT", "/bindings/dev-A", #"{"user":1}"#)
+        _ = await adm(h, "POST", "/projects", #"{"slug":"shop","name":"Shop"}"#)
+        _ = await adm(h, "PUT", "/projects/1/members/1", #"{"role":"developer"}"#)
+        let member = CoreContext(kind: .member, device: "dev-A", approved: true)
+        _ = await h.call(context: member, request: CoreRequest(method: "POST", path: "/minigw/v1/projects/1/notes", header: ["Idempotency-Key": ["k"]], body: Data(#"{"class":"data","title":"N","body":"t"}"#.utf8)))
+        _ = await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop"}"#)
+        let manual = obj(await adm(h, "POST", "/upstream-auto"))
+        #expect(manual["ran"] as? Bool == false && (manual["next"] as? Int ?? 0) == 0)  // manual: nothing is due, nothing to wait for
+        #expect((await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop","auto":true}"#)).status == 200)
+        let auto = obj(await adm(h, "POST", "/upstream-auto"))
+        let next = auto["next"] as? Int ?? 0
+        #expect(auto["ran"] as? Bool == false && (50...61).contains(next), "\(auto)")  // the debounce: about a minute
+        #expect(t.calls.allSatisfy { $0.method != "POST" })  // nothing was sent
+        // a member cannot reach it (there is no member route), and it is not a way to push for someone else
+        let viaMember = await h.call(context: member, request: CoreRequest(method: "POST", path: "/upstream-auto"))
+        #expect(viaMember.status == 404 || viaMember.status == 403)
+        #expect((await h.call(context: member, request: CoreRequest(method: "POST", path: "/minigw/v1/upstream-auto"))).status == 404)
+        let st = obj(await adm(h, "GET", "/upstreams"))
+        let link = (st["links"] as? [[String: Any]])?.first
+        #expect(link?["auto"] as? Bool == true && link?["dirtySince"] != nil && link?["mode"] as? String == "submit")
+    }
+
+    /// Publish mode on the Mac: a note is written on the upstream through the admitted POST /notes, updated in place through PUT, and a note
+    /// that moved there is a conflict that the owner settles through /upstream-resolve (no member can reach that route).
+    @Test func publishModeWritesNotesAndConflictsAreSettledByTheOwner() async throws {
+        let secrets = MemorySecrets(), t = fakeUpstream()
+        nonisolated(unsafe) var theirRevision = 1
+        let base = t.handler
+        t.handler = { c in
+            switch (c.method, c.path) {
+            case ("POST", "/minigw/v1/projects/7/notes"): return UpstreamAnswer(status: 201, body: Data(#"{"id":55,"revision":1}"#.utf8))
+            case ("GET", "/minigw/v1/projects/7/notes/55"): return UpstreamAnswer(status: 200, body: Data(#"{"id":55,"revision":\#(theirRevision)}"#.utf8))
+            case ("PUT", "/minigw/v1/projects/7/notes/55"): return UpstreamAnswer(status: 200, body: Data(#"{"id":55,"revision":\#(theirRevision + 1)}"#.utf8))
+            default: return base(c)
+            }
+        }
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let (h, _) = try await start(callouts: UpstreamHost(secrets: secrets, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac"))
+        defer { h.stop() }
+        _ = await adm(h, "PUT", "/upstreams/hub", #"{"address":"hub.example","token":"tok#\#(Noise.base64url(Noise.newKey().publicKey.rawRepresentation))"}"#)
+        _ = await adm(h, "PUT", "/bindings/dev-A", #"{"user":1}"#)
+        _ = await adm(h, "POST", "/projects", #"{"slug":"shop","name":"Shop"}"#)
+        _ = await adm(h, "PUT", "/projects/1/members/1", #"{"role":"developer"}"#)
+        let member = CoreContext(kind: .member, device: "dev-A", approved: true)
+        let made = await h.call(context: member, request: CoreRequest(method: "POST", path: "/minigw/v1/projects/1/notes", header: ["Idempotency-Key": ["k"]], body: Data(#"{"class":"data","title":"N","body":"t"}"#.utf8)))
+        let noteID = obj(made)["id"] as? Int ?? 1
+        #expect((await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop","mode":"publish"}"#)).status == 200)
+        let first = obj(await adm(h, "POST", "/upstream-push", #"{"project":1}"#))
+        #expect((first["pushes"] as? [[String: Any]])?.first?["created"] as? Int == 1, "\(first)")
+        #expect(t.calls.contains { $0.method == "POST" && $0.path == "/minigw/v1/projects/7/notes" })
+        #expect(!t.calls.contains { $0.path.hasSuffix("/kb/submissions") && $0.method == "POST" })  // a note, not a submission
+        // the mode cannot be switched after notes were sent
+        #expect((await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop","mode":"submit"}"#)).status == 400)
+        // our edit goes to the same note; when it moved there it is a conflict and nothing is written
+        theirRevision = 4
+        let cur = obj(await h.call(context: member, request: CoreRequest(method: "GET", path: "/minigw/v1/projects/1/notes/\(noteID)")))
+        _ = await h.call(context: member, request: CoreRequest(method: "PUT", path: "/minigw/v1/projects/1/notes/\(noteID)", body: Data(#"{"revision":\#(cur["revision"] as? Int ?? 1),"class":"data","title":"N","body":"edited"}"#.utf8)))
+        let before = t.calls.filter { $0.method == "PUT" }.count
+        let second = obj(await adm(h, "POST", "/upstream-push", #"{"project":1}"#))
+        #expect((second["pushes"] as? [[String: Any]])?.first?["conflicts"] as? Int == 1, "\(second)")
+        #expect(t.calls.filter { $0.method == "PUT" }.count == before)
+        let st = obj(await adm(h, "GET", "/upstreams"))
+        #expect(((st["links"] as? [[String: Any]])?.first?["conflicts"] as? [[String: Any]])?.count == 1)
+        // only the owner settles it
+        #expect((await h.call(context: member, request: CoreRequest(method: "POST", path: "/upstream-resolve", body: Data(#"{"project":1,"note":\#(noteID),"ours":true}"#.utf8)))).status != 200)
+        #expect((await adm(h, "POST", "/upstream-resolve", #"{"project":1,"note":\#(noteID),"ours":true}"#)).status == 200)
+        #expect((await adm(h, "POST", "/upstream-resolve", #"{"project":1,"note":\#(noteID),"ours":true}"#)).status == 400)  // nothing left to settle
+        let third = obj(await adm(h, "POST", "/upstream-push", #"{"project":1}"#))
+        #expect(t.calls.contains { $0.method == "POST" && $0.path == "/minigw/v1/projects/7/kb/submissions" }, "\(third)")  // ours: a submission
+    }
+
     @Test func withoutAnAppThatAnswersCalloutsTheRoutesSay501() async throws {
         let (h, _) = try await start(callouts: nil)
         defer { h.stop() }
         let r = await adm(h, "PUT", "/upstreams/hub", #"{"address":"hub.example","token":"t#k"}"#)
         #expect(r.status == 501)
         #expect((await adm(h, "POST", "/upstream-push", #"{}"#)).status == 501)
+        #expect((await adm(h, "POST", "/upstream-auto")).status == 501)
     }
 }
