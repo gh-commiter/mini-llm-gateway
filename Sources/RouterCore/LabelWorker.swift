@@ -11,6 +11,8 @@ final class FMForeground: @unchecked Sendable {
     private var watchers: [Int: @Sendable () -> Void] = [:]
 
     var active: Bool { lock.withLock { count > 0 } }
+    /// Tests only: runs right after a sample was registered and before its task exists (the window a user request can hit).
+    nonisolated(unsafe) var afterRegister: (@Sendable () -> Void)?
 
     /// A user request starts: every watcher (a running sample) is told. Pair with `leave()`.
     func enter() {
@@ -68,7 +70,7 @@ final class LabelWorker: @unchecked Sendable {
         "refactor": "Restructure code without changing behavior.", "docs": "Write or update documentation.",
         "test": "Create or run tests.", "release": "Prepare or publish a release.", "research": "Investigate a question.", "ops": "Operate or maintain infrastructure."]
 
-    private let call: Call
+    private let rawCall: Call
     private let available: @Sendable () -> Bool
     private let backend: Decide.Backend
     private let foreground: FMForeground
@@ -78,7 +80,9 @@ final class LabelWorker: @unchecked Sendable {
     private let beforeStore: @Sendable () async -> Void  // the usage events queued so far reached the helper (the root event must exist)
     private let waitStep: Duration
 
-    private let lock = NSLock()
+    private let lock = NSCondition()
+    private var inflight = 0
+    private var tracked: [UUID: Task<Void, Never>] = [:]
     private var settings: Settings?
     private var settingsAt = ContinuousClock.now
     private var fetching = false
@@ -110,7 +114,7 @@ final class LabelWorker: @unchecked Sendable {
          foreground: FMForeground = .shared, settingsTTL: Duration = .seconds(10), budget: Duration = .seconds(20),
          retryDelays: [Duration] = [.milliseconds(300), .seconds(1), .seconds(3)], waitStep: Duration = .milliseconds(25),
          beforeStore: @escaping @Sendable () async -> Void = {}) {
-        self.call = call; self.available = available; self.backend = backend; self.foreground = foreground
+        self.rawCall = call; self.available = available; self.backend = backend; self.foreground = foreground
         self.settingsTTL = settingsTTL; self.budget = budget; self.retryDelays = retryDelays; self.waitStep = waitStep; self.beforeStore = beforeStore
         Self.liveLock.withLock { Self.live = Self.live.filter { $0.worker != nil } + [Weak(worker: self)] }
     }
@@ -125,8 +129,37 @@ final class LabelWorker: @unchecked Sendable {
 
     /// Clean stop: the queue is dropped, the running decision is cancelled, nothing is started or stored afterwards.
     func stop() {
-        let cancel = lock.withLock { () -> (@Sendable () -> Void)? in closed = true; queue.removeAll(); cache.removeAll(); return cancelCurrent }
+        let (cancel, tasks) = lock.withLock { () -> ((@Sendable () -> Void)?, [Task<Void, Never>]) in
+            closed = true; queue.removeAll(); cache.removeAll()
+            return (cancelCurrent, Array(tracked.values))
+        }
         cancel?()
+        tasks.forEach { $0.cancel() }
+        // `closed` is checked under the same lock before every helper call starts, so only calls already on their way remain: wait for them,
+        // a few seconds at most, then abandon (nothing new is called either way).
+        lock.lock()
+        let end = Date().addingTimeInterval(3)
+        while inflight > 0, lock.wait(until: end) {}
+        lock.unlock()
+    }
+
+    /// Every helper call goes through here: once stopped, none starts (status 0, no body).
+    private func call(_ name: String, _ body: [String: Any]) async -> (status: Int, body: Data) {
+        guard lock.withLock({ () -> Bool in if closed { return false }; inflight += 1; return true }) else { return (0, Data()) }
+        defer { lock.withLock { inflight -= 1; lock.broadcast() } }
+        return await rawCall(name, body)
+    }
+
+    /// Background work of the worker, tracked so that `stop()` cancels it.
+    private func spawn(_ work: @escaping @Sendable () async -> Void) {
+        lock.withLock {
+            guard !closed else { return }
+            let id = UUID()
+            tracked[id] = Task.detached(priority: .utility) { [self] in
+                await work()
+                lock.withLock { _ = tracked.removeValue(forKey: id) }
+            }
+        }
     }
 
     // MARK: admission (the request path: synchronous, never waits)
@@ -150,10 +183,10 @@ final class LabelWorker: @unchecked Sendable {
             preparing += 1
             return (Job(eventID: e.id, input: "", key: "", phase: phase, activity: activity, revision: s.revision, shadow: shadow), stale)
         }
-        if refresh { Task.detached(priority: .utility) { [self] in await fetchSettings() } }
+        if refresh { spawn { [self] in await fetchSettings() } }
         guard var job = admitted else { return }
         let (device, task) = (e.deviceId, e.task)
-        Task.detached(priority: .utility) { [self] in
+        spawn { [self] in
             (job.input, job.key) = Self.input(body: body, device: device, task: task)
             let start = lock.withLock { () -> Bool in
                 preparing -= 1
@@ -215,6 +248,12 @@ final class LabelWorker: @unchecked Sendable {
             return changed ? cancelCurrent : nil
         }
         cancel?()
+        // an enabled worker whose stored backend this Mac cannot run (written by an older version or a restore): say so once per revision
+        if let p = parsed, p.enabled, !p.backend.isEmpty, p.backend != "apple-fm",
+           lock.withLock({ defer { errorRevision = p.revision }; return errorRevision != p.revision }) {
+            _ = await call("label-error", ["message": "backend not available on this Mac: choose apple-fm"])
+            lock.withLock { errorShown = true }
+        }
     }
 
     static func parse(_ body: Data) -> Settings? {
@@ -244,6 +283,8 @@ final class LabelWorker: @unchecked Sendable {
             await process(job)
         }
     }
+
+    private static func eventID() -> String { "ev_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(16) }
 
     private func isClosed() -> Bool { lock.withLock { closed } }
     private func skip() { lock.withLock { _skipped += 1 } }
@@ -283,12 +324,16 @@ final class LabelWorker: @unchecked Sendable {
                 let outcome = await decision(job, s)
                 guard !isClosed() else { return }
                 if outcome.preempted {
+                    if outcome.tokensIn > 0 {  // inference began: the attempt was real work, recorded without any text or error
+                        _ = await call("label-decision", ["id": Self.eventID(), "provider": "apple-fm", "model": "apple-fm", "start": UsageEvent.iso(now),
+                                                          "end": UsageEvent.iso(Date()), "tokensIn": outcome.tokensIn, "tokensOut": outcome.tokensOut,
+                                                          "failed": false, "preempted": true])
+                    }
                     if job.retries == 0 { job.retries += 1; continue }
                     return skip()
                 }
                 // the internal usage event of the decision: no user, never any text
-                let id = "ev_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(16)
-                _ = await call("label-decision", ["id": id, "provider": "apple-fm", "model": "apple-fm", "start": UsageEvent.iso(now), "end": UsageEvent.iso(Date()),
+                _ = await call("label-decision", ["id": Self.eventID(), "provider": "apple-fm", "model": "apple-fm", "start": UsageEvent.iso(now), "end": UsageEvent.iso(Date()),
                                                   "tokensIn": outcome.tokensIn, "tokensOut": outcome.tokensOut, "failed": outcome.results == nil])
                 guard let r = outcome.results else {
                     guard lock.withLock({ !closed && settings?.revision == s.revision && settings?.enabled == true }) else { return skip() }
@@ -316,8 +361,16 @@ final class LabelWorker: @unchecked Sendable {
         private let lock = NSLock(); private var task: Task<String, Error>?; private var cancelled = false
         func set(_ t: Task<String, Error>) { lock.withLock { task = t; if cancelled { t.cancel() } } }
         func cancel() { lock.withLock { cancelled = true; task?.cancel() } }
+        /// The first thing a sample does, before the model is touched: a user request that arrived since registration ends it here.
+        func enter() throws { try lock.withLock { if cancelled { throw CancellationError() } } }
     }
-    private final class Tokens: @unchecked Sendable { var input = 0, output = 0 }
+    private final class Tokens: @unchecked Sendable {
+        private let lock = NSLock(); private var i = 0, o = 0
+        var input: Int { lock.withLock { i } }
+        var output: Int { lock.withLock { o } }
+        func add(input n: Int) { lock.withLock { i += n } }
+        func add(output n: Int) { lock.withLock { o += n } }
+    }
 
     /// Phase, then activity: three samples each, every sample only while no user request runs on the on-device model.
     private func decision(_ job: Job, _ s: Settings) async -> Outcome {
@@ -330,13 +383,17 @@ final class LabelWorker: @unchecked Sendable {
                 let box = SampleBox()
                 if let id = foreground.watch({ preempted.set(); box.cancel() }) {  // registered before the model is touched
                     defer { foreground.unwatch(id) }
-                    lock.withLock { _samples += 1 }
-                    tokens.input += (system.utf8.count + user.utf8.count + 3) / 4
-                    let sample = Task<String, Error> { try await backend(system, user, ids) }
+                    foreground.afterRegister?()
+                    let sample = Task<String, Error> { [self] in
+                        try box.enter()
+                        lock.withLock { _samples += 1 }  // counted only once inference really starts
+                        tokens.add(input: (system.utf8.count + user.utf8.count + 3) / 4)
+                        return try await backend(system, user, ids)
+                    }
                     box.set(sample)
                     let reply = try await withTaskCancellationHandler { try await sample.value } onCancel: { sample.cancel() }
                     if preempted.value { throw CancellationError() }
-                    tokens.output += (reply.utf8.count + 3) / 4
+                    tokens.add(output: (reply.utf8.count + 3) / 4)
                     return reply
                 }
                 try? await Task.sleep(for: step)  // ponytail: polling; a notification when many workers wait
@@ -380,6 +437,7 @@ final class LabelWorker: @unchecked Sendable {
             }
             ok = r.status == 200
         }
+        if isClosed() { return }
         if !ok {
             lock.withLock { _failed += 1 }
             _ = await call("label-error", ["message": "label storage failed"]); lock.withLock { errorShown = true }

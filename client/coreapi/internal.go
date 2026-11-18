@@ -176,6 +176,7 @@ type LabelDecisionRequest struct {
 	TokensIn  int64     `json:"tokensIn"`
 	TokensOut int64     `json:"tokensOut"`
 	Failed    bool      `json:"failed"`
+	Preempted bool      `json:"preempted,omitempty"` // a user's request cancelled the attempt after inference began
 }
 
 // LabelAgreementRequest: one shadow comparison (counters only): kind phase|activity, bucket 667|1000|unknown, agree.
@@ -352,7 +353,7 @@ func (a *API) internal(ctx context.Context, r Request) Response {
 		if st == nil {
 			return unavailable()
 		}
-		if err := st.FinishLabelDecision(ctx, in.ID, in.Provider, in.Model, in.Start, in.End, in.TokensIn, in.TokensOut, in.Failed); err != nil {
+		if err := st.FinishLabelDecision(ctx, in.ID, in.Provider, in.Model, in.Start, in.End, in.TokensIn, in.TokensOut, in.Failed, in.Preempted); err != nil {
 			a.o.Log("label-decision: %v", err)
 			return jsonErr(500, "internal", "Internal error")
 		}

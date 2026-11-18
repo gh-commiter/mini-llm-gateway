@@ -110,6 +110,10 @@ private final class FakeCore: @unchecked Sendable {
     private var calls: [(name: String, body: [String: Any])] = []
     private var settings: [String: Any]
     var eventLabelsStatus = 200
+    private var held: String?, released = false
+    /// Calls named `name` are logged and then held until `release()` (a helper call that is on its way when the app quits).
+    func hold(_ name: String) { lock.withLock { held = name; released = false } }
+    func release() { lock.withLock { released = true } }
     init(enabled: Bool = true, backend: String = "apple-fm", revision: Int = 7, shadow: Bool = false, maxPerHour: Int = 120, threshold: String = "1.0") {
         settings = ["enabled": enabled, "backend": backend, "threshold": threshold, "maxPerHour": String(maxPerHour), "shadow": shadow, "shadowRate": "1",
                     "activities": ["feature", "bugfix", "docs"], "revision": revision]
@@ -121,6 +125,7 @@ private final class FakeCore: @unchecked Sendable {
     var call: LabelWorker.Call {
         { [self] name, body in
             lock.withLock { calls.append((name, body)) }
+            while lock.withLock({ held == name && !released }) { try? await Task.sleep(for: .milliseconds(5)) }
             switch name {
             case "label-settings": return (200, (try? JSONSerialization.data(withJSONObject: lock.withLock { settings })) ?? Data())
             case "event-labels": return (eventLabelsStatus, Data("{}".utf8))
@@ -163,7 +168,8 @@ private func primed(_ w: LabelWorker) async { await w.fetchSettings() }
             w.enqueue(rootEvent(), body: body("Fix the crash"))
             try await Task.sleep(for: .milliseconds(150))
             #expect(samples.value == 0 && w.isIdle && w.queued == 0)
-            #expect(core.log.allSatisfy { $0.name == "label-settings" })
+            // nothing but the settings read; an enabled worker with a backend this Mac cannot run says so once (label-error), nothing else
+            #expect(core.log.allSatisfy { $0.name == "label-settings" || ($0.name == "label-error" && core.count("label-error") == 1) })
         }
     }
 
@@ -314,7 +320,8 @@ private func primed(_ w: LabelWorker) async { await w.fetchSettings() }
         #expect(await until { cancelled.value == 2 && w.skipped == 1 })  // second time: unknown, nothing stored
         fg.leave()
         try await Task.sleep(for: .milliseconds(150))
-        #expect(started.value == 2 && core.count("event-labels") == 0 && core.count("label-decision") == 0)
+        #expect(started.value == 2 && core.count("event-labels") == 0)
+        #expect(core.log.filter { $0.name == "label-decision" }.allSatisfy { $0.body["preempted"] as? Bool == true })  // both interrupted attempts are recorded as work
         #expect(!fg.active)
         w.stop()
     }
@@ -414,7 +421,7 @@ private final class Gate: @unchecked Sendable {
         let h = CoreHelper(binary: try await HelperBuild.shared.binary(), store: store, ownerName: "tester", marks: MemoryMarks(), backoff: [0.05, 0.1], requestTimeout: 10)
         h.start(); defer { h.stop() }
         #expect(await h.waitReady(timeout: 30))
-        func adm(_ m: String, _ p: String, _ b: String = "") async -> CoreResponse { 
+        func adm(_ m: String, _ p: String, _ b: String = "") async -> CoreResponse {
             let parts = p.split(separator: "?", maxSplits: 1).map(String.init)
             return await h.call(context: .admin, request: CoreRequest(method: m, path: parts[0], query: parts.count > 1 ? parts[1] : "", body: Data(b.utf8)))
         }
@@ -485,5 +492,102 @@ private final class Gate: @unchecked Sendable {
         private let lock = NSLock(); private var data = Data()
         func add(_ d: Data) { lock.withLock { data.append(d) } }
         var text: String { lock.withLock { String(decoding: data, as: UTF8.self) } }
+    }
+}
+
+
+// MARK: review fixes: the start race, the lifecycle, preempted work, a stored backend this Mac cannot run
+
+@Suite(.serialized) struct LabelsLifecycle {
+    @Test func aUserRequestBetweenRegistrationAndStartNeverLetsASampleRun() async throws {
+        let core = FakeCore()
+        let fg = FMForeground()
+        let entered = Tally(), enteredWhileForeground = Tally()
+        fg.afterRegister = { if !fg.active { fg.enter() } }  // the user's request arrives in the window after the sample was registered
+        let w = worker(core, backend: { _, _, ids in
+            entered.inc(); if fg.active { enteredWhileForeground.inc() }
+            return ids.contains("plan") ? "do" : "bugfix"
+        }, foreground: fg)
+        await primed(w)
+        w.enqueue(rootEvent(), body: body("Fix the crash"))
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(entered.value == 0 && w.samplesStarted == 0)  // prevented, not merely cancelled afterwards
+        fg.afterRegister = nil
+        fg.leave()
+        #expect(await until { core.count("event-labels") == 1 })  // the retry after the user finished
+        #expect(enteredWhileForeground.value == 0)
+    }
+
+    @Test func nothingIsCalledAfterStopDuringTheRetrySleep() async throws {
+        let core = FakeCore(); core.eventLabelsStatus = 404
+        let w = LabelWorker(call: core.call, available: { true }, backend: answering(), foreground: FMForeground(), settingsTTL: .milliseconds(1),
+                            retryDelays: [.milliseconds(400), .milliseconds(400)], waitStep: .milliseconds(5))
+        await primed(w)
+        w.enqueue(rootEvent(), body: body("Fix the crash"))
+        #expect(await until { core.count("event-labels") == 1 })  // now in the retry sleep
+        w.stop()
+        let n = core.log.count
+        try await Task.sleep(for: .milliseconds(900))
+        #expect(core.log.count == n && core.count("event-labels") == 1 && core.count("label-error") == 0)
+    }
+
+    @Test func nothingIsCalledAfterStopDuringAShadowWrite() async throws {
+        let core = FakeCore(shadow: true)
+        let w = worker(core, backend: answering())
+        await primed(w)
+        core.hold("label-agreement")
+        w.enqueue(rootEvent(phase: "do", activity: "docs"), body: body("Fix the crash"))
+        #expect(await until { core.count("label-agreement") == 1 })  // the first write is on its way
+        let stopper = Task.detached { w.stop() }  // waits for it, a few seconds at most
+        try await Task.sleep(for: .milliseconds(100))
+        core.release()
+        await stopper.value
+        let n = core.log.count
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(core.log.count == n && core.count("label-agreement") == 1 && core.count("label-error") == 0)
+    }
+
+    @Test func nothingIsCalledAfterStopDuringASettingsRefresh() async throws {
+        let core = FakeCore(backend: "foundry:phi")  // a result that would make the refresh call label-error
+        let w = worker(core, backend: answering())
+        core.hold("label-settings")
+        w.enqueue(rootEvent(), body: body("Fix the crash"))  // the first admission starts a refresh in the background
+        #expect(await until { core.count("label-settings") == 1 })
+        let stopper = Task.detached { w.stop() }
+        try await Task.sleep(for: .milliseconds(100))
+        core.release()
+        await stopper.value
+        let n = core.log.count
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(core.log.count == n && core.count("label-error") == 0)
+    }
+
+    @Test func aPreemptedDecisionThatRanInferenceIsRecorded() async throws {
+        let core = FakeCore()
+        let fg = FMForeground()
+        let started = Tally()
+        let w = worker(core, backend: { _, _, _ in
+            started.inc()
+            try await Task.sleep(for: .seconds(60)); return "do"
+        }, foreground: fg)
+        await primed(w)
+        w.enqueue(rootEvent(), body: body("Fix the crash"))
+        #expect(await until { started.value == 1 })
+        fg.enter()
+        #expect(await until { core.count("label-decision") == 1 })
+        let d = try #require(core.last("label-decision"))
+        #expect(d["preempted"] as? Bool == true && d["failed"] as? Bool == false && d["provider"] as? String == "apple-fm" && (d["tokensIn"] as? Int ?? 0) > 0)
+        #expect(!"\(d)".contains("Fix the crash"))  // no prompt text
+        fg.leave(); w.stop()
+    }
+
+    @Test func aStoredBackendThisMacCannotRunIsReportedOncePerRevision() async throws {
+        let core = FakeCore(backend: "foundry:phi-4-mini")
+        let w = worker(core, backend: answering())
+        await primed(w); await primed(w)
+        #expect(core.count("label-error") == 1)
+        #expect((core.last("label-error")?["message"] as? String) == "backend not available on this Mac: choose apple-fm")
+        core.set("revision", 8); await primed(w)
+        #expect(core.count("label-error") == 2)
     }
 }

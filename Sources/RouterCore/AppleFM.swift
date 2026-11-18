@@ -155,8 +155,9 @@ extension Router {
             t.usage = ["output_tokens": (try? await model.tokenCount(for: r.content)) ?? 0]
             return await json(200, t.message(), rid: rid, writer: writer)
         } catch {
-            Self.log.error("\(rid, privacy: .public) apple-fm failed: \(String(describing: error), privacy: .public)")
             let (status, type) = Self.fmStatus(error)
+            // the log keeps the error class only: a model error may describe the context it was given (the user's prompt)
+            Self.log.error("\(rid, privacy: .public) apple-fm failed: \(type, privacy: .public) \(status)")
             if started {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": "Apple FM: \(error)"]]))
                 return status

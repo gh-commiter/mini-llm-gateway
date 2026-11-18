@@ -77,3 +77,49 @@ func TestLabelBackendsOfTheHostAndTheMacWorkerCalls(t *testing.T) {
 }
 
 func itoa(n uint64) string { return strconv.FormatUint(n, 10) }
+
+// A backend stored before this version (or by a restore) is checked when the worker is turned on, and marked in the row.
+func TestMacRefusesToEnableAStoredUnsupportedBackendAndMarksIt(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.st.SetLabelSettings(bg, core.LabelSettingsPatch{Backend: func() *string { s := "foundry:phi-4-mini"; return &s }()}); err != nil {
+		t.Fatal(err)
+	}
+	mac := New(Options{Store: func() *core.Store { return f.st }, Dir: t.TempDir(), LabelBackends: []string{"apple-fm"}})
+	do := func(method, body string) (int, string) {
+		r := mac.Handle(bg, Context{Kind: KindAdmin}, Request{Method: method, Path: "/usage/labels/settings", Body: []byte(body)})
+		return r.Status, string(r.Body)
+	}
+	if st, b := do("PUT", `{"enabled":true}`); st != 400 || !strings.Contains(b, "choose apple-fm") {
+		t.Fatalf("%d %s", st, b)
+	}
+	st, b := do("GET", "")
+	if st != 200 || !strings.Contains(b, `"backends":"apple-fm"`) || !strings.Contains(b, `"backendProblem":"backend: not available on this system; choose apple-fm"`) {
+		t.Fatalf("%d %s", st, b)
+	}
+	if st, b := do("PUT", `{"shadow":false}`); st != 200 { // not turning it on: other changes are fine
+		t.Fatalf("%d %s", st, b)
+	}
+	if st, b := do("PUT", `{"enabled":true,"backend":"apple-fm"}`); st != 200 || !strings.Contains(b, `"backendProblem":""`) {
+		t.Fatalf("%d %s", st, b)
+	}
+	if st, b := func() (int, string) {
+		r := f.api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/usage/labels/settings"})
+		return r.Status, string(r.Body)
+	}(); st != 200 || !strings.Contains(b, `"backends":"apple-fm, foundry:\u003cmodel\u003e"`) {
+		t.Fatalf("%d %s", st, b)
+	}
+}
+
+func TestAPreemptedDecisionIsRecordedAsCancelled(t *testing.T) {
+	f := newFixture(t)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	r := f.api.Handle(bg, Context{Kind: KindInternal}, Request{Method: "POST", Path: "/internal/label-decision",
+		Body: []byte(`{"id":"ev_pre00000001","provider":"apple-fm","model":"apple-fm","start":"` + now + `","end":"` + now + `","tokensIn":10,"tokensOut":1,"failed":false,"preempted":true}`)})
+	if r.Status != 200 {
+		t.Fatal(r.Status, string(r.Body))
+	}
+	var outcome, kind string
+	if err := f.st.DB().QueryRow(`SELECT outcome, COALESCE(error_kind,'') FROM usage_events WHERE id='ev_pre00000001'`).Scan(&outcome, &kind); err != nil || outcome != "cancelled" || kind != "" {
+		t.Fatal(err, outcome, kind)
+	}
+}

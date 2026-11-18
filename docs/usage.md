@@ -523,7 +523,7 @@ limited to the list of phases or activities by guided generation, and still pars
 1000 per mille), same shadow counters and cache, one decision at a time, a queue of 8, 20 seconds per decision, `maxPerHour`. The worker
 starts only after the request was dispatched and never delays it. It also yields to the user: while a request for an on-device model
 (`claude-apple-fm`) runs through this gateway no sample starts, a sample that is running is cancelled, and the decision is retried at most
-once, then left unknown. The worker stops when the app quits. **What *agreement* means:** the share of three independent samples that gave
+once, then left unknown. The worker stops when the app quits: no helper call starts after that. An attempt that a user's request interrupted after inference began is recorded as a cancelled internal usage event. A stored backend this Mac cannot run (for example `foundry:…` from an older version) cannot be turned on; the row shows it under "Backend problem" and `lastError` says so. **What *agreement* means:** the share of three independent samples that gave
 the same answer; it says how steady the small model is, not how often it is right (that is what the shadow counters, compared with explicit
 labels, are for). **Privacy limit:** the gateway never stores, logs or reports the classified text, but the on-device model runtime and the
 operating system (their own logs, crash dumps, Apple's diagnostics) are outside the gateway's control.
