@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### New
+- `minigw gw status` prints a `secrets:` line saying where secrets are kept (Windows Credential Manager, the Secret Service, Keychain, platform files, or a file with the reason), and `minigw status` on a client a `Secrets:` line. The admin API's `GET /status` carries it as `secrets`. Nothing moves yet: no secret changed its place, and a credential store that fails now gives an error instead of a quiet fall-back to `gateway-keys.json`.
+
 ## 0.7.25
 
 ### New

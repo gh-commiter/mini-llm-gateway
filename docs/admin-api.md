@@ -164,7 +164,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "providers": [Provider], "os", "installDir"?, "tray", "autostart", "agents": n, "agentsUnsandboxed", "agentSandbox"?, "claudeSandbox"?, "claudeSandboxReason"?}` |
+| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "providers": [Provider], "os", "installDir"?, "tray", "autostart", "secrets": "where secrets are kept (one line, never a value)", "agents": n, "agentsUnsandboxed", "agentSandbox"?, "claudeSandbox"?, "claudeSandboxReason"?}` |
 | `GET /devices` | – | `{"devices": [Device], "pending": [Device], "allowAnyDevice": bool}` |
 | `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending; without a name, the pending device's name |
 | `PATCH /devices/{id}` | `{"name"}` | `{"device": Device}`; renames an allowed device |

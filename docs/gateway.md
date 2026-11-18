@@ -688,6 +688,16 @@ sandboxes (Claude CLI sandbox rules, the Codex permission profile) let it write 
   `.git` closed.
 - Worktree, sync and read-only (`--minigw-ro`) runs, and `minigw serve` (no direct mode), are unchanged.
 
+## Where secrets are kept
+
+`minigw gw status` prints one line, `secrets: ...`, and the admin API's `GET /status` carries it as `secrets`. It never contains a value. Provider API keys, the agents' tokens and API keys and the upstream gateway credentials go through one place that `minigw serve` chooses once at start and never changes while it runs:
+
+1. The credential store of the signed-in user, when it is not container mode (`MINIGW_CONTAINER=1`) and the store answers: Windows Credential Manager (`secrets: Windows Credential Manager`), the Linux Secret Service through `secret-tool` when the user has a session bus (`secrets: the Secret Service`). On the Mac the app keeps them in the Keychain (`secrets: Keychain (service dev.trojar.minigateway)`).
+2. Files the platform provides, read-only: `$CREDENTIALS_DIRECTORY` (systemd) or `$MINIGW_SECRETS_DIR` (for example Docker or Compose secrets at `/run/secrets`); the file name is the secret's name with `:` written as `_` (`agent:claude` is `agent_claude`). A name the platform does not provide is kept in the file of step 3 (`secrets: platform files <dir> (read-only; others in file <path>)`).
+3. The last resort: `gateway-keys.json` next to `serve.json`, mode 0600 (Windows: the protection of the config folder) (`secrets: file <path> (no credential store for this session)`, or `(container mode)`, or `(forced by MINIGW_SECRETS=file)`).
+
+A store that fails after it was chosen is an error (a locked keyring is "the Secret Service cannot be read"), never a quiet move to a weaker place. Nothing moved in this step: the gateway token and the gateway key are still in `serve.json`; the next step moves them into the store, and `minigw status` on a client shows where its tokens and device key are (`Secrets:`).
+
 ## Where things are stored
 
 | What | Mac app | Windows | Linux |

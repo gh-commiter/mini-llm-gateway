@@ -286,16 +286,16 @@ func TestServeGatewayKeyFileOnMac(t *testing.T) {
 		t.Skip("macOS only")
 	}
 	dir := t.TempDir()
-	if where, err := osKeySet(dir, "gw", gwKey); err != nil || !strings.HasSuffix(where, "gateway-keys.json (mode 0600)") {
+	if where, err := secretsFor(dir).Set("gw", gwKey); err != nil || !strings.HasSuffix(where, "gateway-keys.json (mode 0600)") {
 		t.Fatalf("set: %q %v", where, err)
 	}
 	if st, _ := os.Stat(filepath.Join(dir, "gateway-keys.json")); st == nil || st.Mode().Perm() != 0o600 {
 		t.Fatalf("key file mode: %v", st)
 	}
-	if k, _ := osKeyGet(dir, "gw"); k != gwKey {
+	if k, _, _ := secretsFor(dir).Get("gw"); k != gwKey {
 		t.Fatalf("get: %q", k)
 	}
-	if osKeyDel(dir, "gw"); func() bool {
+	if secretsFor(dir).Delete("gw"); func() bool {
 		b, _ := os.ReadFile(filepath.Join(dir, "gateway-keys.json"))
 		return strings.Contains(string(b), gwKey)
 	}() {
@@ -304,7 +304,7 @@ func TestServeGatewayKeyFileOnMac(t *testing.T) {
 	// Pokvarjena datoteka: napaka, ne tiho prazen seznam (G3).
 	path := filepath.Join(dir, "gateway-keys.json")
 	os.WriteFile(path, []byte("{broken"), 0o600)
-	if _, err := osKeySet(dir, "gw", gwKey); err == nil {
+	if _, err := secretsFor(dir).Set("gw", gwKey); err == nil {
 		t.Fatal("corrupt key file overwritten")
 	}
 	if b, _ := os.ReadFile(path); string(b) != "{broken" {
@@ -315,7 +315,7 @@ func TestServeGatewayKeyFileOnMac(t *testing.T) {
 	os.WriteFile(outside, []byte("{}"), 0o644)
 	os.Remove(path)
 	os.Symlink(outside, path)
-	if _, err := osKeySet(dir, "gw", gwKey); err != nil {
+	if _, err := secretsFor(dir).Set("gw", gwKey); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(outside); string(b) != "{}" {

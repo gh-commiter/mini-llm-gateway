@@ -176,18 +176,6 @@ func credDelete(name string) {
 	procDelete.Call(uintptr(unsafe.Pointer(target)), credTypeGeneric, 0)
 }
 
-// Ključi prehodov (minigw serve gateway): generična poverilnica minigw/gateway/<ime>.
-func osKeyGet(_, name string) (string, string) {
-	b, _ := credLoad("minigw/gateway/" + name)
-	return string(b), storeName
-}
-
-func osKeySet(_, name, key string) (string, error) {
-	return storeName, credSave("minigw/gateway/"+name, []byte(key))
-}
-
-func osKeyDel(_, name string) { credDelete("minigw/gateway/" + name) }
-
 // osKeyNames: the gateway secrets of the Credential Manager (minigw/gateway/<name>).
 func osKeyNames(string) []string {
 	var out []string

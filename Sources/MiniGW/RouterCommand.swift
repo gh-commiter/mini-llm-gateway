@@ -248,6 +248,7 @@ func routerCommand(_ argv: [String]) {
         say("gateway: running, changes apply at once")
         say("version \(st["version"] as? String ?? "?"), port \(st["port"] as? Int ?? 0) on \(st["address"] as? String ?? "?")")
         say(autostartLine(st))
+        if let secrets = st["secrets"] as? String, !secrets.isEmpty { say(clean("secrets: " + secrets)) }
         say("agent requests running: \(st["agents"] as? Int ?? 0)")
         if let core = st["core"] as? String, !core.isEmpty { say(clean(core)) }  // 0.6.0 (#106)
         say("devices: \(st["devices"] as? Int ?? 0) allowed, \(st["pending"] as? Int ?? 0) waiting (minigw gw devices)")

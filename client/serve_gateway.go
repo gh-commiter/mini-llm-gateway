@@ -119,8 +119,7 @@ func (g serveGateway) enabled(upstream string) bool {
 	return g.Models == nil || slices.Contains(g.Models, upstream)
 }
 
-// Shramba ključev (store_windows.go, store_other.go); testi jo zamenjajo.
-var keyGet, keySet, keyDel = osKeyGet, osKeySet, osKeyDel
+// keyGet, keySet, keyDel: secretstore.go (one interface, backend chosen once); tests replace them.
 
 // keyNames: the names of the stored gateway secrets (only to find the "upstream:<name>" ones when minigw is uninstalled).
 var keyNames = osKeyNames
