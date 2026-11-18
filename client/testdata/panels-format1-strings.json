@@ -42,7 +42,13 @@
   "acme.shop.section.orders.scope": "Item",
   "acme.shop.section.orders.detail.section.summary.title": "Summary",
   "acme.shop.section.orders.detail.section.summary.column.title": "Title",
-  "acme.shop.section.orders.detail.section.summary.column.note": "Note"
+  "acme.shop.section.orders.detail.section.summary.column.note": "Note",
+  "acme.shop.section.orders.action.connect": "Connect",
+  "acme.shop.section.orders.action.connect.field.oid": "Order",
+  "acme.shop.section.orders.action.connect.field.token": "Token",
+  "acme.shop.section.orders.action.connect.result.title": "Answer",
+  "acme.shop.section.orders.action.connect.result.column.id": "Id",
+  "acme.shop.section.orders.action.connect.result.column.note": "Note"
  },
  "sl_SI": {
   "acme.shop.about": "Naročila trgovine",
@@ -87,6 +93,12 @@
   "acme.shop.section.orders.scope": "Artikel",
   "acme.shop.section.orders.detail.section.summary.title": "Povzetek",
   "acme.shop.section.orders.detail.section.summary.column.title": "Naslov",
-  "acme.shop.section.orders.detail.section.summary.column.note": "Opomba"
+  "acme.shop.section.orders.detail.section.summary.column.note": "Opomba",
+  "acme.shop.section.orders.action.connect": "Poveži",
+  "acme.shop.section.orders.action.connect.field.oid": "Naročilo",
+  "acme.shop.section.orders.action.connect.field.token": "Žeton",
+  "acme.shop.section.orders.action.connect.result.title": "Odgovor",
+  "acme.shop.section.orders.action.connect.result.column.id": "Id",
+  "acme.shop.section.orders.action.connect.result.column.note": "Opomba"
  }
 }

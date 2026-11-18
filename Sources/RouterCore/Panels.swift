@@ -142,11 +142,14 @@ public struct PanelAction: Decodable, Equatable, Sendable {
     public let when: PanelWhen?
     public let confirm: PanelConfirm?
     public let destructive: Bool?
+    /// What the answer of the action is shown as once it succeeded (a list of rows, or the answer itself as one row).
+    public let result: PanelResult?
     /// A form with a field type this renderer does not know is never shown, not even in part.
     public var supported: Bool { (fields ?? []).allSatisfy(\.supported) }
     public var needsConfirmation: Bool { method == "DELETE" || destructive == true || confirm != nil }
 }
 
+public struct PanelResult: Decodable, Equatable, Sendable { public let items: String?; public let title: String?; public let columns: [PanelColumn] }
 public struct PanelBodyValue: Decodable, Equatable, Sendable { public let field: String?; public let row: String?; public let `const`: PanelJSON? }
 public struct PanelWhen: Decodable, Equatable, Sendable { public let field: String; public let equals: PanelJSON }
 public struct PanelConfirm: Decodable, Equatable, Sendable { public let title: String; public let message: String; public let button: String; public let destructive: Bool? }
@@ -160,7 +163,7 @@ public struct PanelField: Decodable, Equatable, Sendable {
     public let `default`: PanelDefault?
     public let options: [PanelOption]?
     public let ref: String?
-    public var supported: Bool { ["text", "toggle", "choice", "ref"].contains(type) }
+    public var supported: Bool { ["text", "toggle", "choice", "ref", "secret"].contains(type) }
 }
 
 public struct PanelDefault: Decodable, Equatable, Sendable { public let `const`: PanelJSON?; public let row: String? }
@@ -213,8 +216,21 @@ public enum PanelRoutes {
         "DELETE projects/{}/depends/teams/{}",
         "GET grants",
         "POST grants",
-        "DELETE grants"]
+        "DELETE grants",
+        "GET upstreams",
+        "PUT upstreams/{}",
+        "DELETE upstreams/{}",
+        "GET upstreams/{}/probe",
+        "PUT upstreams/{}/links/{}",
+        "DELETE upstreams/{}/links/{}",
+        "POST upstream-push"]
+    /// The routes that may receive the value of a secret field (in the body); a secret field in any other route is refused.
+    public static let builtinSecret = ["PUT upstreams/{}"]
+    /// The routes whose every action must carry a confirm (the sends to an upstream and its removal); an action on one without it is refused.
+    public static let builtinConfirm = ["POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}"]
+    public static func registeredConfirm(for provider: String) -> [String] { provider == "builtin" ? builtinConfirm : [] }
     public static func registered(for provider: String) -> [String]? { provider == "builtin" ? builtin : nil }
+    public static func registeredSecret(for provider: String) -> [String] { provider == "builtin" ? builtinSecret : [] }
 
     /// Does a concrete (escaped) path with its method match one of the registered patterns, segment for segment? A segment
     /// that is empty, ".", ".." or holds a "/" or "\\" once decoded never matches, not even a "{}".
@@ -250,7 +266,7 @@ public enum PanelValidator {
 
     /// Decodes and validates one description with the routes of the provider that the REGISTRY (the answer of GET /panels)
     /// names, never the provider field inside the description: that one must equal it.
-    public static func parse(_ data: Data, provider: String, routes: [String]? = nil) -> PanelParse {
+    public static func parse(_ data: Data, provider: String, routes: [String]? = nil, secretRoutes: [String]? = nil, confirmRoutes: [String]? = nil) -> PanelParse {
         guard data.count <= PanelLimits.bytes else { return .refused("the description is larger than \(PanelLimits.bytes) bytes") }
         struct Probe: Decodable { let format: Int }
         guard let probe = try? JSONDecoder().decode(Probe.self, from: data) else { return .refused("not a JSON object with a format") }
@@ -260,7 +276,7 @@ public enum PanelValidator {
         do { d = try JSONDecoder().decode(PanelDescription.self, from: data) } catch { return .refused("cannot decode: \(error)") }
         guard d.provider == provider else { return .refused("the description says provider \(d.provider), the registry says \(provider)") }
         guard let routes = routes ?? PanelRoutes.registered(for: provider) else { return .refused("provider \(provider) is not known here") }
-        do { try Check(d: d, routes: routes).panel(); return .ready(d) } catch let r as Refusal { return .refused(r.reason) } catch { return .refused("\(error)") }
+        do { try Check(d: d, routes: routes, secretRoutes: secretRoutes ?? PanelRoutes.registeredSecret(for: provider), confirmRoutes: confirmRoutes ?? PanelRoutes.registeredConfirm(for: provider)).panel(); return .ready(d) } catch let r as Refusal { return .refused(r.reason) } catch { return .refused("\(error)") }
     }
 
     struct Refusal: Error { let reason: String; init(_ r: String) { reason = r } }
@@ -284,6 +300,8 @@ public enum PanelValidator {
     struct Check {
         let d: PanelDescription
         let routes: [String]
+        let secretRoutes: [String]
+        let confirmRoutes: [String]
 
         /// A text of the description is a key of the panel's namespace: [a-z0-9._-], at most 120 characters, "<panel id>.…".
         func str(_ name: String, _ k: String?, _ max: Int = 0) throws {
@@ -306,7 +324,7 @@ public enum PanelValidator {
             try sections(d.sections, nested: false)
         }
 
-        struct Scope { var row = false, parent = false; var fields: Set<String> = [] }
+        struct Scope { var row = false, parent = false; var fields: Set<String> = []; var secret: Set<String> = [] }
 
         func sections(_ ss: [PanelSection], nested: Bool) throws {
             guard !ss.isEmpty, ss.count <= PanelLimits.sections else { throw Refusal("sections: 1 to \(PanelLimits.sections)") }
@@ -396,9 +414,22 @@ public enum PanelValidator {
             for f in fields {
                 try field(f, outer)
                 guard sc.fields.insert(f.id).inserted else { throw Refusal("action \(a.id): field \(f.id) repeated") }
+                if f.type == "secret" { sc.secret.insert(f.id) }
             }
             _ = try path("action \(a.id) path", a.method, a.path, sc)
             try query(a.query, sc)
+            if !sc.secret.isEmpty {  // a secret goes only to a route its provider registered as taking one, and only in the body
+                let route = PanelTemplate.route(a.method, a.path) ?? ""
+                guard secretRoutes.contains(route) else { throw Refusal("action \(a.id): a secret field needs a route registered as taking a secret: \(route) is not") }
+                let used = Set((a.body ?? [:]).values.compactMap(\.field))
+                for id in sc.secret where !used.contains(id) { throw Refusal("action \(a.id): secret field \(id) is not sent in the body") }
+            }
+            if let r = a.result {
+                if let i = r.items, !isName(i) { throw Refusal("action \(a.id): result: bad items name") }
+                if let t = r.title { try str("result.title", t) }
+                guard !r.columns.isEmpty, r.columns.count <= PanelLimits.columns else { throw Refusal("action \(a.id): result: columns 1 to \(PanelLimits.columns)") }
+                for c in r.columns { try column(c) }
+            }
             let body = a.body ?? [:]
             guard body.count <= PanelLimits.bodyKeys, !(a.method == "DELETE" && !body.isEmpty) else { throw Refusal("action \(a.id): body") }
             for (k, b) in body {
@@ -410,6 +441,7 @@ public enum PanelValidator {
             }
             if let w = a.when { guard sc.row, isName(w.field), scalar(w.equals) else { throw Refusal("action \(a.id): when") } }
             if a.method == "DELETE" || a.destructive == true { guard a.confirm != nil else { throw Refusal("action \(a.id): a destructive action needs a confirmation") } }
+            if a.confirm == nil, let route = PanelTemplate.route(a.method, a.path), confirmRoutes.contains(route) { throw Refusal("action \(a.id): an action on \(route) needs a confirmation") }
             if let c = a.confirm { try str("confirm.title", c.title); try str("confirm.message", c.message); try str("confirm.button", c.button) }
         }
 
@@ -423,7 +455,8 @@ public enum PanelValidator {
                 if let r = df.row { guard sc.row, isName(r) else { throw Refusal("field \(f.id): default row") } }
                 if let c = df.const { guard scalar(c) else { throw Refusal("field \(f.id): default const") } }
             }
-            guard (f.maxLength == nil || f.type == "text"), (f.options != nil) == (f.type == "choice"), (f.ref != nil) == (f.type == "ref") else {
+            if f.type == "secret", f.default != nil { throw Refusal("field \(f.id): a secret has no default") }
+            guard (f.maxLength == nil || f.type == "text" || f.type == "secret"), (f.options != nil) == (f.type == "choice"), (f.ref != nil) == (f.type == "ref") else {
                 throw Refusal("field \(f.id): wrong extra keys")
             }
             if f.type == "choice" {
@@ -441,7 +474,7 @@ public enum PanelValidator {
                 switch s {
                 case .literal(let l): pat.append(l)
                 case .ref(let kind, let name):
-                    guard (kind == .row && sc.row) || (kind == .parent && sc.parent) || (kind == .field && sc.fields.contains(name)) else {
+                    guard (kind == .row && sc.row) || (kind == .parent && sc.parent) || (kind == .field && sc.fields.contains(name) && !sc.secret.contains(name)) else {
                         throw Refusal("\(where_): placeholder \(kind.rawValue).\(name) is not available here")
                     }
                     pat.append("{}")
@@ -460,7 +493,7 @@ public enum PanelValidator {
                 guard let eq = p.firstIndex(of: "="), m(String(p[..<eq]), #"^[a-z][a-z0-9_]{0,31}\z"#) else { throw Refusal("query: \(p) is not name=value") }
                 let v = String(p[p.index(after: eq)...])
                 if let (kind, name) = PanelTemplate.placeholder(v) {
-                    guard (kind == .row && sc.row) || (kind == .parent && sc.parent) || (kind == .field && sc.fields.contains(name)) else { throw Refusal("query: placeholder \(v) is not available here") }
+                    guard (kind == .row && sc.row) || (kind == .parent && sc.parent) || (kind == .field && sc.fields.contains(name) && !sc.secret.contains(name)) else { throw Refusal("query: placeholder \(v) is not available here") }
                 } else if !m(v, #"^[A-Za-z0-9_.-]{0,64}\z"#) { throw Refusal("query: value \(v) is neither plain nor exactly one placeholder") }
             }
         }

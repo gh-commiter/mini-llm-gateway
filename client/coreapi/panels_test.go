@@ -52,23 +52,31 @@ func TestPanelsAnswerMatchesFixture(t *testing.T) {
 	if !reflect.DeepEqual(reg["builtin"], BuiltinRoutes) {
 		t.Fatalf("registry fixture %v, BuiltinRoutes %v", reg["builtin"], BuiltinRoutes)
 	}
+	if !reflect.DeepEqual(reg["builtinSecret"], BuiltinSecretRoutes) || !reflect.DeepEqual(reg["builtinConfirm"], BuiltinConfirmRoutes) {
+		t.Fatalf("registry fixture %v, %v", reg["builtinSecret"], reg["builtinConfirm"])
+	}
 }
 
 type formatFixture struct {
-	Provider string
-	Routes   []string
-	Panel    any
+	Provider     string
+	Routes       []string
+	SecretRoutes []string
+	Panel        any
+}
+
+func (f formatFixture) provider() PanelProvider {
+	return PanelProvider{ID: f.Provider, Routes: f.Routes, SecretRoutes: f.SecretRoutes}
 }
 
 func TestFormat1FixtureValidates(t *testing.T) {
 	var f formatFixture
 	panelFixture(t, "panels-format1.json", &f)
 	raw, _ := json.Marshal(f.Panel)
-	if err := ValidatePanel(raw, PanelProvider{ID: f.Provider, Routes: f.Routes}); err != nil {
+	if err := ValidatePanel(raw, f.provider()); err != nil {
 		t.Fatal(err)
 	}
 	// every route the fixture registers is used, and a provider without them refuses the panel
-	if err := ValidatePanel(raw, PanelProvider{ID: f.Provider, Routes: f.Routes[1:]}); err == nil {
+	if err := ValidatePanel(raw, PanelProvider{ID: f.Provider, Routes: f.Routes[1:], SecretRoutes: f.SecretRoutes}); err == nil {
 		t.Fatal("a missing registered route must refuse the panel")
 	}
 }
@@ -109,12 +117,13 @@ func TestHostilePanels(t *testing.T) {
 	panelFixture(t, "panels-format1.json", &base)
 	var table struct {
 		Cases []struct {
-			Name      string
-			Set       map[string]any
-			Remove    []string
-			Grow      map[string]int
-			Pad       map[string]int
-			GoAccepts bool // the cases where this validator accepts too (a key that stays an own key, a plain name)
+			Name          string
+			Set           map[string]any
+			Remove        []string
+			Grow          map[string]int
+			Pad           map[string]int
+			ConfirmRoutes []string // routes the provider registers as needing a confirmation, for this case
+			GoAccepts     bool     // the cases where this validator accepts too (a key that stays an own key, a plain name)
 		}
 	}
 	panelFixture(t, "panels-hostile.json", &table)
@@ -161,7 +170,9 @@ func TestHostilePanels(t *testing.T) {
 			parent.(map[string]any)[key] = strings.Repeat("x", n)
 		}
 		out, _ := json.Marshal(doc)
-		err := ValidatePanel(out, PanelProvider{ID: base.Provider, Routes: base.Routes})
+		prov := base.provider()
+		prov.ConfirmRoutes = c.ConfirmRoutes
+		err := ValidatePanel(out, prov)
 		if c.GoAccepts && err != nil {
 			t.Errorf("%s: the validator refused it: %v", c.Name, err)
 		} else if !c.GoAccepts && err == nil {
@@ -173,7 +184,7 @@ func TestHostilePanels(t *testing.T) {
 func TestPanelValidatorEdges(t *testing.T) {
 	var f formatFixture
 	panelFixture(t, "panels-format1.json", &f)
-	p := PanelProvider{ID: f.Provider, Routes: f.Routes}
+	p := f.provider()
 	raw, _ := json.Marshal(f.Panel)
 	if err := ValidatePanel(raw, p); err != nil {
 		t.Fatal(err)
@@ -374,7 +385,7 @@ func TestFormat1StringsFixture(t *testing.T) {
 	var tabs map[string]map[string]string
 	panelFixture(t, "panels-format1-strings.json", &tabs)
 	raw, _ := json.Marshal(f.Panel)
-	p := PanelProvider{ID: f.Provider, Routes: f.Routes}
+	p := f.provider()
 	keys, err := PanelKeys(raw, p)
 	if err != nil {
 		t.Fatal(err)
@@ -464,7 +475,7 @@ func TestProviderIDsAreReserved(t *testing.T) {
 func TestKeysBelowTheTopLevelAreExactToo(t *testing.T) {
 	var f formatFixture
 	panelFixture(t, "panels-format1.json", &f)
-	p := PanelProvider{ID: f.Provider, Routes: f.Routes}
+	p := f.provider()
 	raw, _ := json.Marshal(f.Panel)
 	for name, mut := range map[string]func(string) string{
 		"Method in a row action": func(s string) string { return strings.Replace(s, `"method":"PATCH"`, `"Method":"PATCH"`, 1) },
@@ -492,7 +503,7 @@ func TestBuiltinPanelOrderIsExplicit(t *testing.T) {
 		json.Unmarshal(raw, &d)
 		ids = append(ids, d.ID)
 	}
-	if !reflect.DeepEqual(ids, []string{"builtin.users", "builtin.teams", "builtin.kb"}) {
+	if !reflect.DeepEqual(ids, []string{"builtin.users", "builtin.teams", "builtin.kb", "builtin.upstreams"}) {
 		t.Fatalf("order %v", ids)
 	}
 	// the answer keeps it
@@ -501,7 +512,80 @@ func TestBuiltinPanelOrderIsExplicit(t *testing.T) {
 		Panels []struct{ Description struct{ ID string } }
 	}
 	json.Unmarshal(r.Body, &o)
-	if len(o.Panels) != 3 || o.Panels[0].Description.ID != "builtin.users" || o.Panels[1].Description.ID != "builtin.teams" || o.Panels[2].Description.ID != "builtin.kb" {
+	if len(o.Panels) != 4 || o.Panels[0].Description.ID != "builtin.users" || o.Panels[1].Description.ID != "builtin.teams" || o.Panels[2].Description.ID != "builtin.kb" || o.Panels[3].Description.ID != "builtin.upstreams" {
 		t.Fatalf("%s", r.Body)
+	}
+}
+
+// The Upstream gateways panel has a secret field: it is valid only for a provider that registered the route as taking a secret.
+func TestBuiltinSecretRouteIsRequired(t *testing.T) {
+	p := builtinProvider()
+	var raw json.RawMessage
+	for _, r := range p.Panels {
+		if strings.Contains(string(r), `"builtin.upstreams"`) && strings.Contains(string(r), `"secret"`) {
+			raw = r
+		}
+	}
+	if raw == nil {
+		t.Fatal("no built-in panel with a secret field")
+	}
+	if err := ValidatePanel(raw, p); err != nil {
+		t.Fatal(err)
+	}
+	p.SecretRoutes = nil
+	if err := ValidatePanel(raw, p); err == nil || !strings.Contains(err.Error(), "secret") {
+		t.Fatalf("accepted without a registered secret route: %v", err)
+	}
+	if len(BuiltinSecretRoutes) != 1 || BuiltinSecretRoutes[0] != "PUT upstreams/{}" {
+		t.Fatalf("%v", BuiltinSecretRoutes)
+	}
+}
+
+func TestBuiltinConfirmRoutesAreRequired(t *testing.T) {
+	want := []string{"POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}"}
+	if !reflect.DeepEqual(BuiltinConfirmRoutes, want) {
+		t.Fatalf("%v", BuiltinConfirmRoutes)
+	}
+	p := builtinProvider()
+	var raw json.RawMessage
+	for _, r := range p.Panels {
+		if strings.Contains(string(r), `"builtin.upstreams"`) {
+			raw = r
+		}
+	}
+	if err := ValidatePanel(raw, p); err != nil {
+		t.Fatal(err)
+	}
+	// every action on a confirmation route in the built-in panel has one: dropping the confirm of any of them is refused
+	var doc any
+	json.Unmarshal(raw, &doc)
+	n := 0
+	var walkDoc func(o any)
+	walkDoc = func(o any) {
+		switch v := o.(type) {
+		case map[string]any:
+			if _, ok := v["method"]; ok {
+				if c, has := v["confirm"]; has {
+					delete(v, "confirm")
+					out, _ := json.Marshal(doc)
+					if err := ValidatePanel(out, p); err == nil {
+						t.Errorf("accepted without a confirm: %v %v", v["method"], v["path"])
+					}
+					v["confirm"] = c
+					n++
+				}
+			}
+			for _, x := range v {
+				walkDoc(x)
+			}
+		case []any:
+			for _, x := range v {
+				walkDoc(x)
+			}
+		}
+	}
+	walkDoc(doc)
+	if n < 4 {
+		t.Fatalf("only %d confirmed actions", n)
 	}
 }

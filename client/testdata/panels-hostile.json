@@ -783,6 +783,163 @@
     }
    },
    "swift": "accept"
+  },
+  {
+   "name": "a secret field on a registered route that does not take a secret",
+   "set": {
+    "/sections/1/actions/1/path": "/plugins/acme/orders/{field.oid}/lines"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a secret field in a path",
+   "set": {
+    "/sections/1/actions/1/path": "/plugins/acme/orders/{field.token}/lines"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a secret field in a query",
+   "set": {
+    "/sections/1/actions/1/query": "t={field.token}"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a secret with a default",
+   "set": {
+    "/sections/1/actions/1/fields/1/default": {
+     "const": "x"
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a secret with a row default",
+   "set": {
+    "/sections/1/actions/1/fields/1/default": {
+     "row": "name"
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a secret that is not sent in the body",
+   "set": {
+    "/sections/1/actions/1/body": {
+     "x": {
+      "const": "y"
+     }
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a secret with options",
+   "set": {
+    "/sections/1/actions/1/fields/1/options": [
+     {
+      "value": "a",
+      "label": "acme.shop.x"
+     }
+    ]
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a secret with a ref",
+   "set": {
+    "/sections/1/actions/1/fields/1/ref": "items"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a secret with too long a maxLength",
+   "set": {
+    "/sections/1/actions/1/fields/1/maxLength": 5000
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a result with a bad items name",
+   "set": {
+    "/sections/1/actions/1/result/items": "a b"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a result without columns",
+   "set": {
+    "/sections/1/actions/1/result/columns": []
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a result with an inline title",
+   "set": {
+    "/sections/1/actions/1/result/title": "Answer"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a result with a foreign title key",
+   "set": {
+    "/sections/1/actions/1/result/title": "builtin.kb.title"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a result column of an undeclared ref",
+   "set": {
+    "/sections/1/actions/1/result/columns/0": {
+     "field": "id",
+     "kind": "ref",
+     "ref": "nope",
+     "label": "acme.shop.x"
+    }
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "a result that is not an object",
+   "set": {
+    "/sections/1/actions/1/result": "orders"
+   },
+   "swift": "refuse"
+  },
+  {
+   "name": "an unknown field type next to a secret (the action is a placeholder)",
+   "set": {
+    "/sections/1/actions/1/fields/0/type": "password"
+   },
+   "swift": "placeholder"
+  },
+  {
+   "name": "an action on a route that needs a confirmation, without one",
+   "confirmRoutes": [
+    "PATCH plugins/acme/orders/{}"
+   ],
+   "set": {},
+   "swift": "refuse"
+  },
+  {
+   "name": "a destructive action on a route that needs a confirmation, without one",
+   "confirmRoutes": [
+    "DELETE plugins/acme/orders/{}"
+   ],
+   "remove": [
+    "/sections/1/rowActions/1/confirm"
+   ],
+   "swift": "refuse"
+  },
+  {
+   "name": "a route that needs a confirmation, used with one",
+   "confirmRoutes": [
+    "DELETE plugins/acme/orders/{}"
+   ],
+   "set": {},
+   "swift": "accept",
+   "goAccepts": true
   }
  ]
 }

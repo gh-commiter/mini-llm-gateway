@@ -161,6 +161,48 @@
         "const": 1
        }
       }
+     },
+     {
+      "id": "connect",
+      "label": "acme.shop.section.orders.action.connect",
+      "method": "POST",
+      "path": "/plugins/acme/orders",
+      "fields": [
+       {
+        "id": "oid",
+        "type": "text",
+        "maxLength": 32,
+        "label": "acme.shop.section.orders.action.connect.field.oid"
+       },
+       {
+        "id": "token",
+        "type": "secret",
+        "required": true,
+        "maxLength": 4096,
+        "label": "acme.shop.section.orders.action.connect.field.token"
+       }
+      ],
+      "body": {
+       "token": {
+        "field": "token"
+       }
+      },
+      "result": {
+       "items": "orders",
+       "title": "acme.shop.section.orders.action.connect.result.title",
+       "columns": [
+        {
+         "field": "id",
+         "kind": "text",
+         "label": "acme.shop.section.orders.action.connect.result.column.id"
+        },
+        {
+         "field": "note",
+         "kind": "multiline",
+         "label": "acme.shop.section.orders.action.connect.result.column.note"
+        }
+       ]
+      }
      }
     ],
     "rowActions": [
@@ -299,5 +341,8 @@
     }
    }
   ]
- }
+ },
+ "secretRoutes": [
+  "POST plugins/acme/orders"
+ ]
 }

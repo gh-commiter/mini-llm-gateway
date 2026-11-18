@@ -44,17 +44,29 @@ const (
 // PanelProvider registers panels and the routes its panels may call, as "METHOD pattern" in the notation of adminDo's
 // switch ("PATCH users/{}": a {} is one path segment).
 type PanelProvider struct {
-	ID      string
-	Routes  []string
-	Panels  []json.RawMessage
-	Strings map[string]map[string]string // locale -> {key: text}; "C" is the base and holds every key
+	ID     string
+	Routes []string
+	Panels []json.RawMessage
+	// SecretRoutes: the registered routes that may receive the value of a secret field (in the body). A secret field in an action whose
+	// route is not listed here is refused.
+	SecretRoutes []string
+	// ConfirmRoutes: the registered routes on which every action must carry a confirm (a send that changes the other side): an action
+	// on such a route without one is refused, whatever its method.
+	ConfirmRoutes []string
+	Strings       map[string]map[string]string // locale -> {key: text}; "C" is the base and holds every key
 }
 
 //go:embed panels/*.json
 var builtinPanelFiles embed.FS
 
 // BuiltinRoutes: the routes the built-in panels may use. The core's own routes plus the gateway's GET devices.
-var BuiltinRoutes = []string{"GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices", "GET kb/submissions", "GET kb/submissions/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject", "GET kb/notes", "GET kb/notes/{}", "GET kb/faq", "GET projects", "GET teams", "POST teams", "PATCH teams/{}", "GET teams/{}/members", "PUT teams/{}/members/{}", "DELETE teams/{}/members/{}", "GET teams/{}/projects", "PUT teams/{}/projects/{}", "DELETE teams/{}/projects/{}", "GET teams/{}/assignments", "PUT teams/{}/assignments", "DELETE teams/{}/assignments", "POST projects", "PATCH projects/{}", "GET projects/{}/members", "PUT projects/{}/members/{}", "DELETE projects/{}/members/{}", "GET projects/{}/remotes", "POST projects/{}/remotes", "GET projects/{}/depends", "PUT projects/{}/depends/{}", "DELETE projects/{}/depends/{}", "PUT projects/{}/depends/teams/{}", "DELETE projects/{}/depends/teams/{}", "GET grants", "POST grants", "DELETE grants"}
+// BuiltinSecretRoutes: the built-in routes that may receive a secret (the upstream's token, in the body of its add).
+var BuiltinSecretRoutes = []string{"PUT upstreams/{}"}
+
+// BuiltinConfirmRoutes: the built-in routes whose actions must carry a confirmation: the sends to an upstream and its removal.
+var BuiltinConfirmRoutes = []string{"POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}"}
+
+var BuiltinRoutes = []string{"GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices", "GET kb/submissions", "GET kb/submissions/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject", "GET kb/notes", "GET kb/notes/{}", "GET kb/faq", "GET projects", "GET teams", "POST teams", "PATCH teams/{}", "GET teams/{}/members", "PUT teams/{}/members/{}", "DELETE teams/{}/members/{}", "GET teams/{}/projects", "PUT teams/{}/projects/{}", "DELETE teams/{}/projects/{}", "GET teams/{}/assignments", "PUT teams/{}/assignments", "DELETE teams/{}/assignments", "POST projects", "PATCH projects/{}", "GET projects/{}/members", "PUT projects/{}/members/{}", "DELETE projects/{}/members/{}", "GET projects/{}/remotes", "POST projects/{}/remotes", "GET projects/{}/depends", "PUT projects/{}/depends/{}", "DELETE projects/{}/depends/{}", "PUT projects/{}/depends/teams/{}", "DELETE projects/{}/depends/teams/{}", "GET grants", "POST grants", "DELETE grants", "GET upstreams", "PUT upstreams/{}", "DELETE upstreams/{}", "GET upstreams/{}/probe", "PUT upstreams/{}/links/{}", "DELETE upstreams/{}/links/{}", "POST upstream-push"}
 
 // panelSymbols: the names a renderer maps to its icons.
 var panelSymbols = []string{"person.2", "person.3", "folder", "book", "tray", "gearshape", "doc.text", "key", "list.bullet"}
@@ -63,10 +75,10 @@ var panelSymbols = []string{"person.2", "person.3", "folder", "book", "tray", "g
 var builtinStringFiles embed.FS
 
 // builtinPanelOrder: the order of the built-in panels in GET /panels and so in the sidebar.
-var builtinPanelOrder = []string{"builtin.users.json", "builtin.teams.json", "builtin.kb.json"}
+var builtinPanelOrder = []string{"builtin.users.json", "builtin.teams.json", "builtin.kb.json", "builtin.upstreams.json"}
 
 func builtinProvider() PanelProvider {
-	p := PanelProvider{ID: "builtin", Routes: BuiltinRoutes, Strings: map[string]map[string]string{}}
+	p := PanelProvider{ID: "builtin", Routes: BuiltinRoutes, SecretRoutes: BuiltinSecretRoutes, ConfirmRoutes: BuiltinConfirmRoutes, Strings: map[string]map[string]string{}}
 	sents, _ := builtinStringFiles.ReadDir("panels/strings")
 	for _, e := range sents {
 		var t map[string]string
@@ -187,6 +199,15 @@ type pAction struct {
 	When        *pWhen              `json:"when"`
 	Confirm     *pConfirm           `json:"confirm"`
 	Destructive bool                `json:"destructive"`
+	// Result: what the action's answer is shown as after it succeeded: a list of rows (Items names the array in the answer) or, without
+	// Items, the answer itself as one row. Read-only; the values are plain text like every other.
+	Result *pResult `json:"result"`
+}
+
+type pResult struct {
+	Items   string    `json:"items"`
+	Title   string    `json:"title"`
+	Columns []pColumn `json:"columns"`
 }
 
 type pBodyVal struct {
@@ -365,6 +386,7 @@ func (c *panelCheck) panel() error {
 type tpl struct {
 	row, parent bool
 	fields      map[string]bool
+	secret      map[string]bool // fields of type secret: their value goes into the body only, never into a path or a query
 }
 
 func (c *panelCheck) sections(where string, ss []pSection, nested bool) error {
@@ -572,7 +594,7 @@ func (c *panelCheck) action(a pAction, t tpl) error {
 	if len(a.Fields) > maxFields {
 		return fmt.Errorf("at most %d fields", maxFields)
 	}
-	t.fields = map[string]bool{}
+	t.fields, t.secret = map[string]bool{}, map[string]bool{}
 	for _, f := range a.Fields {
 		if err := c.field(f, t); err != nil {
 			return fmt.Errorf("field %q: %w", f.ID, err)
@@ -581,12 +603,50 @@ func (c *panelCheck) action(a pAction, t tpl) error {
 			return fmt.Errorf("field %q repeated", f.ID)
 		}
 		t.fields[f.ID] = true
+		if f.Type == "secret" {
+			t.secret[f.ID] = true
+		}
 	}
 	if err := c.path("path", a.Method, a.Path, t); err != nil {
 		return err
 	}
 	if err := query(a.Query, t); err != nil {
 		return err
+	}
+	if len(t.secret) > 0 {
+		// A secret goes only to a route its provider registered as taking one, and only in the body.
+		if route := c.routeKey(a.Method, a.Path); !slices.Contains(c.p.SecretRoutes, route) {
+			return fmt.Errorf("a secret field needs a route that the provider registered as taking a secret: %s is not", route)
+		}
+		used := map[string]bool{}
+		for _, b := range a.Body {
+			if b.Field != nil && t.secret[*b.Field] {
+				used[*b.Field] = true
+			}
+		}
+		for id := range t.secret {
+			if !used[id] {
+				return fmt.Errorf("secret field %q is not sent in the body", id)
+			}
+		}
+	}
+	if r := a.Result; r != nil {
+		if r.Items != "" && !reName.MatchString(r.Items) {
+			return fmt.Errorf("result: bad items name")
+		}
+		if r.Title != "" {
+			if err := c.key("result.title", r.Title, maxLabel); err != nil {
+				return err
+			}
+		}
+		if len(r.Columns) == 0 || len(r.Columns) > maxColumns {
+			return fmt.Errorf("result: columns 1 to %d", maxColumns)
+		}
+		for _, col := range r.Columns {
+			if err := c.column(col); err != nil {
+				return fmt.Errorf("result column %q: %w", col.Field, err)
+			}
+		}
 	}
 	if len(a.Body) > maxBodyKeys || (a.Method == "DELETE" && len(a.Body) > 0) {
 		return fmt.Errorf("body: at most %d keys, none on DELETE", maxBodyKeys)
@@ -623,6 +683,9 @@ func (c *panelCheck) action(a pAction, t tpl) error {
 			return fmt.Errorf("a destructive action needs a confirmation")
 		}
 	}
+	if route := c.routeKey(a.Method, a.Path); a.Confirm == nil && slices.Contains(c.p.ConfirmRoutes, route) {
+		return fmt.Errorf("an action on %s needs a confirmation", route)
+	}
 	if cf := a.Confirm; cf != nil {
 		if err := firstErr(c.key("confirm.title", cf.Title, maxLabel), c.key("confirm.message", cf.Message, maxMessage), c.key("confirm.button", cf.Button, maxLabel)); err != nil {
 			return err
@@ -640,6 +703,9 @@ func (c *panelCheck) field(f pField, t tpl) error {
 	}
 	if f.MaxLength < 0 || f.MaxLength > maxFieldLength {
 		return fmt.Errorf("maxLength 0 to %d", maxFieldLength)
+	}
+	if f.Type == "secret" && f.Default != nil {
+		return fmt.Errorf("a secret has no default")
 	}
 	if f.Default != nil {
 		if (f.Default.Const != nil) == (f.Default.Row != nil) {
@@ -659,8 +725,8 @@ func (c *panelCheck) field(f pField, t tpl) error {
 		return nil
 	}
 	switch f.Type {
-	case "text", "toggle":
-		return other(f.Type == "text", false, false)
+	case "text", "toggle", "secret":
+		return other(f.Type != "toggle", false, false)
 	case "choice":
 		if err := other(false, true, false); err != nil {
 			return err
@@ -689,6 +755,17 @@ func (c *panelCheck) field(f pField, t tpl) error {
 	return fmt.Errorf("unknown field type %q", f.Type)
 }
 
+// routeKey: the registered pattern a path template resolves to, "METHOD users/{}" (placeholders as {}).
+func (c *panelCheck) routeKey(method, path string) string {
+	segs := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for i, s := range segs {
+		if rePlace.MatchString(s) {
+			segs[i] = "{}"
+		}
+	}
+	return method + " " + strings.Join(segs, "/")
+}
+
 // path checks a path template and that it resolves to a route the provider registered.
 func (c *panelCheck) path(where, method, path string, t tpl) error {
 	if len(path) > maxPathBytes || !strings.HasPrefix(path, "/") || strings.HasSuffix(path, "/") {
@@ -698,7 +775,7 @@ func (c *panelCheck) path(where, method, path string, t tpl) error {
 	pat := make([]string, len(segs))
 	for i, s := range segs {
 		if m := rePlace.FindStringSubmatch(s); m != nil {
-			ok := (m[1] == "row" && t.row) || (m[1] == "parent" && t.parent) || (m[1] == "field" && t.fields[m[2]])
+			ok := (m[1] == "row" && t.row) || (m[1] == "parent" && t.parent) || (m[1] == "field" && t.fields[m[2]] && !t.secret[m[2]])
 			if !ok {
 				return fmt.Errorf("%s: placeholder %s is not available here", where, s)
 			}
@@ -732,7 +809,7 @@ func query(q string, t tpl) error {
 			return fmt.Errorf("query: %q is not name=value", p)
 		}
 		if pm := rePlace.FindStringSubmatch(m[2]); pm != nil {
-			if !((pm[1] == "row" && t.row) || (pm[1] == "parent" && t.parent) || (pm[1] == "field" && t.fields[pm[2]])) {
+			if !((pm[1] == "row" && t.row) || (pm[1] == "parent" && t.parent) || (pm[1] == "field" && t.fields[pm[2]] && !t.secret[pm[2]])) {
 				return fmt.Errorf("query: placeholder %s is not available here", m[2])
 			}
 		} else if !reQueryLit.MatchString(m[2]) {

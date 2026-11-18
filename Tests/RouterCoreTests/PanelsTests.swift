@@ -68,6 +68,8 @@ private let userAnswers: [(String, Int, String)] = [
     @Test(.enabled(if: haveFixtures)) func registryMatchesGo() throws {
         let reg = try object("panels-registry.json")
         #expect(reg["builtin"] as? [String] == PanelRoutes.builtin)
+        #expect(reg["builtinSecret"] as? [String] == PanelRoutes.builtinSecret)
+        #expect(reg["builtinConfirm"] as? [String] == PanelRoutes.builtinConfirm)
     }
 
     @Test(.enabled(if: haveFixtures)) func builtinDescriptionDecodesAndValidates() throws {
@@ -81,7 +83,7 @@ private let userAnswers: [(String, Int, String)] = [
 
     @Test(.enabled(if: haveFixtures)) func format1FixtureCoversTheWholeFormat() throws {
         let f = try object("panels-format1.json")
-        guard case .ready(let d) = PanelValidator.parse(data(f["panel"]!), provider: f["provider"] as! String, routes: f["routes"] as? [String]) else { throw Err.bad }
+        guard case .ready(let d) = PanelValidator.parse(data(f["panel"]!), provider: f["provider"] as! String, routes: f["routes"] as? [String], secretRoutes: f["secretRoutes"] as? [String]) else { throw Err.bad }
         let orders = d.sections[1]
         #expect(d.sections[0].kind == "text" && orders.kind == "list")
         #expect(orders.columns!.map(\.kind) == ["text", "multiline", "bool", "enum", "ref", "time"])
@@ -90,7 +92,7 @@ private let userAnswers: [(String, Int, String)] = [
         #expect(orders.actions![0].fields!.map(\.type) == ["text", "ref", "choice", "toggle"])
         // a provider that registered fewer routes cannot show it
         let fewer = Array((f["routes"] as! [String]).dropFirst())
-        if case .ready = PanelValidator.parse(data(f["panel"]!), provider: "acme", routes: fewer) { Issue.record("accepted with a missing route") }
+        if case .ready = PanelValidator.parse(data(f["panel"]!), provider: "acme", routes: fewer, secretRoutes: f["secretRoutes"] as? [String]) { Issue.record("accepted with a missing route") }
     }
 
     @Test(.enabled(if: haveFixtures)) func hostileTableIsRefused() throws {
@@ -103,7 +105,7 @@ private let userAnswers: [(String, Int, String)] = [
             for ptr in (c["remove"] as? [String] ?? []) { doc = edit(doc, ptr, remove: true) { $0 } }
             for (ptr, n) in (c["grow"] as? [String: Int] ?? [:]) { doc = edit(doc, ptr) { var a = $0 as! [Any]; while a.count < n { a.append(a[0]) }; return a } }
             for (ptr, n) in (c["pad"] as? [String: Int] ?? [:]) { doc = edit(doc, ptr) { _ in String(repeating: "x", count: n) } }
-            let parsed = PanelValidator.parse(data(doc), provider: "acme", routes: f["routes"] as? [String])
+            let parsed = PanelValidator.parse(data(doc), provider: "acme", routes: f["routes"] as? [String], secretRoutes: f["secretRoutes"] as? [String], confirmRoutes: c["confirmRoutes"] as? [String] ?? [])
             let name = c["name"] as! String
             switch c["swift"] as! String {
             case "refuse":
@@ -297,7 +299,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
 
     @Test(.enabled(if: haveFixtures)) func pagingAndDetailPagesOfTheFormat1Fixture() async throws {
         let f = try object("panels-format1.json")
-        guard case .ready(let d) = PanelValidator.parse(data(f["panel"]!), provider: "acme", routes: f["routes"] as? [String]) else { throw Err.bad }
+        guard case .ready(let d) = PanelValidator.parse(data(f["panel"]!), provider: "acme", routes: f["routes"] as? [String], secretRoutes: f["secretRoutes"] as? [String]) else { throw Err.bad }
         let tabs = try JSONSerialization.jsonObject(with: fixture("panels-format1-strings.json")) as! [String: [String: String]]
         let fake = Fake()
         await fake.set("GET /plugins/acme/items", 200, #"{"items":[{"sku":"s1","title":"Shirt"}]}"#)
@@ -364,7 +366,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
 
     @Test(.enabled(if: haveFixtures)) func theGoAnswerLoads() async throws {
         let c = await catalog(200, String(decoding: try fixture("panels.json"), as: UTF8.self))
-        #expect(c.error == nil && c.entries.map(\.id) == ["builtin.users", "builtin.teams", "builtin.kb"])  // the order of the answer
+        #expect(c.error == nil && c.entries.map(\.id) == ["builtin.users", "builtin.teams", "builtin.kb", "builtin.upstreams"])  // the order of the answer
         let usersEntry = c.entries[0]
         #expect(usersEntry.title(c.strings) == "Users and devices" && usersEntry.sidebarSymbol == "person.2" && c.strings.locale == "C")
         #expect(c.entries[2].title(c.strings) == "Knowledge base" && c.entries[2].sidebarSymbol == "book" && c.entries[1].title(c.strings) == "Teams and projects")
@@ -537,7 +539,7 @@ private func edit(_ doc: Any, _ ptr: String, remove: Bool = false, _ f: (Any) ->
 
     @Test(.enabled(if: haveFixtures)) func aPagingCursorIsAQueryValueAndAnErrorWhenItCannotBeSent() async throws {
         let f = try object("panels-format1.json")
-        guard case .ready(let d) = PanelValidator.parse(data(f["panel"]!), provider: "acme", routes: f["routes"] as? [String]) else { throw Err.bad }
+        guard case .ready(let d) = PanelValidator.parse(data(f["panel"]!), provider: "acme", routes: f["routes"] as? [String], secretRoutes: f["secretRoutes"] as? [String]) else { throw Err.bad }
         let tabs = try JSONSerialization.jsonObject(with: fixture("panels-format1-strings.json")) as! [String: [String: String]]
         let routes = f["routes"] as! [String]
         let orders = d.sections[1]
@@ -604,7 +606,8 @@ private func panelKeys(_ d: PanelDescription) -> Set<String> {
             for a in (x.actions ?? []) + (x.rowActions ?? []) {
                 keys.insert(a.label)
                 if let c = a.confirm { keys.formUnion([c.title, c.message, c.button]) }
-                for f in a.fields ?? [] { keys.insert(f.label) }
+                for f in a.fields ?? [] { keys.insert(f.label); keys.formUnion((f.options ?? []).map(\.label)) }
+                if let r = a.result { if let t = r.title { keys.insert(t) }; for c in r.columns { keys.formUnion([c.label, c.yes, c.no].compactMap { $0 } + (c.values ?? [:]).values) } }
             }
             walk(x.detail?.sections ?? [])
         }
@@ -1040,6 +1043,103 @@ private let teamsAnswers: [(String, Int, String)] = [
     }
 }
 
+private func upstreamsPanel() throws -> PanelDescription {
+    guard case .ready(let d) = PanelValidator.parse(data(try description("builtin.upstreams")), provider: "builtin") else { throw Err.bad }
+    return d
+}
+
+private let upstreamToken = "tok-1234#key-5678"
+private let upstreamAnswers: [(String, Int, String)] = [
+    ("GET /upstreams", 200, #"{"upstreams":[{"name":"hub","address":"hub.example","device":"DEV"}],"links":[{"id":"project-1-hub","place":"project","label":"acme-web","upstream":"hub","linkId":1,"projectId":1,"teamId":0,"team":false,"classesText":"structure, data","pending":2,"total":5,"lastError":""}]}"#),
+    ("GET /projects", 200, #"{"projects":[{"id":1,"name":"Acme Web","archived":false},{"id":2,"name":"Old","archived":true}]}"#),
+    ("GET /teams", 200, #"{"teams":[{"id":4,"name":"web","archived":false}]}"#),
+    ("GET /upstreams/hub/probe", 200, #"{"name":"hub","address":"hub.example","device":"DEV","state":"waiting","probe":"waiting for approval on the upstream"}"#),
+]
+
+@MainActor @Suite struct PanelUpstreamTests {
+    private func model(_ fake: Fake) async throws -> PanelModel {
+        for (k, st, b) in upstreamAnswers { await fake.set(k, st, b) }
+        let m = PanelModel(panel: try upstreamsPanel(), strings: try strings("C"), routes: PanelRoutes.builtin, send: { await fake.handle($0) })
+        await m.load()
+        return m
+    }
+
+    @Test(.enabled(if: haveFixtures)) func everyKeyHasATextAndTheRegistryMarksTheSecretRoute() throws {
+        let d = try upstreamsPanel()
+        for loc in ["C", "sl_SI"] {
+            let st = try strings(loc)
+            let keys = panelKeys(d)
+            #expect(keys.count > 60)
+            for k in keys { #expect(st.table[k] != nil, "\(loc): no text for \(k)") }
+        }
+        #expect(PanelRoutes.builtinSecret == ["PUT upstreams/{}"] && PanelRoutes.builtin.contains("PUT upstreams/{}"))
+        // an action on a route that needs a confirmation has one: without its confirm the panel is refused
+        #expect(PanelRoutes.builtinConfirm == ["POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}"])
+        let bare = String(decoding: data(try description("builtin.upstreams")), as: UTF8.self).replacingOccurrences(of: "\"confirm\":", with: "\"confirmx\":")
+        if case .ready = PanelValidator.parse(Data(bare.utf8), provider: "builtin") { Issue.record("accepted without any confirm") }
+        // without a registered secret route the panel is refused
+        if case .ready = PanelValidator.parse(data(try description("builtin.upstreams")), provider: "builtin", secretRoutes: []) { Issue.record("accepted without a secret route") }
+    }
+
+    @Test(.enabled(if: haveFixtures)) func theSecretStaysOutOfStateAndOutOfErrors() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let up = m.panel.sections[1], add = up.actions![0]
+        let values: [String: PanelJSON] = ["name": .string("hub"), "address": .string("hub.example:8765"), "token": .string(upstreamToken), "deviceName": .string("")]
+        let req = try m.request(add, values: values).get()
+        #expect(req.path == "/upstreams/hub" && req.query.isEmpty && String(decoding: req.body, as: UTF8.self).contains(upstreamToken))
+        #expect(m.scrubbed(add, values)["token"] == nil && m.scrubbed(add, values)["name"] == .string("hub"))
+        #expect(m.problems(add, values: ["name": .string("hub"), "address": .string("a"), "token": .string("  ")]) == ["token": .required])
+        // a server that echoes its input: neither the value nor a part of the token line is shown; a plain message stays; 5xx is generic
+        for (status, message, want) in [(400, "bad token \(upstreamToken)", PanelError.http(400)), (400, "unknown key key-5678", .http(400)), (403, "tok-1234 refused", .http(403)),
+                                        (400, "an upstream named hub exists", .server("an upstream named hub exists")), (500, "internal error \(upstreamToken)", .serverFault(500))] {
+            await fake.set("PUT /upstreams/hub", status, #"{"error":{"message":"\#(message)"}}"#)
+            #expect(await !m.perform(add, section: "upstreams", values: values, confirmed: true))
+            #expect(m.actionError[PanelListKey(path: "upstreams", parent: "")] == want, "\(message)")
+        }
+        // the server trims the token line: an echo of the trimmed value (no "#" in it) is scrubbed too
+        await fake.set("PUT /upstreams/hub", 400, #"{"error":{"message":"bad token plainsecret99"}}"#)
+        var spaced = values; spaced["token"] = .string("  plainsecret99\n")
+        #expect(await !m.perform(add, section: "upstreams", values: spaced, confirmed: true))
+        #expect(m.actionError[PanelListKey(path: "upstreams", parent: "")] == .http(400))
+        // success: the answer is shown (the device ID to approve, the probe text) until the view closes it
+        await fake.set("PUT /upstreams/hub", 200, #"{"name":"hub","address":"hub.example:8765","device":"DEVICE-ID","probe":"waiting for approval"}"#)
+        #expect(await m.perform(add, section: "upstreams", values: values, confirmed: true))
+        let r = m.results[PanelListKey(path: "upstreams", parent: "")]
+        #expect(r?.rows.first?.values["device"] == .string("DEVICE-ID") && r?.columns.count == 4)
+        m.closeResult(section: "upstreams")
+        #expect(m.results.isEmpty)
+    }
+
+    @Test(.enabled(if: haveFixtures)) func theProbeIsReadWhenTheDetailOpensAndPickersSkipArchived() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let up = m.panel.sections[1]
+        #expect(m.pickerOptions("projects").map(\.id) == ["1"])
+        let hub = m.data("upstreams").rows[0]
+        await fake.clear()
+        await m.openDetail(up, row: hub)
+        #expect(await fake.log == ["GET /upstreams/hub/probe"])
+        let state = up.detail!.sections[0].columns![0]
+        #expect(m.cell(state, PanelRow(id: "", values: m.record("upstreams/connection", parent: hub).values!)) == "Waiting for approval there")
+    }
+
+    @Test(.enabled(if: haveFixtures)) func pushAsksFirstAndSaysWhatLeaves() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let links = m.panel.sections[2], link = m.data("links").rows[0]
+        #expect(m.confirmation(links.rowActions![0], row: link)?.title == "Run a dry run for acme-web on hub?")  // every action on upstream-push asks
+        let c = m.confirmation(links.rowActions![1], row: link)
+        #expect(c?.title == "Push acme-web to hub?" && c?.destructive == false && c?.message.contains("title, class, kind and text") == true && c?.message.contains("No note ids") == true)
+        await fake.set("POST /upstream-push", 200, #"{"pushes":[{"label":"acme-web","upstream":"hub","created":1,"skipped":0,"replaced":0,"refused":1,"dryRun":true,"more":false,"linesText":"create <img src=x onerror=alert(1)>\nrefused not allowed"}]}"#)
+        #expect(await m.perform(links.rowActions![0], section: "links", row: link, confirmed: true))
+        let rep = m.results[PanelListKey(path: "links", parent: "")]
+        #expect(rep?.rows.count == 1 && rep?.rows[0].values["linesText"]?.scalarText?.contains("<img src=x onerror=alert(1)>") == true)
+        let lines = rep!.columns.last!
+        #expect(m.cell(lines, rep!.rows[0]).split(separator: "\n").count == 2)
+    }
+}
+
 // MARK: the renderer's source (the app target cannot be unit-tested, so its rules are checked in the text)
 
 /// The code of a source text: comments cut (a `//` inside a string literal stays), then every rule below applied to EVERY
@@ -1071,7 +1171,7 @@ func rendererViolations(_ source: String) -> [String] {
     for rest in args(#"\bText(?:\.init)?\("#) where !(rest.hasPrefix("verbatim:") || rest.hasPrefix("String(localized: \"") || (literal(rest) && rest.range(of: #"^"[^"\\]*"\)"#, options: .regularExpression) != nil)) {
         bad.append("Text(" + rest)
     }
-    let titled = #"(?:\bButton|\bToggle|\bTextField|\bPicker|\bLabeledContent|\bMenu|\bDisclosureGroup|\bSection|\bLabel|\bAlert|\.navigationTitle|\.navigationSubtitle|\.help|\.alert|\.confirmationDialog|\.accessibilityLabel|\.accessibilityHint|\.accessibilityValue|\.badge)(?:\.init)?\("#
+    let titled = #"(?:\bButton|\bToggle|\bSecureField|\bTextField|\bPicker|\bLabeledContent|\bMenu|\bDisclosureGroup|\bSection|\bLabel|\bAlert|\.navigationTitle|\.navigationSubtitle|\.help|\.alert|\.confirmationDialog|\.accessibilityLabel|\.accessibilityHint|\.accessibilityValue|\.badge)(?:\.init)?\("#
     for rest in args(titled) {
         let labels = ["role:", "action:", "isOn:", "selection:", "text:", "Text(verbatim:", "String(localized: \""]
         if !(labels.contains { rest.hasPrefix($0) } || literal(rest)) { bad.append("title " + rest) }

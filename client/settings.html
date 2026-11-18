@@ -206,7 +206,7 @@ const S = {
   pPart:["This part of the panel cannot be shown","Tega dela plošče ni mogoče prikazati"], pNotSent:["The request was not sent","Zahteve nismo poslali"],
   pShort:["The text is shortened here.","Besedilo je tukaj skrajšano."], pRequired:["Required","Obvezno"], pTooLong:["At most %s bytes","Največ %s bajtov"],
   pNone:["None","Nobena"], pOk:["OK","V redu"], cancel:["Cancel","Prekliči"], pLoading:["Loading…","Nalaganje …"], pOpen:["Open","Odpri"], pActions:["Actions…","Dejanja …"],
-  pMore:["Load More","Naloži več"], pBack:["Back","Nazaj"], pPanels:["Panels","Plošče"], pOffline:["The gateway cannot be reached.","Gateway ni dosegljiv."],
+  pMore:["Load More","Naloži več"], pBack:["Back","Nazaj"], pPanels:["Panels","Plošče"], pDone:["Done","Končano"], pOffline:["The gateway cannot be reached.","Gateway ni dosegljiv."],
   usageError:["Could not load usage: %s","Porabe ni mogoče naložiti: %s"],
   unknownCost:["%s requests without a known cost","%s zahtev brez znanega stroška"],
   failedHint:["Summed agent minutes are concurrent work time, not clock time. Only requests that ended in an error count.","Seštete minute agentov so čas dela, ki teče hkrati, ne ura na zidu. Štejejo le zahteve, ki so se končale z napako."],
@@ -817,14 +817,59 @@ function usagePane() {
 const PL = {multiline: 20000, bytes: 65536, sections: 12, columns: 10, actions: 12, fields: 10, label: 120, message: 600, refs: 5, refEntries: 1000,
   options: 20, bodyKeys: 10, queryParams: 8, maxLength: 4096, filter: 5};
 const PANEL_ROUTES = {builtin: [
-  "GET users", "POST users", "PATCH users/{}", "GET bindings", "PUT bindings/{}", "DELETE bindings/{}", "GET devices",
-  "GET kb/submissions", "GET kb/submissions/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject",
-  "GET kb/notes", "GET kb/notes/{}", "GET kb/faq", "GET projects", "GET teams",
-  "POST teams", "PATCH teams/{}", "GET teams/{}/members", "PUT teams/{}/members/{}", "DELETE teams/{}/members/{}",
-  "GET teams/{}/projects", "PUT teams/{}/projects/{}", "DELETE teams/{}/projects/{}", "GET teams/{}/assignments",
-  "PUT teams/{}/assignments", "DELETE teams/{}/assignments", "POST projects", "PATCH projects/{}", "GET projects/{}/members",
-  "PUT projects/{}/members/{}", "DELETE projects/{}/members/{}", "GET projects/{}/remotes", "POST projects/{}/remotes",
-  "GET projects/{}/depends", "PUT projects/{}/depends/{}", "DELETE projects/{}/depends/{}", "PUT projects/{}/depends/teams/{}", "DELETE projects/{}/depends/teams/{}", "GET grants", "POST grants", "DELETE grants"]};
+  "GET users",
+  "POST users",
+  "PATCH users/{}",
+  "GET bindings",
+  "PUT bindings/{}",
+  "DELETE bindings/{}",
+  "GET devices",
+  "GET kb/submissions",
+  "GET kb/submissions/{}",
+  "POST kb/submissions/{}/accept",
+  "POST kb/submissions/{}/reject",
+  "GET kb/notes",
+  "GET kb/notes/{}",
+  "GET kb/faq",
+  "GET projects",
+  "GET teams",
+  "POST teams",
+  "PATCH teams/{}",
+  "GET teams/{}/members",
+  "PUT teams/{}/members/{}",
+  "DELETE teams/{}/members/{}",
+  "GET teams/{}/projects",
+  "PUT teams/{}/projects/{}",
+  "DELETE teams/{}/projects/{}",
+  "GET teams/{}/assignments",
+  "PUT teams/{}/assignments",
+  "DELETE teams/{}/assignments",
+  "POST projects",
+  "PATCH projects/{}",
+  "GET projects/{}/members",
+  "PUT projects/{}/members/{}",
+  "DELETE projects/{}/members/{}",
+  "GET projects/{}/remotes",
+  "POST projects/{}/remotes",
+  "GET projects/{}/depends",
+  "PUT projects/{}/depends/{}",
+  "DELETE projects/{}/depends/{}",
+  "PUT projects/{}/depends/teams/{}",
+  "DELETE projects/{}/depends/teams/{}",
+  "GET grants",
+  "POST grants",
+  "DELETE grants",
+  "GET upstreams",
+  "PUT upstreams/{}",
+  "DELETE upstreams/{}",
+  "GET upstreams/{}/probe",
+  "PUT upstreams/{}/links/{}",
+  "DELETE upstreams/{}/links/{}",
+  "POST upstream-push"]};
+// The routes that may receive the value of a secret field (in the body); a secret field in any other route is refused.
+const PANEL_SECRET_ROUTES = {builtin: ["PUT upstreams/{}"]};
+// The routes whose every action must carry a confirm (the sends to an upstream and its removal); an action on one without it is refused.
+const PANEL_CONFIRM_ROUTES = {builtin: ["POST upstream-push", "PUT upstreams/{}", "DELETE upstreams/{}", "DELETE upstreams/{}/links/{}"]};
 const PANEL_SYMBOLS = ["person.2", "person.3", "folder", "book", "tray", "gearshape", "doc.text", "key", "list.bullet"];
 class PanelRefusal extends Error {}
 const prefuse = m => { throw new PanelRefusal(m); };
@@ -883,7 +928,8 @@ const dAction = (o, w) => (o = dObj(o, w), {id: dStr(o.id, w), label: dStr(o.lab
   body: opt(o, "body", (v, x) => dMap(v, x, (b, y) => (b = dObj(b, y), {field: opt(b, "field", dStr, y), row: opt(b, "row", dStr, y), const: b.const === null ? undefined : b.const})), w),
   fields: opt(o, "fields", (v, x) => dArr(v, x, dField), w), when: opt(o, "when", dWhen, w),
   confirm: opt(o, "confirm", (v, x) => (v = dObj(v, x), {title: dStr(v.title, x), message: dStr(v.message, x), button: dStr(v.button, x), destructive: opt(v, "destructive", dBool, x)}), w),
-  destructive: opt(o, "destructive", dBool, w)});
+  destructive: opt(o, "destructive", dBool, w),
+  result: opt(o, "result", (v, x) => (v = dObj(v, x), {items: opt(v, "items", dStr, x), title: opt(v, "title", dStr, x), columns: dArr(v.columns, x + ".columns", dColumn)}), w)});
 function dSection(o, w) {
   o = dObj(o, w);
   return {kind: dStr(o.kind, w), id: dStr(o.id, w), title: opt(o, "title", dStr, w), body: opt(o, "body", dStr, w), key: opt(o, "key", dStr, w), empty: opt(o, "empty", dStr, w),
@@ -897,7 +943,7 @@ function dSection(o, w) {
 }
 const pSupportedSection = s => s.kind === "list" || s.kind === "text" || s.kind === "record";
 const pSupportedColumn = c => ["text", "multiline", "bool", "enum", "ref", "time"].includes(c.kind);
-const pSupportedField = f => ["text", "toggle", "choice", "ref"].includes(f.type);
+const pSupportedField = f => ["text", "toggle", "choice", "ref", "secret"].includes(f.type);
 const pSupportedAction = a => (a.fields || []).every(pSupportedField);
 const pNeedsConfirmation = a => a.method === "DELETE" || a.destructive === true || a.confirm !== undefined;
 
@@ -984,6 +1030,7 @@ function pKey(d, name, k) {
     prefuse(name + ": " + (typeof k === "string" ? pCut(k, 60) : "nothing") + " is not a string key of panel " + d.id);
   }
 }
+const pFieldOK = (sc, name) => sc.fields.has(name) && !(sc.secret && sc.secret.has(name));  // a secret is never a placeholder
 function pCheckPath(d, routes, where, method, p, sc) {
   const segs = pTemplateParse(p);
   if (!segs) prefuse(where + ": not a path of whole segments");
@@ -991,7 +1038,7 @@ function pCheckPath(d, routes, where, method, p, sc) {
   for (const s of segs) {
     if (s.literal !== undefined) { pat.push(s.literal); continue; }
     const [kind, name] = s.ref;
-    if (!((kind === "row" && sc.row) || (kind === "parent" && sc.parent) || (kind === "field" && sc.fields.has(name)))) prefuse(where + ": placeholder " + kind + "." + name + " is not available here");
+    if (!((kind === "row" && sc.row) || (kind === "parent" && sc.parent) || (kind === "field" && pFieldOK(sc, name)))) prefuse(where + ": placeholder " + kind + "." + name + " is not available here");
     pat.push("{}");
   }
   if (d.provider !== "builtin" && !p.startsWith("/plugins/" + d.provider + "/")) prefuse(where + ": the routes of provider " + d.provider + " live under /plugins/" + d.provider + "/");
@@ -1007,11 +1054,11 @@ function pCheckQuery(q, sc) {
     const v = p.slice(eq + 1), ph = pPlaceholder(v);
     if (ph) {
       const [kind, name] = ph;
-      if (!((kind === "row" && sc.row) || (kind === "parent" && sc.parent) || (kind === "field" && sc.fields.has(name)))) prefuse("query: placeholder " + v + " is not available here");
+      if (!((kind === "row" && sc.row) || (kind === "parent" && sc.parent) || (kind === "field" && pFieldOK(sc, name)))) prefuse("query: placeholder " + v + " is not available here");
     } else if (!/^[A-Za-z0-9_.-]{0,64}$/.test(v)) prefuse("query: value " + v + " is neither plain nor exactly one placeholder");
   }
 }
-function pValidate(d, routes) {
+function pValidate(d, routes, secretRoutes, confirmRoutes) {
   const key = (name, k) => pKey(d, name, k);
   const column = c => {
     if (!pIsName(c.field)) prefuse("column: bad field " + c.field);
@@ -1034,13 +1081,14 @@ function pValidate(d, routes) {
     key("field label", f.label);
     if (!pSupportedField(f)) return;
     if (f.maxLength !== undefined && !(f.maxLength >= 0 && f.maxLength <= PL.maxLength)) prefuse("field " + f.id + ": maxLength");
+    if (f.type === "secret" && f.default !== undefined) prefuse("field " + f.id + ": a secret has no default");
     if (f.default !== undefined) {
       const hasC = f.default.const !== undefined, hasR = f.default.row !== undefined;
       if (hasC === hasR) prefuse("field " + f.id + ": default needs exactly one of const, row");
       if (hasR && !(sc.row && pIsName(f.default.row))) prefuse("field " + f.id + ": default row");
       if (hasC && !pScalarOK(f.default.const)) prefuse("field " + f.id + ": default const");
     }
-    if (!((f.maxLength === undefined || f.type === "text") && ((f.options !== undefined) === (f.type === "choice")) && ((f.ref !== undefined) === (f.type === "ref")))) prefuse("field " + f.id + ": wrong extra keys");
+    if (!((f.maxLength === undefined || f.type === "text" || f.type === "secret") && ((f.options !== undefined) === (f.type === "choice")) && ((f.ref !== undefined) === (f.type === "ref")))) prefuse("field " + f.id + ": wrong extra keys");
     if (f.type === "choice") {
       if (f.options.length === 0 || f.options.length > PL.options) prefuse("field " + f.id + ": options");
       for (const x of f.options) { if (x.value === "" || pBytes(x.value) > 64) prefuse("field " + f.id + ": option value"); key("option", x.label); }
@@ -1054,10 +1102,22 @@ function pValidate(d, routes) {
     const fields = a.fields || [];
     if (fields.length > PL.fields) prefuse("action " + a.id + ": too many fields");
     if (!pSupportedAction(a)) return;
-    const sc = {row: outer.row, parent: outer.parent, fields: new Set()};
-    for (const f of fields) { field(f, outer); if (sc.fields.has(f.id)) prefuse("action " + a.id + ": field " + f.id + " repeated"); sc.fields.add(f.id); }
+    const sc = {row: outer.row, parent: outer.parent, fields: new Set(), secret: new Set()};
+    for (const f of fields) { field(f, outer); if (sc.fields.has(f.id)) prefuse("action " + a.id + ": field " + f.id + " repeated"); sc.fields.add(f.id); if (f.type === "secret") sc.secret.add(f.id); }
     pCheckPath(d, routes, "action " + a.id + " path", a.method, a.path, sc);
     pCheckQuery(a.query, sc);
+    if (sc.secret.size) {  // a secret goes only to a route its provider registered as taking one, and only in the body
+      const route = pRouteOf(a.method, a.path);
+      if (!secretRoutes.includes(route)) prefuse("action " + a.id + ": a secret field needs a route registered as taking a secret: " + route + " is not");
+      const used = new Set(Object.values(a.body || {}).map(b => b.field).filter(x => x !== undefined));
+      for (const id of sc.secret) if (!used.has(id)) prefuse("action " + a.id + ": secret field " + id + " is not sent in the body");
+    }
+    if (a.result !== undefined) {
+      if (a.result.items !== undefined && !pIsName(a.result.items)) prefuse("action " + a.id + ": result: bad items name");
+      if (a.result.title !== undefined) key("result.title", a.result.title);
+      if (a.result.columns.length === 0 || a.result.columns.length > PL.columns) prefuse("action " + a.id + ": result: columns 1 to " + PL.columns);
+      a.result.columns.forEach(column);
+    }
     const body = a.body || {}, nk = Object.keys(body).length;
     if (nk > PL.bodyKeys || (a.method === "DELETE" && nk > 0)) prefuse("action " + a.id + ": body");
     for (const [k, b] of Object.entries(body)) {
@@ -1069,6 +1129,7 @@ function pValidate(d, routes) {
     }
     if (a.when !== undefined && !(sc.row && pIsName(a.when.field) && pScalarOK(a.when.equals))) prefuse("action " + a.id + ": when");
     if ((a.method === "DELETE" || a.destructive === true) && a.confirm === undefined) prefuse("action " + a.id + ": a destructive action needs a confirmation");
+    if (a.confirm === undefined) { const route = pRouteOf(a.method, a.path); if (route !== null && confirmRoutes.includes(route)) prefuse("action " + a.id + ": an action on " + route + " needs a confirmation"); }
     if (a.confirm !== undefined) { key("confirm.title", a.confirm.title); key("confirm.message", a.confirm.message); key("confirm.button", a.confirm.button); }
   };
   const list = (s, nested) => {
@@ -1137,7 +1198,7 @@ function pValidate(d, routes) {
 }
 // panelParse: {state: "ready", panel} | {state: "needsNewer", format} | {state: "refused", reason}. "provider" is the id the REGISTRY
 // (the answer of GET /panels) names, never the provider field inside the description: that one must equal it.
-function panelParse(raw, provider, routes) {
+function panelParse(raw, provider, routes, secretRoutes, confirmRoutes) {
   try {
     if (!pObj(raw) || !Number.isInteger(raw.format)) return {state: "refused", reason: "not a JSON object with a format"};
     if (raw.format > 1) return {state: "needsNewer", format: raw.format};
@@ -1147,7 +1208,7 @@ function panelParse(raw, provider, routes) {
     if (d.provider !== provider) return {state: "refused", reason: "the description says provider " + d.provider + ", the registry says " + provider};
     const rs = routes || pGet(PANEL_ROUTES, provider);
     if (!rs) return {state: "refused", reason: "provider " + provider + " is not known here"};
-    pValidate(d, rs);
+    pValidate(d, rs, secretRoutes || pGet(PANEL_SECRET_ROUTES, provider) || [], confirmRoutes || pGet(PANEL_CONFIRM_ROUTES, provider) || []);
     return {state: "ready", panel: d};
   } catch (e) {
     return {state: "refused", reason: e instanceof PanelRefusal ? e.message : "internal error: " + pCut(String(e && e.message), 120)};
@@ -1213,7 +1274,7 @@ class PanelModel {
   constructor(panel, strings, routes, send) {
     this.panel = panel; this.strings = strings; this.routes = routes; this.send = send;
     this.refs = Object.create(null); this.refError = null; this.lists = new Map(); this.actionError = new Map(); this.records = new Map(); this.selected = new Map();
-    this.sending = new Set(); this.opened = new Map(); this.loading = false; this.redraw = () => {};
+    this.sending = new Set(); this.opened = new Map(); this.results = new Map(); this.loading = false; this.redraw = () => {};
   }
   text(key) { return panelText(this.strings, key); }
   // The entries a picker offers: the ref's entries without the ones its skip rule leaves out (they still name the values that refer to them).
@@ -1376,10 +1437,10 @@ class PanelModel {
     for (const f of a.fields || []) {
       const v = pGet(values, f.id);
       if (f.required === true) {
-        if (f.type === "text") { if (!(typeof v === "string" && v.trim() !== "")) out[f.id] = {required: true}; }
+        if (f.type === "text" || f.type === "secret") { if (!(typeof v === "string" && v.trim() !== "")) out[f.id] = {required: true}; }
         else if (v === undefined || v === null) out[f.id] = {required: true};
       }
-      if (f.type === "text" && typeof v === "string" && f.maxLength !== undefined && f.maxLength > 0 && pBytes(v) > f.maxLength) out[f.id] = {tooLong: f.maxLength};  // bytes, as the core counts them
+      if ((f.type === "text" || f.type === "secret") && typeof v === "string" && f.maxLength !== undefined && f.maxLength > 0 && pBytes(v) > f.maxLength) out[f.id] = {tooLong: f.maxLength};  // bytes, as the core counts them
     }
     return out;
   }
@@ -1410,19 +1471,40 @@ class PanelModel {
     return {title: fill(a.confirm.title), message: fill(a.confirm.message), button: fill(a.confirm.button),
       destructive: a.method === "DELETE" || a.destructive === true || a.confirm.destructive === true};
   }
-  // Sends an action and reloads the whole panel after success. An action that needs a confirmation is refused unless confirmed.
+  // The form values without the secrets: a secret lives only until its request has been sent, on success AND on failure.
+  scrubbed(a, values) { const out = {...values}; for (const f of a.fields || []) if (f.type === "secret") delete out[f.id]; return out; }
+  // An error text must never echo a secret back: a server message that holds the value (or a part of a token line, split at "#")
+  // is replaced by the plain status.
+  static scrub(e, status, secrets) {
+    if (e.kind !== "server") return e;
+    const parts = secrets.flatMap(x => [x, x.trim()]).flatMap(x => [x, ...x.split("#").filter(p => p.length >= 4)]);  // the server trims the token line: the trimmed value too
+    return parts.some(p => p !== "" && e.message.includes(p)) ? {kind: "http", status} : e;
+  }
+  static resultRows(bodyText, res) {
+    let o; try { o = JSON.parse(bodyText); } catch (e) { return null; }
+    if (!pObj(o)) return null;
+    let rows;
+    if (res.items !== undefined) { if (!pOwn(o, res.items) || !Array.isArray(o[res.items])) return null; rows = o[res.items].filter(pObj).map((v, i) => ({id: String(i), values: v})); }
+    else rows = [{id: "0", values: o}];
+    return {title: res.title, columns: res.columns, rows};
+  }
+  closeResult(path, parent) { this.results.delete(pListKey(path, parent ? parent.id : "")); this.redraw(); }
+  // Sends an action and reloads the whole panel after success. An action that needs a confirmation is refused unless confirmed. The values of
+  // secret fields are used for the request only: no state of the model keeps them and no error text repeats them.
   async perform(a, path, row, parent, values, confirmed) {
     const key = pListKey(path, parent ? parent.id : "");
     if (this.sending.has(key)) return false;
     this.sending.add(key);
     try {
-      this.actionError.delete(key);
+      this.actionError.delete(key); this.results.delete(key);
       if (pNeedsConfirmation(a) && !confirmed) { this.actionError.set(key, {kind: "refused", why: "the action needs a confirmation"}); this.redraw(); return false; }
+      const secrets = (a.fields || []).filter(f => f.type === "secret").map(f => pScalarText(pGet(values || {}, f.id))).filter(x => x !== null);
       const r = this.request(a, row, parent, values);
       if (r.error) { this.actionError.set(key, r.error); this.redraw(); return false; }
       const resp = await this.send(r.request);
       const e = panelError(resp.status, resp.body);
-      if (e) { this.actionError.set(key, e); this.redraw(); return false; }
+      if (e) { this.actionError.set(key, PanelModel.scrub(e, resp.status, secrets)); this.redraw(); return false; }
+      if (a.result !== undefined) { const data = PanelModel.resultRows(resp.body, a.result); if (data) this.results.set(key, data); }
       await this.load();
       return true;
     } finally { this.sending.delete(key); this.redraw(); }
@@ -1487,6 +1569,7 @@ function panelView(model, host) {
     const c = model.confirmation(a, row);
     if (c && !confirm(c.title + "\n\n" + c.message)) return false;  // plain text in the browser's own dialog
     const ok = await model.perform(a, path, row, parent, values, true);
+    for (const x of a.fields || []) if (x.type === "secret") delete values[x.id];  // gone as soon as the request has been sent, on success and on failure
     if (ok) view.form = null;
     render();
     return ok;
@@ -1537,8 +1620,12 @@ function panelView(model, host) {
       const label = pe("span", "label", model.text(fld.label));
       let input;
       if (fld.type === "toggle") input = pswitch(pGet(f.values, fld.id) === true, v => { f.values[fld.id] = v; refresh(); });
-      else if (fld.type === "text") {
-        input = pe("input", "left"); input.type = "text"; input.value = typeof pGet(f.values, fld.id) === "string" ? pGet(f.values, fld.id) : "";
+      else if (fld.type === "text" || fld.type === "secret") {
+        const secret = fld.type === "secret";  // a password field that is never filled in and never shown again
+        input = pe("input", "left"); input.type = secret ? "password" : "text";
+        // a token is never offered to a password manager or the browser's own store; and what is not drawn is not kept
+        if (secret) { input.autocomplete = "one-time-code"; input.dataset["1pIgnore"] = ""; input.dataset.lpignore = "true"; delete f.values[fld.id]; }
+        input.value = !secret && typeof pGet(f.values, fld.id) === "string" ? pGet(f.values, fld.id) : "";
         input.addEventListener("input", () => { f.values[fld.id] = input.value; refresh(); });
         input.addEventListener("keydown", e => keys(e, true));
       } else {
@@ -1568,6 +1655,17 @@ function panelView(model, host) {
     if (acts.length) { const b = pe("div", "buttons"); for (const a of acts) b.append(pbutton(model.text(a.label), () => act(a, path, null, parent))); h.append(b); }
     out.push(h);
     out.push(...form(path, parent));
+    const res = model.results.get(pListKey(path, parent ? parent.id : ""));
+    if (res) {
+      const rg = pe("div", "group");
+      if (res.title !== undefined) rg.append(prow(pe("span", "label", model.text(res.title))));
+      for (const row of res.rows) for (const c of res.columns) {
+        if (c.kind === "multiline" || !pSupportedColumn(c)) rg.append(prow(cellNode(c, row, false)));
+        else rg.append(prow(pe("span", "label", model.text(c.label)), pe("span", "value ptext", model.shown(c, row))));
+      }
+      rg.append(prow(pbutton(t("pDone"), () => model.closeResult(path, parent))));
+      out.push(rg);
+    }
     const g = pe("div", "group");
     if (s.scope) {
       const sel = pe("select"), cur = pScalarText(model.selected.get(pListKey(path, parent ? parent.id : "")) ?? null);

@@ -118,7 +118,7 @@ func TestSettingsSessionReachesThePanels(t *testing.T) {
 			Description struct{ ID string }
 		}
 	}
-	if st != 200 || json.Unmarshal([]byte(body), &panels) != nil || len(panels.Panels) != 3 || panels.Panels[0].Description.ID != "builtin.users" || h.Get("Cache-Control") != "no-store" {
+	if st != 200 || json.Unmarshal([]byte(body), &panels) != nil || len(panels.Panels) != 4 || panels.Panels[0].Description.ID != "builtin.users" || panels.Panels[3].Description.ID != "builtin.upstreams" || h.Get("Cache-Control") != "no-store" {
 		t.Fatalf("GET /panels: %d %s", st, body)
 	}
 	st, body, _ = settingsCall(t, base, host, "GET", adminPrefix+"/panels/strings?lang=sl_SI", session[1], "")

@@ -97,6 +97,17 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   another, with add and remove. Every confirmation says what happens: access that ends, that agent runs which are already
   going are not stopped but can no longer read notes (the next read fails), and what does not change. A team's hidden notes
   segment is never listed as a project.
+- **Upstream gateways** (Mac and the `minigw serve` settings page, after Knowledge base): built from the panel `builtin.upstreams`; see
+  [usage.md → Sending a project's knowledge to another gateway](usage.md#sending-a-projects-knowledge-to-another-gateway).
+  **Upstream gateways:** name, address and the **device ID to approve there**; **Add Upstream…** takes a name, an address, the upstream's
+  Copy Token in a password field (never shown again, cleared as soon as it is sent, never repeated in an error) and an optional device
+  name, then shows the device ID and what the upstream says; **Remove** (asks first: its stored credentials are deleted and its links
+  removed; nothing changes there). **Open** checks the connection when it opens (waiting for approval, allowed but not bound, connected,
+  not reachable, token refused). **Links:** project or team, upstream, name there, classes, how many notes would go, last push and last
+  refusal; **Link Project…**, **Link Team…**, **Dry Run** (writes nothing), **Push Now** (asks first, and says exactly what leaves: title,
+  class, kind and text of each note, one line with an opaque reference and the author's display name, the device name and ID in the
+  connection; no note ids, revisions, paths or usage data), **Unlink** (asks first). The report of a dry run or a push is shown under the
+  list. Nothing is sent automatically. On the Mac the credentials are Keychain items of the app.
 - **Knowledge base** (Mac, last of the panels): built from the panel `builtin.kb`. **Waiting for review:**
   pending submissions of projects and teams (title, project or team, class, kind, author, received); **Accept**, **Reject…**
   (asks first; an optional reason the author sees) and **Open** to read the text, and for a replacement the text of the note it
