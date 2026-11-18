@@ -352,6 +352,7 @@ func (s *Store) GetNote(ctx context.Context, p Principal, project, id int64) (n 
 // lineEndings: CRLF and lone CR line endings as LF, the form every note and submission body is stored in (text from Windows
 // terminals and editors), so that a line ending is never taken for a hidden character.
 func lineEndings(s string) string {
+	s = strings.TrimPrefix(s, "\ufeff") // a byte order mark in front of the text (a paste or a Windows file) is not content
 	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
 }
 

@@ -146,9 +146,10 @@ func (p *pusher) call(method, path string, hdr map[string]string, body []byte) (
 	}
 }
 
-// invisibleRune is THE rule for what a person (or a reviewer reading a screen) cannot see in text that came from somewhere else: controls,
-// format characters (bidi, zero-width, the tag block), line and paragraph separators, variation selectors (also the supplement), the
-// Hangul and combining-grapheme fillers. upText and the mirror's body cleaning both use it; do not copy the list.
+// invisibleRune is the context-free part of THE rule for what a person (or a reviewer reading a screen) cannot see in text that came from
+// somewhere else: controls, format characters (bidi, zero-width, the tag block), line and paragraph separators, variation selectors (also the
+// supplement), the Hangul and combining-grapheme fillers. Do not copy the list; callers that hold a whole text use invisibleAt, which also
+// lets an emoji's own U+FE0F and U+200D through.
 func invisibleRune(r rune) bool {
 	switch {
 	case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029:
@@ -163,14 +164,62 @@ func invisibleRune(r rune) bool {
 	return false
 }
 
+// emojiBase: a character that can be (or begin) an emoji. Go's standard library has no emoji property table and there is no dependency for
+// one, so this is a small range check and DELIBERATELY a superset (it admits plain symbols and arrows too). That is safe: the purpose of the
+// rule is that a reviewer is never shown text that differs from what is stored, and a U+FE0F after a symbol or a U+200D between two
+// pictographs hides no text. Letters and digits are not in it (digits only in the keycap form, see invisibleAt).
+func emojiBase(r rune) bool {
+	switch {
+	case r >= 0x1F000 && r <= 0x1FAFF, r >= 0x2600 && r <= 0x27BF, r >= 0x2190 && r <= 0x21FF, r >= 0x2300 && r <= 0x23FF, r >= 0x2B00 && r <= 0x2BFF:
+		return true
+	}
+	switch r {
+	case 0xA9, 0xAE, 0x203C, 0x2049, 0x2122, 0x2139, 0x3030, 0x303D, 0x3297, 0x3299:
+		return true
+	}
+	return false
+}
+
+// invisibleAt: whether rs[i] is invisible in the text rs. As invisibleRune, except that U+FE0F is visible right after an emoji base (or
+// in a keycap: # * 0-9, FE0F, U+20E3) and U+200D is visible between two emoji (a base, optionally FE0F or a skin-tone modifier, ZWJ, a base).
+// A ZWJ between letters, a lone FE0F after a letter, zero-width spaces, bidi controls and the tag characters (so an emoji TAG sequence such as
+// a subdivision flag) stay invisible.
+func invisibleAt(rs []rune, i int) bool {
+	switch rs[i] {
+	case 0xFE0F:
+		if i == 0 {
+			return true
+		}
+		p := rs[i-1]
+		return !(emojiBase(p) || (p == '#' || p == '*' || p >= '0' && p <= '9') && i+1 < len(rs) && rs[i+1] == 0x20E3)
+	case 0x200D:
+		j := i - 1
+		for j >= 0 && (rs[j] == 0xFE0F || rs[j] >= 0x1F3FB && rs[j] <= 0x1F3FF) {
+			j--
+		}
+		return !(j >= 0 && emojiBase(rs[j]) && i+1 < len(rs) && emojiBase(rs[i+1]))
+	}
+	return invisibleRune(rs[i])
+}
+
+// dropInvisible: s without its invisible characters (invisibleAt), each replaced by repl, or removed if repl is -1; keepWS keeps \n and \t.
+func dropInvisible(s string, repl rune, keepWS bool) string {
+	rs := []rune(s)
+	out := make([]rune, 0, len(rs))
+	for i, r := range rs {
+		switch {
+		case keepWS && (r == '\n' || r == '\t'), !invisibleAt(rs, i):
+			out = append(out, r)
+		case repl >= 0:
+			out = append(out, repl)
+		}
+	}
+	return string(out)
+}
+
 // upText: text that came from the upstream or from a person there, as one printable line of at most n bytes.
 func upText(s string, n int) string {
-	s = strings.Map(func(r rune) rune {
-		if invisibleRune(r) {
-			return ' '
-		}
-		return r
-	}, s)
+	s = dropInvisible(s, ' ', false)
 	s = strings.Join(strings.Fields(s), " ")
 	for len(s) > n {
 		_, w := utf8.DecodeLastRuneInString(s)

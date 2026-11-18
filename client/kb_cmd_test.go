@@ -521,3 +521,14 @@ func TestKBReviewShowsATab(t *testing.T) {
 		t.Fatalf("%q", review)
 	}
 }
+
+// A submit with hidden characters is refused with their place, and the writer sees the whole message; an emoji text goes through.
+func TestKBSubmitHiddenRefusedEmojiAccepted(t *testing.T) {
+	c := newClientFx(t)
+	dir := t.TempDir()
+	_, err := c.run("ana", dir, "one\nab​c\n", "kb", "submit", "fakture", "--key", "h1", "--title", "T", "-")
+	if err == nil || !strings.Contains(err.Error(), "the text has 1 hidden characters (line 2 column 3: U+200B ZERO WIDTH SPACE): remove them and submit again") {
+		t.Fatal(err)
+	}
+	c.must("ana", dir, "⚠️ Pitfall\nbody\n", "kb", "submit", "fakture", "--key", "e1", "--title", "T", "-")
+}

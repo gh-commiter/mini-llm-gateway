@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+- Emoji are visible text in submissions, reviews and pulled notes (`⚠️`, `👨‍💻`, `1️⃣`, flags, skin tones); emoji tag sequences (subdivision flags) stay refused as hidden characters.
+- A submission with hidden characters is refused at once, with their line, column and code point; a leading byte order mark is dropped.
+
 ## 0.7.36
 
 Fixes from a second review of the changes made in 0.7.32.
