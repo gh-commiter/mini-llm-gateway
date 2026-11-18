@@ -171,6 +171,7 @@ only on the gateway computer.
 | `minigw gw upstream unlink <project> <name>` \| `--team <team> <name>` | Remove a link (what was already sent stays there) |
 | `minigw gw upstream status [<project>\|--team <team>]` | Per link: how many notes would go, when it last went, and the last refusal |
 | `minigw gw upstream push [<project>\|--team <team>] [--dry-run]` | Send the published notes as submissions; `--dry-run` only asks the upstream what exists and writes nothing |
+| `minigw gw upstream pull [<project>\|--team <team>] --dry-run` | Ask the upstream which notes of the linked project this gateway's device user could read (counts per source, class and kind); stores nothing; without `--dry-run` it is refused for now |
 | `minigw gw kb rebuild-search` | Rebuild the published-note index (repairs search; grants no search access) |
 | `minigw gw kb review [<project>\|--team <team>]` | Pending submissions of a project (or a team's own notes), including bodies |
 | `minigw gw kb accept <id>` | Publish a pending submission as a note or replacement revision |

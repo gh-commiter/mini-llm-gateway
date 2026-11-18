@@ -42,6 +42,7 @@ public enum UpstreamRequest {
         ("GET", "^/minigw/v1/projects$"),
         ("GET", "^/minigw/v1/teams$"),
         ("GET", "^/minigw/v1/projects/(?:[a-z][a-z0-9-]{1,62}|[0-9]{1,61}[a-z-][a-z0-9-]{0,61})$"),
+        ("GET", "^/minigw/v1/projects/[0-9]{1,18}/kb/manifest$"),  // step C: the list of notes this device may read there (ids, revisions, class, kind)
         ("GET", "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions/[0-9]{1,18}$"),
         ("POST", "^/minigw/v1/projects/[0-9]{1,18}/kb/submissions$"),
         ("GET", "^/minigw/v1/projects/[0-9]{1,18}/notes/[0-9]{1,18}$"),

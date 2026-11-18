@@ -330,6 +330,16 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			return a.errResponse(e)
 		}
 		return resp(200, v)
+	case len(seg) == 3 && seg[1] == "kb" && seg[2] == "manifest" && r.Method == "GET":
+		pid, ok := posID(seg[0])
+		if !ok {
+			return a.errResponse(core.ErrInvalid{What: "project id"})
+		}
+		m, e := st.Manifest(ctx, p, pid)
+		if e != nil {
+			return a.errResponse(e)
+		}
+		return resp(200, m)
 	case len(seg) == 3 && seg[1] == "kb" && seg[2] == "import" && r.Method == "POST":
 		pid, ok := posID(seg[0])
 		if !ok {

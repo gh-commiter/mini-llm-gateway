@@ -15,6 +15,7 @@ extension AdminCommands {
           minigw gw upstream resolve --team <team> <note> --theirs|--ours
           minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
           minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
+          minigw gw upstream pull [<project>|--team <team>] --dry-run   ask the upstream what this gateway could read of the linked project (nothing is stored)
         """
 
     /// Go's readKey on the text it read: the secret must be printable ASCII without spaces (it goes into an HTTP header).
@@ -136,6 +137,19 @@ extension AdminCommands {
                 }
                 targets = next
                 if wait > 0 && !targets.isEmpty { pause(Double(wait)) }
+            }
+        case ("pull", 2...3):
+            if !o.dryRun { throw fail("pull: only --dry-run exists for now (it asks the upstream what could be read and stores nothing)") }
+            var body: [String: Any] = ["dryRun": true]
+            if !team.isEmpty && pos.count == 2 { body["team"] = try teamID(team) }
+            else if team.isEmpty && pos.count == 3 { body["project"] = try projectID(pos[2]) }
+            else if pos.count != 2 { throw usage }
+            for p in try request("POST", "/upstream-pull", body)["pulls"]?.array ?? [] {
+                let d = p.dict
+                say(clean("\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? ""))"))
+                for l in d["lines"]?.array ?? [] { say(clean("  " + (l.string ?? ""))) }
+                if let s = d["stopped"]?.string, !s.isEmpty { say(clean("  stopped: " + s)) }
+                else { say("  dry run: \(d["total"]?.int ?? 0) notes could be read, nothing was stored") }
             }
         default: throw usage
         }

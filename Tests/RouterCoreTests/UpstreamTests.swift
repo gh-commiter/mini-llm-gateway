@@ -250,6 +250,17 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
             #expect(UpstreamRequest.admits(method: "GET", path: ok), Comment(rawValue: ok))
         }
         #expect(UpstreamRequest.admits(method: "POST", path: "/minigw/v1/projects/7/kb/submissions"))
+        // step C: exactly one new GET, the manifest of a numbered project, anchored: no query, no trailing slash or newline, no `..`, no long id, no other method
+        #expect(UpstreamRequest.admits(method: "GET", path: "/minigw/v1/projects/7/kb/manifest"))
+        #expect(UpstreamRequest.admits(method: "GET", path: "/minigw/v1/projects/1099511627777/kb/manifest"))
+        for bad in ["/minigw/v1/projects/7/kb/manifest?x=1", "/minigw/v1/projects/7/kb/manifest/", "/minigw/v1/projects/7/kb/manifest\n", "/minigw/v1/projects/7/../kb/manifest",
+                    "/minigw/v1/projects/1234567890123456789/kb/manifest", "/minigw/v1/projects/7/kb/manifest%2f", "/minigw/v1/projects/7/kb/manifest#x", "/minigw/v1/projects//kb/manifest"] {
+            #expect(!UpstreamRequest.admits(method: "GET", path: bad), Comment(rawValue: bad))
+        }
+        for m in ["POST", "PUT", "DELETE", "PATCH", "HEAD", "get"] { #expect(!UpstreamRequest.admits(method: m, path: "/minigw/v1/projects/7/kb/manifest"), Comment(rawValue: m)) }
+        #expect(UpstreamRequest.check(method: "GET", path: "/minigw/v1/projects/7/kb/manifest", headers: [:], body: nil) == "")
+        #expect(UpstreamRequest.check(method: "GET", path: "/minigw/v1/projects/7/kb/manifest", headers: [:], body: Data("x".utf8)) == nil)
+        #expect(UpstreamRequest.patterns.count == 10)
         // a body on a GET and a header that is not the idempotency key are not part of the set
         #expect(UpstreamRequest.check(method: "GET", path: "/minigw/v1/projects", headers: [:], body: Data("x".utf8)) == nil)
     }

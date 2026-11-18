@@ -5,6 +5,7 @@
 ### New
 - `minigw gw status` prints a `secrets:` line saying where secrets are kept (Windows Credential Manager, the Secret Service, Keychain, platform files, or a file with the reason), and `minigw status` on a client a `Secrets:` line. The admin API's `GET /status` carries it as `secrets`. Nothing moves yet: no secret changed its place, and a credential store that fails now gives an error instead of a quiet fall-back to `gateway-keys.json`.
 - A note edited by someone other than its author now shows who changed it: `minigw note read` prints "by A, last changed by B", `minigw note list` ends such a row with "(edited: B)", the Knowledge base panel has a "Last changed by" column, and the member and admin note answers carry an additive `editor` field (absent when the author last changed it). No schema change; the Markdown export and the upstream push are unchanged.
+- Reading an upstream, step 1 (the hub side only): an upstream gateway now answers `GET /minigw/v1/projects/{id}/kb/manifest` for a bound member with the list of published, non-private notes that member could read there (the project, its team's notes and what it depends on, each by the member's own rights): ids, revisions, class and kind only, at most 5000 entries (`truncated` says more exist), counted against the notes-list rate limit. `minigw gw upstream pull [<project>|--team <team>] --dry-run` asks the upstream for that list and prints, per source, how many notes of which class and kind this gateway could read; it stores nothing. The Mac app admits that one new request for its helper (a GET of exactly that path, no query).
 
 ### Changed
 - Documentation brought up to date with beta 0.7.25: four admin panels (not three) in the README, `usage.md` and `gateway.md`; the Compose admin setup is no longer listed as unsupported in `docker.md`; a new parity table of macOS app, Windows, Linux and Docker per feature group ([parity.md](parity.md); the control-by-control list stays in [windows-parity.md](windows-parity.md)); a one-page [team onboarding guide](team-onboarding.md).
@@ -32,6 +33,7 @@
 - Only the owner reviews submissions; a project admin cannot. With one reviewer this is the main bottleneck of a team.
 - Team notes have no `private` class, and only a project admin of the team writes them; the owner has no write path to them (the owner reviews submissions and exports bundles).
 - Worktree mode runs the top repository's own git clean/smudge filters (intended for LFS): use sync for an untrusted repository.
+- Nothing is pulled yet: `pull` without `--dry-run` is refused, there is no local copy of an upstream's notes and search does not include them. A hub must run this version before a local gateway's dry run can read it (an older hub answers "does not support reading"). The dry run has only been tried through tests.
 
 ## 0.7.25
 

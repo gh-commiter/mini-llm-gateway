@@ -1365,7 +1365,10 @@ owner decides what it may do with the existing means.
    ```
 
    `private` notes go only when the link says `--with-private` (and names the class). `push --dry-run` only asks the upstream what
-   exists and writes nothing, there or here. The author's name of a note travels as text in the submission (a line at its end, with
+   exists and writes nothing, there or here. `minigw gw upstream pull [<project>|--team <team>] --dry-run` shows the other direction:
+   what the upstream's device user could read of the linked project (per source: the project, its team's notes, what it depends on;
+   counts per class and kind, never private, at most 5000 notes). It stores nothing and nothing runs it by itself; a real pull comes
+   in a later version. The author's name of a note travels as text in the submission (a line at its end, with
    the gateway, the local note and its revision); the submission itself belongs to the bound user.
 
 **What leaves the gateway with a push**, exactly: for each note its title, class, kind (finding or faq) and body; one line at the end of the
