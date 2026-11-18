@@ -155,6 +155,7 @@ type LabelSettings struct {
 	Activities     []string `json:"activities"`
 	ActivitiesText string   `json:"activitiesText"` // the same list as one line (the panel's text column and field)
 	LastError      string   `json:"lastError"`
+	Revision       uint64   `json:"revision,omitempty"`
 }
 
 const labelSettingsKey = "labels_settings"
@@ -300,6 +301,7 @@ func (s *Store) SetLabelSettings(ctx context.Context, p LabelSettingsPatch) (Lab
 		if p.Backend != nil || p.Enabled != nil {
 			l.LastError = "" // a new choice starts clean
 		}
+		l.Revision++
 		b, _ := json.Marshal(l)
 		out = l.finish()
 		return "", setMeta(tx, labelSettingsKey, string(b))
@@ -323,9 +325,13 @@ func (s *Store) SetLabelError(ctx context.Context, msg string) error {
 // empty one, so an explicit label always wins. Only a phase from PhaseWords and an activity from the current list are
 // stored (anything else is dropped; "" = unknown). A score is per mille of agreement (1 to 1000). Returns how many events
 // got at least one label. The event must exist and be a root (ErrNotFound otherwise); an event of the gateway's own (any source "internal") is never touched. It grants nothing: a label is data.
-func (s *Store) SetModelLabels(ctx context.Context, id, phase, activity string, phaseScore, activityScore int) (n int64, err error) {
+func (s *Store) SetModelLabels(ctx context.Context, id, phase, activity string, phaseScore, activityScore int, revision ...uint64) (n int64, err error) {
 	phase, activity = SafeWordLabel(phase), SafeWordLabel(activity)
 	err = s.write(ctx, func(tx *sql.Tx) error {
+		settings := loadLabelSettings(tx)
+		if !acceptLabelRevision(settings, revision) {
+			return nil
+		}
 		var parent sql.NullString
 		if e := tx.QueryRow(`SELECT parent_id FROM usage_events WHERE id=?`, id).Scan(&parent); e != nil {
 			if errors.Is(e, sql.ErrNoRows) {
@@ -363,7 +369,7 @@ func (s *Store) SetModelLabels(ctx context.Context, id, phase, activity string, 
 
 // RecordAgreement counts one shadow comparison: the kind (phase or activity), the score bucket of the model's choice ("667",
 // "1000" or "unknown" when it did not decide) and whether it matched the explicit label. Numbers only; kept 400 days.
-func (s *Store) RecordAgreement(ctx context.Context, kind, bucket string, agree bool) error {
+func (s *Store) RecordAgreement(ctx context.Context, kind, bucket string, agree bool, revision ...uint64) error {
 	if (kind != "phase" && kind != "activity") || (bucket != "667" && bucket != "1000" && bucket != "unknown") {
 		return ErrInvalid{"agreement"}
 	}
@@ -373,6 +379,9 @@ func (s *Store) RecordAgreement(ctx context.Context, kind, bucket string, agree 
 	}
 	now := s.now().UTC()
 	return s.write(ctx, func(tx *sql.Tx) error {
+		if !acceptLabelRevision(loadLabelSettings(tx), revision) {
+			return nil
+		}
 		if _, err := tx.Exec(`INSERT INTO label_agreement(day,kind,bucket,agree,n) VALUES(?,?,?,?,1) ON CONFLICT(day,kind,bucket,agree) DO UPDATE SET n=n+1`, now.Format("2006-01-02"), kind, bucket, a); err != nil {
 			return err
 		}
@@ -415,4 +424,10 @@ func (s *Store) Agreement(ctx context.Context, days int) (rows []AgreementRow, e
 		return rs.Err()
 	})
 	return
+}
+
+// Worker acceptance belongs in the same transaction as its labels or counters.
+// Calls without a revision are trusted storage operations used by import/tests.
+func acceptLabelRevision(settings LabelSettings, revision []uint64) bool {
+	return len(revision) == 0 || (settings.Enabled && settings.Revision == revision[0])
 }

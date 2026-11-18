@@ -485,15 +485,25 @@ Nothing runs by default. The Linux worker reports an unavailable backend in `las
 Only root `/v1/messages` events are considered. The first user message, with system reminders stripped, plus the task/branch
 label if present, is capped to 2000 Unicode code points and sent directly to the selected Foundry Local model on this computer.
 No remote provider is used. The classifier never chooses a task. Its input is kept only in memory, never in the database,
-audit trail, logs or error text. Attached Read content is retained as in the on-device chat adapter.
+audit trail, logs or error text. The local model runtime’s own logging and operating-system crash dumps are outside
+the gateway’s control. Attached Read content is retained as in the on-device chat adapter.
 
 Phase and activity each use three samples at temperature 0.7. The default threshold `1.0` needs all three to agree;
 `0.67` accepts two of three (stored as 667 per mille). These scores mean **agreement**, not calibrated confidence or probability.
 An invalid answer casts no vote; insufficient agreement leaves that label empty. Explicit labels always win.
-The background worker starts after dispatch, runs one decision at a time, queues at most eight inputs, and allows 20 seconds
-for both labels together. Queued request bodies also have an 8 MiB total memory budget; an oversized body or a full queue
-skips classification. Parsing runs on the worker, so large inputs cannot hold dispatch. `maxPerHour` defaults to 120
-decisions in a rolling hour; reaching the rate limit also skips work.
+The background worker starts after dispatch, runs one decision at a time, queues at most eight inputs, and allows 20 seconds per attempt
+for both labels together, including discovery and waiting for Foundry to become idle. HTTP requests are enqueued only
+after the upstream HTTP call has been sent and returned response headers (or an error). Enqueue extracts and copies only
+the capped text plus its hash; it never retains the request-body buffer. The eight queued inputs retain at most 2000
+Unicode code points each; admission also keeps the existing 8 MiB budget on their original request sizes.
+An oversized body or a full queue skips classification.
+Foreground Foundry requests have priority from discovery through the end of their response. Classification starts each
+sample, including any model loading, only while this gateway’s Foundry is idle. A foreground arrival cancels the sample
+without waiting for the runtime to stop; the decision is retried at most once, then left unknown. Each attempt counts
+toward `maxPerHour` (120 by default) in a rolling hour; reaching the rate limit skips work. Cancellation is cooperative:
+the gateway cannot force the local runtime to stop inference or model loading immediately. Other applications using that
+runtime are outside this coordination. Settings changes invalidate pending results inside the storage transaction,
+including shadow counters.
 Up to 500 decisions are reused for six hours for the same device, first message, task and settings. Classification failures
 leave the user's call and its labels alone; `lastError` contains only an error class.
 

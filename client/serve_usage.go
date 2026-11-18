@@ -64,7 +64,9 @@ func (s *server) dispatched(r *req) {
 		e.BillingMode = "local"
 	}
 	s.api.EventBegin(*e)
-	s.enqueueLabels(r)
+	if !r.deferLabels {
+		s.enqueueLabels(r)
+	}
 }
 
 // endEvent completes the event of a request that was dispatched; any status then is an outcome (an upstream 4xx is an

@@ -1444,6 +1444,7 @@ type req struct {
 	event        *core.UsageEvent // 0.6.0: the usage event of this model request (serve_usage.go)
 	provider     string           // provider of the model request, for its usage event
 	tokenSource  string           // "estimated" when the agent gives no counts
+	deferLabels  bool             // HTTP handlers enqueue only after Do returns
 	evDispatched bool             // execution or the upstream request began: only then is there an event
 	evStarted    time.Time        // when it began: the event's execution time runs from here, not from admission
 	errKind      string           // why a request that was answered with a success status still failed (usage event)

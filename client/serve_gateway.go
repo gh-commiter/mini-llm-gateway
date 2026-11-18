@@ -626,8 +626,10 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 			r.event.PriceSnapshotID = m.price.ID
 		}
 	}
+	r.deferLabels = true
 	s.dispatched(r) // the upstream request goes out (usage event)
 	resp, err := g.client().Do(up)
+	s.enqueueLabels(r)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 499

@@ -20,7 +20,8 @@ const labelQueueBytes = 8 << 20
 
 type labelJob struct {
 	event      core.UsageEvent
-	body       []byte
+	bytes      int
+	retries    int
 	input      string
 	key        [32]byte
 	generation uint64
@@ -79,8 +80,9 @@ type labelState struct {
 	decisionCancel context.CancelFunc
 	done           chan struct{}
 	closed         bool
-	backend        decide.Backend // tests only; production calls Foundry directly
-	budget         time.Duration  // tests may shorten the deadline
+	backend        decide.Backend             // tests only; production calls Foundry directly
+	flush          func(context.Context) bool // tests may stall the recorder barrier
+	budget         time.Duration              // tests may shorten the deadline
 	skipped        atomic.Uint64
 	failed         atomic.Uint64
 }
@@ -124,7 +126,7 @@ func (l *labelState) stop() {
 	}
 }
 
-// Admission only retains the existing body under a byte budget. Parsing, stripping and hashing run on the worker.
+// Admission snapshots only the capped text and hash; the request buffer is never retained.
 func (s *server) enqueueLabels(r *req) {
 	e := r.event
 	if e == nil || !r.evDispatched || r.URL.Path != "/v1/messages" || e.ParentID != "" || e.PhaseSource == core.LabelInternal || e.ActivitySource == core.LabelInternal || e.TaskSource == core.LabelInternal {
@@ -157,7 +159,8 @@ func (s *server) enqueueLabels(r *req) {
 		}
 	}
 	defer l.mu.Unlock()
-	job := labelJob{event: *e, body: r.body, generation: generation, shadow: shadow}
+	input, key := labelInput(r.body, e.DeviceID, e.Task)
+	job := labelJob{event: *e, input: strings.Clone(input), key: key, bytes: len(r.body), generation: generation, shadow: shadow}
 	if l.queue == nil {
 		l.queue = make(chan labelJob, 8)
 		l.done = make(chan struct{})
@@ -167,7 +170,7 @@ func (s *server) enqueueLabels(r *req) {
 	}
 	select {
 	case l.queue <- job:
-		l.queueBytes += len(job.body)
+		l.queueBytes += job.bytes
 	default:
 		l.skipped.Add(1)
 	}
@@ -246,7 +249,7 @@ func (s *server) runLabels(ctx context.Context) {
 			select {
 			case job := <-l.queue:
 				l.mu.Lock()
-				l.queueBytes -= len(job.body)
+				l.queueBytes -= job.bytes
 				l.mu.Unlock()
 			default:
 				return
@@ -257,18 +260,26 @@ func (s *server) runLabels(ctx context.Context) {
 	var cacheGeneration uint64
 	var unavailableGeneration uint64
 	var starts labelRate
+	var pending *labelJob
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		var job labelJob
-		select {
-		case <-ctx.Done():
-			return
-		case job = <-l.queue:
+		if pending != nil {
+			job = *pending
+			pending = nil
+		} else {
+			select {
+			case <-ctx.Done():
+				return
+			case job = <-l.queue:
+			}
+			l.mu.Lock()
+			l.queueBytes -= job.bytes
+			l.mu.Unlock()
 		}
 		l.mu.Lock()
-		l.queueBytes -= len(job.body)
 		settings, generation := l.settings, l.generation
 		l.mu.Unlock()
 		if !settings.Enabled || job.generation != generation {
@@ -288,8 +299,7 @@ func (s *server) runLabels(ctx context.Context) {
 			l.skipped.Add(1)
 			continue
 		}
-		job.input, job.key = labelInput(job.body, job.event.DeviceID, job.event.Task)
-		job.body = nil
+
 		if job.input == "" {
 			l.skipped.Add(1)
 			continue
@@ -323,9 +333,20 @@ func (s *server) runLabels(ctx context.Context) {
 				}
 			}
 			var tokensIn, tokensOut int64
+			preempted := false
 			counted := func(c context.Context, system, user string) (string, error) {
+				sample, release, err := s.foundry.labelSample(c)
+				if err != nil {
+					return "", err
+				}
+				defer release()
 				tokensIn += int64((len(system) + len(user) + 3) / 4)
-				reply, err := backend(c, system, user)
+				reply, err := backend(sample, system, user)
+				if context.Cause(sample) == errLabelForeground {
+					preempted = true
+					cancel()
+					return "", decide.ErrBackend
+				}
 				tokensOut += int64((len(reply) + 3) / 4)
 				return reply, err
 			}
@@ -352,6 +373,15 @@ func (s *server) runLabels(ctx context.Context) {
 			storeCtx, storeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			eventErr := s.core.FinishLabelDecision(storeCtx, "ev_"+randomToken()[:16], model, now, time.Now(), tokensIn, tokensOut, err != nil)
 			storeCancel()
+			if preempted && ctx.Err() == nil {
+				if job.retries == 0 {
+					job.retries++
+					pending = &job
+				} else {
+					l.skipped.Add(1)
+				}
+				continue
+			}
 			if err != nil || eventErr != nil {
 				l.mu.Lock()
 				current := l.generation == generation && l.settings.Enabled
@@ -378,7 +408,11 @@ func (s *server) runLabels(ctx context.Context) {
 			continue
 		}
 		// Begin/finish are asynchronous. Wait here, never on the request path.
-		if !s.api.FlushRecorderContext(ctx) {
+		flush := l.flush
+		if flush == nil {
+			flush = s.api.FlushRecorderContext
+		}
+		if !flush(ctx) {
 			return
 		}
 		if job.shadow {
@@ -398,7 +432,7 @@ func (s *server) runLabels(ctx context.Context) {
 				case 1000:
 					bucket = "1000"
 				}
-				if err := s.core.RecordAgreement(ctx, kind, bucket, results[i].Choice != "" && results[i].Choice == given); err != nil {
+				if err := s.core.RecordAgreement(ctx, kind, bucket, results[i].Choice != "" && results[i].Choice == given, settings.Revision); err != nil {
 					storageFailed = true
 					l.failed.Add(1)
 					_ = s.core.SetLabelError(ctx, "label storage failed")
@@ -408,7 +442,7 @@ func (s *server) runLabels(ctx context.Context) {
 				continue
 			}
 		} else {
-			if _, err := s.core.SetModelLabels(ctx, job.event.ID, results[0].Choice, results[1].Choice, labelScore(results[0]), labelScore(results[1])); err != nil {
+			if _, err := s.core.SetModelLabels(ctx, job.event.ID, results[0].Choice, results[1].Choice, labelScore(results[0]), labelScore(results[1]), settings.Revision); err != nil {
 				l.failed.Add(1)
 				_ = s.core.SetLabelError(ctx, "label storage failed")
 				continue
