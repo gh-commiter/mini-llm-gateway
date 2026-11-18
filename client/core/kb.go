@@ -404,15 +404,18 @@ func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, rea
 	return s.review(ctx, nil, 0, id, accept, reason, seen, nil)
 }
 
-// reviewHash is the version of a submission a reviewer read: everything an accept publishes (class, title, kind, body,
-// what it replaces and at which revision). An author's rewrite of a pending submission (kb import merges into it) changes it.
+// reviewHash is the version of a submission a reviewer read: everything an accept publishes or attributes (the id, class,
+// title, kind, body, what it replaces and at which revision, and the stored provenance, which the note keeps as its
+// revision's provenance: device, source, authored and received time). Any rewrite of a pending submission (kb import
+// merges into it, with a new received time) changes it. It is compared WHOLE (256 bits): the author writes both texts,
+// so a short prefix could be made to collide; the full SHA-256 cannot, and needs no secret nonce or extra column.
 func reviewHash(tx *sql.Tx, id int64) (string, error) {
-	var class, title, kind, body string
+	var class, title, kind, body, prov string
 	var replaces, revision int64
-	if err := tx.QueryRow(`SELECT class,title,entry_kind,body,replaces,revision FROM kb_submissions WHERE id=?`, id).Scan(&class, &title, &kind, &body, &replaces, &revision); err != nil {
+	if err := tx.QueryRow(`SELECT class,title,entry_kind,body,replaces,revision,provenance FROM kb_submissions WHERE id=?`, id).Scan(&class, &title, &kind, &body, &replaces, &revision, &prov); err != nil {
 		return "", notFound(err)
 	}
-	b, _ := json.Marshal([]any{class, title, kind, body, replaces, revision})
+	b, _ := json.Marshal([]any{id, class, title, kind, body, replaces, revision, prov})
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:]), nil
 }
@@ -431,6 +434,17 @@ func (e ErrWriterLost) Error() string {
 	return "the writer of this submission may no longer write it here: reject it or ask them to submit again"
 }
 func (e ErrWriterLost) Unwrap() error { return e.Cause }
+
+// GetSubmissionVersion is the owner's read of submission id as of the version hash (the panel's detail of a list row):
+// the submission only while it still is that version, else ErrSubmissionChanged, so the detail never shows a text the
+// row's Accept would not publish.
+func (s *Store) GetSubmissionVersion(ctx context.Context, id int64, hash string) (Submission, error) {
+	v, err := s.GetSubmission(ctx, Principal{}, 0, id, true)
+	if err == nil && v.ReviewHash != hash {
+		return Submission{}, ErrSubmissionChanged
+	}
+	return v, err
+}
 
 // reviewAccess: a member reviews the submissions of a project (or a team's own notes) only with the role admin there,
 // as loadAccess computes it (direct or through a team assignment; a grant never; for a team segment: a project admin of
@@ -608,6 +622,16 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 		if lim != nil {
 			return lim
 		}
+		state := "rejected"
+		if accept {
+			state = "accepted"
+		}
+		if v.State == state { // a repeat publishes nothing (the stored provenance now names the reviewer)
+			return nil
+		}
+		if v.State != "pending" {
+			return ErrInvalid{"submission already reviewed"}
+		}
 		if accept { // four eyes on the text too: publish only what the reviewer read
 			cur, e := reviewHash(tx, id)
 			if e != nil {
@@ -619,16 +643,6 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 			if seen != cur {
 				return ErrSubmissionChanged
 			}
-		}
-		state := "rejected"
-		if accept {
-			state = "accepted"
-		}
-		if v.State == state {
-			return nil
-		}
-		if v.State != "pending" {
-			return ErrInvalid{"submission already reviewed"}
 		}
 		now := fromMs(ms(s.now()))
 		v.Provenance.Reviewer = reviewer

@@ -1540,7 +1540,7 @@
          "id": "submission",
          "title": "builtin.kb.section.queue.detail.section.submission.title",
          "source": {
-          "path": "/kb/submissions/{parent.id}"
+          "path": "/kb/submissions/{parent.id}/versions/{parent.reviewHash}"
          },
          "columns": [
           {

@@ -22,11 +22,12 @@ For owner-reviewed proposals use `minigw kb submit <project> [--class c] [--titl
 [--key k] <file|->`, then `minigw kb submissions [<project>]`. Preview the project,
 class, title and content and obtain confirmation as for push. Replacements require
 `--replaces <id> --revision <n>`. Owners use `minigw gw kb review [<project>]`,
-`gw kb accept <id> --version <tag>` or `gw kb reject <id> [--reason text]`; a project's admins
-use `minigw kb review [<project>]`, `kb accept <id> --version <tag>` and `kb reject <id>`.
+`gw kb accept <id> --version <hash>` or `gw kb reject <id> [--reason text]`; a project's admins
+use `minigw kb review [<project>]`, `kb accept <id> --version <hash>` and `kb reject <id>`.
 To accept: first read with `kb review` (or `gw kb review`), show the user the text and get their
-yes, then pass the `version` tag review printed for that submission; never accept without it, and
-when the answer is "the submission changed since you read it", review again and show the new text.
+yes, then pass the whole `version` line (64 hex characters) review printed for that submission; never
+accept without it, and when the answer is "the submission changed since you read it", review again and show
+the new text. Nothing but you makes sure the user saw the text: the version only stops a changed text.
 Nobody accepts their own submission. Pending content is only
 visible to its author, the project's admins and the owner; called agents cannot submit. These commands need
 Beta 4 support; never fall back to publishing if submission is unavailable.

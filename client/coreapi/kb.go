@@ -161,6 +161,13 @@ func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []
 	if !ok {
 		return a.errResponse(core.ErrNotFound)
 	}
+	if len(seg) == 5 && seg[3] == "versions" && method == "GET" { // the panel's detail: only while it is the row's version
+		v, e := st.GetSubmissionVersion(ctx, id, seg[4])
+		if e != nil {
+			return a.errResponse(e)
+		}
+		return a.adminSubmission(ctx, st, v)
+	}
 	if len(seg) == 3 && method == "GET" {
 		v, e := st.GetSubmission(ctx, core.Principal{}, 0, id, true)
 		if e != nil {

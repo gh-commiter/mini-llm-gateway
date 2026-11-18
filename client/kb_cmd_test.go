@@ -410,12 +410,29 @@ func TestKBMemberReviewEndToEnd(t *testing.T) {
 	}
 }
 
-// versionIn is the version tag kb review printed (the one submission of the listing).
+// versionIn is the whole version line kb review printed (the one submission of the listing).
 func versionIn(t *testing.T, review string) string {
 	t.Helper()
-	m := regexp.MustCompile(`  version ([0-9a-f]{12})`).FindStringSubmatch(review)
+	m := regexp.MustCompile(`(?m)^version ([0-9a-f]{64})$`).FindStringSubmatch(review)
 	if m == nil {
 		t.Fatal("no version in", review)
 	}
 	return m[1]
+}
+
+// M1': an accept names the WHOLE version: a 12-hex tag is refused outright, also when it is the prefix of the text that is
+// there now (two texts the author made to share a prefix), and a different whole hash is "changed".
+func TestConfirmAcceptNeedsTheWholeVersion(t *testing.T) {
+	a := "e01aad4208f5d17a" + strings.Repeat("0", 48)
+	b := "e01aad4208f5d2f8" + strings.Repeat("1", 48) // the same 12-hex prefix as a
+	var out bytes.Buffer
+	if err := confirmAccept(b, a[:12], false, strings.NewReader(""), &out); err == nil || err.Error() != versionWhole {
+		t.Fatal(err)
+	}
+	if err := confirmAccept(b, a, false, strings.NewReader(""), &out); err == nil || err.Error() != changedSinceRead {
+		t.Fatal(err)
+	}
+	if err := confirmAccept(a, a, false, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
 }

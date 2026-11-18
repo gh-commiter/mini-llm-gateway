@@ -19,7 +19,7 @@
         }
       ],
       "want": {
-        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter 2  device   replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter 2  device   replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\n",
         "err": "",
         "exit": 0,
         "requests": [
@@ -44,7 +44,7 @@
         "7"
       ],
       "opts": {
-        "version": "3f9a0c1d2b7e"
+        "version": "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       },
       "responses": [
         {
@@ -59,7 +59,7 @@
         }
       ],
       "want": {
-        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\nsubmission 7 accepted\n",
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\nsubmission 7 accepted\n",
         "err": "",
         "exit": 0,
         "requests": [
@@ -96,8 +96,8 @@
         }
       ],
       "want": {
-        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
-        "err": "minigw: not accepted: without a terminal, name the version you read: --version <tag> (kb review shows it)\n",
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\n",
+        "err": "minigw: not accepted: without a terminal, name the version you read: --version <hash> (kb review shows it)\n",
         "exit": 1,
         "requests": [
           [
@@ -132,7 +132,7 @@
         }
       ],
       "want": {
-        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\nAccept this text? [y/N] submission 7 accepted\n",
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\nAccept this text? [y/N] submission 7 accepted\n",
         "err": "",
         "exit": 0,
         "requests": [
@@ -1051,7 +1051,7 @@
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
         }
       ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\n",
       "requests": [
         [
           "GET",
@@ -1091,7 +1091,7 @@
           "body": "[{\"id\":1,\"name\":\"acme\",\"segment\":1099511627777}]"
         }
       ],
-      "out": "submission 8  team acme  pending  data  Who deploys?  (faq)\nwriter bor  device dev-bor  replaces 3  revision 2  version 9b9b9b9b9b9b\nThe team lead.\n",
+      "out": "submission 8  team acme  pending  data  Who deploys?  (faq)\nwriter bor  device dev-bor  replaces 3  revision 2\nversion 9b9b9b9b9b9b1111111111111111111111111111111111111111111111111111\nThe team lead.\n",
       "requests": [
         [
           "GET",
@@ -1147,7 +1147,7 @@
         "accept",
         "7",
         "--version",
-        "3f9a0c1d2b7e"
+        "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
       "responses": [
         {
@@ -1161,7 +1161,7 @@
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
         }
       ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\nsubmission 7 accepted\n",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\nsubmission 7 accepted\n",
       "requests": [
         [
           "GET",
@@ -1194,7 +1194,7 @@
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
         }
       ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\n",
       "requests": [
         [
           "GET",
@@ -1202,7 +1202,7 @@
           ""
         ]
       ],
-      "error": "the submission changed since you read it: review it again"
+      "error": "--version takes the whole version line of kb review (64 hex characters), not a part of it"
     },
     {
       "args": [
@@ -1223,7 +1223,7 @@
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
         }
       ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\n",
       "requests": [
         [
           "GET",
@@ -1231,7 +1231,7 @@
           ""
         ]
       ],
-      "error": "the submission changed since you read it: review it again"
+      "error": "--version takes the whole version line of kb review (64 hex characters), not a part of it"
     },
     {
       "args": [
@@ -1250,7 +1250,7 @@
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
         }
       ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\n",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\n",
       "requests": [
         [
           "GET",
@@ -1258,7 +1258,7 @@
           ""
         ]
       ],
-      "error": "not accepted: without a terminal, name the version you read: --version <tag> (kb review shows it)",
+      "error": "not accepted: without a terminal, name the version you read: --version <hash> (kb review shows it)",
       "tty": false
     },
     {
@@ -1278,7 +1278,7 @@
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
         }
       ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\nAccept this text? [y/N] submission 7 accepted\n",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\nAccept this text? [y/N] submission 7 accepted\n",
       "requests": [
         [
           "GET",
@@ -1311,7 +1311,7 @@
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
         }
       ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0  version 3f9a0c1d2b7e\nReview this\nAccept this text? [y/N] ",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\nAccept this text? [y/N] ",
       "requests": [
         [
           "GET",
@@ -1345,6 +1345,35 @@
           "{\"reason\":\"Needs work\"}"
         ]
       ]
+    },
+    {
+      "args": [
+        "accept",
+        "7",
+        "--version",
+        "0000000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\",\"body\":\"Review this\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200,
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"accepted\"}"
+        }
+      ],
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 0  revision 0\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nReview this\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ]
+      ],
+      "error": "the submission changed since you read it: review it again"
     }
   ]
 }
