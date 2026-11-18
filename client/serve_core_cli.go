@@ -88,9 +88,9 @@ func projectID(a *adminClient, ref string) int64 {
 
 // coreOpts: the flags of usage-events and usage.
 type coreOpts struct {
-	upstream                                                                                                                      string
+	upstream                                                                                                                               string
 	days, user, project, model, claudeProbe, provider, device, folder, sort, reason, version, team, by, phase, activity, task, labelSource string
-	json, csv, history, explain                                                                                                   bool
+	json, csv, history, explain                                                                                                            bool
 	// upstream (upstream_cmd.go): the token comes from in; the rest are the link and push options
 	in                        io.Reader
 	remoteProject, remoteTeam string
