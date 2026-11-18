@@ -621,8 +621,14 @@ func TestUpstreamAutoPushBetweenTwoGateways(t *testing.T) {
 	}
 	// the notes that were already there go by themselves (switching auto on marks what is unsent)
 	waitUntil(t, "the first automatic push", 10*time.Second, func() bool { n, _ := f.remoteSubmissions(); return n == 2 })
-	st, _ := f.cmd(coreOpts{}, "status", "shop")
-	if !strings.Contains(st, ", auto") || !strings.Contains(st, "last success") || strings.Contains(st, "dirty since") {
+	// the upstream has both submissions a moment before the local run has written its receipts and cleared the dirty mark: wait for the
+	// run to end (on Linux the status was once read in between: "1 of 2 notes would go ... dirty since")
+	var st string
+	waitUntil(t, "the first automatic run to finish", 10*time.Second, func() bool {
+		st, _ = f.cmd(coreOpts{}, "status", "shop")
+		return strings.Contains(st, "last success") && !strings.Contains(st, "dirty since")
+	})
+	if !strings.Contains(st, ", auto") {
 		t.Fatalf("status after the push: %s", st)
 	}
 	// a storm of edits (a member edits the same note 40 times in a quick row): ONE more submission, with the last text
