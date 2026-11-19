@@ -2,16 +2,26 @@
 
 ## Unreleased
 
+## 0.8.7
+
+A beta that makes the saved versions of notes (kept since 0.8.6) usable: you can look at them and put one back. The gateway and the client both change; no database upgrade.
+
 ### New
-- `minigw note history <id>` lists the saved versions of a note (newest first, at most 100; `--revision n` shows one with its text, `--json` prints the answer), and `minigw note restore <id> --revision n` puts a saved version back as a new revision. The gateway owner has the same two commands as `minigw gw kb history` and `minigw gw kb restore`.
-- Who may read which saved version: you see a saved version only if you may read the note now and your access also allows the class the version had then. A reader sees structure versions (and private ones of their own note), a developer also data, a project admin everything, a reader through a grant only structure and data of the granted project, a team member structure and data of the team's notes. Versions you may not read are left out without a trace: no gap, no count. The owner sees all; reading one private version is logged like any owner read of a private note.
+- `minigw note history <id>` lists the saved versions of a note (newest first, at most 100; `--revision n` shows one with its text, `--json` prints the answer), and `minigw note restore <id> --revision n` puts a saved version back as a new revision. The gateway owner has the same two commands as `minigw gw kb history` and `minigw gw kb restore`. Both clients (Go and Mac) print the same text.
+- Who may read which saved version: you see a saved version only if you may read the note now and your access also allows the class the version had then. A reader sees structure versions (and private ones of their own note), a developer also data, a project admin everything, a reader through a grant only structure and data of the granted project, a team member structure and data of the team's notes. A version you may not read is left out: no text, title, class, size or count of it is shown. The owner sees all; reading a private version is logged like any owner read of a private note.
 - Restore is for project admins (a team assignment counts) and the gateway owner, not for the note's author. It never rewrites history: the text becomes a new revision, the version it replaces is saved first, and the note keeps its CURRENT class unless you ask for the saved one with `--class` (which can widen who reads it). Without a terminal, `restore` needs `--current <revision>` (the revision you saw); a note that changed in the meantime is refused, never overwritten. The restore is audited (`note.restore`, no text) and the new revision records `restoredFromRevision`.
-- `minigw note history` and `note restore` are not available inside an agent run.
+- `note history` and `note restore` are not available inside an agent run, and not through the remote web settings.
+
+### Fixed
+- A note title that contains a line break could forge a line in `minigw note list`, `note read`, search results and FAQ lists (and in the new history list). Titles in one-line rows are now printed on one line, in both clients.
+- Tests only: the loopback WebDAV server of the mount tests survives a transient accept error, a timed-out shell command takes its child processes with it, and a dead test server is reported at once. A release test run had stalled on this.
 
 ### Known problems
-- There is still no command to remove one saved version, and the review of a replacement does not show before and after yet.
+- The two commands were checked with the shared test fixture of both clients and the gateway's own tests; see the release page for what was tried against a real gateway.
+- There is still no command to remove one saved version, and the review of a replacement does not show before and after yet (the browser still does not offer accept for a replacement).
 - Revision numbers are kept, so a gap in the numbers of `note history` shows that versions exist which you may not read or which were not kept; nothing else about them is shown.
-- Within a project the older saved versions of any note go first when the project's history budget is reached, so one member who edits in a loop can push out the older saved versions of other notes in the same project (issue #164).
+- Within a project the older saved versions of any note go first when the project's history budget is reached, so one member who edits in a loop can push out the older saved versions of other notes in the same project.
+- The known problems of 0.8.6 to 0.8.0 still apply.
 
 ## 0.8.6
 
