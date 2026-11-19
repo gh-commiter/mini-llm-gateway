@@ -182,6 +182,18 @@ if [ -n "$sums" ]; then
 fi
 # Windows/Linux: nameščen minigw (MSI: %LOCALAPPDATA%\Programs\Mini Gateway, minigw serve install: ~/.local/bin), ki ni
 # starejši od MIN, je edini minigw (0.5.20), kot brew/aplikacija na macOS: brez prenosa, posodablja ga namestitev.
+# nosums: NOBENIH podpisanih vsot (niti prenesenih in preverjenih v tem zagonu, niti shranjenih/prejšnjih, ki bi se preverile): nič se ne da
+# preveriti, zato to NI sodba o nameščenem odjemalcu ali zagonski datoteki (brez omrežja v sveži mapi); sodba je le s pravimi vsotami.
+nosums=""
+if [ -z "$sums" ] && ! { [ -f "$BIN/SHA256SUMS" ] && [ -f "$BIN/SHA256SUMS.sig" ] && verified "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig"; } &&
+   ! { [ -f "$BIN/SHA256SUMS.prev" ] && [ -f "$BIN/SHA256SUMS.prev.sig" ] && verified "$BIN/SHA256SUMS.prev" "$BIN/SHA256SUMS.prev.sig"; }; then nosums=1; fi
+novedict() { echo "minigw plugin: the installed minigw cannot be verified yet (no network and nothing verified before); trying again at the next session start"; }
+# exportpath: Claudov Bash najde »minigw« tudi brez poti (tudi ob zgodnjem izhodu).
+exportpath() {
+  qb=$(printf '%s' "$BIN" | sed "s/'/'\\\\''/g"); epl="export PATH='$qb':\"\$PATH\""
+  [ -n "${CLAUDE_ENV_FILE:-}" ] && { grep -qxF "$epl" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "$epl" >> "$CLAUDE_ENV_FILE"; }
+  return 0
+}
 # Windows: skripta NIKOLI ne ustvari, prepiše ali preimenuje bin/minigw in bin/minigw.cmd (Git Bash šteje »minigw« in minigw.exe za isto
 # datoteko: zato je bila prej potrebna ključavnica). Nameščeni minigw velja le prek ZAGONSKE datoteke, ki jo napiše minigw plugin install
 # (client/plugin.go shimSh): prava datoteka bin/minigw (ugotovljena iz IMENIKA, nikoli s test/stat na golem imenu), z natanko tistim
@@ -232,9 +244,13 @@ above() {
 if [ "$os" = linux ] && [ -e "$inst" ] && ! { mine "$inst" && mine "${inst%/*}" && above "${inst%/*}"; }; then
   echo "minigw plugin: not using $(san "$inst"): it or a folder above it is not yours or is writable by others."; inst=""
 fi
+# Veljavna zagonska datoteka (natanko besedilo Go odjemalca), a nobenih vsot: brez sodbe. Ostane z minigw.cmd, brez zapisa .verified (kljuka ne zažene
+# nič), ena vrstica; odstrani se le ob pravi sodbi (vsote so, hash cilja ni v njih; cilja ni; prestar, ko je boljša lastna kopija).
+if [ -n "$nosums" ] && [ -n "$usedlauncher" ] && [ -x "$inst" ]; then novedict; exportpath; tidy; exit 0; fi  # cilj, ki ga ni, je prava sodba
 isums=""; instx=""; [ -n "$inst" ] && [ -x "$inst" ] && instx=1
 instok=""; [ -n "$instx" ] && trusted "$inst" && { instok=1; isums=$tsums; iv=$(exever "$inst"); }  # neoverjen: odsoten, ne zažene se
-if [ -n "$instx" ] && [ -z "$instok" ]; then  # ne zaženemo ga, a posodobitev ponudimo (prej je to povedala vrstica »X is installed«)
+if [ -n "$instx" ] && [ -z "$instok" ] && [ -n "$nosums" ]; then novedict
+elif [ -n "$instx" ] && [ -z "$instok" ]; then  # ne zaženemo ga, a posodobitev ponudimo (prej je to povedala vrstica »X is installed«)
   u=$(how)
   [ "$os" = linux ] && [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/minigw-serve.service" ] && u="/minigw:gw update"
   [ "$os" = windows ] && [ -n "${APPDATA:-}" ] && [ -f "$(cygpath -u "$APPDATA")/minigw/serve.json" ] && u="/minigw:gw update"
@@ -253,7 +269,14 @@ stamp="$BIN/.asset.sha256"  # vsota prenesenega paketa (na macOS je to minigw.zi
 
 # fetch <asset>: prenese, preveri vsoto (in na macOS podpis) ter namesti v $EXE. Linux/Windows: vrstni red je zapisan pri keepsums
 # (prenos pod začasnim imenom v isti mapi, objava vsot, ENA zamenjava mv); mv, ki ne uspe (exe teče), pusti stari overjeni exe.
+# replacefail: zamenjava minigw.exe ni uspela (exe teče): ENA vrstica na zagon (ne glede na to, kdo je poskusil prvi), brez surove napake orodja
+replaced=""
+replacefail() {
+  [ -n "$replaced" ] || echo "minigw plugin: could not replace $(san "$EXE") (in use?); the copy in place stays and the update is tried again in the next session."
+  replaced=1
+}
 fetch() {
+  [ -n "$replaced" ] && return 1  # zamenjava je v tem zagonu že odpovedala: brez novega prenosa
   w=$(want "$1"); [ -n "$w" ] || return 1
   if [ "$os" = darwin ]; then
     tmp=$(mktemp -d) || return 1
@@ -267,10 +290,8 @@ fetch() {
   if curl -fsSL --max-time 25 -o "$ft" "$base/$1" && [ "$(sha "$ft")" = "$w" ] && chmod +x "$ft"; then
     testexit dl
     keepsums
-    mv -f "$ft" "$EXE"; fs=$?; forget
-    if [ $fs -ne 0 ]; then
-      rm -f "$ft"; echo "minigw plugin: could not replace $(san "$EXE") (in use?); the verified copy stays and the update is tried again in the next session."; return 1
-    fi
+    mv -f "$ft" "$EXE" 2>/dev/null; fs=$?; forget
+    if [ $fs -ne 0 ]; then rm -f "$ft"; replacefail; return 1; fi
     testexit exe
     echo "$w" > "$stamp"; return 0
   fi
@@ -305,9 +326,7 @@ else
     shm "$EXE"
     if [ -z "$SH" ]; then
       echo "minigw plugin: the client in bin is in use and could not be checked this time; trying again at the next session start"
-      qb=$(printf '%s' "$BIN" | sed "s/'/'\\\\''/g"); line="export PATH='$qb':\"\$PATH\""
-      [ -n "${CLAUDE_ENV_FILE:-}" ] && { grep -qxF "$line" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "$line" >> "$CLAUDE_ENV_FILE"; }
-      tidy; exit 0
+      exportpath; tidy; exit 0
     fi
   fi
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
@@ -328,12 +347,12 @@ else
   # »najnovejši overjeni odjemalec, ki ga imamo«; ko MSI posodobi nameščenega, naslednji zagon kopira znova. Neoverjene datoteke se ne kopira.
   copyinst() {
     shm "$inst"; hi=$SH
-    if [ -f "$EXE" ] && [ ! -L "$EXE" ] && { shm "$EXE"; [ "$SH" = "$hi" ]; }; then [ "$isums" = "$SN" ] && keepsums; return 0; fi  # že ta kopija
+    if [ -f "$EXE" ] && [ ! -L "$EXE" ] && { shm "$EXE"; [ "$SH" = "$hi" ]; }; then [ "$isums" = "$SN" ] && keepsums; echo "$hi" > "$stamp"; return 0; fi  # že ta kopija
     ft="$BIN/${EXE##*/}.new.$$"
     if cp "$inst" "$ft" 2>/dev/null && chmod +x "$ft" && trusted "$ft"; then
       [ "$isums" = "$SN" ] && keepsums
-      if mv -f "$ft" "$EXE"; then forget; return 0; fi
-      forget; rm -f "$ft"; echo "minigw plugin: could not replace $(san "$EXE") (in use?); it stays and the installed minigw is copied again in the next session."; return 1
+      if mv -f "$ft" "$EXE" 2>/dev/null; then forget; echo "$hi" > "$stamp"; return 0; fi
+      forget; rm -f "$ft"; replacefail; return 1
     fi
     rm -f "$ft"; echo "minigw plugin: could not copy the installed minigw into place."; return 1
   }

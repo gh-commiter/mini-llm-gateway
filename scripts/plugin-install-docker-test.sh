@@ -155,6 +155,7 @@ out=$(winrun); print -r -- $out
 cmp -s "$exe" $GB/minigw.exe && [[ $out == *"connected to Mini Gateway"* && ! -e $GB/minigw && "$(head -1 $GB/.verified)" == "$(shasum -a 256 $GB/minigw.exe | cut -d' ' -f1)  $GB/minigw.exe" ]] || fail "10 S3b: the verified installed client was not copied into place: $out"
 [[ "$(wc -l < $T/win/ops)" -eq 1 ]] || fail "10 S3b: not exactly one mv onto minigw.exe: $(cat $T/win/ops)"
 nobare "10 S3b"
+[[ "$(<$GB/.asset.sha256)" == "$(shasum -a 256 $GB/minigw.exe | cut -d' ' -f1)" ]] || fail "10 S3b: .asset.sha256 does not match the copy in place"
 cp "$exe" $T/win/exe.keep; print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0 # updated by the MSI" > "$exe"; wtrust "$exe" $MINV
 winrun > /dev/null; cmp -s "$exe" $GB/minigw.exe || fail "10 S3b: an updated installed client was not copied again"
 cp $T/win/exe.keep "$exe"
@@ -174,6 +175,25 @@ clear10; wtrust "$T/rel/wold/minigw-windows-amd64.exe" 0.5.0   # shranjene vsote
 cp $T/rel/wold/minigw-windows-amd64.exe "$exe"; out=$(winrun wold); print -r -- $out
 [[ $out == *"using the plugin's own copy of minigw 0.5.20 (the latest release), older than"* && $out == *"the installed minigw 0.5.0 is older still: "* ]] || fail "10 S10 lower: no clause for an older installed client: $out"
 cp $T/win/exe.keep "$exe" 2>/dev/null || true
+# S11: SVEŽA mapa, brez omrežja, VELJAVNA zagonska datoteka (besedilo Go odjemalca): brez sodbe. Zagonska datoteka in minigw.cmd ostaneta, brez zapisa
+# .verified, ena vrstica, izhod 0, nič na golem imenu; šele prava sodba (vsote so, hash cilja ni v njih) jo odstrani
+clear10; golauncher "$exe"; cp $GB/minigw $T/win/l11.keep; cp $GB/minigw.cmd $T/win/l11.cmd.keep; rm -f $T/win/ops
+out=$(winrun); print -r -- $out
+[[ $out == *"the installed minigw cannot be verified yet (no network and nothing verified before); trying again at the next session start"* ]] || fail "10 S11: no no-verdict line: $out"
+cmp -s $T/win/l11.keep $GB/minigw && cmp -s $T/win/l11.cmd.keep $GB/minigw.cmd && [[ ! -e $GB/.verified && ! -e $T/win/ops ]] || fail "10 S11: the launcher was removed or a record written offline"
+nobare "10 S11"
+winrun wdl > /dev/null   # prava sodba: vsote so, hash cilja (MSI exe) ni v njih: zagonska datoteka gre, lastna kopija velja
+[[ ! -e $GB/minigw && ! -e $GB/minigw.cmd ]] && cmp -s $RELEXE $GB/minigw.exe || fail "10 S11: a real verdict did not remove the launcher"
+# S12: ista sveža mapa, brez omrežja, nameščen MSI minigw BREZ zagonske datoteke: ne trdi »is not the current release«, pove brez sodbe in ohrani sporočilo o omrežju
+clear10; out=$(winrun); print -r -- $out
+[[ $out == *"cannot be verified yet (no network and nothing verified before)"* && $out != *"is not the current release"* && $out == *"gateway skills are unavailable until the network is back"* ]] || fail "10 S12: wrong sentence for an unverifiable installed client without any sums: $out"
+# S13: exe zaseden pri kopiranju nameščenega (mv ne uspe): ENA vrstica, brez surove napake orodja, lastna kopija ostane (overja jo .prev)
+clear10; winrun wdl > /dev/null; cp $GB/SHA256SUMS $GB/SHA256SUMS.prev; cp $GB/SHA256SUMS.sig $GB/SHA256SUMS.prev.sig
+cp "$exe" $T/win/exe.keep13; print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0 # newer installed" > "$exe"; wtrust "$exe" $MINV
+out=$(FAILMV=1 winrun 2> $T/win/err13); print -r -- $out
+[[ "$(print -r -- $out | grep -c 'could not replace')" -eq 1 && ! -s $T/win/err13 && $out == *"connected to Mini Gateway"* ]] || fail "10 S13: not exactly one line, or a raw tool error: $out $(cat $T/win/err13)"
+cmp -s $RELEXE $GB/minigw.exe || fail "10 S13: the verified own copy was lost"
+cp $T/win/exe.keep13 "$exe"
 # S7: ostanek 0.8.1-0.8.9: .keep brez minigw.exe in .aside.lock: .keep gre nazaj, ključavnica izgine, nič drugega
 clear10; winrun wdl > /dev/null; mv $GB/minigw.exe $GB/minigw.exe.keep; mkdir $GB/.aside.lock; print 1 > $GB/.aside.lock/pid
 winrun > /dev/null

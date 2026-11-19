@@ -949,6 +949,21 @@ func TestInstallScriptUnverifiedCandidatesAreNeverRun(t *testing.T) {
 	}
 }
 
+// No signed sums at all (none fetched, none stored): nothing can be verified, so an installed client is not called "not the
+// current release (or could not be verified)": the start says there is no verdict yet and tries again next time.
+func TestInstallScriptNoSumsAtAllIsNoVerdict(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		r := runInstallScript(t, installRun{goos: goos, installed: "minigw 0.7.99", latest: "0.7.99"})
+		if r.ran() {
+			t.Errorf("%s: an unverified installed client was executed:\n%s", goos, r.out)
+		}
+		r.mustSay(t, "the installed minigw cannot be verified yet (no network and nothing verified before); trying again at the next session start")
+		if strings.Contains(r.out, "is not the current release") {
+			t.Errorf("%s: a verdict without any sums:\n%s", goos, r.out)
+		}
+	}
+}
+
 func TestInstallScriptVerifiedCandidateIsUsed(t *testing.T) {
 	for _, goos := range []string{"linux", "windows"} {
 		r := runInstallScript(t, installRun{goos: goos, installed: "minigw 0.7.99", latest: "0.7.99", trustInst: true})
