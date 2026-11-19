@@ -194,8 +194,15 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		if b.Team {
 			project, team = 0, id
 		}
-		if method == "PUT" && b.Remote == "" { // the same name there, as the CLI does it (a form leaves it empty to mean that)
+		if method == "PUT" && b.Remote == "" { // not told (a form leaves it empty to mean that): an existing link keeps its destination, a new one gets the same name there
 			b.Remote = a.localName(ctx, st, id, b.Team)
+			if ls, e := st.UpstreamLinks(ctx, project, team); e == nil {
+				for _, l := range ls {
+					if l.Upstream == seg[1] && l.Remote != "" {
+						b.Remote = l.Remote
+					}
+				}
+			}
 		}
 		var err error
 		readOff := false
@@ -208,7 +215,7 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		if err != nil {
 			return failErr(err)
 		}
-		return 200, map[string]any{"ok": true, "readOff": readOff}, true
+		return 200, map[string]any{"ok": true, "readOff": readOff, "remote": b.Remote}, true
 	}
 	return fail(404, "not found")
 }

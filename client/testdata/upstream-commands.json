@@ -272,7 +272,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"classes\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"classes\":\"\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -314,7 +314,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"auto\":true,\"classes\":\"\",\"mode\":\"publish\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"auto\":true,\"classes\":\"\",\"mode\":\"publish\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -392,7 +392,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"auto\":false,\"classes\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"auto\":false,\"classes\":\"\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -433,7 +433,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"auto\":true,\"classes\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"auto\":true,\"classes\":\"\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -589,7 +589,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"classes\":\"private\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"classes\":\"private\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -973,7 +973,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"acceptReach\":true,\"classes\":\"\",\"read\":true,\"readClasses\":\"\",\"readOnly\":true,\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"acceptReach\":true,\"classes\":\"\",\"read\":true,\"readClasses\":\"\",\"readOnly\":true,\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -1017,7 +1017,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"acceptReach\":true,\"classes\":\"\",\"read\":true,\"readClasses\":\"structure,data\",\"readOnly\":true,\"readSources\":\"team:acme\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"acceptReach\":true,\"classes\":\"\",\"read\":true,\"readClasses\":\"structure,data\",\"readOnly\":true,\"readSources\":\"team:acme\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -1058,7 +1058,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"acceptReach\":false,\"classes\":\"\",\"read\":false,\"readClasses\":\"\",\"readOnly\":true,\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"acceptReach\":false,\"classes\":\"\",\"read\":false,\"readClasses\":\"\",\"readOnly\":true,\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -1101,7 +1101,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"acceptReach\":true,\"classes\":\"structure\",\"read\":true,\"readClasses\":\"\",\"readOnly\":false,\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"acceptReach\":true,\"classes\":\"structure\",\"read\":true,\"readClasses\":\"\",\"readOnly\":false,\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -1142,7 +1142,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"acceptReach\":false,\"classes\":\"\",\"read\":true,\"readClasses\":\"\",\"readOnly\":true,\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"acceptReach\":false,\"classes\":\"\",\"read\":true,\"readClasses\":\"\",\"readOnly\":true,\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -1507,7 +1507,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"auto\":true,\"classes\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"auto\":true,\"classes\":\"\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -1606,7 +1606,7 @@
     }
    ],
    "want": {
-    "out": "note 12: our version goes to the upstream as a submission at the next push (when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read, it becomes a NEW note there: a second note if the old one still exists out of sight)\n",
+    "out": "note 12: our version goes to the upstream as a submission at the next push; the push report says whether it replaces the upstream's note or becomes a new one (a new one when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read: a second note if the old one still exists out of sight)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1865,7 +1865,7 @@
     }
    ],
    "want": {
-    "out": "note 12: our version goes to the upstream as a submission at the next push (when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read, it becomes a NEW note there: a second note if the old one still exists out of sight)\n",
+    "out": "note 12: our version goes to the upstream as a submission at the next push; the push report says whether it replaces the upstream's note or becomes a new one (a new one when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read: a second note if the old one still exists out of sight)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1959,7 +1959,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"classes\":\"\",\"pullEvery\":30,\"readOnly\":true,\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"classes\":\"\",\"pullEvery\":30,\"readOnly\":true,\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -2002,7 +2002,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"acceptReach\":true,\"classes\":\"\",\"pullEvery\":5,\"read\":true,\"readClasses\":\"\",\"readOnly\":true,\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"acceptReach\":true,\"classes\":\"\",\"pullEvery\":5,\"read\":true,\"readClasses\":\"\",\"readOnly\":true,\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -2246,7 +2246,7 @@
      [
       "PUT",
       "/upstreams/hub/links/3",
-      "{\"acceptReach\":true,\"classes\":\"\",\"read\":true,\"readClasses\":\"\",\"readOnly\":true,\"readSources\":\"\",\"remote\":\"shop\",\"team\":false,\"withPrivate\":false}"
+      "{\"acceptReach\":true,\"classes\":\"\",\"read\":true,\"readClasses\":\"\",\"readOnly\":true,\"readSources\":\"\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }
@@ -2367,7 +2367,7 @@
     }
    ],
    "want": {
-    "out": "note 14: our version goes to the upstream as a submission at the next push (when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read, it becomes a NEW note there: a second note if the old one still exists out of sight)\n",
+    "out": "note 14: our version goes to the upstream as a submission at the next push; the push report says whether it replaces the upstream's note or becomes a new one (a new one when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read: a second note if the old one still exists out of sight)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -2449,7 +2449,7 @@
     }
    ],
    "want": {
-    "out": "note 15: our version goes to the upstream as a submission at the next push (when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read, it becomes a NEW note there: a second note if the old one still exists out of sight)\n",
+    "out": "note 15: our version goes to the upstream as a submission at the next push; the push report says whether it replaces the upstream's note or becomes a new one (a new one when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read: a second note if the old one still exists out of sight)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -2508,7 +2508,7 @@
    }
   },
   {
-   "name": "push replaces a note and a rejected one",
+   "name": "push replaces a note and re-sends a rejected one",
    "args": [
     "upstream",
     "push",
@@ -2524,11 +2524,11 @@
     {
      "match": "POST /upstream-push",
      "status": 200,
-     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"replace 12 Invoice numbering: replaces the accepted note 55 upstream (revision 3)\", \"replace 13 Reset steps: the earlier submission was rejected upstream (note 56 changed after this was written): replaces the note 56 upstream (revision 5)\"], \"created\": 0, \"skipped\": 0, \"replaced\": 2, \"refused\": 0, \"dryRun\": false}]}"
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"replace 12 Invoice numbering: replaces the accepted note 55 upstream (revision 3)\", \"create 13 Reset steps: the earlier submission was rejected upstream (note 56 changed after this was written): sent as a new submission\"], \"created\": 1, \"skipped\": 0, \"replaced\": 1, \"refused\": 0, \"dryRun\": false}]}"
     }
    ],
    "want": {
-    "out": "shop -> hub (shop)\n  replace 12 Invoice numbering: replaces the accepted note 55 upstream (revision 3)\n  replace 13 Reset steps: the earlier submission was rejected upstream (note 56 changed after this was written): replaces the note 56 upstream (revision 5)\n  created 0, replaced 2, skipped 0, refused 0\n",
+    "out": "shop -> hub (shop)\n  replace 12 Invoice numbering: replaces the accepted note 55 upstream (revision 3)\n  create 13 Reset steps: the earlier submission was rejected upstream (note 56 changed after this was written): sent as a new submission\n  created 1, replaced 1, skipped 0, refused 0\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -2756,11 +2756,11 @@
     {
      "match": "POST /upstream-push",
      "status": 200,
-     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"replace 12 Invoice numbering: resolved as ours, replaces the accepted note 55 upstream (revision 7)\", \"replace 13 Reset steps: resolved as ours, the upstream's note 56 is still deleted or out of sight: sent as a NEW note (a second note if it still exists out of sight)\", \"replace 14 Faq: resolved as ours, the earlier submission 5 cannot be read, so it is not known whether it became a note: sent as a NEW note (a second note if it did)\"], \"created\": 0, \"skipped\": 0, \"replaced\": 3, \"refused\": 0, \"dryRun\": false}]}"
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"replace 12 Invoice numbering: resolved as ours, replaces the accepted note 55 upstream (revision 7)\", \"create 13 Reset steps: resolved as ours, the upstream's note 56 is still deleted or out of sight: sent as a NEW note (a second note if it still exists out of sight)\", \"create 14 Faq: resolved as ours, the earlier submission 5 cannot be read, so it is not known whether it became a note: sent as a NEW note (a second note if it did)\"], \"created\": 2, \"skipped\": 0, \"replaced\": 1, \"refused\": 0, \"dryRun\": false}]}"
     }
    ],
    "want": {
-    "out": "shop -> hub (shop)\n  replace 12 Invoice numbering: resolved as ours, replaces the accepted note 55 upstream (revision 7)\n  replace 13 Reset steps: resolved as ours, the upstream's note 56 is still deleted or out of sight: sent as a NEW note (a second note if it still exists out of sight)\n  replace 14 Faq: resolved as ours, the earlier submission 5 cannot be read, so it is not known whether it became a note: sent as a NEW note (a second note if it did)\n  created 0, replaced 3, skipped 0, refused 0\n",
+    "out": "shop -> hub (shop)\n  replace 12 Invoice numbering: resolved as ours, replaces the accepted note 55 upstream (revision 7)\n  create 13 Reset steps: resolved as ours, the upstream's note 56 is still deleted or out of sight: sent as a NEW note (a second note if it still exists out of sight)\n  create 14 Faq: resolved as ours, the earlier submission 5 cannot be read, so it is not known whether it became a note: sent as a NEW note (a second note if it did)\n  created 2, replaced 1, skipped 0, refused 0\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -2798,7 +2798,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure,data, auto, publish\n  read: off\n  2 notes wait for a review upstream; they are checked at the next push (not a failure)\n",
+    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure,data, auto, publish\n  read: off\n  2 notes waited for a review upstream at the last push; they are checked at the next push (not a failure)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -2811,6 +2811,47 @@
       "GET",
       "/upstreams?project=3",
       ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "link auto keeps the destination of an existing link",
+   "args": [
+    "upstream",
+    "link",
+    "shop",
+    "hub"
+   ],
+   "opts": {
+    "auto": true
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "PUT /upstreams/hub/links/3",
+     "status": 200,
+     "body": "{\"ok\": true, \"readOff\": false, \"remote\": \"shared\"}"
+    }
+   ],
+   "want": {
+    "out": "linked shop to hub as shared: changes are sent automatically (a minute after the last one; minigw gw upstream status shows it)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PUT",
+      "/upstreams/hub/links/3",
+      "{\"auto\":true,\"classes\":\"\",\"team\":false,\"withPrivate\":false}"
      ]
     ]
    }

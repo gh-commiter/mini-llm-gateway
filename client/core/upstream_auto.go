@@ -186,7 +186,10 @@ func (s *Store) afterRun(ctx context.Context, l UpstreamLink, res UpstreamPush) 
 		if e := tx.QueryRow(`SELECT push_generation,push_failed,fail_count FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&generation, &priorFailed, &n); e != nil {
 			return notFound(e)
 		}
-		traversalFailed := priorFailed != 0 || res.Refused > 0 || (res.Stopped != "" && !res.More)
+		// a run that sent or checked something is a success for the link even when notes were refused: they are listed (last refusal), they do not
+		// escalate the back-off; only a run where every try was refused, or that a link-wide answer ended, is a failure
+		refusedOnly := res.Refused > 0 && res.Created+res.Replaced+res.Waiting+res.Conflicts == 0
+		traversalFailed := priorFailed != 0 || refusedOnly || (res.Stopped != "" && !res.More)
 		failed := traversalFailed
 		var cursor int64
 		if res.More {

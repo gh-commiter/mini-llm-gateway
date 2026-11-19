@@ -138,16 +138,16 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			say(clean("unlinked " + local + " from " + name))
 			return
 		}
-		if remote == "" {
-			remote = local // the same name there, unless told
-		}
 		if u.auto && u.manual {
 			fail("--auto and --manual together: choose one")
 		}
 		if u.read && u.noRead {
 			fail("--read and --no-read together: choose one")
 		}
-		req := map[string]any{"team": isTeam, "remote": remote, "classes": u.class, "withPrivate": u.withPrivate}
+		req := map[string]any{"team": isTeam, "classes": u.class, "withPrivate": u.withPrivate}
+		if remote != "" { // not told: the gateway keeps the destination of an existing link, or uses the same name there for a new one
+			req["remote"] = remote
+		}
 		if u.auto {
 			req["auto"] = true
 		} else if u.manual {
@@ -179,8 +179,16 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		if reading || pulling {
 			req["readOnly"] = !pushFlags // an existing link keeps its push settings
 		}
-		var linked struct{ ReadOff bool }
+		var linked struct {
+			ReadOff bool
+			Remote  string
+		}
 		a.do("PUT", fmt.Sprintf("/upstreams/%s/links/%d", url.PathEscape(name), id), req, &linked)
+		if linked.Remote != "" {
+			remote = linked.Remote
+		} else if remote == "" {
+			remote = local
+		}
 		if linked.ReadOff {
 			defer say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach"))
 		}
@@ -246,7 +254,7 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 				say(clean("  " + s))
 			}
 			if l.Waiting > 0 {
-				say(fmt.Sprintf("  %d notes wait for a review upstream; they are checked at the next push (not a failure)", l.Waiting))
+				say(fmt.Sprintf("  %d notes waited for a review upstream at the last push; they are checked at the next push (not a failure)", l.Waiting))
 			}
 			if s := upstreamForeign(l); s != "" {
 				say(clean("  " + s))
@@ -280,7 +288,7 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		}
 		a.do("POST", "/upstream-resolve", body, nil)
 		if u.ours {
-			say(fmt.Sprintf("note %d: our version goes to the upstream as a submission at the next push (when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read, it becomes a NEW note there: a second note if the old one still exists out of sight)", note))
+			say(fmt.Sprintf("note %d: our version goes to the upstream as a submission at the next push; the push report says whether it replaces the upstream's note or becomes a new one (a new one when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read: a second note if the old one still exists out of sight)", note))
 		} else {
 			say(fmt.Sprintf("note %d: our text stays unsent (the upstream's text is not fetched here); a later change here is looked at again", note))
 		}

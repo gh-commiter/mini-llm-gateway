@@ -283,7 +283,7 @@ func TestUpstreamAcceptanceIsRememberedAndUnknownIsNotResent(t *testing.T) {
 	f.ok(f.ResolveUpstream(ctx, fk, 0, data.ID, true))
 	res, e = f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
-	if len(h.posts) != posts+1 || h.lastPost().body["replaces"].(float64) != 0 || res[0].Replaced != 1 {
+	if len(h.posts) != posts+1 || h.lastPost().body["replaces"].(float64) != 0 || res[0].Created != 1 { // a new submission is reported as create
 		t.Fatalf("%+v", res[0])
 	}
 }

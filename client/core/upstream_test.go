@@ -905,7 +905,7 @@ func TestResolveOursThenEditStaysOnTheSubmissionPath(t *testing.T) {
 		edit("third")
 		r, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
 		f.ok(e)
-		if r[0].Conflicts != 0 || r[0].Replaced != 1 {
+		if r[0].Conflicts != 0 || r[0].Replaced+r[0].Created != 1 { // rejected: the text goes as a new submission (create)
 			t.Fatalf("gone=%v: %+v", gone, r[0])
 		}
 		for _, c := range up.calls[before:] {

@@ -217,3 +217,56 @@ func TestUpstreamLinkDetailNamesTheKindOfConflict(t *testing.T) {
 		t.Fatalf("%+v", detail)
 	}
 }
+
+// A link that exists keeps its destination when a later `link` does not name one (a mode, class or auto change); only a named different
+// destination is refused once notes were sent; a first link without one uses the local name.
+func TestRelinkWithoutADestinationKeepsIt(t *testing.T) {
+	f := newFixture(t)
+	h := &methodHost{secretHost: secretHost{secrets: map[string]string{}}}
+	h.answer = func(method, path string) (int, string) {
+		switch {
+		case strings.HasPrefix(path, "/minigw/v1/projects/") && !strings.Contains(path, "/kb/") && method == "GET":
+			return 200, fmt.Sprintf(`{"id":7,"slug":%q}`, strings.TrimPrefix(path, "/minigw/v1/projects/"))
+		case method == "POST":
+			return 201, `{"id":5,"state":"pending"}`
+		}
+		return 404, `{}`
+	}
+	api := New(Options{Store: func() *core.Store { return f.st }, Upstream: h})
+	call := func(method, path, body string, want int) []byte {
+		t.Helper()
+		r := api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: method, Path: path, Body: []byte(body)})
+		if r.Status != want {
+			t.Fatalf("%s %s: %d %s", method, path, r.Status, r.Body)
+		}
+		return r.Body
+	}
+	fk := f.pid["fakture"]
+	link := fmt.Sprintf("/upstreams/hub/links/%d", fk)
+	call("PUT", "/upstreams/hub", `{"address":"127.0.0.1:8766","token":"tok#key"}`, 200)
+	remote := func() string {
+		ls, e := f.st.UpstreamLinks(bg, fk, 0)
+		if e != nil || len(ls) != 1 {
+			t.Fatal(e, ls)
+		}
+		return ls[0].Remote
+	}
+	call("PUT", link, `{}`, 200) // a first link without a destination: the local name
+	if remote() != "fakture" {
+		t.Fatal(remote())
+	}
+	call("PUT", link, `{"remote":"shared"}`, 200)
+	call("POST", "/upstream-push", fmt.Sprintf(`{"project":%d}`, fk), 200) // receipts
+	for _, body := range []string{`{"auto":true}`, `{"auto":false}`, `{"classes":"structure"}`, `{"mode":"submit","auto":true}`} {
+		var out map[string]any
+		json.Unmarshal(call("PUT", link, body, 200), &out)
+		if remote() != "shared" || out["remote"] != "shared" {
+			t.Fatalf("%s: %q %v", body, remote(), out)
+		}
+	}
+	b := call("PUT", link, `{"remote":"other"}`, 400) // an explicit different destination
+	if !strings.Contains(string(b), "unlink it and link it again") || remote() != "shared" {
+		t.Fatal(string(b), remote())
+	}
+	call("PUT", link, `{"remote":"shared","auto":true}`, 200) // the same one named: fine
+}

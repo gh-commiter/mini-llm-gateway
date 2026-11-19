@@ -745,7 +745,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 					continue
 				}
 			case readable && sub.State == "rejected": // definitely no note came of it
-				detail = "the earlier submission was rejected upstream" + upReason(sub.Reason) + ": sent again"
+				detail = "the earlier submission was rejected upstream" + upReason(sub.Reason) + ": sent as a new submission"
 			case readable && sub.State == "pending":
 				// a second submission of a note that is not yet there could be accepted too: two notes. So it waits for the review; that is
 				// not a failure (no back-off), and the link looks at the submission again at a quiet pace.
@@ -775,6 +775,9 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				}
 				continue
 			}
+		}
+		if action == "replace" && replaces == 0 { // the verb says what is sent: a replacement only when it replaces an upstream note
+			action = "create"
 		}
 		if owner && !strings.HasPrefix(detail, "resolved as ours") {
 			detail = "resolved as ours, " + detail
@@ -838,9 +841,18 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			return res, err
 		}
 	} else if !dry && res.Refused > 0 {
+		if res.Created+res.Replaced+res.Waiting+res.Conflicts > 0 { // something got through: the push counts as done, the refusals are listed
+			if err := s.upstreamRecordPush(wctx, l.Project, l.Upstream, "", true); err != nil {
+				return res, err
+			}
+		}
 		for i := len(res.Lines) - 1; i >= 0; i-- {
 			if strings.HasPrefix(res.Lines[i], "refused ") {
-				if err := s.upstreamRecordPush(wctx, l.Project, l.Upstream, upText(res.Lines[i], 300), false); err != nil {
+				why := upText(res.Lines[i], 300)
+				if res.Refused > 1 {
+					why += fmt.Sprintf(" (%d notes refused in that run)", res.Refused)
+				}
+				if err := s.upstreamRecordPush(wctx, l.Project, l.Upstream, why, false); err != nil {
 					return res, err
 				}
 				break

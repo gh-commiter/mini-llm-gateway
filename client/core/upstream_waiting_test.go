@@ -509,3 +509,56 @@ func TestFirstNewNoteRefusedForItsClassDoesNotStopTheRun(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+// After a rejected first submission the re-sent text is a NEW submission: the report says create, not replace.
+func TestRejectedFirstSubmissionIsReportedAsCreate(t *testing.T) {
+	f, fk, h := twoNotes(t)
+	h.subs[1] = `{"id":%d,"state":"rejected","note":0,"reason":"no"}`
+	h.notes = map[int]int{}
+	posts := len(h.posts)
+	res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
+	f.ok(e)
+	r := res[0]
+	got := h.postsFor("Structure one", posts)
+	if r.Created != 1 || len(got) != 1 || got[0].body["replaces"].(float64) != 0 || !strings.HasPrefix(r.Lines[0], "create ") || !strings.Contains(r.Lines[0], "sent as a new submission") {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// A run that sent something is a success for the link even when a note was refused (too large, say): no escalating back-off, the refusal is
+// listed; a run where every try is refused stays a failure.
+func TestPartialSuccessDoesNotEscalateTheBackoff(t *testing.T) {
+	for _, all := range []bool{false, true} {
+		f, fk, notes := autoFx(t)
+		_ = notes
+		h := newHubFake()
+		h.hook = func(c upCall) (int, string, bool) {
+			if c.method == "POST" && (all || c.body["title"] == "Structure one") {
+				return 413, `{"error":{"type":"too_large","message":"Too large"}}`, true
+			}
+			return 0, "", false
+		}
+		f.edit("ana", fk, notes["Structure one"], "v1")
+		f.clock = f.clock.Add(2 * time.Minute)
+		r, e := f.AutoPush(ctx, h.fake, noSleep)
+		f.ok(e)
+		l := f.link(fk)
+		if !r.Ran {
+			t.Fatalf("%+v", r)
+		}
+		if all {
+			if r.Push.Created != 0 || l.FailCount != 1 || l.NextAttempt == nil {
+				t.Fatalf("all refused: %+v %+v", r.Push, l)
+			}
+			continue
+		}
+		if r.Push.Created != 1 || r.Push.Refused != 1 || l.FailCount != 0 || l.NextAttempt != nil || l.LastOK == nil || l.LastPush == nil || l.DirtySince != nil || !strings.Contains(l.LastError, "Too large") {
+			t.Fatalf("partial: %+v %+v", r.Push, l)
+		}
+		posts := h.fake.count("POST")
+		f.clock = f.clock.Add(time.Hour)
+		if r2, _ := f.AutoPush(ctx, h.fake, noSleep); r2.Ran || h.fake.count("POST") != posts { // not retried until something changes
+			t.Fatalf("looped: %+v", r2)
+		}
+	}
+}
