@@ -597,7 +597,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
             Thread { self.serve(c) }.start()
         }
     }
-    func stop() { loop.markStopped(); close(fd) }
+    func stop() { loop.stop() }
 
     private func serve(_ c: Int32) {
         defer { close(c) }

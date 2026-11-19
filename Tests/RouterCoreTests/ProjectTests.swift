@@ -288,7 +288,7 @@ final class ProjectFakeGateway: @unchecked Sendable {
     }
 
     var url: String { "http://127.0.0.1:\(port)" }
-    func stop() { loop.markStopped(); close(fd) }
+    func stop() { loop.stop() }
 
     private func serve(_ c: Int32) {
         defer { close(c) }

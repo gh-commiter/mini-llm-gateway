@@ -33,7 +33,7 @@ private final class DAVLoopback: @unchecked Sendable {
         loop.start(listener: listener) { c in Thread.detachNewThread { self.serve(c) } }
     }
 
-    func stop() { loop.markStopped(); close(listener) }
+    func stop() { loop.stop() }
 
     /// #150: nil when the server answers a minimal request within 3 s; otherwise why it does not. A test calls this before it touches the mount, so a dead server
     /// fails the test at once instead of blocking in the mount (a `stat` on a mount whose server is gone does not return).
