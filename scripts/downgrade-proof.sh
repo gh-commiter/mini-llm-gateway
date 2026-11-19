@@ -11,17 +11,33 @@
 #   5. 0.7.0 over the migrated data: what the user sees; then 0.7.0's gw core restore of the core-8 snapshot: project and
 #      note are back, what was created after the upgrade is gone
 # Usage: scripts/downgrade-proof.sh   (the scratch folder is only left behind, never cleaned: KEEP the evidence)
+# Folders: WAYBACK_SCRATCH (scratch; default <cache>/minigw-downgrade-proof) and WAYBACK_SIGNED (signed copies; default
+# $TMPDIR/mg-signed-tests, or <cache>/minigw-downgrade-proof-signed when TMPDIR is unset); <cache> is $TMPDIR, else
+# ~/Library/Caches (macOS) or ${XDG_CACHE_HOME:-~/.cache}, never bare /tmp. Both must be directories of the current user with mode 700:
+# one that exists with another owner or mode is a stop, not something the script repairs. Each run builds from its OWN extraction of
+# the two trees inside its run folder (no tree is shared between runs), and a cached signed copy is used only after codesign verified it.
 emulate -L zsh; set -eu
 cd ${0:A:h}/..
 REPO=$PWD
 OLDREV=71cfd5fb
-W="${WAYBACK_SCRATCH:-${TMPDIR:-/tmp}/minigw-downgrade-proof}"
-R="$W/run-$(date +%Y%m%dT%H%M%S)"
+if [[ -n ${TMPDIR:-} ]]; then CACHE=$TMPDIR
+elif [[ $(uname -s) == Darwin ]]; then CACHE=$HOME/Library/Caches
+else CACHE=${XDG_CACHE_HOME:-$HOME/.cache}; fi
+W="${WAYBACK_SCRATCH:-$CACHE/minigw-downgrade-proof}"
 PIDS=(); T0=$SECONDS
 trap 'for p in $PIDS; do kill $p 2>/dev/null || true; done' EXIT  # exactly the pids this script started
 fail() { print -u2 "FAIL: $*"; print -u2 "evidence: $R"; exit 1 }
 ok() { print "PASS $*" }
-mkdir -p "$W/old" "$W/cur" "$R/home" "$R/cfg"
+secure_dir() { # secure_dir <path>: created with mode 700 if missing; an existing one must be ours with mode 700, else stop
+  [[ -d $1 ]] || { mkdir -p ${1:h} && mkdir -m 700 $1 } || { print -u2 "FAIL: cannot create $1"; exit 1 }
+  local own mode
+  if [[ $(uname -s) == Darwin ]]; then own=$(/usr/bin/stat -f %u $1) mode=$(/usr/bin/stat -f %Lp $1)
+  else own=$(stat -c %u $1) mode=$(stat -c %a $1); fi
+  [[ ! -L $1 && $own == $(id -u) && $mode == 700 ]] || { print -u2 "FAIL: $1 must be a directory of this user with mode 700 (owner $own, mode $mode, or a link): not using it"; exit 1 }
+}
+secure_dir "$W"
+R=$(mktemp -d "$W/run-$(date +%Y%m%dT%H%M%S)-XXXXXX")  # mode 700, new for every run
+mkdir -p "$R/home" "$R/cfg" "$R/src/old" "$R/src/cur"
 
 # ---- 1. build ----
 HELPER=$R/wbhelper.go
@@ -80,30 +96,37 @@ func must(err error) {
 	}
 }
 EOF
-git archive $OLDREV client | tar -x -C "$W/old"
-git archive HEAD client | tar -x -C "$W/cur"
+git archive $OLDREV client | tar -x -C "$R/src/old"  # the sources are extracted inside the run folder: nothing left over from an earlier run is built
+git archive HEAD client | tar -x -C "$R/src/cur"
 for t in old cur; do
-  mkdir -p "$W/$t/client/cmd/wbhelper"; cp $HELPER "$W/$t/client/cmd/wbhelper/main.go"
+  mkdir -p "$R/src/$t/client/cmd/wbhelper"; cp $HELPER "$R/src/$t/client/cmd/wbhelper/main.go"
   # no GOFLAGS=-mod=mod, no network: a module missing from the cache is a stop, not a download
-  (cd "$W/$t/client" && GOFLAGS=-mod=readonly GOPROXY=off go build -trimpath -buildvcs=false -o "$R/build-minigw-$t" . && GOFLAGS=-mod=readonly GOPROXY=off go build -trimpath -buildvcs=false -o "$R/build-wbhelper-$t" ./cmd/wbhelper) ||
+  (cd "$R/src/$t/client" && GOFLAGS=-mod=readonly GOPROXY=off go build -trimpath -buildvcs=false -o "$R/build-minigw-$t" . && GOFLAGS=-mod=readonly GOPROXY=off go build -trimpath -buildvcs=false -o "$R/build-wbhelper-$t" ./cmd/wbhelper) ||
     fail "1: build of $t failed (modules not in the module cache? no downloads are allowed)"
 done
 # Every program that runs here (it listens or connects, even on loopback) runs from a STABLE path with a STABLE signature, so a
 # firewall / Little Snitch sees one program, not a new one per build (as scripts' signed-test-exec.sh in the mg-build skill):
-# ${TMPDIR}/mg-signed-tests/downgrade-<name>.<sha16>, Developer ID, identifier dev.trojar.minigateway.gotest.downgrade-<name>.
+# <signed folder>/downgrade-<name>.<sha256 of the unsigned build>, Developer ID, identifier dev.trojar.minigateway.gotest.downgrade-<name>.
 IDENT=${MG_TEST_SIGN_IDENTITY:-Developer ID Application: Uros Trojar (Y2M489RDV8)}
 SIGN=0
 [[ $(uname -s) == Darwin ]] && /usr/bin/security find-identity -v -p codesigning 2>/dev/null | grep -qF "$IDENT" && SIGN=1
 (( SIGN )) || print "NOTE: no signing identity here (or not macOS): running the built binaries unsigned"
-SD=${TMPDIR:-/tmp}/mg-signed-tests; mkdir -p -m 700 $SD
+if [[ -n ${TMPDIR:-} ]]; then SD=${WAYBACK_SIGNED:-$TMPDIR/mg-signed-tests}; else SD=${WAYBACK_SIGNED:-$CACHE/minigw-downgrade-proof-signed}; fi
+(( SIGN )) && secure_dir "$SD"
 REALHOME=$(/usr/bin/dscl . -read /Users/$(id -un) NFSHomeDirectory 2>/dev/null | awk '{print $2}'); [[ -d $REALHOME ]] || REALHOME=$HOME
 prog() { # prog <name>: the path to run for $R/build-<name>
   local b=$R/build-$1
   (( SIGN )) || { print -r -- $b; return }
-  local d=$SD/downgrade-$1.$(/usr/bin/shasum -a 256 $b | cut -c1-16)
-  if [[ ! -x $d ]]; then
+  local d=$SD/downgrade-$1.$(/usr/bin/shasum -a 256 $b | cut -d' ' -f1)
+  local req="identifier \"dev.trojar.minigateway.gotest.downgrade-$1\" and anchor apple generic and certificate leaf[subject.OU] = \"Y2M489RDV8\""
+  # a cached copy is used only if it verifies with exactly this identifier and team; on any doubt it is copied and signed again
+  if [[ ! -f $d || -L $d ]] || ! /usr/bin/codesign --verify --strict -R="$req" $d >/dev/null 2>&1; then
     cp -f $b $d.$$ && HOME=$REALHOME /usr/bin/codesign --force --sign "$IDENT" --identifier "dev.trojar.minigateway.gotest.downgrade-$1" $d.$$ >/dev/null 2>&1 &&
       mv -f $d.$$ $d || fail "cannot sign $1; not running an unsigned program"
+    /usr/bin/codesign --verify --strict -R="$req" $d >/dev/null 2>&1 || fail "the signed $1 does not verify; not running it"
+    print "     signed copy of $1: new ($d)" >&2
+  else
+    print "     signed copy of $1: reused and verified ($d)" >&2
   fi
   print -r -- $d
 }

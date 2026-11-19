@@ -623,11 +623,12 @@ enum ProjectText {
         return String(out)
     }
 
-    private static func invisibleRune(_ v: UInt32) -> Bool {
+    static func invisibleRune(_ v: UInt32) -> Bool {
         guard let u = Unicode.Scalar(v) else { return true }
         if u.properties.generalCategory == .control || u.properties.generalCategory == .format || v == 0x2028 || v == 0x2029 { return true }
         switch v {
-        case 0xFE00...0xFE0F, 0xE0100...0xE01EF, 0x180B...0x180F, 0xE0000...0xE007F, 0x034F, 0x115F, 0x1160, 0x3164, 0xFFA0: return true
+        case 0xFE00...0xFE0F, 0xE0100...0xE01EF, 0x180B...0x180F, 0xE0000...0xE007F, 0x034F, 0x115F, 0x1160, 0x3164, 0xFFA0,
+             0x2065, 0xFFF0...0xFFF8, 0xE0080...0xE00FF, 0xE01F0...0xE0FFF: return true  // the last four: default-ignorable, unassigned
         default: return false
         }
     }

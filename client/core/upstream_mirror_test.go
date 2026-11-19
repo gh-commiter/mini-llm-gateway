@@ -1241,7 +1241,7 @@ func TestInvisibleRuneTable(t *testing.T) {
 	for r, want := range map[rune]bool{
 		'a': false, ' ': false, '\n': true /* a control: mirrorBody keeps it itself */, 0x7f: true, 0x200b: true, 0x202e: true, 0x2066: true, 0xfeff: true, 0xad: true,
 		0xfe0f: true, 0xfe00: true, 0xe0100: true, 0xe01ef: true, 0xe0041: true, 0xe0001: true, 0x115f: true, 0x1160: true, 0x3164: true, 0xffa0: true,
-		0x034f: true, 0x180b: true, 0x2028: true, 0x2029: true, 'é': false, '日': false, '😀': false, 0xe01f0: false,
+		0x034f: true, 0x180b: true, 0x2028: true, 0x2029: true, 'é': false, '日': false, '😀': false, 0xe01f0: true,
 	} {
 		if invisibleRune(r) != want {
 			t.Errorf("U+%04X: %v", r, !want)
