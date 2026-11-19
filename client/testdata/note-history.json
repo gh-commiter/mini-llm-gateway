@@ -21,7 +21,7 @@
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -57,7 +57,7 @@
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Current text\nno saved revisions you may read\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Current text\nno saved revisions you may read\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -93,7 +93,7 @@
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by an accepted submission (reviewer Sam)  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by an accepted submission (reviewer Sam)  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -267,7 +267,7 @@
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -307,7 +307,7 @@
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Currenttext\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  32 bytes  Savedtext\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Currenttext\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  32 bytes  Savedtext\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -694,7 +694,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "out": "",
     "err": "",
     "error": "the note has changed: its current revision is 5 (read it again, then retry)",
     "requests": [
@@ -756,7 +756,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "out": "",
     "err": "",
     "error": "rejected: revision 2 has the same text as the current note: nothing to restore",
     "requests": [
@@ -885,7 +885,7 @@
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -1021,6 +1021,218 @@
      "orchard:3@proj"
     ]
    }
+  },
+  {
+   "name": "list complete",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":3,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"},{\"revision\":1,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 3 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nrevision 1  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "replaced by an owner restore",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"the gateway owner (restore of revision 1)\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by the gateway owner (restore of revision 1)  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "restore without the admin role",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2",
+    "--current",
+    "4"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/3/notes/7/restore",
+     "status": 403,
+     "body": "{\"error\":{\"type\":\"forbidden\",\"message\":\"forbidden\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not allowed: restoring a saved version needs the project admin role (or the gateway owner)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/3/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":4,\"class\":\"data\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "history of the current revision",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--revision",
+    "4"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "revision 4 is the current text: minigw note read 7",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "restore of the current revision",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "4",
+    "--current",
+    "4"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "revision 4 is the current text: nothing to restore",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
   }
  ],
  "owner": [
@@ -1040,7 +1252,7 @@
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1388,7 +1600,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "out": "",
     "err": "minigw: revision mismatch (current 5)\n",
     "exit": 1,
     "requests": [
@@ -1439,7 +1651,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "out": "",
     "err": "minigw: revision 2 has the same text as the current note: nothing to restore\n",
     "exit": 1,
     "requests": [
@@ -1496,7 +1708,7 @@
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1541,6 +1753,64 @@
      [
       "GET",
       "/status",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner list complete",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /kb/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":3,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"},{\"revision\":1,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 3 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nrevision 1  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7/history",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner history of the current revision",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {
+    "revision": 4
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: revision 4 is the current text, not a saved version\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7",
       ""
      ]
     ]

@@ -326,7 +326,7 @@ func describeWriter(tx *sql.Tx, provenance string) string {
 	case p.ActorKind == ActorGatewayService:
 		return "the gateway"
 	case p.ActorKind == "owner":
-		return "the owner"
+		return "the gateway owner"
 	}
 	var name string
 	if p.User == 0 || tx.QueryRow(`SELECT name FROM users WHERE id=?`, p.User).Scan(&name) != nil {
@@ -342,6 +342,9 @@ func describeReplacer(tx *sql.Tx, savedBy, successor string) string {
 	restored := ""
 	if ok && p.SourceKind == "restored" {
 		restored = " (restore)"
+		if p.RestoredFrom > 0 {
+			restored = fmt.Sprintf(" (restore of revision %d)", p.RestoredFrom)
+		}
 	}
 	switch {
 	case savedBy != "":
@@ -349,7 +352,7 @@ func describeReplacer(tx *sql.Tx, savedBy, successor string) string {
 	case !ok:
 		return "a review or import"
 	case p.ActorKind == "owner":
-		return "the owner" + restored
+		return "the gateway owner" + restored
 	case p.ActorKind == ActorImport || p.SourceKind == SourceImport:
 		return "an import"
 	case p.Reviewer != "":

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const historyTail = "older revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them"
+const historyTail = "some revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you"
 const restoreNeedsCurrent = "not restored: without a terminal, name the current revision: --current <n>"
 
 // historyTime: a time of these commands, to the minute, always with its zone: UTC, or the offset from it.
@@ -66,7 +66,10 @@ func noteHistoryCommand(sub, path string, id, revision, current int64, hasCurren
 		if len(h.History) == 0 {
 			say("no saved revisions you may read")
 		}
-		say(historyTail)
+		// Every saved revision lies below the current one: the list is complete when it holds all of 1..current-1.
+		if int64(len(h.History)) != h.Note.Revision-1 {
+			say(historyTail)
+		}
 		return nil
 	}
 	data, err := request("GET", path, nil)
@@ -76,6 +79,15 @@ func noteHistoryCommand(sub, path string, id, revision, current int64, hasCurren
 	var cur noteView
 	if err = json.Unmarshal(data, &cur); err != nil {
 		return err
+	}
+	if revision == cur.Revision {
+		switch {
+		case sub == "restore":
+			return fmt.Errorf("revision %d is the current text: nothing to restore", revision)
+		case strings.HasPrefix(path, "/kb/"):
+			return fmt.Errorf("revision %d is the current text, not a saved version", revision)
+		}
+		return fmt.Errorf("revision %d is the current text: minigw note read %d", revision, id)
 	}
 	data, err = request("GET", path+"/history/"+strconv.FormatInt(revision, 10), nil)
 	if err != nil {
@@ -113,13 +125,18 @@ func noteHistoryCommand(sub, path string, id, revision, current int64, hasCurren
 	if hasCurrent {
 		expected = current
 	}
-	say(fmt.Sprintf("restore note %d to the text of revision %d (now revision %d, becomes %d)", id, revision, cur.Revision, cur.Revision+1))
-	if target == cur.Class {
-		say("class: " + target + " (kept)")
-	} else {
-		say("class: " + cur.Class + " -> " + target)
+	// The plan is printed where it is a question (before the prompt, or before the refusal that names the current
+	// revision) and with the success: never before a request that is refused, so it cannot read as if it happened.
+	plan := func() {
+		say(fmt.Sprintf("restore note %d to the text of revision %d (now revision %d, becomes %d)", id, revision, cur.Revision, cur.Revision+1))
+		if target == cur.Class {
+			say("class: " + target + " (kept)")
+		} else {
+			say("class: " + cur.Class + " -> " + target)
+		}
 	}
 	if !hasCurrent {
+		plan()
 		if !terminal {
 			return errors.New(restoreNeedsCurrent)
 		}
@@ -135,8 +152,15 @@ func noteHistoryCommand(sub, path string, id, revision, current int64, hasCurren
 		Class            string `json:"class"`
 	}{revision, expected, target})
 	data, err = request("POST", path+"/restore", payload)
+	var g gwStatusError
+	if errors.As(err, &g) && g.status == 403 && err.Error() == forbiddenRoleText {
+		return errors.New("not allowed: restoring a saved version needs the project admin role (or the gateway owner)")
+	}
 	if err != nil {
 		return err
+	}
+	if hasCurrent {
+		plan()
 	}
 	var n noteView
 	if err = json.Unmarshal(data, &n); err != nil {

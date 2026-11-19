@@ -190,7 +190,7 @@ func gatewayAnswer(st int, data []byte, h http.Header) error {
 	case 403:
 		switch b.Error.Type {
 		case "forbidden":
-			return errors.New("not allowed: your role in this project does not permit it (a grant alone only lets you read; linking needs a direct role)")
+			return errors.New(forbiddenRoleText)
 		case "archived":
 			return errors.New("the project is archived: nobody can write to it")
 		}
@@ -631,6 +631,8 @@ func noteScopeHint(err error, scoped bool) error {
 	}
 	return out
 }
+
+const forbiddenRoleText = "not allowed: your role in this project does not permit it (a grant alone only lets you read; linking needs a direct role)"
 
 const noteScopeText = "a note of a team needs --team <team>; a note of another project needs a folder linked to that project (a search of a team or another project shows the ids)"
 

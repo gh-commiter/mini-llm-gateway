@@ -472,7 +472,7 @@ func TestNoteHistoryNamesWriterAndReplacer(t *testing.T) {
 	for _, c := range []struct {
 		i             int
 		written, repl string
-	}{{0, "ana", "fani (restore)"}, {1, "fani", "an accepted submission (reviewer owner)"}, {2, "ana", "fani"}} {
+	}{{0, "ana", "fani (restore of revision 1)"}, {1, "fani", "an accepted submission (reviewer owner)"}, {2, "ana", "fani"}} {
 		v := h.History[c.i]
 		if v.WrittenBy != c.written || v.ReplacedBy != c.repl {
 			t.Fatalf("row %d: written %q replaced %q", c.i, v.WrittenBy, v.ReplacedBy)
