@@ -18,7 +18,7 @@ func TestRebuildSearchOfManyNotesIsFast(t *testing.T) {
 	f := newFx(t)
 	pid, uid := f.pid["fakture"], f.uid["ana"]
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
-		for i := 0; i < 3000; i++ {
+		for i := 0; i < 2000; i++ {
 			var b strings.Builder
 			for w := 0; w < 400; w++ {
 				fmt.Fprintf(&b, "w%dx%d ", i, w%97)
@@ -30,13 +30,32 @@ func TestRebuildSearchOfManyNotesIsFast(t *testing.T) {
 		}
 		return nil
 	}))
-	f.ok(f.RebuildSearch(ctx)) // the first one fills the index
+	// An index as incremental writes leave it (many small segments: that is what makes a whole-table delete with secure-delete on slow);
+	// the same state is made before each measurement, the bulk rebuild runs first and the old way second.
+	unmerged := func() {
+		f.ok(f.write(ctx, func(tx *sql.Tx) error {
+			for _, q := range []string{`INSERT INTO note_search(note_search, rank) VALUES('secure-delete', 0)`, `DELETE FROM note_search`, searchInsert, `INSERT INTO note_search(note_search, rank) VALUES('secure-delete', 1)`} {
+				if _, err := tx.Exec(q); err != nil {
+					return err
+				}
+			}
+			return nil
+		}))
+	}
+	unmerged()
 	start := time.Now()
-	f.ok(f.RebuildSearch(ctx)) // the second deletes 3000 indexed notes and indexes them again
-	d := time.Since(start)
-	t.Logf("rebuild of 3000 notes of 400 words: %v", d)
-	if d > 2500*time.Millisecond { // with the option on it took about 5 s here (quadratic), now about 0.4 s
-		t.Fatalf("rebuild took %v", d)
+	f.ok(f.RebuildSearch(ctx)) // deletes 2000 indexed notes and indexes them again (the bulk path)
+	bulk := time.Since(start)
+	unmerged()
+	start = time.Now() // the same delete and re-index of the same rows the OLD way: secure-delete left on for the whole-table delete
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM note_search; ` + searchInsert)
+		return err
+	}))
+	old := time.Since(start)
+	t.Logf("rebuild of 2000 notes of 400 words: bulk %v, old way %v", bulk, old)
+	if bulk > old/3 { // relative, on the same machine
+		t.Fatalf("the bulk rebuild (%v) is not clearly faster than the old way (%v)", bulk, old)
 	}
 	for _, table := range []string{"note_search", "upstream_mirror_search"} { // the option is back on after the bulk delete
 		var v int64
@@ -53,23 +72,26 @@ func TestMirrorPurgeOfManyRowsIsFastAndLeavesNoText(t *testing.T) {
 	f := newFx(t)
 	fk := f.pid["fakture"]
 	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
+	f.ok(f.AddUpstream(ctx, "hub2", "hub2.example:8765"))
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
-		for i := 0; i < 3000; i++ {
-			var b strings.Builder
-			for w := 0; w < 400; w++ {
-				fmt.Fprintf(&b, "m%dx%d ", i, w%97)
-			}
-			if i == 1500 {
-				b.WriteString("zebrafootballxyz")
-			}
-			body := b.String()
-			r, e := tx.Exec(`INSERT INTO upstream_mirror(project_id,upstream,source_id,source_label,remote_note,remote_rev,class,kind,title,body,bytes,updated,fetched) VALUES(?,?,7,'',?,3,'structure','finding',?,?,?,1,1)`, fk, "hub", i+1, fmt.Sprint("m ", i), body, len(body))
-			if e != nil {
-				return e
-			}
-			id, _ := r.LastInsertId()
-			if _, e = tx.Exec(`INSERT INTO upstream_mirror_search(rowid,title,body) VALUES(?,?,?)`, id, fmt.Sprint("m ", i), body); e != nil {
-				return e
+		for _, up := range []string{"hub", "hub2"} {
+			for i := 0; i < 2000; i++ {
+				var b strings.Builder
+				for w := 0; w < 400; w++ {
+					fmt.Fprintf(&b, "m%dx%d ", i, w%97)
+				}
+				if i == 1500 && up == "hub" {
+					b.WriteString("zebrafootballxyz")
+				}
+				body := b.String()
+				r, e := tx.Exec(`INSERT INTO upstream_mirror(project_id,upstream,source_id,source_label,remote_note,remote_rev,class,kind,title,body,bytes,updated,fetched) VALUES(?,?,7,'',?,3,'structure','finding',?,?,?,1,1)`, fk, up, i+1, fmt.Sprint("m ", i), body, len(body))
+				if e != nil {
+					return e
+				}
+				id, _ := r.LastInsertId()
+				if _, e = tx.Exec(`INSERT INTO upstream_mirror_search(rowid,title,body) VALUES(?,?,?)`, id, fmt.Sprint("m ", i), body); e != nil {
+					return e
+				}
 			}
 		}
 		return nil
@@ -92,12 +114,21 @@ func TestMirrorPurgeOfManyRowsIsFastAndLeavesNoText(t *testing.T) {
 	if !inFile() {
 		t.Fatal("the marker word is not in the database files before the unlink: the test cannot see anything")
 	}
-	start := time.Now()
+	start := time.Now() // one link's 2000 rows the OLD way first (secure-delete left on) ...
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		if _, e := tx.Exec(`DELETE FROM upstream_mirror_search WHERE rowid IN (SELECT id FROM upstream_mirror WHERE upstream='hub2')`); e != nil {
+			return e
+		}
+		_, e := tx.Exec(`DELETE FROM upstream_mirror WHERE upstream='hub2'`)
+		return e
+	}))
+	old := time.Since(start)
+	start = time.Now() // ... then the other link's 2000 rows through the bulk path
 	f.ok(f.write(ctx, func(tx *sql.Tx) error { _, e := purgeMirror(tx, fk, "hub"); return e }))
-	d := time.Since(start)
-	t.Logf("purge of 3000 mirror rows: %v", d)
-	if d > 2500*time.Millisecond { // with the option on it took about 5 s here, now about 0.3 s
-		t.Fatalf("purge took %v", d)
+	bulk := time.Since(start)
+	t.Logf("purge of 2000 mirror rows: bulk %v, old way %v", bulk, old)
+	if bulk > old/3 { // relative, on the same machine
+		t.Fatalf("the bulk purge (%v) is not clearly faster than the old way (%v)", bulk, old)
 	}
 	f.ok(f.Close()) // a clean close checkpoints the log into the main file
 	if inFile() {
