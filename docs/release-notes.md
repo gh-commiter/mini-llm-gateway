@@ -2,10 +2,15 @@
 
 ## Unreleased
 
+## 0.8.11
+
 ### Fixed
 - Windows plugin: an offline session start in a fresh data folder (nothing verified before) no longer removes a valid launcher (`bin/minigw` and `minigw.cmd` written by `minigw plugin install`): without any signed checksums there is no verdict, so the launcher stays, no `.verified` record is written and one line says the installed minigw cannot be verified yet and that the next start tries again. A launcher is removed only on a real verdict (checksums available and the client's hash is not in them, the client does not exist, or it is older than `MIN_CLIENT` while a better own copy is in place). The "is not the current release ... update it" advice is now printed only when checksums were fetched and verified in that very start; offline, with only stored checksums of an older release, nothing says what the current release is, so it says nothing (the plugin's own verified copy is used) or, when no client is usable, prints the same no-verdict line.
 - A write-locked `minigw.exe` (the replacement `mv` fails) now gives one line per start, without the raw tool error. After the installed client is copied into place, `.asset.sha256` matches what is in place (only macOS reads that file, so a stale one never misled a later run on Windows or Linux).
 
+### Known problems
+- Windows plugin, wording only: offline, the start calls the plugin's own copy "the latest release" although it is only the latest one it has seen, and in a fresh folder without network it prints two lines where one would do.
+- The known problems of 0.8.10 to 0.8.0 still apply.
 
 ## 0.8.10
 
