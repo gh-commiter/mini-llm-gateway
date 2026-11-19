@@ -18,7 +18,7 @@ func TestNoteHistoryRoutes(t *testing.T) {
 		t.Fatal(e)
 	}
 	memberPath := fmt.Sprintf("/minigw/v1/projects/%d/notes/%d", pid, id)
-	ownerPath := fmt.Sprintf("/minigw/admin/v1/kb/notes/%d", id)
+	ownerPath := fmt.Sprintf("/kb/notes/%d", id) // admin paths are below the admin prefix
 	reads := func() int {
 		events, e := f.st.AuditEvents(bg, 0, 500)
 		if e != nil {

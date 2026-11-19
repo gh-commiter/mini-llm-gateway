@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### New
+- `minigw note history <id>` lists the saved versions of a note (newest first, at most 100; `--revision n` shows one with its text, `--json` prints the answer), and `minigw note restore <id> --revision n` puts a saved version back as a new revision. The gateway owner has the same two commands as `minigw gw kb history` and `minigw gw kb restore`.
+- Who may read which saved version: you see a saved version only if you may read the note now and your access also allows the class the version had then. A reader sees structure versions (and private ones of their own note), a developer also data, a project admin everything, a reader through a grant only structure and data of the granted project, a team member structure and data of the team's notes. Versions you may not read are left out without a trace: no gap, no count. The owner sees all; reading one private version is logged like any owner read of a private note.
+- Restore is for project admins (a team assignment counts) and the gateway owner, not for the note's author. It never rewrites history: the text becomes a new revision, the version it replaces is saved first, and the note keeps its CURRENT class unless you ask for the saved one with `--class` (which can widen who reads it). Without a terminal, `restore` needs `--current <revision>` (the revision you saw); a note that changed in the meantime is refused, never overwritten. The restore is audited (`note.restore`, no text) and the new revision records `restoredFromRevision`.
+- `minigw note history` and `note restore` are not available inside an agent run.
+
+### Known problems
+- There is still no command to remove one saved version, and the review of a replacement does not show before and after yet.
+
 ## 0.8.6
 
 A beta that stops a silent loss in the knowledge base: until now an edit, an accepted replacement or a re-import overwrote a note's text and the old text was kept nowhere. **This beta upgrades the gateway's database (schema 25 to 26). Going back to 0.8.5 or older afterwards needs the snapshot or backup made before the update** (see "Going back" in `docs/install.md`; in Docker Compose run `backup.sh --stop` before changing the version).

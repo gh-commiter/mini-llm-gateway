@@ -1,13 +1,16 @@
 package core
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func versionRevs(h NoteHistory) []int64 {
@@ -58,8 +61,8 @@ func TestNoteHistoryAccess(t *testing.T) {
 				f.ok(f.SetMember(ctx, pid, f.uid[tc.user], Reader))
 			}
 			if tc.grant {
+				// a grant reader reads through the SOURCE project (loadAccess adds the grant classes), as policy_test.go does
 				f.ok(f.AddGrant(ctx, pid, f.pid["eureko"], Data))
-				pid = f.pid["eureko"]
 			}
 			if tc.deactivated {
 				f.ok(f.SetUserActive(ctx, p.UserID, false))
@@ -130,8 +133,16 @@ func TestNoteHistoryAccess(t *testing.T) {
 		p := f.p("fani")
 		_, e := f.UpdateNote(ctx, p, f.seg, n.ID, n.Revision, NoteInput{Class: Data, Title: "new", Body: "new"})
 		f.ok(e)
+		// eva is on the roster: loadSegmentAccess gives her read of structure and data, so she sees the structure row.
 		reader := f.p("eva")
 		h, e := f.ListNoteHistory(ctx, &reader, f.seg, n.ID)
+		f.ok(e)
+		if !reflect.DeepEqual(versionRevs(h), []int64{1}) {
+			t.Fatal(h)
+		}
+		// bor is a developer of fakture but not on the roster: nothing of the segment.
+		outsider := f.p("bor")
+		_, e = f.ListNoteHistory(ctx, &outsider, f.seg, n.ID)
 		is(t, e, ErrNotFound)
 		dev := f.p("ana")
 		h, e = f.ListNoteHistory(ctx, &dev, f.pid["fakture"], n.ID)
@@ -348,4 +359,59 @@ func TestNoteRestore(t *testing.T) {
 		_, e = f.RestoreNote(ctx, &p, n.ProjectID, n.ID, 1, n.Revision, Structure)
 		f.ok(e)
 	})
+}
+
+// Catches: the new provenance field changing the stored JSON (and so the review hash) of everything written before it.
+func TestRestoredFromDoesNotChangeExistingProvenanceJSON(t *testing.T) {
+	ts := time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
+	b, e := json.Marshal(Provenance{ActorKind: "member", User: 1, Device: "d", Project: 2, SourceKind: "pushed note", ContentHash: "h", Authored: ts, Received: ts})
+	if e != nil {
+		t.Fatal(e)
+	}
+	const want = `{"actorKind":"member","user":1,"device":"d","project":2,"sourceKind":"pushed note","sourceReference":"","contentHash":"h","authored":"2026-11-14T10:00:00Z","received":"2026-11-14T10:00:00Z","reviewer":"","reviewed":null}`
+	if string(b) != want {
+		t.Fatal(string(b))
+	}
+	// A pending submission keeps its review hash across a restore of another note.
+	f := newFx(t)
+	p, pid := f.p("ana"), f.pid["fakture"]
+	v, _, e := f.Submit(ctx, p, pid, "hash-key", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "pending", Body: "pending body"}})
+	f.ok(e)
+	hash := func() string {
+		var h string
+		f.ok(f.read(ctx, func(tx *sql.Tx) error { var err error; h, err = reviewHash(tx, v.ID); return err }))
+		return h
+	}
+	before := hash()
+	n := f.mk("ana", "fakture", Structure)
+	admin := f.p("fani")
+	n, e = f.UpdateNote(ctx, admin, pid, n.ID, n.Revision, NoteInput{Class: Structure, Title: "changed", Body: "changed"})
+	f.ok(e)
+	_, e = f.RestoreNote(ctx, &admin, pid, n.ID, 1, n.Revision, Structure)
+	f.ok(e)
+	if hash() != before {
+		t.Fatal("review hash changed")
+	}
+}
+
+// Catches: a restored note (sourceKind "restored") breaking bundle export and import.
+func TestRestoredNoteSurvivesABundleRoundTrip(t *testing.T) {
+	f := newSeg(t)
+	n := f.mk("fani", "fakture", Structure)
+	admin := f.p("fani")
+	n, e := f.UpdateNote(ctx, admin, n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: "changed", Body: "changed"})
+	f.ok(e)
+	_, e = f.RestoreNote(ctx, &admin, n.ProjectID, n.ID, 1, n.Revision, Structure)
+	f.ok(e)
+	file := filepath.Join(t.TempDir(), "restored.zip")
+	f.ok(f.ExportBundle(ctx, BundleExport{Team: "acme", Path: file}))
+	target := openT(t, t.TempDir())
+	defer target.Close()
+	_, e = target.ImportBundle(ctx, BundleImport{Path: file, Source: "restored"})
+	f.ok(e)
+	var body string
+	f.ok(target.DB().QueryRow(`SELECT body FROM notes`).Scan(&body))
+	if body != "body" {
+		t.Fatal("restored text lost in the bundle", body)
+	}
 }

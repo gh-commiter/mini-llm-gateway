@@ -858,7 +858,7 @@
    "want": {
     "out": "",
     "err": "",
-    "error": "revision must be positive",
+    "error": "--current must be positive",
     "requests": [],
     "links": [
      "orchard:3@proj"
@@ -1318,7 +1318,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: revision must be positive\n",
+    "err": "minigw: --current must be positive\n",
     "exit": 1,
     "requests": []
    }
