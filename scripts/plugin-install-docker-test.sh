@@ -73,7 +73,7 @@ chmod +x $T/win/fake/* "$W/Programs/Mini Gateway/minigw.exe"; print old > $T/win
 wtrust() { { print "VERSION $2"; print "$(shasum -a 256 "$1" | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > $T/win/data/bin/SHA256SUMS
   ssh-keygen -Y sign -q -f $T/key -n minigw-release < $T/win/data/bin/SHA256SUMS > $T/win/data/bin/SHA256SUMS.sig }
 wtrust "$W/Programs/Mini Gateway/minigw.exe" $MINV
-winrun() { OPS=$T/win/ops VIOL=$T/win/viol CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE= LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
+winrun() { OPS=$T/win/ops VIOL=$T/win/viol CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE=${WENV:-} LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
 out=$(winrun newer); print -r -- $out
 [[ $out == *"minigw $MINV is installed, 0.99.0 is available: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi (check it first: docs/install.md, Check a download)"* && $out != *"/minigw:gw update"* ]] ||
   fail "10: no MSI update hint for a client-only install"
@@ -184,6 +184,19 @@ out=$(winrun wdl); print -r -- $out
 [[ ! -e $GB/minigw.exe && ! -e $GB/minigw && -d $GB/.aside.lock && ! -e $GB/.verified && $out == *"another session is setting up the minigw client"* ]] || fail "10h H2: a held lock did not stop the download"
 rmdir $GB/.aside.lock; winrun wdl > /dev/null
 cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/.aside.lock ]] || fail "10h H2: not installed once the lock was free"
+# H4: svež tuj ključavnica, lastna overjena kopija je tu: PATH se zapiše, vrstica o stanju je kot sicer, izhod 0, v bin se nič ne dotakne
+clear10h; winrun wdl > /dev/null   # lastna kopija, vsote in zapis
+mkdir $GB/.aside.lock; touch $T/win/mark4; sleep 1.1; : > $T/win/env4
+out=$(WENV=$T/win/env4 winrun); print -r -- $out
+[[ $out == *"connected to Mini Gateway"* && $out != *"another session"* ]] || fail "10h H4: no normal status line while another session holds the lock: $out"
+grep -q '^export PATH=' $T/win/env4 || fail "10h H4: PATH was not written for the session"
+[[ -d $GB/.aside.lock && -z "$(find $GB -type f -newer $T/win/mark4)" ]] || fail "10h H4: a busy run touched bin: $(find $GB -type f -newer $T/win/mark4)"
+rmdir $GB/.aside.lock
+# H5: svež tuj ključavnica in nobenega odjemalca: ena vrstica, izhod 0, PATH se ne zapiše
+clear10h; mkdir $GB/.aside.lock; : > $T/win/env5
+out=$(WENV=$T/win/env5 winrun); print -r -- $out
+[[ $out == *"another session is setting up the minigw client"* && ! -s $T/win/env5 ]] || fail "10h H5: no client, held lock: $out"
+rmdir $GB/.aside.lock
 # H3: dva različna ostanka .keep: oba ostaneta pod edinstvenima imenoma (nobenega prepisa)
 clear10h; cp $RELEXE $GB/minigw.exe; winrun wdl > /dev/null   # overjen exe
 print leftover-A > $GB/minigw.exe.keep; winrun wdl > /dev/null

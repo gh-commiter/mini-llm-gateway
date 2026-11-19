@@ -304,8 +304,12 @@ else
   if [ "$os" = windows ]; then if acqlock; then recoverkeep; else busy=1; fi; fi
   if [ -n "$busy" ]; then
     # drug svež zagon drži ključavnico: ta zagon se NE dotakne minigw.exe, lupin ne zapisa; uporabi, kar je zdaj uporabno (zapis odloča)
-    locked=1; [ -n "$inst" ] && EXE=$inst
-    [ -x "$EXE" ] || { echo "minigw plugin: another session is setting up the minigw client; its commands work once that is done (start a new session)."; tidy; exit 0; }
+    # Ostalo (PATH, vrstica o stanju) teče kot sicer, a le z odjemalcem, ki je overjen ŽE: nameščeni (inst) ali lastna kopija, ki jo overijo
+    # podpisane vsote (authexe); neoverjene kopije (npr. .keep, ki ga drug zagon šele vrača) se ne zažene.
+    locked=1
+    if [ -n "$inst" ]; then EXE=$inst
+    elif [ -x "$EXE" ] && [ ! -L "$EXE" ] && authexe; then :
+    else echo "minigw plugin: another session is setting up the minigw client; its commands work once that is done (start a new session)."; tidy; exit 0; fi
   else
     # Windows: lupini iz prejšnje seje (majhni besedilni datoteki tega skripta) ne smeta preživeti nameščenega minigw, ki ni več overjen.
     if [ "$os" = windows ] && [ -z "$inst" ]; then
