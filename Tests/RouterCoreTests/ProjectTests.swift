@@ -688,3 +688,37 @@ private final class Captured: @unchecked Sendable {
         do { try env(agent: true).kb(["faq"]); Issue.record("agent allowed") } catch { #expect((error as? ProjectError)?.message == ProjectEnv.agentRefusal) }
     }
 }
+
+// MARK: note history: the older-gateway hint and the zone of its times (twins of Go's TestOlderGatewayNamesTheVersionForNoteHistory)
+
+@Suite struct NoteHistoryHints {
+    /// A new client against a gateway older than 0.8.7: the note history routes say which version has them instead of "not found or not
+    /// visible" (a 404, or a 405 for restore); a 0.8.7 gateway's own 404 stays as it is. Same inputs and texts as the Go test.
+    @Test func olderGatewayNamesTheVersionForNoteHistory() {
+        let projects = "/minigw/v1/projects"
+        let cases: [(String, String, String, Int, String)] = [
+            ("0.8.6", "GET", projects + "/3/notes/7/history", 404, "this gateway is 0.8.6; note history needs 0.8.7 or newer"),
+            ("0.8.6", "GET", projects + "/3/notes/7/history/2", 404, "this gateway is 0.8.6; note history needs 0.8.7 or newer"),
+            ("0.8.6", "POST", projects + "/3/notes/7/restore", 405, "this gateway is 0.8.6; note restore needs 0.8.7 or newer"),
+            ("0.8.6", "POST", projects + "/3/notes/7/restore", 404, "this gateway is 0.8.6; note restore needs 0.8.7 or newer"),
+            ("0.8.7", "GET", projects + "/3/notes/7/history", 404, "not found"),
+            ("0.8.6", "GET", projects + "/3/notes/7", 404, "not found"),
+            ("0.8.6", "GET", projects + "/3/notes/7/other", 404, "not found")]
+        for (version, method, path, status, want) in cases {
+            let send = ProjectEnv.olderRouteHint { _, _, p, _, _ in
+                p == "/health/ready" ? ProjectReply(status: 200, data: Data(#"{"version":"\#(version)"}"#.utf8)) : ProjectReply(status: status, data: Data(#"{"error":{"message":"not found"}}"#.utf8))
+            }
+            let r = send(ProjectConn(url: "", token: ""), method, path, [:], nil)
+            #expect(r.status == status && String(decoding: r.data, as: UTF8.self).contains(want), "\(version) \(method) \(path)")
+        }
+    }
+
+    /// Times print to the minute with their zone: UTC, or the offset (Go's historyTime; the fixture runs in UTC only).
+    @Test func historyTimesCarryTheirZone() throws {
+        let t = try #require(ProjectText.parseTime("2026-11-17T09:12:30Z"))
+        #expect(ProjectEnv.historyTime(t, TimeZone(secondsFromGMT: 0)!) == "2026-11-17 09:12 UTC")
+        #expect(ProjectEnv.historyTime(t, TimeZone(secondsFromGMT: 3600)!) == "2026-11-17 10:12 +01:00")
+        #expect(ProjectEnv.historyTime(t, TimeZone(secondsFromGMT: -5 * 3600)!) == "2026-11-17 04:12 -05:00")
+        #expect(ProjectEnv.historyTime(t, TimeZone(secondsFromGMT: 5 * 3600 + 1800)!) == "2026-11-17 14:42 +05:30")
+    }
+}
