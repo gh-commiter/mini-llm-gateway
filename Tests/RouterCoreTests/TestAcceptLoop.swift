@@ -120,6 +120,10 @@ final class TestAcceptLoop: @unchecked Sendable {
         #expect(served.withLock { $0 } == 2)
         loop.stop(); loop.stop()  // twice is harmless
         #expect(loop.endedErrno == nil)
-        #expect(close(l) == -1 && errno == EBADF, "the loop closed the listener")
+        // (not close(l) == EBADF: a parallel test may have been given that descriptor number already) nothing listens on the port any more
+        let s = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(s) }
+        let r = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        #expect(r == -1 && errno == ECONNREFUSED, "the loop closed the listener")
     }
 }
