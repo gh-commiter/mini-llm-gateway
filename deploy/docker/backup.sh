@@ -30,6 +30,12 @@ for id in $containers; do
 done
 svcs=$(docker compose ps --status running --services) || fail 'cannot inspect services'
 container=$(docker compose ps -aq minigw | head -n 1)
+if [ -n "$container" ]; then
+    # the gateway container's real mounts must be the volumes resolved above (catches a missing -f override that renames them)
+    mounts=$(docker inspect --format '{{range .Mounts}}{{.Type}} {{.Destination}} {{.Name}}{{"\n"}}{{end}}' "$container") || fail 'cannot inspect the gateway container'
+    lcv=$(printf '%s\n' "$mounts" | sed -n 's|^volume /var/lib/minigw/config \(.*\)$|\1|p'); lsv=$(printf '%s\n' "$mounts" | sed -n 's|^volume /var/lib/minigw/scratch \(.*\)$|\1|p')
+    [ "$lcv" = "$cv" ] && [ "$lsv" = "$sv" ] || fail "the gateway container uses volumes ${lcv:-none}, ${lsv:-none} but Compose resolves $cv, $sv: run with the same COMPOSE_FILE and COMPOSE_PROJECT_NAME as the deployment"
+fi
 image=debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 if [ -n "$container" ]; then
     candidate=$(docker inspect --format '{{.Image}}' "$container")
@@ -97,48 +103,14 @@ else
     [ -r "$source/manifest.txt" ] || fail 'manifest.txt not found in the backup directory'
     mproject=$(sed -n 's/^project=//p' "$source/manifest.txt" | head -n 1)
     [ -n "$mproject" ] || fail 'manifest.txt has no project name'
+    mcv=$(sed -n 's/^config=//p' "$source/manifest.txt" | head -n 1); msv=$(sed -n 's/^scratch=//p' "$source/manifest.txt" | head -n 1)
+    printf 'Restoring backup of %s (%s, %s) into %s (%s, %s)\n' "$mproject" "$mcv" "$msv" "$project" "$cv" "$sv"
     [ -z "$into" ] || [ "$into" = "$project" ] || fail "--into-project must name the current project ($project)"
-    [ "$mproject" = "$project" ] || [ "$into" = "$project" ] || fail "backup was made in project $mproject, the current project is $project: run with COMPOSE_PROJECT_NAME=$mproject, or give --into-project $project to restore it into $project on purpose"
+    [ "$mproject" = "$project" ] && [ "$mcv" = "$cv" ] && [ "$msv" = "$sv" ] || [ "$into" = "$project" ] || fail "backup was made in project $mproject (volumes $mcv, $msv), the current project is $project (volumes $cv, $sv): run with the environment of the original, or give --into-project $project to restore into $project on purpose"
     [ -z "$running" ] || fail 'service is running; stop it before restore'
     helper --mount "type=bind,src=$source,dst=/b,readonly" "$image" -c 'cd /b; test "$(wc -l < SHA256SUMS)" -eq 2 && grep -Eq "^[0-9a-f]{64}  config[.]tar$" SHA256SUMS && grep -Eq "^[0-9a-f]{64}  scratch[.]tar$" SHA256SUMS && sha256sum -c SHA256SUMS >/dev/null' >/dev/null 2>&1 || fail 'checksum verification failed'
-    # What a real deployment writes: the gateway's own files and, in scratch, copies of work trees and agent homes that can
-    # hold symbolic links (client/serve_scratchmove.go copies them, client/serve_agents.go makes auth.json links). So symlinks
-    # are allowed when the target stays inside the volume (relative without escaping, or under /var/lib/minigw/); hard links,
-    # devices, FIFOs, absolute names and any .. component are refused. A backup directory is as trusted as the volume itself:
-    # this is a guard against a damaged or mixed-up archive, not a signature.
-    rc=0
-    helper -i --mount "type=bind,src=$source,dst=/b,readonly" "$image" -s >/dev/null 2>&1 <<'EOF' || rc=$?
-cd /b || exit 14
-for f in config.tar scratch.tar; do
-    tar -tf "$f" > /tmp/n || exit 14
-    tar -tvf "$f" > /tmp/v || exit 14
-    r=0; grep -Eq '^/|(^|/)[.][.](/|$)' /tmp/n || r=$?; [ "$r" = 1 ] || exit 11
-    r=0; grep -Eq '^[^-dl]' /tmp/v || r=$?; [ "$r" = 1 ] || exit 12
-    awk '
-/^l/ {
-  i = index($0, " -> ")
-  if (i == 0) { bad = 1; next }
-  pre = substr($0, 1, i - 1); t = substr($0, i + 4)
-  sub(/^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ /, "", pre)
-  if (t ~ /^\//) { if (t !~ /^\/var\/lib\/minigw\// || t ~ /(^|\/)\.\.(\/|$)/) bad = 1; next }
-  n = split(pre, a, "/"); d = 0
-  for (k = 1; k < n; k++) if (a[k] != "" && a[k] != ".") s[++d] = a[k]
-  m = split(t, b, "/")
-  for (k = 1; k <= m; k++) {
-    if (b[k] == "" || b[k] == ".") continue
-    if (b[k] == "..") { if (d == 0) bad = 1; else d-- } else s[++d] = b[k]
-  }
-}
-END { exit bad }' /tmp/v || exit 13
-done
-EOF
-    case $rc in
-        0) ;;
-        11) fail 'archive refused: absolute path or .. component';;
-        12) fail 'archive refused: hard link, device, FIFO or other special entry';;
-        13) fail 'archive refused: symbolic link that leaves the volume';;
-        *) fail 'archive refused: cannot list the archives';;
-    esac
+    # The checksums guard against a damaged or mixed-up archive. A backup directory must be protected like the volume itself
+    # (it holds the keys); restore does not inspect archive content.
     writers
     for v in "$cv" "$sv"; do
         if exists "$v"; then

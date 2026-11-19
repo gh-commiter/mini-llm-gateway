@@ -88,16 +88,7 @@ backup_contract() {
       after=$(docker volume ls -q | sort)
       [[ $rc != 0 && $out == *$message* && $before == $after ]] || { print -u2 -r -- "$out"; fail "backup refusal: $message"; }
     }
-    badarchive() { # kind: a copy of $archive whose scratch.tar carries one more entry; checksums recomputed so only the content check can refuse it
-      local d=$work/bad-$1-$name
-      mkdir -m 700 $d && cp $archive/config.tar $archive/scratch.tar $archive/manifest.txt $d/ || return 1
-      python3 -c '
-import tarfile,sys
-t=tarfile.open(sys.argv[1],"a"); k=sys.argv[2]
-n,ty,l={"abs":("/abs-file",tarfile.REGTYPE,""),"dotdot":("a/../b",tarfile.REGTYPE,""),"fifo":("fifo0",tarfile.FIFOTYPE,""),"dev":("dev0",tarfile.CHRTYPE,""),"hard":("hard0",tarfile.LNKTYPE,"work/deep/marker.txt"),"symesc":("esc0",tarfile.SYMTYPE,"../../etc/x"),"symabs":("abs0",tarfile.SYMTYPE,"/etc/passwd")}[k]
-i=tarfile.TarInfo(n); i.type=ty; i.linkname=l; t.addfile(i); t.close()' $d/scratch.tar $1 || return 1
-      (cd $d && shasum -a 256 config.tar scratch.tar > SHA256SUMS)
-    }
+    print -rl -- 'volumes:' '  config:' "    name: renamed-$prefix-config" '  scratch:' "    name: renamed-$prefix-scratch" > $work/compose.rename.yaml
     for name in default override; do
       if [[ $name == default ]]; then unset COMPOSE_PROJECT_NAME; else export COMPOSE_PROJECT_NAME=$prefix-override; fi
       target=$prefix-$name
@@ -108,11 +99,12 @@ i=tarfile.TarInfo(n); i.type=ty; i.linkname=l; t.addfile(i); t.close()' $d/scrat
       docker compose exec -T minigw minigw gw user add backup-user >/dev/null || fail 'backup user'
       docker compose exec -T minigw minigw gw project add backup-project 'Backup project' >/dev/null || fail 'backup project'
       identity=$(identity_hash) || fail 'source identity'
+      COMPOSE_FILE=${COMPOSE_FILE}:compose.rename.yaml refuse 'the gateway container uses volumes' ./renamed
       refuse 'service is running' ./running
       docker compose stop >/dev/null || fail 'stop for note fixture'
       # distinct scratch content (a file and a relative link, as scratch copies of work trees have) and a note in the core database
       docker run --rm --label com.docker.compose.project=$target --network none --user 10001:10001 --mount type=volume,src=${target}_scratch,dst=/s python:3-alpine \
-        sh -c "mkdir -p /s/work/deep && printf 'scratch-$name-bytes' > /s/work/deep/marker.txt && ln -s deep/marker.txt /s/work/rel-link" || fail 'scratch fixture'
+        sh -c "mkdir -p /s/work/deep && printf 'scratch-$name-bytes' > /s/work/deep/marker.txt && ln -s deep/marker.txt /s/work/rel-link && ln /s/work/deep/marker.txt /s/work/hard-link" || fail 'scratch fixture'
       docker run --rm --label com.docker.compose.project=$target --network none --user 10001:10001 --mount type=volume,src=${target}_config,dst=/c python:3-alpine python -c "
 import sqlite3
 c=sqlite3.connect('/c/core/core.db')
@@ -149,6 +141,8 @@ c.commit()" || fail 'note fixture'
       docker rm -f $prefix-writer >/dev/null || fail 'remove foreign writer'
       PATH=$work/find-failure:$PATH refuse 'cannot inspect volume' --restore $archive
       refuse 'target volume is not empty' --restore $archive
+      COMPOSE_FILE=${COMPOSE_FILE}:compose.rename.yaml refuse "Restoring backup of $target (${target}_config, ${target}_scratch) into $target (renamed-$prefix-config, renamed-$prefix-scratch)" --restore $archive
+      COMPOSE_FILE=${COMPOSE_FILE}:compose.rename.yaml refuse 'made in project' --restore $archive
       export COMPOSE_PROJECT_NAME=$prefix-restored-$name
       safe_project $COMPOSE_PROJECT_NAME || fail 'unsafe restore project or volumes'
       # a backup of another project is restored only with --into-project naming the current one
@@ -164,10 +158,6 @@ c.commit()" || fail 'note fixture'
       cp $archive/config.tar $work/decoy-$name/configXtar; cp $archive/scratch.tar $work/decoy-$name/scratchXtar
       (cd $work/decoy-$name && shasum -a 256 configXtar scratchXtar > SHA256SUMS)
       refuse 'checksum verification failed' --restore --into-project $COMPOSE_PROJECT_NAME $work/decoy-$name
-      # archive content, checked before anything is written
-      for k in abs dotdot; do badarchive $k || fail "bad archive $k"; refuse 'absolute path or .. component' --restore --into-project $COMPOSE_PROJECT_NAME $work/bad-$k-$name; done
-      for k in fifo dev hard; do badarchive $k || fail "bad archive $k"; refuse 'hard link, device, FIFO or other special entry' --restore --into-project $COMPOSE_PROJECT_NAME $work/bad-$k-$name; done
-      for k in symesc symabs; do badarchive $k || fail "bad archive $k"; refuse 'symbolic link that leaves the volume' --restore --into-project $COMPOSE_PROJECT_NAME $work/bad-$k-$name; done
       sh ./backup.sh --restore --into-project $COMPOSE_PROJECT_NAME $archive || fail 'restore separate project'
       # before the gateway starts: same modes and owners, all 10001:10001, secrets keep 600/700, scratch bytes and link intact
       modes ${COMPOSE_PROJECT_NAME}_config > $work/restored-config-$name || fail 'modes of restored config'
@@ -176,7 +166,7 @@ c.commit()" || fail 'note fixture'
       cmp -s $work/modes-scratch-$name $work/restored-scratch-$name || { diff $work/modes-scratch-$name $work/restored-scratch-$name >&2; fail 'scratch modes changed by the restore'; }
       grep -q '^600 ' $work/restored-config-$name && grep -q '^700 ' $work/restored-config-$name || fail 'no 600/700 entries in the restored config volume'
       [[ -z $(grep -hv ' 10001:10001 ' $work/restored-config-$name $work/restored-scratch-$name) ]] || fail 'restored entries not owned by 10001:10001'
-      [[ $(docker run --rm --network none --mount type=volume,src=${COMPOSE_PROJECT_NAME}_scratch,dst=/s,readonly python:3-alpine sh -c 'cat /s/work/deep/marker.txt; echo; readlink /s/work/rel-link') == "scratch-$name-bytes"$'\n'deep/marker.txt ]] || fail 'restored scratch content'
+      [[ $(docker run --rm --network none --mount type=volume,src=${COMPOSE_PROJECT_NAME}_scratch,dst=/s,readonly python:3-alpine sh -c 'cat /s/work/deep/marker.txt; echo; readlink /s/work/rel-link; cat /s/work/hard-link') == "scratch-$name-bytes"$'\n'deep/marker.txt$'\n'"scratch-$name-bytes" ]] || fail 'restored scratch content'
       docker compose up -d --no-build || fail 'restored up'
       healthy $COMPOSE_PROJECT_NAME || fail 'restored health'
       [[ $(identity_hash) == $identity ]] || fail 'restored identity'

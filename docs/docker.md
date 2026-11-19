@@ -140,11 +140,16 @@ into a separate project, for example as a recovery drill.
 
 The script resolves real volume names from Compose, refuses missing backup sources, and checks checksums before
 restoring. With `--stop` it always runs `docker compose stop`, then refuses if any container (of any project)
-still mounts either volume, and afterwards starts only the services that were running before, also when archiving
-fails. Restore also refuses while any container mounts either volume. Before it writes anything, restore lists
-both archives and refuses absolute names, `..` components, hard links, devices and FIFOs, and symbolic links
-whose target leaves the volume (scratch can hold ordinary relative links). A backup directory is as trusted as the
-volume itself: this is a guard against a damaged or mixed-up archive, not a signature. A failed backup is
+that mounts either volume is anything other than stopped (exited or created), and afterwards starts only the services
+that were running before, also when archiving fails. A bind mount of a volume's backing directory by some other
+container is not detected. Restore makes the same check. When the project has a gateway container, the script also
+checks that its real mounts are the two volumes Compose resolves, and refuses if not (a missing `-f` override can
+rename them). Restore prints `Restoring backup of <project> (<volumes>) into <project> (<volumes>)` and needs
+`--into-project` whenever the project or the volume names differ from the manifest. With `--offline` nothing can
+confirm the project: the printed `Project:` line is what you must check. The checksums guard against a damaged or
+mixed-up archive; a backup directory must be protected like the volume itself (it holds the keys), and restore
+does not inspect archive content.
+A failed backup is
 incomplete and must not be used. Both volumes belong together. The config volume holds provider keys in protected
 files: a backup is a secret. Keep it private and copy it to protected storage.
 `docker compose down` keeps volumes; `down -v` deletes all their data.
