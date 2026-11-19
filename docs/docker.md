@@ -345,9 +345,31 @@ Open `https://settings.example.net`, sign in. Passwords and sessions follow the 
 idle, audit file `remote-settings.audit.jsonl` in the config volume). The proxy's log holds no passwords and no session
 values (the session header is filtered out of Caddy's error log; the e2e test checks it).
 
-**What is reachable:** only the settings page, login and logout, and the provider, model and device routes that the
-gateway allows remotely; everything else, including inference, projects, sync and the other admin routes, answers 404
-at the proxy and is refused again by the gateway. The proxy also refuses any path with dot segments, doubled slashes or
+**What is reachable.** The page and its sign-in, and these routes below `/minigw/admin/v1/` (nothing else: inference, sync,
+notes, history, the other admin routes and every other method answer 404 at the proxy and are refused again by the gateway).
+`GET /minigw/settings` is the page; `POST /minigw/settings/login` and `POST /minigw/settings/logout` sign in and out.
+
+<!-- remote-routes:begin (docs/docker.md; the test TestRemoteRoutesTableMatchesTheAllowList compares this table with remoteAdminAllowed) -->
+| Methods | Path (below `/minigw/admin/v1/`) | What it does |
+|---|---|---|
+| GET, POST | `providers`, `devices` | list; add (a provider's key is entered here) |
+| PATCH, DELETE | `providers/{name}`, `devices/{name}` | change or remove |
+| GET, POST | `providers/{name}/models` | list and enable models |
+| GET | `devices/{name}/history` | a device's connections |
+| GET | `users`, `bindings`, `teams`, `projects` | read-only lists |
+| GET | `teams/{id}`, `teams/{id}/assignments`, `projects/{id}/members` | read-only: a team, who is assigned, who has access to a project and why |
+| GET | `kb/submissions`, `kb/submissions/{id}` | pending knowledge-base submissions and their text (the first 100) |
+| POST | `kb/submissions/{id}/accept`, `kb/submissions/{id}/reject` | decide a submission |
+<!-- remote-routes:end -->
+
+**A remote accept publishes to the knowledge base**, for everyone who can read that project or team. A stolen session can
+therefore read every pending text (for a replacement also the current text of the note it replaces, private notes
+included) and publish it. What cannot be accepted remotely: a text with hidden characters, a text too long to review on the
+page, and a replacement whose note changed or no longer exists since it was written or whose current text is too long (reject
+works). Two limits apply: at most 30 decisions that reach the core per 10 minutes (the 429 carries `Retry-After`), and a higher
+limit of 300 refused decisions per 10 minutes; the exact rules are in [gateway.md](gateway.md#remote-settings-listener). Notes,
+note history and restore, sync and every change of projects, teams or users stay with the CLI. To make the remote review
+reject-only, remove `accept` from the proxy's `@post` matcher (and from `remoteAdminAllowed`). The proxy also refuses any path with dot segments, doubled slashes or
 percent-encoding, so it never forwards what it did not check. Port 8766 is never published; only HTTPS is, no HTTP port
 exists (no redirect: a redirect would invite typing a password on an `http://` address; HSTS keeps browsers on HTTPS).
 The gateway listens on 8766 on every network it joins, so a container on a network shared with it (`default`, a
