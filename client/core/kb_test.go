@@ -244,8 +244,8 @@ func TestSubmissionStaleReplacement(t *testing.T) {
 	_, e = f.UpdateNote(ctx, p, project, n.ID, n.Revision, in)
 	f.ok(e)
 	_, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
-	var conflict ErrRevision
-	if !errors.As(e, &conflict) || conflict.Current != 2 {
+	var refusal ErrRefusal // the explicit stale refusal comes before the revision wall (ErrRevision) of submissionAccess
+	if !errors.As(e, &refusal) || !strings.Contains(e.Error(), "changed since this submission was written (it expected revision 1, the note is at 2)") {
 		t.Fatal(e)
 	}
 	got, e := f.GetNote(ctx, p, project, n.ID)

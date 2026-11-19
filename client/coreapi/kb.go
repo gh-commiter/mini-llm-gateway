@@ -91,13 +91,17 @@ func (a *API) reviewRoute(ctx context.Context, st *core.Store, p core.Principal,
 			return a.errResponse(core.ErrNotFound)
 		}
 		var b struct {
-			Reason     string `json:"reason"`
-			ReviewHash string `json:"reviewHash"`
+			Reason          string `json:"reason"`
+			ReviewHash      string `json:"reviewHash"`
+			CurrentRevision int64  `json:"currentRevision"`
 		}
 		if e := payload(r, &b); e != nil {
 			return a.errResponse(e)
 		}
-		v, e := st.MemberReview(ctx, p, project, id, rest[1] == "accept", b.Reason, b.ReviewHash)
+		if b.CurrentRevision < 0 {
+			return a.errResponse(core.ErrInvalid{What: "currentRevision"})
+		}
+		v, e := st.MemberReviewAt(ctx, p, project, id, rest[1] == "accept", b.Reason, b.ReviewHash, b.CurrentRevision)
 		if e != nil {
 			return a.errResponse(e)
 		}
@@ -184,13 +188,17 @@ func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []
 	}
 	if len(seg) == 4 && method == "POST" && (seg[3] == "accept" || seg[3] == "reject") {
 		var b struct {
-			Reason     string `json:"reason"`
-			ReviewHash string `json:"reviewHash"`
+			Reason          string `json:"reason"`
+			ReviewHash      string `json:"reviewHash"`
+			CurrentRevision int64  `json:"currentRevision"`
 		}
 		if e := payload(Request{Body: body}, &b); e != nil {
 			return a.errResponse(e)
 		}
-		v, e := st.ReviewSubmission(ctx, id, seg[3] == "accept", b.Reason, b.ReviewHash)
+		if b.CurrentRevision < 0 {
+			return a.errResponse(core.ErrInvalid{What: "currentRevision"})
+		}
+		v, e := st.ReviewSubmissionAt(ctx, id, seg[3] == "accept", b.Reason, b.ReviewHash, b.CurrentRevision)
 		if e != nil {
 			return a.errResponse(e)
 		}

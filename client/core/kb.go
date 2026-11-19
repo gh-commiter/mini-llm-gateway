@@ -189,8 +189,21 @@ type Submission struct {
 	// The review reads (with ReviewHash) show Title and Body without what a reviewer cannot see (invisibleRune, the mirror's rule):
 	// Hidden counts what was left out of the text shown (an accept is refused while the stored text has any); ReviewCheck is "ok",
 	// "hidden", or "long" (the body is longer than the owner's panel shows: review and accept it with gw kb review).
-	Hidden      int    `json:"hidden,omitempty"`
-	ReviewCheck string `json:"reviewCheck,omitempty"`
+	Hidden int `json:"hidden,omitempty"`
+	// ReviewCheck is the overall check every surface tests (ok only when it is safe to accept): the proposal's own check
+	// (ProposalCheck: ok, hidden or long) together with the replaced note's (TargetState and the Current* fields, which a
+	// review read of a replacement carries): ok, hidden or long on either side, or target (the note is missing or changed).
+	// CurrentRevision is 0 for none and missing; CurrentBody only in a detail, never in a list.
+	ReviewCheck        string  `json:"reviewCheck,omitempty"`
+	ProposalCheck      string  `json:"proposalCheck,omitempty"`
+	TargetState        string  `json:"targetState,omitempty"`
+	CurrentRevision    *int64  `json:"currentRevision,omitempty"`
+	CurrentTitle       string  `json:"currentTitle,omitempty"`
+	CurrentClass       Class   `json:"currentClass,omitempty"`
+	CurrentKind        string  `json:"currentKind,omitempty"`
+	CurrentHidden      int     `json:"currentHidden,omitempty"`
+	CurrentReviewCheck string  `json:"currentReviewCheck,omitempty"`
+	CurrentBody        *string `json:"currentBody,omitempty"`
 }
 
 // reviewPanelLimit: the characters of a body the owner's panel shows (PanelLimits.multiline, PL.multiline); a rune count is never
@@ -242,22 +255,109 @@ func hiddenRefusal(what, s string, ws bool) error {
 	return ErrRefusal{fmt.Sprintf("the %s has %d hidden characters (%s%s): remove them and submit again", what, n, strings.Join(where, "; "), more)}
 }
 
-// reviewRead: a review read of v (stored text from the table, whatever v carries): the text shown, Hidden and ReviewCheck.
-func reviewRead(tx *sql.Tx, v *Submission) error {
+// reviewEval is the one rule for what a reviewer is shown of a stored text, for the proposal and for the note it
+// replaces: the title and body without the characters nobody can see, how many that left out, and the check: "ok",
+// "hidden" (some were left out) or "long" (the body is longer than the panel shows).
+func reviewEval(title, body string) (t, b string, hidden int, check string) {
+	t, b, hidden = hiddenIn(title, body)
+	switch {
+	case hidden > 0:
+		check = "hidden"
+	case utf8.RuneCountInString(body) > reviewPanelLimit:
+		check = "long"
+	default:
+		check = "ok"
+	}
+	return
+}
+
+// replacedNote is the note a replacement would overwrite, as one review read sees it: state none (no replacement),
+// ok, stale (its revision is not the one the submission expected) or missing (deleted, a mirror id, of another
+// project than the submission, or not readable by the reviewer).
+type replacedNote struct {
+	state            string
+	revision         int64
+	class            Class
+	kind, title, raw string
+}
+
+// readReplaced reads the target of v in the caller's transaction. The note's project is checked BEFORE its body is
+// selected; rv (nil = the gateway owner) must be able to read the note's class, else it is as good as missing.
+func readReplaced(tx *sql.Tx, v *Submission, rv *Principal) (r replacedNote, err error) {
+	if v.Replaces == 0 {
+		r.state = "none"
+		return
+	}
+	r.state = "missing"
+	n, e := noteMetadata(tx, v.Replaces) // a mirror id is not found here
+	if errors.Is(e, ErrNotFound) {
+		return
+	}
+	if e != nil {
+		return r, e
+	}
+	if n.ProjectID != v.Project {
+		return
+	}
+	if rv != nil {
+		a, e := loadAccess(tx, rv.UserID, v.Project)
+		if e != nil {
+			return r, e
+		}
+		if !a.can(pRead, n.Class, n.AuthorID == rv.UserID) {
+			return
+		}
+	}
+	var body string
+	if e = tx.QueryRow(`SELECT title,body FROM notes WHERE id=?`, v.Replaces).Scan(&r.title, &body); e != nil {
+		return r, e
+	}
+	r.raw = body
+	r.revision, r.class, r.kind = n.Revision, n.Class, n.EntryKind
+	r.state = "ok"
+	if n.Revision != v.Revision {
+		r.state = "stale"
+	}
+	return
+}
+
+// reviewRead: a review read of v (stored text from the table, whatever v carries): the text shown, Hidden, ProposalCheck,
+// the replaced note's state and text (rv = the reviewing member, nil = the owner; details: with the current body) and
+// the overall ReviewCheck.
+func reviewRead(tx *sql.Tx, v *Submission, rv *Principal, details bool) error {
 	var title, body string
 	if err := tx.QueryRow(`SELECT title, body FROM kb_submissions WHERE id=?`, v.ID).Scan(&title, &body); err != nil {
 		return err
 	}
-	t, b, n := hiddenIn(title, body)
-	v.Title, v.Hidden, v.ReviewCheck = t, n, "ok"
+	t, b, n, check := reviewEval(title, body)
+	v.Title, v.Hidden, v.ProposalCheck = t, n, check
 	if v.Body != nil {
 		v.Body = &b
 	}
+	r, err := readReplaced(tx, v, rv)
+	if err != nil {
+		return err
+	}
+	zero := int64(0)
+	v.TargetState, v.CurrentRevision = r.state, &zero
+	v.CurrentTitle, v.CurrentClass, v.CurrentKind, v.CurrentHidden, v.CurrentReviewCheck, v.CurrentBody = "", "", "", 0, "", nil
+	if r.state == "ok" || r.state == "stale" {
+		ct, cb, ch, cc := reviewEval(r.title, r.raw)
+		v.CurrentRevision = &r.revision
+		v.CurrentTitle, v.CurrentClass, v.CurrentKind, v.CurrentHidden, v.CurrentReviewCheck = ct, r.class, r.kind, ch, cc
+		if details {
+			v.CurrentBody = &cb
+		}
+	}
 	switch {
-	case n > 0:
+	case n > 0 || v.CurrentHidden > 0:
 		v.ReviewCheck = "hidden"
-	case utf8.RuneCountInString(body) > reviewPanelLimit:
+	case check == "long" || v.CurrentReviewCheck == "long":
 		v.ReviewCheck = "long"
+	case r.state == "stale" || r.state == "missing":
+		v.ReviewCheck = "target"
+	default:
+		v.ReviewCheck = "ok"
 	}
 	return nil
 }
@@ -434,7 +534,7 @@ func (s *Store) GetSubmission(ctx context.Context, p Principal, project, id int6
 		if v.ReviewHash, e = reviewHash(tx, id); e != nil { // the owner's read is a review read
 			return e
 		}
-		return reviewRead(tx, &v)
+		return reviewRead(tx, &v, nil, true)
 	})
 	if err != nil {
 		return Submission{}, err
@@ -483,7 +583,7 @@ func (s *Store) ListSubmissions(ctx context.Context, p Principal, project, after
 		for i := range out { // the owner's queue rows are review reads: the panel accepts with this hash
 			if e == nil && owner {
 				if out[i].ReviewHash, e = reviewHash(tx, out[i].ID); e == nil {
-					e = reviewRead(tx, &out[i])
+					e = reviewRead(tx, &out[i], nil, false)
 				}
 			}
 		}
@@ -495,7 +595,13 @@ func (s *Store) ListSubmissions(ctx context.Context, p Principal, project, after
 // ReviewSubmission is the gateway owner's review: any submission, audited as the owner. seen is the ReviewHash of the
 // read the decision rests on: an accept requires it to name the current content (reject ignores it).
 func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, reason, seen string) (v Submission, err error) {
-	return s.review(ctx, nil, 0, id, accept, reason, seen, nil)
+	return s.review(ctx, nil, 0, id, accept, reason, seen, nil, nil)
+}
+
+// ReviewSubmissionAt is ReviewSubmission as the API calls it: an accept of a replacement also names currentRevision, the
+// revision of the replaced note whose text the reviewer was shown (0 = the client showed none).
+func (s *Store) ReviewSubmissionAt(ctx context.Context, id int64, accept bool, reason, seen string, currentRevision int64) (Submission, error) {
+	return s.review(ctx, nil, 0, id, accept, reason, seen, nil, &currentRevision)
 }
 
 // reviewHash is the version of a submission a reviewer read: everything an accept publishes or attributes (the id, class,
@@ -505,11 +611,25 @@ func (s *Store) ReviewSubmission(ctx context.Context, id int64, accept bool, rea
 // so a short prefix could be made to collide; the full SHA-256 cannot, and needs no secret nonce or extra column.
 func reviewHash(tx *sql.Tx, id int64) (string, error) {
 	var class, title, kind, body, prov string
-	var replaces, revision int64
-	if err := tx.QueryRow(`SELECT class,title,entry_kind,body,replaces,revision,provenance FROM kb_submissions WHERE id=?`, id).Scan(&class, &title, &kind, &body, &replaces, &revision, &prov); err != nil {
+	var replaces, revision, project int64
+	if err := tx.QueryRow(`SELECT class,title,entry_kind,body,replaces,revision,provenance,project_id FROM kb_submissions WHERE id=?`, id).Scan(&class, &title, &kind, &body, &replaces, &revision, &prov, &project); err != nil {
 		return "", notFound(err)
 	}
-	b, _ := json.Marshal([]any{id, class, title, kind, body, replaces, revision, prov})
+	input := []any{id, class, title, kind, body, replaces, revision, prov} // a new note: the hash of 0.8.7, byte for byte
+	if replaces != 0 {
+		// A replacement is versioned and also binds the note it replaces: its revision and raw text, class and kind, or
+		// "missing": any edit, import, restore or delete of it after a read changes the hash.
+		t := []any{"missing"}
+		r, err := readReplaced(tx, &Submission{Project: project, Replaces: replaces, Revision: revision}, nil)
+		if err != nil {
+			return "", err
+		}
+		if r.state != "missing" {
+			t = []any{r.revision, r.title, r.raw, r.class, r.kind}
+		}
+		input = []any{"review/2", id, class, title, kind, body, replaces, revision, prov, t}
+	}
+	b, _ := json.Marshal(input)
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:]), nil
 }
@@ -674,7 +794,7 @@ func (s *Store) GetReview(ctx context.Context, p Principal, project, id int64) (
 		if v.ReviewHash, e = reviewHash(tx, id); e != nil {
 			return e
 		}
-		if e = reviewRead(tx, &v); e != nil {
+		if e = reviewRead(tx, &v, &p, true); e != nil {
 			return e
 		}
 		return tx.QueryRow(`SELECT name FROM users WHERE id=?`, v.User).Scan(&writer)
@@ -688,11 +808,18 @@ func (s *Store) GetReview(ctx context.Context, p Principal, project, id int64) (
 // MemberReview is a project admin's accept or reject of a submission of project (0 = its own project): reviewable, never their own, and an
 // accept only of what the reviewer could write themselves (class, the replaced note). Audited as the reviewing user.
 func (s *Store) MemberReview(ctx context.Context, p Principal, project, id int64, accept bool, reason, seen string) (Submission, error) {
-	return s.review(ctx, &p, project, id, accept, reason, seen, s.rate(p.UserID, true))
+	return s.review(ctx, &p, project, id, accept, reason, seen, s.rate(p.UserID, true), nil)
+}
+
+// MemberReviewAt is MemberReview as the API calls it (see ReviewSubmissionAt).
+func (s *Store) MemberReviewAt(ctx context.Context, p Principal, project, id int64, accept bool, reason, seen string, currentRevision int64) (Submission, error) {
+	return s.review(ctx, &p, project, id, accept, reason, seen, s.rate(p.UserID, true), &currentRevision)
 }
 
 // review: rv nil = the owner (any project); else the reviewing member, limited to project (lim after the access checks).
-func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, accept bool, reason, seen string, lim error) (v Submission, err error) {
+// current: the revision of the replaced note the reviewer was shown; nil only for in-process callers that read the
+// note themselves (tests): then the note's own revision is taken. The API always passes it.
+func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, accept bool, reason, seen string, lim error, current *int64) (v Submission, err error) {
 	if len(reason) > maxReason {
 		return v, ErrInvalid{"reason: at most 1024 bytes"}
 	}
@@ -729,6 +856,21 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 		if v.State != "pending" {
 			return ErrInvalid{"submission already reviewed"}
 		}
+		var target replacedNote
+		if accept && v.Replaces != 0 { // the replaced note first: each refusal says what is wrong with it
+			if target, e = readReplaced(tx, &v, rv); e != nil {
+				return e
+			}
+			switch target.state {
+			case "missing":
+				return ErrRefusal{"the note this submission replaces no longer exists: reject it"}
+			case "stale":
+				return ErrRefusal{fmt.Sprintf("note %d changed since this submission was written (it expected revision %d, the note is at %d): reject it and ask for a new submission", v.Replaces, v.Revision, target.revision)}
+			}
+			if _, _, k, _ := reviewEval(target.title, target.raw); k > 0 {
+				return ErrRefusal{fmt.Sprintf("the current text of note %d has %d hidden characters: correct the note first (minigw note edit; the old text stays in its history), then review again", v.Replaces, k)}
+			}
+		}
 		if accept { // four eyes on the text too: publish only what the reviewer read
 			cur, e := reviewHash(tx, id)
 			if e != nil {
@@ -739,6 +881,18 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 			}
 			if seen != cur {
 				return ErrSubmissionChanged
+			}
+			shown := target.revision // what the reviewer says they were shown: the note's own for an in-process caller
+			if current != nil {
+				shown = *current
+			}
+			switch {
+			case v.Replaces != 0 && shown == 0:
+				return ErrRefusal{fmt.Sprintf("this submission replaces note %d: update minigw to see its current text before accepting it", v.Replaces)}
+			case v.Replaces != 0 && shown != target.revision:
+				return ErrSubmissionChanged
+			case v.Replaces == 0 && shown != 0:
+				return ErrInvalid{"currentRevision"}
 			}
 			var title, body string
 			if e = tx.QueryRow(`SELECT title, body FROM kb_submissions WHERE id=?`, id).Scan(&title, &body); e != nil {
