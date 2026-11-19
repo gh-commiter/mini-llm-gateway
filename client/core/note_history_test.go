@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -39,7 +40,7 @@ func checkHistory(t *testing.T, s *Store, old Note) {
 	if title != old.Title || body != old.Body || class != string(old.Class) || kind != old.EntryKind || updated != ms(old.Updated) || provenance != original || provenance != string(want) {
 		t.Fatalf("snapshot differs: %q %q %s %s %d %s; old %+v", title, body, class, kind, updated, provenance, old)
 	}
-	if charge != int64(len(title)+len(body)+len(class)+len(kind)+len(provenance)+48) {
+	if charge != int64(len(title)+len(body)+len(class)+len(kind)+len(provenance)+56) {
 		t.Fatalf("wrong byte charge: %d", charge)
 	}
 }
@@ -191,7 +192,7 @@ func TestNoteHistoryMigration25(t *testing.T) {
 				t.Fatal("old content lost", body, e)
 			}
 			var tables int
-			if e := s.DB().QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='note_history'`).Scan(&tables); e != nil || (tables == 1) == fail {
+			if e := s.DB().QueryRow(`SELECT count(*) FROM sqlite_master WHERE name IN ('note_history','note_history_totals','note_history_project','note_history_total_ins','note_history_total_del')`).Scan(&tables); e != nil || (tables == 5) == fail || (fail && tables != 0) {
 				t.Fatal("migration table", tables, e)
 			}
 			if snaps, _ := filepath.Glob(filepath.Join(dir, "core-25-*.db")); len(snaps) != 1 {
@@ -606,5 +607,96 @@ func TestNoteHistoryKindOnlyAndCRLFNoop(t *testing.T) {
 	f.ok(f.DB().QueryRow(`SELECT entry_kind FROM note_history WHERE note_id=?`, n.ID).Scan(&kind))
 	if kind != n.EntryKind || n.EntryKind == "faq" {
 		t.Fatal("kind", kind)
+	}
+}
+
+// Catches: INSERT OR REPLACE (the old row would go without the totals trigger and the total would drift).
+func TestNoteHistoryUsesPlainInsert(t *testing.T) {
+	src, err := os.ReadFile("note_history.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToUpper(string(src)), "INSERT OR") {
+		t.Fatal("history rows must be written with a plain INSERT")
+	}
+}
+
+// Catches: totals drifting after a restore (of a schema 25 backup migrated on restore, and of a schema 26 backup).
+func TestNoteHistoryAccountingAfterRestore(t *testing.T) {
+	for _, old := range []bool{true, false} {
+		t.Run(fmt.Sprint("schema25=", old), func(t *testing.T) {
+			base := migrations
+			t.Cleanup(func() { migrations = base })
+			if old {
+				migrations = base[:25]
+			}
+			f := newFx(t)
+			n := f.mk("ana", "fakture", Structure)
+			if !old {
+				n = f.edit("ana", n.ProjectID, n, "before backup")
+			}
+			backup := filepath.Join(t.TempDir(), "b.db")
+			f.ok(f.Backup(ctx, backup))
+			migrations = base
+			dir := t.TempDir()
+			f.ok(Restore(dir, backup))
+			s := openT(t, dir)
+			defer s.Close()
+			g := &fx{Store: s, t: t, clock: f.clock, uid: f.uid, pid: f.pid}
+			s.now = func() time.Time { return g.clock }
+			for i := 0; i < 3; i++ {
+				g.clock = g.clock.Add(11 * time.Minute)
+				n = g.edit("ana", n.ProjectID, n, fmt.Sprint("after ", i))
+			}
+			if kept, sum := historyTotal(t, s, n.ProjectID); kept != sum || sum == 0 {
+				t.Fatal("total after edits", kept, sum)
+			}
+			g.ok(g.DeleteNote(ctx, g.p("ana"), n.ProjectID, n.ID, n.Revision))
+			if kept, sum := historyTotal(t, s, n.ProjectID); kept != 0 || sum != 0 {
+				t.Fatal("total after delete", kept, sum)
+			}
+		})
+	}
+}
+
+// Catches: eviction order not falling back to note id, revision when saved times tie.
+func TestNoteHistoryTiedSavedEvictsLowestNoteFirst(t *testing.T) {
+	limitsRestored(t)
+	f := newFx(t)
+	a, b := f.mk("ana", "fakture", Structure), f.mk("ana", "fakture", Structure)
+	pid := a.ProjectID
+	a = f.edit("ana", pid, a, "e1")
+	f.edit("ana", pid, b, "e1")
+	exec(t, f.Store, `UPDATE note_history SET saved=5`)
+	var c int64
+	f.ok(f.DB().QueryRow(`SELECT bytes FROM note_history WHERE note_id=?`, a.ID).Scan(&c))
+	maxHistoryProjectBytes = 2*c + 100 // two rows fit, three do not
+	f.clock = f.clock.Add(11 * time.Minute)
+	f.edit("ana", pid, a, "e2")
+	if got := historyRevisions(t, f.Store, a.ID); !reflect.DeepEqual(got, []int64{2}) || historyCount(t, f.Store, b.ID) != 1 {
+		t.Fatal("tie order", got)
+	}
+}
+
+// Catches: an eviction surviving the rollback of the overwrite that caused it.
+func TestNoteHistoryRollbackAfterEviction(t *testing.T) {
+	limitsRestored(t)
+	f := newFx(t)
+	a, b := f.mk("ana", "fakture", Structure), f.mk("ana", "fakture", Structure)
+	pid := a.ProjectID
+	a = f.edit("ana", pid, a, "e1")
+	f.edit("ana", pid, b, "e1")
+	var kept0, rows0 int64
+	f.ok(f.DB().QueryRow(`SELECT (SELECT bytes FROM note_history_totals WHERE project_id=?),count(*) FROM note_history`, pid).Scan(&kept0, &rows0))
+	maxHistoryProjectBytes = kept0 // the next row must evict
+	exec(t, f.Store, `CREATE TRIGGER failing BEFORE UPDATE ON notes BEGIN SELECT RAISE(ABORT,'injected'); END`)
+	f.clock = f.clock.Add(11 * time.Minute)
+	if _, e := f.UpdateNote(ctx, f.p("ana"), pid, a.ID, a.Revision, NoteInput{Class: Structure, Title: a.Title, Body: "e2"}); e == nil {
+		t.Fatal("injected failure ignored")
+	}
+	var kept1, rows1 int64
+	f.ok(f.DB().QueryRow(`SELECT (SELECT bytes FROM note_history_totals WHERE project_id=?),count(*) FROM note_history`, pid).Scan(&kept1, &rows1))
+	if kept0 != kept1 || rows0 != rows1 {
+		t.Fatal("eviction survived the rollback", kept0, kept1, rows0, rows1)
 	}
 }

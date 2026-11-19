@@ -73,11 +73,13 @@ func saveNoteHistory(tx *sql.Tx, id int64, in NoteInput, now time.Time, by int64
 			return nil
 		}
 	}
-	// A logical byte budget, not the size on disk: UTF-8 text bytes plus the six stored integers.
-	charge := int64(len(title)+len(body)+len(class)+len(kind)+len(provenance)) + 6*8
+	// A logical byte budget, not the size on disk: UTF-8 text bytes plus the seven stored integers (id, revision, updated, charge, saved, saved_by, project).
+	charge := int64(len(title)+len(body)+len(class)+len(kind)+len(provenance)) + 7*8
 	if charge > maxHistoryNoteBytes || charge > maxHistoryProjectBytes {
 		return nil // cannot be kept within the budget; the overwrite goes on
 	}
+	// Plain insert, never the replace form: a replace deletes the old row without firing the totals trigger
+	// (recursive triggers are off), and the project total would drift.
 	if _, err := tx.Exec(`INSERT INTO note_history(note_id,revision,title,body,class,entry_kind,updated,bytes,provenance,saved,saved_by,project_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, revision, title, body, class, kind, updated, charge, provenance, ms(now), by, project); err != nil {
 		return err
@@ -111,6 +113,10 @@ func trimNote(tx *sql.Tx, id, keep int64) error {
 		}
 		rows = append(rows, r)
 	}
+	if err := rs.Err(); err != nil { // before any deletion: a failed iteration must not leave a partial eviction
+		rs.Close()
+		return err
+	}
 	if err := rs.Close(); err != nil {
 		return err
 	}
@@ -124,7 +130,7 @@ func trimNote(tx *sql.Tx, id, keep int64) error {
 		count--
 		total -= r.size
 	}
-	return rs.Err()
+	return nil
 }
 
 // trimProject deletes the project's oldest rows (saved, note, revision) until its total fits, never the row just saved.
@@ -151,6 +157,10 @@ func trimProject(tx *sql.Tx, project, keepID, keepRev int64) error {
 		}
 		drop = append(drop, k)
 		total -= size
+	}
+	if err := rs.Err(); err != nil { // before any deletion
+		rs.Close()
+		return err
 	}
 	if err := rs.Close(); err != nil {
 		return err
