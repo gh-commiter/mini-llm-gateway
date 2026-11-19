@@ -298,6 +298,18 @@ if [ "$os" = darwin ]; then
         echo "minigw plugin: could not download or verify minigw from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; unrecord; exit 0; fi; }
   fi
 else
+  # Datoteke, ki je ni mogoče PREBRATI (odprta izključno, »Device or resource busy«), ne moremo preveriti: to NI »neoverjena«. V tem zagonu se je
+  # ne briše in ne zamenja, zapis .verified ostane kot je (kljuka datoteke, katere hash ne more izračunati, ne zažene: neskladje = tiho);
+  # ena vrstica, PATH se izvozi, naslednji zagon poskusi znova.
+  if [ -f "$EXE" ] && [ ! -L "$EXE" ]; then
+    shm "$EXE"
+    if [ -z "$SH" ]; then
+      echo "minigw plugin: the client in bin is in use and could not be checked this time; trying again at the next session start"
+      qb=$(printf '%s' "$BIN" | sed "s/'/'\\\\''/g"); line="export PATH='$qb':\"\$PATH\""
+      [ -n "${CLAUDE_ENV_FILE:-}" ] && { grep -qxF "$line" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "$line" >> "$CLAUDE_ENV_FILE"; }
+      tidy; exit 0
+    fi
+  fi
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
   # Nameščen minigw: Linux povezava bin/minigw; Windows: zagonska datoteka bin/minigw, ki jo napiše minigw plugin install (glej winlauncher):
   # skripta je ne ustvari ne prepiše; brez veljavne zagonske datoteke velja lastna kopija bin/minigw.exe (v Git Bashu jo »minigw« najde).
@@ -377,7 +389,8 @@ if ! goodver "$cur"; then
 elif older "$cur" "$MIN" && [ -n "$usedinst" ]; then
   echo "minigw plugin: using the installed minigw $cur, older than $MIN which this plugin's commands need; some commands will not work until it is updated ($(how))"
 elif older "$cur" "$MIN"; then
-  echo "minigw plugin: using the plugin's own copy of minigw $cur (the latest release), older than $MIN which this plugin's commands need; some commands will not work until a newer minigw is released or you install a beta from https://github.com/$REPO/releases${stale:+ (the installed minigw is older still: $(how))}"
+  sc=""; [ -n "$stale" ] && older "$iv" "$cur" && sc=" (the installed minigw $iv is older still: $(how))"
+  echo "minigw plugin: using the plugin's own copy of minigw $cur (the latest release), older than $MIN which this plugin's commands need; some commands will not work until a newer minigw is released or you install a beta from https://github.com/$REPO/releases${sc}"
 elif [ -n "$stale" ]; then
   echo "minigw plugin: the installed minigw${iv:+ $iv} is older than $MIN: the plugin uses its own copy $cur (update the installed one: $(how))"
 fi

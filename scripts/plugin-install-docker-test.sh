@@ -69,6 +69,9 @@ exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\\''"
 print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0" > "$exe"
 # OPS: vsak mv/rm na minigw, minigw.exe, .keep (v ustaljenem stanju prazno); VIOL: klic na GOLEM imenu »minigw«, ko ta ne obstaja, a minigw.exe obstaja
 for c in mv rm; do print '#!/bin/sh\nif [ -n "${FAILMV:-}" ] && [ '$c' = mv ]; then for last; do :; done; case $last in */bin/minigw.exe) echo busy >\&2; exit 1 ;; esac; fi\nfor a; do case $a in */bin/minigw|*/bin/minigw.exe|*/bin/minigw.exe.keep) echo "'$c' $*" >> "$OPS" ;; esac\ncase $a in */bin/minigw) [ ! -e "$a" ] && [ -e "$a.exe" ] && echo "'$c' $*" >> "$VIOL" ;; esac; done\nexec /bin/'$c' "$@"' > $T/win/fake/$c; done
+REALSHA=$(command -v shasum)   # ovojnica: branje minigw.exe v bin ne uspe (odprt izključno), ko je FAILREAD nastavljen; sicer pravi shasum
+print '#!/bin/sh\nif [ -n "${FAILREAD:-}" ]; then for a; do case $a in */bin/minigw.exe) echo "sha256sum: $a: Device or resource busy" >\&2; exit 1 ;; esac; done; fi\nexec '$REALSHA' "$@"' > $T/win/fake/shasum
+REALSUM=$(command -v sha256sum || true); [[ -n $REALSUM ]] && print '#!/bin/sh\nif [ -n "${FAILREAD:-}" ]; then for a; do case $a in */bin/minigw.exe) echo "sha256sum: $a: Device or resource busy" >\&2; exit 1 ;; esac; done; fi\nexec '$REALSUM' "$@"' > $T/win/fake/sha256sum
 chmod +x $T/win/fake/* "$exe"
 # izdaja z lažnim minigw-windows-amd64.exe (različica, oznaka vsebine), podpisana s testnim ključem
 mkrel() { mkdir -p $T/rel/$1; print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $2; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0 # $1" > $T/rel/$1/minigw-windows-amd64.exe; chmod +x $T/rel/$1/minigw-windows-amd64.exe
@@ -77,7 +80,7 @@ mkrel wdl $MINV; mkrel wnew 0.99.0; mkrel wold 0.5.20
 RELEXE=$T/rel/wdl/minigw-windows-amd64.exe
 # shrani podpisane vsote ob kopijo (kot po prenosu): wtrust <datoteka> <različica>
 wtrust() { { print "VERSION $2"; print "$(shasum -a 256 "$1" | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > $GB/SHA256SUMS; ssh-keygen -Y sign -q -f $T/key -n minigw-release < $GB/SHA256SUMS > $GB/SHA256SUMS.sig }
-winrun() { FAILMV=${FAILMV:-} OPS=$T/win/ops VIOL=$T/win/viol CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE=${WENV:-} LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
+winrun() { FAILMV=${FAILMV:-} FAILREAD=${FAILREAD:-} OPS=$T/win/ops VIOL=$T/win/viol CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE=${WENV:-} LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
 clear10() { rm -f $GB/* $GB/.[a-z]* $T/win/ops $T/win/viol 2>/dev/null || true; rmdir $GB/.aside.lock 2>/dev/null || true }
 golauncher() { printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec 'C:${1//$sq/$rep}' \"\$@\"" > $GB/minigw; printf '@setlocal DisableDelayedExpansion\r\n@"%s" %%*\r\n' "$1" > $GB/minigw.cmd }
 # nobenega ukaza na golem imenu bin/minigw (OPS/VIOL), razen kjer test to izrecno dovoli
@@ -158,6 +161,19 @@ cp $T/win/exe.keep "$exe"
 print '#!/bin/sh\ntouch '$T'/win/ran3b' > "$exe"; clear10; wtrust $RELEXE $MINV   # sums vouch for ANOTHER file: the installed one is unverified
 winrun > /dev/null; [[ ! -e $T/win/ran3b && ! -e $GB/minigw.exe ]] || fail "10 S3b: an unverified installed client was copied or run"
 cp $T/win/exe.keep "$exe"
+# S9: exe, ki ga ni mogoče PREBRATI (odprt izključno): NI »neoverjen«. Nobenega rm/mv, ena vrstica, izhod 0, PATH izvožen, zapis nespremenjen; naslednji zagon običajen
+clear10; winrun wdl > /dev/null; cp $GB/.verified $T/win/verified.keep; cp $GB/minigw.exe $T/win/exe.keep9; rm -f $T/win/ops; : > $T/win/env9
+out=$(FAILREAD=1 WENV=$T/win/env9 winrun wnew 2> $T/win/err9); print -r -- $out
+[[ $out == *"the client in bin is in use and could not be checked this time; trying again at the next session start"* && $out != *"cannot verify"* && $out != *"unavailable"* && ! -s $T/win/err9 ]] || fail "10 S9: the unreadable exe was not treated as no verdict: $out $(cat $T/win/err9)"
+[[ ! -e $T/win/ops ]] && cmp -s $T/win/exe.keep9 $GB/minigw.exe && cmp -s $T/win/verified.keep $GB/.verified && grep -q '^export PATH=' $T/win/env9 || fail "10 S9: the exe or the record was touched, or no PATH"
+winrun wnew > /dev/null; cmp -s $T/rel/wnew/minigw-windows-amd64.exe $GB/minigw.exe || fail "10 S9: the next normal run did not update"
+# S10: stavek o starejšem nameščenem: klavzula le, ko je nameščeni STROGO starejši od lastne kopije
+clear10; cp $T/rel/wold/minigw-windows-amd64.exe "$exe"; out=$(winrun wold); print -r -- $out   # nameščeni = lastna kopija (0.5.20): enako
+[[ $out == *"using the plugin's own copy of minigw 0.5.20 (the latest release), older than"* && $out != *"is older still"* ]] || fail "10 S10 equal: a clause about an installed client that is not older: $out"
+clear10; wtrust "$T/rel/wold/minigw-windows-amd64.exe" 0.5.0   # shranjene vsote overijo nameščeni exe kot 0.5.0
+cp $T/rel/wold/minigw-windows-amd64.exe "$exe"; out=$(winrun wold); print -r -- $out
+[[ $out == *"using the plugin's own copy of minigw 0.5.20 (the latest release), older than"* && $out == *"the installed minigw 0.5.0 is older still: "* ]] || fail "10 S10 lower: no clause for an older installed client: $out"
+cp $T/win/exe.keep "$exe" 2>/dev/null || true
 # S7: ostanek 0.8.1-0.8.9: .keep brez minigw.exe in .aside.lock: .keep gre nazaj, ključavnica izgine, nič drugega
 clear10; winrun wdl > /dev/null; mv $GB/minigw.exe $GB/minigw.exe.keep; mkdir $GB/.aside.lock; print 1 > $GB/.aside.lock/pid
 winrun > /dev/null
