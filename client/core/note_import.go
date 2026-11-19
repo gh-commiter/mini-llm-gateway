@@ -297,7 +297,7 @@ func (s *Store) importNote(tx *sql.Tx, project, author, id int64, in NoteInput, 
 		if err := tx.QueryRow(`SELECT entry_kind FROM notes WHERE id=?`, id).Scan(&in.EntryKind); err != nil {
 			return 0, err
 		}
-		if err := saveNoteHistory(tx, id, in); err != nil {
+		if err := saveNoteHistory(tx, id, in, s.now(), 0, false); err != nil {
 			return 0, err
 		}
 		if _, err := tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1 WHERE id=?`, in.Class, in.Title, in.Body, size, ms(s.now()), id); err != nil {

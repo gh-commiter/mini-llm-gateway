@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func historyCount(t *testing.T, s *Store, id int64) int {
@@ -61,6 +62,7 @@ func TestNoteHistoryOverwritePaths(t *testing.T) {
 			}
 			f.ok(err)
 			write := func(in NoteInput, revision int64) error {
+				f.clock = f.clock.Add(11 * time.Minute) // each edit starts a new burst
 				switch path {
 				case "edit":
 					_, e := f.UpdateNote(ctx, p, pid, n.ID, revision, in)
@@ -139,7 +141,7 @@ func TestNoteHistoryConflictAndInsertFailure(t *testing.T) {
 		t.Fatal("revision conflict", e)
 	}
 	// A duplicate key makes the snapshot insert fail after the checks, before the overwrite.
-	exec(t, f.Store, `INSERT INTO note_history SELECT id,revision,title,body,class,entry_kind,updated,1,'{}' FROM notes WHERE id=?`, n.ID)
+	exec(t, f.Store, `INSERT INTO note_history SELECT id,revision,title,body,class,entry_kind,updated,1,'{}',0,0 FROM notes WHERE id=?`, n.ID)
 	_, e = f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, in)
 	if e == nil {
 		t.Fatal("insert failure ignored")
@@ -148,46 +150,6 @@ func TestNoteHistoryConflictAndInsertFailure(t *testing.T) {
 	f.ok(e)
 	if !reflect.DeepEqual(after, n) || historyCount(t, f.Store, n.ID) != 1 {
 		t.Fatal("failed insert changed note or history")
-	}
-}
-
-func TestNoteHistoryCaps(t *testing.T) {
-	for _, cap := range []string{"revisions", "note bytes", "project bytes"} {
-		t.Run(cap, func(t *testing.T) {
-			f := newFx(t)
-			p, pid := f.p("ana"), f.pid["fakture"]
-			in := NoteInput{Class: Structure, Title: "a", Body: "é"}
-			n, _, e := f.CreateNote(ctx, p, pid, "cap", in)
-			f.ok(e)
-			var provenance string
-			f.ok(f.DB().QueryRow(`SELECT provenance FROM note_revisions WHERE note_id=? AND revision=?`, n.ID, n.Revision).Scan(&provenance))
-			charge := int64(len(in.Title) + len(in.Body) + len(string(in.Class)) + len(n.EntryKind) + len(provenance) + 32)
-			oldR, oldN, oldP := maxHistoryRevisions, maxHistoryNoteBytes, maxHistoryProjectBytes
-			t.Cleanup(func() { maxHistoryRevisions, maxHistoryNoteBytes, maxHistoryProjectBytes = oldR, oldN, oldP })
-			want := "history limit for this note reached:"
-			switch cap {
-			case "revisions":
-				maxHistoryRevisions = 1
-			case "note bytes":
-				maxHistoryNoteBytes = charge
-			case "project bytes":
-				maxHistoryProjectBytes = charge
-				want = "history limit for this project reached:"
-			}
-			in.Body = "new"
-			n, e = f.UpdateNote(ctx, p, pid, n.ID, n.Revision, in)
-			f.ok(e) // exactly at the boundary
-			in.Body = "refused"
-			_, e = f.UpdateNote(ctx, p, pid, n.ID, n.Revision, in)
-			if e == nil || !strings.HasPrefix(e.Error(), want) || strings.Contains(e.Error(), "delet") {
-				t.Fatal("cap error", e)
-			}
-			after, e := f.GetNote(ctx, p, pid, n.ID)
-			f.ok(e)
-			if !reflect.DeepEqual(n, after) || historyCount(t, f.Store, n.ID) != 1 {
-				t.Fatal("refused overwrite changed note or history")
-			}
-		})
 	}
 }
 
@@ -249,70 +211,6 @@ func TestNoteHistoryMigration25(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestNoteHistoryRefusedReviewAndImport(t *testing.T) {
-	for _, path := range []string{"review", "import"} {
-		t.Run(path, func(t *testing.T) {
-			f := newFx(t)
-			p, pid := f.p("ana"), f.pid["fakture"]
-			r, e := f.ImportMarkdown(ctx, p, pid, MarkdownInput{Path: "cap.md", Class: Structure, Markdown: "original"})
-			f.ok(e)
-			n, e := f.GetNote(ctx, p, pid, r.NoteID)
-			f.ok(e)
-			old := maxHistoryRevisions
-			maxHistoryRevisions = 0
-			t.Cleanup(func() { maxHistoryRevisions = old })
-			if path == "review" {
-				v, _, err := f.Submit(ctx, p, pid, "refused", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "new", Body: "replacement"}, Replaces: n.ID, Revision: n.Revision})
-				f.ok(err)
-				_, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
-				var state string
-				f.ok(f.DB().QueryRow(`SELECT state FROM kb_submissions WHERE id=?`, v.ID).Scan(&state))
-				if state != "pending" {
-					t.Fatal("refused replacement changed submission state", state)
-				}
-			} else {
-				_, e = f.ImportMarkdown(ctx, p, pid, MarkdownInput{Path: "cap.md", Class: Structure, Markdown: "replacement"})
-			}
-			var ref ErrRefusal
-			if !errors.As(e, &ref) || !strings.HasPrefix(e.Error(), "history limit for this note reached:") {
-				t.Fatal("missing actionable cap refusal", e)
-			}
-			after, e := f.GetNote(ctx, p, pid, n.ID)
-			f.ok(e)
-			if !reflect.DeepEqual(n, after) || historyCount(t, f.Store, n.ID) != 0 {
-				t.Fatal("refused write changed note or history")
-			}
-		})
-	}
-}
-
-func TestNoteHistoryProjectAndTeamBudgets(t *testing.T) {
-	f := newSeg(t)
-	p, pid := f.p("fani"), f.pid["fakture"]
-	first := f.mk("fani", "fakture", Structure)
-	second := f.mk("fani", "fakture", Structure)
-	segment := f.put("fani", Structure, "team")
-	changed := NoteInput{Class: Structure, Title: "current", Body: "current"}
-	_, e := f.UpdateNote(ctx, p, pid, first.ID, first.Revision, changed)
-	f.ok(e)
-	var used int64
-	f.ok(f.DB().QueryRow(`SELECT sum(bytes) FROM note_history WHERE note_id=?`, first.ID).Scan(&used))
-	old := maxHistoryProjectBytes
-	maxHistoryProjectBytes = used
-	t.Cleanup(func() { maxHistoryProjectBytes = old })
-	_, e = f.UpdateNote(ctx, p, pid, second.ID, second.Revision, changed)
-	if e == nil || !strings.HasPrefix(e.Error(), "history limit for this project reached:") || historyCount(t, f.Store, second.ID) != 0 {
-		t.Fatal("project budget did not aggregate notes", e)
-	}
-	// A class-only change fits exactly in the segment's independent budget.
-	var provenance string
-	f.ok(f.DB().QueryRow(`SELECT provenance FROM note_revisions WHERE note_id=? AND revision=?`, segment.ID, segment.Revision).Scan(&provenance))
-	maxHistoryProjectBytes = int64(len(segment.Title) + len(segment.Body) + len(string(segment.Class)) + len(segment.EntryKind) + len(provenance) + 32)
-	_, e = f.UpdateNote(ctx, p, f.seg, segment.ID, segment.Revision, NoteInput{Class: Data, Title: segment.Title, Body: segment.Body})
-	f.ok(e)
-	checkHistory(t, f.Store, segment)
 }
 
 func TestNoteHistoryBackupAndCurrentBundle(t *testing.T) {
@@ -399,5 +297,170 @@ func TestNoteHistoryCopiesStoredProvenanceVerbatim(t *testing.T) {
 	f.ok(f.DB().QueryRow(`SELECT provenance FROM note_history WHERE note_id=? AND revision=?`, n.ID, n.Revision).Scan(&provenance))
 	if provenance != stored {
 		t.Fatal("stored provenance was reinterpreted", provenance)
+	}
+}
+
+func historyRevisions(t *testing.T, s *Store, id int64) []int64 {
+	t.Helper()
+	rows, err := s.DB().Query(`SELECT revision FROM note_history WHERE note_id=? ORDER BY revision`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var r int64
+		if err := rows.Scan(&r); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func limitsRestored(t *testing.T) {
+	r, n, p, b := maxHistoryRevisions, maxHistoryNoteBytes, maxHistoryProjectBytes, historyBurst
+	t.Cleanup(func() { maxHistoryRevisions, maxHistoryNoteBytes, maxHistoryProjectBytes, historyBurst = r, n, p, b })
+}
+
+// Catches: a storm pushing the original out of the window, or an edit being refused.
+func TestNoteHistoryStormKeepsTheTextFromBeforeIt(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	pid := n.ProjectID
+	cur := n
+	for i := 0; i < 200; i++ {
+		cur = f.edit("ana", pid, cur, fmt.Sprint("storm ", i))
+		f.clock = f.clock.Add(300 * time.Millisecond)
+	}
+	if got := historyRevisions(t, f.Store, n.ID); len(got) != 1 || got[0] != n.Revision {
+		t.Fatal("storm rows", got)
+	}
+	checkHistory(t, f.Store, n)
+	if cur.Revision != n.Revision+200 {
+		t.Fatal("not every edit succeeded", cur.Revision)
+	}
+}
+
+// Catches: the burst measured from the last edit instead of from the saved row, a window that never ends, and
+// authors sharing a burst.
+func TestNoteHistoryBurstBoundaries(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	pid := n.ProjectID
+	cur := f.edit("ana", pid, n, "one") // saves revision 1 at t0
+	f.clock = f.clock.Add(9 * time.Minute)
+	cur = f.edit("ana", pid, cur, "two") // inside the burst
+	f.clock = f.clock.Add(2 * time.Minute)
+	cur = f.edit("ana", pid, cur, "three") // 11 minutes after the row was saved, though 2 after the last edit
+	if got := historyRevisions(t, f.Store, n.ID); !reflect.DeepEqual(got, []int64{1, 3}) {
+		t.Fatal("rows", got)
+	}
+	cur = f.edit("fani", pid, cur, "four") // another author: always a row
+	cur = f.edit("ana", pid, cur, "five")
+	cur = f.edit("fani", pid, cur, "six")
+	if got := historyRevisions(t, f.Store, n.ID); !reflect.DeepEqual(got, []int64{1, 3, 4, 5, 6}) {
+		t.Fatal("alternating authors", got)
+	}
+	f.clock = f.clock.Add(11 * time.Minute)
+	f.edit("fani", pid, cur, "seven")
+	if got := historyRevisions(t, f.Store, n.ID); len(got) != 6 {
+		t.Fatal("11 minutes later", got)
+	}
+}
+
+// Catches: an accepted replacement being coalesced into a burst, or the next edit comparing with an older row.
+func TestNoteHistoryReplacementStartsANewBurst(t *testing.T) {
+	f := newFx(t)
+	p := f.p("ana")
+	n := f.mk("ana", "fakture", Structure)
+	pid := n.ProjectID
+	cur := f.edit("ana", pid, n, "one") // row for revision 1
+	v, _, e := f.Submit(ctx, p, pid, "burst-replace", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: n.Title, Body: "replaced"}, Replaces: n.ID, Revision: cur.Revision})
+	f.ok(e)
+	_, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
+	f.ok(e)
+	f.clock = f.clock.Add(time.Second)
+	cur, e = f.GetNote(ctx, p, pid, n.ID)
+	f.ok(e)
+	f.edit("ana", pid, cur, "after") // within seconds of the same author's earlier row, but after the replacement
+	if got := historyRevisions(t, f.Store, n.ID); !reflect.DeepEqual(got, []int64{1, 2, 3}) {
+		t.Fatal("rows", got)
+	}
+}
+
+// Catches: the 101st version being refused, a gap in the kept revisions, or the newest being dropped.
+func TestNoteHistoryKeepsTheNewestHundred(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	cur := n
+	for i := 0; i < 105; i++ {
+		f.clock = f.clock.Add(11 * time.Minute)
+		cur = f.edit("ana", n.ProjectID, cur, fmt.Sprint("v", i))
+	}
+	got := historyRevisions(t, f.Store, n.ID)
+	if len(got) != 100 || got[0] != 6 || got[99] != 105 || got[99]-got[0] != 99 {
+		t.Fatal("window", len(got), got[0], got[len(got)-1])
+	}
+}
+
+// Catches: byte caps refusing, dropping the new row, dropping the wrong end, or ignoring the note/project scope.
+func TestNoteHistoryByteCapsDropOldest(t *testing.T) {
+	limitsRestored(t)
+	f := newFx(t)
+	pid := f.pid["fakture"]
+	a, b := f.mk("ana", "fakture", Structure), f.mk("ana", "fakture", Structure)
+	step := func(n Note, body string) Note {
+		f.clock = f.clock.Add(11 * time.Minute)
+		return f.edit("ana", pid, n, body)
+	}
+	a = step(a, "1")
+	a = step(a, "2") // saved revision 2, one character: every later row has this size
+	var charge int64
+	f.ok(f.DB().QueryRow(`SELECT bytes FROM note_history WHERE note_id=? AND revision=2`, a.ID).Scan(&charge))
+	maxHistoryNoteBytes = 2 * charge
+	for _, body := range []string{"3", "4", "5"} {
+		a = step(a, body)
+	}
+	if got := historyRevisions(t, f.Store, a.ID); !reflect.DeepEqual(got, []int64{4, 5}) {
+		t.Fatal("note cap", got)
+	}
+	// project cap: a's two rows fill it exactly; the new row of another note pushes out the project's oldest
+	maxHistoryNoteBytes = 1 << 30
+	maxHistoryProjectBytes = 2 * charge
+	b = step(b, "1")
+	if len(historyRevisions(t, f.Store, b.ID)) != 1 {
+		t.Fatal("new row was dropped for the project cap")
+	}
+	for _, r := range historyRevisions(t, f.Store, a.ID) {
+		if r == 4 {
+			t.Fatal("project cap kept the oldest row")
+		}
+	}
+	var total int64
+	f.ok(f.DB().QueryRow(`SELECT sum(bytes) FROM note_history`).Scan(&total))
+	if total > maxHistoryProjectBytes {
+		t.Fatal("project over its cap", total)
+	}
+	// a snapshot larger than any budget is not stored, and the edit still succeeds
+	maxHistoryProjectBytes = 1
+	n := historyCount(t, f.Store, b.ID)
+	b2 := step(b, "2")
+	if b2.Revision != b.Revision+1 || historyCount(t, f.Store, b.ID) != n {
+		t.Fatal("oversize snapshot", b2.Revision)
+	}
+}
+
+// Catches: an old database's note without a provenance row failing its first edit.
+func TestNoteHistoryNoteWithoutProvenance(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	exec(t, f.Store, `DELETE FROM note_revisions WHERE note_id=?`, n.ID)
+	_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "edited"})
+	f.ok(e)
+	var prov string
+	f.ok(f.DB().QueryRow(`SELECT provenance FROM note_history WHERE note_id=? AND revision=?`, n.ID, n.Revision).Scan(&prov))
+	if prov != "" {
+		t.Fatal("provenance", prov)
 	}
 }

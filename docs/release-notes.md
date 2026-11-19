@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The gateway's database goes from schema 25 to 26. It now keeps the previous version of a note before an edit, an accepted replacement or a re-import overwrites it: the newest 100 versions per note, at most 8 MiB per note and 500 MiB per project, older versions go first, and an overwrite is never refused because of it. A burst of edits by one person within ten minutes keeps the version from before the burst. Nothing shows these versions yet.
+- Going back to 0.8.5 or older after this update needs the snapshot or backup made before the update (see "Going back" in `docs/install.md`).
+
 ## 0.8.5
 
 A beta toward a team gateway in Docker Compose: the owner can review what the team hands in to the knowledge base from a browser. This is the first action in the remote settings, besides providers and devices, that changes something.
