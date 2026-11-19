@@ -75,6 +75,8 @@ audit() { $DC exec -T minigw cat /var/lib/minigw/config/remote-settings.audit.js
 
 # one user, team and project for the read-only list checks below (the CLI changes them; the remote page only reads)
 $DC exec -T minigw minigw gw user add e2euser >/dev/null 2>&1 && $DC exec -T minigw minigw gw team add e2eteam >/dev/null 2>&1 && $DC exec -T minigw minigw gw project add e2eproj "E2E Project" >/dev/null 2>&1 || setup_fail "gw user/team/project add"
+BINDDEV=$(printf 'A%.0s' {1..43})   # a well-formed device id (32 zero bytes); the binding is what is listed
+$DC exec -T minigw minigw gw bind $BINDDEV e2euser >/dev/null 2>&1 || setup_fail "gw bind"
 GWTOKEN=$(docker run --rm --user 10001:10001 -v ${proj}_config:/c:ro $PY python -c "import json;print(json.load(open('/c/serve.json'))['token'])" 2>/dev/null)
 [[ -n $GWTOKEN ]] || setup_fail "gateway token"
 
@@ -97,10 +99,10 @@ c=$(req $URL/minigw/admin/v1/providers)
 [[ $c == 401 ]] && pass "same route without a session -> 401" || bad "no-session providers answered $c"
 # read-only lists: users, bindings, teams, projects
 SH=(-H "X-Minigw-Remote-Session: $S")
-for pair in users:e2euser bindings:bindings teams:e2eteam projects:e2eproj; do
+for pair in users:e2euser bindings:$BINDDEV teams:e2eteam projects:e2eproj; do
   p=${pair%%:*}; want=${pair#*:}
   c=$(req $SH $URL/minigw/admin/v1/$p)
-  [[ $c == 200 ]] && grep -q "\"$want\"\|$want" $W/body && pass "logged in: GET $p -> 200 with the data" || bad "GET $p answered $c"
+  [[ $c == 200 ]] && grep -qF -- "$want" $W/body && pass "logged in: GET $p -> 200 with the data" || bad "GET $p answered $c"
   c=$(req $URL/minigw/admin/v1/$p)
   [[ $c == 401 ]] && pass "GET $p without a session -> 401" || bad "GET $p without a session answered $c"
   for m in POST PUT DELETE; do
@@ -161,7 +163,7 @@ c=$(req -H "X-Minigw-Remote-Session: $S" $URL/minigw/admin/v1/providers)
 sleep 1
 plog=$($DC logs admin-proxy 2>&1)
 print -r -- $plog | grep -q 'http.log.error' && pass "the proxy logged the upstream error" || bad "no upstream error in the proxy log (the next check would prove nothing)"
-print -r -- $plog | grep -qF -- $S && bad "the session token is in the proxy log" || pass "no session token in the proxy log after an upstream error"
+[[ $plog == *"$S"* ]] && bad "the session token is in the proxy log" || pass "no session token in the proxy log after an upstream error"
 $DC start minigw >/dev/null 2>&1; healthy || setup_fail "gateway did not come back"
 # where did the gateway see the browser? (the documented check; informational)
 seen=$(audit | grep '"IP":"[0-9a-f]' | tail -1 | sed -n 's/.*"IP":"\([^"]*\)".*/\1/p')
@@ -175,10 +177,10 @@ sh admin-certs.sh link $W/norenew >/dev/null 2>&1; mv $W/norenew/ca/link-ca.key 
 sh admin-certs.sh renew $W/norenew >/dev/null 2>&1 && bad "renew without the CA key succeeded" || pass "renew refuses when the CA key is absent"
 # no password or session value anywhere in the proxy log after the whole run
 plog=$($DC logs admin-proxy 2>&1)
-leak=0; for v in $S $PW $GWTOKEN "wrong password here" "wrong password again"; do print -r -- $plog | grep -qF -- $v && leak=1; done
+leak=0; for v in $S $PW $GWTOKEN "wrong password here" "wrong password again"; do [[ $plog == *"$v"* ]] && leak=1; done
 (( leak )) && bad "a password, session or token value is in the proxy log" || pass "no password, session or gateway token value in the proxy log after the run"
 glog=$($DC logs minigw 2>&1)
-leak=0; for v in $S $PW $GWTOKEN "wrong password here" "wrong password again"; do print -r -- $glog | grep -qF -- $v && leak=1; done
+leak=0; for v in $S $PW $GWTOKEN "wrong password here" "wrong password again"; do [[ $glog == *"$v"* ]] && leak=1; done
 (( leak )) && bad "a password, session or token value is in the gateway log" || pass "no password, session or gateway token value in the gateway log after the run"
 # client IP outside allowedSourceCIDRs
 setcfg '["203.0.113.0/24"]' || setup_fail "second config / restart"

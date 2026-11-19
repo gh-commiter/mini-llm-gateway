@@ -873,6 +873,9 @@ func TestRemoteReadOnlyListsEndToEnd(t *testing.T) {
 			t.Fatal(w.Code)
 		}
 	}
+	if w := f.run(f.request("GET", adminPrefix+"/bindings", "")); !strings.Contains(w.Body.String(), `"device":"`+devID(cf.dev["ana"])+`","user":`+fmt.Sprint(cf.uid["ana"])) {
+		t.Fatal("the binding is not listed", w.Body.String())
+	}
 	before := f.run(f.request("GET", adminPrefix+"/users", "")).Body.String()
 	f.run(f.request("POST", adminPrefix+"/users", `{"name":"mallory"}`))
 	if after := f.run(f.request("GET", adminPrefix+"/users", "")).Body.String(); after != before {
@@ -898,8 +901,19 @@ func remoteCaddyMatchers(t *testing.T) map[string]struct {
 		methods []string
 		re      *regexp.Regexp
 	}
+	imports := 0
 	for _, line := range strings.Split(string(srcFile(t, "../deploy/docker/Caddyfile")), "\n") {
 		f := strings.Fields(line)
+		// Only @get, @post, @change may reach the gateway; @dirty and the final handle answer 404 themselves.
+		if len(f) > 0 && strings.HasPrefix(f[0], "@") && f[0] != "@get" && f[0] != "@post" && f[0] != "@change" && f[0] != "@dirty" {
+			t.Fatal("Caddyfile matcher the parity test does not know:", f[0])
+		}
+		if len(f) > 0 && f[0] == "handle" && !(len(f) == 2 && f[1] == "{" || len(f) == 3 && f[2] == "{" && (f[1] == "@get" || f[1] == "@post" || f[1] == "@change" || f[1] == "@dirty")) {
+			t.Fatal("Caddyfile handle the parity test does not know:", line)
+		}
+		if len(f) == 2 && f[0] == "import" && f[1] == "gateway" {
+			imports++
+		}
 		switch {
 		case len(f) == 2 && f[1] == "{" && (f[0] == "@get" || f[0] == "@post" || f[0] == "@change"):
 			cur = f[0]
@@ -916,8 +930,8 @@ func remoteCaddyMatchers(t *testing.T) map[string]struct {
 			cur = ""
 		}
 	}
-	if len(out) != 3 {
-		t.Fatal("expected @get, @post, @change, got", len(out))
+	if len(out) != 3 || imports != 3 {
+		t.Fatal("expected @get, @post, @change and exactly three routes to the gateway, got", len(out), imports)
 	}
 	return out
 }
@@ -926,6 +940,26 @@ func remoteCaddyMatchers(t *testing.T) map[string]struct {
 func TestRemoteAllowListMatchesCaddyfile(t *testing.T) {
 	matchers := remoteCaddyMatchers(t)
 	names := []string{"users", "bindings", "teams", "projects", "providers", "devices", "general", "status", "agents", "settings", "quota", "usage", "kb", "grants", "audit", "core", "export", "import", "upstreams", "upstream-push", "upstream-pull", "upstream-auto", "upstream-resolve", "upstream-links", "panels", "sync", "gateways", "sessions", "unknown"}
+	names = append(names, "activity", "foundry")
+	// Every first segment the gateway's own router or the core's IsAdminPath knows is a candidate too.
+	for _, src := range []string{"serve_admin.go", "coreapi/admin.go"} {
+		text := string(srcFile(t, src))
+		if src == "coreapi/admin.go" {
+			i := strings.Index(text, "func IsAdminPath")
+			text = text[i : i+strings.Index(text[i:], "\nfunc adminSeg")]
+			for _, m := range regexp.MustCompile(`case ((?:"[^"]+"(?:, )?)+):`).FindAllStringSubmatch(text, -1) {
+				for _, n := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(m[1], -1) {
+					names = append(names, n[1])
+				}
+			}
+			continue
+		}
+		for _, m := range regexp.MustCompile(`(?m)^\tcase (".*"):`).FindAllStringSubmatch(text, -1) {
+			for _, n := range regexp.MustCompile(`"(?:GET|POST|PUT|PATCH|DELETE) ([a-z][a-z0-9-]*)`).FindAllStringSubmatch(m[1], -1) {
+				names = append(names, n[1])
+			}
+		}
+	}
 	var paths []string
 	for _, n := range names {
 		for _, form := range []string{"", "/1", "/1/models", "/1/history", "/1/members", "/1/assignments", "/1/depends", "/strings", "/login", "/logout", "/history", "/events"} {

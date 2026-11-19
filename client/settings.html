@@ -219,7 +219,7 @@ const S = {
   roNote: ["Read-only. Change users, teams and projects on the server: docker compose exec minigw minigw gw …", "Samo branje. Uporabnike, ekipe in projekte spremeniš na strežniku: docker compose exec minigw minigw gw …"],
   roUsers: ["Users", "Uporabniki"], roBindings: ["Devices and users", "Naprave in uporabniki"], roTeams: ["Teams", "Ekipe"], roProjects: ["Projects", "Projekti"],
   roActive: ["active", "aktiven"], roInactive: ["inactive", "neaktiven"], roOwner: ["owner", "lastnik"], roArchived: ["archived", "arhiviran"],
-  roMembers: ["%s members", "%s članov"], roProjectsN: ["%s projects", "%s projektov"], roReview: ["%s waiting for review", "%s čaka na pregled"], roNone: ["none", "ni vnosov"],
+  roMembers: ["%s members", "%s članov"], roProjectsN: ["%s projects", "%s projektov"], roNone: ["none", "ni vnosov"],
   roUnavailable: ["The project database is not available.", "Projektna zbirka ni na voljo."],
   general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Providers", "Ponudniki"], claude: ["Claude CLI", "Claude CLI"],
   about: ["About", "O aplikaciji"], license: ["License", "Licenca"], copyToken: ["Copy Token", "Kopiraj žeton"],
@@ -1893,7 +1893,7 @@ const pages = {
       ...list(t("roUsers"), u, "users", x => row(x.name, value([x.active ? t("roActive") : t("roInactive"), x.owner ? t("roOwner") : ""].filter(Boolean).join(" · ")))),
       ...list(t("roBindings"), b, "bindings", x => row(device(x.device), value(user(x.user)))),
       ...list(t("roTeams"), tm, "teams", x => row(x.name + (x.path ? " (" + x.path + ")" : ""), value([t("roMembers", x.memberCount), t("roProjectsN", x.projectCount), x.archived ? t("roArchived") : ""].filter(Boolean).join(" · ")))),
-      ...list(t("roProjects"), pr, "projects", x => row(x.name + " (" + x.slug + ")", value([x.teamName, t("roMembers", x.memberCount), x.pendingReview ? t("roReview", x.pendingReview) : "", x.archived ? t("roArchived") : ""].filter(Boolean).join(" · "))))];
+      ...list(t("roProjects"), pr, "projects", x => row(x.name + " (" + x.slug + ")", value([x.teamName, t("roMembers", x.memberCount), x.archived ? t("roArchived") : ""].filter(Boolean).join(" · "))))];
   },
   async devices() {
     const [d, g] = await Promise.all([api("GET", "/devices"), REMOTE ? Promise.resolve({}) : api("GET", "/general")]);
