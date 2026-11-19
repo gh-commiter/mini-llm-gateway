@@ -613,6 +613,7 @@ type installRun struct {
 	envOld    bool   // CLAUDE_ENV_FILE already holds the line an older plugin version appended
 	freshOwn  bool   // the release's SHA256SUMS lists the plugin's own copy (nothing to download)
 	serveNew  string // the release has this body as the client asset (and its SHA256SUMS lists it): the plugin downloads it
+	shims     bool   // Windows: bin/minigw and bin/minigw.cmd from an earlier session already point at the installed client
 	badCp     bool   // cp fails for .sums.new (full disk) ...
 	oldNew    bool   // ... while an OLD .sums.new/.sig.new that lists the installed (substituted) client is already there
 	fresh     bool   // the release's SHA256SUMS (served by the fake curl) lists the installed client; nothing cached
@@ -738,6 +739,10 @@ case $u in */SHA256SUMS) cat `+tmp+`/sums > "$out" ;; */SHA256SUMS.sig) echo sig
 		}
 		h := sha256.Sum256([]byte(body))
 		write("sums", "VERSION 0.7.99\n"+hex.EncodeToString(h[:])+"  "+asset+"\n")
+	}
+	if o.shims {
+		write(dn+"/bin/minigw", "#!/bin/sh\n# Mini Gateway: the installed minigw\nexec 'C:"+inst+"' \"$@\"\n")
+		write(dn+"/bin/minigw.cmd", "@setlocal DisableDelayedExpansion\r\n@\"%LOCALAPPDATA%\\Programs\\Mini Gateway\\minigw.exe\" %*\r\n")
 	}
 	if o.badCp {
 		realCp, _ := exec.LookPath("cp")
@@ -1117,5 +1122,19 @@ func TestInstallScriptFailedSumsCopyGivesNoVerdict(t *testing.T) {
 			}
 		}
 		r.mustSay(t, "the minigw installed at ")
+	}
+}
+
+// Windows: shims from an earlier session must not outlive the installed client's verification: when no verified installed
+// client is selected, they are removed and the plugin's own verified minigw.exe answers.
+func TestInstallScriptWindowsStaleShimsAreRemoved(t *testing.T) {
+	r := runInstallScript(t, installRun{goos: "windows", installed: "minigw 0.7.99", latest: "0.7.99", shims: true, ownCopy: "minigw 0.7.99", trustOwn: true})
+	for _, f := range []string{"minigw", "minigw.cmd"} {
+		if _, err := os.Stat(filepath.Join(r.data, "bin", f)); err == nil {
+			t.Errorf("the stale shim %s still points at the unverified installed client:\n%s", f, r.out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(r.data, "bin", "minigw.exe")); err != nil {
+		t.Errorf("the verified own copy is gone:\n%s", r.out)
 	}
 }

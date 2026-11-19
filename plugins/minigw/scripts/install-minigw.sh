@@ -236,6 +236,12 @@ else
     fi
     return 0
   }
+  # Windows: lupini iz prejšnje seje (majhni besedilni datoteki tega skripta) ne smeta preživeti nameščenega minigw, ki ni več overjen.
+  if [ "$os" = windows ] && [ -z "$inst" ]; then
+    for f in "$BIN/minigw" "$BIN/minigw.cmd"; do
+      [ -f "$f" ] && [ ! -L "$f" ] && [ "$(wc -c < "$f")" -lt 1024 ] && grep -q 'Mini Gateway: the installed minigw\|DisableDelayedExpansion' "$f" && rm -f "$f"
+    done
+  fi
   if [ -n "$inst" ]; then
     linkinst
     [ "$isums" = "$BIN/.sums.new" ] && keepsums  # overjen z vsotami tega zagona: shrani jih za brez omrežja

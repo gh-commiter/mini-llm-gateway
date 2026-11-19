@@ -90,6 +90,12 @@ out=$(winrun); print -r -- $out
 print '#!/bin/sh\ntouch '$T'/ran10\necho minigw 9.9.9' > "$exe"; chmod +x "$exe"; rm -f $T/ran10
 out=$(winrun); print -r -- $out
 [[ ! -e $T/ran10 && ! -e $T/win/data/bin/minigw && $out == *"cannot verify the installed minigw and cannot download a verified one"* ]] || fail "10c: a substituted MSI minigw was run or linked"
+# 10e: lupini iz seje 1 (overjen nameščeni minigw.exe), potem je exe zamenjan (hash ni v vsotah): lupini izgineta, zažene se kopija vtičnika
+print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
+cp "$exe" $T/win/data/bin/minigw.exe; winrun newer > /dev/null
+[[ -e $T/win/data/bin/minigw && -e $T/win/data/bin/minigw.cmd ]] || fail "10e: session 1 wrote no shims"
+print '#!/bin/sh\ntouch '$T'/ran10e' > "$exe"; rm -f $T/ran10e; out=$(winrun newer); print -r -- $out
+[[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd && ! -e $T/ran10e && -e $T/win/data/bin/minigw.exe ]] || fail "10e: a stale shim still points at the substituted installed minigw"
 # 10d: BREZ vnaprej vpisanih vsot (stanje prave naprave): nameščen minigw.exe z neznanim hashem se ne zažene, a vrstica ponudi posodobitev
 print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.7.0; exit 0' > "$exe"; chmod +x "$exe"; rm -f $T/win/data/bin/SHA256SUMS $T/win/data/bin/SHA256SUMS.sig
 out=$(winrun newer); print -r -- $out
