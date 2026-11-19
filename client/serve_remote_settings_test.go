@@ -966,9 +966,30 @@ func remoteCaddyMatchers(t *testing.T) map[string]struct {
 		methods []string
 		re      *regexp.Regexp
 	}
-	imports := 0
-	for _, line := range strings.Split(string(srcFile(t, "../deploy/docker/Caddyfile")), "\n") {
+	dirtyDefined, dirtyHandle, dirtyResponds, firstGateway := false, -1, false, -1
+	n := 0
+	inDirty := false
+	for i, line := range strings.Split(string(srcFile(t, "../deploy/docker/Caddyfile")), "\n") {
 		f := strings.Fields(line)
+		// The parity model drops every percent-encoded path because @dirty does: require that refusal, and that it comes first.
+		if len(f) > 1 && f[0] == "@dirty" && f[1] == "expression" {
+			for _, want := range []string{`(^|/)[.][.]?(/|$)`, `|//|`, `|%|`, `\\\\`, `.contains("%")`} {
+				if !strings.Contains(line, want) {
+					t.Fatal("the @dirty matcher no longer refuses", want)
+				}
+			}
+			dirtyDefined = true
+		}
+		if len(f) == 3 && f[0] == "handle" && f[1] == "@dirty" && f[2] == "{" {
+			dirtyHandle, inDirty = i, true
+		} else if inDirty && len(f) == 1 && f[0] == "}" {
+			inDirty = false
+		} else if inDirty && strings.Join(f, " ") == `respond "Not found" 404` {
+			dirtyResponds = true
+		}
+		if len(f) == 2 && f[0] == "import" && f[1] == "gateway" && firstGateway < 0 {
+			firstGateway = i
+		}
 		// Only @get, @post, @change may reach the gateway; @dirty and the final handle answer 404 themselves.
 		if len(f) > 0 && strings.HasPrefix(f[0], "@") && f[0] != "@get" && f[0] != "@post" && f[0] != "@change" && f[0] != "@dirty" {
 			t.Fatal("Caddyfile matcher the parity test does not know:", f[0])
@@ -977,7 +998,7 @@ func remoteCaddyMatchers(t *testing.T) map[string]struct {
 			t.Fatal("Caddyfile handle the parity test does not know:", line)
 		}
 		if len(f) == 2 && f[0] == "import" && f[1] == "gateway" {
-			imports++
+			n++
 		}
 		switch {
 		case len(f) == 2 && f[1] == "{" && (f[0] == "@get" || f[0] == "@post" || f[0] == "@change"):
@@ -995,8 +1016,11 @@ func remoteCaddyMatchers(t *testing.T) map[string]struct {
 			cur = ""
 		}
 	}
-	if len(out) != 3 || imports != 3 {
-		t.Fatal("expected @get, @post, @change and exactly three routes to the gateway, got", len(out), imports)
+	if len(out) != 3 || n != 3 {
+		t.Fatal("expected @get, @post, @change and exactly three routes to the gateway, got", len(out), n)
+	}
+	if !dirtyDefined || dirtyHandle < 0 || !dirtyResponds || dirtyHandle > firstGateway {
+		t.Fatal("the Caddyfile needs a handle @dirty block that answers 404 before any route to the gateway")
 	}
 	return out
 }

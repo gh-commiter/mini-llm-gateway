@@ -51,8 +51,15 @@ h3 { font-size: 13px; margin: 18px 4px 6px; display: flex; align-items: center; 
 .row + .row { border-top: 1px solid var(--line); }
 .row .label { flex: 1; min-width: 0; }
 .row .sub { color: var(--muted); font-size: 12px; }
-.ro .label, .ro .value { overflow-wrap: break-word; white-space: normal; }  /* remote Team page: labels wrap at word boundaries, ids anywhere */
-.ro .id { overflow-wrap: anywhere; }
+/* remote Team page: text wraps at spaces first; a word longer than the row breaks anywhere. "anywhere" (not "break-word") because only it also lowers the
+   min-content size: a flex row's intrinsic width is the sum of its items' min-content widths, so with break-word a 60-character unbroken name made <main>
+   (a flex item of body with min-width:auto) at least that wide and the page scrolled sideways between 701 and about 880 px. */
+.ro, .ro .label, .ro .value { overflow-wrap: anywhere; }
+.ro .value { white-space: normal; }
+main:has(.ro) { min-width: 0; }  /* belt and braces, only where the Team page is shown */
+.ro .row[aria-expanded]::before { content: "\25B8"; flex: none; width: 1em; color: var(--muted); transition: transform .12s; }
+.ro .row[aria-expanded="true"]::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .ro .row[aria-expanded]::before { transition: none; } }
 .ro-item + .ro-item { border-top: 1px solid var(--line); }
 .ro-detail { border-top: 1px solid var(--line); }
 .ro-detail .row + .row { border-top: 1px solid var(--line); }
