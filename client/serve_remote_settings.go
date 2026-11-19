@@ -366,6 +366,10 @@ func (s *server) remoteKBAcceptRefusal(id string, body []byte) string {
 		if string(cur) == "" || string(cur) == "0" {
 			return fmt.Sprintf("This submission replaces note %d: the request must carry currentRevision, the revision of the note whose current text was shown.", int64(r))
 		}
+		// the right value too, against the fresh read: a wrong one is refused here, before the limiter and the core
+		if rev, _ := m["currentRevision"].(float64); string(cur) != strconv.FormatInt(int64(rev), 10) {
+			return "The note changed since you read it: read the submission again."
+		}
 	} else if has {
 		return "This submission replaces no note: the request must not carry currentRevision."
 	}

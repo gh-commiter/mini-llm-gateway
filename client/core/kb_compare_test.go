@@ -436,7 +436,7 @@ func TestReviewRejectGivesAStaleOrMissingReplacementADefaultReason(t *testing.T)
 			_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "moved on"})
 			f.ok(e)
 			reject(f, n, stale.ID, "")
-			if got := reasonOf(f, stale.ID); got != "note 1 changed after this was written (it expected revision 1, the note is at 2): read the note and propose the change again" {
+			if got := reasonOf(f, stale.ID); got != DefaultStaleReason {
 				t.Fatal(got)
 			}
 			// a typed reason is kept as it is
@@ -455,7 +455,7 @@ func TestReviewRejectGivesAStaleOrMissingReplacementADefaultReason(t *testing.T)
 			f.ok(e)
 			f.ok(f.DeleteNote(ctx, f.p("ana"), n.ProjectID, n.ID, cur.Revision))
 			reject(f, n, gone.ID, "")
-			if got := reasonOf(f, gone.ID); got != "note 1 no longer exists" {
+			if got := reasonOf(f, gone.ID); got != DefaultStaleReason {
 				t.Fatal(got)
 			}
 			// a reject that is not about a stale target stays empty: a new note, and a replacement of an unchanged note
@@ -471,5 +471,132 @@ func TestReviewRejectGivesAStaleOrMissingReplacementADefaultReason(t *testing.T)
 				t.Fatal(got)
 			}
 		})
+	}
+}
+
+// Catches: an owner review read of a replacement of a PRIVATE note leaving no audit row, an audit row that carries text, a row for
+// a note that is not private, or a row for a list.
+func TestReviewOwnerReadOfAPrivateTargetIsAudited(t *testing.T) {
+	f := newFx(t)
+	ana, pid := f.p("ana"), f.pid["fakture"]
+	n, _, e := f.CreateNote(ctx, ana, pid, "priv-note", NoteInput{Class: Private, Title: "Secret title", Body: "secret body"})
+	f.ok(e)
+	v, _, e := f.Submit(ctx, ana, pid, "priv-repl", SubmissionInput{NoteInput: NoteInput{Class: Private, Title: "New", Body: "new"}, Replaces: n.ID, Revision: n.Revision})
+	f.ok(e)
+	reads := func() (n int, last string) {
+		rows, err := f.DB().Query(`SELECT detail FROM audit_events WHERE action='kb.owner.read' AND subject=?`, fmt.Sprint(n0(f, v)))
+		f.ok(err)
+		defer rows.Close()
+		for rows.Next() {
+			n++
+			f.ok(rows.Scan(&last))
+		}
+		return
+	}
+	if c, _ := reads(); c != 0 {
+		t.Fatal("audited before a read")
+	}
+	if _, e = f.ListSubmissions(ctx, Principal{}, 0, 0, true); e != nil {
+		t.Fatal(e)
+	}
+	if c, _ := reads(); c != 0 {
+		t.Fatal("a list was audited")
+	}
+	ownerRead(f, v.ID)
+	ownerRead(f, v.ID)
+	c, last := reads()
+	if c != 2 || strings.Contains(last, "secret") || strings.Contains(last, "Secret") || !strings.Contains(last, `"submission":`) {
+		t.Fatal(c, last)
+	}
+	// a note that is not private: no audit row
+	n2, v2 := replacement(f, "audit-plain")
+	ownerRead(f, v2.ID)
+	var count int
+	f.ok(f.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action='kb.owner.read' AND subject=?`, fmt.Sprint(n2.ID)).Scan(&count))
+	if count != 0 {
+		t.Fatal("a non-private target was audited")
+	}
+}
+
+func n0(f *fx, v Submission) int64 { return v.Replaces }
+
+// Catches: the default reject reason carrying a revision or a note state that depends on who reads it. It is ONE sentence for
+// everyone (the author, a reviewer, the owner), whatever the author's access to the note is now.
+func TestReviewDefaultReasonIsTheSameForEveryone(t *testing.T) {
+	reasonOf := func(f *fx, id int64) string {
+		var r string
+		f.ok(f.DB().QueryRow(`SELECT reason FROM kb_submissions WHERE id=?`, id).Scan(&r))
+		return r
+	}
+	want := "the note this would replace changed or no longer exists: read the project's notes and propose the change again"
+	if DefaultStaleReason != want {
+		t.Fatal(DefaultStaleReason)
+	}
+	for _, c := range []struct {
+		name  string
+		setup func(f *fx, n Note)
+	}{
+		{"author can read, note changed", func(f *fx, n Note) {
+			_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "moved on"})
+			f.ok(e)
+		}},
+		{"author removed, note changed", func(f *fx, n Note) {
+			_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "moved on"})
+			f.ok(e)
+			f.ok(f.RemoveMember(ctx, n.ProjectID, f.uid["ana"]))
+		}},
+		{"author deactivated, note changed", func(f *fx, n Note) {
+			_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "moved on"})
+			f.ok(e)
+			f.ok(f.SetUserActive(ctx, f.uid["ana"], false))
+		}},
+		{"someone else's private note", func(f *fx, n Note) {
+			exec(t, f.Store, `UPDATE notes SET class='private',author_id=?,revision=revision+1 WHERE id=?`, f.uid["fani"], n.ID)
+		}},
+		{"note deleted", func(f *fx, n Note) { f.ok(f.DeleteNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision)) }},
+	} {
+		for _, who := range []string{"owner", "member"} {
+			t.Run(c.name+" "+who, func(t *testing.T) {
+				f := newFx(t)
+				n, v := replacement(f, "same")
+				c.setup(f, n)
+				var e error
+				if who == "owner" {
+					_, e = f.ReviewSubmission(ctx, v.ID, false, "", "")
+				} else {
+					_, e = f.MemberReview(ctx, f.p("fani"), n.ProjectID, v.ID, false, "", "")
+				}
+				f.ok(e)
+				if got := reasonOf(f, v.ID); got != want {
+					t.Fatal(got)
+				}
+				// nothing about the note's revision or state reaches the reviewer through the reviewer's own read either
+				if g, _, e := f.GetReview(ctx, f.p("fani"), n.ProjectID, v.ID); e != nil || strings.Contains(g.Reason, "revision") {
+					t.Fatal(g.Reason, e)
+				}
+			})
+		}
+	}
+}
+
+// Catches: a version-bound detail with a stale hash recording a private read although no text was returned.
+func TestReviewVersionDetailAuditsOnlyWhenItReturnsText(t *testing.T) {
+	f := newFx(t)
+	ana, pid := f.p("ana"), f.pid["fakture"]
+	n, _, e := f.CreateNote(ctx, ana, pid, "ver-note", NoteInput{Class: Private, Title: "Secret", Body: "secret body"})
+	f.ok(e)
+	v, _, e := f.Submit(ctx, ana, pid, "ver-repl", SubmissionInput{NoteInput: NoteInput{Class: Private, Title: "New", Body: "new"}, Replaces: n.ID, Revision: n.Revision})
+	f.ok(e)
+	reads := func() (c int) {
+		f.ok(f.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action='kb.owner.read'`).Scan(&c))
+		return
+	}
+	hash := ownerRead(f, v.ID).ReviewHash // one audited read
+	before := reads()
+	if _, e := f.GetSubmissionVersion(ctx, v.ID, "0"+hash[1:]); !errors.Is(e, ErrSubmissionChanged) || reads() != before {
+		t.Fatal("a refused stale hash was audited", e, reads(), before)
+	}
+	if _, e := f.GetSubmissionVersion(ctx, v.ID, hash); e != nil || reads() != before+1 {
+		t.Fatal("a returned read was not audited exactly once", e, reads(), before)
 	}
 }

@@ -311,7 +311,10 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 		t.Fatal("a new note with currentRevision", w.Code, w.Body.String())
 	}
 	k.reject(plain, "done")
-	if w = k.acceptAt(repl, vr.ReviewHash, vr.CurrentRevision+1); w.Code != 400 || !strings.Contains(w.Body.String(), "changed since you read it") {
+	// a wrong value is refused at the gateway's door: 403, one denied row, no started row, nothing reaches the core
+	coreRows := k.count(`SELECT COUNT(*) FROM audit_events`)
+	deniedBefore := deniedRows(repl)
+	if w = k.acceptAt(repl, vr.ReviewHash, vr.CurrentRevision+1); w.Code != 403 || !strings.Contains(w.Body.String(), "changed since you read it") || deniedRows(repl) != deniedBefore+1 || k.count(`SELECT COUNT(*) FROM audit_events`) != coreRows || pending(repl) != 1 {
 		t.Fatal("accepted with a wrong currentRevision", w.Code, w.Body.String())
 	}
 	if w = k.acceptAt(repl, vr.ReviewHash, vr.CurrentRevision); w.Code != 200 || k.count(`SELECT COUNT(*) FROM notes WHERE id=? AND body=?`, done.Note, "new text") != 1 || history() != 1 || k.count(`SELECT COUNT(*) FROM note_history WHERE note_id=? AND body=?`, done.Note, hostile) != 1 {
@@ -324,7 +327,7 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 	// a reject without a typed reason of a stale replacement tells its author why (the same core rule as the CLI's)
 	stale2 := replace("T <b>one</b>", "for a second stale target")
 	edit("edited again after the proposal")
-	if w = k.reject(stale2, ""); w.Code != 200 || k.count(`SELECT COUNT(*) FROM kb_submissions WHERE id=? AND reason LIKE ?`, stale2, "note % changed after this was written (it expected revision %, the note is at %): read the note and propose the change again") != 1 {
+	if w = k.reject(stale2, ""); w.Code != 200 || k.count(`SELECT COUNT(*) FROM kb_submissions WHERE id=? AND reason=?`, stale2, core.DefaultStaleReason) != 1 {
 		t.Fatal("default reason", w.Code, w.Body.String())
 	}
 	// hidden characters in the CURRENT text do not block the accept: the new text is published clean, the history keeps the old one raw
