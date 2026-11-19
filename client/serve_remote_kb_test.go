@@ -321,12 +321,23 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 	stale := replace("T <b>one</b>", "for a stale target")
 	edit("edited after the proposal")
 	refuseAccept("stale", stale, "missing or changed")
+	// a reject without a typed reason of a stale replacement tells its author why (the same core rule as the CLI's)
+	stale2 := replace("T <b>one</b>", "for a second stale target")
+	edit("edited again after the proposal")
+	if w = k.reject(stale2, ""); w.Code != 200 || k.count(`SELECT COUNT(*) FROM kb_submissions WHERE id=? AND reason LIKE ?`, stale2, "note % changed after this was written (it expected revision %, the note is at %): read the note and propose the change again") != 1 {
+		t.Fatal("default reason", w.Code, w.Body.String())
+	}
+	// hidden characters in the CURRENT text do not block the accept: the new text is published clean, the history keeps the old one raw
 	hiddenCur := replace("T <b>one</b>", "for a hidden current text")
-	k.exec(`UPDATE notes SET body=? WHERE id=?`, "cur‮rent​", done.Note)
-	if got := k.read(hiddenCur); got.CurrentHidden != 2 || got.Check != "hidden" || got.CurrentBody != "current" {
+	rawCur := "cur‮rent​"
+	k.exec(`UPDATE notes SET body=? WHERE id=?`, rawCur, done.Note)
+	got := k.read(hiddenCur)
+	if got.CurrentHidden != 2 || got.Check != "ok" || got.CurrentBody != "current" {
 		t.Fatalf("%+v", got)
 	}
-	refuseAccept("hidden current", hiddenCur, "hidden characters")
+	if w = k.acceptAt(hiddenCur, got.ReviewHash, got.CurrentRevision); w.Code != 200 || k.count(`SELECT COUNT(*) FROM notes WHERE id=? AND body=?`, done.Note, "for a hidden current text") != 1 || k.count(`SELECT COUNT(*) FROM note_history WHERE note_id=? AND body=?`, done.Note, rawCur) != 1 {
+		t.Fatal("hidden current text blocked or not kept", w.Code, w.Body.String())
+	}
 	k.exec(`UPDATE notes SET body=? WHERE id=?`, "plain again", done.Note)
 	longCur := replace("T <b>one</b>", "for a long current text")
 	k.exec(`UPDATE notes SET body=? WHERE id=?`, strings.Repeat("z", 64<<10), done.Note)
@@ -369,8 +380,8 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 		if got.CurrentBody != c.Out || got.CurrentHidden < 0 {
 			t.Errorf("%s: current body %q, want %q", c.Name, got.CurrentBody, c.Out)
 		}
-		if got.CurrentHidden > 0 && got.Check != "hidden" {
-			t.Errorf("%s: hidden current text but check %q", c.Name, got.Check)
+		if got.Check == "hidden" {
+			t.Errorf("%s: the current side made the check hidden", c.Name)
 		}
 	}
 	k.reject(cur, "done")

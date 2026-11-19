@@ -679,12 +679,16 @@
  "builtin.kb.section.queue.detail.section.replaced.column.currentkind.value.faq": "FAQ",
  "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck": "Current text check",
  "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.ok": "Shown in full",
- "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.hidden": "Hidden characters: cannot be accepted",
+ "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.hidden": "Has hidden characters (not shown)",
  "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.long": "Too long to review here: use minigw gw kb review",
- "builtin.kb.section.queue.detail.section.replaced.column.currenthidden": "Hidden characters removed",
+ "builtin.kb.section.queue.detail.section.replaced.column.currenthidden": "Hidden characters in the current text (not shown; accepting removes them)",
  "builtin.kb.section.queue.detail.section.replaced.column.currentbody": "Current text",
  "builtin.kb.section.queue.action.replace": "Accept replacement…",
  "builtin.kb.section.queue.action.replace.confirm.title": "Replace a note with {title}?",
  "builtin.kb.section.queue.action.replace.confirm.message": "This overwrites an existing note. The previous text is saved in its history. Open the submission first to compare the current text with the new one.",
- "builtin.kb.section.queue.action.replace.confirm.button": "Replace"
+ "builtin.kb.section.queue.action.replace.confirm.button": "Replace",
+ "builtin.kb.section.queue.column.lineschange": "Lines (current -> new)",
+ "builtin.kb.section.queue.column.charschange": "Characters (current -> new)",
+ "builtin.kb.section.queue.detail.section.replaced.column.lineschange": "Lines (current -> new)",
+ "builtin.kb.section.queue.detail.section.replaced.column.charschange": "Characters (current -> new)"
 }

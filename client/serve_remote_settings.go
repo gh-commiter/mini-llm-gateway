@@ -369,7 +369,7 @@ func (s *server) remoteKBAcceptRefusal(id string, body []byte) string {
 	case "ok":
 		return ""
 	case "hidden":
-		return "This submission, or the note it replaces, contains hidden characters and cannot be accepted: reject it, or correct the note first."
+		return "This submission contains hidden characters and cannot be accepted: reject it and ask for the text without them."
 	case "target":
 		return "The note this submission replaces is missing or changed since it was written: reject it."
 	}

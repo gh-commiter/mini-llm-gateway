@@ -699,14 +699,16 @@ class and kind (or `missing`); a submission that replaces nothing hashes exactly
 detail carry `targetState` (`none`, `ok`, `stale` when the note's revision is not the one the submission expected,
 `missing` when it is deleted, of another project, a mirror or not readable by the reviewer), `currentRevision` (0 for
 `none` and `missing`), and for `ok` and `stale` `currentTitle`, `currentClass`, `currentKind`, `currentHidden`,
-`currentReviewCheck` (`ok`, `hidden`, `long`) and, in a detail only, `currentBody`. `proposalCheck` is the check of the new
-text, `reviewCheck` the overall one (`ok` only when both are ok and the note is unchanged; else `hidden`, `long` or
-`target`). An accept refuses a missing, changed or hidden-text target with its own 400 reason. The member list carries
+`currentReviewCheck` (`ok`, `hidden`, `long`), the sizes `currentChars`, `currentLines`, `newChars`, `newLines` (of the texts as shown: runes and lines; also on list rows; `new*` for every replacement) and, in a detail only, `currentBody`. `proposalCheck` is the check of the new
+text, `reviewCheck` the overall one (`ok` only when the new text is ok, the current text is not long and the note is unchanged; else `hidden`
+(the new text), `long` or `target`; hidden characters in the current text are only counted in `currentHidden`). An accept refuses a missing or
+changed target with its own 400 reason. Rejecting a stale or missing replacement with no reason stores a default one. The admin submission also
+carries `linesChange` and `charsChange` ("current -> new") for the panel. The member list carries
 none of this. "Long" (a text over 20000 characters, the current text as well as the new one) is a rule of the panel and the remote
 page, enforced for the remote listener by its own check of the read; the core does not refuse it and the owner CLI shows the
 full text and may accept. The Mac panel's queue row offers Accept for a new note (`acceptInPanel`: `reviewCheck` is `ok` and nothing is replaced) and, for a
 replacement whose note is unchanged and whose two texts are ok, only "Accept replacement" (`acceptReplacementInPanel`), which asks
-for a confirmation first and sends `reviewHash` and `currentRevision` from the row; a stale, missing, hidden or long replacement
+for a confirmation first and sends `reviewHash` and `currentRevision` from the row; a stale, missing or long replacement
 offers neither (the detail shows both texts; `gw kb accept` and the remote page also work). The remote listener refuses, before its limiter counts and with a `denied` audit row, an accept of a
 replacement without `currentRevision` (or with 0) and an accept of a submission that replaces nothing that carries one.
 

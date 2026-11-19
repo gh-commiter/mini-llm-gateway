@@ -204,6 +204,25 @@ type Submission struct {
 	CurrentHidden      int     `json:"currentHidden,omitempty"`
 	CurrentReviewCheck string  `json:"currentReviewCheck,omitempty"`
 	CurrentBody        *string `json:"currentBody,omitempty"`
+	// Sizes of the two texts as the review shows them (the body without the characters nobody can see): characters are runes,
+	// lines the text's lines (an empty text has none). New* for every replacement, Current* while the note is there (ok, stale).
+	// They are on list rows too, which stay body-free.
+	CurrentChars *int `json:"currentChars,omitempty"`
+	CurrentLines *int `json:"currentLines,omitempty"`
+	NewChars     *int `json:"newChars,omitempty"`
+	NewLines     *int `json:"newLines,omitempty"`
+}
+
+// textLines: the number of lines of a text as shown (0 for an empty one; a final line break does not start another).
+func textLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
 }
 
 // reviewPanelLimit: the characters of a body the owner's panel shows (PanelLimits.multiline, PL.multiline); a rune count is never
@@ -341,18 +360,29 @@ func reviewRead(tx *sql.Tx, v *Submission, rv *Principal, details bool) error {
 	zero := int64(0)
 	v.TargetState, v.CurrentRevision = r.state, &zero
 	v.CurrentTitle, v.CurrentClass, v.CurrentKind, v.CurrentHidden, v.CurrentReviewCheck, v.CurrentBody = "", "", "", 0, "", nil
+	v.CurrentChars, v.CurrentLines, v.NewChars, v.NewLines = nil, nil, nil, nil
+	currentLong := false
+	if v.Replaces != 0 {
+		nc, nl := utf8.RuneCountInString(b), textLines(b)
+		v.NewChars, v.NewLines = &nc, &nl
+	}
 	if r.state == "ok" || r.state == "stale" {
 		ct, cb, ch, cc := reviewEval(r.title, r.raw)
 		v.CurrentRevision = &r.revision
 		v.CurrentTitle, v.CurrentClass, v.CurrentKind, v.CurrentHidden, v.CurrentReviewCheck = ct, r.class, r.kind, ch, cc
+		cch, cl := utf8.RuneCountInString(cb), textLines(cb)
+		v.CurrentChars, v.CurrentLines = &cch, &cl
+		currentLong = utf8.RuneCountInString(r.raw) > reviewPanelLimit
 		if details {
 			v.CurrentBody = &cb
 		}
 	}
+	// Hidden characters in the CURRENT text do not block an accept (the new text, which is what is published, must be clean; the
+	// replaced text stays in the history as it was): CurrentHidden is for display only.
 	switch {
-	case n > 0 || v.CurrentHidden > 0:
+	case n > 0:
 		v.ReviewCheck = "hidden"
-	case check == "long" || v.CurrentReviewCheck == "long":
+	case check == "long" || currentLong:
 		v.ReviewCheck = "long"
 	case r.state == "stale" || r.state == "missing":
 		v.ReviewCheck = "target"
@@ -850,6 +880,15 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 		if accept {
 			state = "accepted"
 		}
+		if !accept && reason == "" && v.State == "pending" && v.Replaces != 0 { // a lost contribution tells its author why
+			if t, e := readReplaced(tx, &v, rv); e != nil {
+				return e
+			} else if t.state == "stale" {
+				reason = fmt.Sprintf("note %d changed after this was written (it expected revision %d, the note is at %d): read the note and propose the change again", v.Replaces, v.Revision, t.revision)
+			} else if t.state == "missing" {
+				reason = fmt.Sprintf("note %d no longer exists", v.Replaces)
+			}
+		}
 		if v.State == state { // a repeat publishes nothing (the stored provenance now names the reviewer)
 			return nil
 		}
@@ -866,9 +905,6 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 				return ErrRefusal{"the note this submission replaces no longer exists: reject it"}
 			case "stale":
 				return ErrRefusal{fmt.Sprintf("note %d changed since this submission was written (it expected revision %d, the note is at %d): reject it and ask for a new submission", v.Replaces, v.Revision, target.revision)}
-			}
-			if _, _, k, _ := reviewEval(target.title, target.raw); k > 0 {
-				return ErrRefusal{fmt.Sprintf("the current text of note %d has %d hidden characters: correct the note first (minigw note edit; the old text stays in its history), then review again", v.Replaces, k)}
 			}
 		}
 		if accept { // four eyes on the text too: publish only what the reviewer read

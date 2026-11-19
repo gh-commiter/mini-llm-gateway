@@ -173,7 +173,6 @@ func TestReviewAcceptRefusals(t *testing.T) {
 		cur    func(n Note) int64
 		want   string
 	}{
-		{"hidden current", func(f *fx, n Note) { exec(t, f.Store, `UPDATE notes SET body='a'||char(8203)||'b' WHERE id=?`, n.ID) }, nil, "the current text of note 1 has 1 hidden characters: correct the note first (minigw note edit; the old text stays in its history), then review again"},
 		{"missing", func(f *fx, n Note) { f.ok(f.DeleteNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision)) }, nil, "the note this submission replaces no longer exists: reject it"},
 		{"stale", func(f *fx, n Note) {
 			_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "newer"})
@@ -188,9 +187,6 @@ func TestReviewAcceptRefusals(t *testing.T) {
 				n, v := replacement(f, "refuse")
 				seen := ownerRead(f, v.ID).ReviewHash
 				tc.change(f, n)
-				if tc.name == "hidden current" {
-					seen = ownerRead(f, v.ID).ReviewHash // the reviewer read it as it is now
-				}
 				cur := n.Revision
 				if tc.cur != nil {
 					cur = tc.cur(n)
@@ -346,5 +342,128 @@ func TestReviewTargetOfAnotherProjectCannotBeAccepted(t *testing.T) {
 	}
 	if got, e := f.GetNote(ctx, f.p("cene"), other.ProjectID, other.ID); e != nil || got.Title != other.Title {
 		t.Fatal("the other project's note changed", got, e)
+	}
+}
+
+// Catches: hidden characters in the CURRENT text blocking an accept, the new text not being clean, or the history not keeping
+// the replaced text exactly as it was.
+func TestReviewAcceptWithHiddenCharactersInTheCurrentText(t *testing.T) {
+	for _, who := range []string{"owner", "member"} {
+		t.Run(who, func(t *testing.T) {
+			f := newFx(t)
+			n, v := replacement(f, "hiddencur")
+			raw := "cur\u202erent\u200b body"
+			exec(t, f.Store, `UPDATE notes SET body=? WHERE id=?`, raw, n.ID)
+			d := ownerRead(f, v.ID)
+			if d.CurrentHidden != 2 || d.ReviewCheck != "ok" || d.CurrentBody == nil || *d.CurrentBody != "current body" || d.TargetState != "ok" {
+				t.Fatalf("%+v", d)
+			}
+			var e error
+			if who == "owner" {
+				_, e = f.ReviewSubmissionAt(ctx, v.ID, true, "", d.ReviewHash, n.Revision)
+			} else {
+				_, e = f.MemberReviewAt(ctx, f.p("fani"), n.ProjectID, v.ID, true, "", d.ReviewHash, n.Revision)
+			}
+			f.ok(e)
+			got, e := f.GetNote(ctx, f.p("ana"), n.ProjectID, n.ID)
+			f.ok(e)
+			if got.Body != "new body" || got.Title != "New title" {
+				t.Fatal(got)
+			}
+			var old string
+			f.ok(f.DB().QueryRow(`SELECT body FROM note_history WHERE note_id=? AND revision=?`, n.ID, n.Revision).Scan(&old))
+			if old != raw {
+				t.Fatalf("history %q, want the raw old text %q", old, raw)
+			}
+		})
+	}
+}
+
+// Catches: the sizes of the two texts missing from a review read (list rows included), or counted on the raw text.
+func TestReviewReadCarriesTheSizes(t *testing.T) {
+	f := newFx(t)
+	n, v := replacement(f, "sizes")
+	exec(t, f.Store, `UPDATE notes SET body=? WHERE id=?`, "one\ntwo\u200b\nthree\n", n.ID)
+	exec(t, f.Store, `UPDATE kb_submissions SET body=? WHERE id=?`, "alpha\nbeta", v.ID)
+	rows, e := f.ListSubmissions(ctx, Principal{}, 0, 0, true)
+	f.ok(e)
+	for _, d := range []Submission{rows[0], ownerRead(f, v.ID)} {
+		if d.CurrentLines == nil || *d.CurrentLines != 3 || *d.CurrentChars != 14 || *d.NewLines != 2 || *d.NewChars != 10 {
+			t.Fatalf("%+v %v %v %v %v", d, d.CurrentLines, d.CurrentChars, d.NewLines, d.NewChars)
+		}
+		if d.CurrentBody != nil && d.Body == nil {
+			t.Fatal("list row with a body")
+		}
+	}
+	// a new note carries none; a missing target carries only the new side
+	plain, _, e := f.Submit(ctx, f.p("ana"), f.pid["fakture"], "sizes-plain", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "P", Body: "p"}})
+	f.ok(e)
+	if d := ownerRead(f, plain.ID); d.NewChars != nil || d.CurrentChars != nil {
+		t.Fatalf("%+v", d)
+	}
+	f.ok(f.DeleteNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision))
+	if d := ownerRead(f, v.ID); d.CurrentChars != nil || d.NewLines == nil || *d.NewLines != 2 {
+		t.Fatalf("%+v", d)
+	}
+}
+
+// Catches: a reject of a stale or missing replacement leaving its author without a reason, or a typed reason being replaced.
+func TestReviewRejectGivesAStaleOrMissingReplacementADefaultReason(t *testing.T) {
+	reasonOf := func(f *fx, id int64) string {
+		var r string
+		f.ok(f.DB().QueryRow(`SELECT reason FROM kb_submissions WHERE id=?`, id).Scan(&r))
+		return r
+	}
+	for _, who := range []string{"owner", "member"} {
+		reject := func(f *fx, n Note, id int64, reason string) {
+			var e error
+			if who == "owner" {
+				_, e = f.ReviewSubmission(ctx, id, false, reason, "")
+			} else {
+				_, e = f.MemberReview(ctx, f.p("fani"), n.ProjectID, id, false, reason, "")
+			}
+			f.ok(e)
+		}
+		t.Run(who, func(t *testing.T) {
+			f := newFx(t)
+			n, stale := replacement(f, who+"-stale")
+			_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "moved on"})
+			f.ok(e)
+			reject(f, n, stale.ID, "")
+			if got := reasonOf(f, stale.ID); got != "note 1 changed after this was written (it expected revision 1, the note is at 2): read the note and propose the change again" {
+				t.Fatal(got)
+			}
+			// a typed reason is kept as it is
+			cur, _ := f.GetNote(ctx, f.p("ana"), n.ProjectID, n.ID)
+			typed, _, e := f.Submit(ctx, f.p("ana"), n.ProjectID, who+"-typed", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "T", Body: "t"}, Replaces: n.ID, Revision: cur.Revision})
+			f.ok(e)
+			_, e = f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, cur.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "again"})
+			f.ok(e)
+			reject(f, n, typed.ID, "my own reason")
+			if got := reasonOf(f, typed.ID); got != "my own reason" {
+				t.Fatal(got)
+			}
+			// missing
+			cur, _ = f.GetNote(ctx, f.p("ana"), n.ProjectID, n.ID)
+			gone, _, e := f.Submit(ctx, f.p("ana"), n.ProjectID, who+"-gone", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "G", Body: "g"}, Replaces: n.ID, Revision: cur.Revision})
+			f.ok(e)
+			f.ok(f.DeleteNote(ctx, f.p("ana"), n.ProjectID, n.ID, cur.Revision))
+			reject(f, n, gone.ID, "")
+			if got := reasonOf(f, gone.ID); got != "note 1 no longer exists" {
+				t.Fatal(got)
+			}
+			// a reject that is not about a stale target stays empty: a new note, and a replacement of an unchanged note
+			plain, _, e := f.Submit(ctx, f.p("ana"), n.ProjectID, who+"-plain", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Pl", Body: "p"}})
+			f.ok(e)
+			reject(f, n, plain.ID, "")
+			if got := reasonOf(f, plain.ID); got != "" {
+				t.Fatal(got)
+			}
+			n2, fine := replacement(f, who+"-fine")
+			reject(f, n2, fine.ID, "")
+			if got := reasonOf(f, fine.ID); got != "" {
+				t.Fatal(got)
+			}
+		})
 	}
 }

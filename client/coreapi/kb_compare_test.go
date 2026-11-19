@@ -101,7 +101,7 @@ func TestKBQueueRowsOfferTheRightAccept(t *testing.T) {
 		plain.ID:                                      {true, false},
 		repl("ok", "current body", nil):               {false, true},
 		repl("stale", "current body", edit):           {false, false},
-		repl("hidden", "a\u200bb", nil):               {false, false},
+		repl("hidden", "a\u200bb", nil):               {false, true}, // hidden characters in the current text do not block
 		repl("long", strings.Repeat("x", 20001), nil): {false, false},
 		repl("missing", "current body", func(n core.Note) { f.st.DeleteNote(bg, ana, pid, n.ID, n.Revision) }): {false, false},
 	}

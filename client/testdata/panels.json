@@ -1489,6 +1489,16 @@
          "long": "builtin.kb.section.queue.column.reviewcheck.value.long",
          "target": "builtin.kb.section.queue.column.reviewcheck.value.target"
         }
+       },
+       {
+        "field": "linesChange",
+        "kind": "text",
+        "label": "builtin.kb.section.queue.column.lineschange"
+       },
+       {
+        "field": "charsChange",
+        "kind": "text",
+        "label": "builtin.kb.section.queue.column.charschange"
        }
       ],
       "filter": [
@@ -1727,6 +1737,16 @@
            "field": "currentBody",
            "kind": "multiline",
            "label": "builtin.kb.section.queue.detail.section.replaced.column.currentbody"
+          },
+          {
+           "field": "linesChange",
+           "kind": "text",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.lineschange"
+          },
+          {
+           "field": "charsChange",
+           "kind": "text",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.charschange"
           }
          ]
         }

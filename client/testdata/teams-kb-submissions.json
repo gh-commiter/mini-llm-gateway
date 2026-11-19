@@ -246,6 +246,9 @@
         "accept",
         "7"
       ],
+      "opts": {
+        "version": "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
+      },
       "responses": [
         {
           "match": "GET /kb/submissions/7",
@@ -259,7 +262,7 @@
         }
       ],
       "want": {
-        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw gw kb history 5 shows it, minigw gw kb restore 5 --revision 3 puts it back\n",
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw gw kb history 5 shows it, minigw gw kb restore 5 --revision 3 puts it back\n",
         "err": "",
         "exit": 0,
         "requests": [
@@ -274,9 +277,6 @@
             "{\"currentRevision\":3,\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
           ]
         ]
-      },
-      "opts": {
-        "version": "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       }
     },
     {
@@ -286,6 +286,9 @@
         "accept",
         "7"
       ],
+      "opts": {
+        "version": "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
+      },
       "responses": [
         {
           "match": "GET /kb/submissions/7",
@@ -304,9 +307,6 @@
             ""
           ]
         ]
-      },
-      "opts": {
-        "version": "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       }
     },
     {
@@ -315,6 +315,7 @@
         "kb",
         "review"
       ],
+      "opts": {},
       "responses": [
         {
           "match": "GET /kb/submissions?project=0&after=0",
@@ -324,11 +325,11 @@
         {
           "match": "GET /kb/submissions/7",
           "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"stale\",\"currentRevision\":4,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"hidden\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"target\",\"currentHidden\":1}"
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"stale\",\"currentRevision\":4,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"hidden\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"target\",\"currentHidden\":1,\"currentLines\":1,\"currentChars\":12,\"newLines\":1,\"newChars\":8}"
         }
       ],
       "want": {
-        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: note 5  revision 4  structure  finding  Current title\ncurrent text contains hidden characters: 1 removed from the text shown; correct the note first (minigw note edit), then review again\nthe note changed since this submission was written (it expected revision 3, the note is at 4): it cannot be accepted\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\n",
+        "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device   replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\ncurrent: 1 lines, 12 characters -> new: 1 lines, 8 characters\nCurrent text: note 5  revision 4  structure  finding  Current title\nthe current text has 1 hidden characters (not shown); accepting this replacement removes them from the note\nthe note changed since this submission was written (it expected revision 3, the note is at 4): it cannot be accepted\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\n",
         "err": "",
         "exit": 0,
         "requests": [
@@ -1241,6 +1242,54 @@
           ""
         ]
       ]
+    },
+    {
+      "args": [
+        "submit",
+        "demo",
+        "--key",
+        "fixed",
+        "--title",
+        "Proposal ž",
+        "-"
+      ],
+      "input": "Review this",
+      "name": "submit after a rejection without a reason",
+      "out": "submission 7 pending\nan earlier submission with this title was rejected (no reason given)\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/1/kb/submissions",
+          "{\"body\":\"Review this\",\"class\":\"data\",\"replaces\":0,\"revision\":0,\"title\":\"Proposal ž\"}"
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=0",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "body": "{\"id\":1}",
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200
+        },
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\"}",
+          "match": "POST /minigw/v1/projects/1/kb/submissions",
+          "status": 201
+        },
+        {
+          "body": "{\"submissions\":[{\"id\":3,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"rejected\",\"reason\":\"\",\"provenance\":{\"received\":\"2026-11-19T00:00:00Z\"}}],\"next\":0}",
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=0",
+          "status": 200
+        }
+      ]
     }
   ],
   "noteJSON": "{\"id\":7,\"title\":\"T\u009b‮ \",\"body\":\"published\u009b‮  body\",\"provenance\":{\"actorKind\":\"member\",\"user\":2,\"device\":\"device\",\"project\":1,\"sourceKind\":\"pushed note\",\"sourceReference\":\"\",\"contentHash\":\"abc\",\"authored\":\"2026-11-16T10:00:00Z\",\"received\":\"2026-11-16T10:00:00Z\",\"reviewer\":\"owner\",\"reviewed\":\"2026-11-16T11:00:00Z\"}}",
@@ -1648,26 +1697,14 @@
       "error": "the submission changed since you read it: review it again"
     },
     {
-      "name": "replacement ok",
       "args": [
         "accept",
         "7",
         "--version",
         "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
-      "responses": [
-        {
-          "match": "GET /minigw/v1/projects/0/kb/review/7",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"ok\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"ok\"}"
-        },
-        {
-          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"accepted\"}"
-        }
-      ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
+      "name": "replacement ok",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\ncurrent: 1 lines, 12 characters -> new: 1 lines, 8 characters\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
       "requests": [
         [
           "GET",
@@ -1679,29 +1716,64 @@
           "/minigw/v1/projects/0/kb/review/7/accept",
           "{\"currentRevision\":3,\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
         ]
+      ],
+      "responses": [
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"ok\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"ok\",\"currentLines\":1,\"currentChars\":12,\"newLines\":1,\"newChars\":8}",
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200
+        },
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"accepted\"}",
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200
+        }
       ]
     },
     {
-      "name": "replacement stale",
       "args": [
         "accept",
         "7",
         "--version",
         "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
+      "name": "replacement shortened",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\ncurrent: 212 lines, 11429 characters -> new: 141 lines, 7602 characters (lines shorter: 71)\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/0/kb/review/7/accept",
+          "{\"currentRevision\":3,\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        ]
+      ],
       "responses": [
         {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"ok\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"ok\",\"currentLines\":212,\"currentChars\":11429,\"newLines\":141,\"newChars\":7602}",
           "match": "GET /minigw/v1/projects/0/kb/review/7",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"stale\",\"currentRevision\":4,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"ok\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"target\"}"
+          "status": 200
         },
         {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"accepted\"}",
           "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
-          "status": 400,
-          "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"note 5 changed since this submission was written (it expected revision 3, the note is at 4): reject it and ask for a new submission\"}}"
+          "status": 200
         }
+      ]
+    },
+    {
+      "args": [
+        "accept",
+        "7",
+        "--version",
+        "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: note 5  revision 4  structure  finding  Current title\nthe note changed since this submission was written (it expected revision 3, the note is at 4): it cannot be accepted\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\n",
+      "error": "rejected: note 5 changed since this submission was written (it expected revision 3, the note is at 4): reject it and ask for a new submission",
+      "name": "replacement stale",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\ncurrent: 1 lines, 12 characters -> new: 1 lines, 8 characters\nCurrent text: note 5  revision 4  structure  finding  Current title\nthe note changed since this submission was written (it expected revision 3, the note is at 4): it cannot be accepted\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\n",
       "requests": [
         [
           "GET",
@@ -1714,28 +1786,28 @@
           "{\"currentRevision\":4,\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
         ]
       ],
-      "error": "rejected: note 5 changed since this submission was written (it expected revision 3, the note is at 4): reject it and ask for a new submission"
+      "responses": [
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"stale\",\"currentRevision\":4,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"ok\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"target\",\"currentLines\":1,\"currentChars\":12,\"newLines\":1,\"newChars\":8}",
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200
+        },
+        {
+          "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"note 5 changed since this submission was written (it expected revision 3, the note is at 4): reject it and ask for a new submission\"}}",
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 400
+        }
+      ]
     },
     {
-      "name": "replacement missing",
       "args": [
         "accept",
         "7",
         "--version",
         "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
-      "responses": [
-        {
-          "match": "GET /minigw/v1/projects/0/kb/review/7",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"missing\",\"currentRevision\":0,\"proposalCheck\":\"ok\",\"reviewCheck\":\"target\"}"
-        },
-        {
-          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
-          "status": 400,
-          "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"the note this submission replaces no longer exists: reject it\"}}"
-        }
-      ],
+      "error": "rejected: the note this submission replaces no longer exists: reject it",
+      "name": "replacement missing",
       "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: note 5 no longer exists: this submission cannot be accepted\nNew text: data  finding  Proposal ž\nNew body\n",
       "requests": [
         [
@@ -1749,92 +1821,96 @@
           "{\"currentRevision\":0,\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
         ]
       ],
-      "error": "rejected: the note this submission replaces no longer exists: reject it"
-    },
-    {
-      "name": "replacement current hidden",
-      "args": [
-        "accept",
-        "7",
-        "--version",
-        "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
-      ],
       "responses": [
         {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"missing\",\"currentRevision\":0,\"proposalCheck\":\"ok\",\"reviewCheck\":\"target\"}",
           "match": "GET /minigw/v1/projects/0/kb/review/7",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"hidden\",\"currentBody\":\"Cur rent body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"hidden\",\"currentHidden\":2}"
+          "status": 200
         },
         {
+          "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"the note this submission replaces no longer exists: reject it\"}}",
           "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
-          "status": 400,
-          "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"the current text of note 5 has 2 hidden characters: correct the note first (minigw note edit; the old text stays in its history), then review again\"}}"
+          "status": 400
         }
-      ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: note 5  revision 3  structure  finding  Current title\ncurrent text contains hidden characters: 2 removed from the text shown; correct the note first (minigw note edit), then review again\nCur rent body\nNew text: data  finding  Proposal ž\nNew body\n",
-      "requests": [
-        [
-          "GET",
-          "/minigw/v1/projects/0/kb/review/7",
-          ""
-        ],
-        [
-          "POST",
-          "/minigw/v1/projects/0/kb/review/7/accept",
-          "{\"currentRevision\":3,\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
-        ]
-      ],
-      "error": "rejected: the current text of note 5 has 2 hidden characters: correct the note first (minigw note edit; the old text stays in its history), then review again"
-    },
-    {
-      "name": "replacement current long",
-      "args": [
-        "accept",
-        "7",
-        "--version",
-        "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
-      ],
-      "responses": [
-        {
-          "match": "GET /minigw/v1/projects/0/kb/review/7",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"long\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"long\"}"
-        },
-        {
-          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"accepted\"}"
-        }
-      ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
-      "requests": [
-        [
-          "GET",
-          "/minigw/v1/projects/0/kb/review/7",
-          ""
-        ],
-        [
-          "POST",
-          "/minigw/v1/projects/0/kb/review/7/accept",
-          "{\"currentRevision\":3,\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
-        ]
       ]
     },
     {
-      "name": "replacement old gateway",
       "args": [
         "accept",
         "7",
         "--version",
         "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
+      "name": "replacement current hidden is accepted",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\ncurrent: 1 lines, 11 characters -> new: 1 lines, 8 characters\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Current title\nthe current text has 2 hidden characters (not shown); accepting this replacement removes them from the note\nCur rent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/0/kb/review/7/accept",
+          "{\"currentRevision\":3,\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        ]
+      ],
       "responses": [
         {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"hidden\",\"currentBody\":\"Cur rent body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"ok\",\"currentHidden\":2,\"currentLines\":1,\"currentChars\":11,\"newLines\":1,\"newChars\":8}",
           "match": "GET /minigw/v1/projects/0/kb/review/7",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3}"
+          "status": 200
+        },
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"accepted\"}",
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200
         }
+      ]
+    },
+    {
+      "args": [
+        "accept",
+        "7",
+        "--version",
+        "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
+      "name": "replacement current long",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\ncurrent: 1 lines, 12 characters -> new: 1 lines, 8 characters\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/0/kb/review/7",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/0/kb/review/7/accept",
+          "{\"currentRevision\":3,\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
+        ]
+      ],
+      "responses": [
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"long\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"long\",\"currentLines\":1,\"currentChars\":12,\"newLines\":1,\"newChars\":8}",
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200
+        },
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"accepted\"}",
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "args": [
+        "accept",
+        "7",
+        "--version",
+        "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
+      ],
+      "error": "not accepted: this gateway cannot show the current text of note 5; update the gateway, or reject it",
+      "name": "replacement old gateway",
       "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: not shown (the gateway is older than 0.8.8)\nNew text: data  finding  Proposal ž\nNew body\n",
       "requests": [
         [
@@ -1843,34 +1919,23 @@
           ""
         ]
       ],
-      "error": "not accepted: this gateway cannot show the current text of note 5; update the gateway, or reject it"
+      "responses": [
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3}",
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200
+        }
+      ]
     },
     {
-      "name": "replacement of a team note",
       "args": [
         "accept",
         "7",
         "--version",
         "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
-      "responses": [
-        {
-          "match": "GET /minigw/v1/projects/0/kb/review/7",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1099511627777,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"ok\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"ok\"}"
-        },
-        {
-          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"accepted\"}"
-        },
-        {
-          "match": "GET /minigw/v1/teams",
-          "status": 200,
-          "body": "[{\"name\":\"garden\",\"segment\":1099511627777}]"
-        }
-      ],
-      "out": "submission 7  team  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 --team garden shows it, minigw note restore 5 --revision 3 --team garden puts it back\n",
+      "name": "replacement of a team note",
+      "out": "submission 7  team  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 --team garden shows it, minigw note restore 5 --revision 3 --team garden puts it back\n",
       "requests": [
         [
           "GET",
@@ -1887,29 +1952,34 @@
           "/minigw/v1/teams",
           ""
         ]
+      ],
+      "responses": [
+        {
+          "body": "{\"id\":7,\"project\":1099511627777,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Current title\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"ok\",\"currentBody\":\"Current body\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"ok\"}",
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200
+        },
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"accepted\"}",
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200
+        },
+        {
+          "body": "[{\"name\":\"garden\",\"segment\":1099511627777}]",
+          "match": "GET /minigw/v1/teams",
+          "status": 200
+        }
       ]
     },
     {
-      "name": "replacement hostile current",
       "args": [
         "accept",
         "7",
         "--version",
         "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
-      "responses": [
-        {
-          "match": "GET /minigw/v1/projects/0/kb/review/7",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Cur\\u001b[31mrent\\nforged line\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"ok\",\"currentBody\":\"a\\u202eb\\u200bc <img onerror=x>\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"ok\"}"
-        },
-        {
-          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
-          "status": 200,
-          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"accepted\"}"
-        }
-      ],
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: note 5  revision 3  structure  finding  Cur[31mrent forged line\nabc <img onerror=x>\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
+      "name": "replacement hostile current",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Cur[31mrent forged line\nabc <img onerror=x>\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
       "requests": [
         [
           "GET",
@@ -1921,6 +1991,18 @@
           "/minigw/v1/projects/0/kb/review/7/accept",
           "{\"currentRevision\":3,\"reason\":\"\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\"}"
         ]
+      ],
+      "responses": [
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"pending\",\"body\":\"New body\",\"provenance\":{\"device\":\"dev-ana\"},\"authorName\":\"ana\",\"reviewHash\":\"3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\",\"entryKind\":\"finding\",\"replaces\":5,\"revision\":3,\"targetState\":\"ok\",\"currentRevision\":3,\"currentTitle\":\"Cur\\u001b[31mrent\\nforged line\",\"currentClass\":\"structure\",\"currentKind\":\"finding\",\"currentReviewCheck\":\"ok\",\"currentBody\":\"a\\u202eb\\u200bc <img onerror=x>\",\"proposalCheck\":\"ok\",\"reviewCheck\":\"ok\"}",
+          "match": "GET /minigw/v1/projects/0/kb/review/7",
+          "status": 200
+        },
+        {
+          "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal \\u017e\",\"state\":\"accepted\"}",
+          "match": "POST /minigw/v1/projects/0/kb/review/7/accept",
+          "status": 200
+        }
       ]
     }
   ]

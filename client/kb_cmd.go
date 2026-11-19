@@ -123,7 +123,7 @@ func (e *projectEnv) rejectedHint(c connection, project int64, title string) {
 			return
 		}
 		for i, v := range pg.Submissions {
-			if v.State == "rejected" && v.Reason != "" && v.Title == title && now().Sub(v.Provenance.Received) < rejectedHintDays*24*time.Hour && (found == nil || v.ID > found.ID) {
+			if v.State == "rejected" && v.Title == title && now().Sub(v.Provenance.Received) < rejectedHintDays*24*time.Hour && (found == nil || v.ID > found.ID) {
 				found = &pg.Submissions[i]
 			}
 		}
@@ -133,7 +133,11 @@ func (e *projectEnv) rejectedHint(c connection, project int64, title string) {
 		after = pg.Next
 	}
 	if found != nil {
-		e.say(clean("an earlier submission with this title was rejected: " + found.Reason))
+		if found.Reason == "" {
+			e.say("an earlier submission with this title was rejected (no reason given)")
+		} else {
+			e.say(clean("an earlier submission with this title was rejected: " + found.Reason))
+		}
 	}
 }
 
@@ -417,7 +421,10 @@ func printReview(say func(string), v core.Submission, authorName string, names m
 	if v.ReviewHash != "" { // on its own line, to copy whole into kb accept --version
 		say(clean("version " + v.ReviewHash))
 	}
-	if v.Replaces != 0 { // a replacement: the note's current text first, then the new text
+	if v.Replaces != 0 { // a replacement: the sizes of both texts, the note's current text, then the new text
+		if line := sizesLine(v); line != "" {
+			say(line)
+		}
 		printCurrent(say, v)
 		say(oneLine(fmt.Sprintf("New text: %s  %s  %s", v.Class, kindOf(v.EntryKind), v.Title)))
 	}
@@ -436,6 +443,22 @@ func kindOf(k string) string {
 	return k
 }
 
+// sizesLine: how much the replacement shortens or lengthens the note, from the sizes the gateway counted (the texts as shown:
+// characters are runes, lines the text's lines). Nothing when a side is not there (an older gateway, a missing note).
+func sizesLine(v core.Submission) string {
+	if v.CurrentLines == nil || v.CurrentChars == nil || v.NewLines == nil || v.NewChars == nil {
+		return ""
+	}
+	line := fmt.Sprintf("current: %d lines, %d characters -> new: %d lines, %d characters", *v.CurrentLines, *v.CurrentChars, *v.NewLines, *v.NewChars)
+	switch d := *v.NewLines - *v.CurrentLines; {
+	case d < 0:
+		line += fmt.Sprintf(" (lines shorter: %d)", -d)
+	case d > 0:
+		line += fmt.Sprintf(" (lines longer: %d)", d)
+	}
+	return line
+}
+
 // printCurrent prints the note a replacement overwrites, as the gateway's review read shows it. A gateway older than
 // 0.8.8 sends none of it: that is said, and the accept is refused locally (acceptNeedsCurrent).
 func printCurrent(say func(string), v core.Submission) {
@@ -449,9 +472,13 @@ func printCurrent(say func(string), v core.Submission) {
 		if v.CurrentRevision != nil {
 			rev = *v.CurrentRevision
 		}
-		say(oneLine(fmt.Sprintf("Current text: note %d  revision %d  %s  %s  %s", v.Replaces, rev, v.CurrentClass, kindOf(v.CurrentKind), v.CurrentTitle)))
+		head := "Current text"
+		if v.TargetState == "ok" {
+			head += " (will be replaced)"
+		}
+		say(oneLine(fmt.Sprintf("%s: note %d  revision %d  %s  %s  %s", head, v.Replaces, rev, v.CurrentClass, kindOf(v.CurrentKind), v.CurrentTitle)))
 		if v.CurrentHidden > 0 {
-			say(fmt.Sprintf("current text contains hidden characters: %d removed from the text shown; correct the note first (minigw note edit), then review again", v.CurrentHidden))
+			say(fmt.Sprintf("the current text has %d hidden characters (not shown); accepting this replacement removes them from the note", v.CurrentHidden))
 		}
 		if v.TargetState == "stale" {
 			say(fmt.Sprintf("the note changed since this submission was written (it expected revision %d, the note is at %d): it cannot be accepted", v.Revision, rev))
