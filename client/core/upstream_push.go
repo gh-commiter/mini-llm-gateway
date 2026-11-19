@@ -279,6 +279,26 @@ func refusal(a upAnswer) string {
 	return "the upstream says: " + m
 }
 
+// conflictWhy: what a conflict is, by its kind (rev: the upstream's revision seen; 0: deleted or no longer visible; -1: the earlier submission
+// cannot be read). conflictText adds what to do, in the words status uses too.
+func conflictWhy(rev int64) string {
+	switch {
+	case rev == 0:
+		return "deleted or no longer visible on the upstream, not recreated"
+	case rev < 0:
+		return "the earlier submission upstream can no longer be read: check on the hub whether it was accepted"
+	}
+	return "changed on the upstream since our last write (revision " + strconv.FormatInt(rev, 10) + "), not overwritten"
+}
+
+func conflictText(rev, note int64) string {
+	t := conflictWhy(rev) + ": minigw gw upstream resolve <project> " + strconv.FormatInt(note, 10) + " --theirs|--ours"
+	if rev <= 0 {
+		t += "; if it is visible (or readable) again, --ours replaces it"
+	}
+	return t
+}
+
 // linkWide: a refusal that ends the whole run, and only an explicit one: 401, a rate limit, no usable answer, a lost role (no_project_access), a
 // role that allows no hand-in (no_submit_access), an archived project, and a 404 that is not about a note we named (the project itself is gone).
 // Everything else (a 403 forbidden, any other 403, a 5xx, a 404 about a note) concerns the one note it came for: that note is refused and the
@@ -319,6 +339,13 @@ func (p *pusher) resolve(l UpstreamLink) (int64, string) {
 		return 0, "this gateway is not on team " + upText(l.Remote, 64) + " on the upstream (or it does not exist there)"
 	}
 	a := p.call("GET", "/minigw/v1/projects/"+url.PathEscape(l.Remote), nil, nil)
+	if a.status == 404 || a.status == 403 && a.errMsg != "" { // a project the identity cannot see is answered as a missing one
+		why := "the upstream project " + upText(l.Remote, 64) + " was not found or this gateway's identity may not see it there (ask the upstream's admin; minigw gw upstream status shows the identity)"
+		if a.errMsg != "" && !strings.EqualFold(a.errMsg, "not found") {
+			why += " (the upstream says: " + a.errMsg + ")"
+		}
+		return 0, why
+	}
 	if a.status != 200 {
 		return 0, refusal(a)
 	}
@@ -529,26 +556,19 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		}
 		if n.Conflicted {
 			res.Conflicts++
-			line("conflict", n, "changed on the upstream since our last write, not overwritten: minigw gw upstream resolve <project> "+strconv.FormatInt(n.ID, 10)+" --theirs|--ours")
+			line("conflict", n, conflictText(n.Sent.ConflictRev, n.ID)) // the same words as status, by the kind of the conflict
 			continue
 		}
 		conflict := func(rev int64) error {
 			res.Conflicts++
-			why := "changed on the upstream since our last write (revision " + strconv.FormatInt(rev, 10) + "), not overwritten"
-			switch {
-			case rev == 0:
-				why = "deleted or no longer visible on the upstream, not recreated"
-			case rev < 0:
-				why = "the earlier submission upstream can no longer be read: check on the hub whether it was accepted"
-			}
 			if dry {
-				line("would conflict", n, why)
+				line("would conflict", n, conflictWhy(rev))
 				return nil
 			}
 			if e := s.upstreamRecordConflict(wctx, l.Project, l.Upstream, n.ID, rev); e != nil {
 				return e
 			}
-			line("conflict", n, why+": minigw gw upstream resolve <project> "+strconv.FormatInt(n.ID, 10)+" --theirs|--ours")
+			line("conflict", n, conflictText(rev, n.ID))
 			return nil
 		}
 		if l.Mode == "publish" && n.EntryKind != "faq" && !(n.Sent != nil && (n.Sent.Conflict == 2 || n.Sent.RemoteSub > 0)) { // a note sent as a submission ("ours") stays on the submission path

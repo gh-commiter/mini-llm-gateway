@@ -596,3 +596,39 @@ func TestUnreadableEarlierSubmissionIsNotWrittenOver(t *testing.T) {
 		})
 	}
 }
+
+// A project the identity cannot see is answered as a missing one: the stop line says what that means.
+func TestProjectLookupNotFoundExplainsItself(t *testing.T) {
+	for _, c := range []struct {
+		status int
+		body   string
+		want   string
+	}{{404, `{"error":{"message":"Not found"}}`, "was not found or this gateway's identity may not see it there"}, {403, `{"error":{"type":"no_project_access","message":"No project access"}}`, "(the upstream says: No project access)"}, {403, `{}`, "must allow its device"}} {
+		f, notes := upFx(t)
+		_ = notes
+		fk := f.pid["fakture"]
+		f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
+		up := &fakeUp{handler: func(upCall) (int, string, time.Duration) { return c.status, c.body, 0 }}
+		res, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
+		f.ok(e)
+		if r := res[0]; !strings.Contains(r.Stopped, c.want) || (c.status == 404 && !strings.Contains(r.Stopped, "upstream project shop")) || up.count("POST") != 0 {
+			t.Fatalf("%d: %+v", c.status, r)
+		}
+	}
+}
+
+// A note that is already a conflict is reported in the words of its kind, as status words it.
+func TestExistingConflictsAreReportedByKind(t *testing.T) {
+	f, fk, h := twoNotes(t)
+	h.notes[55] = 0 // Structure one: out of sight
+	delete(h.subs, 2)
+	if _, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep); e != nil {
+		t.Fatal(e)
+	}
+	res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep) // the conflicts are there now
+	f.ok(e)
+	all := strings.Join(res[0].Lines, "\n")
+	if res[0].Conflicts != 2 || !strings.Contains(all, "deleted or no longer visible on the upstream") || !strings.Contains(all, "the earlier submission upstream can no longer be read") || strings.Count(all, "--ours replaces it") != 2 || strings.Contains(all, "changed on the upstream") {
+		t.Fatalf("%+v", res[0])
+	}
+}
