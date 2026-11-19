@@ -156,6 +156,8 @@ func invisibleRune(r rune) bool {
 		return true
 	case r >= 0xFE00 && r <= 0xFE0F, r >= 0xE0100 && r <= 0xE01EF, r >= 0x180B && r <= 0x180F, r >= 0xE0000 && r <= 0xE007F:
 		return true
+	case r == 0x2065, r >= 0xFFF0 && r <= 0xFFF8, r >= 0xE0080 && r <= 0xE00FF, r >= 0xE01F0 && r <= 0xE0FFF: // default-ignorable, unassigned: they render as nothing too
+		return true
 	}
 	switch r {
 	case 0x034F, 0x115F, 0x1160, 0x3164, 0xFFA0:

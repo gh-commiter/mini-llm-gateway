@@ -1,6 +1,9 @@
 package core
 
 import (
+	"encoding/json"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -77,5 +80,39 @@ func TestSubmitRefusesTabAndNewlineInATitle(t *testing.T) {
 	}
 	if _, _, e := f.Submit(ctx, f.p("ana"), project, "t2", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "A", Body: "x\ty\nz"}}); e != nil {
 		t.Fatal(e)
+	}
+}
+
+// invisibleRune over ALL code points against the compact list of ranges in testdata/invisible-ranges.json, which the Swift client's test reads
+// too, so that the two rules cannot drift apart. MINIGW_REGEN_FIXTURE=1 rewrites the file from this rule (then review the diff).
+func TestInvisibleRangesFixture(t *testing.T) {
+	var got [][2]int
+	for r := rune(0); r <= 0x10FFFF; r++ {
+		if r >= 0xD800 && r <= 0xDFFF || !invisibleRune(r) {
+			continue
+		}
+		if n := len(got); n > 0 && got[n-1][1] == int(r)-1 {
+			got[n-1][1] = int(r)
+		} else {
+			got = append(got, [2]int{int(r), int(r)})
+		}
+	}
+	const path = "../testdata/invisible-ranges.json"
+	if os.Getenv("MINIGW_REGEN_FIXTURE") != "" {
+		b, _ := json.Marshal(got)
+		if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want [][2]int
+	if err := json.Unmarshal(data, &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the invisible code points differ from testdata/invisible-ranges.json: %v", got)
 	}
 }

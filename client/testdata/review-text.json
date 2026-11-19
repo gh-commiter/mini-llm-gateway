@@ -88,5 +88,25 @@
   "name": "tag sequence",
   "in": "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc7f",
   "out": "\ud83c\udff4"
+ },
+ {
+  "name": "unassigned default-ignorable U+2065",
+  "in": "a\u2065b",
+  "out": "ab"
+ },
+ {
+  "name": "unassigned U+FFF0",
+  "in": "a\ufff0b",
+  "out": "ab"
+ },
+ {
+  "name": "unassigned U+E0080",
+  "in": "a\udb40\udc80b",
+  "out": "ab"
+ },
+ {
+  "name": "unassigned U+E01F0",
+  "in": "a\udb40\uddf0b",
+  "out": "ab"
  }
 ]

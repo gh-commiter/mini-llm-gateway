@@ -133,6 +133,17 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         #expect(send("0.7.10", "/minigw/v1/projects/7/kb/search?q=x") == "not found or not visible")
     }
 
+    /// The rule over ALL code points against the compact range list the Go test checks too (client/testdata/invisible-ranges.json).
+    @Test func invisibleRangesFixture() throws {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let want = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("client/testdata/invisible-ranges.json"))) as! [[Int]]
+        var got: [[Int]] = []
+        for v in 0...0x10FFFF where !(0xD800...0xDFFF).contains(v) && ProjectText.invisibleRune(UInt32(v)) {
+            if let last = got.last, last[1] == v - 1 { got[got.count - 1][1] = v } else { got.append([v, v]) }
+        }
+        #expect(got == want)
+    }
+
     @Test func pruneKeepsFreshAndTheNewest200() throws {
         let w = try HookWorld(stdin: Data())
         try w.link("gw1", 7, "acme-shop")
