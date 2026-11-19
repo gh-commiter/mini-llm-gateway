@@ -219,7 +219,7 @@ func (s *Store) open() error {
 }
 
 func openDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dsn(path, "_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(FULL)&_pragma=trusted_schema(0)&_txlock=immediate"))
+	db, err := sql.Open("sqlite", dsn(path, "_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(FULL)&_pragma=secure_delete(1)&_pragma=trusted_schema(0)&_txlock=immediate"))
 	if err != nil {
 		return nil, err
 	}
