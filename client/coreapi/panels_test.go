@@ -589,3 +589,55 @@ func TestBuiltinConfirmRoutesAreRequired(t *testing.T) {
 		t.Fatalf("only %d confirmed actions", n)
 	}
 }
+
+// The queue's replaced-note record reads the version-bound detail (so the one hash binds both texts), no section reads the
+// note by its id, and the accept action carries the revision of the replaced note.
+func TestKBPanelReplacedRecordIsVersionBound(t *testing.T) {
+	raw, err := os.ReadFile("panels/builtin.kb.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "/kb/notes/{parent.replaces}") {
+		t.Fatal("a section still reads the replaced note by its id")
+	}
+	var p struct {
+		Sections []struct {
+			ID         string
+			RowActions []struct {
+				ID   string
+				Body map[string]map[string]string
+			}
+			Detail struct {
+				Sections []struct {
+					ID     string
+					Source struct{ Path string }
+				}
+			}
+		}
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, s := range p.Sections {
+		if s.ID != "queue" {
+			continue
+		}
+		for _, d := range s.Detail.Sections {
+			if d.ID == "replaced" {
+				found = true
+				if d.Source.Path != "/kb/submissions/{parent.id}/versions/{parent.reviewHash}" {
+					t.Fatal(d.Source.Path)
+				}
+			}
+		}
+		for _, a := range s.RowActions {
+			if a.ID == "accept" && a.Body["currentRevision"]["row"] != "currentRevision" {
+				t.Fatal("accept does not send currentRevision", a.Body)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no replaced record")
+	}
+}

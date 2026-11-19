@@ -1486,7 +1486,8 @@
         "values": {
          "ok": "builtin.kb.section.queue.column.reviewcheck.value.ok",
          "hidden": "builtin.kb.section.queue.column.reviewcheck.value.hidden",
-         "long": "builtin.kb.section.queue.column.reviewcheck.value.long"
+         "long": "builtin.kb.section.queue.column.reviewcheck.value.long",
+         "target": "builtin.kb.section.queue.column.reviewcheck.value.target"
         }
        }
       ],
@@ -1513,6 +1514,9 @@
         "body": {
          "reviewHash": {
           "row": "reviewHash"
+         },
+         "currentRevision": {
+          "row": "currentRevision"
          }
         }
        },
@@ -1612,7 +1616,8 @@
            "values": {
             "ok": "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.ok",
             "hidden": "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.hidden",
-            "long": "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.long"
+            "long": "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.long",
+            "target": "builtin.kb.section.queue.detail.section.submission.column.reviewcheck.value.target"
            }
           },
           {
@@ -1636,33 +1641,68 @@
           "equals": true
          },
          "source": {
-          "path": "/kb/notes/{parent.replaces}"
+          "path": "/kb/submissions/{parent.id}/versions/{parent.reviewHash}"
          },
          "columns": [
           {
-           "field": "title",
-           "kind": "text",
-           "label": "builtin.kb.section.queue.detail.section.replaced.column.title"
-          },
-          {
-           "field": "class",
+           "field": "targetState",
            "kind": "enum",
-           "label": "builtin.kb.section.queue.detail.section.replaced.column.class",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.targetstate",
            "values": {
-            "structure": "builtin.kb.section.queue.detail.section.replaced.column.class.value.structure",
-            "data": "builtin.kb.section.queue.detail.section.replaced.column.class.value.data",
-            "private": "builtin.kb.section.queue.detail.section.replaced.column.class.value.private"
+            "none": "builtin.kb.section.queue.detail.section.replaced.column.targetstate.value.none",
+            "ok": "builtin.kb.section.queue.detail.section.replaced.column.targetstate.value.ok",
+            "stale": "builtin.kb.section.queue.detail.section.replaced.column.targetstate.value.stale",
+            "missing": "builtin.kb.section.queue.detail.section.replaced.column.targetstate.value.missing"
            }
           },
           {
-           "field": "updated",
-           "kind": "time",
-           "label": "builtin.kb.section.queue.detail.section.replaced.column.updated"
+           "field": "currentRevision",
+           "kind": "text",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.currentrevision"
           },
           {
-           "field": "body",
+           "field": "currentTitle",
+           "kind": "text",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.currenttitle"
+          },
+          {
+           "field": "currentClass",
+           "kind": "enum",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.currentclass",
+           "values": {
+            "structure": "builtin.kb.section.queue.detail.section.replaced.column.currentclass.value.structure",
+            "data": "builtin.kb.section.queue.detail.section.replaced.column.currentclass.value.data",
+            "private": "builtin.kb.section.queue.detail.section.replaced.column.currentclass.value.private"
+           }
+          },
+          {
+           "field": "currentKind",
+           "kind": "enum",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.currentkind",
+           "values": {
+            "finding": "builtin.kb.section.queue.detail.section.replaced.column.currentkind.value.finding",
+            "faq": "builtin.kb.section.queue.detail.section.replaced.column.currentkind.value.faq"
+           }
+          },
+          {
+           "field": "currentReviewCheck",
+           "kind": "enum",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck",
+           "values": {
+            "ok": "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.ok",
+            "hidden": "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.hidden",
+            "long": "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.long"
+           }
+          },
+          {
+           "field": "currentHidden",
+           "kind": "text",
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.currenthidden"
+          },
+          {
+           "field": "currentBody",
            "kind": "multiline",
-           "label": "builtin.kb.section.queue.detail.section.replaced.column.body"
+           "label": "builtin.kb.section.queue.detail.section.replaced.column.currentbody"
           }
          ]
         }
