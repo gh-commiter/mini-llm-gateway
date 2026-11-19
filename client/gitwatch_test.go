@@ -730,3 +730,90 @@ func TestParseGitRawReportsLinksAndExecutablesAddedOrDeleted(t *testing.T) {
 		t.Errorf("%v %v", files, modes)
 	}
 }
+
+// G1: a cut index listing, a refs read and a history read over the output limit keep INCOMPLETE but cannot switch the protection off; an unresolvable HEAD or no working read can.
+func TestGitWatchResetsWhenOnlyTheLimitsWereReached(t *testing.T) {
+	defer func(o int64) { gitWatchMaxOutput = o }(gitWatchMaxOutput)
+	stage := func(t *testing.T, root string) {
+		os.WriteFile(filepath.Join(root, ".envrc"), []byte("echo hi"), 0o644)
+		gitIn(t, root, "add", ".envrc")
+	}
+	t.Run("listing cut", func(t *testing.T) {
+		root := watchRepo(t)
+		w := gitWatchStart(root)
+		for i := 0; i < 30; i++ {
+			os.WriteFile(filepath.Join(root, fmt.Sprintf("file-with-a-long-name-%02d.txt", i)), []byte("x"), 0o644)
+		}
+		stage(t, root)
+		gitIn(t, root, "add", ".")
+		gitWatchMaxOutput = 300
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "INCOMPLETE", "index not read in full", "removed from the index for you")
+		if gitIn(t, root, "ls-files", "-s", ".envrc") != "" {
+			t.Errorf("still in the index:\n%s", out)
+		}
+	})
+	t.Run("refs cut", func(t *testing.T) {
+		root := watchRepo(t)
+		w := gitWatchStart(root)
+		for i := 0; i < 12; i++ {
+			gitIn(t, root, "branch", fmt.Sprintf("a-branch-with-a-long-name-%d", i))
+		}
+		stage(t, root)
+		gitWatchMaxOutput = 600
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "refs not read in full", "removed from the index for you")
+		if gitIn(t, root, "ls-files", "-s", ".envrc") != "" {
+			t.Errorf("still in the index:\n%s", out)
+		}
+	})
+	t.Run("no read works", func(t *testing.T) {
+		root := watchRepo(t)
+		w := gitWatchStart(root)
+		stage(t, root)
+		gitWatchMaxOutput = 5
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "may be staged that are not listed")
+		if gitIn(t, root, "ls-files", "-s", ".envrc") == "" {
+			t.Errorf("the watcher took a path out of the index:\n%s", out)
+		}
+	})
+	t.Run("HEAD does not resolve", func(t *testing.T) {
+		root := watchRepo(t)
+		gitWatchMaxOutput = 1 << 20
+		w := gitWatchStart(root)
+		gitIn(t, root, "branch", "other")
+		stage(t, root)
+		gitIn(t, root, "symbolic-ref", "HEAD", "refs/heads/ghost")
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "NOT removed from the index")
+		if gitIn(t, root, "ls-files", "-s", ".envrc") == "" {
+			t.Errorf("the watcher took a path out of the index:\n%s", out)
+		}
+	})
+}
+
+// G2: a printed command only for a conservative path; a hostile name (cmd.exe, PowerShell) gets none.
+func TestGitUnstageWarningPrintsNoCommandForAHostilePath(t *testing.T) {
+	for _, hostile := range []string{".githooks/x & calc.exe & rem ", ".githooks/x'; Start-Process calc; '", "-rf", ".githooks/x\ty", ".githooks/é"} {
+		w := gitUnstageWarning([]string{hostile, ".envrc"}, false)
+		if gitCommandSafe(hostile) || strings.Contains(w, "restore --staged -- '"+hostile) || !strings.Contains(w, "restore --staged -- '.envrc'") || !strings.Contains(w, "No command is printed for 1 path(s)") {
+			t.Errorf("%q:\n%s", hostile, w)
+		}
+	}
+	if !gitCommandSafe(".github/workflows/a-b_c.yml") || !gitCommandSafe("a@b+c") {
+		t.Error("a plain path is refused")
+	}
+}
+
+// G3: every name the watcher prints is escaped (the fixture rows assert the lines; this the function).
+func TestGitEscEscapesWhatCanRewriteATerminalLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain/name.txt": "plain/name.txt", "a\x1b[2K\r": `a\x1b[2K\x0d`, "x\x1b]52;c;AAAA\x07": `x\x1b]52;c;AAAA\x07`, "a‮b": `a\u{202e}b`, "a b": `a\u{2028}b`,
+		`back\slash`: `back\\slash`, "c1\u0085": `c1\x85`, "é": "é", "\xff": `\xff`, "del\x7f": `del\x7f`,
+	} {
+		if got := gitEsc(in); got != want {
+			t.Errorf("gitEsc(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -260,6 +260,50 @@
    "reset": []
   },
   {
+   "name": "names with terminal escapes, OSC 52 and a bidi override are printed escaped",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "a.txt": "100644 aaaa 0"
+    },
+    "pending": []
+   },
+   "end": {
+    "head": "ev‮il",
+    "refs": {
+     "refs/heads/main": "b",
+     "refs/heads/x\u001b]52;c;AAAA\u0007": "b"
+    },
+    "index": {
+     "a.txt": "100644 aaaa 0",
+     ".githooks/a\u001b[2K\r": "100644 bbbb 0"
+    },
+    "pending": [],
+    "cached": [
+     ".githooks/a\u001b[2K\r"
+    ]
+   },
+   "commits": [
+    {
+     "id": "c1",
+     "files": [
+      ".githooks/‮evil"
+     ]
+    }
+   ],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: HEAD now on ev\\u{202e}il; 1 new commit(s); new branches: x\\x1b]52;c;AAAA\\x07; moved branches: main; 1 staged path(s)",
+    "minigw: WARNING: the agent committed a protected path: .githooks/\\u{202e}evil - review before git checkout, reset --hard, restore, stash pop or your next commit",
+    "minigw: WARNING: the agent staged a protected path: .githooks/a\\x1b[2K\\x0d - removed from the index for you (your files were not touched)"
+   ],
+   "reset": [
+    ".githooks/a\u001b[2K\r"
+   ]
+  },
+  {
    "name": "merge in progress",
    "start": {
     "head": "main",

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Direct mode lets the agent write git's own data (gitDirWritable), so the owner always sees what it did in the repository and is warned about what git could
@@ -46,6 +47,10 @@ type gitCommit struct {
 	Modes []string `json:"modes"` // "path old->new": the file mode or type changed in this commit (0.7.1: a typechange, 120000 -> 100644, is named)
 }
 
+// gitWatchCandidateSpecs: pathspecs that select every path that can be protected, and more (a protected name starts with "." or is a Windows short name with "~"; a leading
+// HFS-ignorable character before the dot is the known gap). protectedPath stays the one definition.
+var gitWatchCandidateSpecs = []string{":(glob)**/.*", ":(glob)**/.*/**", ":(glob)**/*~*", ":(glob)**/*~*/**"}
+
 const gitWatchNames = 20 // names shown per list
 
 var (
@@ -55,41 +60,77 @@ var (
 
 func gitNames(l []string) string {
 	sort.Strings(l)
+	more := ""
 	if len(l) > gitWatchNames {
-		return strings.Join(l[:gitWatchNames], ", ") + fmt.Sprintf(" and %d more", len(l)-gitWatchNames)
+		more = fmt.Sprintf(" and %d more", len(l)-gitWatchNames)
+		l = l[:gitWatchNames]
 	}
-	return strings.Join(l, ", ")
+	e := make([]string, len(l))
+	for i, n := range l {
+		e[i] = gitEsc(n)
+	}
+	return strings.Join(e, ", ") + more
 }
 
-// gitUnstageWarning: nothing was removed from the index; the literal command per path (the first five), no command for a name with a control character.
+// gitEsc: every name the watcher prints (a path, a branch, a tag: the agent chooses them) goes through this: control characters (C0, DEL, C1) as \xNN, a backslash as \\, the bidi controls
+// and the line and paragraph separators as \u{...}, so that a name cannot erase or rewrite the warning in the owner's terminal and stays recognisable. Swift GitWatch.esc is the same.
+func gitEsc(s string) string {
+	var o strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n == 1: // not UTF-8: the byte
+			fmt.Fprintf(&o, "\\x%02x", s[i])
+		case r == '\\':
+			o.WriteString("\\\\")
+		case r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f:
+			fmt.Fprintf(&o, "\\x%02x", r)
+		case r == 0x61c || r == 0x200e || r == 0x200f || r == 0x2028 || r == 0x2029 || r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x206f:
+			fmt.Fprintf(&o, "\\u{%x}", r)
+		default:
+			o.WriteString(s[i : i+n])
+		}
+		i += n
+	}
+	return o.String()
+}
+
+// gitCommandSafe: a path that gets a printed command: only letters, digits and . _ / @ + - (no space, nothing a shell or cmd.exe reads as syntax), and not starting with "-". The owner
+// may paste the command into sh, cmd.exe or PowerShell; any other path is named without a command.
+func gitCommandSafe(p string) bool {
+	return p != "" && !strings.HasPrefix(p, "-") && !strings.ContainsFunc(p, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._/@+-", r))
+	})
+}
+
+// gitUnstageWarning: nothing was removed from the index; the literal command per path (the first five) for the paths that are safe to paste, no command for the others.
 func gitUnstageWarning(paths []string, indexCut bool) string {
-	var plain []string
+	var safe []string
 	for _, p := range paths {
-		if strings.IndexFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) < 0 {
-			plain = append(plain, p)
+		if gitCommandSafe(p) {
+			safe = append(safe, p)
 		}
 	}
-	odd := len(paths) - len(plain)
+	sort.Strings(safe)
+	other := len(paths) - len(safe)
 	m := "minigw: WARNING: "
 	if len(paths) == 0 {
 		return m + "protected paths may be staged that are not listed (the index listing was cut): look at git status before your next commit"
 	}
-	m += "a protected path looks staged: " + gitNames(slices.Clone(plain)) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit."
-	var cmds []string
-	for i, p := range plain {
-		if i < 5 {
-			cmds = append(cmds, "git --literal-pathspecs restore --staged -- '"+strings.ReplaceAll(p, "'", "'\\''")+"'")
+	m += "a protected path looks staged: " + gitNames(slices.Clone(paths)) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit."
+	if len(safe) > 0 {
+		var cmds []string
+		for _, p := range safe[:min(5, len(safe))] {
+			cmds = append(cmds, "git --literal-pathspecs restore --staged -- '"+p+"'")
 		}
-	}
-	if len(cmds) > 0 {
 		m += " To unstage by hand (this unstages your own staged change of that path too): " + strings.Join(cmds, "; ")
-		if len(plain) > 5 {
-			m += fmt.Sprintf(" and %d more", len(plain)-5)
+		if len(safe) > 5 {
+			m += fmt.Sprintf(" and %d more", len(safe)-5)
 		}
 		m += "."
 	}
-	if odd > 0 {
-		m += fmt.Sprintf(" %d path(s) with a control character in the name: no command printed, use git status.", odd)
+	if other > 0 {
+		m += fmt.Sprintf(" No command is printed for %d path(s) whose names have characters other than letters, digits and . _ / @ + -: unstage them from git status or your git tool.", other)
 	}
 	if indexCut {
 		m += " The index listing was cut: protected paths may be staged that are not listed."
@@ -142,7 +183,7 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 		if end.Head == "" {
 			parts = append(parts, "HEAD is detached")
 		} else {
-			parts = append(parts, "HEAD now on "+end.Head)
+			parts = append(parts, "HEAD now on "+gitEsc(end.Head))
 		}
 	} else if end.Head == "" && end.HeadID != start.HeadID {
 		parts = append(parts, "detached HEAD moved") // no branch moves with it: only the object id says so
@@ -280,13 +321,12 @@ func gitWatchState(root string) (gitState, bool) {
 	if fi, err := os.Lstat(filepath.Join(root, ".git")); err != nil || !fi.IsDir() {
 		return st, false
 	}
-	refs, ok := gitWatchRun(root, "", "for-each-ref", "--format=%(refname) %(objectname)") // every namespace: heads, tags, stash, notes, replace, packed refs too
-	if !ok && refs == "" {
+	refs, refsOK := gitWatchRun(root, "", "for-each-ref", "--format=%(refname) %(objectname)") // every namespace: heads, tags, stash, notes, replace, packed refs too
+	if !refsOK && refs == "" {
 		return st, false
 	}
-	if !ok {
-		st.Incomplete = append(st.Incomplete, "refs not read in full")
-		st.Unreliable = true
+	if !refsOK {
+		st.Incomplete = append(st.Incomplete, "refs not read in full") // refs and history cannot make the index picture wrong: INCOMPLETE, but the reset stays
 	}
 	for _, l := range strings.Split(refs, "\n") {
 		if r, id, ok := strings.Cut(l, " "); ok {
@@ -296,32 +336,60 @@ func gitWatchState(root string) (gitState, bool) {
 	if h, ok := gitWatchRun(root, "", "symbolic-ref", "-q", "--short", "HEAD"); ok {
 		st.Head = strings.TrimSpace(h)
 	}
-	if id, ok := gitWatchRun(root, "", "rev-parse", "-q", "--verify", "HEAD"); ok { // also when HEAD is detached: no ref names that commit
+	id, headOK := gitWatchRun(root, "", "rev-parse", "-q", "--verify", "HEAD")
+	if headOK { // also when HEAD is detached: no ref names that commit
 		st.HeadID = strings.TrimSpace(id)
 	}
 	idx, ok := gitWatchRun(root, "", "ls-files", "-s", "-z")
 	if !ok {
 		st.Incomplete = append(st.Incomplete, "index not read in full")
-		st.Unreliable, st.IndexCut = true, true
 	}
 	sum := sha256.Sum256([]byte(idx))
 	st.IndexHash = hex.EncodeToString(sum[:])
-	for _, e := range strings.Split(idx, "\x00") {
-		if meta, p, ok := strings.Cut(e, "\t"); ok {
-			if f := strings.Fields(meta); len(f) == 3 {
-				st.Index[p] = f[0] + " " + f[1] + " " + f[2]
+	parseIndex := func(out string) {
+		for _, e := range strings.Split(out, "\x00") {
+			if meta, p, ok := strings.Cut(e, "\t"); ok {
+				if f := strings.Fields(meta); len(f) == 3 {
+					st.Index[p] = f[0] + " " + f[1] + " " + f[2]
+				}
 			}
 		}
 	}
-	cached, ok := gitWatchRun(root, "", "diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z")
-	if !ok {
-		st.Incomplete = append(st.Incomplete, "staged paths not read in full")
+	parseIndex(idx)
+	// The tree HEAD has, resolved once, before `diff --cached`, which then compares the index with that tree id: both reads see the same tree, or the watcher knows it has none.
+	// A HEAD that cannot be resolved in a repository that has commits (a flake once listed a committed .envrc as staged) makes the index picture unreliable: nothing is reset.
+	tr, trOK := gitWatchRun(root, "", "rev-parse", "-q", "--verify", "HEAD^{tree}")
+	tid := strings.TrimSpace(tr)
+	unborn := !headOK && refsOK && refs == ""
+	var tree []string
+	if _, err := hex.DecodeString(tid); trOK && tid != "" && err == nil {
+		tree = []string{tid}
+	} else if !unborn {
 		st.Unreliable, st.IndexCut = true, true
 	}
+	diffArgs := append([]string{"diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z"}, tree...)
+	cached, cachedOK := gitWatchRun(root, "", diffArgs...)
+	if !cachedOK {
+		st.Incomplete = append(st.Incomplete, "staged paths not read in full")
+	}
 	st.Cached = []string{}
-	for _, p := range strings.Split(cached, "\x00") {
-		if p != "" {
-			st.Cached = append(st.Cached, p)
+	addCached := func(out string) {
+		for _, p := range strings.Split(out, "\x00") {
+			if p != "" && !slices.Contains(st.Cached, p) {
+				st.Cached = append(st.Cached, p)
+			}
+		}
+	}
+	addCached(cached)
+	if (!ok || !cachedOK) && !st.Unreliable {
+		// The listing was cut: read only the paths that can be protected (a pathspec over-approximation; protectedPath stays the one definition) so that a big index does not switch the protection off.
+		l2, l2OK := gitWatchRun(root, "", append([]string{"ls-files", "-s", "-z", "--"}, gitWatchCandidateSpecs...)...)
+		c2, c2OK := gitWatchRun(root, "", append(append([]string{}, diffArgs...), append([]string{"--"}, gitWatchCandidateSpecs...)...)...)
+		if l2OK && c2OK {
+			parseIndex(l2)
+			addCached(c2)
+		} else {
+			st.Unreliable, st.IndexCut = true, true
 		}
 	}
 	for _, n := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"} {
@@ -382,7 +450,6 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 		out, ok := gitWatchRun(w.root, "", args...)
 		if !ok {
 			end.Incomplete = append(end.Incomplete, "history not read in full")
-			end.Unreliable = true
 		}
 		ids := strings.Fields(out)
 		if len(ids) > gitWatchMaxCommits {
@@ -394,7 +461,6 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 			raw, ok := gitWatchRun(w.root, "", "diff-tree", "-m", "-r", "-z", "--raw", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id)
 			if !ok {
 				end.Incomplete = append(end.Incomplete, "files of a commit not read in full")
-				end.Unreliable = true
 			}
 			files, modes := parseGitRaw(raw)
 			commits = append(commits, gitCommit{ID: id, Files: files, Modes: modes})
@@ -402,9 +468,9 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 	}
 	lines, reset := gitWatchReport(w.start, end, commits, protectedPath)
 	if len(reset) > 0 && !restore {
-		lines = append(lines, "minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): run git reset -- "+strings.Join(reset, " "))
+		lines = append(lines, "minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): unstage them from git status or your git tool: "+gitNames(slices.Clone(reset)))
 	} else if len(reset) > 0 && !w.resetIndex(reset) {
-		lines = append(lines, "minigw: could not remove the staged protected paths from the index: run git reset -- "+strings.Join(reset, " "))
+		lines = append(lines, "minigw: could not remove the staged protected paths from the index: unstage them from git status or your git tool: "+gitNames(slices.Clone(reset)))
 	}
 	return lines, len(end.Incomplete) == 0
 }

@@ -49,23 +49,42 @@ public struct GitWatch: Sendable {
 
     static let names = 20  // names shown per list
     static let keepIncomplete: TimeInterval = 7 * 24 * 3600  // how long a baseline that could not be compared in full is kept
+    /// Pathspecs that select every path that can be protected, and more (a protected name starts with "." or is a Windows short name with "~"; a leading HFS-ignorable character before the dot is the known gap).
+    static let candidateSpecs = [":(glob)**/.*", ":(glob)**/.*/**", ":(glob)**/*~*", ":(glob)**/*~*/**"]
     static let maxCommitsDefault = 200, maxOutputDefault = 1 << 20
     static func list(_ l: [String]) -> String {
         let s = l.sorted()
-        return s.count > names ? s.prefix(names).joined(separator: ", ") + " and \(s.count - names) more" : s.joined(separator: ", ")
+        return s.count > names ? s.prefix(names).map(esc).joined(separator: ", ") + " and \(s.count - names) more" : s.map(esc).joined(separator: ", ")
     }
 
-    /// The warning when the staged protected paths could not be told reliably: nothing was removed from the index; the literal command per path (the first five), no command for a
-    /// name with a control character.
+    /// Every name the watcher prints (a path, a branch, a tag: the agent chooses them) goes through this: control characters (C0, DEL, C1) as \xNN, a backslash as \\, the bidi controls
+    /// and the line and paragraph separators as \u{...}, so that a name cannot erase or rewrite the warning in the owner's terminal and stays recognisable. Go gitEsc is the same.
+    static func esc(_ s: String) -> String {
+        var o = ""
+        for u in s.unicodeScalars {
+            let v = u.value
+            if u == "\\" { o += "\\\\" }
+            else if v < 0x20 || v == 0x7f || (0x80...0x9f).contains(v) { o += "\\x" + (v < 16 ? "0" : "") + String(v, radix: 16) }
+            else if v == 0x61c || v == 0x200e || v == 0x200f || v == 0x2028 || v == 0x2029 || (0x202a...0x202e).contains(v) || (0x2066...0x206f).contains(v) { o += "\\u{" + String(v, radix: 16) + "}" }
+            else { o.unicodeScalars.append(u) }
+        }
+        return o
+    }
+
+    /// A path that gets a printed command: only letters, digits and . _ / @ + - (no space, nothing a shell or cmd.exe reads as syntax), and not starting with "-". The owner may paste the
+    /// command into sh, cmd.exe or PowerShell; any other path is named without a command.
+    static func commandSafe(_ p: String) -> Bool { !p.isEmpty && !p.hasPrefix("-") && p.unicodeScalars.allSatisfy { $0.isASCII && ($0.properties.isAlphabetic || ("0"..."9").contains($0) || "._/@+-".unicodeScalars.contains($0)) } }
+
+    /// The warning when the staged protected paths could not be told reliably: nothing was removed from the index; the literal command per path (the first five) for the paths that are
+    /// safe to paste, no command for the others.
     static func unstageWarning(_ paths: [String], indexCut: Bool) -> String {
-        let plain = paths.filter { !$0.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } }, odd = paths.count - plain.count
+        let safe = paths.filter(commandSafe), other = paths.count - safe.count
         var m = "minigw: WARNING: "
         if paths.isEmpty { m += "protected paths may be staged that are not listed (the index listing was cut): look at git status before your next commit" }
         else {
-            m += "a protected path looks staged: " + list(plain) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit."
-            let cmds = plain.prefix(5).map { "git --literal-pathspecs restore --staged -- '" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-            if !cmds.isEmpty { m += " To unstage by hand (this unstages your own staged change of that path too): " + cmds.joined(separator: "; ") + (plain.count > 5 ? " and \(plain.count - 5) more" : "") + "." }
-            if odd > 0 { m += " \(odd) path(s) with a control character in the name: no command printed, use git status." }
+            m += "a protected path looks staged: " + list(paths) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit."
+            if !safe.isEmpty { m += " To unstage by hand (this unstages your own staged change of that path too): " + safe.sorted().prefix(5).map { "git --literal-pathspecs restore --staged -- '" + $0 + "'" }.joined(separator: "; ") + (safe.count > 5 ? " and \(safe.count - 5) more" : "") + "." }
+            if other > 0 { m += " No command is printed for \(other) path(s) whose names have characters other than letters, digits and . _ / @ + -: unstage them from git status or your git tool." }
             if indexCut { m += " The index listing was cut: protected paths may be staged that are not listed." }
         }
         return m
@@ -89,7 +108,7 @@ public struct GitWatch: Sendable {
         for (p, v) in end.index where counted(p) && start.index[p] != v && notCommitted(p) { staged.append(p) }
         for p in start.index.keys where end.index[p] == nil && counted(p) && notCommitted(p) { staged.append(p) }
         var parts: [String] = []
-        if end.head != start.head { parts.append(end.head.isEmpty ? "HEAD is detached" : "HEAD now on " + end.head) }
+        if end.head != start.head { parts.append(end.head.isEmpty ? "HEAD is detached" : "HEAD now on " + esc(end.head)) }
         else if end.head.isEmpty, end.headId != start.headId { parts.append("detached HEAD moved") }  // no branch moves with it: only the object id says so
         if !commits.isEmpty { parts.append("\(commits.count) new commit(s)") }
         for (what, l) in [("new branches", newBranches), ("moved branches", moved), ("new tags", newTags), ("moved tags", movedTags), ("other refs changed", other), ("deleted refs", deleted)] where !l.isEmpty { parts.append(what + ": " + list(l)) }
@@ -157,23 +176,37 @@ public struct GitWatch: Sendable {
         let refs = git(root, maxOutput: maxOutput, ["for-each-ref", "--format=%(refname) %(objectname)"])  // every namespace: heads, tags, stash, notes, replace, packed refs too
         guard refs.ok || !refs.out.isEmpty else { return nil }
         var s = State()
-        if !refs.ok { s.incomplete.append("refs not read in full"); s.unreliable = true }
+        if !refs.ok { s.incomplete.append("refs not read in full") }  // refs and history cannot make the index picture wrong: INCOMPLETE, but the reset stays
         for l in refs.out.split(separator: "\n") { let p = l.split(separator: " ", maxSplits: 1).map(String.init); if p.count == 2 { s.refs[p[0]] = p[1] } }
         let h = git(root, maxOutput: maxOutput, ["symbolic-ref", "-q", "--short", "HEAD"])
         if h.ok { s.head = h.out.trimmingCharacters(in: .whitespacesAndNewlines) }
         let hid = git(root, maxOutput: maxOutput, ["rev-parse", "-q", "--verify", "HEAD"])  // also when HEAD is detached: no ref names that commit
         if hid.ok { s.headId = hid.out.trimmingCharacters(in: .whitespacesAndNewlines) }
         let ls = git(root, maxOutput: maxOutput, ["ls-files", "-s", "-z"])
-        if !ls.ok { s.incomplete.append("index not read in full"); s.unreliable = true; s.indexCut = true }
-        let idx = ls.out
-        s.indexHash = SHA256.hash(data: Data(idx.utf8)).map { String(format: "%02x", $0) }.joined()
-        for e in idx.split(separator: "\0") {
+        if !ls.ok { s.incomplete.append("index not read in full") }
+        func parseIndex(_ out: String) { for e in out.split(separator: "\0") {
             let parts = e.split(separator: "\t", maxSplits: 1).map(String.init)
             if parts.count == 2 { let f = parts[0].split(separator: " ").map(String.init); if f.count == 3 { s.index[parts[1]] = f.joined(separator: " ") } }
-        }
-        let cached = git(root, maxOutput: maxOutput, ["diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z"])
-        if !cached.ok { s.incomplete.append("staged paths not read in full"); s.unreliable = true; s.indexCut = true }
+        } }
+        s.indexHash = SHA256.hash(data: Data(ls.out.utf8)).map { String(format: "%02x", $0) }.joined()
+        parseIndex(ls.out)
+        // The tree HEAD has, resolved once, before `diff --cached`, which then compares the index with that tree id: both reads see the same tree, or the watcher knows it has none.
+        // A HEAD that cannot be resolved in a repository that has commits (a flake once listed a committed .envrc as staged) makes the index picture unreliable: nothing is reset.
+        let tr = git(root, maxOutput: maxOutput, ["rev-parse", "-q", "--verify", "HEAD^{tree}"])
+        let tid = tr.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        let unborn = !hid.ok && refs.ok && refs.out.isEmpty
+        var tree: [String] = []
+        if tr.ok, !tid.isEmpty, tid.allSatisfy({ $0.isHexDigit }) { tree = [tid] } else if !unborn { s.unreliable = true; s.indexCut = true }
+        let diffArgs = ["diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z"] + tree
+        let cached = git(root, maxOutput: maxOutput, diffArgs)
+        if !cached.ok { s.incomplete.append("staged paths not read in full") }
         s.cached = cached.out.split(separator: "\0").map(String.init)
+        if !ls.ok || !cached.ok, !s.unreliable {
+            // The listing was cut: read only the paths that can be protected (a pathspec over-approximation; Sync.isProtected stays the one definition) so that a big index does not switch the protection off.
+            let l2 = git(root, maxOutput: maxOutput, ["ls-files", "-s", "-z", "--"] + Self.candidateSpecs)
+            let c2 = git(root, maxOutput: maxOutput, diffArgs + ["--"] + Self.candidateSpecs)
+            if l2.ok, c2.ok { parseIndex(l2.out); s.cached = Array(Set(s.cached ?? []).union(c2.out.split(separator: "\0").map(String.init))) } else { s.unreliable = true; s.indexCut = true }
+        }
         for n in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] where lstat(root + "/.git/" + n, &st) == 0 { s.pending.append(n) }
         return s
     }
@@ -210,7 +243,7 @@ public struct GitWatch: Sendable {
         if !tips.isEmpty {
             // Framing that a file name cannot forge: the commit ids come alone (rev-list), then each commit's names alone (diff-tree, NUL-separated, raw, no header at all).
             let r = Self.git(root, maxOutput: maxOutput, ["rev-list", "-n", String(maxCommits + 1)] + tips + (old.isEmpty ? [] : ["--not"] + old))
-            if !r.ok { end.incomplete.append("history not read in full"); end.unreliable = true }
+            if !r.ok { end.incomplete.append("history not read in full") }
             var ids = r.out.split(whereSeparator: \.isWhitespace).map(String.init)
             if ids.count > maxCommits {
                 ids = Array(ids.prefix(maxCommits))
@@ -219,15 +252,15 @@ public struct GitWatch: Sendable {
             for id in ids {
                 // -m: a merge is diffed against each parent; --root: the first commit has files too
                 let n = Self.git(root, maxOutput: maxOutput, ["diff-tree", "-m", "-r", "-z", "--raw", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id])
-                if !n.ok { end.incomplete.append("files of a commit not read in full"); end.unreliable = true }
+                if !n.ok { end.incomplete.append("files of a commit not read in full") }
                 let (files, modes) = Self.parseRaw(n.out)
                 commits.append(Commit(id: id, files: files, modes: modes))
             }
         }
         var (lines, reset) = Self.report(start: start, end: end, commits: commits, isProtected: { Sync.isProtected($0) })
         if !reset.isEmpty, !restore {
-            lines.append("minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): run git reset -- " + reset.joined(separator: " "))
-        } else if !reset.isEmpty, !resetIndex(reset) { lines.append("minigw: could not remove the staged protected paths from the index: run git reset -- " + reset.joined(separator: " ")) }
+            lines.append("minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): unstage them from git status or your git tool: " + Self.list(reset))
+        } else if !reset.isEmpty, !resetIndex(reset) { lines.append("minigw: could not remove the staged protected paths from the index: unstage them from git status or your git tool: " + Self.list(reset)) }
         return (lines, end.incomplete.isEmpty)
     }
 
