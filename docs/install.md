@@ -267,7 +267,11 @@ the MSI, or `rm ~/.local/bin/minigw`.
   the systemd user unit. `install.sh --uninstall` runs `minigw uninstall`, which removes the unit, the plugin entries
   and scratch folders, then removes the two files.
 
-## Going back to 0.7.0
+## Going back
+
+The project database now uses schema 26. Going back to 0.8.5 or older requires the snapshot or full database backup from before the update. An older program refuses the newer database. Restore the pre-update copy while the gateway is stopped; changes made after that copy, including note history, are not in it. Markdown exports and bundles do not carry note history.
+
+### Going back to 0.7.0
 
 0.7.0 refuses a project database that a newer version has migrated (models keep working; projects and notes answer
 503 `core_unavailable`). The upgrade wrote a snapshot of the old database next to it, `core-8-<time>.db` in the `core`
@@ -286,7 +290,7 @@ back again; run on macOS with `minigw serve`, offline, on 127.0.0.1; the command
 5. Start the gateway. The project and the notes from before the upgrade are back.
 
 Until step 4 a 0.7.0 gateway on the migrated database shows `gw status`: `projects: off (core database has a newer
-schema than this program (schema 25, program 8))`, `gw project list`: `The project database is not available: …`, and
+schema than this program (schema 26, program 8))`, `gw project list`: `The project database is not available: …`, and
 logs `WARNING: the core database cannot be used, project routes answer 503 core_unavailable (models work)`. Nothing is
 damaged by that; the newer database stays where it is.
 

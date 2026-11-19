@@ -13,6 +13,7 @@ source "$ROOT/scripts/compose-e2e-common.zsh"
 T0=$SECONDS
 OLD=0.7.6; OLD_SCHEMA=12
 CURRENT=$(python3 -c 'import re,sys; s=open(sys.argv[1]).read(); print(len(re.search(r"var migrations = .*?\{(.*?)\}",s).group(1).split(",")))' "$ROOT/client/core/core.go")
+[[ $CURRENT == 26 ]] || { print -u2 'FAIL: expected current schema 26'; exit 1; }
 if [[ -n ${TMPDIR:-} ]]; then CACHE=$TMPDIR
 elif [[ $(uname -s) == Darwin ]]; then CACHE=$HOME/Library/Caches
 else CACHE=${XDG_CACHE_HOME:-$HOME/.cache}; fi
@@ -230,9 +231,38 @@ empty() {
 }
 restore() { sh "$ROOT/deploy/docker/backup.sh" --restore "$@" || fail 'restore'; }
 upgrade upgraded
+# Publish a note and a replacement with this binary, so the backup carries history.
+print 'historyoldneedle exact old body' | member kb submit drill --title 'History recovery' --key history-first -
+HISTORY_SUB=$(member kb submissions drill --json | python3 -c 'import json,sys; print(next(v["id"] for v in json.load(sys.stdin)["submissions"] if v["title"]=="History recovery"))')
+history_version() {
+  gw kb review drill | awk -v id="$HISTORY_SUB" '$1=="submission" {found=($2==id)} found && $1=="version" {print $2}'
+}
+HISTORY_VERSION=$(history_version)
+gw kb accept "$HISTORY_SUB" --version "$HISTORY_VERSION"
+HISTORY_NOTE=$(member note list --json | python3 -c 'import json,sys; print(next(v["id"] for v in json.load(sys.stdin)["notes"] if v["title"]=="History recovery"))')
+print 'historynewneedle replacement body' | member kb submit drill --title 'History replacement' --key history-second --replaces "$HISTORY_NOTE" --revision 1 -
+HISTORY_SUB=$(member kb submissions drill --json | python3 -c 'import json,sys; print(next(v["id"] for v in json.load(sys.stdin)["submissions"] if v["title"]=="History replacement"))')
+HISTORY_VERSION=$(history_version)
+gw kb accept "$HISTORY_SUB" --version "$HISTORY_VERSION"
 backup post
 POST=$(archive post)
 [[ $(schema "$POST") == $CURRENT && $CURRENT -gt $OLD_SCHEMA ]] || fail 'current schema'
+history_backup() {
+  python3 -c '
+import os,sqlite3,sys,tarfile,tempfile
+with tarfile.open(sys.argv[1]+"/config.tar") as t, tempfile.TemporaryDirectory(dir=sys.argv[2]) as d:
+ p=os.path.join(d,"core.db")
+ for suffix in ("","-wal","-shm"):
+  name="./core/core.db"+suffix
+  if name in t.getnames():
+   with open(p+suffix,"wb") as f: f.write(t.extractfile(name).read())
+ c=sqlite3.connect("file:"+p+"?mode=ro",uri=True)
+ assert c.execute("select body from note_history where note_id=? and revision=1",(int(sys.argv[3]),)).fetchall()==[("historyoldneedle exact old body\n",)]
+ assert c.execute("select body from notes where id=?",(int(sys.argv[3]),)).fetchone()[0]=="historynewneedle replacement body\n"
+ c.close()
+' "$1" "$R" "$HISTORY_NOTE" || fail 'history backup content'
+}
+history_backup "$POST"
 ok "upgrade $OLD_SCHEMA -> $CURRENT, listings, search and snapshot"
 empty
 old
@@ -258,6 +288,15 @@ empty
 restore --into-project "$COMPOSE_PROJECT_NAME" "$PRE"
 upgrade again
 ok 'pre-update backup with new binary upgrades again'
+# Restore the post-update backup under the new binary and inspect a fresh copy.
+empty
+restore --into-project "$COMPOSE_PROJECT_NAME" "$POST"
+docker compose up -d --no-build || fail 'start new with history backup'
+wait_healthy || fail 'restored history health'
+backup history-restored
+[[ $(schema "$(archive history-restored)") == 26 ]] || fail 'restored history schema'
+history_backup "$(archive history-restored)"
+ok 'new binary restores old body in note_history and current replacement'
 # A newer backup under the old binary must refuse the core and leave its bytes intact.
 empty
 old

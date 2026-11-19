@@ -794,6 +794,9 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 				if e != nil {
 					return e
 				}
+				if e = saveNoteHistory(tx, v.Replaces, NoteInput{Class: v.Class, Title: v.Title, Body: body, EntryKind: v.EntryKind}); e != nil {
+					return e
+				}
 				if _, e = tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1,entry_kind=? WHERE id=?`, v.Class, v.Title, body, size, ms(now), v.EntryKind, v.Replaces); e != nil {
 					return e
 				}

@@ -293,6 +293,13 @@ func (s *Store) importNote(tx *sql.Tx, project, author, id int64, in NoteInput, 
 		}
 		id, _ = r.LastInsertId()
 	} else {
+		// An import retains the published kind, regardless of the file's claim.
+		if err := tx.QueryRow(`SELECT entry_kind FROM notes WHERE id=?`, id).Scan(&in.EntryKind); err != nil {
+			return 0, err
+		}
+		if err := saveNoteHistory(tx, id, in); err != nil {
+			return 0, err
+		}
 		if _, err := tx.Exec(`UPDATE notes SET class=?,title=?,body=?,bytes=?,updated=?,revision=revision+1 WHERE id=?`, in.Class, in.Title, in.Body, size, ms(s.now()), id); err != nil {
 			return 0, err
 		}

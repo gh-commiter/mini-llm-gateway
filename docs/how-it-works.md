@@ -16,6 +16,8 @@ the gateway applies. For day-to-day use see [usage.md](usage.md).
 
 ## Request flow
 
+The project database keeps the outgoing title, body, class, kind, updated time and recorded provenance before a note is overwritten by an edit, accepted replacement or Markdown/bundle re-import. Schema 26 stores this history in the same transaction as the change, with separate limits of 100 historical revisions and 8 MiB per note, and 500 MiB per project (each team-note segment has its own budget). An overwrite that would exceed a limit is refused without changing the note; history is never silently pruned. Nothing shows or restores history yet. Deleting a note deletes its history. Full database backups carry history; Markdown exports, bundles, upstream pushes, search and mirrors contain only current content.
+
 ```mermaid
 flowchart LR
   subgraph client["Client: Mac, Windows or Linux"]

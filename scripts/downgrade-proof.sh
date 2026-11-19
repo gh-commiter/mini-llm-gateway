@@ -207,7 +207,7 @@ stop
 [[ $P == *wb* ]] || fail "3: current gateway does not list the project: $P (log: $(<$R/serve-cur-a.log))"
 L=$("$HC" list $R/cfg)
 SCHEMA=${${(f)L}[1]#schema=}
-(( SCHEMA > 8 )) || fail "3: schema after the upgrade: $L"
+(( SCHEMA == 26 )) || fail "3: schema after the upgrade: $L (expected 26)"
 [[ $L == *note=before-upgrade* ]] || fail "3: note not readable after the upgrade: $L"
 SNAP8=(${CORE}/core-8-*.db(N)); (( $#SNAP8 == 1 )) || fail "3: expected one core-8 snapshot: $(ls $CORE)"
 "$HC" add $R/cfg after-upgrade
