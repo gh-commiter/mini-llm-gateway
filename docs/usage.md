@@ -11,6 +11,18 @@ people who can no longer read the note. Grants permit only their shared classes.
 all classes; reading a private version, or any version of a currently private note, is audited.
 Revision numbers are kept: a gap in the numbers shows that versions exist which you may not read or which were not kept; nothing else about them is shown.
 
+Each row says two things that must not be confused: when this version was WRITTEN and by whom
+(`written 2026-11-17 09:12 UTC by Ana`), and when it was REPLACED and by whom (`replaced 2026-11-18
+14:02 UTC by Tilen`; for a review it says `an accepted submission (reviewer ...)`, for an import `an
+import`, and a restore adds `(restore)`). A version you pick to restore is the one that was current
+between those two times. Every time is to the minute and carries its zone: `UTC`, or the offset from it
+(`+01:00`). A row reads, for example: `revision 5  written 2026-11-17 09:12 UTC by Ana  replaced 2026-11-18
+14:02 UTC by Tilen  structure  finding  1200 bytes  Invoice numbering`. After a restore the command says
+the new revision and the class the note has now, and how to take the saved class if it differs. A note
+that is a copy from an upstream gateway has no history here: the command says so and names the gateway
+that has it. A gateway older than 0.8.7 does not have these commands: the client names its version and
+says to update the gateway.
+
 Project admins and the gateway owner can restore; authors without the admin role cannot.
 Read the saved text first, then use `minigw note restore <id> --revision <n>`.
 Restore keeps the current class by default. `--class <saved class>` explicitly restores the saved

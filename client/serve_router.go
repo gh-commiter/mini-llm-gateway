@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -69,6 +70,7 @@ runs; otherwise they go to serve.json.
 All take --config FILE (default: the minigw serve config).`
 
 type adminClient struct {
+	noteCommand  string  // "note history" or "note restore": what the owner ran, for the older-gateway sentence
 	base, secret string  // tekoči router
 	routerKey    []byte  // javni ključ routerja: Noise preveri, da je na vratih res ta router
 	off          *server // router ne teče
@@ -246,6 +248,11 @@ func (a *adminClient) do(method, path string, body, out any) int {
 			} `json:"error"`
 		}
 		json.Unmarshal(resp, &e)
+		if status == 404 || status == 405 {
+			if hint := a.olderNoteHistory(path); hint != "" {
+				fail(hint)
+			}
+		}
 		fail(clean(e.Error.Message))
 	}
 	if out != nil {
@@ -255,6 +262,39 @@ func (a *adminClient) do(method, path string, body, out any) int {
 }
 
 func must(b []byte, _ error) []byte { return b }
+
+var ownerNoteHistoryPath = regexp.MustCompile(`^/kb/notes/[0-9]+/(history(/[0-9]+)?|restore)$`)
+
+// olderNoteHistory: a 404 on the owner's note history routes from a gateway older than 0.8.7 becomes a sentence that
+// names the gateway's version (GET /status) and the update; "" when the path is another one or the version is not older.
+func (a *adminClient) olderNoteHistory(path string) string {
+	if !ownerNoteHistoryPath.MatchString(path) {
+		return ""
+	}
+	var status int
+	var resp []byte
+	switch {
+	case a.fake != nil:
+		status, resp = a.fake("GET", "/status", nil)
+	case a.off == nil:
+		var err error
+		if status, resp, err = a.http("GET", "/status", nil, 3*time.Second); err != nil {
+			return ""
+		}
+	default:
+		st, obj := a.off.adminDo("GET", "/status", nil)
+		status, resp = st, must(json.Marshal(obj))
+	}
+	var r struct{ Version string }
+	if status != 200 || json.Unmarshal(resp, &r) != nil || r.Version == "" || strings.Trim(r.Version, "0123456789.") != "" || !versionLess(r.Version, "0.8.7") {
+		return ""
+	}
+	family := "note history"
+	if strings.HasSuffix(path, "/restore") || a.noteCommand == "note restore" {
+		family = "note restore"
+	}
+	return fmt.Sprintf("this gateway is %s; %s needs 0.8.7 or newer: update the gateway (/minigw:gw update there)", r.Version, family)
+}
 
 // autostartLine: zagon ob prijavi za gw status in gw autostart. Windows: vrednost Run, tudi pri namestitvi MSI, kjer
 // minigw serve uninstall zavrne.
@@ -874,7 +914,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota", "upstream", "labels":
-		coreCommand(a, pos, coreOpts{revision: *noteRevision, current: *noteCurrent, hasCurrent: set["current"], file: *evFile, showErrors: *evShowErrors, in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, read: *upRead, noRead: *upNoRead, readClass: *upReadClass, readSources: *upReadSources, pullEvery: *upPullEvery, acceptReach: *upAcceptReach, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, version: *version, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
+		coreCommand(a, pos, coreOpts{revision: *noteRevision, hasRevision: set["revision"], current: *noteCurrent, hasCurrent: set["current"], file: *evFile, showErrors: *evShowErrors, in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, read: *upRead, noRead: *upNoRead, readClass: *upReadClass, readSources: *upReadSources, pullEvery: *upPullEvery, acceptReach: *upAcceptReach, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, version: *version, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

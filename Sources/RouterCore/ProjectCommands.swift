@@ -111,7 +111,7 @@ public final class ProjectEnv {
         case 400: return ProjectError("rejected: " + ProjectText.oneLine(message))
         case 403:
             switch type {
-            case "forbidden": return ProjectError("not allowed: your role in this project does not permit it (a grant alone only lets you read; linking needs a direct role)")
+            case "forbidden": return ProjectError(forbiddenRoleText)
             case "archived": return ProjectError("the project is archived: nobody can write to it")
             default:
                 let m = ProjectText.oneLine(message)
@@ -157,15 +157,21 @@ public final class ProjectEnv {
 
     /// A 404 on the kb routes (first in 0.7.10) or the team routes (0.7.1) from a gateway older than that becomes a sentence that names the
     /// gateway's version and the update, instead of "not found or not visible". The version is asked (/health/ready) only after such a 404, once.
+    /// The command a note history route belongs to ("note history" or "note restore"); nil for any other path.
+    static func noteHistoryFamily(_ path: String) -> String? {
+        guard path.range(of: #"^/minigw/v1/projects/[0-9]+/notes/[0-9]+/(history(/[0-9]+)?|restore)$"#, options: .regularExpression) != nil else { return nil }
+        return path.hasSuffix("/restore") ? "note restore" : "note history"
+    }
     public static func olderRouteHint(_ send: @escaping Send) -> Send {
         final class Version: @unchecked Sendable { var v = "" }
         let known = Version()
         return { c, method, path, headers, body in
             let r = send(c, method, path, headers, body)
-            guard r.status == 404 else { return r }
+            guard r.status == 404 || r.status == 405 && noteHistoryFamily(path) != nil else { return r }  // a 0.8.6 gateway answers a restore POST with 405
             let family: String, min: String
             if path.hasPrefix("/minigw/v1/teams") { (family, min) = ("team", "0.7.1") }
             else if path.hasPrefix("/minigw/v1/projects/") && path.contains("/kb/") { (family, min) = ("kb", "0.7.10") }
+            else if let f = noteHistoryFamily(path) { (family, min) = (f, "0.8.7") }
             else { return r }
             if known.v.isEmpty {
                 let h = send(c, "GET", "/health/ready", [:], nil)
@@ -177,7 +183,7 @@ public final class ProjectEnv {
             guard versionLess(known.v, min) else { return r }
             let msg = "this gateway is \(known.v); \(family) needs \(min) or newer: update the gateway (/minigw:gw update there)"
             let body = try? JSONSerialization.data(withJSONObject: ["error": ["type": "older_gateway", "message": msg]])
-            return ProjectReply(status: 404, data: body ?? Data(), retryAfter: r.retryAfter)
+            return ProjectReply(status: r.status, data: body ?? Data(), retryAfter: r.retryAfter)
         }
     }
 
@@ -450,11 +456,18 @@ public final class ProjectEnv {
         }
         switch sub {
         case "history", "restore":
-            guard pos.isEmpty, !(sub == "restore" && fl.int64("revision") < 1) else { throw usage }
-            try Self.noteHistoryCommand(sub, "\(base)/\(id)", id: id, revision: fl.int64("revision"), current: fl.int64("current"), hasCurrent: fl.set.contains("current"), cls: cls, asJSON: asJSON,
-                                        terminal: isTerminal(), out: { out($0) }, answer: readAnswer, stamp: { stamp($0) }, request: { method, path, body in
+            guard pos.isEmpty, !(sub == "restore" && !fl.set.contains("revision")) else { throw usage }
+            try Self.noteHistoryCommand(sub, "\(base)/\(id)", id: id, revision: fl.int64("revision"), hasRevision: fl.set.contains("revision"), current: fl.int64("current"), hasCurrent: fl.set.contains("current"), cls: cls, asJSON: asJSON,
+                                        terminal: isTerminal(), out: { out($0) }, answer: readAnswer, zone: zone, request: { method, path, body in
                 let r = request(c, method, path, [:], body)
-                guard r.status == 200 else { throw gwError(r) }
+                guard r.status == 200 else {
+                    var err = Self.scopeHint(gwError(r), scoped: runConn != nil || !team.isEmpty)
+                    // the restore flow meets the history route first: the older-gateway sentence names the command that was run
+                    if sub == "restore" && err.message.contains("; note history needs 0.8.7") {
+                        err = ProjectError(err.message.replacingOccurrences(of: "; note history needs", with: "; note restore needs"), gatewayStatus: err.gatewayStatus)
+                    }
+                    throw err
+                }
                 return r.data
             })
         case "list":

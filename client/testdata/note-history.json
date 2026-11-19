@@ -17,11 +17,11 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history",
      "status": 200,
-     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -57,7 +57,7 @@
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Current text\nno saved revisions you may read\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Current text\nno saved revisions you may read\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -89,11 +89,11 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history",
      "status": 200,
-     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"an accepted submission (reviewer Sam)\"}]}"
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  saved 2026-11-14 10:00  by a review or import  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by an accepted submission (reviewer Sam)  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -132,11 +132,11 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     }
    ],
    "want": {
-    "out": "note 7  revision 2 of 4  structure  finding  saved 2026-11-14 10:00 by Robin\nSaved text\nOld body\n",
+    "out": "note 7  revision 2 of 4  structure  finding  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin\nSaved text\nOld body\n",
     "err": "",
     "error": "",
     "requests": [
@@ -175,11 +175,11 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history",
      "status": 200,
-     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
     }
    ],
    "want": {
-    "out": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}\n",
+    "out": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}\n",
     "err": "",
     "error": "",
     "requests": [
@@ -219,11 +219,11 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     }
    ],
    "want": {
-    "out": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}\n",
+    "out": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}\n",
     "err": "",
     "error": "",
     "requests": [
@@ -263,11 +263,11 @@
     {
      "match": "GET /minigw/v1/projects/1099511627777/notes/7/history",
      "status": 200,
-     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"team\":\"garden\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"team\":\"garden\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -303,11 +303,11 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history",
      "status": 200,
-     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current\\u001b‮​\\ttext\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Ro\\u001b‮​\\tbin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":32,\"title\":\"Saved\\u001b‮​\\ttext\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current\\u001b‮​\\ttext\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Ro\\u001b‮​\\tbin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":32,\"title\":\"Saved\\u001b‮​\\ttext\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"An\\u001b‮​\\ta\",\"replacedBy\":\"Ro\\u001b‮​\\tbin\"}]}"
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Currenttext\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  32 bytes  Savedtext\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Currenttext\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  32 bytes  Savedtext\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -346,11 +346,11 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Ro\\u001b‮​\\tbin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":32,\"title\":\"Saved\\u001b‮​\\ttext\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"old\\ttext\\u001b‮​\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Ro\\u001b‮​\\tbin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":32,\"title\":\"Saved\\u001b‮​\\ttext\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"An\\u001b‮​\\ta\",\"replacedBy\":\"Ro\\u001b‮​\\tbin\",\"body\":\"old\\ttext\\u001b‮​\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     }
    ],
    "want": {
-    "out": "note 7  revision 2 of 4  structure  finding  saved 2026-11-14 10:00 by Robin\nSavedtext\nold    text\n",
+    "out": "note 7  revision 2 of 4  structure  finding  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin\nSavedtext\nold    text\n",
     "err": "",
     "error": "",
     "requests": [
@@ -397,7 +397,7 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     },
     {
      "match": "POST /minigw/v1/projects/3/notes/7/restore",
@@ -406,7 +406,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nRestore? [y/N] note 7 restored from revision 2 (data, revision 5)\n",
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nRestore? [y/N] restored revision 2 as revision 5; the note is data (current class kept; use --class structure to restore the saved class)\n",
     "err": "",
     "error": "",
     "requests": [
@@ -459,7 +459,7 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     }
    ],
    "want": {
@@ -510,7 +510,7 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     },
     {
      "match": "POST /minigw/v1/projects/3/notes/7/restore",
@@ -519,7 +519,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nnote 7 restored from revision 2 (data, revision 5)\n",
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nrestored revision 2 as revision 5; the note is data (current class kept; use --class structure to restore the saved class)\n",
     "err": "",
     "error": "",
     "requests": [
@@ -570,7 +570,7 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     }
    ],
    "want": {
@@ -623,7 +623,7 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     },
     {
      "match": "POST /minigw/v1/projects/3/notes/7/restore",
@@ -632,7 +632,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data -> structure\nnote 7 restored from revision 2 (structure, revision 5)\n",
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data -> structure\nrestored revision 2 as revision 5; the note is structure (class changed from data to structure)\n",
     "err": "",
     "error": "",
     "requests": [
@@ -685,7 +685,7 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     },
     {
      "match": "POST /minigw/v1/projects/3/notes/7/restore",
@@ -694,7 +694,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "out": "",
     "err": "",
     "error": "the note has changed: its current revision is 5 (read it again, then retry)",
     "requests": [
@@ -747,7 +747,7 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     },
     {
      "match": "POST /minigw/v1/projects/3/notes/7/restore",
@@ -756,7 +756,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "out": "",
     "err": "",
     "error": "rejected: revision 2 has the same text as the current note: nothing to restore",
     "requests": [
@@ -881,11 +881,11 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history",
      "status": 200,
-     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  18 bytes  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "error": "",
     "requests": [
@@ -924,11 +924,11 @@
     {
      "match": "GET /minigw/v1/projects/3/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     }
    ],
    "want": {
-    "out": "note 7  revision 2 of 4  structure  finding  saved 2026-11-14 10:00 by Robin\nPlain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nOld body\n",
+    "out": "note 7  revision 2 of 4  structure  finding  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin\nPlain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nOld body\n",
     "err": "",
     "error": "",
     "requests": [
@@ -941,6 +941,403 @@
      [
       "GET",
       "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "mirrored note history",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 400,
+     "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"this note is a copy from the upstream gateway hub:archive: its saved versions are on that gateway; run minigw note history there\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "rejected: this note is a copy from the upstream gateway hub:archive: its saved versions are on that gateway; run minigw note history there",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "team note without team",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"not found or not visible\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible\na note of a team needs --team <team>; a note of another project needs a folder linked to that project (a search of a team or another project shows the ids)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "list complete",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":3,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"},{\"revision\":1,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 3 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nrevision 1  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "replaced by an owner restore",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"the gateway owner (restore of revision 1)\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by the gateway owner (restore of revision 1)  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "restore without the admin role",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2",
+    "--current",
+    "4"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/3/notes/7/restore",
+     "status": 403,
+     "body": "{\"error\":{\"type\":\"forbidden\",\"message\":\"forbidden\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not allowed: restoring a saved version needs the project admin role (or the gateway owner)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/3/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":4,\"class\":\"data\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "history of the current revision",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--revision",
+    "4"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "revision 4 is the current text: minigw note read 7",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "restore of the current revision",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "4",
+    "--current",
+    "4"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "revision 4 is the current text: nothing to restore",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "history revision zero",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--revision",
+    "0"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "--revision must be positive",
+    "requests": [],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "history revision negative",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--revision",
+    "-1"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "--revision must be positive",
+    "requests": [],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "restore revision zero",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "0",
+    "--current",
+    "4"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "--revision must be positive",
+    "requests": [],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "accepted by a member admin",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"an accepted submission (reviewer Ana Admin)\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by an accepted submission (reviewer Ana Admin)  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
       "",
       ""
      ]
@@ -964,11 +1361,11 @@
     {
      "match": "GET /kb/notes/7/history",
      "status": 200,
-     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -999,11 +1396,11 @@
     {
      "match": "GET /kb/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     }
    ],
    "want": {
-    "out": "note 7  revision 2 of 4  structure  finding  saved 2026-11-14 10:00 by Robin\nSaved text\nOld body\n",
+    "out": "note 7  revision 2 of 4  structure  finding  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin\nSaved text\nOld body\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1034,11 +1431,11 @@
     {
      "match": "GET /kb/notes/7/history",
      "status": 200,
-     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
     }
    ],
    "want": {
-    "out": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}\n",
+    "out": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1070,7 +1467,7 @@
     {
      "match": "GET /kb/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     },
     {
      "match": "POST /kb/notes/7/restore",
@@ -1079,7 +1476,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nnote 7 restored from revision 2 (data, revision 5)\n",
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nrestored revision 2 as revision 5; the note is data (current class kept; use --class structure to restore the saved class)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1122,7 +1519,7 @@
     {
      "match": "GET /kb/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     },
     {
      "match": "POST /kb/notes/7/restore",
@@ -1131,7 +1528,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nRestore? [y/N] note 7 restored from revision 2 (data, revision 5)\n",
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nRestore? [y/N] restored revision 2 as revision 5; the note is data (current class kept; use --class structure to restore the saved class)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1174,7 +1571,7 @@
     {
      "match": "GET /kb/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     }
    ],
    "want": {
@@ -1214,7 +1611,7 @@
     {
      "match": "GET /kb/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     }
    ],
    "want": {
@@ -1256,7 +1653,7 @@
     {
      "match": "GET /kb/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     },
     {
      "match": "POST /kb/notes/7/restore",
@@ -1265,7 +1662,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data -> structure\nnote 7 restored from revision 2 (structure, revision 5)\n",
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data -> structure\nrestored revision 2 as revision 5; the note is structure (class changed from data to structure)\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1307,7 +1704,7 @@
     {
      "match": "GET /kb/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     },
     {
      "match": "POST /kb/notes/7/restore",
@@ -1316,7 +1713,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "out": "",
     "err": "minigw: revision mismatch (current 5)\n",
     "exit": 1,
     "requests": [
@@ -1358,7 +1755,7 @@
     {
      "match": "GET /kb/notes/7/history/2",
      "status": 200,
-     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
     },
     {
      "match": "POST /kb/notes/7/restore",
@@ -1367,7 +1764,7 @@
     }
    ],
    "want": {
-    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "out": "",
     "err": "minigw: revision 2 has the same text as the current note: nothing to restore\n",
     "exit": 1,
     "requests": [
@@ -1420,11 +1817,11 @@
     {
      "match": "GET /kb/notes/7/history",
      "status": 200,
-     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
     }
    ],
    "want": {
-    "out": "note 7  revision 4 (current)  data  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  18 bytes  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "out": "note 7  revision 4 (current)  data  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -1434,6 +1831,139 @@
       ""
      ]
     ]
+   }
+  },
+  {
+   "name": "owner older gateway history",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /kb/notes/7/history",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"not found\"}}"
+    },
+    {
+     "match": "GET /status",
+     "status": 200,
+     "body": "{\"Version\":\"0.8.6\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: this gateway is 0.8.6; note history needs 0.8.7 or newer: update the gateway (/minigw:gw update there)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7/history",
+      ""
+     ],
+     [
+      "GET",
+      "/status",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner list complete",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /kb/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":3,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"},{\"revision\":1,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"Robin\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 3 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\nrevision 1  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by Robin  structure  finding  18 bytes  Saved text\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7/history",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner history of the current revision",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {
+    "revision": 4
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: revision 4 is the current text, not a saved version\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner history revision zero",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {
+    "revision": 0
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: --revision must be positive\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "owner restore revision zero",
+   "args": [
+    "kb",
+    "restore",
+    "7"
+   ],
+   "opts": {
+    "revision": 0,
+    "current": 4
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: --revision must be positive\n",
+    "exit": 1,
+    "requests": []
    }
   }
  ]

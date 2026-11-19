@@ -20,7 +20,7 @@ type admCase struct {
 	Name string   `json:"name"`
 	Args []string `json:"args"`
 	Opts struct {
-		Revision    int64  `json:"revision,omitempty"`
+		Revision    *int64 `json:"revision,omitempty"`
 		Current     *int64 `json:"current,omitempty"`
 		Reason      string `json:"reason,omitempty"`
 		Version     string `json:"version,omitempty"`
@@ -122,9 +122,13 @@ func runAdminCase(c *admCase) *admWant {
 		}
 		return 599, []byte(`{"error":{"message":"no such response in the fixture"}}`)
 	}}
-	o := coreOpts{revision: c.Opts.Revision, days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
+	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
 		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, version: c.Opts.Version, team: c.Opts.Team, by: c.Opts.By, labelSource: c.Opts.LabelSource, phase: c.Opts.Phase, activity: c.Opts.Activity, task: c.Opts.Task,
 		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, deviceName: c.Opts.DeviceName, auto: c.Opts.Auto, manual: c.Opts.Manual, theirs: c.Opts.Theirs, ours: c.Opts.Ours, mode: c.Opts.Mode, upstream: c.Opts.Upstream, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun, read: c.Opts.Read, noRead: c.Opts.NoRead, readClass: c.Opts.ReadClass, readSources: c.Opts.ReadSources, pullEvery: c.Opts.PullEvery, acceptReach: c.Opts.AcceptReach, file: c.path, showErrors: c.Opts.ShowErrors}
+	if c.Opts.Revision != nil {
+		o.revision = *c.Opts.Revision
+		o.hasRevision = true
+	}
 	if c.Opts.Current != nil {
 		o.current = *c.Opts.Current
 		o.hasCurrent = true

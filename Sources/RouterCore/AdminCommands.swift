@@ -26,7 +26,7 @@ public struct AdminOpts {
     /// labels eval: the examples file and --show-errors (the misses with their text, to this terminal only)
     public var file = "", showErrors = false
     /// note history and restore: --revision, --current (and whether it was given); --class is `classes`
-    public var revision: Int64 = 0, current: Int64 = 0, hasCurrent = false
+    public var revision: Int64 = 0, current: Int64 = 0, hasRevision = false, hasCurrent = false
     public var tokenInput: (() throws -> String)?
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
                 provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "", by: String = "", phase: String = "", activity: String = "", task: String = "", labelSource: String = "") {
@@ -72,6 +72,8 @@ public final class AdminCommands {
     let out: (String) -> Void
     public var zone = TimeZone.current
     public var now: () -> Date = { Date() }
+    /// "note history" or "note restore": what the owner ran, for the older-gateway sentence
+    var noteCommand = ""
     /// Waits (seconds) between the calls of a long `upstream push`; tests give a fake.
     public var pause: (Double) -> Void = { Thread.sleep(forTimeInterval: $0) }
     /// The time of one `gw upstream pull` command (as Go's pullWallDefault, 10 minutes); a test lowers it.

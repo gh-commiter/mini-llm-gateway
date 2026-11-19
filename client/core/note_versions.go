@@ -6,19 +6,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // NoteVersion is an outgoing revision. Bytes counts text, not the budget charge.
 type NoteVersion struct {
-	Revision   int64           `json:"revision"`
-	Saved      time.Time       `json:"saved"`
-	SavedBy    string          `json:"savedBy"`
-	Class      Class           `json:"class"`
-	EntryKind  string          `json:"entryKind"`
-	Bytes      int64           `json:"bytes"`
-	Title      string          `json:"title"`
-	Updated    time.Time       `json:"updated"`
+	Revision  int64     `json:"revision"`
+	Saved     time.Time `json:"saved"`
+	SavedBy   string    `json:"savedBy"`
+	Class     Class     `json:"class"`
+	EntryKind string    `json:"entryKind"`
+	Bytes     int64     `json:"bytes"`
+	Title     string    `json:"title"`
+	Updated   time.Time `json:"updated"`
+	// WrittenBy: who wrote this version; ReplacedBy: who or what overwrote it (Saved is when). Both are words, not ids.
+	WrittenBy  string          `json:"writtenBy"`
+	ReplacedBy string          `json:"replacedBy"`
 	Body       *string         `json:"body,omitempty"`
 	Provenance json.RawMessage `json:"provenance,omitempty"`
 }
@@ -62,7 +66,8 @@ func historyAccess(tx *sql.Tx, p *Principal, project, id int64) (Note, readable,
 }
 
 func versions(tx *sql.Tx, n Note, r readable, own bool, revision int64) ([]NoteVersion, error) {
-	q := `SELECT h.revision,h.saved,COALESCE(u.name,''),h.class,h.entry_kind,h.title,h.body,h.updated,h.provenance FROM note_history h LEFT JOIN users u ON u.id=h.saved_by WHERE h.note_id=?`
+	// succ: the provenance of the revision that overwrote this one (it tells a review or an import from an edit).
+	q := `SELECT h.revision,h.saved,COALESCE(u.name,''),h.class,h.entry_kind,h.title,h.body,h.updated,h.provenance,COALESCE((SELECT r2.provenance FROM note_revisions r2 WHERE r2.note_id=h.note_id AND r2.revision=h.revision+1),'') FROM note_history h LEFT JOIN users u ON u.id=h.saved_by WHERE h.note_id=?`
 	args := []any{n.ID}
 	if revision > 0 {
 		q += ` AND h.revision=?`
@@ -77,14 +82,15 @@ func versions(tx *sql.Tx, n Note, r readable, own bool, revision int64) ([]NoteV
 	for rows.Next() {
 		var v NoteVersion
 		var saved, updated int64
-		var body, provenance string
-		if err := rows.Scan(&v.Revision, &saved, &v.SavedBy, &v.Class, &v.EntryKind, &v.Title, &body, &updated, &provenance); err != nil {
+		var body, provenance, successor string
+		if err := rows.Scan(&v.Revision, &saved, &v.SavedBy, &v.Class, &v.EntryKind, &v.Title, &body, &updated, &provenance, &successor); err != nil {
 			return nil, err
 		}
 		if !r.allows(v.Class, own) {
 			continue
 		}
 		v.Saved, v.Updated = fromMs(saved), fromMs(updated)
+		v.WrittenBy, v.ReplacedBy = describeWriter(tx, provenance), describeReplacer(tx, v.SavedBy, successor)
 		v.Bytes = int64(len(v.Title) + len(body))
 		if revision > 0 {
 			v.Body = &body
@@ -105,6 +111,9 @@ func (s *Store) ListNoteHistory(ctx context.Context, p *Principal, project, id i
 		lim = s.rate(p.UserID, false)
 	}
 	err = s.read(ctx, func(tx *sql.Tx) error {
+		if e := s.mirrorHistory(ctx, tx, p, project, id); e != nil {
+			return e
+		}
 		n, r, e := historyAccess(tx, p, project, id)
 		if e != nil {
 			return e
@@ -134,6 +143,9 @@ func (s *Store) GetNoteVersion(ctx context.Context, p *Principal, project, id, r
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		var r readable
 		var e error
+		if e = s.mirrorHistory(ctx, tx, p, project, id); e != nil {
+			return e
+		}
 		n, r, e = historyAccess(tx, p, project, id)
 		if e != nil {
 			return e
@@ -184,6 +196,9 @@ func (s *Store) RestoreNote(ctx context.Context, p *Principal, project, id, from
 		var old Note
 		var a access
 		var e error
+		if e = s.mirrorHistory(ctx, tx, p, project, id); e != nil {
+			return e
+		}
 		if p == nil {
 			old, e = noteMetadata(tx, id)
 			if e == nil {
@@ -295,4 +310,89 @@ func (s *Store) RestoreNote(ctx context.Context, p *Principal, project, id, from
 		return Note{}, err
 	}
 	return
+}
+
+func parseProvenance(s string) (p Provenance, ok bool) {
+	return p, s != "" && json.Unmarshal([]byte(s), &p) == nil
+}
+
+// describeWriter names the writer of a version from its stored provenance, as the provenance marks it.
+func describeWriter(tx *sql.Tx, provenance string) string {
+	p, ok := parseProvenance(provenance)
+	switch {
+	case !ok:
+		return "unknown"
+	case p.ActorKind == ActorImport:
+		return "an import"
+	case p.ActorKind == ActorGatewayService:
+		return "the gateway"
+	case p.ActorKind == "owner":
+		return "the gateway owner"
+	}
+	var name string
+	if p.User == 0 || tx.QueryRow(`SELECT name FROM users WHERE id=?`, p.User).Scan(&name) != nil {
+		return "unknown"
+	}
+	return name
+}
+
+// describeReplacer says who or what overwrote a version: the editing user (saved_by) or, for a review or an import,
+// what the overwriting revision's provenance shows.
+func describeReplacer(tx *sql.Tx, savedBy, successor string) string {
+	p, ok := parseProvenance(successor)
+	restored := ""
+	if ok && p.SourceKind == "restored" {
+		restored = " (restore)"
+		if p.RestoredFrom > 0 {
+			restored = fmt.Sprintf(" (restore of revision %d)", p.RestoredFrom)
+		}
+	}
+	switch {
+	case savedBy != "":
+		return savedBy + restored
+	case !ok:
+		return "a review or import"
+	case p.ActorKind == "owner":
+		return "the gateway owner" + restored
+	case p.ActorKind == ActorImport || p.SourceKind == SourceImport:
+		return "an import"
+	case p.Reviewer != "":
+		return "an accepted submission (reviewer " + reviewerName(tx, p.Reviewer) + ")"
+	}
+	return "a review or import"
+}
+
+// mirrorHistory: a mirrored note (a copy from an upstream gateway) has no history here. A caller who may read the copy
+// is told where its versions are, which they can already see; anyone else gets the same not found as for any unknown note.
+func (s *Store) mirrorHistory(ctx context.Context, tx *sql.Tx, p *Principal, project, id int64) error {
+	if p == nil || !isMirrorID(id) {
+		return nil
+	}
+	a, err := memberAccess(tx, *p, project)
+	if err != nil {
+		return err
+	}
+	rs, err := noteSources(tx, p.UserID, project, a)
+	if err != nil {
+		return err
+	}
+	n, err := readMirrorNote(ctx, tx, s.now(), p.UserID, project, rs, id)
+	if err != nil {
+		return err
+	}
+	return ErrRefusal{"this note is a copy from the upstream gateway " + n.From + ": its saved versions are on that gateway; run minigw note history there"}
+}
+
+// reviewerName: a member reviewer is stored as "user:<id>" (the owner as "owner"); the row shows the user's name,
+// or "a former member" for a user that no longer exists, never the id.
+func reviewerName(tx *sql.Tx, reviewer string) string {
+	id, ok := strings.CutPrefix(reviewer, "user:")
+	if !ok {
+		return reviewer
+	}
+	var name string
+	if n, err := strconv.ParseInt(id, 10, 64); err != nil || tx.QueryRow(`SELECT name FROM users WHERE id=?`, n).Scan(&name) != nil {
+		return "a former member"
+	}
+	return name
 }
