@@ -55,7 +55,8 @@ print '#!/bin/sh\nexit 0' > $T/fakebin/systemctl; cp $T/fakebin/systemctl $T/fak
 # Kot v pravem vtičniku: MIN_CLIENT leži poleg skripte (brez njega bi skripta uporabila rezervno vrednost in to povedala).
 MINV=$(<plugins/minigw/scripts/MIN_CLIENT); print -r -- $MINV > $T/MIN_CLIENT; print -r -- $MINV > $T/minv
 [[ $V == $MINV ]] || fail "9: the client built from the source ($V) is not MIN_CLIENT ($MINV): the \"installed current\" client would be too old"
-cp plugins/minigw/scripts/install-minigw.sh $T/real.sh; cp plugins/minigw/scripts/kb-hook.sh $T/kb-hook.sh
+cp ${INSTALL_SCRIPT:-plugins/minigw/scripts/install-minigw.sh} $T/real.sh;  # INSTALL_SCRIPT: preizkus starejše skripte (da se vidi, da test pade)
+ cp plugins/minigw/scripts/kb-hook.sh $T/kb-hook.sh
 sed "s|^SIGNER=.*|SIGNER='minigw-release namespaces=\"minigw-release\" $(cut -d' ' -f1,2 $T/key.pub)'|" $T/real.sh > $T/testkey.sh
 
 # 10: Windows brez Windows: lažna uname (MINGW64) in cygpath (-u: ista pot, -m/-w: C: spredaj); pot z ' in %.
@@ -90,12 +91,26 @@ rec=$T/win/data/bin/.verified; sh_=$(shasum -a 256 $T/win/data/bin/minigw | cut 
 # ustaljeno stanje (lupina že prava): nobenega mv/rm na minigw, minigw.exe ali .keep v dveh zaporednih zagonih
 rm -f $T/win/ops; winrun newer > /dev/null; winrun newer > /dev/null
 [[ ! -e $T/win/ops && "$(<$T/win/data/bin/minigw.exe)" == old && ! -e $T/win/viol ]] || fail "10: steady state touched minigw/minigw.exe: $(cat $T/win/ops 2>&1)"
+# ustaljeno stanje ne zapiše niti minigw.cmd ne lupine (nobena datoteka minigw* novejša od oznake)
+touch $T/win/mark; sleep 1.1; winrun newer > /dev/null
+[[ -z "$(find $T/win/data/bin -name 'minigw*' -type f -newer $T/win/mark)" ]] || fail "10: steady state rewrote $(find $T/win/data/bin -name 'minigw*' -type f -newer $T/win/mark)"
 # ključavnica zasedena (druga seja), lupine ni: ta zagon je ne zapiše, minigw.exe se ne dotakne
 rm $T/win/data/bin/minigw; mkdir $T/win/data/bin/.aside.lock; rm -f $T/win/ops $T/win/data/bin/.verified; winrun newer > /dev/null
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/ops && ! -e $T/win/data/bin/.verified && -d $T/win/data/bin/.aside.lock && "$(<$T/win/data/bin/minigw.exe)" == old ]] ||
   fail "10: a held lock did not stop the shim write or the own exe was touched"
 rmdir $T/win/data/bin/.aside.lock; winrun newer > /dev/null
 [[ -f $T/win/data/bin/minigw && -s $T/win/data/bin/.verified && "$(<$T/win/data/bin/minigw.exe)" == old && ! -e $T/win/data/bin/.aside.lock && ! -e $T/win/viol ]] || fail "10: first shim write after the lock went"
+# dve seji hkrati (10 ponovitev, vsakič prvi prehod): obe končata 0, zapis je in ustreza lupini, brez ostankov in napak
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  rm -f $T/win/data/bin/minigw $T/win/data/bin/minigw.cmd $T/win/data/bin/.verified
+  winrun newer > $T/win/p1.out 2> $T/win/p1.err & p1=$!
+  winrun newer > $T/win/p2.out 2> $T/win/p2.err & p2=$!
+  wait $p1 && wait $p2 || fail "10 parallel $i: exit status"
+  [[ ! -s $T/win/p1.err && ! -s $T/win/p2.err ]] || fail "10 parallel $i: stderr: $(cat $T/win/p1.err $T/win/p2.err)"
+  [[ "$(head -1 $T/win/data/bin/.verified | cut -d' ' -f1)" == "$(shasum -a 256 $T/win/data/bin/minigw | cut -d' ' -f1)" && -f $T/win/data/bin/minigw.cmd ]] || fail "10 parallel $i: no record, or it does not match the shim"
+  [[ "$(<$T/win/data/bin/minigw.exe)" == old && -z "$(find $T/win/data/bin \( -name '*.new.*' -o -name '*.chk.*' -o -name '.aside.lock' -o -name '*.keep' \))" && ! -e $T/win/viol ]] ||
+    fail "10 parallel $i: leftovers or the own exe touched: $(ls -A $T/win/data/bin)"
+done
 [[ -e $T/win/data/bin/minigw.exe && $out == *"connected to Mini Gateway"* ]] || fail "10: the plugin copy was deleted (a kb mcp config points at it) or status not read"
 rm "$exe"; out=$(winrun); print -r -- $out
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd ]] || fail "10: shims kept without an installed minigw"
@@ -116,15 +131,15 @@ cp "$exe" $T/win/data/bin/minigw.exe; winrun newer > /dev/null
 [[ -e $T/win/data/bin/minigw && -e $T/win/data/bin/minigw.cmd ]] || fail "10e: session 1 wrote no shims"
 print '#!/bin/sh\ntouch '$T'/ran10e' > "$exe"; rm -f $T/ran10e; out=$(winrun newer); print -r -- $out
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd && ! -e $T/ran10e && -e $T/win/data/bin/minigw.exe ]] || fail "10e: a stale shim still points at the substituted installed minigw"
-# 10f (#153 review 2): star lupina bin/minigw (drug cilj) + zapis lupine odpove (mapa minigw.new na poti) → brez .verified, kljuka ne zažene starega cilja
+# 10f (#153 review 2): star lupina bin/minigw (drug cilj) + zapis lupine se ne zgodi (ključavnica zasedena) → brez .verified, kljuka ne zažene starega cilja
 print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
-print '#!/bin/sh\n# Mini Gateway: the installed minigw\ntouch '$T'/ran10f' > $T/win/data/bin/minigw; chmod +x $T/win/data/bin/minigw; mkdir -p $T/win/data/bin/minigw.new; rm -f $T/ran10f $T/win/data/bin/.verified
+print '#!/bin/sh\n# Mini Gateway: the installed minigw\ntouch '$T'/ran10f' > $T/win/data/bin/minigw; chmod +x $T/win/data/bin/minigw; mkdir -p $T/win/data/bin/.aside.lock; rm -f $T/ran10f $T/win/data/bin/.verified
 winrun newer > /dev/null
 [[ ! -e $T/win/data/bin/.verified ]] || fail "10f: a record was written next to a shim this run did not write"
 mkdir -p $T/win/roaming/minigw; print '{"version":1,"enabled":[{"gateway":"g","project":3}]}' > $T/win/roaming/minigw/kb-hooks.json
 print -n '{}' | CLAUDE_PLUGIN_DATA=$T/win/data HOME=$T/win/home APPDATA=$T/win/roaming PATH=$T/win/fake:$PATH sh plugins/minigw/scripts/kb-hook.sh stop > /dev/null 2>&1
 [[ ! -e $T/ran10f ]] || fail "10f: the hook ran the old shim's target"
-rmdir $T/win/data/bin/minigw.new; winrun newer > /dev/null   # kontrola: ko zapis uspe, je zapis tu
+rmdir $T/win/data/bin/.aside.lock; winrun newer > /dev/null   # kontrola: ko zapis uspe, je zapis tu
 [[ -s $T/win/data/bin/.verified && ! -e $T/ran10f ]] || fail "10f: no record after a successful shim write"
 rm -f $T/win/roaming/minigw/kb-hooks.json
 # 10d: BREZ vnaprej vpisanih vsot (stanje prave naprave): nameščen minigw.exe z neznanim hashem se ne zažene, a vrstica ponudi posodobitev
@@ -174,6 +189,17 @@ out=$(run /tmp/d3 good testkey); echo "$out"
 [ "$(cat /tmp/d3/bin/.verified)" = "$(sha256sum /tmp/d3/bin/minigw | cut -d" " -f1)  /tmp/d3/bin/minigw" ] || fail "3: no record of the accepted download (#153)"
 [ "$(stat -c %a /tmp/d3/bin/.verified)" = 600 ] || fail "3: the record is not mode 600"
 echo "ok 3: good signature installs"
+# 3b (#153): dve seji hkrati v svežih mapah: obe končata 0, zapis ustreza datoteki, brez ostankov in napak
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  d=/tmp/dpar$i
+  run $d good testkey > /tmp/p1.out 2> /tmp/p1.err & p1=$!
+  run $d good testkey > /tmp/p2.out 2> /tmp/p2.err & p2=$!
+  wait $p1 && wait $p2 || fail "3b $i: exit status"
+  [ ! -s /tmp/p1.err ] && [ ! -s /tmp/p2.err ] || fail "3b $i: stderr: $(cat /tmp/p1.err /tmp/p2.err)"
+  [ "$(cut -d" " -f1 $d/bin/.verified)" = "$(sha256sum $d/bin/minigw | cut -d" " -f1)" ] || fail "3b $i: no record, or it does not match"
+  [ -z "$(find $d/bin -name "*.new.*" -o -name "*.chk.*" -o -name .aside.lock)" ] || fail "3b $i: leftovers: $(ls -A $d/bin)"
+done
+echo "ok 3b: two session starts at once keep the record"
 
 mkdir -p /tmp/d4/bin; cp /t/minigw-old /tmp/d4/bin/minigw; cp /t/rel/older/SHA256SUMS /t/rel/older/SHA256SUMS.sig /tmp/d4/bin/  # overjena stara kopija
 out=$(run /tmp/d4 bad testkey); echo "$out"
