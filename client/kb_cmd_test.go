@@ -60,7 +60,7 @@ func TestKBCommandParity(t *testing.T) {
 	for _, c := range f.Member {
 		var out bytes.Buffer
 		var requests [][]string
-		env := &projectEnv{out: &out, in: strings.NewReader(c.Input), connect: func() (connection, string) { return connection{}, "" }, do: func(_ connection, method, path string, h map[string]string, b []byte) (int, []byte, http.Header) {
+		env := &projectEnv{out: &out, in: strings.NewReader(c.Input), now: func() time.Time { return time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC) }, connect: func() (connection, string) { return connection{}, "" }, do: func(_ connection, method, path string, h map[string]string, b []byte) (int, []byte, http.Header) {
 			requests = append(requests, []string{method, path, string(b)})
 			if method == "POST" && h["Idempotency-Key"] != "fixed" {
 				t.Fatal("missing key", h)

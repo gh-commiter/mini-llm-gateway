@@ -39,6 +39,7 @@ import Testing
                 return ProjectReply(status: r["status"] as! Int, data: Data((r["body"] as! String).utf8))
             })
             env.zone = TimeZone(identifier: "UTC")!
+            env.now = { Date(timeIntervalSince1970: 1_795_132_800) }  // 2026-11-20T00:00:00Z: the 30 day window of the rejected-title hint
             try env.kb(c["args"] as! [String])
             #expect(out == c["out"] as! String)
             #expect(requests == c["requests"] as! [[String]])
