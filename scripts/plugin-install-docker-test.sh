@@ -59,191 +59,97 @@ cp ${INSTALL_SCRIPT:-plugins/minigw/scripts/install-minigw.sh} $T/real.sh;  # IN
  cp plugins/minigw/scripts/kb-hook.sh $T/kb-hook.sh
 sed "s|^SIGNER=.*|SIGNER='minigw-release namespaces=\"minigw-release\" $(cut -d' ' -f1,2 $T/key.pub)'|" $T/real.sh > $T/testkey.sh
 
-# 10: Windows brez Windows: lažna uname (MINGW64) in cygpath (-u: ista pot, -m/-w: C: spredaj); pot z ' in %.
+# 10: Windows brez Windows (nova zasnova): skripta NIKOLI ne ustvari, prepiše ali preimenuje bin/minigw in bin/minigw.cmd, nobene ključavnice.
+# Lažna uname (MINGW64) in cygpath (-u: ista pot, -m/-w: C: spredaj); pot z ' in %. mv/rm ovojnici zabeležita vsak klic na minigw, minigw.exe, .keep.
 W="$T/win/O'Brien 100%"; mkdir -p $T/win/fake "$W/Programs/Mini Gateway" $T/win/data/bin $T/win/home
+GB=$T/win/data/bin
 print '#!/bin/sh\ncase $1 in -s) echo MINGW64_NT-10.0 ;; *) echo x86_64 ;; esac' > $T/win/fake/uname
-print '#!/bin/sh\ncase $1 in -u) printf "%s\\n" "$2" ;; -m) printf "C:%s\\n" "$2" ;; -w) printf "C:%s\\n" "$2" | tr / "\\\\" ;; esac' > $T/win/fake/cygpath
-print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0" > "$W/Programs/Mini Gateway/minigw.exe"
-# Git Bash zamenja golo ime »minigw«, ki ne obstaja, z minigw.exe; POSIX lupina tega ne zna, zato mv/rm ovojnici ujameta klic na golem imenu, ki ga
-# ni, ko minigw.exe obstaja (VIOL), in zabeležita vsak klic na minigw, minigw.exe in .keep (OPS: v ustaljenem stanju sme biti prazen)
-# (test/>/cat/cmp ostanejo nepreizkušeni: to pokrije le pravi Windows)
+print '#!/bin/sh\ncase $1 in -u) p=$2; printf "%s\\n" "${p#C:}" ;; -m) printf "C:%s\\n" "$2" ;; -w) printf "C:%s\\n" "$2" | tr / "\\\\" ;; esac' > $T/win/fake/cygpath
+exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\\''"
+print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0" > "$exe"
+# OPS: vsak mv/rm na minigw, minigw.exe, .keep (v ustaljenem stanju prazno); VIOL: klic na GOLEM imenu »minigw«, ko ta ne obstaja, a minigw.exe obstaja
 for c in mv rm; do print '#!/bin/sh\nfor a; do case $a in */bin/minigw|*/bin/minigw.exe|*/bin/minigw.exe.keep) echo "'$c' $*" >> "$OPS" ;; esac\ncase $a in */bin/minigw) [ ! -e "$a" ] && [ -e "$a.exe" ] && echo "'$c' $*" >> "$VIOL" ;; esac; done\nexec /bin/'$c' "$@"' > $T/win/fake/$c; done
-chmod +x $T/win/fake/* "$W/Programs/Mini Gateway/minigw.exe"; print old > $T/win/data/bin/minigw.exe
-# Linux in Windows zaženeta le datoteko, ki je v preverjenih SHA256SUMS ob kopiji (podpis testnega ključa): wtrust jo vpiše
-wtrust() { { print "VERSION $2"; print "$(shasum -a 256 "$1" | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > $T/win/data/bin/SHA256SUMS
-  ssh-keygen -Y sign -q -f $T/key -n minigw-release < $T/win/data/bin/SHA256SUMS > $T/win/data/bin/SHA256SUMS.sig }
-wtrust "$W/Programs/Mini Gateway/minigw.exe" $MINV
+chmod +x $T/win/fake/* "$exe"
+# izdaja z lažnim minigw-windows-amd64.exe (različica, oznaka vsebine), podpisana s testnim ključem
+mkrel() { mkdir -p $T/rel/$1; print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $2; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0 # $1" > $T/rel/$1/minigw-windows-amd64.exe; chmod +x $T/rel/$1/minigw-windows-amd64.exe
+  (cd $T/rel/$1 && { print "VERSION $2"; print "$(shasum -a 256 minigw-windows-amd64.exe | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > SHA256SUMS && ssh-keygen -Y sign -q -f $T/key -n minigw-release < SHA256SUMS > SHA256SUMS.sig) }
+mkrel wdl $MINV; mkrel wnew 0.99.0; mkrel wold 0.5.20
+RELEXE=$T/rel/wdl/minigw-windows-amd64.exe
+# shrani podpisane vsote ob kopijo (kot po prenosu): wtrust <datoteka> <različica>
+wtrust() { { print "VERSION $2"; print "$(shasum -a 256 "$1" | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > $GB/SHA256SUMS; ssh-keygen -Y sign -q -f $T/key -n minigw-release < $GB/SHA256SUMS > $GB/SHA256SUMS.sig }
 winrun() { OPS=$T/win/ops VIOL=$T/win/viol CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE=${WENV:-} LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
-out=$(winrun newer); print -r -- $out
-[[ $out == *"minigw $MINV is installed, 0.99.0 is available: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi (check it first: docs/install.md, Check a download)"* && $out != *"/minigw:gw update"* ]] ||
-  fail "10: no MSI update hint for a client-only install"
-mkdir -p $T/win/roaming/minigw; print '{}' > $T/win/roaming/minigw/serve.json
-out=$(winrun newer); print -r -- $out
-[[ $out == *"Mini Gateway $MINV is installed, 0.99.0 is available: /minigw:gw update"* ]] || fail "10: no update hint (M1)"
-exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\''"
-[[ "$(<$T/win/data/bin/minigw)" == "#!/bin/sh"$'\n'"# Mini Gateway: the installed minigw"$'\n'"exec 'C:${exe//$sq/$rep}' \"\$@\"" ]] || fail "10: sh shim: $(<$T/win/data/bin/minigw)"
-[[ "$(<$T/win/data/bin/minigw.cmd)" == "@setlocal DisableDelayedExpansion"$'\r\n'"@\"%LOCALAPPDATA%\\Programs\\Mini Gateway\\minigw.exe\" %*"$'\r' ]] || fail "10: cmd shim: $(<$T/win/data/bin/minigw.cmd)"
-# #153: zapis sprejetega za kb-hook.sh: lupina bin/minigw in nameščeni minigw.exe, vsak z lastnim SHA-256, mode 600
-rec=$T/win/data/bin/.verified; sh_=$(shasum -a 256 $T/win/data/bin/minigw | cut -d" " -f1); ex_=$(shasum -a 256 "$exe" | cut -d" " -f1)
-[[ "$(<$rec)" == "$sh_  $T/win/data/bin/minigw"$'\n'"$ex_  $exe" && "$(ls -l $rec | cut -c1-10)" == -rw------- && ! -e $rec.new ]] || fail "10: .verified: $(<$rec)"
-[[ "$(<$T/win/data/bin/minigw.exe)" == old && ! -e $T/win/data/bin/minigw.exe.keep && ! -e $T/win/viol ]] || fail "10: the plugin's own minigw.exe was touched by a shim write: $(cat $T/win/viol 2>&1)"
-[[ ! -e $T/win/data/bin/.sums.new && ! -e $T/win/data/bin/.sig.new ]] || fail "10: verified sums left behind (#159)"
-# ustaljeno stanje (lupina že prava): nobenega mv/rm na minigw, minigw.exe ali .keep v dveh zaporednih zagonih
-rm -f $T/win/ops; winrun newer > /dev/null; winrun newer > /dev/null
-[[ ! -e $T/win/ops && "$(<$T/win/data/bin/minigw.exe)" == old && ! -e $T/win/viol ]] || fail "10: steady state touched minigw/minigw.exe: $(cat $T/win/ops 2>&1)"
-# ustaljeno stanje ne zapiše niti minigw.cmd ne lupine (nobena datoteka minigw* novejša od oznake)
-touch $T/win/mark; sleep 1.1; winrun newer > /dev/null
-[[ -z "$(find $T/win/data/bin -name 'minigw*' -type f -newer $T/win/mark)" ]] || fail "10: steady state rewrote $(find $T/win/data/bin -name 'minigw*' -type f -newer $T/win/mark)"
-# ključavnica zasedena (druga seja), lupine ni: ta zagon je ne zapiše, minigw.exe se ne dotakne
-rm $T/win/data/bin/minigw; mkdir $T/win/data/bin/.aside.lock; rm -f $T/win/ops $T/win/data/bin/.verified; winrun newer > /dev/null
-[[ ! -e $T/win/data/bin/minigw && ! -e $T/win/ops && ! -e $T/win/data/bin/.verified && -d $T/win/data/bin/.aside.lock && "$(<$T/win/data/bin/minigw.exe)" == old ]] ||
-  fail "10: a held lock did not stop the shim write or the own exe was touched"
-rmdir $T/win/data/bin/.aside.lock; winrun newer > /dev/null
-[[ -f $T/win/data/bin/minigw && -s $T/win/data/bin/.verified && "$(<$T/win/data/bin/minigw.exe)" == old && ! -e $T/win/data/bin/.aside.lock && ! -e $T/win/viol ]] || fail "10: first shim write after the lock went"
-# dve seji hkrati (10 ponovitev, vsakič prvi prehod): obe končata 0, zapis je in ustreza lupini, brez ostankov in napak
+clear10() { rm -f $GB/* $GB/.[a-z]* $T/win/ops $T/win/viol 2>/dev/null || true; rmdir $GB/.aside.lock 2>/dev/null || true }
+golauncher() { printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec 'C:${1//$sq/$rep}' \"\$@\"" > $GB/minigw; printf '@setlocal DisableDelayedExpansion\r\n@"%s" %%*\r\n' "$1" > $GB/minigw.cmd }
+# nobenega ukaza na golem imenu bin/minigw (OPS/VIOL), razen kjer test to izrecno dovoli
+nobare() { [[ ! -e $T/win/viol ]] || fail "$1: a call on the bare name with minigw.exe present: $(cat $T/win/viol)"
+  if [[ -e $T/win/ops ]]; then local l; while read -r l; do for w in ${(z)l}; do [[ $w == */bin/minigw ]] && fail "$1: the script touched the bare name: $l"; done; done < $T/win/ops; fi }
+
+# S1: ni odjemalca: lastna kopija se prenese, .verified imenuje bin/minigw.exe, na golem imenu nič
+clear10; out=$(winrun wdl); print -r -- $out
+cmp -s $RELEXE $GB/minigw.exe && [[ $out == *"connected to Mini Gateway"* && ! -e $GB/minigw && ! -e $GB/minigw.cmd ]] || fail "10 S1: own exe not installed, or a launcher was written"
+[[ "$(head -1 $GB/.verified)" == "$(shasum -a 256 $GB/minigw.exe | cut -d' ' -f1)  $GB/minigw.exe" && "$(wc -l < $GB/.verified)" -eq 1 ]] || fail "10 S1: .verified: $(<$GB/.verified)"
+nobare "10 S1"
+# ustaljeno stanje: dva zagona, nobenega mv/rm
+rm -f $T/win/ops; winrun wdl > /dev/null; winrun > /dev/null
+[[ ! -e $T/win/ops ]] || fail "10 S1: steady state touched minigw/minigw.exe: $(cat $T/win/ops)"
+# S2: nameščen minigw + zagonska datoteka Go odjemalca, ki velja: uporabi se kot je, zapis ima zagonsko datoteko in nameščeni exe, nič se ne piše
+clear10; wtrust "$exe" $MINV; golauncher "$exe"; cp $GB/minigw $T/win/launcher.keep; cp $GB/minigw.cmd $T/win/launcher.cmd.keep
+out=$(WENV=$T/win/env2 winrun); print -r -- $out
+cmp -s $T/win/launcher.keep $GB/minigw && cmp -s $T/win/launcher.cmd.keep $GB/minigw.cmd && [[ ! -e $GB/minigw.exe && $out == *"connected to Mini Gateway"* ]] || fail "10 S2: the launcher was touched or an own exe appeared"
+[[ "$(<$GB/.verified)" == "$(shasum -a 256 $GB/minigw | cut -d' ' -f1)  $GB/minigw"$'\n'"$(shasum -a 256 "$exe" | cut -d' ' -f1)  $exe" ]] || fail "10 S2: .verified: $(<$GB/.verified)"
+grep -q '^export PATH=' $T/win/env2 || fail "10 S2: no PATH line"
+nobare "10 S2"
+# S3: nameščen minigw BREZ zagonske datoteke: lastna kopija se prenese, nič na golem imenu
+clear10; out=$(winrun wdl); print -r -- $out
+cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/minigw && ! -e $GB/minigw.cmd ]] || fail "10 S3"
+nobare "10 S3"
+# S4: zagonska datoteka, ki ne velja: odstranjena (edini dovoljen rm na golem imenu), lastna kopija velja
+# (i) kaže na neoverjen exe (njegov hash ni v vsotah)
+clear10; golauncher "$exe"; out=$(winrun wdl); print -r -- $out
+cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/minigw && ! -e $GB/minigw.cmd ]] || fail "10 S4 i: an unverified launcher target was kept or own exe missing"
+# (ii) kaže v nič
+clear10; golauncher "$W/Programs/Gone/minigw.exe"; out=$(winrun wdl)
+cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/minigw && ! -e $GB/minigw.cmd ]] || fail "10 S4 ii: a launcher to nowhere was kept"
+# (iii) overjen, a starejši od MIN_CLIENT: lastna kopija, stavek pove, katera
+clear10; wtrust "$exe" 0.5.20; golauncher "$exe"; out=$(winrun wdl); print -r -- $out
+cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/minigw && $out == *"the installed minigw 0.5.20 is older than $MINV: the plugin uses its own copy $MINV (update the installed one: "* ]] || fail "10 S4 iii: old installed client: $out"
+# (iv) tuje besedilo brez znamenja: datoteke se ne dotakne (ni njena, ni zagonska datoteka Go odjemalca)
+clear10; print '#!/bin/sh\necho foreign' > $GB/minigw; out=$(winrun wdl) 
+[[ "$(<$GB/minigw)" == $'#!/bin/sh\necho foreign' ]] || fail "10 S4 iv: a foreign file named minigw was removed"
+# S5: lastna kopija zastarela (druga izdaja): ENA zamenjava mv, brez dotika golega imena
+clear10; winrun wdl > /dev/null; rm -f $T/win/ops; winrun wnew > /dev/null
+cmp -s $T/rel/wnew/minigw-windows-amd64.exe $GB/minigw.exe || fail "10 S5: not replaced"
+[[ "$(wc -l < $T/win/ops)" -eq 1 && "$(<$T/win/ops)" == "mv -f $GB/minigw.exe.new."*" $GB/minigw.exe" ]] || fail "10 S5: not exactly one mv onto minigw.exe: $(cat $T/win/ops)"
+nobare "10 S5"
+# S6: ubit zagon na vsakem koraku zamenjave (MINIGW_TEST_EXIT_AT): naslednji zagon brez omrežja ima overljiv odjemalec, nikoli »cannot verify«
+for step in dl prev sums sig exe; do
+  clear10; winrun wdl > /dev/null
+  MINIGW_TEST_EXIT_AT=$step winrun wnew > /dev/null 2>&1 && fail "10 S6 $step: the test hook did not stop the run" || true
+  out=$(winrun); print -r -- "$step: $out"
+  [[ $out == *"connected to Mini Gateway"* && $out != *"cannot verify"* && -x $GB/minigw.exe ]] || fail "10 S6 $step: no verifiable client after a kill: $out"
+  if [[ $step == exe ]]; then cmp -s $T/rel/wnew/minigw-windows-amd64.exe $GB/minigw.exe || fail "10 S6 exe: new exe missing"; else cmp -s $RELEXE $GB/minigw.exe || fail "10 S6 $step: the old exe was lost"; fi
+  winrun wnew > /dev/null; cmp -s $T/rel/wnew/minigw-windows-amd64.exe $GB/minigw.exe || fail "10 S6 $step: the next online run did not finish the update"
+  [[ -z "$(find $GB \( -name '*.new.*' -o -name '*.chk.*' \) -mmin +10)" ]] || true
+done
+# S7: ostanek 0.8.1-0.8.9: .keep brez minigw.exe in .aside.lock: .keep gre nazaj, ključavnica izgine, nič drugega
+clear10; winrun wdl > /dev/null; mv $GB/minigw.exe $GB/minigw.exe.keep; mkdir $GB/.aside.lock; print 1 > $GB/.aside.lock/pid
+winrun > /dev/null
+cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/minigw.exe.keep && ! -e $GB/.aside.lock ]] || fail "10 S7: leftover .keep/.aside.lock not cleaned: $(ls -A $GB)"
+# oba obstajata: .keep se ne dotakne (eden mv, ko cilja ni)
+print other > $GB/minigw.exe.keep; winrun > /dev/null
+[[ "$(<$GB/minigw.exe.keep)" == other ]] && cmp -s $RELEXE $GB/minigw.exe || fail "10 S7: a .keep next to an exe was touched"
+rm -f $GB/minigw.exe.keep
+# S8: dva zagona hkrati (10 parov), oba prenašata: zadnji mv zmaga, ista overjena izdaja, brez ostankov in golih imen
 for i in 1 2 3 4 5 6 7 8 9 10; do
-  rm -f $T/win/data/bin/minigw $T/win/data/bin/minigw.cmd $T/win/data/bin/.verified
-  winrun newer > $T/win/p1.out 2> $T/win/p1.err & p1=$!
-  winrun newer > $T/win/p2.out 2> $T/win/p2.err & p2=$!
-  wait $p1 && wait $p2 || fail "10 parallel $i: exit status"
-  [[ ! -s $T/win/p1.err && ! -s $T/win/p2.err ]] || fail "10 parallel $i: stderr: $(cat $T/win/p1.err $T/win/p2.err)"
-  [[ "$(head -1 $T/win/data/bin/.verified | cut -d' ' -f1)" == "$(shasum -a 256 $T/win/data/bin/minigw | cut -d' ' -f1)" && -f $T/win/data/bin/minigw.cmd ]] || fail "10 parallel $i: no record, or it does not match the shim"
-  [[ "$(<$T/win/data/bin/minigw.exe)" == old && -z "$(find $T/win/data/bin \( -name '*.new.*' -o -name '*.chk.*' -o -name '.aside.lock' -o -name '*.keep' \))" && ! -e $T/win/viol ]] ||
-    fail "10 parallel $i: leftovers or the own exe touched: $(ls -A $T/win/data/bin)"
+  clear10
+  winrun wdl > $T/win/p1.out 2> $T/win/p1.err & p1=$!
+  winrun wdl > $T/win/p2.out 2> $T/win/p2.err & p2=$!
+  wait $p1 && wait $p2 || fail "10 S8 $i: exit status"
+  [[ ! -s $T/win/p1.err && ! -s $T/win/p2.err ]] || fail "10 S8 $i: stderr: $(cat $T/win/p1.err $T/win/p2.err)"
+  cmp -s $RELEXE $GB/minigw.exe && [[ -s $GB/.verified && -z "$(find $GB \( -name '*.new.*' -o -name '*.chk.*' -o -name '.aside.lock' -o -name '*.keep' \))" ]] || fail "10 S8 $i: leftovers: $(ls -A $GB)"
+  nobare "10 S8 $i"
 done
-[[ -e $T/win/data/bin/minigw.exe && $out == *"connected to Mini Gateway"* ]] || fail "10: the plugin copy was deleted (a kb mcp config points at it) or status not read"
-rm "$exe"; out=$(winrun); print -r -- $out
-[[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd ]] || fail "10: shims kept without an installed minigw"
-[[ ! -e $T/win/viol ]] || fail "10: removing the shims went through the bare name: $(cat $T/win/viol)"  # (the unverified own exe is removed by the reject path, by name)
-# 10b: stari MSI minigw (0.5.20) in prenos ne uspe (ni izdaje): stari ostane, a glasno (enako kot macOS in Linux)
-print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.20; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" 0.5.20
-out=$(winrun); print -r -- $out
-[[ $out == *"using the installed minigw 0.5.20, older than $MINV which this plugin's commands need; some commands will not work until it is updated (run the installer"* && -e $T/win/data/bin/minigw && -e $T/win/data/bin/minigw.cmd ]] ||
-  fail "10b: an authentic old MSI client is not kept offline, or silently"
-# 10c: isti minigw.exe, a zamenjan (hash ni v preverjenih vsotah): ne zažene se, ne poveže
-print '#!/bin/sh\ntouch '$T'/ran10\necho minigw 9.9.9' > "$exe"; chmod +x "$exe"; rm -f $T/ran10
-out=$(winrun); print -r -- $out
-[[ ! -e $T/ran10 && ! -e $T/win/data/bin/minigw && $out == *"cannot verify the installed minigw and cannot download a verified one"* ]] || fail "10c: a substituted MSI minigw was run or linked"
-[[ ! -e $T/win/data/bin/.verified ]] || fail "10c: the record of the rejected minigw is still there (#153)"
-# 10e: lupini iz seje 1 (overjen nameščeni minigw.exe), potem je exe zamenjan (hash ni v vsotah): lupini izgineta, zažene se kopija vtičnika
-print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
-cp "$exe" $T/win/data/bin/minigw.exe; winrun newer > /dev/null
-[[ -e $T/win/data/bin/minigw && -e $T/win/data/bin/minigw.cmd ]] || fail "10e: session 1 wrote no shims"
-print '#!/bin/sh\ntouch '$T'/ran10e' > "$exe"; rm -f $T/ran10e; out=$(winrun newer); print -r -- $out
-[[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd && ! -e $T/ran10e && -e $T/win/data/bin/minigw.exe ]] || fail "10e: a stale shim still points at the substituted installed minigw"
-# 10f (#153 review 2): star lupina bin/minigw (drug cilj) + zapis lupine se ne zgodi (ključavnica zasedena) → brez .verified, kljuka ne zažene starega cilja
-print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
-print '#!/bin/sh\n# Mini Gateway: the installed minigw\ntouch '$T'/ran10f' > $T/win/data/bin/minigw; chmod +x $T/win/data/bin/minigw; mkdir -p $T/win/data/bin/.aside.lock; rm -f $T/ran10f $T/win/data/bin/.verified
-winrun newer > /dev/null
-[[ ! -e $T/win/data/bin/.verified ]] || fail "10f: a record was written next to a shim this run did not write"
-mkdir -p $T/win/roaming/minigw; print '{"version":1,"enabled":[{"gateway":"g","project":3}]}' > $T/win/roaming/minigw/kb-hooks.json
-print -n '{}' | CLAUDE_PLUGIN_DATA=$T/win/data HOME=$T/win/home APPDATA=$T/win/roaming PATH=$T/win/fake:$PATH sh plugins/minigw/scripts/kb-hook.sh stop > /dev/null 2>&1
-[[ ! -e $T/ran10f ]] || fail "10f: the hook ran the old shim's target"
-rmdir $T/win/data/bin/.aside.lock; winrun newer > /dev/null   # kontrola: ko zapis uspe, je zapis tu
-[[ -s $T/win/data/bin/.verified && ! -e $T/ran10f ]] || fail "10f: no record after a successful shim write"
-rm -f $T/win/roaming/minigw/kb-hooks.json
-# 10d: BREZ vnaprej vpisanih vsot (stanje prave naprave): nameščen minigw.exe z neznanim hashem se ne zažene, a vrstica ponudi posodobitev
-print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.7.0; exit 0' > "$exe"; chmod +x "$exe"; rm -f $T/win/data/bin/SHA256SUMS $T/win/data/bin/SHA256SUMS.sig
-out=$(winrun newer); print -r -- $out
-[[ $out == *"the minigw installed at "*"is not the current release 0.99.0 (or could not be verified); update it: /minigw:gw update"* ]] || fail "10d: no update line for an untrusted installed gateway client"
-rm $T/win/roaming/minigw/serve.json; out=$(winrun newer)
-[[ $out == *"is not the current release 0.99.0 (or could not be verified); update it: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi"* ]] || fail "10d: no MSI line for an untrusted client-only install"
-[[ ! -e $T/win/viol ]] || fail "10: a write/mv/rm on bin/minigw while minigw.exe exists: $(cat $T/win/viol)"
-# 10g (varnostni pregled L3): minigw.exe.keep, ki ga je pustil ubit zagon, se vrne PRVO in brezpogojno (shim je že pravi, aside se ne kliče)
-print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
-GB=$T/win/data/bin; winrun > /dev/null; rm -f $GB/minigw.exe.keep.old.*(N); rmdir $GB/.aside.lock 2>/dev/null || true
-print kept-A > $GB/minigw.exe.keep; rm -f $GB/minigw.exe; winrun > /dev/null   # keep, brez exe, brez ključavnice
-[[ "$(<$GB/minigw.exe)" == kept-A && ! -e $GB/minigw.exe.keep && ! -e $GB/.aside.lock ]] || fail "10g A: the stranded .keep was not put back"
-rm -f $GB/minigw.exe; print kept-B > $GB/minigw.exe.keep; mkdir $GB/.aside.lock; winrun > /dev/null   # keep, brez exe, sveža ključavnica
-[[ ! -e $GB/minigw.exe && "$(<$GB/minigw.exe.keep)" == kept-B && -d $GB/.aside.lock ]] || fail "10g B: a held lock did not make the run skip the recovery"
-rmdir $GB/.aside.lock; winrun > /dev/null
-[[ "$(<$GB/minigw.exe)" == kept-B && ! -e $GB/minigw.exe.keep && ! -e $GB/.aside.lock ]] || fail "10g B: not restored once the lock was free"
-print same-C > $GB/minigw.exe; cp $GB/minigw.exe $GB/minigw.exe.keep; winrun > /dev/null   # oba, enaka
-[[ "$(<$GB/minigw.exe)" == same-C && ! -e $GB/minigw.exe.keep && ! -e $GB/minigw.exe.keep.old ]] || fail "10g C: an identical .keep was not removed"
-print new-D > $GB/minigw.exe; print stray-D > $GB/minigw.exe.keep; winrun > /dev/null   # oba, različna
-kd=($GB/minigw.exe.keep.old.*(N))
-[[ "$(<$GB/minigw.exe)" == new-D && ! -e $GB/minigw.exe.keep && ${#kd} == 1 && "$(<${kd[1]})" == stray-D ]] || fail "10g D: a different .keep was deleted or replaced the exe"
-rm -f $GB/minigw.exe.keep.old.*(N)
-# 10h (varnostni pregled, 2. krog): ena ključavnica za vsako zamenjavo bin/minigw.exe; svež tuj zagon = ta zagon se ne dotakne nič; edinstvena imena ostankov
-mkdir -p $T/rel/wdl; print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > $T/rel/wdl/minigw-windows-amd64.exe; chmod +x $T/rel/wdl/minigw-windows-amd64.exe
-(cd $T/rel/wdl && { print "VERSION $MINV"; print "$(shasum -a 256 minigw-windows-amd64.exe | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > SHA256SUMS && ssh-keygen -Y sign -q -f $T/key -n minigw-release < SHA256SUMS > SHA256SUMS.sig)
-RELEXE=$T/rel/wdl/minigw-windows-amd64.exe; rm -f "$exe"   # brez nameščenega MSI minigw
-clear10h() { rm -f $GB/minigw.exe $GB/minigw.exe.keep $GB/minigw.exe.keep.old.*(N) $GB/minigw $GB/minigw.cmd $GB/.verified $GB/SHA256SUMS $GB/SHA256SUMS.sig; rmdir $GB/.aside.lock 2>/dev/null || true }
-# H1: dva zagona hkrati, ni nameščenega odjemalca, ostal .keep (neoverjena kopija): konec je preneseni exe, brez .keep, ključavnice in ostankov
-for i in 1 2 3 4 5; do
-  clear10h; print stranded > $GB/minigw.exe.keep
-  winrun wdl > $T/win/h1.out 2> $T/win/h1.err & h1=$!
-  winrun wdl > $T/win/h2.out 2> $T/win/h2.err & h2=$!
-  wait $h1 && wait $h2 || fail "10h H1 $i: exit status"
-  cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/minigw.exe.keep && ! -e $GB/.aside.lock && -s $GB/.verified ]] || fail "10h H1 $i: the download was overwritten or left debris: $(ls -A $GB)"
-  [[ -z "$(find $GB \( -name '*.new.*' -o -name '*.chk.*' \))" ]] || fail "10h H1 $i: temp files left: $(ls -A $GB)"
-done
-# H2: svež tuj ključavnica, ni exe: ta zagon ne prenese in ne zapiše nič; ko ključavnice ni, namesti
-clear10h; mkdir $GB/.aside.lock
-out=$(winrun wdl); print -r -- $out
-[[ ! -e $GB/minigw.exe && ! -e $GB/minigw && -d $GB/.aside.lock && ! -e $GB/.verified && $out == *"another session is setting up the minigw client"* ]] || fail "10h H2: a held lock did not stop the download"
-rmdir $GB/.aside.lock; winrun wdl > /dev/null
-cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/.aside.lock ]] || fail "10h H2: not installed once the lock was free"
-# H4: svež tuj ključavnica, lastna overjena kopija je tu: PATH se zapiše, vrstica o stanju je kot sicer, izhod 0, v bin se nič ne dotakne
-clear10h; winrun wdl > /dev/null   # lastna kopija, vsote in zapis
-mkdir $GB/.aside.lock; touch $T/win/mark4; sleep 1.1; : > $T/win/env4
-out=$(WENV=$T/win/env4 winrun); print -r -- $out
-[[ $out == *"connected to Mini Gateway"* && $out == *"another session is setting up the minigw client"*"this start changes nothing and uses the verified client"* ]] || fail "10h H4: no normal status line (and the one explaining line) while another session holds the lock: $out"
-grep -q '^export PATH=' $T/win/env4 || fail "10h H4: PATH was not written for the session"
-[[ -d $GB/.aside.lock && -z "$(find $GB -type f -newer $T/win/mark4)" ]] || fail "10h H4: a busy run touched bin: $(find $GB -type f -newer $T/win/mark4)"
-rmdir $GB/.aside.lock
-# H5: svež tuj ključavnica in nobenega odjemalca: ena vrstica, izhod 0, PATH se ne zapiše
-clear10h; mkdir $GB/.aside.lock; : > $T/win/env5
-out=$(WENV=$T/win/env5 winrun); print -r -- $out
-[[ $out == *"another session is setting up the minigw client"* && ! -s $T/win/env5 ]] || fail "10h H5: no client, held lock: $out"
-rmdir $GB/.aside.lock
-# 10i (pravi Windows, krog 2): ključavnica pozna lastnika (.aside.lock/pid = »pid epoha«): mrtev lastnik = takoj prevzem in vrnitev .keep; živ = busy
-deadpid() { (exit 0) & dp=$!; wait $dp; print -r -- $dp }
-aside10i() { clear10h; winrun wdl > /dev/null; mv $GB/minigw.exe $GB/minigw.exe.keep; mkdir $GB/.aside.lock }   # lastna kopija odmaknjena, ključavnica
-recovered10i() { cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/minigw.exe.keep && ! -e $GB/.aside.lock ]] }
-aside10i; print "$(deadpid) $(date +%s)" > $GB/.aside.lock/pid
-out=$(winrun); print -r -- $out
-recovered10i && [[ $out == *"recovered the client left aside by an interrupted start"* && $out == *"connected to Mini Gateway"* ]] || fail "10i dead owner: not recovered at once: $out $(ls -A $GB)"
-aside10i; sleep 60 & lp=$!; print "$lp $(date +%s)" > $GB/.aside.lock/pid
-out=$(winrun); print -r -- $out
-[[ ! -e $GB/minigw.exe && -e $GB/minigw.exe.keep && -d $GB/.aside.lock && $out == *"another session is setting up the minigw client (process $lp since "* ]] || fail "10i live owner: not busy: $out"
-print "$lp $(( $(date +%s) - 300 ))" > $GB/.aside.lock/pid   # živ pid, a starejši od 2 min: ponovno uporabljen pid ali obvisel zagon
-winrun > /dev/null; recovered10i || fail "10i live but old owner: not taken over"
-aside10i; kill $lp 2>/dev/null || true; rm -f $GB/.aside.lock/pid   # brez datoteke pid: svež = busy, star = zastarel
-out=$(winrun); print -r -- $out
-[[ ! -e $GB/minigw.exe && -e $GB/minigw.exe.keep && -d $GB/.aside.lock && $out == *"another session is setting up"* ]] || fail "10i no pid file, fresh: not busy"
-touch -t 200001010000 $GB/.aside.lock; winrun > /dev/null; recovered10i || fail "10i no pid file, old: not taken over"
-# prava ubita seja znotraj ključavnice: ena seja se ubije, ko ključavnica obstaja; naslednja jo prevzame takoj in dokonča
-killed=0
-for i in {1..40}; do
-  clear10h; rm -f $GB/.aside.lock/pid
-  winrun wdl > /dev/null 2>&1 & rp=$!
-  for j in {1..400}; do [[ -s $GB/.aside.lock/pid ]] && break; sleep 0.005; done
-  kp=$(cut -d' ' -f1 $GB/.aside.lock/pid 2>/dev/null || true)
-  if [[ -n $kp ]] && kill -9 $kp 2>/dev/null; then killed=$((killed+1)); fi
-  wait $rp || true
-  if [[ -d $GB/.aside.lock ]]; then
-    winrun wdl > /dev/null || fail "10i kill $i: the next run failed"
-    cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/.aside.lock && ! -e $GB/minigw.exe.keep ]] || fail "10i kill $i: not recovered by the next run: $(ls -A $GB)"
-  fi
-  (( killed >= 3 )) && break
-done
-(( killed >= 1 )) || fail "10i: no run could be killed inside the lock"
-clear10h
-# 10j: lastna kopija je (zadnja izdaja) starejša od MIN, nameščenega ni: stavek pove, da je to lastna kopija, ne nameščeni minigw
-mkdir -p $T/rel/wold; print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.20; [ "$1" = status ] && echo "Status:    connected"; exit 0' > $T/rel/wold/minigw-windows-amd64.exe; chmod +x $T/rel/wold/minigw-windows-amd64.exe
-(cd $T/rel/wold && { print "VERSION 0.5.20"; print "$(shasum -a 256 minigw-windows-amd64.exe | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > SHA256SUMS && ssh-keygen -Y sign -q -f $T/key -n minigw-release < SHA256SUMS > SHA256SUMS.sig)
-clear10h; out=$(winrun wold); print -r -- $out
-[[ $out == *"using the plugin's own copy of minigw 0.5.20 (the latest release), older than $MINV which this plugin's commands need"* && $out != *"using the installed minigw"* ]] || fail "10j: the sentence does not say it is the plugin's own copy"
-clear10h
-# H3: dva različna ostanka .keep: oba ostaneta pod edinstvenima imenoma (nobenega prepisa)
-clear10h; cp $RELEXE $GB/minigw.exe; winrun wdl > /dev/null   # overjen exe
-print leftover-A > $GB/minigw.exe.keep; winrun wdl > /dev/null
-print leftover-C > $GB/minigw.exe.keep; winrun wdl > /dev/null
-kd=($GB/minigw.exe.keep.old.*(N)); got=""; for f in $kd; do got="$got $(<$f)"; done
-cmp -s $RELEXE $GB/minigw.exe && [[ ${#kd} == 2 && "$got" == *leftover-A* && "$got" == *leftover-C* && ! -e $GB/minigw.exe.keep ]] || fail "10h H3: a leftover was overwritten (found: $got)"
-clear10h
-print "ok 10: Windows shims point at the installed minigw; client-only MSI gets the MSI hint"
+print "ok 10: Windows: the script never writes bin/minigw; own exe or the Go launcher; one mv; kills at every step stay verifiable"
 
 docker run --rm -v $T:/t:ro debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 sh -c '
 set -u
