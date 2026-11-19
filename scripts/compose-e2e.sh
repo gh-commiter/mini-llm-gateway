@@ -10,6 +10,7 @@
 # Rules: containers publish ports on 127.0.0.1 only; no --privileged, no chown/chmod -R, no volume or system prune.
 emulate -L zsh; set -u
 ROOT=${0:A:h:h}
+source "$ROOT/scripts/compose-e2e-common.zsh"
 V=${MINIGW_VERSION:-0.7.22}
 D=${SCRATCH_DIR:-"/Volumes/SAMSUNG990PRO/Mini Gateway Scratch/dev-builds/docker2-0723"}
 PORT=${PORT:-18767}; FPORT=${FPORT:-18769}
@@ -35,16 +36,6 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p $D/bin $D/fix
-
-healthy() { # project: wait until the container is healthy
-  local i st
-  for i in {1..40}; do
-    st=$(docker inspect --format '{{.State.Health.Status}}' $1-minigw-1 2>/dev/null)
-    [[ $st == healthy ]] && return 0
-    sleep 5
-  done
-  return 1
-}
 
 backup_contract() {
   mkdir -p "$ROOT/.omc/state" || fail 'backup workspace'

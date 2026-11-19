@@ -102,18 +102,6 @@ For the other one, for example on an Apple Silicon Mac that can emulate it: `DOC
 docker compose up -d --build`. `scripts/compose-e2e.sh` runs the whole deployment test for both platforms and says SKIP
 when the machine cannot emulate one.
 
-## Update
-
-Change the version and rebuild (take a backup first, see below):
-
-```sh
-MINIGW_VERSION=0.8.0 docker compose up -d --build    # or set it in .env
-```
-
-A release before the first one with container mode (it is listed in the release notes) builds and starts, but it has no
-container mode: it does not keep the agents off, `docker compose exec … minigw gw` finds no config, and `HEALTHCHECK`
-reports `unhealthy`. Use a release whose notes mention Docker Compose.
-
 ## Backup
 
 `backup.sh` needs Python 3 on the server (it reads `docker compose config --format json`). Run it next to
@@ -180,14 +168,80 @@ docker compose start
 The default project is `minigw`, independent of the folder name; `COMPOSE_PROJECT_NAME` overrides it.
 Prefer the script for validation, checksums and restart handling.
 
-**Before an update:** back up first. Going back requires restoring the matching backup of both
-volumes AND setting the old `MINIGW_VERSION` before rebuilding and starting.
+## Updating and going back
 
-## Rollback
+Always run `backup.sh --stop` **before changing `MINIGW_VERSION`**, using the same Compose environment as the
+deployment. Keep that backup off the Docker data disk. Going back means the old version **and both volumes from
+the backup made before the update**. Restoring a backup made after the update does not undo a database migration.
 
-A newer version may upgrade the project database schema, and an older program refuses a newer schema ("core database has
-a newer schema than this program"): the gateway then still serves models but project routes answer 503. To go back,
-restore the backup you took before the update (both volumes), then start the older version. The same goes for the config: a release without service-name providers refuses to start with a provider such as `http://litellm:4000` in `serve.json`.
+From `deploy/docker`, with the old version still selected:
+
+```sh
+sh backup.sh --stop ./backups
+# Save the printed Backup: path and the old MINIGW_VERSION before continuing.
+export MINIGW_VERSION=<new-release>
+docker compose up -d --build
+docker compose exec minigw minigw serve healthcheck
+docker compose exec minigw minigw gw status
+docker compose exec minigw minigw gw project list
+```
+
+Wait for health and check `projects: on`, then check your users, memberships, notes and pending review. Liveness alone
+does not prove the project database opened. `gw status` does not print its schema number when the core is available.
+The rehearsal below checks the schema in an archived copy of the stopped database too.
+
+To go back, first preserve any new work separately: the pre-update backup contains none of it. Resolve the exact
+volume names before taking down the deployment:
+
+```sh
+docker compose config --format json   # read volumes.config.name and volumes.scratch.name
+docker compose down
+# Destructive: substitute ONLY those two exact volume names after checking them.
+docker volume rm <config-volume> <scratch-volume>
+export MINIGW_VERSION=<old-release>
+sh backup.sh --restore ./backups/minigw-backup-<pre-update-UTC-time>
+docker compose up -d --build
+docker compose exec minigw minigw serve healthcheck
+docker compose exec minigw minigw gw status
+docker compose exec minigw minigw gw project list
+```
+
+Keep the chosen version in `.env` for future commands too. Do not run `down -v` on an unrelated deployment.
+For recovery on a clean host, copy the deployment files and the protected backup directory, select the version,
+and restore into absent or empty volumes. A separate project needs explicit consent in the restore command:
+
+```sh
+export COMPOSE_PROJECT_NAME=minigw-recovered
+export MINIGW_VERSION=<new-release>
+sh backup.sh --restore --into-project minigw-recovered ./backups/minigw-backup-<pre-update-UTC-time>
+docker compose up -d --build
+```
+
+The new version can restore the pre-update backup and migrate it again. An older version refuses a newer schema;
+models and liveness can still work while projects and notes answer 503 `core_unavailable`. A release without
+service-name providers also refuses a configuration with a provider such as `http://litellm:4000`.
+
+The rehearsal captured this exact line from 0.7.6's `gw status` after restoring a schema-25 backup:
+
+```text
+projects: off (core database has a newer schema than this program (schema 25, program 12))
+```
+
+Its project listing failed, and after stopping the refused gateway `core.db` was byte-identical to the restored file.
+
+Before migrating, the gateway writes `core-<old-schema>-<UTC-time>.db` next to `core.db` in the config volume's
+`core` folder. It is a consistent database snapshot for an offline `minigw gw core restore`, not a deployment backup:
+it lacks the configuration, provider keys and scratch volume, and is lost with that volume. The newest three snapshots
+are kept, plus the oldest snapshot of the lowest schema for 30 days (and protection during failed migrations).
+
+`zsh scripts/compose-recovery-e2e.sh` rehearses the signed 0.7.6 release (schema 12, the first with container mode),
+this branch's Linux binary, going back, and recovery into a separate project. It needs zsh on Linux too, Docker
+Compose v2 with BuildKit, Go with cached modules, Python 3, curl, ssh-keygen and shasum. Its provider stub listens only
+on container loopback; published ports bind to `127.0.0.1`. `SCRATCH_DIR` selects where it retains private evidence
+and backup directories; otherwise it uses the platform cache convention described at the top of the script.
+It checks the refused-start database bytes and captures the old gateway's status, project error and logs.
+A loud SKIP returns nonzero unless `ALLOW_SKIP=1`; release gates should leave that unset. No Linux server run is
+claimed by this rehearsal on a development machine.
 
 ## Hardening that is on
 
