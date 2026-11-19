@@ -1420,7 +1420,7 @@ Without `--version`, `kb accept` shows the text and asks "Accept this text? [y/N
 **A replacement shows both texts.** For a submission that replaces a note, `kb review` and `gw kb review` print the note's
 current text first (`Current text (will be replaced): note N  revision C  <class>  <kind>  <title>`, then its text), then
 `New text: <class>  <kind>  <title>` and the new text. A line before the two texts gives their sizes
-(`current: 212 lines, 11429 characters -> new: 141 lines, 7602 characters (lines shorter: 71)`; characters are counted on the
+(`current: 212 lines, 11429 characters -> new: 141 lines, 7602 characters (lines shorter: 71, 33 %)`; characters are counted on the
 text as shown, without hidden characters), so a rewrite that silently drops paragraphs is seen at once. You accept that pair: the `version` line also covers the note's
 current revision and text, so if the note is edited, imported over or restored after you read it, the accept is refused
 with "the submission changed since you read it" and you review again. Also refused, each with its reason: the note was

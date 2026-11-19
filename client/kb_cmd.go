@@ -455,7 +455,7 @@ func sizesLine(v core.Submission) string {
 	line := fmt.Sprintf("current: %d lines, %d characters -> new: %d lines, %d characters", *v.CurrentLines, *v.CurrentChars, *v.NewLines, *v.NewChars)
 	switch d := *v.NewLines - *v.CurrentLines; {
 	case d < 0:
-		line += fmt.Sprintf(" (lines shorter: %d)", -d)
+		line += fmt.Sprintf(" (lines shorter: %d, %d %%)", -d, (-d*100+*v.CurrentLines/2) / *v.CurrentLines)
 	case d > 0:
 		line += fmt.Sprintf(" (lines longer: %d)", d)
 	}

@@ -1738,7 +1738,7 @@
         "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
       "name": "replacement shortened",
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\ncurrent: 212 lines, 11429 characters -> new: 141 lines, 7602 characters (lines shorter: 71)\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\ncurrent: 212 lines, 11429 characters -> new: 141 lines, 7602 characters (lines shorter: 71, 33 %)\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
       "requests": [
         [
           "GET",
