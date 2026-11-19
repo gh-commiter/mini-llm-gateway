@@ -825,7 +825,7 @@ func TestUpstreamPublishModeBetweenTwoGateways(t *testing.T) {
 	if out, _ = f.cmd(coreOpts{}, "push", "shop"); !strings.Contains(out, "deleted or no longer visible on the upstream, not recreated") {
 		t.Fatal(out)
 	}
-	if out, _ = f.cmd(coreOpts{}, "status", "shop"); !strings.Contains(out, "(deleted there)") {
+	if out, _ = f.cmd(coreOpts{}, "status", "shop"); !strings.Contains(out, "(deleted or no longer visible there)") {
 		t.Fatal(out)
 	}
 }

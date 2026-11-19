@@ -19,7 +19,7 @@ const upstreamHelp = `
   minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)
   minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)
   minigw gw upstream unlink <project> <name> | --team <team> <name>
-  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
+  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)
   minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
   minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
   minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
@@ -276,9 +276,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		}
 		a.do("POST", "/upstream-resolve", body, nil)
 		if u.ours {
-			say(fmt.Sprintf("note %d: our version goes to the upstream as a submission at the next push", note))
+			say(fmt.Sprintf("note %d: our version goes to the upstream as a submission at the next push (when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read, it becomes a NEW note there: a second note if the old one still exists out of sight)", note))
 		} else {
-			say(fmt.Sprintf("note %d: the upstream's version stays, our change is forgotten for it", note))
+			say(fmt.Sprintf("note %d: our text stays unsent (the upstream's text is not fetched here); a later change here is looked at again", note))
 		}
 	case pos[1] == "push" && len(pos) <= 3:
 		body := map[string]any{"dryRun": u.dryRun}
@@ -623,7 +623,7 @@ func upstreamConflicts(l upLink) string {
 	for _, c := range l.Conflicts {
 		what := "changed there"
 		if c.Gone {
-			what = "deleted there"
+			what = "deleted or no longer visible there"
 		} else if c.Submission {
 			what = "the earlier submission can no longer be read there: check on the hub whether it became a note"
 		}

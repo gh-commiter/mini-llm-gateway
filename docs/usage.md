@@ -1681,7 +1681,7 @@ writes the notes on the upstream directly (the device's user there needs the dev
 there, later pushes update that same note. Before updating, the gateway reads the note there: if its revision is not the one it left (somebody
 changed it on the upstream, or deleted it) the change is **not** written. The note is a conflict: it is listed in `upstream status` (and in the
 push report) as `CONFLICT: note N (changed there)` and is skipped until you decide with `minigw gw upstream resolve <project> <note> --theirs`
-(keep the upstream's version; our change is forgotten for it) or `--ours` (our version is sent as a submission for the upstream's reviewers,
+(keep the upstream's version: our text stays unsent and the upstream's text is not fetched here) or `--ours` (our version is sent as a submission for the upstream's reviewers,
 never as an overwrite). Add `--upstream <name>` to resolve only that link; it is required when the note conflicts on several upstreams.
 Without it, a single conflict is still resolved as before; an ambiguous request lists the upstreams and changes nothing. The mode cannot
 be changed once the link has sent notes: unlink and link again (what was sent stays there). Deleting a
