@@ -2,9 +2,27 @@
 
 ## Unreleased
 
+## 0.8.1
+
+A beta after stable 0.8.0. It fixes two defects of 0.8.0 found in the first real updates and deployments, and starts the work on a team gateway in Docker Compose. The gateway and client programs are unchanged except for the version; the changes are in the plugin's scripts, the Compose files and the documentation.
+
 ### Fixed
-- Windows plugin: writing or removing the `minigw` launcher in the plugin folder can no longer replace or delete the plugin's own `minigw.exe` (Git Bash treats `minigw` and `minigw.exe` as one file). In 0.8.0 the own copy could be lost when an installed client appeared, or before an update download that then failed. Verified checksums that were not stored are now removed at the end of the run (#159).
-- The plugin's knowledge base hook no longer runs a `minigw` that the install step has not checked, and runs nothing while hooks are off (#153). `kb-hook.sh` now exits silently unless `minigw kb hooks on` is set for at least one project, and then runs only the file whose SHA-256 matches the record `bin/.verified` that `install-minigw.sh` writes when it accepts a client (and removes when it rejects one). A replaced or not yet checked file, a missing record or a missing `sha256sum`/`shasum` means no run.
+- Docker Compose backup: the backup recipe in `docs/docker.md` built the volume name from the folder name, while the Compose project is named `minigw` by default. In a folder such as `deploy/docker` it could archive an empty, newly created volume. Backups made with that recipe must be checked: `tar -tf minigw-config.tar | grep serve.json` has to print the file; if it prints nothing, that backup is empty.
+- Windows plugin: writing or removing the `minigw` launcher in the plugin folder can no longer replace or delete the plugin's own `minigw.exe` (Git Bash treats `minigw` and `minigw.exe` as one file). In 0.8.0 the own copy could be lost when an installed client appeared, or before an update download that then failed. Two sessions that start at the same moment no longer disturb each other's files, and leftover checksum files are removed.
+- The plugin's knowledge base hook no longer runs a `minigw` that the install step has not checked, and runs nothing while hooks are off. `kb-hook.sh` exits silently unless `minigw kb hooks on` is set for at least one project, and then runs only the file whose SHA-256 matches the record `bin/.verified` that `install-minigw.sh` writes when it has verified a client (and removes when it rejects one). A replaced or not yet checked file, a missing record or a missing `sha256sum`/`shasum` means no run. A client that was kept without verification (a computer without `ssh-keygen`) gets no record, so the hooks stay silent there.
+
+### New
+- `deploy/docker/backup.sh` backs up and restores both volumes of a gateway in Docker Compose (it needs Python 3 on the server). The volume names come from Compose itself. It refuses a project without containers (unless `--offline`), a gateway container that uses other volumes than Compose resolves, any other container that is not stopped and mounts the volumes, an empty source, and a restore into a volume that is not empty or into another project (unless `--into-project`). `--stop` stops the services for the copy and starts again only those that ran before. See "Backup" in `docs/docker.md`.
+- Container logs of the Compose deployment are bounded (`json-file`, 10 MB, 3 files).
+- `docs/docker.md`: first setup on a team server step by step, what the remote web settings cover today (providers and devices), and what to do before an update.
+
+### Known problems
+- Windows, Mini Gateway installed with the MSI and the plugin still at 0.7.0: the session start says "0.8.0 is available: /minigw:gw update", but that command answers "already up to date". Update the plugin first (it updates by itself when the marketplace has automatic updates on; otherwise `claude plugin marketplace update mini-gateway` and `claude plugin update minigw@mini-gateway`), then run `/minigw:gw update`; or install the MSI of the new release by hand.
+- Windows: after an update with the MSI, its `minigw plugin install` step writes the launchers `minigw` and `minigw.cmd` into the plugin folder next to the plugin's own `minigw.exe`. Both are the same version then; the plugin's script keeps the own copy and uses the launcher.
+- With knowledge base hooks switched on, each hook call on Windows takes about a second (the client file is hashed every time); with hooks off about 0.3 s. Measured on one computer.
+- `backup.sh` does not notice a container that reaches a volume through a bind mount of its folder on the host. Restore does not inspect the content of the archives: a backup folder must be protected like the volumes themselves (it holds the provider keys). A backup with the admin profile (`compose.admin.yaml`) was not run in the automatic test; restore on a second, real Linux server was not tried yet.
+- Updating a Compose deployment from one version to the next with a database upgrade, and going back, was not rehearsed yet.
+- The known problems of 0.8.0 still apply.
 
 ## 0.8.0
 

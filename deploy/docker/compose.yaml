@@ -14,6 +14,11 @@ services:
     image: minigw:${MINIGW_VERSION:?set MINIGW_VERSION}
     command: ["--config", "/var/lib/minigw/config/serve.json"]
     init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     stop_grace_period: 45s
     user: "10001:10001"

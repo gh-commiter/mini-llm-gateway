@@ -3,10 +3,10 @@
 A Linux gateway (`minigw serve`) in a container, for providers only: Claude CLI, Codex, Grok, Copilot and Foundry Local
 are off and stay off (the default container has no user namespaces, so the agent sandbox does not work; the gateway
 refuses them in the settings, in an imported `serve.json` and when a request runs). Providers (LiteLLM, OpenRouter, xAI,
-any OpenAI-compatible endpoint), devices, projects and notes work as on any other gateway. Remote web settings are not
-part of the Compose deployment yet: you administer it with `docker compose exec minigw minigw gw …`. The gateway has
-an opt-in password listener behind mutual TLS ([configuration](gateway.md#remote-settings-listener)); the supported
-Compose reverse-proxy profile will follow separately. Do not publish its internal port.
+any OpenAI-compatible endpoint), devices, projects and notes work as on any other gateway. Remote web settings cover
+providers and devices through the optional `compose.admin.yaml` proxy below.
+Administer users, teams, projects, KB review and upstream with `docker compose exec minigw minigw gw …`.
+The image has no `minigw-tui`: `minigw gw settings` does not work in the container.
 
 The files are in [`deploy/docker/`](../deploy/docker): `compose.yaml` and `Dockerfile`. The image is built on your
 computer from the GitHub release: no registry, no account. The build checks the signature of `SHA256SUMS` with the
@@ -16,18 +16,35 @@ the build.
 
 ## Install and first start
 
-```sh
-git clone https://github.com/gh-commiter/mini-llm-gateway && cd mini-llm-gateway/deploy/docker
-echo MINIGW_VERSION=0.7.6 > .env                     # the release to build: 0.7.6 (a beta) is the first with container mode
-MINIGW_BIND=0.0.0.0 docker compose up -d --build     # MINIGW_BIND: the host address to publish port 8765 on
-```
+### First setup on a team server
 
-`MINIGW_VERSION` must be set: there is no default yet, because no stable release has container mode (0.7.0 would build but
-cannot run this way). When a stable release has it, this page will name it.
+Run these commands in order (choose the host bind address and protect it with the host firewall):
 
-`MINIGW_BIND` defaults to `127.0.0.1` (this computer only); use `0.0.0.0` or one LAN address so other computers can
-connect, and limit who can reach port 8765 with the host firewall. `MINIGW_PORT` changes the host port. Set the
-variables in a `.env` file next to `compose.yaml` to keep them.
+1. Clone and enter the deployment directory:
+   ```sh
+   git clone https://github.com/gh-commiter/mini-llm-gateway
+   cd mini-llm-gateway/deploy/docker
+   ```
+2. Save the release and bind address in `.env`:
+   ```sh
+   printf "MINIGW_VERSION=0.8.0\nMINIGW_BIND=127.0.0.1\n" > .env
+   ```
+   Replace loopback with your server address to admit other computers. `MINIGW_PORT` defaults to 8765.
+3. Build and start:
+   ```sh
+   docker compose up -d --build
+   ```
+4. Check health:
+   ```sh
+   docker compose exec minigw minigw serve healthcheck
+   ```
+5. Add the first provider in an interactive terminal (keep the default TTY; the key prompt disables echo):
+   ```sh
+   docker compose exec minigw minigw gw provider add OpenRouter https://openrouter.ai/api
+   docker compose exec minigw minigw gw provider models OpenRouter --enable all
+   ```
+6. Follow [team onboarding](team-onboarding.md) for users, teams and projects, prefixing its commands
+   with `docker compose exec minigw`.
 
 The first start creates the configuration in the config volume and prints no token. The connect line for clients:
 
@@ -99,19 +116,68 @@ reports `unhealthy`. Use a release whose notes mention Docker Compose.
 
 ## Backup
 
-Both volumes together, with the gateway stopped (the database must not change while it is copied):
+`backup.sh` needs Python 3 on the server (it reads `docker compose config --format json`). Run it next to
+`compose.yaml`:
 
 ```sh
+sh backup.sh --stop ./backups
+# Or stop first, then: sh backup.sh ./backups
+sh backup.sh --restore ./backups/minigw-backup-<UTC time>
+# Restore requires stopped services and empty or absent target volumes.
+docker compose up -d
+```
+
+**Use the same Compose environment as the deployment.** The script cannot know how the deployment was started,
+only what Compose resolves in the current folder and environment. Run it from the same folder with the same `.env`,
+or set the same `COMPOSE_PROJECT_NAME` and `COMPOSE_FILE`, including the admin overlay
+(`COMPOSE_FILE=compose.yaml:compose.admin.yaml`) if you use it. Its first line is
+`Project: <name>; volumes: <config>, <scratch>`: check that these are the volumes you mean. A wrong project
+usually has the volumes of another deployment or none, and never a container of this deployment, so a backup
+refuses when the project has no container at all. If you took the deployment down on purpose
+(`docker compose down` keeps the volumes but removes the containers), add `--offline`. A restore refuses a
+backup made in another project unless you give `--into-project <current project>`: that is how you restore
+into a separate project, for example as a recovery drill.
+
+The script resolves real volume names from Compose, refuses missing backup sources, and checks checksums before
+restoring. With `--stop` it always runs `docker compose stop`, then refuses if any container (of any project)
+that mounts either volume is anything other than stopped (exited or created), and afterwards starts only the services
+that were running before, also when archiving fails. A bind mount of a volume's backing directory by some other
+container is not detected. Restore makes the same check. When the project has a gateway container, the script also
+checks that its real mounts are the two volumes Compose resolves, and refuses if not (a missing `-f` override can
+rename them). Restore prints `Restoring backup of <project> (<volumes>) into <project> (<volumes>)` and needs
+`--into-project` whenever the project or the volume names differ from the manifest. With `--offline` nothing can
+confirm the project: the printed `Project:` line is what you must check. The checksums guard against a damaged or
+mixed-up archive; a backup directory must be protected like the volume itself (it holds the keys), and restore
+does not inspect archive content.
+A failed backup is
+incomplete and must not be used. Both volumes belong together. The config volume holds provider keys in protected
+files: a backup is a secret. Keep it private and copy it to protected storage.
+`docker compose down` keeps volumes; `down -v` deletes all their data.
+If a restore fails during extraction, its targets may be partially populated. Keep the backup,
+inspect the failure and remove only those failed restore volumes before retrying into empty targets.
+
+Manual equivalent (default project; substitute the exact names shown by Compose for an override):
+
+```sh
+docker compose config --format json      # volumes.config.name and volumes.scratch.name
+docker volume ls                        # verify minigw_config and minigw_scratch exist
+docker volume inspect minigw_config minigw_scratch || exit 1
 docker compose stop
+umask 077
+mkdir -m 700 manual-backup
 for v in config scratch; do
-  docker run --rm -v "$(basename "$PWD" | tr 'A-Z' 'a-z')_$v":/v:ro -v "$PWD":/b debian:trixie-slim tar -C /v -cf /b/minigw-$v.tar .
+  docker run --rm --network none --mount type=volume,src=minigw_$v,dst=/v,readonly \
+    debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 \
+    tar -C /v -cf - . > manual-backup/$v.tar
 done
 docker compose start
 ```
 
-(`<project>_config` and `<project>_scratch` are the volume names; `docker volume ls` shows them. The project name is
-the folder name, or `COMPOSE_PROJECT_NAME`.) Restore into empty volumes the same way with `tar -x`, owned by uid 10001.
-`docker compose down` keeps the volumes; `down -v` deletes them with all data.
+The default project is `minigw`, independent of the folder name; `COMPOSE_PROJECT_NAME` overrides it.
+Prefer the script for validation, checksums and restart handling.
+
+**Before an update:** back up first. Going back requires restoring the matching backup of both
+volumes AND setting the old `MINIGW_VERSION` before rebuilding and starting.
 
 ## Rollback
 
