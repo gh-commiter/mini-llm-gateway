@@ -1,6 +1,8 @@
 package core
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,8 +28,11 @@ func TestDeletedNoteTextIsNotLeftInTheDatabaseFile(t *testing.T) {
 	f.ok(f.Close())                                           // closing checkpoints the WAL into the main file
 	for _, name := range []string{"core.db", "core.db-wal"} { // the main file and, if it is still there, the log
 		raw, err := os.ReadFile(filepath.Join(f.dir, name))
-		if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && name == "core.db-wal" { // only a missing log is fine (it is removed when the database closes cleanly)
 			continue
+		}
+		if err != nil {
+			t.Fatal(err)
 		}
 		for _, needle := range []string{"PASTED-SECRET-0123456789", "quokkaxylophone"} { // the stored text, and the word as an FTS posting
 			if strings.Contains(string(raw), needle) {

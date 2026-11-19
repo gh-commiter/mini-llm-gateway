@@ -327,7 +327,7 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 	// a reject without a typed reason of a stale replacement tells its author why (the same core rule as the CLI's)
 	stale2 := replace("T <b>one</b>", "for a second stale target")
 	edit("edited again after the proposal")
-	if w = k.reject(stale2, ""); w.Code != 200 || k.count(`SELECT COUNT(*) FROM kb_submissions WHERE id=? AND reason LIKE ?`, stale2, "note % changed after this was written (it expected revision %, the note is at %): read the note and propose the change again") != 1 {
+	if w = k.reject(stale2, ""); w.Code != 200 || k.count(`SELECT COUNT(*) FROM kb_submissions WHERE id=? AND reason=?`, stale2, core.DefaultStaleReason) != 1 {
 		t.Fatal("default reason", w.Code, w.Body.String())
 	}
 	// hidden characters in the CURRENT text do not block the accept: the new text is published clean, the history keeps the old one raw

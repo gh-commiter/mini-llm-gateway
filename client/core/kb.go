@@ -705,6 +705,9 @@ func reviewHash(tx *sql.Tx, id int64) (string, error) {
 // ErrOldClientReplacement: the answer to an accept of a replacement from a client that sent no currentRevision (older than 0.8.8).
 const ErrOldClientReplacement = "this minigw is too old to accept a replacement (it cannot show the note's current text): use minigw 0.8.8 or newer (a beta: https://github.com/gh-commiter/mini-llm-gateway/releases), review it in the Mini Gateway app or in the remote settings, or reject it"
 
+// DefaultStaleReason is stored when a replacement whose note changed or is gone is rejected without a reason.
+const DefaultStaleReason = "the note this would replace changed or no longer exists: read the project's notes and propose the change again"
+
 // The refusals of an accept that does not name what is there now.
 var (
 	ErrReviewHashMissing = ErrRefusal{"name the version you read: read the submission first (minigw kb review), or update minigw"}
@@ -928,31 +931,20 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 			state = "accepted"
 		}
 		if !accept && reason == "" && v.State == "pending" && v.Replaces != 0 { // a lost contribution tells its author why
-			// The author is told only what the author may know NOW. First: may the author see anything of this project at all (an
-			// active user, a bound device, a role or team seat that still reads it)? If not, the one generic reason covers a changed AND a
-			// deleted note: nothing about the note's existence or revision. An author who can read the project is told the specific
-			// facts the project's own members could see: a deleted note ("no longer exists": the author named it) or a changed one with its
-			// revision, the latter only when the author can read that note too (class, someone else's private note); else the generic one.
-			author := Principal{UserID: v.User, DeviceID: v.Provenance.Device}
-			generic := "the note this would replace changed or is no longer available to you: read the project's notes and propose the change again"
-			t, e := readReplaced(tx, &v, nil)
-			if e != nil {
+			// ONE sentence for everyone who can read the reason (the author, a reviewer, the owner): no revision, no note state beyond
+			// "changed or gone". Deciding whether it applies reads only the note's project and revision, never its text.
+			var project, revision int64
+			e := error(nil)
+			if isMirrorID(v.Replaces) {
+				e = sql.ErrNoRows
+			} else {
+				e = tx.QueryRow(`SELECT project_id,revision FROM notes WHERE id=?`, v.Replaces).Scan(&project, &revision)
+			}
+			if e != nil && !errors.Is(e, sql.ErrNoRows) {
 				return e
 			}
-			if t.state == "ok" { // nothing is wrong with the target: no default reason
-			} else if _, e := memberAccess(tx, author, v.Project); e != nil {
-				if !errors.Is(e, ErrNoProjectAccess) && !errors.Is(e, ErrNotFound) && !errors.Is(e, ErrForbidden) && !errors.Is(e, ErrDeviceNotBound) {
-					return e
-				}
-				reason = generic
-			} else if t.state == "missing" {
-				reason = fmt.Sprintf("note %d no longer exists", v.Replaces)
-			} else if ta, e := readReplaced(tx, &v, &author); e != nil {
-				return e
-			} else if ta.state == "stale" {
-				reason = fmt.Sprintf("note %d changed after this was written (it expected revision %d, the note is at %d): read the note and propose the change again", v.Replaces, v.Revision, ta.revision)
-			} else {
-				reason = generic
+			if e != nil || project != v.Project || revision != v.Revision {
+				reason = DefaultStaleReason
 			}
 		}
 		if v.State == state { // a repeat publishes nothing (the stored provenance now names the reviewer)
