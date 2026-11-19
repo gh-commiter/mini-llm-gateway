@@ -473,7 +473,7 @@ final class ProjectStore: @unchecked Sendable {
         let env = ProjectEnv(connect: { (ProjectConn(url: url, token: "tok"), "g") }, state: s.state, cwd: s.root + "/proj", stdin: { Data() }, out: { out += $0 }, err: { _ in },
                              agent: false, send: { c, m, p, h, b in ProjectHTTP.send(c, m, p, h, b, clientInfo: "x", timeout: 5) }, sleep: { _ in })
         #expect(throws: ProjectError.self) { try env.project(["list"]) }
-        do { try env.project(["list"]) } catch { #expect((error as! ProjectError).message == "no answer from the gateway") }
+        do { try env.project(["list"]) } catch { #expect((error as! ProjectError).message == "no answer from the gateway (connection refused)") }
     }
 
     @Test func aLostAnswerIsRetriedWithTheSameKey() throws {
@@ -738,5 +738,46 @@ extension NoteHistoryHints {
             let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { _ in }, err: { _ in }, agent: false, send: send)
             do { try env.note(args); Issue.record("\(args): no error") } catch { #expect((error as? ProjectError)?.message.contains(want) == true, "\(args): \(error)") }
         }
+    }
+}
+
+/// "no answer from the gateway" names its cause in fixed words that the Go client uses too (transportCause in client/project_cmd.go, pinned there):
+/// connection refused | timed out after N s | connection reset | could not resolve the host | network unreachable | TLS: certificate not trusted | TLS: handshake failed | bad gateway address.
+@Suite struct ProjectNoAnswerCause {
+    @Test func theCommonTransportErrorsGetTheSharedWords() {
+        func word(_ e: Error) -> String { ProjectHTTP.cause(e, timeout: 30) }
+        func posix(_ code: Int32) -> Error { URLError(.cannotConnectToHost, userInfo: ["_kCFStreamErrorDomainKey": 1, "_kCFStreamErrorCodeKey": Int(code)]) }
+        #expect(word(posix(ECONNREFUSED)) == "connection refused")
+        #expect(word(posix(ECONNRESET)) == "connection reset")
+        #expect(word(posix(EHOSTUNREACH)) == "network unreachable")
+        #expect(word(URLError(.timedOut)) == "timed out after 30 s")
+        #expect(word(URLError(.cannotFindHost)) == "could not resolve the host")
+        #expect(word(URLError(.dnsLookupFailed)) == "could not resolve the host")
+        #expect(word(URLError(.networkConnectionLost)) == "connection reset")
+        #expect(word(URLError(.notConnectedToInternet)) == "network unreachable")
+        #expect(word(URLError(.serverCertificateUntrusted)) == "TLS: certificate not trusted")
+        #expect(word(URLError(.secureConnectionFailed)) == "TLS: handshake failed")
+        #expect(word(URLError(.badServerResponse)) == "")
+        let secret = URLError(.timedOut, userInfo: [NSURLErrorFailingURLStringErrorKey: "http://secret-host/x?token=abc", NSLocalizedDescriptionKey: "token=abc"])
+        #expect(!word(secret).contains("secret") && !word(secret).contains("token"))
+    }
+
+    @Test func theSentenceCarriesTheCauseAndOnlyAShortCleanOne() {
+        #expect(ProjectEnv.gatewayError(0, Data(), nil).message == "no answer from the gateway")
+        #expect(ProjectEnv.gatewayError(0, Data("connection reset".utf8), nil).message == "no answer from the gateway (connection reset)")
+        let hostile = ProjectEnv.gatewayError(0, Data("x\u{1b}[31m\nline two".utf8), nil).message
+        #expect(!hostile.contains("\u{1b}") && !hostile.contains("\n"), "\(hostile)")
+    }
+
+    @Test func aRealConnectionToNothingSaysRefused() {
+        let l = socket(AF_INET, SOCK_STREAM, 0)
+        var a = sockaddr_in(), n = socklen_t(MemoryLayout<sockaddr_in>.size)
+        a.sin_family = sa_family_t(AF_INET); a.sin_len = UInt8(n); a.sin_addr.s_addr = inet_addr("127.0.0.1")
+        _ = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(l, $0, n) } }
+        _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(l, $0, &n) } }
+        let port = UInt16(bigEndian: a.sin_port)
+        close(l)  // bound and closed, never listening: nothing answers on this loopback port
+        let r = ProjectHTTP.send(ProjectConn(url: "http://127.0.0.1:\(port)", token: "tok"), "GET", "/x", [:], nil, clientInfo: "x", timeout: 5)
+        #expect(r.status == 0 && String(decoding: r.data, as: UTF8.self) == "connection refused", "\(r.status) \(String(decoding: r.data, as: UTF8.self))")
     }
 }

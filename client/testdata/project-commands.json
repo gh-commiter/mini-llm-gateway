@@ -356,6 +356,76 @@
    }
   },
   {
+   "name": "project list no answer, refused",
+   "args": [
+    "project",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 0,
+     "body": "connection refused"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no answer from the gateway (connection refused)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project list no answer, timed out",
+   "args": [
+    "project",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 0,
+     "body": "timed out after 30 s"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no answer from the gateway (timed out after 30 s)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
    "name": "project list bad flag",
    "args": [
     "project",
