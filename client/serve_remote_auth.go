@@ -156,6 +156,31 @@ type remoteAuth struct {
 	epoch      uint64
 	disabled   bool
 	derive     func([]byte, remotePassword) []byte
+	decisions  []time.Time // KB review decisions in the last remoteDecisionWindow (under mu)
+}
+
+const (
+	remoteDecisionLimit  = 30
+	remoteDecisionWindow = 10 * time.Minute
+)
+
+// allowDecision counts one review decision for the whole listener: at most remoteDecisionLimit per remoteDecisionWindow.
+func (a *remoteAuth) allowDecision() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := a.now()
+	keep := a.decisions[:0]
+	for _, t := range a.decisions {
+		if now.Sub(t) < remoteDecisionWindow {
+			keep = append(keep, t)
+		}
+	}
+	a.decisions = keep
+	if len(a.decisions) >= remoteDecisionLimit {
+		return false
+	}
+	a.decisions = append(a.decisions, now)
+	return true
 }
 
 func newRemoteAuth(config string, now func() time.Time) (*remoteAuth, error) {
@@ -233,10 +258,11 @@ func (a *remoteAuth) saveLocks() error {
 	return writeFileAtomic(a.lockPath(), b)
 }
 func (a *remoteAuth) audit(action, result, ip, rid string) error {
-	return a.auditOperation(action, result, ip, rid, "")
+	return a.auditOperation(action, result, ip, rid, "", "")
 }
 
-func (a *remoteAuth) auditOperation(action, result, ip, rid, operation string) error {
+// auditOperation writes one audit row; subject is the id of what a review decision acts on (digits only), empty otherwise.
+func (a *remoteAuth) auditOperation(action, result, ip, rid, operation, subject string) error {
 	allowed := map[string]bool{"login": true, "logout": true, "revoke": true, "mutation": true, "lockout": true}
 	outcomes := map[string]bool{"ok": true, "denied": true, "limited": true, "error": true, "started": true}
 	if !allowed[action] || !outcomes[result] {
@@ -244,13 +270,16 @@ func (a *remoteAuth) auditOperation(action, result, ip, rid, operation string) e
 	}
 	if operation != "" {
 		switch operation {
-		case "POST providers", "PATCH providers/{}", "DELETE providers/{}", "POST providers/{}/models", "POST devices", "PATCH devices/{}", "DELETE devices/{}":
+		case "POST providers", "PATCH providers/{}", "DELETE providers/{}", "POST providers/{}/models", "POST devices", "PATCH devices/{}", "DELETE devices/{}", "POST kb/submissions/{}/accept", "POST kb/submissions/{}/reject":
 		default:
 			return errors.New("invalid audit operation")
 		}
 		if action != "mutation" {
 			return errors.New("invalid audit action")
 		}
+	}
+	if subject != "" && (!remoteNumericID(subject) || operation == "") {
+		return errors.New("invalid audit subject")
 	}
 	if ip != "" {
 		if _, err := netip.ParseAddr(ip); err != nil {
@@ -289,7 +318,8 @@ func (a *remoteAuth) auditOperation(action, result, ip, rid, operation string) e
 	b, _ := json.Marshal(struct {
 		Time                                                time.Time
 		Principal, IP, RequestID, Action, Result, Operation string
-	}{a.now().UTC(), "remote-admin", ip, rid, action, result, operation})
+		Subject                                             string `json:",omitempty"`
+	}{a.now().UTC(), "remote-admin", ip, rid, action, result, operation, subject})
 	if _, err = f.Write(append(b, '\n')); err != nil {
 		return err
 	}

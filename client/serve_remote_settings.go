@@ -229,32 +229,87 @@ func (c *limitedConn) Close() error {
 // exactly this spelling (the shared handler matches keys case-insensitively and lets the last duplicate win). baseURL
 // and insecure would send the stored API key to another host; tools and model raise what agents may do.
 func remoteProviderPatchRefusal(body []byte) string {
+	_, msg := remoteBodyObject(body, func(key string) string {
+		switch key {
+		case "name", "enabled", "aliases":
+			return ""
+		}
+		return "Changing " + strconv.Quote(key) + " is not allowed remotely: it needs the API key again, so add the provider again with its key, or make the change locally."
+	})
+	return msg
+}
+
+// remoteBodyObject reads a JSON object once, key by key: every key must have exactly the spelling refuse accepts (it returns ""
+// for an allowed key, else the refusal text), no key may repeat and nothing may follow the object. Returns the raw values.
+func remoteBodyObject(body []byte, refuse func(key string) string) (map[string]json.RawMessage, string) {
+	const notObject = "The request body must be a JSON object."
 	d := json.NewDecoder(bytes.NewReader(body))
 	if t, err := d.Token(); err != nil || t != json.Delim('{') {
-		return "The request body must be a JSON object."
+		return nil, notObject
 	}
-	seen := map[string]bool{}
+	out := map[string]json.RawMessage{}
 	for d.More() {
 		t, err := d.Token()
 		key, ok := t.(string)
 		if err != nil || !ok {
-			return "The request body must be a JSON object."
+			return nil, notObject
 		}
-		var skip json.RawMessage
-		if d.Decode(&skip) != nil {
-			return "The request body must be a JSON object."
+		var v json.RawMessage
+		if d.Decode(&v) != nil {
+			return nil, notObject
 		}
-		if seen[key] {
-			return "Duplicate key " + strconv.Quote(key) + " in the request body."
+		if _, dup := out[key]; dup {
+			return nil, "Duplicate key " + strconv.Quote(key) + " in the request body."
 		}
-		seen[key] = true
-		switch key {
-		case "name", "enabled", "aliases":
-		default:
-			return "Changing " + strconv.Quote(key) + " is not allowed remotely: it needs the API key again, so add the provider again with its key, or make the change locally."
+		if msg := refuse(key); msg != "" {
+			return nil, msg
 		}
+		out[key] = v
+	}
+	if t, err := d.Token(); err != nil || t != json.Delim('}') {
+		return nil, notObject
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return nil, notObject
+	}
+	return out, ""
+}
+
+// remoteKBDecisionRefusal: the body of a remote review decision. Accept carries exactly {"reviewHash": 64 lowercase hex} (the
+// version the owner read), reject exactly {"reason": text up to 1024 bytes}. The core's decoder matches keys case-insensitively
+// and lets the last duplicate win, so the keys are checked here, before anything is dispatched.
+func remoteKBDecisionRefusal(accept bool, body []byte) string {
+	want := "reason"
+	if accept {
+		want = "reviewHash"
+	}
+	vals, msg := remoteBodyObject(body, func(key string) string {
+		if key == want {
+			return ""
+		}
+		return "The request body may only carry " + strconv.Quote(want) + ", spelled exactly so."
+	})
+	if msg != "" {
+		return msg
+	}
+	raw, ok := vals[want]
+	var v string
+	if !ok || json.Unmarshal(raw, &v) != nil {
+		return "The request body must carry " + strconv.Quote(want) + " as a string."
+	}
+	if accept {
+		if len(v) != 64 || strings.Trim(v, "0123456789abcdef") != "" {
+			return "reviewHash must be the 64 lowercase hexadecimal characters of the version you read."
+		}
+	} else if len(v) > 1024 {
+		return "The reason is longer than 1024 bytes."
 	}
 	return ""
+}
+
+// remoteKBDecisionPath: POST kb/submissions/{id}/accept|reject (seg is the path below the admin prefix, split).
+func remoteKBDecisionPath(seg []string) bool {
+	return len(seg) == 4 && seg[0] == "kb" && seg[1] == "submissions" && (seg[3] == "accept" || seg[3] == "reject")
 }
 
 // remoteNumericID: 1 to 18 ASCII digits (no sign, no space), the same as [0-9]{1,18} in the Caddyfile.
@@ -288,6 +343,19 @@ func remoteAdminAllowed(method, path string) bool {
 		case "users", "bindings", "teams", "projects": // read-only lists; changes stay with the CLI
 			return method == "GET"
 		}
+	}
+	// KB review: list and read pending submissions, accept or reject the version read. Accept is the one entry below to drop
+	// (and "accept" in the Caddyfile @post, and the page's button) to make the remote review reject-only.
+	if len(seg) >= 2 && seg[0] == "kb" && seg[1] == "submissions" {
+		switch {
+		case len(seg) == 2:
+			return method == "GET"
+		case len(seg) == 3:
+			return method == "GET" && remoteNumericID(seg[2])
+		case len(seg) == 4 && remoteNumericID(seg[2]):
+			return method == "POST" && (seg[3] == "accept" || seg[3] == "reject")
+		}
+		return false
 	}
 	if len(seg) == 2 && seg[0] == "teams" { // read-only team detail: one numeric id, GET only
 		return method == "GET" && remoteNumericID(seg[1])
@@ -427,6 +495,11 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 		if login || logout {
 			limit = 4 << 10
 		}
+		pathSeg := strings.Split(strings.TrimPrefix(path, adminPrefix+"/"), "/")
+		kbDecision := mutation && remoteKBDecisionPath(pathSeg)
+		if kbDecision {
+			limit = 8 << 10 // a reason of 1024 bytes needs at most 6 KiB escaped
+		}
 		rc := http.NewResponseController(w)
 		if err := rc.SetReadDeadline(time.Now().Add(remoteBodyTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
 			deny(413)
@@ -463,10 +536,16 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 				return
 			}
 		}
+		if kbDecision {
+			if msg := remoteKBDecisionRefusal(pathSeg[3] == "accept", body); msg != "" {
+				writeError(w, rid, 403, msg)
+				return
+			}
+		}
 		// Audit intent before dispatch, so a broken audit log prevents mutations.
-		operation := ""
+		operation, subject := "", ""
 		if mutation {
-			seg := strings.Split(strings.TrimPrefix(path, adminPrefix+"/"), "/")
+			seg := pathSeg
 			operation = r.Method + " " + seg[0]
 			if len(seg) > 1 {
 				operation += "/{}"
@@ -474,8 +553,22 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 			if len(seg) > 2 {
 				operation += "/models"
 			}
+			if kbDecision {
+				operation, subject = "POST kb/submissions/{}/"+seg[3], seg[2]
+				if !s.remoteAuth.allowDecision() {
+					s.remoteAuth.mu.Lock()
+					err = s.remoteAuth.auditOperation("mutation", "limited", ip, rid, operation, subject)
+					s.remoteAuth.mu.Unlock()
+					if err != nil {
+						deny(500)
+						return
+					}
+					writeError(w, rid, 429, "Too many review decisions: wait a few minutes.")
+					return
+				}
+			}
 			s.remoteAuth.mu.Lock()
-			err = s.remoteAuth.auditOperation("mutation", "started", ip, rid, operation)
+			err = s.remoteAuth.auditOperation("mutation", "started", ip, rid, operation, subject)
 			s.remoteAuth.mu.Unlock()
 			if err != nil {
 				deny(500)
@@ -489,7 +582,7 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 				result = "denied"
 			}
 			s.remoteAuth.mu.Lock()
-			err = s.remoteAuth.auditOperation("mutation", result, ip, rid, operation)
+			err = s.remoteAuth.auditOperation("mutation", result, ip, rid, operation, subject)
 			s.remoteAuth.mu.Unlock()
 			if err != nil {
 				writeError(w, rid, 500, "The operation may have completed; its audit result could not be saved. Check the settings before retrying.")

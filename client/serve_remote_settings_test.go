@@ -1051,7 +1051,7 @@ func TestRemoteAllowListMatchesCaddyfile(t *testing.T) {
 	}
 	var paths []string
 	for _, n := range names {
-		for _, form := range []string{"", "/1", "/1/models", "/1/history", "/1/members", "/1/assignments", "/1/depends", "/strings", "/login", "/logout", "/history", "/events", "/0", "/0/members", "/0/assignments", "/123456789012345678", "/123456789012345678/members", "/1234567890123456789", "/1234567890123456789/members", "/1a", "/1a/members", "/-1", "/-1/assignments", "/+1", "/+1/members", "/%31", "/%31/members", "/1/", "/1/members/2", "/1/assignments/2", "/1/grants", "/1/projects"} {
+		for _, form := range []string{"", "/1", "/1/models", "/1/history", "/1/members", "/1/assignments", "/1/depends", "/strings", "/login", "/logout", "/history", "/events", "/0", "/0/members", "/0/assignments", "/123456789012345678", "/123456789012345678/members", "/1234567890123456789", "/1234567890123456789/members", "/1a", "/1a/members", "/-1", "/-1/assignments", "/+1", "/+1/members", "/%31", "/%31/members", "/1/", "/1/members/2", "/1/assignments/2", "/1/grants", "/1/projects", "/submissions", "/submissions/1", "/submissions/0", "/submissions/1/accept", "/submissions/1/reject", "/submissions/1/versions/ab", "/submissions/1/accept/2", "/submissions/1a/accept", "/submissions/-1/reject", "/submissions/1234567890123456789/accept", "/submissions/%31/accept", "/submissions/1/", "/notes", "/notes/1", "/faq", "/search/rebuild"} {
 			paths = append(paths, adminPrefix+"/"+n+form)
 		}
 	}

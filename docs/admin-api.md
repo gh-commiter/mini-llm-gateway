@@ -640,11 +640,11 @@ Owner routes use the existing owner admin authentication and base URL:
 
 | Method | Path | Result |
 |---|---|---|
-| GET | `/kb/submissions?project=0&after=0` | Pending metadata; project 0 means all |
-| GET | `/kb/submissions/{id}` | Submission with body |
+| GET | `/kb/submissions?project=0&after=0` | Pending metadata; project 0 means all; also on the remote settings listener, without a query (the first 100), read-only. |
+| GET | `/kb/submissions/{id}` | Submission with body; also on the remote settings listener, without a query (the first 100), read-only. |
 | GET | `/kb/submissions/{id}/versions/{reviewHash}` | The same, only while the submission is that version (400 "the submission changed since you read it" otherwise): the panel's detail of a list row |
-| POST | `/kb/submissions/{id}/accept` | Publish; JSON `{"reviewHash":"…"}`, the `reviewHash` of the list row or the read (required) |
-| POST | `/kb/submissions/{id}/reject` | Reject; JSON `{"reason":"text"}` |
+| POST | `/kb/submissions/{id}/accept` | Publish; JSON `{"reviewHash":"…"}`, the `reviewHash` of the list row or the read (required); also on the remote settings listener: the body keys are exact (one key, spelled exactly), 30 decisions per 10 minutes. |
+| POST | `/kb/submissions/{id}/reject` | Reject; JSON `{"reason":"text"}`; also on the remote settings listener: the body keys are exact (one key, spelled exactly), 30 decisions per 10 minutes. |
 | GET | `/kb/notes?project={id}&class=&kind=&after=&limit=` | The notes of a project or of a team's own notes, every class (`private` too), 50 per page by default, `{notes, next}` (`next` absent on the last page) |
 | GET | `/kb/notes/{id}` | One note with body and provenance, any class |
 | GET | `/kb/faq?project={id}&after=` | The `faq` notes of a project or a team, newest first, `{entries: [{id, title, class, answer, updated}], next}` |

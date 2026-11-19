@@ -57,6 +57,10 @@ h3 { font-size: 13px; margin: 18px 4px 6px; display: flex; align-items: center; 
 .ro, .ro .label, .ro .value { overflow-wrap: anywhere; }
 .ro .value { white-space: normal; }
 main:has(.ro) { min-width: 0; }  /* belt and braces, only where the Team page is shown */
+.rv-text { white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; unicode-bidi: isolate; background: var(--panel); border-radius: 10px; padding: 10px 12px; margin: 6px 0; }
+.rv-title { font-weight: 600; overflow-wrap: anywhere; unicode-bidi: isolate; margin: 10px 0 4px; }
+.rv-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.rv-reason { width: 100%; min-height: 4em; }
 .ro .row[aria-expanded]::before { content: "\25B8"; flex: none; width: 1em; color: var(--muted); transition: transform .12s; }
 .ro .row[aria-expanded="true"]::before { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .ro .row[aria-expanded]::before { transition: none; } }
@@ -248,6 +252,20 @@ const S = {
   roActive: ["active", "aktiven"], roInactive: ["inactive", "neaktiven"], roOwner: ["owner", "lastnik"], roArchived: ["archived", "arhiviran"],
   roMembers: ["Members: %s", "Člani: %s"], roProjectsN: ["Projects: %s", "Projekti: %s"], roProxyOld: ["The proxy in front of this gateway does not allow this list yet: update deploy/docker/Caddyfile to this version and run docker compose restart admin-proxy.", "Posrednik pred tem prehodom tega seznama še ne dovoli: posodobi deploy/docker/Caddyfile na to različico in zaženi docker compose restart admin-proxy."], roNone: ["none", "ni vnosov"],
   roNotFound: ["Not found: it may have been deleted.", "Ni najdeno: morda je izbrisano."], roMembersH: ["Members", "Člani"], roAssignH: ["Assignments (project, user, role)", "Dodelitve (projekt, uporabnik, vloga)"], roDirect: ["Direct: %s", "Neposredno: %s"], roFromTeam: ["From team %s: %s", "Iz ekipe %s: %s"],
+  remoteReview: ["Review", "Pregled"],
+  rvNote: ["Pending knowledge-base submissions of all projects and teams. A decision applies to exactly the text you read.", "Čakajoči prispevki v bazo znanja vseh projektov in ekip. Odločitev velja za natanko besedilo, ki si ga prebral."],
+  rvNone: ["No submissions are waiting.", "Nič ne čaka na pregled."],
+  rvMore: ["More submissions are waiting: review them with minigw gw kb review.", "Čaka še več prispevkov: preglej jih z minigw gw kb review."],
+  rvOk: ["ok", "v redu"], rvHiddenCheck: ["hidden characters", "skriti znaki"], rvLongCheck: ["too long to review here", "predolgo za pregled tukaj"],
+  rvHidden: ["Contains hidden characters: %s removed from the text shown; it cannot be accepted (reject it and ask for the text without them).", "Vsebuje skrite znake: %s odstranjenih iz prikazanega besedila; ni ga mogoče sprejeti (zavrni ga in prosi za besedilo brez njih)."],
+  rvLong: ["Too long to review here: use minigw gw kb review and kb accept on the server.", "Predolgo za pregled tukaj: uporabi minigw gw kb review in kb accept na strežniku."],
+  rvBack: ["Back", "Nazaj"], rvCancel: ["Cancel", "Prekliči"], rvAccept: ["Accept…", "Sprejmi…"], rvReject: ["Reject…", "Zavrni…"], rvRejectDo: ["Reject", "Zavrni"],
+  rvReason: ["Reason (optional, up to 1024 bytes)", "Razlog (po želji, do 1024 bajtov)"], rvPublish: ["Publish to %s", "Objavi v %s"],
+  rvConfirmAccept: ["Publish exactly this text to everyone who can read %s?", "Objavim natanko to besedilo vsem, ki lahko berejo %s?"], rvConfirmReject: ["Reject this submission?", "Zavrnem ta prispevek?"],
+  rvProject: ["Project", "Projekt"], rvTeam: ["Team", "Ekipa"], rvAuthor: ["Author", "Avtor"], rvClass: ["Class", "Razred"], rvKind: ["Kind", "Vrsta"], rvReceived: ["Received", "Prejeto"],
+  rvReplaces: ["Replaces note %s", "Nadomesti zapisek %s"], rvVersion: ["Version %s", "Različica %s"], rvReasonIs: ["Reason", "Razlog"],
+  rvAccepted: ["Accepted and published.", "Sprejeto in objavljeno."], rvRejected: ["Rejected.", "Zavrnjeno."],
+  rvChanged: ["The submission changed since you read it: review it again.", "Prispevek se je spremenil, odkar si ga prebral: preglej ga znova."],
   roUnavailable: ["The project database is not available.", "Projektna zbirka ni na voljo."],
   general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Providers", "Ponudniki"], claude: ["Claude CLI", "Claude CLI"],
   about: ["About", "O aplikaciji"], license: ["License", "Licenca"], copyToken: ["Copy Token", "Kopiraj žeton"],
@@ -1788,7 +1806,7 @@ function panelView(model, host) {
 // --- panoji ---
 
 const pages = {
-  remoteHome: () => [el("h2", {textContent: "Mini Gateway"}), note(SL ? "Izberi ponudnika, Naprave ali Ekipo (samo branje) v meniju." : "Select a provider, Devices or Team (read-only) in the menu."), button(SL ? "Odjava" : "Sign out", remoteLogout)],
+  remoteHome: () => [el("h2", {textContent: "Mini Gateway"}), note(SL ? "Izberi ponudnika, Naprave, Ekipo (samo branje) ali Pregled v meniju." : "Select a provider, Devices, Team (read-only) or Review in the menu."), button(SL ? "Odjava" : "Sign out", remoteLogout)],
   panel: id => panelPage(id),
   usage: () => usagePane(),
   codex: () => agentPane("codex"),
@@ -1962,6 +1980,61 @@ const pages = {
       ...list(t("roBindings"), b, "bindings", x => row(((dv.devices || []).find(d => d.id === x.device) || {}).name || el("span", {class: "label mono id", textContent: x.device}), value(user(x.user)))),
       ...list(t("roTeams"), tm, "teams", x => opens(row(x.name + (x.path ? " (" + x.path + ")" : ""), value([t("roMembers", x.memberCount), t("roProjectsN", x.projectCount), x.archived ? t("roArchived") : ""].filter(Boolean).join(" · "))), teamDetail(x))),
       ...list(t("roProjects"), pr, "projects", x => opens(row(x.name + " (" + x.slug + ")", value([x.teamName, t("roMembers", x.memberCount), x.archived ? t("roArchived") : ""].filter(Boolean).join(" · "))), projectDetail(x)))];
+  },
+  async remoteReview() {  // review of pending KB submissions: the exact version read is the one accepted; text only, nothing built from data but textContent
+    const box = el("div");
+    const rvErr = e => e.message.startsWith("The project database is not available") ? t("roUnavailable") : e.message === "HTTP 404" ? t("roProxyOld") : e.message.includes("changed since you read it") ? t("rvChanged") : e.message;
+    const text = (cls, s) => el("div", {class: cls, dir: "ltr", textContent: s});
+    const checkText = v => v.reviewCheck === "ok" ? t("rvOk") : v.reviewCheck === "hidden" ? t("rvHiddenCheck") : t("rvLongCheck");
+    const scopeLabel = v => (v.scopeKind === "team" ? t("rvTeam") : t("rvProject")) + ": " + v.scopeName;
+    const set = (...kids) => box.replaceChildren(...kids.flat().filter(k => k !== null && k !== undefined && k !== false));
+    const meta = v => el("div", {class: "group ro"}, row(t("rvAuthor"), value(v.authorName)), row(scopeLabel(v)), row(t("rvClass") + " / " + t("rvKind"), value(v.class + " / " + v.entryKind)),
+      row(t("rvReceived"), value(new Date(v.received).toLocaleString())), v.isReplacement ? row(t("rvReplaces", v.replaces)) : null);
+    async function showList(msg) {
+      let r;
+      try { r = await api("GET", "/kb/submissions"); } catch (e) { if (!SESSION) throw e; set(note(rvErr(e))); return; }
+      const rows = r.submissions.map(v => {
+        const x = row(labelSub(v.title, scopeLabel(v)), value([v.class, v.entryKind, v.authorName, checkText(v)].join(" · ")));
+        x.classList.add("clickable"); x.tabIndex = 0; x.setAttribute("role", "button");
+        const open = () => showDetail(v.id);
+        x.addEventListener("click", open);
+        x.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); } });
+        return x;
+      });
+      set(msg ? note(msg) : null, rows.length ? el("div", {class: "group ro"}, ...rows) : note(t("rvNone")), r.next ? note(t("rvMore")) : null);
+    }
+    async function showDetail(id, msg) {
+      let v;
+      try { v = await api("GET", "/kb/submissions/" + encodeURIComponent(id)); } catch (e) { if (!SESSION) return; set(note(rvErr(e)), buttons(button(t("rvBack"), () => showList()))); return; }
+      const reason = el("textarea", {class: "rv-reason", maxLength: 1024, placeholder: t("rvReason")});
+      // no Accept at all unless the core's review read says "ok" (hidden characters are refused by the core, long ones are reviewed on the server)
+      set(msg ? note(msg) : null, text("rv-title", v.title), meta(v), text("rv-text", v.body || ""),
+        v.hidden > 0 ? note(t("rvHidden", v.hidden)) : null, v.reviewCheck === "long" ? note(t("rvLong")) : null, reason,
+        el("div", {class: "rv-buttons"}, button(t("rvBack"), () => showList()),
+          v.reviewCheck === "ok" ? button(t("rvAccept"), () => confirm(v, true, "")) : null,
+          button(t("rvReject"), () => confirm(v, false, reason.value))));
+    }
+    function confirm(v, accept, why) {
+      const status = note();
+      const go = el("button", {class: "btn primary", textContent: accept ? t("rvPublish", v.scopeName) : t("rvRejectDo")});
+      const cancel = button(t("rvCancel"), () => showDetail(v.id));
+      go.addEventListener("click", async () => {
+        go.disabled = cancel.disabled = true;  // at once: a second click sends nothing; on any error the decision buttons stay disabled (no retry)
+        try {
+          await api("POST", "/kb/submissions/" + encodeURIComponent(v.id) + (accept ? "/accept" : "/reject"), accept ? {reviewHash: v.reviewHash} : {reason: why});
+          await showList(t(accept ? "rvAccepted" : "rvRejected"));
+        } catch (e) {
+          if (!SESSION) return;
+          if (e.message.includes("changed since you read it")) { showDetail(v.id, t("rvChanged")); return; }  // a fresh read, then decide again
+          status.textContent = e.message; status.className = "note err"; cancel.disabled = false;
+        }
+      });
+      set(el("h3", {textContent: accept ? t("rvConfirmAccept", v.scopeName) : t("rvConfirmReject")}), text("rv-title", v.title), meta(v),
+        accept ? note(t("rvVersion", v.reviewHash.slice(0, 8))) : null, !accept && why ? note(t("rvReasonIs") + ": " + why) : null,
+        text("rv-text", v.body || ""), el("div", {class: "rv-buttons"}, go, cancel), status);
+    }
+    await showList();
+    return [el("h2", {textContent: t("remoteReview")}), note(t("rvNote")), box];
   },
   async devices() {
     const [d, g] = await Promise.all([api("GET", "/devices"), REMOTE ? Promise.resolve({}) : api("GET", "/general")]);
@@ -2225,7 +2298,7 @@ let current = "general", currentArg = "", gateways = [], shownClaude = "";
 const openHistory = new Set(); // naprave z odprto zgodovino (ostane ob osvežitvi vsakih 5 s)
 let openSession = "";
 // Ikone stranske vrstice (kot na Macu: barvna ploščica z znakom).
-const ICON = {usage: ["#176ac6", "▥"], general: ["#8e8e93", "⚙"], devices: ["#007aff", devicesGlyph], sessions: ["#34c759", "◷"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
+const ICON = {review: ["#34c759", "✓"], usage: ["#176ac6", "▥"], general: ["#8e8e93", "⚙"], devices: ["#007aff", devicesGlyph], sessions: ["#34c759", "◷"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
 // The panels (Users and devices, Teams and projects, Knowledge base …): descriptions from GET /panels, texts from GET /panels/strings.
 const PANELS = {entries: [], strings: {locale: "C", table: {}}, error: null, loaded: false};
 async function panelFetch(req) {
@@ -2272,6 +2345,7 @@ async function nav() {
     ...gateways.map(g => ["gateway", g.name, gwIcon(g), g.name]),
     ["devices", t("devices"), ICON.devices],
     ["remoteTeam", t("remoteTeam"), ICON.devices],
+    ["remoteReview", t("remoteReview"), ICON.review],
   ] : [
     ["general", t("general"), ICON.general],
     ...gateways.map(g => ["gateway", g.name, gwIcon(g), g.name]),
@@ -2304,7 +2378,7 @@ async function nav() {
 }
 
 async function show(page, arg) {
-  if (REMOTE && !["remoteHome", "gateway", "addGateway", "devices", "remoteTeam"].includes(page)) page = "remoteHome";
+  if (REMOTE && !["remoteHome", "gateway", "addGateway", "devices", "remoteTeam", "remoteReview"].includes(page)) page = "remoteHome";
   current = page; currentArg = arg || "";
   await nav();
   if (REMOTE && !SESSION) return;

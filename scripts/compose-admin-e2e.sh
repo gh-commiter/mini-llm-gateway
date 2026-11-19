@@ -84,6 +84,18 @@ $DC exec -T minigw minigw gw bind $BINDDEV e2euser >/dev/null 2>&1 || setup_fail
 GWTOKEN=$(docker run --rm --user 10001:10001 -v ${proj}_config:/c:ro $PY python -c "import json;print(json.load(open('/c/serve.json'))['token'])" 2>/dev/null)
 [[ -n $GWTOKEN ]] || setup_fail "gateway token"
 
+# a member on a real device submits two KB submissions: the member CLI runs inside the gateway container, the token goes in on stdin (never in an argument)
+gw() { $DC exec -T minigw minigw gw "$@" }
+member() { $DC exec -T -e HOME=/var/lib/minigw/scratch/member -e MINIGW_SECRETS=file -w /var/lib/minigw/scratch/member minigw minigw "$@" }
+$DC exec -T minigw mkdir -p /var/lib/minigw/scratch/member >/dev/null 2>&1 || setup_fail "member scratch folder"
+MTOKEN=$(gw token 2>/dev/null | grep -o 'mgw-[A-Za-z0-9_-]*#[A-Za-z0-9_-]*' | head -1)
+[[ -n $MTOKEN ]] || setup_fail "connect token"
+print -r -- $MTOKEN | $DC exec -T -e HOME=/var/lib/minigw/scratch/member -e MINIGW_SECRETS=file -w /var/lib/minigw/scratch/member minigw minigw connect 127.0.0.1:8765 --token - >/dev/null 2>&1 || setup_fail "member connect"
+MDEVICE=$(member status 2>/dev/null | sed -n 's/^Device: *\([^ ]*\).*/\1/p')
+[[ -n $MDEVICE ]] || setup_fail "member device"
+gw devices allow $MDEVICE --name e2e-member >/dev/null 2>&1 && gw bind $MDEVICE e2euser >/dev/null 2>&1 && member project link e2eproj >/dev/null 2>&1 || setup_fail "member device allow / bind / link"
+print 'Body one needle1' | member kb submit e2eproj --title 'E2E review one' - >/dev/null 2>&1 && print 'Body two' | member kb submit e2eproj --title 'E2E review two' - >/dev/null 2>&1 || setup_fail "member kb submit"
+
 # --- cases ---
 c=$(req $URL/minigw/settings)
 [[ $c == 200 ]] && grep -qi password $W/body && pass "login page loads over HTTPS" || bad "login page: $c $(cat $W/err)"
@@ -135,6 +147,33 @@ for pair in teams/${TID}:e2eother teams/${TID}/assignments:e2eother projects/${P
 done
 c=$(req $SH $URL/minigw/admin/v1/projects/$PID/members)
 grep -q '"origins"' $W/body && grep -qF -- '"directRole":"developer"' $W/body && grep -qF -- 'e2eteam (reader)' $W/body && pass "the project members say why: direct role and the team" || bad "project members origins: $(cat $W/body)"
+# KB review: list, read, accept the version read, a replay, reject; the body keys are exact; nothing else of the KB API passes
+KB=$URL/minigw/admin/v1/kb/submissions
+c=$(req $SH $KB)
+[[ $c == 200 ]] && grep -qF -- 'E2E review one' $W/body && grep -qF -- 'E2E review two' $W/body && pass "GET kb/submissions -> 200 with both titles" || bad "GET kb/submissions answered $c"
+c=$(req $KB)
+[[ $c == 401 ]] && pass "GET kb/submissions without a session -> 401" || bad "GET kb/submissions without a session answered $c"
+c=$(req $SH $KB/1)
+KH=$(sed -n 's/.*"reviewHash":"\([0-9a-f]*\)".*/\1/p' $W/body)
+[[ $c == 200 ]] && grep -qF -- 'E2E review one' $W/body && grep -qF -- 'Body one needle1' $W/body && [[ ${#KH} == 64 ]] && pass "GET kb/submissions/1 -> 200 with the text and a review hash" || bad "GET kb/submissions/1 answered $c"
+c=$(req -X POST $H -d "{\"reviewHash\":\"$KH\"}" $KB/1/accept)
+[[ $c == 401 ]] && pass "accept without a session -> 401" || bad "accept without a session answered $c"
+for body in "{\"ReviewHash\":\"$KH\"}" "{\"reviewHash\":\"$KH\",\"reviewHash\":\"$KH\"}" "{\"reviewHash\":\"$KH\",\"reason\":\"x\"}" '{"reviewHash":"abc"}' '{}'; do
+  c=$(req -X POST $H $SH -d "$body" $KB/1/accept)
+  [[ $c == 403 ]] && pass "accept with a body that is not exactly {reviewHash} -> 403" || bad "accept with a wrong body answered $c"
+done
+c=$(req -X POST $H $SH -d "{\"reviewHash\":\"$KH\"}" $KB/1/accept)
+[[ $c == 200 ]] && grep -qF -- '"state":"accepted"' $W/body && pass "accept of the version read -> 200 accepted" || bad "accept answered $c $(cat $W/body)"
+c=$(req -X POST $H $SH -d "{\"reviewHash\":\"$KH\"}" $KB/1/accept)
+[[ $c == 200 ]] && pass "the same accept again -> 200" || bad "repeated accept answered $c"
+c=$(req -X POST $H $SH -d '{"reason":"e2e reject"}' $KB/2/reject)
+[[ $c == 200 ]] && grep -qF -- '"state":"rejected"' $W/body && pass "reject with a reason -> 200 rejected" || bad "reject answered $c"
+c=$(req $SH $KB); [[ $c == 200 ]] && ! grep -qF -- 'E2E review' $W/body && pass "no submission is pending afterwards" || bad "list after decisions answered $c"
+for pm in "POST $KB/1/versions/x" "POST $URL/minigw/admin/v1/kb/notes" "GET $URL/minigw/admin/v1/kb/notes" "POST $URL/minigw/admin/v1/kb/search/rebuild" "PUT $KB" "DELETE $KB" "PUT $KB/1" "DELETE $KB/1" "PATCH $KB/1/accept" "PUT $KB/1/reject" "DELETE $KB/1/accept" "POST $KB" "POST $KB/1" "GET $KB/1/accept" "GET $KB/1x" "GET $KB/1/versions/$KH" "POST $KB/1/accept/2" "POST ${KB}/1a/accept"; do
+  c=$(req -X ${pm%% *} $H $SH -d '{}' ${pm#* })
+  [[ $c == 404 ]] && pass "${pm% *} ${pm#*/minigw/admin/v1/} -> 404 at the proxy" || bad "$pm answered $c"
+done
+c=$(req -I $SH $KB); [[ $c == 404 ]] && pass "HEAD kb/submissions -> 404 at the proxy" || bad "HEAD kb/submissions answered $c"
 for p in projects/$PID/grants grants projects/$PID/depends teams/$TID/members teams/$TID/projects teams/abc projects/${PID}a/members teams/+$TID teams/1234567890123456789 projects/1234567890123456789/members projects/$PID/members/$TID projects/$PID/members/ teams/$TID/assignments/1 projects/$PID projects/members; do
   c=$(req $SH $URL/minigw/admin/v1/$p)
   [[ $c == 404 ]] && pass "GET $p -> 404 at the proxy" || bad "GET $p answered $c"
@@ -200,10 +239,10 @@ sh admin-certs.sh link $W/norenew >/dev/null 2>&1; mv $W/norenew/ca/link-ca.key 
 sh admin-certs.sh renew $W/norenew >/dev/null 2>&1 && bad "renew without the CA key succeeded" || pass "renew refuses when the CA key is absent"
 # no password or session value anywhere in the proxy log after the whole run
 plog=$($DC logs admin-proxy 2>&1)
-leak=0; for v in $S $PW $GWTOKEN "wrong password here" "wrong password again"; do [[ $plog == *"$v"* ]] && leak=1; done
+leak=0; for v in $S $PW $GWTOKEN "Body one needle1" "wrong password here" "wrong password again"; do [[ $plog == *"$v"* ]] && leak=1; done
 (( leak )) && bad "a password, session or token value is in the proxy log" || pass "no password, session or gateway token value in the proxy log after the run"
 glog=$($DC logs minigw 2>&1)
-leak=0; for v in $S $PW $GWTOKEN "wrong password here" "wrong password again"; do [[ $glog == *"$v"* ]] && leak=1; done
+leak=0; for v in $S $PW $GWTOKEN "Body one needle1" "wrong password here" "wrong password again"; do [[ $glog == *"$v"* ]] && leak=1; done
 (( leak )) && bad "a password, session or token value is in the gateway log" || pass "no password, session or gateway token value in the gateway log after the run"
 # client IP outside allowedSourceCIDRs
 setcfg '["203.0.113.0/24"]' || setup_fail "second config / restart"

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### New
+- The remote settings page has a "Review" page: it lists the pending knowledge-base submissions of all projects and teams, shows one as the owner's review read gives it, and accepts or rejects exactly the version read (a confirmation view first; hidden characters cannot be accepted). The listener and the proxy allow four more routes (`GET kb/submissions`, `GET kb/submissions/{id}`, `POST kb/submissions/{id}/accept|reject`), the body keys are checked exactly, at most 30 decisions are taken in 10 minutes, and the remote audit log names the submission. After updating, copy the release's `deploy/docker/Caddyfile` into your deployment folder and run `docker compose restart admin-proxy`.
+
 ## 0.8.4
 
 A beta toward a team gateway in Docker Compose: the owner sees from a browser who has access to what.

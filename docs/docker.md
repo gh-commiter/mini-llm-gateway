@@ -272,7 +272,7 @@ gateway container (the admin file is what adds the certificate mount and the `ad
 recreates the gateway container once, the volumes stay).
 
 The page manages providers and devices and shows users, device-user bindings, teams and projects read-only (menu item
-"Team (read-only)"). Change those with `docker compose exec minigw minigw gw …`; the proxy and the listener allow only
+"Team (read-only)"). Change those with `docker compose exec minigw minigw gw …` (the one exception: the "Review" page accepts or rejects pending knowledge-base submissions, the exact version you read; notes, the FAQ and paging beyond the first 100 submissions stay with `minigw gw kb review`); the proxy and the listener allow only
 the four `GET` lists plus three `GET` views with one numeric id (who is in a team, what a team assigns, who has access to
 a project and why), nothing deeper (no grants, dependencies or member changes). Rows of teams and projects open on a
 click or Enter. After an update copy the release's
