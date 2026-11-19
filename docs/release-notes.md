@@ -2,7 +2,22 @@
 
 ## Unreleased
 
-- `serve install` no longer says "already up to date" when it runs from the same version as the installed gateway: it says it installs the version of the minigw that runs it and how to get a newer release (update the plugin, or the new MSI) (#158).
+## 0.8.2
+
+A beta toward a team gateway in Docker Compose. The gateway and client programs change in one message only; the rest is a rehearsal script and documentation.
+
+### New
+- `scripts/compose-recovery-e2e.sh` rehearses the three dangerous moments of a Compose deployment, and runs before every release: an update from the oldest release with container mode (0.7.6, database schema 12) to this version with a populated database (users, a team, a project with members, notes, a submission waiting for review, a provider): the database is upgraded and the same data is listed and found by search; going back to the old version with the backup made before the update; a restore into a separate project from the backup folder alone. An old version that meets a database upgraded by a newer one refuses it and leaves the file unchanged.
+- `docs/docker.md`, "Updating and going back": the exact commands, the message an old version prints for a newer database, and what the snapshot inside the volume is for (it is not a backup).
+
+### Fixed
+- `minigw serve install` no longer answers "already up to date" when the installed gateway has the same version as the `minigw` that runs it. It says that it installs the version of the `minigw` that runs it, and how to get a newer release: update the Claude Code plugin and run `/minigw:gw update` again, or install the newer MSI. The plugin's `gw` skill and `docs/install.md` describe the same step. (Found in the first real update to 0.8.0 on Windows: with an old plugin the session start pointed to an update that then did nothing.)
+
+### Known problems
+- A plugin older than 0.8.2 still shows the old hint and its skill lacks the step above: update the plugin first (`claude plugin marketplace update mini-gateway`, `claude plugin update minigw@mini-gateway`). The plugin's `release` branch moves only with a stable release.
+- The rehearsal runs with Docker Desktop on a Mac. A Linux server, SELinux, rootless Docker, a remote Docker context and Podman were not tried.
+- `minigw gw status` does not show the database schema number; after an update, check `projects: on` and your data as the documentation says.
+- The known problems of 0.8.1 and 0.8.0 still apply.
 
 ## 0.8.1
 
