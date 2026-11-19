@@ -187,6 +187,13 @@ winrun wdl > /dev/null   # prava sodba: vsote so, hash cilja (MSI exe) ni v njih
 # S12: ista sveža mapa, brez omrežja, nameščen MSI minigw BREZ zagonske datoteke: ne trdi »is not the current release«, pove brez sodbe in ohrani sporočilo o omrežju
 clear10; out=$(winrun); print -r -- $out
 [[ $out == *"cannot be verified yet (no network and nothing verified before)"* && $out != *"is not the current release"* && $out == *"gateway skills are unavailable until the network is back"* ]] || fail "10 S12: wrong sentence for an unverifiable installed client without any sums: $out"
+# S14: brez omrežja, SHRANJENE vsote starejše izdaje (lastna kopija 0.5.20), nameščeni MSI minigw, ki ga vsote ne vsebujejo: brez svežega pogleda ne vemo, kaj je
+# zadnja izdaja: stavek »is not the current release … update it« se NE izpiše; velja lastna overjena kopija (»connected«)
+clear10; winrun wold > /dev/null; out=$(winrun); print -r -- $out
+[[ $out != *"is not the current release"* && $out == *"connected to Mini Gateway"* ]] || fail "10 S14: advice about the current release without a fresh signed view: $out"
+# in ko ni uporabnega odjemalca: vrstica brez sodbe, ne tega stavka
+rm -f $GB/minigw.exe; out=$(winrun); print -r -- $out
+[[ $out != *"is not the current release"* && $out == *"cannot be verified yet (no network and nothing verified before)"* ]] || fail "10 S14b: no-verdict line expected when no client is usable: $out"
 # S13: exe zaseden pri kopiranju nameščenega (mv ne uspe): ENA vrstica, brez surove napake orodja, lastna kopija ostane (overja jo .prev)
 clear10; winrun wdl > /dev/null; cp $GB/SHA256SUMS $GB/SHA256SUMS.prev; cp $GB/SHA256SUMS.sig $GB/SHA256SUMS.prev.sig
 cp "$exe" $T/win/exe.keep13; print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0 # newer installed" > "$exe"; wtrust "$exe" $MINV

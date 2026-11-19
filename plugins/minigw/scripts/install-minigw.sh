@@ -249,7 +249,12 @@ fi
 if [ -n "$nosums" ] && [ -n "$usedlauncher" ] && [ -x "$inst" ]; then novedict; exportpath; tidy; exit 0; fi  # cilj, ki ga ni, je prava sodba
 isums=""; instx=""; [ -n "$inst" ] && [ -x "$inst" ] && instx=1
 instok=""; [ -n "$instx" ] && trusted "$inst" && { instok=1; isums=$tsums; iv=$(exever "$inst"); }  # neoverjen: odsoten, ne zažene se
+# Stavek »is not the current release … update it« potrebuje sodbo iz vsot, PRENESENIH IN PREVERJENIH V TEM ZAGONU (sums): brez svežega pogleda ne vemo,
+# katera izdaja je zadnja (shranjene vsote starejše izdaje ne vsebujejo hasha novejšega nameščenega odjemalca). Brez njih o tem ne rečemo nič
+# (velja lastna overjena kopija) ali, če ni uporabnega odjemalca, ena vrstica brez sodbe (pending → spodaj ob neuspehu).
+pending=""
 if [ -n "$instx" ] && [ -z "$instok" ] && [ -n "$nosums" ]; then novedict
+elif [ -n "$instx" ] && [ -z "$instok" ] && [ -z "$sums" ]; then pending=1
 elif [ -n "$instx" ] && [ -z "$instok" ]; then  # ne zaženemo ga, a posodobitev ponudimo (prej je to povedala vrstica »X is installed«)
   u=$(how)
   [ "$os" = linux ] && [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/minigw-serve.service" ] && u="/minigw:gw update"
@@ -369,6 +374,7 @@ else
           if [ -n "$unsigned" ]; then why="$unsigned; gateway skills are unavailable until the release can be verified"
           elif [ -n "$sums" ]; then why="the download failed or did not match the signed checksum; gateway skills are unavailable until it works"
           else why="github.com/$REPO could not be reached; gateway skills are unavailable until the network is back"; fi
+          [ -n "$pending" ] && novedict
           echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why."
         else
           echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."

@@ -930,7 +930,12 @@ func TestInstallScriptUnverifiedCandidatesAreNeverRun(t *testing.T) {
 		if _, err := os.Lstat(r.exe); err == nil {
 			t.Errorf("%s: a substituted installed client was linked:\n%s", goos, r.out)
 		}
-		r.mustSay(t, "cannot verify the installed minigw and cannot download a verified one", "the minigw installed at ", "is not the current release")
+		// Offline with only STORED sums nothing says what the current release is, so there is no "update it" advice: the guarantee under
+		// test (the substituted client is never run or linked) is checked above; here the start says nothing about the release.
+		r.mustSay(t, "cannot verify the installed minigw and cannot download a verified one", "cannot be verified yet (no network and nothing verified before)")
+		if strings.Contains(r.out, "is not the current release") {
+			t.Errorf("%s: advice about the current release without a fresh signed view:\n%s", goos, r.out)
+		}
 
 		r = runInstallScript(t, installRun{goos: goos, installed: "-", latest: "0.7.99", cache: true, ownCopy: "minigw 0.7.99"})
 		if r.ran() {
