@@ -2,9 +2,19 @@
 
 ## Unreleased
 
+## 0.8.4
+
+A beta toward a team gateway in Docker Compose: the owner sees from a browser who has access to what.
+
 ### New
 - The remote "Team (read-only)" page opens a team (its members and what it assigns) and a project (who has access and why: directly or through which team) on a click or Enter. The listener and the proxy allow three more `GET` routes, each with exactly one numeric id (`/teams/{id}`, `/teams/{id}/assignments`, `/projects/{id}/members`). After updating, copy the release's `deploy/docker/Caddyfile` into your deployment folder and run `docker compose restart admin-proxy`; until then the page shows the hint instead of the detail.
 - Narrow screens (settings page, local and remote): below 700 px the navigation sits above the content, so the content gets the full width; on the remote Team page a value drops under its label when the row is narrow.
+
+### Known problems
+- The local settings page shares the new layout for narrow screens. It was checked through the pages it shares with the remote one (General, Devices, providers), not opened itself at a narrow width.
+- A project that no longer exists is shown like a project without members ("none"); a team that no longer exists says "Not found".
+- The page was tried in one browser engine (Chromium). It uses the CSS selector `:has()`: a browser older than about three years lacks it, and a very long name without spaces can then make the page scroll sideways at medium widths.
+- The known problems of 0.8.3, 0.8.2, 0.8.1 and 0.8.0 still apply.
 
 ## 0.8.3
 
