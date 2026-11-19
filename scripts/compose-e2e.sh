@@ -15,11 +15,20 @@ D=${SCRATCH_DIR:-"/Volumes/SAMSUNG990PRO/Mini Gateway Scratch/dev-builds/docker2
 PORT=${PORT:-18767}; FPORT=${FPORT:-18769}
 REL=https://github.com/gh-commiter/mini-llm-gateway/releases/download/v$V
 FIX=minigw-docker2-fixture
-STUB=litellm
+STUB=minigw-docker2-stub-$$
 SKIPPED=()
+BACKUP_PROJECTS=()
+BACKUP_DIRS=()
 fail() { print -u2 "FAIL $*"; exit 1 }
 ok() { print "ok   $*" }
-cleanup() { docker stop $FIX $STUB >/dev/null 2>&1; (cd $ROOT/deploy/docker; for p in arm64 amd64 arm64-rel amd64-rel; do COMPOSE_PROJECT_NAME=minigw-docker2-$p MINIGW_VERSION=$V docker compose stop >/dev/null 2>&1; done) }
+cleanup() {
+  docker stop $FIX $STUB >/dev/null 2>&1
+  for p in $BACKUP_PROJECTS; do
+    COMPOSE_PROJECT_NAME=$p MINIGW_VERSION=local docker compose -f $ROOT/deploy/docker/compose.yaml down -v >/dev/null 2>&1
+  done
+  for dir in $BACKUP_DIRS; do rm -rf -- "$dir"; done # only directories made by mktemp below
+  (cd $ROOT/deploy/docker; for p in arm64 amd64 arm64-rel amd64-rel; do COMPOSE_PROJECT_NAME=minigw-docker2-$p MINIGW_VERSION=$V docker compose stop >/dev/null 2>&1; done)
+}
 trap cleanup EXIT
 mkdir -p $D/bin $D/fix
 
@@ -31,6 +40,92 @@ healthy() { # project: wait until the container is healthy
     sleep 5
   done
   return 1
+}
+
+backup_contract() {
+  mkdir -p "$ROOT/.omc/state" || fail 'backup workspace'
+  local work=$(mktemp -d "$ROOT/.omc/state/compose-backup.XXXXXX")
+  [[ -d $work ]] || fail 'mktemp backup workspace'
+  BACKUP_DIRS+=($work)
+  local prefix=minigw-backup-e2e-$(date +%s)-$RANDOM name target before after out archive identity
+  BACKUP_PROJECTS+=($prefix-default $prefix-override $prefix-restored-default $prefix-restored-override)
+  # Exercise the unset-variable default without touching an operator's minigw project.
+  # The production default itself is checked separately; only its literal is namespaced here.
+  (unset COMPOSE_PROJECT_NAME; MINIGW_VERSION=local docker compose -f $ROOT/deploy/docker/compose.yaml config --format json) |
+    python3 -c 'import json,sys; c=json.load(sys.stdin); assert c["name"]=="minigw"; assert c["volumes"]["config"]["name"]=="minigw_config"' || fail 'production default project'
+  cp $ROOT/deploy/docker/backup.sh $work/
+  python3 -c 'import pathlib,sys; s=pathlib.Path(sys.argv[1]).read_text(); old="${COMPOSE_PROJECT_NAME:-minigw}"; assert s.count(old)==1; pathlib.Path(sys.argv[2]).write_text(s.replace(old,"${COMPOSE_PROJECT_NAME:-"+sys.argv[3]+"}"))' \
+    $ROOT/deploy/docker/compose.yaml $work/compose.yaml $prefix-default || fail 'isolated default fixture'
+  (
+    cd $work || exit 1
+    export MINIGW_VERSION=local MINIGW_BIND=127.0.0.1 MINIGW_PORT=$PORT
+    unset COMPOSE_FILE
+    safe_project() {
+      docker compose config --format json | python3 -c 'import json,sys; c=json.load(sys.stdin); p=sys.argv[1]; assert c["name"]==p; assert all(c["volumes"][k]["name"]==p+"_"+k for k in ("config","scratch"))' "$1"
+    }
+    identity_hash() {
+      docker compose exec -T minigw cat /var/lib/minigw/config/serve.json |
+        python3 -c 'import json,sys,hashlib; c=json.load(sys.stdin); print(hashlib.sha256(json.dumps([c["key"],c["instance"]]).encode()).hexdigest())'
+    }
+    mkdir "$work/helper-failure"
+    export BACKUP_REAL_DOCKER=$(command -v docker)
+    print -rl -- '#!/bin/sh' 'case "$*" in *"tar -C /v -cf - ."*) exit 71;; esac' 'exec "$BACKUP_REAL_DOCKER" "$@"' > "$work/helper-failure/docker"
+    chmod 700 "$work/helper-failure/docker"
+    refuse() {
+      local message=$1; shift
+      before=$(docker volume ls -q | sort)
+      out=$(sh ./backup.sh "$@" 2>&1); local rc=$?
+      after=$(docker volume ls -q | sort)
+      [[ $rc != 0 && $out == *$message* && $before == $after ]] || fail "backup refusal: $message"
+    }
+    for name in default override; do
+      if [[ $name == default ]]; then unset COMPOSE_PROJECT_NAME; else export COMPOSE_PROJECT_NAME=$prefix-override; fi
+      target=$prefix-$name
+      safe_project $target || fail 'unsafe fixture project or volumes'
+      refuse 'volume does not exist' ./missing
+      docker compose up -d --no-build || fail 'backup fixture up'
+      healthy $target || fail 'backup fixture health'
+      docker compose exec -T minigw minigw gw user add backup-user >/dev/null || fail 'backup user'
+      docker compose exec -T minigw minigw gw project add backup-project 'Backup project' >/dev/null || fail 'backup project'
+      identity=$(identity_hash) || fail 'source identity'
+      refuse 'service is running' ./running
+      docker compose stop >/dev/null || fail 'stop for note fixture'
+      docker run --rm --label com.docker.compose.project=$target --network none --user 10001:10001 --mount type=volume,src=${target}_config,dst=/c python:3-alpine python -c "
+import sqlite3
+c=sqlite3.connect('/c/core/core.db')
+c.execute(\"INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated) SELECT p.id,'data','Backup note','Restored body',13,u.id,1,1 FROM projects p,users u WHERE p.slug='backup-project' AND u.name='backup-user'\")
+c.execute(\"INSERT INTO note_revisions(note_id,revision,provenance) SELECT id,revision,json_object('actorKind','member','user',author_id,'project',project_id,'sourceKind','pushed note') FROM notes WHERE title='Backup note'\")
+c.commit()" || fail 'note fixture'
+      docker compose start >/dev/null || fail 'start note fixture'
+      healthy $target || fail 'note fixture health'
+      PATH=$work/helper-failure:$PATH refuse 'archive failed' --stop ./failed
+      healthy $target || fail 'archive failure did not restart service'
+      sh ./backup.sh --stop ./good-$name || fail 'backup --stop'
+      healthy $target || fail 'backup did not restart service'
+      archive=($work/good-$name/minigw-backup-*(N)); archive=$archive[1]
+      python3 -c 'import pathlib,stat,sys; p=pathlib.Path(sys.argv[1]); assert stat.S_IMODE(p.stat().st_mode)==0o700; assert all(stat.S_IMODE((p/n).stat().st_mode)==0o600 for n in ("config.tar","scratch.tar","SHA256SUMS","manifest.txt"))' $archive || fail 'backup permissions'
+      docker compose stop >/dev/null || fail 'stop backup source'
+      refuse 'target volume is not empty' --restore $archive
+      export COMPOSE_PROJECT_NAME=$prefix-restored-$name
+      safe_project $COMPOSE_PROJECT_NAME || fail 'unsafe restore project or volumes'
+      cp $archive/config.tar $work/config.saved
+      printf x >> $archive/config.tar
+      refuse 'checksum verification failed' --restore $archive
+      mv $work/config.saved $archive/config.tar
+      sh ./backup.sh --restore $archive || fail 'restore separate project'
+      docker compose up -d --no-build || fail 'restored up'
+      healthy $COMPOSE_PROJECT_NAME || fail 'restored health'
+      [[ $(identity_hash) == $identity ]] || fail 'restored identity'
+      docker compose exec -T minigw minigw gw user list | grep -q backup-user || fail 'restored users'
+      docker compose exec -T minigw minigw gw project list | grep -q backup-project || fail 'restored project'
+      docker compose exec -T minigw minigw gw api GET /kb/notes/1 |
+        python3 -c 'import json,sys; n=json.load(sys.stdin); assert n["title"]=="Backup note" and n["body"]=="Restored body"' || fail 'restored note through gateway'
+      docker compose down -v >/dev/null || fail 'restored cleanup'
+      export COMPOSE_PROJECT_NAME=$target
+      docker compose down -v >/dev/null || fail 'source cleanup'
+    done
+  ) || fail 'backup contract'
+  ok 'backup default/override, isolated restore and refusals'
 }
 
 run_platform() { # arm64|amd64
@@ -50,7 +145,7 @@ run_platform() { # arm64|amd64
   docker compose $local exec -T minigw minigw serve healthcheck || fail "$arch: serve healthcheck"; ok "$plat: serve healthcheck"
   # a provider by Compose service name: the stub is a container named litellm on the project network
   docker stop $STUB >/dev/null 2>&1
-  docker run --rm -d --name $STUB --network ${proj}_default python:3-alpine python -c "
+  docker run --rm -d --name $STUB --network ${proj}_default --network-alias litellm python:3-alpine python -c "
 import http.server,json
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(s):
@@ -116,6 +211,7 @@ fixtures() {
 }
 
 for a in arm64 amd64; do run_platform $a; done
+backup_contract
 fixtures
 # control: the untampered files through the fixture server build fine, so the failures below come from the tampering
 out=$(docker build --progress=plain --target fetch-release --build-arg VERSION=$V --build-arg RELEASE_BASE=http://host.docker.internal:$FPORT/real \
