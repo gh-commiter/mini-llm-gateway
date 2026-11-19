@@ -41,7 +41,7 @@ if [ -n "$container" ]; then
     candidate=$(docker inspect --format '{{.Image}}' "$container")
     if docker run --rm --label "com.docker.compose.project=$project" --network none --entrypoint sh "$candidate" -c 'command -v tar && command -v sha256sum' >/dev/null 2>&1; then image=$candidate; fi
 fi
-helper() { docker run --rm --label "com.docker.compose.project=$project" --network none --user 0:0 --entrypoint sh "$@"; }
+helper() { docker run --rm --label "com.docker.compose.project=$project" --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --security-opt no-new-privileges --entrypoint sh "$@"; }
 # A helper that cannot start (Docker exit 125/126/127; Docker's own message is on stderr) is not a verdict on the data.
 hfail() { case $1 in 125|126|127) fail "cannot run the helper container (exit $1; Docker's message is above): image $image";; esac; fail "$2"; }
 probe() { perr=$(helper "$image" -c true 2>&1) || fail "cannot run the helper container: $perr (image $image: the gateway's own image or debian:trixie-slim; it must be present or pullable)"; }

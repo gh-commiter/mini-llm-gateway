@@ -15,6 +15,8 @@ D=${SCRATCH_DIR:-"/Volumes/SAMSUNG990PRO/Mini Gateway Scratch/dev-builds/docker2
 PORT=${PORT:-18767}; FPORT=${FPORT:-18769}
 REL=https://github.com/gh-commiter/mini-llm-gateway/releases/download/v$V
 FIX=minigw-docker2-fixture
+PY=python:3-alpine@sha256:0f9552bb28711333da16915ec146f5e6bb44a7fdac9ced15dc17c2e0206346dd   # multi-arch index digest (arm64 and amd64), same as compose-admin-e2e.sh
+DEB=debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2   # the Dockerfile's base
 STUB=minigw-docker2-stub-$$
 SKIPPED=()
 BACKUP_PROJECTS=()
@@ -63,7 +65,7 @@ backup_contract() {
     cd $work || exit 1
     export MINIGW_VERSION=local MINIGW_BIND=127.0.0.1 MINIGW_PORT=$PORT
     # two services (the gateway and a sidecar) so that --stop can be checked to start only what ran before
-    print -rl -- 'services:' '  sidecar:' '    image: python:3-alpine' '    command: ["sleep","3600"]' '    init: true' > $work/compose.extra.yaml
+    print -rl -- 'services:' '  sidecar:' "    image: $PY" '    command: ["sleep","3600"]' '    init: true' > $work/compose.extra.yaml
     export COMPOSE_FILE=compose.yaml:compose.extra.yaml
     ! grep -q 'type=bind' backup.sh || fail 'backup.sh bind-mounts a host folder'
     safe_project() {
@@ -74,7 +76,7 @@ backup_contract() {
         python3 -c 'import json,sys,hashlib; c=json.load(sys.stdin); print(hashlib.sha256(json.dumps([c["key"],c["instance"]]).encode()).hexdigest())'
     }
     modes() { # volume: mode, uid:gid and name of every entry, sorted (stat does not follow links)
-      docker run --rm --network none --mount type=volume,src=$1,dst=/v,readonly python:3-alpine sh -c 'cd /v && find . -exec stat -c "%a %u:%g %n" {} + | sort'
+      docker run --rm --network none --mount type=volume,src=$1,dst=/v,readonly $PY sh -c 'cd /v && find . -exec stat -c "%a %u:%g %n" {} + | sort'
     }
     running_services() { docker compose ps --status running --services | sort | tr '\n' ' ' }
     mkdir "$work/helper-failure" "$work/find-failure" "$work/stream-failure"
@@ -105,9 +107,9 @@ backup_contract() {
       refuse 'service is running' ./running
       docker compose stop >/dev/null || fail 'stop for note fixture'
       # distinct scratch content (a file and a relative link, as scratch copies of work trees have) and a note in the core database
-      docker run --rm --label com.docker.compose.project=$target --network none --user 10001:10001 --mount type=volume,src=${target}_scratch,dst=/s python:3-alpine \
+      docker run --rm --label com.docker.compose.project=$target --network none --user 10001:10001 --mount type=volume,src=${target}_scratch,dst=/s $PY \
         sh -c "mkdir -p /s/work/deep && printf 'scratch-$name-bytes' > /s/work/deep/marker.txt && ln -s deep/marker.txt /s/work/rel-link && ln /s/work/deep/marker.txt /s/work/hard-link" || fail 'scratch fixture'
-      docker run --rm --label com.docker.compose.project=$target --network none --user 10001:10001 --mount type=volume,src=${target}_config,dst=/c python:3-alpine python -c "
+      docker run --rm --label com.docker.compose.project=$target --network none --user 10001:10001 --mount type=volume,src=${target}_config,dst=/c $PY python -c "
 import sqlite3
 c=sqlite3.connect('/c/core/core.db')
 c.execute(\"INSERT INTO notes(project_id,class,title,body,bytes,author_id,created,updated) SELECT p.id,'data','Backup note','Restored body',13,u.id,1,1 FROM projects p,users u WHERE p.slug='backup-project' AND u.name='backup-user'\")
@@ -116,7 +118,7 @@ c.commit()" || fail 'note fixture'
       docker compose start >/dev/null || fail 'start note fixture'
       healthy $target || fail 'note fixture health'
       # another writer (not of this project) mounts the volume: refused, named, and the services come back
-      docker run -d --name $prefix-writer --mount type=volume,src=${target}_scratch,dst=/s python:3-alpine sleep 600 >/dev/null || fail 'foreign writer'
+      docker run -d --name $prefix-writer --mount type=volume,src=${target}_scratch,dst=/s $PY sleep 600 >/dev/null || fail 'foreign writer'
       refuse "container $prefix-writer is running and mounts volume" --stop ./writer
       docker rm -f $prefix-writer >/dev/null || fail 'remove foreign writer'
       healthy $target || fail 'foreign writer refusal did not restart service'
@@ -143,7 +145,7 @@ c.commit()" || fail 'note fixture'
       modes ${target}_config > $work/modes-config-$name || fail 'modes of source config'
       modes ${target}_scratch > $work/modes-scratch-$name || fail 'modes of source scratch'
       # restore into the source itself: another writer, a failing listing and a non-empty target are each refused
-      docker run -d --name $prefix-writer --mount type=volume,src=${target}_config,dst=/c python:3-alpine sleep 600 >/dev/null || fail 'foreign writer for restore'
+      docker run -d --name $prefix-writer --mount type=volume,src=${target}_config,dst=/c $PY sleep 600 >/dev/null || fail 'foreign writer for restore'
       refuse "container $prefix-writer is running and mounts volume" --restore $archive
       docker rm -f $prefix-writer >/dev/null || fail 'remove foreign writer'
       PATH=$work/find-failure:$PATH refuse 'cannot inspect volume' --restore $archive
@@ -174,7 +176,7 @@ c.commit()" || fail 'note fixture'
       cmp -s $work/modes-scratch-$name $work/restored-scratch-$name || { diff $work/modes-scratch-$name $work/restored-scratch-$name >&2; fail 'scratch modes changed by the restore'; }
       grep -q '^600 ' $work/restored-config-$name && grep -q '^700 ' $work/restored-config-$name || fail 'no 600/700 entries in the restored config volume'
       [[ -z $(grep -hv ' 10001:10001 ' $work/restored-config-$name $work/restored-scratch-$name) ]] || fail 'restored entries not owned by 10001:10001'
-      [[ $(docker run --rm --network none --mount type=volume,src=${COMPOSE_PROJECT_NAME}_scratch,dst=/s,readonly python:3-alpine sh -c 'cat /s/work/deep/marker.txt; echo; readlink /s/work/rel-link; cat /s/work/hard-link') == "scratch-$name-bytes"$'\n'deep/marker.txt$'\n'"scratch-$name-bytes" ]] || fail 'restored scratch content'
+      [[ $(docker run --rm --network none --mount type=volume,src=${COMPOSE_PROJECT_NAME}_scratch,dst=/s,readonly $PY sh -c 'cat /s/work/deep/marker.txt; echo; readlink /s/work/rel-link; cat /s/work/hard-link') == "scratch-$name-bytes"$'\n'deep/marker.txt$'\n'"scratch-$name-bytes" ]] || fail 'restored scratch content'
       docker compose up -d --no-build || fail 'restored up'
       healthy $COMPOSE_PROJECT_NAME || fail 'restored health'
       [[ $(identity_hash) == $identity ]] || fail 'restored identity'
@@ -192,7 +194,7 @@ c.commit()" || fail 'note fixture'
 
 run_platform() { # arm64|amd64
   local arch=$1 plat=linux/$1 proj=minigw-docker2-$1 out
-  if ! docker run --rm --platform $plat debian:trixie-slim true >/dev/null 2>&1; then
+  if ! docker run --rm --platform $plat $DEB true >/dev/null 2>&1; then
     print "SKIP $plat: Docker cannot run it on this machine (no emulation); NOT TESTED"; SKIPPED+=($plat); return
   fi
   export DOCKER_DEFAULT_PLATFORM=$plat COMPOSE_PROJECT_NAME=$proj MINIGW_PORT=$PORT MINIGW_BIND=127.0.0.1 MINIGW_LOCAL_DIR=$D/bin
@@ -207,7 +209,7 @@ run_platform() { # arm64|amd64
   docker compose $local exec -T minigw minigw serve healthcheck || fail "$arch: serve healthcheck"; ok "$plat: serve healthcheck"
   # a provider by Compose service name: the stub is a container named litellm on the project network
   docker stop $STUB >/dev/null 2>&1
-  docker run --rm -d --name $STUB --network ${proj}_default --network-alias litellm python:3-alpine python -c "
+  docker run --rm -d --name $STUB --network ${proj}_default --network-alias litellm $PY python -c "
 import http.server,json
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(s):
@@ -267,7 +269,7 @@ fixtures() {
   cmp -s $r/SHA256SUMS $D/fix/badsums/v$V/SHA256SUMS && fail "fixture badsums is not tampered"
   cmp -s $r/SHA256SUMS.sig $D/fix/badsig/v$V/SHA256SUMS.sig && fail "fixture badsig is not tampered"
   docker stop $FIX >/dev/null 2>&1
-  docker run --rm -d --name $FIX -p 127.0.0.1:$FPORT:8000 -v $D/fix:/srv:ro python:3-alpine python -m http.server 8000 -d /srv >/dev/null || fail "fixture server"
+  docker run --rm -d --name $FIX -p 127.0.0.1:$FPORT:8000 -v $D/fix:/srv:ro $PY python -m http.server 8000 -d /srv >/dev/null || fail "fixture server"
   sleep 2
   curl -fsS -o /dev/null http://127.0.0.1:$FPORT/real/v$V/SHA256SUMS || fail "fixture server not answering"
 }
