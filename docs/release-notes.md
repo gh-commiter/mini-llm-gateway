@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `serve install` no longer says "already up to date" when it runs from the same version as the installed gateway: it says it installs the version of the minigw that runs it and how to get a newer release (update the plugin, or the new MSI) (#158).
+
 ## 0.8.1
 
 A beta after stable 0.8.0. It fixes two defects of 0.8.0 found in the first real updates and deployments, and starts the work on a team gateway in Docker Compose. The gateway and client programs are unchanged except for the version; the changes are in the plugin's scripts, the Compose files and the documentation.

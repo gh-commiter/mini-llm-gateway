@@ -376,7 +376,8 @@ func updateMSI(dir string) (string, error) {
 	gateway := msiPart("Gateway")
 	// Različica v mapi MSI proti tej (MSI izdaje ima različico tega minigw): enaka → nič, novejša → ne nazaj.
 	if v := installedVersion(filepath.Join(dir, "minigw.exe")); v == version && gateway {
-		return "Mini Gateway " + version + " in " + dir + " is already up to date", nil
+		return "Mini Gateway " + version + " in " + dir + " is the same version as this minigw (" + version + "). serve install installs the version of the minigw that runs it, it does not look for newer releases.\n" +
+			"For a newer release: update the Claude Code plugin and run /minigw:gw update again, or install the newer MSI from https://github.com/gh-commiter/mini-llm-gateway/releases", nil
 	} else if v != "" && versionLess(version, v) {
 		msg := "Mini Gateway " + v + " in " + dir + " is newer than this minigw (" + version + "); not changed"
 		if !gateway {
