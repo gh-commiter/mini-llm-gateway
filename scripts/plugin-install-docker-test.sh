@@ -151,7 +151,7 @@ rm $T/win/roaming/minigw/serve.json; out=$(winrun newer)
 [[ ! -e $T/win/viol ]] || fail "10: a write/mv/rm on bin/minigw while minigw.exe exists: $(cat $T/win/viol)"
 # 10g (varnostni pregled L3): minigw.exe.keep, ki ga je pustil ubit zagon, se vrne PRVO in brezpogojno (shim je že pravi, aside se ne kliče)
 print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
-GB=$T/win/data/bin; winrun > /dev/null; rm -f $GB/minigw.exe.keep.old; rmdir $GB/.aside.lock 2>/dev/null || true
+GB=$T/win/data/bin; winrun > /dev/null; rm -f $GB/minigw.exe.keep.old.*(N); rmdir $GB/.aside.lock 2>/dev/null || true
 print kept-A > $GB/minigw.exe.keep; rm -f $GB/minigw.exe; winrun > /dev/null   # keep, brez exe, brez ključavnice
 [[ "$(<$GB/minigw.exe)" == kept-A && ! -e $GB/minigw.exe.keep && ! -e $GB/.aside.lock ]] || fail "10g A: the stranded .keep was not put back"
 rm -f $GB/minigw.exe; print kept-B > $GB/minigw.exe.keep; mkdir $GB/.aside.lock; winrun > /dev/null   # keep, brez exe, sveža ključavnica
@@ -161,8 +161,36 @@ rmdir $GB/.aside.lock; winrun > /dev/null
 print same-C > $GB/minigw.exe; cp $GB/minigw.exe $GB/minigw.exe.keep; winrun > /dev/null   # oba, enaka
 [[ "$(<$GB/minigw.exe)" == same-C && ! -e $GB/minigw.exe.keep && ! -e $GB/minigw.exe.keep.old ]] || fail "10g C: an identical .keep was not removed"
 print new-D > $GB/minigw.exe; print stray-D > $GB/minigw.exe.keep; winrun > /dev/null   # oba, različna
-[[ "$(<$GB/minigw.exe)" == new-D && ! -e $GB/minigw.exe.keep && "$(<$GB/minigw.exe.keep.old)" == stray-D ]] || fail "10g D: a different .keep was deleted or replaced the exe"
-rm -f $GB/minigw.exe.keep.old
+kd=($GB/minigw.exe.keep.old.*(N))
+[[ "$(<$GB/minigw.exe)" == new-D && ! -e $GB/minigw.exe.keep && ${#kd} == 1 && "$(<${kd[1]})" == stray-D ]] || fail "10g D: a different .keep was deleted or replaced the exe"
+rm -f $GB/minigw.exe.keep.old.*(N)
+# 10h (varnostni pregled, 2. krog): ena ključavnica za vsako zamenjavo bin/minigw.exe; svež tuj zagon = ta zagon se ne dotakne nič; edinstvena imena ostankov
+mkdir -p $T/rel/wdl; print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > $T/rel/wdl/minigw-windows-amd64.exe; chmod +x $T/rel/wdl/minigw-windows-amd64.exe
+(cd $T/rel/wdl && { print "VERSION $MINV"; print "$(shasum -a 256 minigw-windows-amd64.exe | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > SHA256SUMS && ssh-keygen -Y sign -q -f $T/key -n minigw-release < SHA256SUMS > SHA256SUMS.sig)
+RELEXE=$T/rel/wdl/minigw-windows-amd64.exe; rm -f "$exe"   # brez nameščenega MSI minigw
+clear10h() { rm -f $GB/minigw.exe $GB/minigw.exe.keep $GB/minigw.exe.keep.old.*(N) $GB/minigw $GB/minigw.cmd $GB/.verified $GB/SHA256SUMS $GB/SHA256SUMS.sig; rmdir $GB/.aside.lock 2>/dev/null || true }
+# H1: dva zagona hkrati, ni nameščenega odjemalca, ostal .keep (neoverjena kopija): konec je preneseni exe, brez .keep, ključavnice in ostankov
+for i in 1 2 3 4 5; do
+  clear10h; print stranded > $GB/minigw.exe.keep
+  winrun wdl > $T/win/h1.out 2> $T/win/h1.err & h1=$!
+  winrun wdl > $T/win/h2.out 2> $T/win/h2.err & h2=$!
+  wait $h1 && wait $h2 || fail "10h H1 $i: exit status"
+  cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/minigw.exe.keep && ! -e $GB/.aside.lock && -s $GB/.verified ]] || fail "10h H1 $i: the download was overwritten or left debris: $(ls -A $GB)"
+  [[ -z "$(find $GB \( -name '*.new.*' -o -name '*.chk.*' \))" ]] || fail "10h H1 $i: temp files left: $(ls -A $GB)"
+done
+# H2: svež tuj ključavnica, ni exe: ta zagon ne prenese in ne zapiše nič; ko ključavnice ni, namesti
+clear10h; mkdir $GB/.aside.lock
+out=$(winrun wdl); print -r -- $out
+[[ ! -e $GB/minigw.exe && ! -e $GB/minigw && -d $GB/.aside.lock && ! -e $GB/.verified && $out == *"another session is setting up the minigw client"* ]] || fail "10h H2: a held lock did not stop the download"
+rmdir $GB/.aside.lock; winrun wdl > /dev/null
+cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/.aside.lock ]] || fail "10h H2: not installed once the lock was free"
+# H3: dva različna ostanka .keep: oba ostaneta pod edinstvenima imenoma (nobenega prepisa)
+clear10h; cp $RELEXE $GB/minigw.exe; winrun wdl > /dev/null   # overjen exe
+print leftover-A > $GB/minigw.exe.keep; winrun wdl > /dev/null
+print leftover-C > $GB/minigw.exe.keep; winrun wdl > /dev/null
+kd=($GB/minigw.exe.keep.old.*(N)); got=""; for f in $kd; do got="$got $(<$f)"; done
+cmp -s $RELEXE $GB/minigw.exe && [[ ${#kd} == 2 && "$got" == *leftover-A* && "$got" == *leftover-C* && ! -e $GB/minigw.exe.keep ]] || fail "10h H3: a leftover was overwritten (found: $got)"
+clear10h
 print "ok 10: Windows shims point at the installed minigw; client-only MSI gets the MSI hint"
 
 docker run --rm -v $T:/t:ro debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 sh -c '

@@ -233,26 +233,39 @@ else
   # BRANJE je neškodljivo, če vsebina odloči (lupina je majhna in ima besedilo; 19 MB exe ne): same, oldshims. Edini zapis na golo ime
   # (prvi prehod, lupina še ni prava) teče v aside: minigw.exe se odmakne (.keep), ukaz teče, vrne se VEDNO. Ključavnica mkdir (atomarna)
   # varuje prehod pred drugo sejo; zasedena = ta zagon lupine ne zapiše (izhod 3, brez izpisa); starejša od 5 min (find -mmin) je zastarela.
+  # Ključavnica (mkdir, atomarna) varuje VSAKO zamenjavo bin/minigw.exe in lupin (prenos, vrnitev .keep, aside): ta zagon jo drži ves čas
+  # (acqlock), drug svež zagon pa se ne dotakne ničesar (busy). Sprosti jo release ob izhodu; ubit zagon jo pusti, starejša od 5 min je zastarela.
+  release() { [ -n "$held" ] && rmdir "$BIN/.aside.lock" 2>/dev/null; held=""; return 0; }
+  acqlock() {
+    wl="$BIN/.aside.lock"
+    mkdir "$wl" 2>/dev/null || { [ -n "$(find "$wl" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$wl" 2>/dev/null && mkdir "$wl" 2>/dev/null; } || return 1
+    held=1; trap release EXIT; trap 'release; exit 1' HUP INT TERM; return 0
+  }
   aside() {
-    l="$BIN/.aside.lock"; k="$BIN/minigw.exe.keep"; had=""
-    mkdir "$l" 2>/dev/null || { [ -n "$(find "$l" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$l" 2>/dev/null && mkdir "$l" 2>/dev/null; } || return 3
+    l="$BIN/.aside.lock"; k="$BIN/minigw.exe.keep"; had=""; own=""
+    if [ -z "$held" ]; then mkdir "$l" 2>/dev/null || { [ -n "$(find "$l" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$l" 2>/dev/null && mkdir "$l" 2>/dev/null; } || return 3; own=1; fi
     [ -e "$k" ] && [ ! -e "$BIN/minigw.exe" ] && mv "$k" "$BIN/minigw.exe"  # ostanek prekinjenega zagona (le pod ključavnico)
-    if [ -f "$BIN/minigw.exe" ]; then mv -f "$BIN/minigw.exe" "$k" || { rmdir "$l"; return 1; }; had=1; fi  # tekoče exe Windows ne pusti premakniti: lupina se ne zapiše
+    if [ -f "$BIN/minigw.exe" ]; then mv -f "$BIN/minigw.exe" "$k" || { [ -z "$own" ] || rmdir "$l"; return 1; }; had=1; fi  # tekoče exe Windows ne pusti premakniti: lupina se ne zapiše
     "$@"; r=$?
     [ -z "$had" ] || mv -f "$k" "$BIN/minigw.exe" || r=1
-    rmdir "$l"; return $r
+    [ -z "$own" ] || rmdir "$l"; return $r
   }
-  # recoverkeep (varnostni pregled L3): zagon, ki ga je ura kljuke (60 s) ubila v aside, pusti overjeno kopijo kot minigw.exe.keep. To se vrne
-  # PRVO, ne glede na stanje lupine: .keep brez exe gre nazaj (pod ključavnico; zasedena = ta zagon preskoči); oba obstajata: .keep izgine
-  # le, če je bajt za bajtom enak exe, sicer gre v minigw.exe.keep.old (morda novejše overjene kopije se nikoli tiho ne zbriše).
+  # recoverkeep (varnostni pregled L3), pod ključavnico: zagon, ki ga je ura kljuke (60 s) ubila v aside, pusti overjeno kopijo kot
+  # minigw.exe.keep; vrne se PRVO, ne glede na stanje lupine. .keep brez exe gre nazaj; oba obstajata: .keep izgine le, če je bajt za bajtom
+  # enak exe, sicer gre pod EDINSTVENO ime minigw.exe.keep.old.<pid> (nikoli prepis druge kopije). Take ostanke zbriše šele zagon, ko so enaki
+  # trenutnemu exe ali starejši od 10 min (kot ostanki mrtvih zagonov v tidy), štetje od premika.
   recoverkeep() {
-    rk="$BIN/minigw.exe.keep"; [ -e "$rk" ] || return 0
-    rl="$BIN/.aside.lock"
-    mkdir "$rl" 2>/dev/null || { [ -n "$(find "$rl" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$rl" 2>/dev/null && mkdir "$rl" 2>/dev/null; } || return 0
-    if [ ! -e "$BIN/minigw.exe" ]; then mv "$rk" "$BIN/minigw.exe"
-    elif cmp -s "$rk" "$BIN/minigw.exe"; then rm -f "$rk"
-    else mv -f "$rk" "$BIN/minigw.exe.keep.old"; fi
-    rmdir "$rl"; return 0
+    rk="$BIN/minigw.exe.keep"
+    if [ -e "$rk" ]; then
+      if [ ! -e "$BIN/minigw.exe" ]; then mv "$rk" "$BIN/minigw.exe"
+      elif cmp -s "$rk" "$BIN/minigw.exe"; then rm -f "$rk"
+      else mv "$rk" "$BIN/minigw.exe.keep.old.$$" && touch "$BIN/minigw.exe.keep.old.$$"; fi
+    fi
+    for ro in "$BIN"/minigw.exe.keep.old.*; do
+      [ -f "$ro" ] || continue
+      if { [ -f "$BIN/minigw.exe" ] && cmp -s "$ro" "$BIN/minigw.exe"; } || [ -n "$(find "$ro" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then rm -f "$ro"; fi
+    done
+    return 0
   }
   # same <besedilo-fn> <pot>: vsebina je natanko to besedilo (cmp na kratki datoteki; exe se razlikuje v prvih bajtih)
   same() { "$1" > "$BIN/minigw.chk.$$" 2>/dev/null; cmp -s "$BIN/minigw.chk.$$" "$2"; ir=$?; rm -f "$BIN/minigw.chk.$$"; return $ir; }
@@ -287,29 +300,36 @@ else
     fi
     return 0
   }
-  [ "$os" = windows ] && recoverkeep
-  # Windows: lupini iz prejšnje seje (majhni besedilni datoteki tega skripta) ne smeta preživeti nameščenega minigw, ki ni več overjen.
-  if [ "$os" = windows ] && [ -z "$inst" ]; then
-    oldshims
-  fi
-  if [ -n "$inst" ]; then
-    linkinst
-    [ "$isums" = "$SN" ] && keepsums  # overjen z vsotami tega zagona: shrani jih za brez omrežja
-  elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || ! authexe || { [ -n "$(want "$asset")" ] && { shm "$EXE"; [ "$SH" != "$(want "$asset")" ]; }; }; then
-    [ "$os" = windows ] && oldshims  # brez namestitve: lupini na odstranjeni minigw gresta
-    if [ -n "$sums" ] && [ ! -L "$EXE" ] && [ -x "$EXE" ] && { shm "$EXE"; [ "$SH" = "$(want "$asset")" ]; }; then
-      keepsums  # ista datoteka kot v podpisanih vsotah: overjena brez prenosa
-    else
-      fetch "$asset" || { authexe && [ -x "$EXE" ]; } || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {
-        if [ -n "$instx" ] || [ -e "$EXE" ] || [ -L "$EXE" ]; then
-          rm -f "$EXE"; forget; unrecord  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
-          if [ -n "$unsigned" ]; then why="$unsigned; gateway skills are unavailable until the release can be verified"
-          elif [ -n "$sums" ]; then why="the download failed or did not match the signed checksum; gateway skills are unavailable until it works"
-          else why="github.com/$REPO could not be reached; gateway skills are unavailable until the network is back"; fi
-          echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why."
-        else
-          echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."
-        fi; unrecord; exit 0; }
+  busy=""
+  if [ "$os" = windows ]; then if acqlock; then recoverkeep; else busy=1; fi; fi
+  if [ -n "$busy" ]; then
+    # drug svež zagon drži ključavnico: ta zagon se NE dotakne minigw.exe, lupin ne zapisa; uporabi, kar je zdaj uporabno (zapis odloča)
+    locked=1; [ -n "$inst" ] && EXE=$inst
+    [ -x "$EXE" ] || { echo "minigw plugin: another session is setting up the minigw client; its commands work once that is done (start a new session)."; tidy; exit 0; }
+  else
+    # Windows: lupini iz prejšnje seje (majhni besedilni datoteki tega skripta) ne smeta preživeti nameščenega minigw, ki ni več overjen.
+    if [ "$os" = windows ] && [ -z "$inst" ]; then
+      oldshims
+    fi
+    if [ -n "$inst" ]; then
+      linkinst
+      [ "$isums" = "$SN" ] && keepsums  # overjen z vsotami tega zagona: shrani jih za brez omrežja
+    elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || ! authexe || { [ -n "$(want "$asset")" ] && { shm "$EXE"; [ "$SH" != "$(want "$asset")" ]; }; }; then
+      [ "$os" = windows ] && oldshims  # brez namestitve: lupini na odstranjeni minigw gresta
+      if [ -n "$sums" ] && [ ! -L "$EXE" ] && [ -x "$EXE" ] && { shm "$EXE"; [ "$SH" = "$(want "$asset")" ]; }; then
+        keepsums  # ista datoteka kot v podpisanih vsotah: overjena brez prenosa
+      else
+        fetch "$asset" || { authexe && [ -x "$EXE" ]; } || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {
+          if [ -n "$instx" ] || [ -e "$EXE" ] || [ -L "$EXE" ]; then
+            rm -f "$EXE"; forget; unrecord  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
+            if [ -n "$unsigned" ]; then why="$unsigned; gateway skills are unavailable until the release can be verified"
+            elif [ -n "$sums" ]; then why="the download failed or did not match the signed checksum; gateway skills are unavailable until it works"
+            else why="github.com/$REPO could not be reached; gateway skills are unavailable until the network is back"; fi
+            echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why."
+          else
+            echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."
+          fi; unrecord; exit 0; }
+      fi
     fi
   fi
 fi
