@@ -79,7 +79,7 @@ func TestResolveOursReadsAgainBeforeCreating(t *testing.T) {
 }
 
 // Waiting for a review is not a failure and does not keep the link due: nothing runs by itself because notes wait. The wait is looked at when a
-// push happens anyway (a local change, a manual push, the periodic pull); then accepted: the latest text goes as a replacement, rejected: it goes
+// push happens anyway (a local change, a manual push); then accepted: the latest text goes as a replacement, rejected: it goes
 // as a new submission because it differs from the rejected one.
 func TestWaitingNotesAreCheckedWhenAPushHappensAnyway(t *testing.T) {
 	for _, outcome := range []string{"accepted", "rejected"} {
@@ -560,5 +560,39 @@ func TestPartialSuccessDoesNotEscalateTheBackoff(t *testing.T) {
 		if r2, _ := f.AutoPush(ctx, h.fake, noSleep); r2.Ran || h.fake.count("POST") != posts { // not retried until something changes
 			t.Fatalf("looped: %+v", r2)
 		}
+	}
+}
+
+// An earlier submission that cannot be read is not written over, even when the upstream note is known: a link-wide answer ends the run, a
+// per-note failure refuses that note, and no note GET or POST follows for it.
+func TestUnreadableEarlierSubmissionIsNotWrittenOver(t *testing.T) {
+	for _, c := range []struct {
+		status int
+		typ    string
+		stops  bool
+	}{{401, "", true}, {403, "no_submit_access", true}, {500, "", false}, {403, "forbidden", false}} {
+		t.Run(fmt.Sprint(c.status, c.typ), func(t *testing.T) {
+			f, fk, h := twoNotes(t)
+			for _, title := range []string{"Structure one", "Data two"} { // the upstream notes are known from an earlier push
+				f.ok(f.upstreamRecordRemoteNote(ctx, fk, "hub", noteID(f, fk, title), map[string]int64{"Structure one": 55, "Data two": 56}[title]))
+			}
+			h.hook = func(cl upCall) (int, string, bool) {
+				if cl.method == "GET" && cl.path == "/minigw/v1/projects/7/kb/submissions/1" {
+					return c.status, fmt.Sprintf(`{"error":{"type":%q,"message":"no"}}`, c.typ), true
+				}
+				return 0, "", false
+			}
+			posts := len(h.posts)
+			res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
+			f.ok(e)
+			r := res[0]
+			first := h.postsFor("Structure one", posts)
+			if r.Refused != 1 || len(first) != 0 || (r.Stopped != "") != c.stops {
+				t.Fatalf("%+v %v", r, first)
+			}
+			if c.stops && len(h.posts) != posts || !c.stops && (r.Replaced != 1 || len(h.postsFor("Data two", posts)) != 1) {
+				t.Fatalf("%+v", r)
+			}
+		})
 	}
 }

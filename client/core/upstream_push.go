@@ -709,6 +709,12 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				}
 				return res, false, nil
 			}
+			if !readable && a.status != 404 { // the earlier submission could not be read (not: is gone): nothing is written on an answer we did not get
+				if r, done, e := fail(a, "the earlier submission "+subID+" cannot be read"); done {
+					return r, e
+				}
+				continue
+			}
 			switch {
 			case target > 0:
 				tid := strconv.FormatInt(target, 10)
