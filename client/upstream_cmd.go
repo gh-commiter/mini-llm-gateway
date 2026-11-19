@@ -246,7 +246,7 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 				say(clean("  " + s))
 			}
 			if l.Waiting > 0 {
-				say(fmt.Sprintf("  %d notes wait for a review upstream (nothing more is sent for them until it is decided there; not a failure)", l.Waiting))
+				say(fmt.Sprintf("  %d notes wait for a review upstream; they are checked at the next push (not a failure)", l.Waiting))
 			}
 			if s := upstreamForeign(l); s != "" {
 				say(clean("  " + s))

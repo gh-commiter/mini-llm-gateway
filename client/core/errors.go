@@ -17,9 +17,12 @@ var (
 	ErrDeviceNotListed = errors.New("device not on the gateway's device list")
 	ErrDeviceNotBound  = errors.New("device not bound to a user")
 	ErrForbidden       = errors.New("forbidden") // 403 forbidden
-	ErrArchived        = errors.New("project is archived")
-	ErrIdempotency     = errors.New("idempotency key used with another payload") // 409 idempotency_conflict
-	ErrTooLarge        = errors.New("too large")                                 // 413
+	// ErrNoSubmit is an ErrForbidden that says the caller's role allows no hand-in at all in the project (a reader), as against a note or a class
+	// it may not write: 403 no_submit_access, so that a pusher stops at the first instead of trying every note.
+	ErrNoSubmit    = fmt.Errorf("no right to hand in: %w", ErrForbidden)
+	ErrArchived    = errors.New("project is archived")
+	ErrIdempotency = errors.New("idempotency key used with another payload") // 409 idempotency_conflict
+	ErrTooLarge    = errors.New("too large")                                 // 413
 )
 
 // ErrRevision (409 revision_mismatch) is returned only to a caller who may change the note.

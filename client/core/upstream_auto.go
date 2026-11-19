@@ -192,7 +192,7 @@ func (s *Store) afterRun(ctx context.Context, l UpstreamLink, res UpstreamPush) 
 		if res.More {
 			cursor = res.Next
 			// Preserve the traversal failure, but continue a batch that made progress or waits for a write limit.
-			failed = res.Wait == 0 && res.Created+res.Replaced == 0
+			failed = res.Wait == 0 && res.Created+res.Replaced+res.Waiting+res.Conflicts == 0 // a slice that only checked waiting notes or found conflicts got somewhere
 		}
 		savedFailure := 0
 		if res.More && traversalFailed {
@@ -212,18 +212,6 @@ func (s *Store) afterRun(ctx context.Context, l UpstreamLink, res UpstreamPush) 
 		if failed {
 			n++
 			_, e := tx.Exec(`UPDATE upstream_links SET fail_count=?,last_fail=?,next_attempt=?,push_cursor=?,push_generation=?,push_failed=? WHERE project_id=? AND upstream=?`, n, now, now+t.backoff(n, s.jitterFn()).Milliseconds(), cursor, generation, savedFailure, l.Project, l.Upstream)
-			return e
-		}
-		var waiting int
-		if e := tx.QueryRow(waitingSQL, l.Project, l.Upstream).Scan(&waiting); e != nil {
-			return e
-		}
-		if waiting > 0 { // notes wait for a review upstream: not a failure; the link stays due and looks again at a quiet pace (5 debounces, at least a second), no back-off
-			poll := 5 * t.Debounce
-			if poll < time.Second {
-				poll = time.Second
-			}
-			_, e := tx.Exec(`UPDATE upstream_links SET last_ok=?,fail_count=0,next_attempt=CASE WHEN auto=1 THEN ? ELSE 0 END,push_cursor=0,push_generation=0,push_failed=0,dirty_since=CASE WHEN dirty_since=0 AND auto=1 THEN ? ELSE dirty_since END WHERE project_id=? AND upstream=?`, now, now+poll.Milliseconds(), now, l.Project, l.Upstream)
 			return e
 		}
 		_, e := tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN last_change=push_generation THEN 0 ELSE dirty_since END,last_ok=?,fail_count=0,next_attempt=0,push_cursor=0,push_generation=0,push_failed=0 WHERE project_id=? AND upstream=?`, now, l.Project, l.Upstream)
@@ -317,6 +305,11 @@ func (s *Store) AutoPull(ctx context.Context, tr UpstreamTransport, sleep func(t
 			return run, err
 		}
 		run.Ran, run.Pull = true, &res
+		if l.Auto && l.Waiting > 0 { // notes wait for a review upstream: this periodic cycle is when it is looked at again (no timer of its own)
+			if pr, e := s.pushLink(ctx, tr, l.UpstreamLink, l.Label, 0, false, sleep, true); e == nil {
+				run.Push = &pr
+			}
+		}
 		break
 	}
 	next()

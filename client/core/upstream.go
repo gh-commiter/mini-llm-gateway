@@ -197,10 +197,9 @@ ALTER TABLE upstream_sent ADD COLUMN sent_content TEXT NOT NULL DEFAULT ''; -- p
 	return err
 }
 
-// waitingSQL counts the notes of a link that wait for a review upstream (a note deleted here waits for nothing). The wait is derived state kept
-// in a column that has no other meaning for a submission receipt: remote_rev is the upstream note's revision only for a note written directly
-// (publish mode, remote_sub 0); a receipt with a submission and remote_rev -1 waits for the review of that submission. No schema change.
-const waitingSQL = `SELECT count(*) FROM upstream_sent s JOIN notes n ON n.id=s.note_id AND n.project_id=s.project_id WHERE s.project_id=? AND s.upstream=? AND s.remote_sub>0 AND s.remote_rev=-1 AND s.conflict=0`
+// The wait for a review upstream (a note whose first submission is still pending) is derived state kept in a column that has no other meaning
+// for a submission receipt: remote_rev is the upstream note's revision only for a note written directly (publish mode, remote_sub 0); a receipt
+// with a submission and remote_rev -1 waits for the review of that submission. No schema change. Only upstreamNotes counts it (see Waiting).
 
 func (s *Store) ListUpstreams(ctx context.Context) (out []Upstream, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
@@ -790,6 +789,7 @@ const linkCols = `project_id,upstream,remote,remote_team,classes,with_private,la
 type upstreamScan struct {
 	Notes    []UpstreamNote // in id order, from the first note after the cursor: the ones to send (Body set) and the unchanged ones (Unchanged, no Body)
 	Pending  int            // of Notes: how many are to send
+	Waiting  int            // of those: how many wait for the review of their earlier submission upstream (only notes the link would push now)
 	Total    int            // of Notes, without the Foreign ones
 	Foreign  int            // of Notes: arrived from another gateway, never sent
 	Overflow bool           // more notes to send follow the last of Notes (limit reached)
@@ -862,6 +862,9 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 					return out, nil
 				}
 				out.Pending++
+				if u.Sent != nil && u.Sent.Waiting {
+					out.Waiting++
+				}
 			}
 			out.Total++
 			out.Notes = append(out.Notes, u)
@@ -919,7 +922,7 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 			if e != nil {
 				return e
 			}
-			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign}
+			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign, Waiting: scan.Waiting}
 			if e := readInfo(tx, ms(s.now()), &info); e != nil {
 				return e
 			}
@@ -945,9 +948,6 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 				}
 			}
 			nr.Close()
-			if e = tx.QueryRow(waitingSQL, l.Project, l.Upstream).Scan(&info.Waiting); e != nil {
-				return e
-			}
 			cr, e := tx.Query(`SELECT note_id, conflict_rev FROM upstream_sent WHERE project_id=? AND upstream=? AND conflict=1 ORDER BY note_id LIMIT ?`, l.Project, l.Upstream, maxNotPropagated)
 			if e != nil {
 				return e
@@ -1021,7 +1021,7 @@ ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revis
 // upstreamRecordConflict: the upstream note changed (or is gone: rev 0) since our last write; it is not overwritten.
 func (s *Store) upstreamRecordConflict(ctx context.Context, project int64, upstream string, note, rev int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`UPDATE upstream_sent SET conflict=1, conflict_rev=? WHERE project_id=? AND upstream=? AND note_id=?`, rev, project, upstream, note)
+		_, e := tx.Exec(`UPDATE upstream_sent SET conflict=1, conflict_rev=?, remote_rev=CASE WHEN remote_sub>0 AND remote_rev=-1 THEN 0 ELSE remote_rev END WHERE project_id=? AND upstream=? AND note_id=?`, rev, project, upstream, note)
 		return e
 	})
 }

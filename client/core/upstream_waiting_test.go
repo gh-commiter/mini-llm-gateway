@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -77,9 +78,10 @@ func TestResolveOursReadsAgainBeforeCreating(t *testing.T) {
 	}
 }
 
-// Waiting for a review is not a failure: no back-off, the link looks again at a quiet pace; accepted without another local edit: the latest text
-// goes as a replacement; rejected: it goes as a new submission because it differs from the rejected one.
-func TestAutoPushWaitsForAReviewWithoutFailing(t *testing.T) {
+// Waiting for a review is not a failure and does not keep the link due: nothing runs by itself because notes wait. The wait is looked at when a
+// push happens anyway (a local change, a manual push, the periodic pull); then accepted: the latest text goes as a replacement, rejected: it goes
+// as a new submission because it differs from the rejected one.
+func TestWaitingNotesAreCheckedWhenAPushHappensAnyway(t *testing.T) {
 	for _, outcome := range []string{"accepted", "rejected"} {
 		t.Run(outcome, func(t *testing.T) {
 			f, fk, notes := autoFx(t)
@@ -101,141 +103,256 @@ func TestAutoPushWaitsForAReviewWithoutFailing(t *testing.T) {
 				t.Fatalf("wait: %+v", r.Push)
 			}
 			l := f.link(fk)
-			if l.Waiting != 1 || l.FailCount != 0 || l.DirtySince == nil || l.LastError != "" {
-				t.Fatalf("waiting is a failure or not shown: %+v", l)
+			if l.Waiting != 1 || l.FailCount != 0 || l.DirtySince != nil || l.NextAttempt != nil || l.LastError != "" {
+				t.Fatalf("a wait is a failure, keeps the link due, or is not shown: %+v", l)
 			}
-			// the quiet pace: not due again within 5 debounces, and then again without failing, nothing sent
-			if r := run(2 * time.Minute); r.Ran {
-				t.Fatal("looked again too soon")
-			}
-			for i := 0; i < 3; i++ {
-				if r := run(6 * time.Minute); !r.Ran || r.Push.Waiting != 1 || len(h.posts) != 2 {
+			gets := h.fake.count("GET")
+			for i := 0; i < 5; i++ { // no timer of its own: nothing runs, the upstream is not asked
+				if r := run(20 * time.Minute); r.Ran || r.Next != 0 {
 					t.Fatalf("round %d: %+v", i, r)
 				}
-				if l = f.link(fk); l.FailCount != 0 || l.Waiting != 1 {
-					t.Fatalf("round %d: %+v", i, l)
-				}
 			}
-			// the review: with no further local edit the latest text still goes
+			if h.fake.count("GET") != gets {
+				t.Fatal("the upstream was asked while only a wait was open")
+			}
 			if outcome == "accepted" {
 				h.accept(1, 55, 1)
 			} else {
 				h.reject(1, "no")
 			}
-			r := run(6 * time.Minute)
-			if !r.Ran || r.Push.Waiting != 0 || len(h.posts) != 3 || !strings.Contains(h.lastPost().body["body"].(string), "v2") {
-				t.Fatalf("after the review: %+v %d", r.Push, len(h.posts))
+			if r := run(20 * time.Minute); r.Ran { // the review alone starts nothing
+				t.Fatalf("%+v", r)
 			}
+			res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep) // the next push notices it, with no further local edit
+			f.ok(e)
 			want := float64(0)
 			if outcome == "accepted" {
 				want = 55
 			}
-			if h.lastPost().body["replaces"].(float64) != want {
-				t.Fatalf("%+v", h.lastPost().body)
+			if res[0].Waiting != 0 || len(h.posts) != 3 || !strings.Contains(h.lastPost().body["body"].(string), "v2") || h.lastPost().body["replaces"].(float64) != want {
+				t.Fatalf("after the review: %+v %+v", res[0], h.lastPost().body)
 			}
-			if l = f.link(fk); l.Waiting != 0 || l.DirtySince != nil || l.FailCount != 0 {
+			if l = f.link(fk); l.Waiting != 0 || l.FailCount != 0 {
 				t.Fatalf("%+v", l)
-			}
-			if r = run(6 * time.Minute); r.Ran || len(h.posts) != 3 { // and it is quiet again
-				t.Fatalf("%+v", r)
 			}
 		})
 	}
 }
 
-// A pending first submission: no POST and the wait state is remembered and shown; the text going back to what was sent ends the wait.
-func TestWaitingEndsWhenTheTextIsAsSentAgain(t *testing.T) {
+// A local change after the wait started is a push that happens anyway: it checks the wait too.
+func TestALocalChangeChecksTheWaitingNotes(t *testing.T) {
 	f, fk, notes := autoFx(t)
 	h := newHubFake()
 	n := notes["Structure one"]
-	if _, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep); e != nil {
-		t.Fatal(e)
-	}
-	f.edit("ana", fk, n, "other")
-	res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
+	f.edit("ana", fk, n, "v1")
+	f.clock = f.clock.Add(2 * time.Minute)
+	_, e := f.AutoPush(ctx, h.fake, noSleep)
 	f.ok(e)
-	if res[0].Waiting != 1 || len(h.posts) != 2 || f.link(fk).Waiting != 1 {
-		t.Fatalf("%+v", res[0])
+	f.edit("ana", fk, n, "v2")
+	f.clock = f.clock.Add(2 * time.Minute)
+	if r, _ := f.AutoPush(ctx, h.fake, noSleep); !r.Ran || r.Push.Waiting != 1 {
+		t.Fatalf("%+v", r.Push)
 	}
-	f.edit("ana", fk, n, "body of Structure one") // the text it was sent with
-	res, e = f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
+	h.accept(1, 55, 1)
+	f.edit("ana", fk, notes["Data two"], "other note changed") // a change elsewhere
+	f.clock = f.clock.Add(2 * time.Minute)
+	r, e := f.AutoPush(ctx, h.fake, noSleep)
 	f.ok(e)
-	if res[0].Skipped != 2 || res[0].Waiting != 0 || f.link(fk).Waiting != 0 {
-		t.Fatalf("%+v %+v", res[0], f.link(fk))
+	if !r.Ran || r.Push.Replaced != 1 || r.Push.Waiting != 1 || h.lastPost().body["replaces"].(float64) != 55 { // Data two is still pending
+		t.Fatalf("%+v", r.Push)
 	}
 }
 
-// A refusal that concerns one note (this identity may not write it) refuses that note and goes on; one that concerns the identity ends the run.
-func TestUpstreamWriteRefusalOfOneNoteDoesNotStopTheRun(t *testing.T) {
-	for _, c := range []struct {
-		errType string
-		status  int
-		stops   bool
-	}{{"forbidden", 403, false}, {"not_found", 404, false}, {"no_project_access", 403, true}, {"archived", 403, true}, {"", 403, true}} {
-		t.Run(fmt.Sprint(c.errType, c.status), func(t *testing.T) {
+// Notes wait, then the periodic pull cycle of the link runs: the same cycle pushes (no timer of its own) and notices the review.
+func TestThePeriodicPullChecksTheWaitingNotes(t *testing.T) {
+	f, fk, ph := autoPullFx(t)
+	yes := true
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Auto: &yes}))
+	hf := newHubFake()
+	pull := ph.up()
+	both := &fakeUp{handler: func(c upCall) (int, string, time.Duration) { // submissions and notes 50 up: the push's hub, the rest: the pulled one
+		var id int
+		if c.method == "POST" || strings.Contains(c.path, "/kb/submissions") || sscan(c.path, "/minigw/v1/projects/7/notes/%d", &id) && id >= 50 {
+			return hf.fake.handler(c)
+		}
+		st, b, _, _ := pull.Do(ctx, "hub", c.method, c.path, nil, nil)
+		return st, string(b), 0
+	}}
+	keySeq++
+	n, _, e := f.CreateNote(ctx, f.p("ana"), fk, fmt.Sprint("uk", keySeq), NoteInput{Class: Structure, Title: "Wait one", Body: "v1"})
+	f.ok(e)
+	_, e = f.PushUpstream(ctx, both, fk, 0, "", 0, false, noSleep)
+	f.ok(e)
+	f.clock = f.clock.Add(time.Second)
+	_, e = f.UpdateNote(ctx, f.p("ana"), fk, n.ID, n.Revision, NoteInput{Class: n.Class, Title: n.Title, Body: "v2"})
+	f.ok(e)
+	res, e := f.PushUpstream(ctx, both, fk, 0, "", 0, false, noSleep)
+	f.ok(e)
+	if res[0].Waiting != 1 || f.link(fk).Waiting != 1 {
+		t.Fatalf("%+v", res[0])
+	}
+	hf.accept(1, 55, 1)
+	posts := len(hf.posts)
+	f.clock = f.clock.Add(16 * time.Minute) // the pull interval
+	r, e := f.AutoStep(ctx, both, noSleep)
+	f.ok(e)
+	if !r.Ran || r.Push == nil || r.Push.Replaced != 1 || len(hf.posts) != posts+1 || hf.lastPost().body["replaces"].(float64) != 55 {
+		t.Fatalf("%+v", r)
+	}
+	if l := f.link(fk); l.Waiting != 0 || l.FailCount != 0 {
+		t.Fatalf("%+v", l)
+	}
+}
+
+// resolve --ours finds the earlier submission pending: that wait is counted and resolved like any other, and "ours" stays in force.
+func TestResolvedAsOursWaitLifecycle(t *testing.T) {
+	for _, outcome := range []string{"accepted", "rejected"} {
+		t.Run(outcome, func(t *testing.T) {
 			f, fk, h := twoNotes(t)
-			h.hook = func(cl upCall) (int, string, bool) {
-				if cl.method == "POST" && cl.body["replaces"].(float64) == 55 {
-					return c.status, fmt.Sprintf(`{"error":{"type":%q,"message":"no"}}`, c.errType), true
-				}
-				return 0, "", false
+			delete(h.subs, 2) // Data two: its earlier submission cannot be read: a conflict
+			if res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep); e != nil || res[0].Conflicts < 1 {
+				t.Fatalf("%+v %v", res, e)
 			}
+			data := noteID(f, fk, "Data two")
+			f.ok(f.ResolveUpstream(ctx, fk, 0, data, true))
+			h.subs[2] = `{"id":%d,"state":"pending","note":0}` // readable again, pending
+			h.notes[55] = 0                                    // (Structure one stays out of the way)
 			posts := len(h.posts)
 			res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
 			f.ok(e)
-			r := res[0]
-			if c.stops {
-				if r.Stopped == "" || r.Replaced != 0 || len(h.posts) != posts {
-					t.Fatalf("%+v", r)
-				}
-				return
+			if res[0].Waiting != 1 || len(h.posts) != posts || f.link(fk).Waiting != 1 {
+				t.Fatalf("%+v %+v", res[0], f.link(fk))
 			}
-			if r.Stopped != "" || r.Refused != 1 || r.Replaced != 1 || len(h.posts) != posts+1 || h.lastPost().body["replaces"].(float64) != 56 {
-				t.Fatalf("%+v", r)
+			if outcome == "accepted" {
+				h.accept(2, 56, 4)
+			} else {
+				h.reject(2, "no")
+			}
+			res, e = f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
+			f.ok(e)
+			got := h.postsFor("Data two", posts)
+			if len(got) != 1 || f.link(fk).Waiting != 0 {
+				t.Fatalf("%+v %v", res[0], got)
+			}
+			if outcome == "accepted" && (got[0].body["replaces"].(float64) != 56 || got[0].body["revision"].(float64) != 4) || outcome == "rejected" && got[0].body["replaces"].(float64) != 0 {
+				t.Fatalf("%+v", got[0].body)
 			}
 		})
 	}
 }
 
-// Publish mode: the same for a note that may be read but not replaced.
-func TestPublishWriteRefusalOfOneNoteDoesNotStopTheRun(t *testing.T) {
-	f, notes := upFx(t)
-	fk := f.pid["fakture"]
-	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Mode: "publish"}))
-	rev := map[int]int{}
-	nextID := 100
-	up := &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
-		var id int
-		switch {
-		case c.path == "/minigw/v1/projects/shop":
-			return 200, `{"id":7,"slug":"shop"}`, 0
-		case c.method == "POST" && c.path == "/minigw/v1/projects/7/notes":
-			nextID++
-			rev[nextID] = 1
-			return 201, fmt.Sprintf(`{"id":%d,"revision":1}`, nextID), 0
-		case c.method == "GET" && sscan(c.path, "/minigw/v1/projects/7/notes/%d", &id):
-			return 200, fmt.Sprintf(`{"id":%d,"revision":%d}`, id, rev[id]), 0
-		case c.method == "PUT" && sscan(c.path, "/minigw/v1/projects/7/notes/%d", &id):
-			if id == 101 {
-				return 403, `{"error":{"type":"forbidden","message":"Not allowed"}}`, 0
-			}
-			rev[id]++
-			return 200, fmt.Sprintf(`{"id":%d,"revision":%d}`, id, rev[id]), 0
-		}
-		return 404, `{}`, 0
-	}}
-	_, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
+// Only notes the link would push now are waiting: a waiting note outside the link's classes is not counted; back in, it is looked at again.
+func TestWaitingCountsOnlyNotesInTheLinksScope(t *testing.T) {
+	f, fk, notes := autoFx(t)
+	h := newHubFake()
+	f.edit("ana", fk, notes["Structure one"], "v1")
+	_, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
-	for _, title := range []string{"Structure one", "Data two"} {
-		f.clock = f.clock.Add(time.Second)
-		n, e := f.GetNote(ctx, f.p("ana"), fk, notes[title].ID)
-		f.ok(e)
-		_, e = f.UpdateNote(ctx, f.p("ana"), fk, n.ID, n.Revision, NoteInput{Class: n.Class, Title: title, Body: "changed " + title})
-		f.ok(e)
+	f.edit("ana", fk, notes["Structure one"], "v2")
+	if res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep); e != nil || res[0].Waiting != 1 || f.link(fk).Waiting != 1 {
+		t.Fatalf("%+v %v", res, e)
 	}
-	res, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
+	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "data", false)) // structure leaves the link
+	if f.link(fk).Waiting != 0 {
+		t.Fatalf("%+v", f.link(fk))
+	}
+	gets := h.fake.count("GET")
+	f.ok(func() error { _, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep); return e }())
+	if h.fake.count("GET") != gets+1 { // only the project lookup: the note is not looked at
+		t.Fatalf("%d requests", h.fake.count("GET")-gets)
+	}
+	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "structure,data", false)) // and back
+	if f.link(fk).Waiting != 1 {
+		t.Fatalf("%+v", f.link(fk))
+	}
+	h.accept(1, 55, 1)
+	posts := len(h.posts)
+	if res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep); e != nil || res[0].Replaced < 1 || len(h.posts) != posts+1 || h.lastPost().body["replaces"].(float64) != 55 {
+		t.Fatalf("%+v %v", res, e)
+	}
+}
+
+// expiringUp: answers `after` requests, then every request waits for its context to end (a time slice used up inside a request).
+type expiringUp struct {
+	inner UpstreamTransport
+	after int
+	n     int
+}
+
+func (u *expiringUp) Do(c context.Context, up, method, path string, h map[string]string, body []byte) (int, []byte, time.Duration, error) {
+	u.n++
+	if u.n > u.after {
+		<-c.Done()
+		return 0, nil, 0, c.Err()
+	}
+	return u.inner.Do(c, up, method, path, h, body)
+}
+
+// A time slice that ends INSIDE a request is not the upstream failing: the run ends with More and the cursor, what was checked counts as progress.
+func TestSliceExpiringInsideARequestKeepsTheCursor(t *testing.T) {
+	f, fk, h := twoNotes(t)
+	h.subs[1] = `{"id":%d,"state":"pending","note":0}`
+	h.subs[2] = `{"id":%d,"state":"pending","note":0}`
+	h.notes = map[int]int{}
+	slow := &expiringUp{inner: h.fake, after: 2} // the project lookup and the first note's submission
+	cctx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
+	defer cancel()
+	res, e := f.PushUpstream(cctx, slow, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
-	if r := res[0]; r.Stopped != "" || r.Refused != 1 || r.Replaced != 1 {
+	r := res[0]
+	if !r.More || r.Waiting != 1 || r.Refused != 0 || r.Next != noteID(f, fk, "Structure one") || !strings.Contains(r.Stopped, "time budget") {
 		t.Fatalf("%+v", r)
+	}
+	// the next call goes on above the cursor and finds the second one
+	res, e = f.PushUpstream(ctx, h.fake, fk, 0, "hub", r.Next, false, noSleep)
+	f.ok(e)
+	if res[0].Waiting != 1 || res[0].More {
+		t.Fatalf("%+v", res[0])
+	}
+}
+
+// A hub that says the identity may not hand in at all stops the run at the first note; one that only says 403 does after three in a row.
+func TestDeniedWritesStopTheRun(t *testing.T) {
+	for _, c := range []struct {
+		typ   string
+		tries int
+		want  string
+	}{{"no_submit_access", 1, "may no longer hand in"}, {"forbidden", 3, "refused several writes in a row"}} {
+		t.Run(c.typ, func(t *testing.T) {
+			f, notes := upFx(t)
+			fk := f.pid["fakture"]
+			for _, title := range []string{"Data three", "Data four"} {
+				keySeq++
+				n, _, e := f.CreateNote(ctx, f.p("ana"), fk, fmt.Sprint("uk", keySeq), NoteInput{Class: Data, Title: title, Body: "x"})
+				f.ok(e)
+				notes[title] = n
+			}
+			f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
+			h := newHubFake()
+			_, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
+			f.ok(e)
+			for i := 1; i <= 4; i++ {
+				h.accept(i, 54+i, 1)
+			}
+			for _, title := range []string{"Structure one", "Data two", "Data three", "Data four"} {
+				f.clock = f.clock.Add(time.Second)
+				n, e := f.GetNote(ctx, f.p("ana"), fk, notes[title].ID)
+				f.ok(e)
+				_, e = f.UpdateNote(ctx, f.p("ana"), fk, n.ID, n.Revision, NoteInput{Class: n.Class, Title: title, Body: "changed " + title})
+				f.ok(e)
+			}
+			h.hook = func(cl upCall) (int, string, bool) {
+				if cl.method == "POST" {
+					return 403, fmt.Sprintf(`{"error":{"type":%q,"message":"Not allowed"}}`, c.typ), true
+				}
+				return 0, "", false
+			}
+			posts := h.fake.count("POST")
+			res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
+			f.ok(e)
+			if r := res[0]; r.Refused != c.tries || !strings.Contains(r.Stopped, c.want) || h.fake.count("POST") != posts+c.tries {
+				t.Fatalf("%+v %d", r, h.fake.count("POST")-posts)
+			}
+		})
 	}
 }

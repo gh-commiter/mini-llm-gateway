@@ -413,6 +413,9 @@ func submissionAccess(tx *sql.Tx, p Principal, project int64, in SubmissionInput
 		return err
 	}
 	if !a.can(pCreate, in.Class, true) {
+		if !a.can(pCreate, Structure, true) && !a.can(pCreate, Data, true) && !a.can(pCreate, Private, true) {
+			return ErrNoSubmit
+		}
 		return ErrForbidden
 	}
 	if in.Replaces != 0 {

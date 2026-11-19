@@ -236,7 +236,7 @@ func TestUpstreamBoundUserWithoutWriteRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := f.cmd(coreOpts{}, "push", "shop")
-	if err != nil || !strings.Contains(out, "refused 1") || !strings.Contains(out, "stopped: the upstream says:") {
+	if err != nil || !strings.Contains(out, "refused 1") || !strings.Contains(out, "stopped: the upstream identity may no longer hand in") {
 		t.Fatalf("%q %v", out, err)
 	}
 	if n, _ := f.remoteSubmissions(); n != 0 {

@@ -2798,7 +2798,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure,data, auto, publish\n  read: off\n  2 notes wait for a review upstream (nothing more is sent for them until it is decided there; not a failure)\n",
+    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure,data, auto, publish\n  read: off\n  2 notes wait for a review upstream; they are checked at the next push (not a failure)\n",
     "err": "",
     "exit": 0,
     "requests": [

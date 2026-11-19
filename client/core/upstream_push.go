@@ -97,16 +97,18 @@ func (s *Store) PushUpstream(ctx context.Context, tr UpstreamTransport, project,
 }
 
 type pusher struct {
-	s      *Store
-	tr     UpstreamTransport
-	up     string
-	sleep  func(time.Duration) bool
-	ctx    context.Context
-	secret []byte        // this gateway's key for what it sends (Store.upstreamKey)
-	more   bool          // set when a limit could not be waited out
-	wait   time.Duration // for how long
-	status int           // the HTTP status of the last call (0: no usable answer)
-	big    bool          // the last call's answer was over maxUpstreamAnswer
+	s       *Store
+	tr      UpstreamTransport
+	up      string
+	sleep   func(time.Duration) bool
+	ctx     context.Context
+	secret  []byte        // this gateway's key for what it sends (Store.upstreamKey)
+	more    bool          // set when a limit could not be waited out, or the time slice of the call ran out (expired)
+	slice   bool          // push only: ctx is the time slice of the call (a pull's ctx is one request's timeout: its expiry is the upstream not answering)
+	expired bool          // the slice of the call ran out while a request was on its way: not a failure of the upstream
+	wait    time.Duration // for how long
+	status  int           // the HTTP status of the last call (0: no usable answer)
+	big     bool          // the last call's answer was over maxUpstreamAnswer
 }
 
 type upAnswer struct {
@@ -121,6 +123,10 @@ func (p *pusher) call(method, path string, hdr map[string]string, body []byte) (
 	for i := 0; ; i++ {
 		st, data, retry, err := p.tr.Do(p.ctx, p.up, method, path, hdr, body)
 		p.status, p.big = 0, err == nil && len(data) > maxUpstreamAnswer
+		if err != nil && p.slice && p.ctx.Err() != nil { // our own deadline (or a shutdown), not the upstream failing: the run goes on in the next call
+			p.more, p.expired = true, true
+			return upAnswer{status: 0, errMsg: "the time slice of this call ran out"}
+		}
 		if err != nil || len(data) > maxUpstreamAnswer {
 			return upAnswer{status: 0, errMsg: "no usable answer from the upstream"}
 		}
@@ -261,6 +267,8 @@ func refusal(a upAnswer) string {
 	switch {
 	case a.status == 0:
 		return "no answer from the upstream"
+	case a.errType == "no_submit_access":
+		return "the upstream identity may no longer hand in to this project upstream (its role there allows no hand-in): ask the upstream's admin"
 	case a.status == 401 || a.status == 403 && a.errMsg == "":
 		return "the upstream refuses this gateway (HTTP " + strconv.Itoa(a.status) + "): the owner there must allow its device, bind it to a user and give that user a role"
 	}
@@ -271,6 +279,12 @@ func refusal(a upAnswer) string {
 	return "the upstream says: " + m
 }
 
+// maxDeniedWrites: this many refusals (403) of a write in a row, with no note accepted in the run, end it: the upstream identity has lost the
+// right to hand in (a hub that says so, no_submit_access, ends the run at the first).
+const maxDeniedWrites = 3
+
+const deniedWhy = "the upstream refused several writes in a row (HTTP 403) and accepted none: the upstream identity may no longer hand in to this project there: ask the upstream's admin"
+
 // linkWide: a refusal that ends the whole run (nothing else would be accepted either), as against one that concerns only the note it came
 // for (this identity may not write it, it is not visible): 401, a rate limit, no usable answer, a lost role or an archived project always stop;
 // a 403 that does not say which, too. A "forbidden" (this identity may not write this note or class) and a 404 concern the note when it names
@@ -278,7 +292,7 @@ func refusal(a upAnswer) string {
 // reader's refusal would be the same for every note) and the run ends.
 func linkWide(a upAnswer, noteScoped bool) bool {
 	switch {
-	case a.status == 0 || a.status == 401 || a.status == 429 || a.errType == "pending_limit" || a.errType == "no_project_access" || a.errType == "archived":
+	case a.status == 0 || a.status == 401 || a.status == 429 || a.errType == "pending_limit" || a.errType == "no_project_access" || a.errType == "no_submit_access" || a.errType == "archived":
 		return true
 	case a.status == 403:
 		return a.errType != "forbidden" || !noteScoped
@@ -465,7 +479,21 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 	if err != nil {
 		return UpstreamPush{}, err
 	}
-	p := &pusher{s: s, tr: tr, up: l.Upstream, sleep: sleep, ctx: ctx, secret: secret}
+	p := &pusher{s: s, tr: tr, up: l.Upstream, sleep: sleep, ctx: ctx, secret: secret, slice: true}
+	denied := 0 // 403 refusals of a write in a row with nothing accepted in this run: an identity that lost the right to hand in (an old upstream does not say so)
+	tooManyDenied := func(a upAnswer) bool {
+		if a.status != 403 {
+			return false
+		}
+		denied++
+		return denied >= maxDeniedWrites && res.Created+res.Replaced == 0
+	}
+	limitMore := func() (UpstreamPush, error) { // the run stops without a fault: a write limit to wait out, or the slice of this call is used
+		if p.expired {
+			return more("time budget of this call used: push again", 0)
+		}
+		return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+	}
 	stop := func(why string) (UpstreamPush, error) {
 		res.Stopped = why
 		if !dry {
@@ -477,7 +505,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 	}
 	remote, why := p.resolve(l)
 	if p.more { // the upstream's write limit cannot be waited out within this call
-		return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+		return limitMore()
 	}
 	if why != "" {
 		return stop(why)
@@ -544,7 +572,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			// publish mode: the note is written on the upstream directly (a note, not a submission)
 			notesBase := fmt.Sprintf("/minigw/v1/projects/%d/notes", remote)
 			waitMsg := func() (UpstreamPush, error) {
-				return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+				return limitMore()
 			}
 			// refused: counts a refusal; done=true ends the run (nothing else would be accepted either)
 			refused := func(a upAnswer, noteScoped bool) (r UpstreamPush, done bool, e error) {
@@ -556,6 +584,10 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				line("refused", n, refusal(a))
 				if linkWide(a, noteScoped) {
 					r, e = stop(refusal(a))
+					return r, true, e
+				}
+				if tooManyDenied(a) {
+					r, e = stop(deniedWhy)
 					return r, true, e
 				}
 				return res, false, nil
@@ -655,7 +687,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			if n.Sent.RemoteSub > 0 {
 				a = p.call("GET", fmt.Sprintf("%s/%d", base, n.Sent.RemoteSub), nil, nil)
 				if p.more {
-					return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+					return limitMore()
 				}
 			}
 			var sub struct {
@@ -683,7 +715,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			// fail: a request about THIS note failed; the run goes on with the others unless the failure concerns everything
 			fail := func(a upAnswer, what string) (r UpstreamPush, done bool, e error) {
 				if p.more {
-					r, e = more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+					r, e = limitMore()
 					return r, true, e
 				}
 				res.Refused++
@@ -703,7 +735,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				tid := strconv.FormatInt(target, 10)
 				na := p.call("GET", fmt.Sprintf("/minigw/v1/projects/%d/notes/%d", remote, target), nil, nil)
 				if p.more {
-					return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+					return limitMore()
 				}
 				var cur struct{ Revision int64 }
 				switch {
@@ -793,12 +825,15 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		}
 		if a.status != 201 {
 			if p.more { // a write limit that cannot be waited out in this call: not a refusal of the note
-				return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+				return limitMore()
 			}
 			res.Refused++
 			line("refused", n, refusal(a))
 			if linkWide(a, replaces > 0 || res.Created+res.Replaced > 0) {
 				return stop(refusal(a)) // nothing else would be accepted either
+			}
+			if tooManyDenied(a) {
+				return stop(deniedWhy)
 			}
 			continue
 		}

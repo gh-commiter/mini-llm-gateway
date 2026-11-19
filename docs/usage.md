@@ -1719,11 +1719,13 @@ because the note changed there meanwhile): after the next change here the push i
 does not appear; the report says `the earlier submission was rejected upstream (<reason>)`. A note whose text did not change here is not sent again
 (an automatic push does not retry it either). When the push reads an earlier submission and finds it accepted, it writes down the upstream note
 before doing anything else with that note. Two submissions of a note that is not yet there could both be accepted as notes, so a note whose first
-submission is still **pending** upstream waits for its review: the report says `wait ... still pending`, `status` says "N notes wait for a review upstream".
-Waiting is not a failure (no back-off, no failure count for the link, the other notes go on); an automatic link looks at the submission again every five
-debounce periods (5 minutes by default), one request per waiting note. When the review is done the latest text goes: accepted, as a replacement of the new
-note (also when nothing was edited here since the wait began); rejected, as a new submission if the text differs from the rejected one. A note whose text
-is back to what was sent stops waiting. A
+submission is still **pending** upstream waits for its review: the report says `wait ... still pending`, `status` says "N notes wait for a review
+upstream; they are checked at the next push". Waiting is not a failure (no back-off, no failure count, the other notes go on) and does not make the
+link due by itself: there is no timer for it. A waiting note is looked at again (one request per note) whenever a push happens anyway: a manual push,
+an automatic push caused by a local change, or the periodic pull of a link that is read and set to automatic. A link with none of these keeps the wait
+until the next push. Then the latest text goes: accepted, as a replacement of the new note (also when nothing was edited here since the wait began);
+rejected, as a new submission if the text differs from the rejected one. A note whose text is back to what was sent stops waiting, and a note outside
+the link's classes is not counted. This holds also for a note settled with `resolve --ours` whose earlier submission turns out to be pending. A
 replacement of an accepted note may be sent while an earlier replacement is pending (only one of them can be accepted: the other is stale). Where the
 upstream cannot say what became of the earlier submission (deleted or no longer visible there: HTTP 404), or the upstream note is deleted or no longer
 visible, nothing is sent as a new note: `status` lists the note as a conflict, and `gw upstream resolve <project> <note> --ours` sends our text as a submission: before it creates anything the push looks again, and replaces the
@@ -1733,7 +1735,8 @@ report line says which of these happened. `--theirs` leaves the local text unsen
 If one note cannot be read for another reason (the bound user may not read it, a server error, an answer that makes no sense), that note is `refused`
 with its number and the run goes on with the others; a refusal to write one note (this identity may not write it or its class) refuses that note too
 once the run has had a note accepted or when it names an existing note. An answer that says the gateway itself is not allowed (401, lost role, archived project), a first
-refusal of a new note before anything was accepted, or a rate limit ends the run. Nothing is
+refusal of a new note before anything was accepted, a hub that says the identity may not hand in at all (`no_submit_access`: the report says the upstream
+identity may no longer hand in to this project: ask its admin), three refusals of a write in a row with nothing accepted in the run (an older hub), or a rate limit ends the run. Nothing is
 sent for a note that cannot be traced, so a note is never knowingly sent as a new one when it may already exist there. A link that has sent notes cannot
 be pointed at another project on the upstream (unlink it and link it again). After restoring an older database (see Going back in `docs/install.md`) check
 `gw upstream status` and do not push before comparing with the upstream: what was sent after that backup is not known to the restored database, and a push would create it
