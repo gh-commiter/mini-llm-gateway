@@ -221,14 +221,15 @@ else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
   # Nameščen minigw: Linux povezava; Windows lupini kot minigw plugin install (Git Bash najde bin/minigw brez pripone,
   # ne .cmd; minigw.cmd za cmd/PowerShell), kopija vtičnika (minigw.exe) gre.
+  # shimtext: besedilo lupine bin/minigw za $inst (en vir: zapis ga napiše, zapis .verified ga primerja)
+  shimtext() { q=$(cygpath -m "$inst" | sed "s/'/'\\\\''/g"); printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec '$q' \"\$@\""; }
   linkinst() {  # $inst: nameščen minigw (overjen, ali edini, ki ga je mogoče uporabiti)
     if [ "$os" = linux ]; then
       [ "$(readlink "$EXE" 2>/dev/null)" = "$inst" ] || { rm -f "$EXE"; forget; ln -s "$inst" "$EXE"; } ||
         echo "minigw plugin: could not link $(san "$EXE") to $(san "$inst")."
     else
       # minigw.cmd: brez zakasnjene razširitve, pot MSI kot %LOCALAPPDATA%\… (ASCII; enako kot shimCmd v client/plugin.go)
-      q=$(cygpath -m "$inst" | sed "s/'/'\\\\''/g")
-      { printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec '$q' \"\$@\"" > "$BIN/minigw.new" &&
+      { shimtext > "$BIN/minigw.new" &&
         printf '@setlocal DisableDelayedExpansion\r\n@"%%LOCALAPPDATA%%\\Programs\\Mini Gateway\\minigw.exe" %%*\r\n' > "$BIN/minigw.cmd" &&
         mv -f "$BIN/minigw.new" "$BIN/minigw"; } ||
         echo "minigw plugin: could not point $(san "$BIN")/minigw at $(san "$inst")."
@@ -269,7 +270,9 @@ fi
 # v podpisanih vsotah (trusted). Izjema brez ssh-keygen (neoverjena lastna kopija) zapisa NIMA. SHA-256 (po povezavi) gre atomarno, 600.
 # Windows z nameščenim minigw: kljuka zažene lupino bin/minigw, ta pa nameščeni minigw: zapis ima obe vrstici (»sha  pot«).
 ent=$EXE; [ "$os" = windows ] && [ -n "$inst" ] && ent="$BIN/minigw"
-if [ "$os" = darwin ]; then valid "$EXE"; else trusted "$EXE"; fi && shm "$ent" && h1=$SH && h2=$h1 && { [ "$ent" = "$EXE" ] || { shm "$EXE"; h2=$SH; }; } &&
+if [ "$os" = darwin ]; then valid "$EXE"; else trusted "$EXE"; fi &&
+   { [ "$ent" = "$EXE" ] || { [ -f "$ent" ] && [ ! -L "$ent" ] && [ "$(shimtext)" = "$(cat "$ent")" ]; }; } &&  # lupina je ta, ki jo je zapisal ta zagon
+   shm "$ent" && h1=$SH && h2=$h1 && { [ "$ent" = "$EXE" ] || { shm "$EXE"; h2=$SH; }; } &&
    [ -n "$h1" ] && [ -n "$h2" ] && ( umask 077; { printf '%s  %s\n' "$h1" "$ent"; [ "$ent" = "$EXE" ] || printf '%s  %s\n' "$h2" "$EXE"; } > "$BIN/.verified.new" ) &&
    mv -f "$BIN/.verified.new" "$BIN/.verified" || { unrecord; rm -f "$BIN/.verified.new"; }
 

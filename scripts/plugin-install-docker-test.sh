@@ -100,6 +100,17 @@ cp "$exe" $T/win/data/bin/minigw.exe; winrun newer > /dev/null
 [[ -e $T/win/data/bin/minigw && -e $T/win/data/bin/minigw.cmd ]] || fail "10e: session 1 wrote no shims"
 print '#!/bin/sh\ntouch '$T'/ran10e' > "$exe"; rm -f $T/ran10e; out=$(winrun newer); print -r -- $out
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd && ! -e $T/ran10e && -e $T/win/data/bin/minigw.exe ]] || fail "10e: a stale shim still points at the substituted installed minigw"
+# 10f (#153 review 2): star lupina bin/minigw (drug cilj) + zapis lupine odpove (mapa minigw.new na poti) → brez .verified, kljuka ne zažene starega cilja
+print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
+print '#!/bin/sh\n# Mini Gateway: the installed minigw\ntouch '$T'/ran10f' > $T/win/data/bin/minigw; chmod +x $T/win/data/bin/minigw; mkdir -p $T/win/data/bin/minigw.new; rm -f $T/ran10f $T/win/data/bin/.verified
+winrun newer > /dev/null
+[[ ! -e $T/win/data/bin/.verified ]] || fail "10f: a record was written next to a shim this run did not write"
+mkdir -p $T/win/roaming/minigw; print '{"version":1,"enabled":[{"gateway":"g","project":3}]}' > $T/win/roaming/minigw/kb-hooks.json
+print -n '{}' | CLAUDE_PLUGIN_DATA=$T/win/data HOME=$T/win/home APPDATA=$T/win/roaming PATH=$T/win/fake:$PATH sh plugins/minigw/scripts/kb-hook.sh stop > /dev/null 2>&1
+[[ ! -e $T/ran10f ]] || fail "10f: the hook ran the old shim's target"
+rmdir $T/win/data/bin/minigw.new; winrun newer > /dev/null   # kontrola: ko zapis uspe, je zapis tu
+[[ -s $T/win/data/bin/.verified && ! -e $T/ran10f ]] || fail "10f: no record after a successful shim write"
+rm -f $T/win/roaming/minigw/kb-hooks.json
 # 10d: BREZ vnaprej vpisanih vsot (stanje prave naprave): nameščen minigw.exe z neznanim hashem se ne zažene, a vrstica ponudi posodobitev
 print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.7.0; exit 0' > "$exe"; chmod +x "$exe"; rm -f $T/win/data/bin/SHA256SUMS $T/win/data/bin/SHA256SUMS.sig
 out=$(winrun newer); print -r -- $out
