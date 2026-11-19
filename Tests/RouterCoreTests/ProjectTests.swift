@@ -265,6 +265,7 @@ final class ProjectFakeGateway: @unchecked Sendable {
     struct Resp { var status: Int, headers: [String: String] = [:], body: String = "" }
     let handler: @Sendable (Req) -> Resp
     private var fd: Int32 = -1
+    private let loop = TestAcceptLoop("ProjectFakeGateway")
     private(set) var port: UInt16 = 0
     private let lock = NSLock()
     private var seen: [Req] = []
@@ -283,17 +284,11 @@ final class ProjectFakeGateway: @unchecked Sendable {
         _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &l) } }
         port = UInt16(bigEndian: a.sin_port)
         let listener = fd
-        Thread { [self] in
-            while true {
-                let c = accept(listener, nil, nil)
-                if c < 0 { return }
-                Thread { self.serve(c) }.start()
-            }
-        }.start()
+        loop.start(listener: listener) { c in Thread { self.serve(c) }.start() }
     }
 
     var url: String { "http://127.0.0.1:\(port)" }
-    func stop() { close(fd) }
+    func stop() { loop.markStopped(); close(fd) }
 
     private func serve(_ c: Int32) {
         defer { close(c) }

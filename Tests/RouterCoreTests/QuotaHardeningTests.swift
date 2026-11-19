@@ -162,6 +162,7 @@ private func waitGone(_ pid: pid_t, seconds: Double = 3) async -> Bool {
 /// A tiny HTTP server on 127.0.0.1: for each connection it reads the request head and calls `serve` with the socket.
 private final class SocketServer: @unchecked Sendable {
     private var fd: Int32 = -1
+    private let loop = TestAcceptLoop("SocketServer")
     private(set) var port: UInt16 = 0
     init(_ serve: @escaping @Sendable (Int32) -> Void) {
         fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -175,26 +176,22 @@ private final class SocketServer: @unchecked Sendable {
         _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &l) } }
         port = UInt16(bigEndian: a.sin_port)
         let lfd = fd
-        Thread {
-            while true {
-                let c = accept(lfd, nil, nil)
-                if c < 0 { return }
-                var on: Int32 = 1
-                setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))  // a client that goes away is an error, not a signal
-                Thread {
-                    var buf = [UInt8](repeating: 0, count: 4096), got = Data()
-                    while got.range(of: Data("\r\n\r\n".utf8)) == nil {
-                        let n = read(c, &buf, buf.count)
-                        if n <= 0 { break }
-                        got.append(buf, count: n)
-                    }
-                    serve(c)
-                    close(c)
-                }.start()
-            }
-        }.start()
+        loop.start(listener: lfd) { c in
+            var on: Int32 = 1
+            setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))  // a client that goes away is an error, not a signal
+            Thread {
+                var buf = [UInt8](repeating: 0, count: 4096), got = Data()
+                while got.range(of: Data("\r\n\r\n".utf8)) == nil {
+                    let n = read(c, &buf, buf.count)
+                    if n <= 0 { break }
+                    got.append(buf, count: n)
+                }
+                serve(c)
+                close(c)
+            }.start()
+        }
     }
-    func stop() { close(fd) }
+    func stop() { loop.markStopped(); close(fd) }
 }
 
 /// What the fake server managed to write, and whether it saw the client close the connection.

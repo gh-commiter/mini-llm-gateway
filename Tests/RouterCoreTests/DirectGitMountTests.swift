@@ -11,6 +11,7 @@ import Testing
 private final class DAVLoopback: @unchecked Sendable {
     let root: URL, prefix: String
     private var listener: Int32 = -1
+    private let loop = TestAcceptLoop("DAVLoopback")  // #150
     private(set) var port: UInt16 = 0
     private let seen = Mutex<[String]>([])  // requests that reached the client side, newest last (for the failure message)
     var writes: [String] { seen.withLock { $0.filter { !$0.hasPrefix("PROPFIND") && !$0.hasPrefix("GET")  && !$0.hasPrefix("HEAD") && !$0.hasPrefix("OPTIONS") } } }
@@ -29,16 +30,49 @@ private final class DAVLoopback: @unchecked Sendable {
         var len = socklen_t(MemoryLayout<sockaddr_in>.size)
         _ = withUnsafeMutablePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(listener, $0, &len) } }
         port = UInt16(bigEndian: addr.sin_port)
-        Thread.detachNewThread { [self] in
-            while true {
-                let c = accept(listener, nil, nil)
-                if c < 0 { return }
-                Thread.detachNewThread { self.serve(c) }
-            }
-        }
+        loop.start(listener: listener) { c in Thread.detachNewThread { self.serve(c) } }
     }
 
-    func stop() { close(listener) }
+    func stop() { loop.markStopped(); close(listener) }
+
+    /// #150: nil when the server answers a minimal request within 3 s; otherwise why it does not. A test calls this before it touches the mount, so a dead server
+    /// fails the test at once instead of blocking in the mount (a `stat` on a mount whose server is gone does not return).
+    func deadReason() -> String? {
+        let why = { (what: String) in
+            "the test's WebDAV server stopped answering (\(what); accept loop errno \(self.loop.endedErrno.map(TestAcceptLoop.name) ?? "none seen, the loop is still running"); \(self.summary))"
+        }
+        if loop.endedErrno != nil { return why("its accept loop has ended") }
+        let s = socket(AF_INET, SOCK_STREAM, 0)
+        guard s >= 0 else { return nil }
+        defer { close(s) }
+        var a = sockaddr_in()
+        a.sin_family = sa_family_t(AF_INET); a.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        a.sin_addr.s_addr = inet_addr("127.0.0.1"); a.sin_port = port.bigEndian
+        let flags = fcntl(s, F_GETFL)
+        _ = fcntl(s, F_SETFL, flags | O_NONBLOCK)
+        let r = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        if r != 0 {
+            guard errno == EINPROGRESS else { return why("connect failed with \(TestAcceptLoop.name(errno))") }
+            var p = pollfd(fd: s, events: Int16(POLLOUT), revents: 0)
+            var err: Int32 = 0, n = socklen_t(MemoryLayout<Int32>.size)
+            guard poll(&p, 1, 3000) == 1, getsockopt(s, SOL_SOCKET, SO_ERROR, &err, &n) == 0, err == 0 else { return why("no connection within 3 s") }
+        }
+        _ = fcntl(s, F_SETFL, flags)
+        var tv = timeval(tv_sec: 3, tv_usec: 0), on: Int32 = 1
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        let req = Array("OPTIONS \(prefix)/ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".utf8)
+        guard write(s, req, req.count) == req.count else { return why("the request could not be sent") }
+        var buf = [UInt8](repeating: 0, count: 16)
+        return read(s, &buf, buf.count) >= 5 ? nil : why("no answer within 3 s")
+    }
+
+    /// Fails the test at once (the cleanup defers still unmount) when the server does not answer.
+    func requireAnswering() throws {
+        let why = deadReason()
+        try #require(why == nil, Comment(rawValue: why ?? ""))
+    }
 
     /// One request per connection, as the router's server (HTTPParser has no keep-alive).
     private func serve(_ c: Int32) {
@@ -72,39 +106,70 @@ private final class DAVLoopback: @unchecked Sendable {
     }
 }
 
+/// Runs `cmd` in `cwd` with `/bin/sh`, stdout and stderr together. #150: the shell starts in "/" and does its own `cd` (a launch with a working directory on a wedged mount
+/// blocks the caller in the kernel), runs in a process group of its own, and on the timeout the whole GROUP is killed (a `git` the shell started must not outlive it holding the
+/// pipe); the output then says so, with the command, the time and the processes that were still alive.
 private func sh(_ cmd: String, cwd: String, timeout: Double = 90) -> (status: Int32, out: String) {
-    let p = Process(), pipe = Pipe()
-    p.executableURL = URL(fileURLWithPath: "/bin/sh")
-    p.arguments = ["-c", "export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 GIT_AUTHOR_NAME=n GIT_AUTHOR_EMAIL=a@b GIT_COMMITTER_NAME=n GIT_COMMITTER_EMAIL=a@b; " + cmd]
-    p.currentDirectoryURL = URL(fileURLWithPath: cwd)
-    p.standardOutput = pipe; p.standardError = pipe
-    guard (try? p.run()) != nil else { return (-1, "cannot run") }
-    var data = Data()
-    let reader = Thread { data = pipe.fileHandleForReading.readDataToEndOfFile() }
+    var env = ProcessInfo.processInfo.environment
+    env.merge(["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_AUTHOR_NAME": "n", "GIT_AUTHOR_EMAIL": "a@b",
+               "GIT_COMMITTER_NAME": "n", "GIT_COMMITTER_EMAIL": "a@b"]) { $1 }
+    let quoted = "'" + cwd.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    guard let c = Native.spawnGroup("/bin/sh", ["-c", "exec 2>&1; cd \(quoted) || exit 97; " + cmd], dir: URL(fileURLWithPath: "/"), env: env) else { return (-1, "cannot run") }
+    try? c.err.close()  // the shell sends its stderr into stdout first thing
+    let started = Date(), pid = c.pid
+    let data = Mutex(Data())
+    let reader = Thread { let d = c.out.readDataToEndOfFile(); data.withLock { $0 = d } }
     reader.start()
-    let deadline = Date().addingTimeInterval(timeout)
-    while p.isRunning && Date() < deadline { usleep(20_000) }
-    if p.isRunning { p.terminate() }
-    p.waitUntilExit()
-    // The reader ends at EOF, and EOF comes only when EVERY holder of the pipe has closed it: a process the command left behind (a
-    // daemon git started, a mount helper) keeps it open after the shell is gone, and a full test run once waited here for an hour.
-    // Give it a moment, then close our end: the read fails and the thread ends with what it has.
-    let patience = Date().addingTimeInterval(5)
+    var raw: Int32 = 0, timedOut = false, notes = ""
+    func exited(_ wait: Double) -> Bool {
+        let end = Date().addingTimeInterval(wait)
+        while true {
+            if waitpid(pid, &raw, WNOHANG) == pid { return true }
+            if Date() >= end { return false }
+            usleep(20_000)
+        }
+    }
+    if !exited(timeout) {
+        timedOut = true
+        let alive = Native.pipeWriters(of: c.out.fileDescriptor).map { w -> String in
+            var path = [CChar](repeating: 0, count: 4096), bsd = proc_bsdinfo()
+            _ = proc_pidpath(w, &path, UInt32(path.count))
+            _ = proc_pidinfo(w, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size))
+            return "pid \(w) ppid \(bsd.pbi_ppid) \(String(cString: path))"
+        }
+        kill(-pid, SIGKILL)
+        _ = exited(5)  // a process stuck in the kernel on a wedged mount may outlive SIGKILL for a while: do not wait for it
+        notes = "[#150] TIMEOUT: `\(cmd)` in \(cwd) was killed (the whole process group) after \(String(format: "%.1f", Date().timeIntervalSince(started))) s of \(timeout) s; alive then: \(alive.isEmpty ? "nobody we can see" : alive.joined(separator: "; "))"
+        print(notes)
+    }
+    // The reader ends at EOF, and EOF comes only when EVERY holder of the pipe has closed it. After a timeout the group is dead; a normal exit can still leave a process
+    // that left the group (setsid): give the reader a moment, name the holders, then close our end: the read fails and the thread ends with what it has.
+    let patience = Date().addingTimeInterval(timedOut ? 2 : 5)
     while reader.isExecuting && Date() < patience { usleep(5_000) }
     if reader.isExecuting {
-        // #150: name the holder (the cause of the old hour-long hang was never seen): pid, parent, program, command line.
-        let holders = Native.pipeWriters(of: pipe.fileHandleForReading.fileDescriptor).map { pid -> String in
+        let holders = Native.pipeWriters(of: c.out.fileDescriptor).map { w -> String in
             var path = [CChar](repeating: 0, count: 4096), bsd = proc_bsdinfo()
-            _ = proc_pidpath(pid, &path, UInt32(path.count))
-            _ = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size))
-            return "pid \(pid) ppid \(bsd.pbi_ppid) \(String(cString: path))"
+            _ = proc_pidpath(w, &path, UInt32(path.count))
+            _ = proc_pidinfo(w, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size))
+            return "pid \(w) ppid \(bsd.pbi_ppid) \(String(cString: path))"
         }
         print("[#150] `\(cmd)`: the shell exited but the pipe is still held by: \(holders.isEmpty ? "nobody we can see" : holders.joined(separator: "; "))")
-        try? pipe.fileHandleForReading.close()
+        try? c.out.close()
     }
     let last = Date().addingTimeInterval(5)
     while reader.isExecuting && Date() < last { usleep(5_000) }
-    return (p.terminationStatus, String(decoding: data, as: UTF8.self))
+    let status: Int32 = timedOut ? SIGKILL : (raw & 0x7f == 0 ? (raw >> 8) & 0xff : raw & 0x7f)  // like Process.terminationStatus: the exit code, or the signal
+    return (status, String(decoding: data.withLock { $0 }, as: UTF8.self) + (notes.isEmpty ? "" : "\n" + notes))
+}
+
+@Test func aTimedOutShellTakesItsChildrenWithItAndNamesTheCommand() {
+    let mark = "sleep 29\(Int.random(in: 100...999))"  // a unique command line to look for afterwards
+    let started = Date()
+    let r = sh("\(mark) & \(mark); echo not reached", cwd: "/", timeout: 1)
+    #expect(Date().timeIntervalSince(started) < 15, "the helper waited for the orphan: \(r)")
+    #expect(r.status == SIGKILL && r.out.contains("TIMEOUT") && r.out.contains(mark), "\(r)")
+    usleep(300_000)
+    #expect(sh("pgrep -f '\(mark)' | grep -v $$ || echo none", cwd: "/", timeout: 10).out.hasSuffix("none\n"), "a child of the killed shell is still alive")
 }
 
 /// For failure messages when a mount dies: the system's mount table for this mount point and the webdavfs processes (a dead agent = the OS dropped the mount).
@@ -147,6 +212,7 @@ private func forceUnmount(_ mp: URL) {
     // the agent: edit, add, commit, branch, tag, switch, stash, merge a local branch
     for cmd in ["echo more >> a.txt && git add a.txt && git commit -qm agent", "git branch feature", "git tag v1", "git checkout -q -b topic", "echo again >> a.txt && git stash -q",
                 "git checkout -q - && git merge -q --no-edit x", "git log --oneline | wc -l | grep -q 2", "git gc -q", "git repack -a -d -q && git prune --expire=now && git count-objects -v | grep -q '^count: 0'", "git gc --aggressive -q"] {
+        try server.requireAnswering()
         let r = sh(cmd, cwd: mp.path)
         #expect(r.status == 0, "\(cmd): \(r) | mounted \(ShareHub.isMounted(mp)); \(server.summary)\(r.status == 0 ? "" : " | " + webdavState(mp))")
     }
@@ -165,7 +231,7 @@ private func forceUnmount(_ mp: URL) {
     WebDAV.refused.withLock { $0 = WebDAV.RefusalLog() }
     let denied = ["echo '# t' >> .git/config", "echo noop > .git/hooks/pre-commit", "echo noop > .git/info/attributes", "echo /x > .git/objects/info/alternates",
                   "mkdir .git/rebase-merge && echo noop > .git/rebase-merge/git-rebase-todo", "echo x > .git/shallow", "git config user.name evil"]
-    for cmd in denied { _ = sh(cmd, cwd: mp.path) }
+    for cmd in denied { if server.deadReason() != nil { break }; _ = sh(cmd, cwd: mp.path) }  // (a dead server is reported below, once stderr is ours again)
     var refusals = ""
     for _ in 0..<150 {
         refusals = (try? String(contentsOf: errFile, encoding: .utf8)) ?? ""
@@ -173,6 +239,7 @@ private func forceUnmount(_ mp: URL) {
         usleep(200_000)
     }
     dup2(saved, 2); close(saved); close(fd)
+    try server.requireAnswering()
     // (the shell may report success for a write that webdavfs writes back after close and the client then refuses: the checks are the refusal line and the client's folder)
     let state = "mounted \(ShareHub.isMounted(mp)); \(server.summary)"  // no line = the writes never reached the client (a stalled mount) or the log was used up
     #expect(refusals.contains("minigw: refused agent write to \".git/hooks/pre-commit\" (protected path)"), "\(refusals) | \(state)")
@@ -254,6 +321,7 @@ func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
     defer { forceUnmount(mp) }
     try #require(mounted, "mount_webdav to the loopback server")
     let env = ClaudeCLIConfig.sandboxGitEnv(mount: true).map { "export \($0.key)='\($0.value)'" }.joined(separator: "; ")
+    try server.requireAnswering()
     print("[mode] ls -l on the mount: \(sh("ls -l exec.sh plain.txt link", cwd: mp.path).out)")
     print("[mode] status on the mount, default config: \(sh("git status --short; git config core.symlinks; git ls-files -s", cwd: mp.path).out)")
     print("[mode] status with the run's environment: \(sh(env + "; git status --short; git diff --raw", cwd: mp.path).out)")
