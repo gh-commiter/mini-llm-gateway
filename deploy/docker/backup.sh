@@ -42,6 +42,9 @@ if [ -n "$container" ]; then
     if docker run --rm --label "com.docker.compose.project=$project" --network none --entrypoint sh "$candidate" -c 'command -v tar && command -v sha256sum' >/dev/null 2>&1; then image=$candidate; fi
 fi
 helper() { docker run --rm --label "com.docker.compose.project=$project" --network none --user 0:0 --entrypoint sh "$@"; }
+# A helper that cannot start (Docker exit 125/126/127; Docker's own message is on stderr) is not a verdict on the data.
+hfail() { case $1 in 125|126|127) fail "cannot run the helper container (exit $1; Docker's message is above): image $image";; esac; fail "$2"; }
+probe() { perr=$(helper "$image" -c true 2>&1) || fail "cannot run the helper container: $perr (image $image: the gateway's own image or debian:trixie-slim; it must be present or pullable)"; }
 # A failing inspect is not "no such volume": restore must never read an I/O error as an absent target.
 exists() { out=$(docker volume inspect "$1" 2>&1) && return 0; case $out in *[Nn]o\ such\ volume*) return 1;; esac; fail "cannot inspect volume: $1"; }
 # Any container that mounts either volume, whatever its project, must be stopped (after --stop stopped this project's services).
@@ -55,10 +58,15 @@ $list
 EOF
     done
 }
-restart=no
+restart=no; target=; complete=no
 finish() {
     rc=$?
     trap - EXIT
+    if [ -n "$target" ] && [ "$complete" = no ]; then
+        # this run's own fresh directory: remove what it wrote, before services start again on a possibly full disk
+        rm -f "$target/config.tar" "$target/scratch.tar" "$target/SHA256SUMS" "$target/manifest.txt"
+        rmdir "$target" 2>/dev/null && printf 'backup: incomplete backup removed: %s\n' "$target" >&2
+    fi
     if [ "$restart" = yes ]; then
         # only what ran before (a service stopped on purpose stays stopped)
         # shellcheck disable=SC2086
@@ -80,26 +88,32 @@ if [ "$mode" = backup ]; then
         [ -z "$running" ] || fail 'service is running; use --stop'
     fi
     writers
+    probe
     mkdir -p "$1"
     target=$(cd "$1" && pwd)/minigw-backup-$(date -u +%Y%m%dT%H%M%SZ)
-    case $target in *','*|*'"'*) fail 'backup path cannot contain commas or quotes';; esac
     mkdir -m 700 "$target" || fail 'backup directory already exists'
     for kind in config scratch; do
         v=$cv; [ "$kind" = config ] || v=$sv
-        helper --mount "type=volume,src=$v,dst=/v,readonly" "$image" -c 'tar -C /v -cf - .' > "$target/$kind.tar" || fail 'archive failed (incomplete backup)'
+        helper --mount "type=volume,src=$v,dst=/v,readonly" "$image" -c 'tar -C /v -cf - .' > "$target/$kind.tar" || hfail $? 'archive failed (incomplete backup)'
     done
-    helper --mount "type=bind,src=$target,dst=/b,readonly" "$image" -c 'tar -tf /b/config.tar | grep -qx "./serve.json" && tar -tf /b/config.tar | grep -qx "./core/core.db"' >/dev/null 2>&1 || fail 'config archive lacks serve.json or core database (empty source)'
-    helper --mount "type=bind,src=$target,dst=/b,readonly" "$image" -c 'cd /b; sha256sum config.tar scratch.tar' > "$target/SHA256SUMS" || fail 'checksum failed'
+    # the archives are streamed to the helper: no host folder is bind-mounted
+    names=$(helper -i "$image" -c 'tar -tf -' < "$target/config.tar") || hfail $? 'config archive cannot be listed'
+    printf '%s\n' "$names" | grep -qx './serve.json' && printf '%s\n' "$names" | grep -qx './core/core.db' || fail 'config archive lacks serve.json or core database (empty source)'
+    : > "$target/SHA256SUMS"
+    for kind in config scratch; do
+        h=$(helper -i "$image" -c 'sha256sum' < "$target/$kind.tar") || hfail $? 'checksum failed'
+        printf '%s  %s.tar\n' "${h%% *}" "$kind" >> "$target/SHA256SUMS"
+    done
     version=$(printf '%s' "$config" | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["minigw"]["image"])')
     if [ -n "$container" ] && [ "$image" = "${candidate:-}" ]; then
         version=$(docker run --rm --label "com.docker.compose.project=$project" --network none --entrypoint minigw "$image" --version | head -n 1)
     fi
     printf 'date=%s\nproject=%s\nconfig=%s\nscratch=%s\nMINIGW_VERSION=%s\n' "$(date -u +%FT%TZ)" "$project" "$cv" "$sv" "$version" > "$target/manifest.txt"
     chmod 600 "$target/"*
+    complete=yes
     printf 'Backup: %s\n' "$target"
 else
     source=$(cd "$1" && pwd) || fail 'backup directory not found'
-    case $source in *','*|*'"'*) fail 'backup path cannot contain commas or quotes';; esac
     [ -r "$source/manifest.txt" ] || fail 'manifest.txt not found in the backup directory'
     mproject=$(sed -n 's/^project=//p' "$source/manifest.txt" | head -n 1)
     [ -n "$mproject" ] || fail 'manifest.txt has no project name'
@@ -108,7 +122,13 @@ else
     [ -z "$into" ] || [ "$into" = "$project" ] || fail "--into-project must name the current project ($project)"
     [ "$mproject" = "$project" ] && [ "$mcv" = "$cv" ] && [ "$msv" = "$sv" ] || [ "$into" = "$project" ] || fail "backup was made in project $mproject (volumes $mcv, $msv), the current project is $project (volumes $cv, $sv): run with the environment of the original, or give --into-project $project to restore into $project on purpose"
     [ -z "$running" ] || fail 'service is running; stop it before restore'
-    helper --mount "type=bind,src=$source,dst=/b,readonly" "$image" -c 'cd /b; test "$(wc -l < SHA256SUMS)" -eq 2 && grep -Eq "^[0-9a-f]{64}  config[.]tar$" SHA256SUMS && grep -Eq "^[0-9a-f]{64}  scratch[.]tar$" SHA256SUMS && sha256sum -c SHA256SUMS >/dev/null' >/dev/null 2>&1 || fail 'checksum verification failed'
+    probe
+    [ -r "$source/SHA256SUMS" ] && [ "$(wc -l < "$source/SHA256SUMS")" -eq 2 ] || fail 'checksum verification failed'
+    for kind in config scratch; do
+        want=$(grep -E "^[0-9a-f]{64}  $kind[.]tar\$" "$source/SHA256SUMS") || fail 'checksum verification failed'
+        have=$(helper -i "$image" -c 'sha256sum' < "$source/$kind.tar") || hfail $? 'checksum verification failed'
+        [ "${have%% *}" = "${want%% *}" ] || fail 'checksum verification failed'
+    done
     # The checksums guard against a damaged or mixed-up archive. A backup directory must be protected like the volume itself
     # (it holds the keys); restore does not inspect archive content.
     writers
@@ -121,7 +141,7 @@ else
     for kind in config scratch; do
         v=$cv; [ "$kind" = config ] || v=$sv
         exists "$v" || docker volume create --label "com.docker.compose.project=$project" --label "com.docker.compose.volume=$kind" "$v" >/dev/null
-        helper --mount "type=volume,src=$v,dst=/v" --mount "type=bind,src=$source,dst=/b,readonly" "$image" -c "tar -C /v --no-same-owner -xf /b/$kind.tar && chown -R 10001:10001 /v" >/dev/null 2>&1 || fail 'restore failed; target is now non-empty'
+        helper -i --mount "type=volume,src=$v,dst=/v" "$image" -c 'tar -C /v --no-same-owner -xf - && chown -R 10001:10001 /v' < "$source/$kind.tar" || hfail $? 'restore failed; target is now non-empty'
     done
     printf 'Restored. Next: docker compose up -d\n'
 fi

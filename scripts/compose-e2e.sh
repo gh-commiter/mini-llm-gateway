@@ -65,6 +65,7 @@ backup_contract() {
     # two services (the gateway and a sidecar) so that --stop can be checked to start only what ran before
     print -rl -- 'services:' '  sidecar:' '    image: python:3-alpine' '    command: ["sleep","3600"]' '    init: true' > $work/compose.extra.yaml
     export COMPOSE_FILE=compose.yaml:compose.extra.yaml
+    ! grep -q 'type=bind' backup.sh || fail 'backup.sh bind-mounts a host folder'
     safe_project() {
       docker compose config --format json | python3 -c 'import json,sys; c=json.load(sys.stdin); p=sys.argv[1]; assert c["name"]==p; assert all(c["volumes"][k]["name"]==p+"_"+k for k in ("config","scratch"))' "$1"
     }
@@ -76,17 +77,18 @@ backup_contract() {
       docker run --rm --network none --mount type=volume,src=$1,dst=/v,readonly python:3-alpine sh -c 'cd /v && find . -exec stat -c "%a %u:%g %n" {} + | sort'
     }
     running_services() { docker compose ps --status running --services | sort | tr '\n' ' ' }
-    mkdir "$work/helper-failure" "$work/find-failure"
+    mkdir "$work/helper-failure" "$work/find-failure" "$work/stream-failure"
+    print -rl -- '#!/bin/sh' 'case " $* " in *" run "*" -i "*) echo "docker: Error response from daemon: mounts denied" >&2; exit 125;; esac' 'exec "$BACKUP_REAL_DOCKER" "$@"' > "$work/stream-failure/docker"
     export BACKUP_REAL_DOCKER=$(command -v docker)
     print -rl -- '#!/bin/sh' 'case "$*" in *"tar -C /v -cf - ."*) exit 71;; esac' 'exec "$BACKUP_REAL_DOCKER" "$@"' > "$work/helper-failure/docker"
     print -rl -- '#!/bin/sh' 'case "$*" in *"find /v -mindepth"*) exit 71;; esac' 'exec "$BACKUP_REAL_DOCKER" "$@"' > "$work/find-failure/docker"
-    chmod 700 "$work/helper-failure/docker" "$work/find-failure/docker"
+    chmod 700 "$work/helper-failure/docker" "$work/find-failure/docker" "$work/stream-failure/docker"
     refuse() { # message, then the backup.sh arguments: must fail with the message and create no volume
       local message=$1; shift
       before=$(docker volume ls -q | sort)
       out=$(sh ./backup.sh "$@" 2>&1); local rc=$?
       after=$(docker volume ls -q | sort)
-      [[ $rc != 0 && $out == *$message* && $before == $after ]] || { print -u2 -r -- "$out"; fail "backup refusal: $message"; }
+      [[ $rc != 0 && $out == *$message* && ( -z ${forbid:-} || $out != *${forbid:-}* ) && $before == $after ]] || { print -u2 -r -- "$out"; fail "backup refusal: $message"; }
     }
     print -rl -- 'volumes:' '  config:' "    name: renamed-$prefix-config" '  scratch:' "    name: renamed-$prefix-scratch" > $work/compose.rename.yaml
     for name in default override; do
@@ -122,6 +124,11 @@ c.commit()" || fail 'note fixture'
       PATH=$work/helper-failure:$PATH refuse 'archive failed' --stop ./failed
       healthy $target || fail 'archive failure did not restart service'
       [[ $(running_services) == 'minigw sidecar ' ]] || fail 'archive failure: services not restored'
+      # Docker itself fails on the helper that reads an archive: Docker's message, no verdict on the data, no partial directory, services back
+      PATH=$work/stream-failure:$PATH forbid='empty source' refuse 'mounts denied' --stop ./streamfail
+      [[ -z $(print -l $work/streamfail/minigw-backup-*(N)) ]] || fail 'partial backup was not removed'
+      healthy $target || fail 'stream failure did not restart service'
+      [[ $(running_services) == 'minigw sidecar ' ]] || fail 'stream failure: services not restored'
       # --stop starts again only what ran before: the sidecar was stopped on purpose and stays stopped
       docker compose stop sidecar >/dev/null || fail 'stop sidecar'
       sh ./backup.sh --stop ./good-$name || fail 'backup --stop'
@@ -145,6 +152,7 @@ c.commit()" || fail 'note fixture'
       COMPOSE_FILE=${COMPOSE_FILE}:compose.rename.yaml refuse 'made in project' --restore $archive
       export COMPOSE_PROJECT_NAME=$prefix-restored-$name
       safe_project $COMPOSE_PROJECT_NAME || fail 'unsafe restore project or volumes'
+      PATH=$work/stream-failure:$PATH forbid='checksum verification failed' refuse 'mounts denied' --restore --into-project $COMPOSE_PROJECT_NAME $archive
       # a backup of another project is restored only with --into-project naming the current one
       refuse 'made in project' --restore $archive
       refuse '--into-project must name the current project' --restore --into-project $prefix-elsewhere $archive
