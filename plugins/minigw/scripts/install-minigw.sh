@@ -23,6 +23,15 @@ case "$(uname -s)" in
   *) echo "minigw plugin: no minigw client for $(uname -s)."; exit 0 ;;
 esac
 mkdir -p "$BIN"
+# Vsaka začasna datoteka je za ta zagon (.$$): dve seji hkrati si je ne delita. tidy zbriše le datoteke tega zagona (vsote, ki jih keepsums ni
+# shranil, ne ostanejo) in ostanke mrtvih zagonov, starejše od 10 minut (tudi imena brez pripone iz starejših izdaj).
+SN="$BIN/.sums.new.$$" SG="$BIN/.sig.new.$$" VN="$BIN/.verified.new.$$" locked=""
+tidy() {
+  rm -f "$SN" "$SG" "$VN" "$BIN/minigw.new.$$" "$BIN/minigw.chk.$$" "$BIN/minigw.cmd.new.$$"
+  find "$BIN" -maxdepth 1 \( -name '*.new.*' -o -name '*.chk.*' -o -name .sums.new -o -name .sig.new -o -name .verified.new -o -name minigw.new -o -name minigw.chk \) -mmin +10 -exec rm -f {} \; 2>/dev/null
+  return 0
+}
+unrecord() { rm -f "$BIN/.verified"; tidy; }  # #153: zapis sprejete datoteke za kb-hook.sh; zavrnitev ga zbriše
 
 
 ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //; s/[ -].*$//'; }  # »0.7.4-beta (x)« je 0.7.4
@@ -67,7 +76,7 @@ shm() {
 # verified <vsote> <podpis>: verify_sums enkrat na par vsot v tem zagonu.
 verified() {
   case $1 in
-    */.sums.new) [ -n "$vn" ] || { verify_sums "$1" "$2" && vn=0 || vn=1; }; return "$vn" ;;
+    "$SN") [ -n "$vn" ] || { verify_sums "$1" "$2" && vn=0 || vn=1; }; return "$vn" ;;
     *) [ -n "$vm" ] || { verify_sums "$1" "$2" && vm=0 || vm=1; }; return "$vm" ;;
   esac
 }
@@ -102,7 +111,7 @@ trustedby() {
     { shm "$3"; h=$SH; [ -n "$h" ]; } && [ "$(hashof "$asset" < "$1")" = "$h" ] && tsums=$1
 }
 # Shranjene vsote ali vsote, preverjene v tem zagonu (.sums.new): nameščen minigw, ki je ta izdaja, je overjen že v prvi seji.
-trusted() { trustedby "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig" "$1" || trustedby "$BIN/.sums.new" "$BIN/.sig.new" "$1"; }
+trusted() { trustedby "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig" "$1" || trustedby "$SN" "$SG" "$1"; }
 # exever <datoteka>: različica overjene datoteke je v podpisani vrstici VERSION vsot, ki so jo overile (zaženemo --version le brez nje).
 exever() {
   xv=""
@@ -116,7 +125,7 @@ authexe() {
   if [ "$os" = darwin ]; then valid "$EXE"; else trusted "$EXE" || { ! command -v ssh-keygen >/dev/null 2>&1 && [ -x "$EXE" ] && [ ! -L "$EXE" ]; }; fi
 }
 # keepsums: po uspešnem prenosu (ali ko je kopija v bin/ enaka vnosu) shrani preverjene vsote ob kopijo.
-keepsums() { [ -f "$BIN/.sums.new" ] && [ -f "$BIN/.sig.new" ] && mv -f "$BIN/.sums.new" "$BIN/SHA256SUMS" && mv -f "$BIN/.sig.new" "$BIN/SHA256SUMS.sig"; vn="" vm=""; return 0; }
+keepsums() { [ -f "$SN" ] && [ -f "$SG" ] && mv -f "$SN" "$BIN/SHA256SUMS" && mv -f "$SG" "$BIN/SHA256SUMS.sig"; vn="" vm=""; return 0; }
 
 # Kontrolne vsote zadnje izdaje: po njih se prenesena kopija posodobi (brez omrežja ostane obstoječa). Le podpisane
 # (#8): sicer ni posodobitve (obstoječa ostane) in ne prve namestitve.
@@ -125,8 +134,8 @@ st=$(mktemp -d) && if curl -fsSL --max-time 8 -o "$st/s" "$base/SHA256SUMS" 2>/d
   verify_sums "$st/s" "$st/sig"; case $? in
     0) sums=$(cat "$st/s"); vn=""
       # kopija v bin/: pozitiven izid le, če sta OBE kopiji uspeli in sta enaki preverjenima; sicer brez obeh datotek (kot brez svežih vsot)
-      if cp "$st/s" "$BIN/.sums.new" && cp "$st/sig" "$BIN/.sig.new" && cmp -s "$st/s" "$BIN/.sums.new" && cmp -s "$st/sig" "$BIN/.sig.new"; then vn=0
-      else rm -f "$BIN/.sums.new" "$BIN/.sig.new"; fi ;;
+      if cp "$st/s" "$SN" && cp "$st/sig" "$SG" && cmp -s "$st/s" "$SN" && cmp -s "$st/sig" "$SG"; then vn=0
+      else rm -f "$SN" "$SG"; fi ;;
     2) unsigned="cannot check the release signature: install OpenSSH (ssh-keygen)" ;;
     *) unsigned="the release's SHA256SUMS is not signed by Mini Gateway" ;;
   esac
@@ -214,23 +223,53 @@ if [ "$os" = darwin ]; then
       if [ -n "$stale" ]; then rm -f "$EXE"; forget; ln -s "$stale" "$EXE"
       else
         { [ -e "$EXE" ] || [ -L "$EXE" ]; } && { mv -f "$EXE" "$BIN/minigw.rejected"; forget; }  # nepodpisana kopija: ne sme ostati, kjer jo zaženejo skilli
-        echo "minigw plugin: could not download or verify minigw from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; fi; }
+        echo "minigw plugin: could not download or verify minigw from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; unrecord; exit 0; fi; }
   fi
 else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
   # Nameščen minigw: Linux povezava; Windows lupini kot minigw plugin install (Git Bash najde bin/minigw brez pripone,
   # ne .cmd; minigw.cmd za cmd/PowerShell), kopija vtičnika (minigw.exe) gre.
+  # Git Bash (MSYS) za obstoječo minigw.exe pozna »minigw« kot isto datoteko: mv/rm/> na golem imenu zadene ali ZAMENJA minigw.exe.
+  # BRANJE je neškodljivo, če vsebina odloči (lupina je majhna in ima besedilo; 19 MB exe ne): same, oldshims. Edini zapis na golo ime
+  # (prvi prehod, lupina še ni prava) teče v aside: minigw.exe se odmakne (.keep), ukaz teče, vrne se VEDNO. Ključavnica mkdir (atomarna)
+  # varuje prehod pred drugo sejo; zasedena = ta zagon lupine ne zapiše (izhod 3, brez izpisa); starejša od 5 min (find -mmin) je zastarela.
+  aside() {
+    l="$BIN/.aside.lock"; k="$BIN/minigw.exe.keep"; had=""
+    mkdir "$l" 2>/dev/null || { [ -n "$(find "$l" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$l" 2>/dev/null && mkdir "$l" 2>/dev/null; } || return 3
+    [ -e "$k" ] && [ ! -e "$BIN/minigw.exe" ] && mv "$k" "$BIN/minigw.exe"  # ostanek prekinjenega zagona (le pod ključavnico)
+    if [ -f "$BIN/minigw.exe" ]; then mv -f "$BIN/minigw.exe" "$k" || { rmdir "$l"; return 1; }; had=1; fi  # tekoče exe Windows ne pusti premakniti: lupina se ne zapiše
+    "$@"; r=$?
+    [ -z "$had" ] || mv -f "$k" "$BIN/minigw.exe" || r=1
+    rmdir "$l"; return $r
+  }
+  # same <besedilo-fn> <pot>: vsebina je natanko to besedilo (cmp na kratki datoteki; exe se razlikuje v prvih bajtih)
+  same() { "$1" > "$BIN/minigw.chk.$$" 2>/dev/null; cmp -s "$BIN/minigw.chk.$$" "$2"; ir=$?; rm -f "$BIN/minigw.chk.$$"; return $ir; }
+  cmdtext() { printf '@setlocal DisableDelayedExpansion\r\n@"%%LOCALAPPDATA%%\\Programs\\Mini Gateway\\minigw.exe" %%*\r\n'; }
+  # oldshims: lupini iz prejšnje seje (majhni besedilni datoteki tega skripta); exe prepozna po velikosti in besedilu
+  oldshims() {
+    for f in "$BIN/minigw" "$BIN/minigw.cmd"; do
+      [ -f "$f" ] && [ ! -L "$f" ] && [ "$(wc -c < "$f")" -lt 1024 ] && grep -q 'Mini Gateway: the installed minigw\|DisableDelayedExpansion' "$f" && rm -f "$f"
+    done
+  }
+  # shimtext: besedilo lupine bin/minigw za $inst (en vir: zapis ga napiše, zapis .verified ga primerja)
+  shimtext() { q=$(cygpath -m "$inst" | sed "s/'/'\\\\''/g"); printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec '$q' \"\$@\""; }
   linkinst() {  # $inst: nameščen minigw (overjen, ali edini, ki ga je mogoče uporabiti)
     if [ "$os" = linux ]; then
       [ "$(readlink "$EXE" 2>/dev/null)" = "$inst" ] || { rm -f "$EXE"; forget; ln -s "$inst" "$EXE"; } ||
         echo "minigw plugin: could not link $(san "$EXE") to $(san "$inst")."
     else
       # minigw.cmd: brez zakasnjene razširitve, pot MSI kot %LOCALAPPDATA%\… (ASCII; enako kot shimCmd v client/plugin.go)
-      q=$(cygpath -m "$inst" | sed "s/'/'\\\\''/g")
-      { printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec '$q' \"\$@\"" > "$BIN/minigw.new" &&
-        printf '@setlocal DisableDelayedExpansion\r\n@"%%LOCALAPPDATA%%\\Programs\\Mini Gateway\\minigw.exe" %%*\r\n' > "$BIN/minigw.cmd" &&
-        mv -f "$BIN/minigw.new" "$BIN/minigw"; } ||
-        echo "minigw plugin: could not point $(san "$BIN")/minigw at $(san "$inst")."
+      # lupina in minigw.cmd se zapišeta le, če se vsebina razlikuje (ustaljeno stanje ne zapiše nič); ključavnica zasedena: ne eno ne drugo
+      if ! same shimtext "$BIN/minigw"; then
+        shimtext > "$BIN/minigw.new.$$" && aside mv -f "$BIN/minigw.new.$$" "$BIN/minigw"; ar=$?
+        [ $ar = 3 ] && locked=1
+        [ $ar = 0 ] || [ $ar = 3 ] || echo "minigw plugin: could not point $(san "$BIN")/minigw at $(san "$inst")."
+        rm -f "$BIN/minigw.new.$$"
+      fi
+      if [ -z "$locked" ] && ! same cmdtext "$BIN/minigw.cmd"; then
+        { cmdtext > "$BIN/minigw.cmd.new.$$" && mv -f "$BIN/minigw.cmd.new.$$" "$BIN/minigw.cmd"; } || echo "minigw plugin: could not write $(san "$BIN")/minigw.cmd."
+        rm -f "$BIN/minigw.cmd.new.$$"
+      fi
       # kopija vtičnika (minigw.exe) ostane: pot vanjo je lahko v nastavitvi »kb mcp --print-config«; bin/minigw ima prednost
       EXE=$inst
     fi
@@ -238,31 +277,44 @@ else
   }
   # Windows: lupini iz prejšnje seje (majhni besedilni datoteki tega skripta) ne smeta preživeti nameščenega minigw, ki ni več overjen.
   if [ "$os" = windows ] && [ -z "$inst" ]; then
-    for f in "$BIN/minigw" "$BIN/minigw.cmd"; do
-      [ -f "$f" ] && [ ! -L "$f" ] && [ "$(wc -c < "$f")" -lt 1024 ] && grep -q 'Mini Gateway: the installed minigw\|DisableDelayedExpansion' "$f" && rm -f "$f"
-    done
+    oldshims
   fi
   if [ -n "$inst" ]; then
     linkinst
-    [ "$isums" = "$BIN/.sums.new" ] && keepsums  # overjen z vsotami tega zagona: shrani jih za brez omrežja
+    [ "$isums" = "$SN" ] && keepsums  # overjen z vsotami tega zagona: shrani jih za brez omrežja
   elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || ! authexe || { [ -n "$(want "$asset")" ] && { shm "$EXE"; [ "$SH" != "$(want "$asset")" ]; }; }; then
-    [ "$os" = windows ] && rm -f "$BIN/minigw" "$BIN/minigw.cmd"  # brez namestitve: lupini na odstranjeni minigw gresta
+    [ "$os" = windows ] && oldshims  # brez namestitve: lupini na odstranjeni minigw gresta
     if [ -n "$sums" ] && [ ! -L "$EXE" ] && [ -x "$EXE" ] && { shm "$EXE"; [ "$SH" = "$(want "$asset")" ]; }; then
       keepsums  # ista datoteka kot v podpisanih vsotah: overjena brez prenosa
     else
       fetch "$asset" || { authexe && [ -x "$EXE" ]; } || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {
         if [ -n "$instx" ] || [ -e "$EXE" ] || [ -L "$EXE" ]; then
-          rm -f "$EXE"; forget  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
+          rm -f "$EXE"; forget; unrecord  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
           if [ -n "$unsigned" ]; then why="$unsigned; gateway skills are unavailable until the release can be verified"
           elif [ -n "$sums" ]; then why="the download failed or did not match the signed checksum; gateway skills are unavailable until it works"
           else why="github.com/$REPO could not be reached; gateway skills are unavailable until the network is back"; fi
           echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why."
         else
           echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."
-        fi; exit 0; }
+        fi; unrecord; exit 0; }
     fi
   fi
 fi
+
+# #153: zapis bin/.verified (za kb-hook.sh) le, če je preverjanje v tem zagonu res uspelo: macOS podpis Developer ID; Linux/Windows SHA-256
+# v podpisanih vsotah (trusted). Izjema brez ssh-keygen (neoverjena lastna kopija) zapisa NIMA. SHA-256 (po povezavi) gre atomarno, 600.
+# Windows z nameščenim minigw: kljuka zažene lupino bin/minigw, ta pa nameščeni minigw: zapis ima obe vrstici (»sha  pot«).
+ent=$EXE; [ "$os" = windows ] && [ -n "$inst" ] && ent="$BIN/minigw"
+# Pravilo: zasedena ključavnica (drug zagon piše lupino) = zapis ostane tak, kot je; preverjanje ali lupina v nasprotju = zbriše se;
+# sicer se napiše (neuspel zapis pusti obstoječega: neskladje po hashu kljuko tako ali tako utiša).
+if [ -n "$locked" ]; then :
+elif { if [ "$os" = darwin ]; then valid "$EXE"; else trusted "$EXE"; fi; } &&
+   { if [ "$ent" = "$EXE" ]; then shm "$ent"; else  # lupina mora biti ta, ki jo je zapisal ta zagon (primerjava vsebine)
+       [ -f "$ent" ] && [ ! -L "$ent" ] && same shimtext "$ent" && shm "$ent"; fi; } && h1=$SH && h2=$h1 &&
+   { [ "$ent" = "$EXE" ] || { shm "$EXE"; h2=$SH; }; } && [ -n "$h1" ] && [ -n "$h2" ]; then
+  ( umask 077; { printf '%s  %s\n' "$h1" "$ent"; [ "$ent" = "$EXE" ] || printf '%s  %s\n' "$h2" "$EXE"; } > "$VN" ) &&
+    mv -f "$VN" "$BIN/.verified" || rm -f "$VN"
+else unrecord; fi
 
 # Izbran minigw (že overjen na macOS) je lahko prestar (brez prenosa, zadnja izdaja starejša, ali ga namestitev še ni posodobila):
 # nikoli tiho, ena vrstica iz dejanskega izida. Različica le v strogi obliki.
@@ -341,3 +393,4 @@ if ! command -v claude >/dev/null 2>&1; then
   esac
   echo "minigw plugin: the agent skills need the standalone claude command on PATH (the VS Code extension's bundled CLI is not enough): install it with: $inst"
 fi
+tidy

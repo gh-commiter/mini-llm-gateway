@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+- Windows plugin: writing or removing the `minigw` launcher in the plugin folder can no longer replace or delete the plugin's own `minigw.exe` (Git Bash treats `minigw` and `minigw.exe` as one file). In 0.8.0 the own copy could be lost when an installed client appeared, or before an update download that then failed. Verified checksums that were not stored are now removed at the end of the run (#159).
+- The plugin's knowledge base hook no longer runs a `minigw` that the install step has not checked, and runs nothing while hooks are off (#153). `kb-hook.sh` now exits silently unless `minigw kb hooks on` is set for at least one project, and then runs only the file whose SHA-256 matches the record `bin/.verified` that `install-minigw.sh` writes when it accepts a client (and removes when it rejects one). A replaced or not yet checked file, a missing record or a missing `sha256sum`/`shasum` means no run.
+
 ## 0.8.0
 
 Mini Gateway 0.8.0 is a stable release. It collects the 39 beta versions 0.7.1 to 0.7.39, which stable users never saw, and is the first stable release since 0.7.0. It is the same product code as beta 0.7.39; only tests and the version number differ. The sections below describe what 0.8.0 is, not how each beta got there. Read **Changed**, **Upgrading from 0.7.0** and **Known problems** before you update a gateway that other people use.

@@ -55,7 +55,8 @@ print '#!/bin/sh\nexit 0' > $T/fakebin/systemctl; cp $T/fakebin/systemctl $T/fak
 # Kot v pravem vtičniku: MIN_CLIENT leži poleg skripte (brez njega bi skripta uporabila rezervno vrednost in to povedala).
 MINV=$(<plugins/minigw/scripts/MIN_CLIENT); print -r -- $MINV > $T/MIN_CLIENT; print -r -- $MINV > $T/minv
 [[ $V == $MINV ]] || fail "9: the client built from the source ($V) is not MIN_CLIENT ($MINV): the \"installed current\" client would be too old"
-cp plugins/minigw/scripts/install-minigw.sh $T/real.sh
+cp ${INSTALL_SCRIPT:-plugins/minigw/scripts/install-minigw.sh} $T/real.sh;  # INSTALL_SCRIPT: preizkus starejše skripte (da se vidi, da test pade)
+ cp plugins/minigw/scripts/kb-hook.sh $T/kb-hook.sh
 sed "s|^SIGNER=.*|SIGNER='minigw-release namespaces=\"minigw-release\" $(cut -d' ' -f1,2 $T/key.pub)'|" $T/real.sh > $T/testkey.sh
 
 # 10: Windows brez Windows: lažna uname (MINGW64) in cygpath (-u: ista pot, -m/-w: C: spredaj); pot z ' in %.
@@ -63,12 +64,16 @@ W="$T/win/O'Brien 100%"; mkdir -p $T/win/fake "$W/Programs/Mini Gateway" $T/win/
 print '#!/bin/sh\ncase $1 in -s) echo MINGW64_NT-10.0 ;; *) echo x86_64 ;; esac' > $T/win/fake/uname
 print '#!/bin/sh\ncase $1 in -u) printf "%s\\n" "$2" ;; -m) printf "C:%s\\n" "$2" ;; -w) printf "C:%s\\n" "$2" | tr / "\\\\" ;; esac' > $T/win/fake/cygpath
 print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0" > "$W/Programs/Mini Gateway/minigw.exe"
+# Git Bash zamenja golo ime »minigw«, ki ne obstaja, z minigw.exe; POSIX lupina tega ne zna, zato mv/rm ovojnici ujameta klic na golem imenu, ki ga
+# ni, ko minigw.exe obstaja (VIOL), in zabeležita vsak klic na minigw, minigw.exe in .keep (OPS: v ustaljenem stanju sme biti prazen)
+# (test/>/cat/cmp ostanejo nepreizkušeni: to pokrije le pravi Windows)
+for c in mv rm; do print '#!/bin/sh\nfor a; do case $a in */bin/minigw|*/bin/minigw.exe|*/bin/minigw.exe.keep) echo "'$c' $*" >> "$OPS" ;; esac\ncase $a in */bin/minigw) [ ! -e "$a" ] && [ -e "$a.exe" ] && echo "'$c' $*" >> "$VIOL" ;; esac; done\nexec /bin/'$c' "$@"' > $T/win/fake/$c; done
 chmod +x $T/win/fake/* "$W/Programs/Mini Gateway/minigw.exe"; print old > $T/win/data/bin/minigw.exe
 # Linux in Windows zaženeta le datoteko, ki je v preverjenih SHA256SUMS ob kopiji (podpis testnega ključa): wtrust jo vpiše
 wtrust() { { print "VERSION $2"; print "$(shasum -a 256 "$1" | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > $T/win/data/bin/SHA256SUMS
   ssh-keygen -Y sign -q -f $T/key -n minigw-release < $T/win/data/bin/SHA256SUMS > $T/win/data/bin/SHA256SUMS.sig }
 wtrust "$W/Programs/Mini Gateway/minigw.exe" $MINV
-winrun() { CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE= LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
+winrun() { OPS=$T/win/ops VIOL=$T/win/viol CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE= LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
 out=$(winrun newer); print -r -- $out
 [[ $out == *"minigw $MINV is installed, 0.99.0 is available: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi (check it first: docs/install.md, Check a download)"* && $out != *"/minigw:gw update"* ]] ||
   fail "10: no MSI update hint for a client-only install"
@@ -78,9 +83,38 @@ out=$(winrun newer); print -r -- $out
 exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\''"
 [[ "$(<$T/win/data/bin/minigw)" == "#!/bin/sh"$'\n'"# Mini Gateway: the installed minigw"$'\n'"exec 'C:${exe//$sq/$rep}' \"\$@\"" ]] || fail "10: sh shim: $(<$T/win/data/bin/minigw)"
 [[ "$(<$T/win/data/bin/minigw.cmd)" == "@setlocal DisableDelayedExpansion"$'\r\n'"@\"%LOCALAPPDATA%\\Programs\\Mini Gateway\\minigw.exe\" %*"$'\r' ]] || fail "10: cmd shim: $(<$T/win/data/bin/minigw.cmd)"
+# #153: zapis sprejetega za kb-hook.sh: lupina bin/minigw in nameščeni minigw.exe, vsak z lastnim SHA-256, mode 600
+rec=$T/win/data/bin/.verified; sh_=$(shasum -a 256 $T/win/data/bin/minigw | cut -d" " -f1); ex_=$(shasum -a 256 "$exe" | cut -d" " -f1)
+[[ "$(<$rec)" == "$sh_  $T/win/data/bin/minigw"$'\n'"$ex_  $exe" && "$(ls -l $rec | cut -c1-10)" == -rw------- && ! -e $rec.new ]] || fail "10: .verified: $(<$rec)"
+[[ "$(<$T/win/data/bin/minigw.exe)" == old && ! -e $T/win/data/bin/minigw.exe.keep && ! -e $T/win/viol ]] || fail "10: the plugin's own minigw.exe was touched by a shim write: $(cat $T/win/viol 2>&1)"
+[[ ! -e $T/win/data/bin/.sums.new && ! -e $T/win/data/bin/.sig.new ]] || fail "10: verified sums left behind (#159)"
+# ustaljeno stanje (lupina že prava): nobenega mv/rm na minigw, minigw.exe ali .keep v dveh zaporednih zagonih
+rm -f $T/win/ops; winrun newer > /dev/null; winrun newer > /dev/null
+[[ ! -e $T/win/ops && "$(<$T/win/data/bin/minigw.exe)" == old && ! -e $T/win/viol ]] || fail "10: steady state touched minigw/minigw.exe: $(cat $T/win/ops 2>&1)"
+# ustaljeno stanje ne zapiše niti minigw.cmd ne lupine (nobena datoteka minigw* novejša od oznake)
+touch $T/win/mark; sleep 1.1; winrun newer > /dev/null
+[[ -z "$(find $T/win/data/bin -name 'minigw*' -type f -newer $T/win/mark)" ]] || fail "10: steady state rewrote $(find $T/win/data/bin -name 'minigw*' -type f -newer $T/win/mark)"
+# ključavnica zasedena (druga seja), lupine ni: ta zagon je ne zapiše, minigw.exe se ne dotakne
+rm $T/win/data/bin/minigw; mkdir $T/win/data/bin/.aside.lock; rm -f $T/win/ops $T/win/data/bin/.verified; winrun newer > /dev/null
+[[ ! -e $T/win/data/bin/minigw && ! -e $T/win/ops && ! -e $T/win/data/bin/.verified && -d $T/win/data/bin/.aside.lock && "$(<$T/win/data/bin/minigw.exe)" == old ]] ||
+  fail "10: a held lock did not stop the shim write or the own exe was touched"
+rmdir $T/win/data/bin/.aside.lock; winrun newer > /dev/null
+[[ -f $T/win/data/bin/minigw && -s $T/win/data/bin/.verified && "$(<$T/win/data/bin/minigw.exe)" == old && ! -e $T/win/data/bin/.aside.lock && ! -e $T/win/viol ]] || fail "10: first shim write after the lock went"
+# dve seji hkrati (10 ponovitev, vsakič prvi prehod): obe končata 0, zapis je in ustreza lupini, brez ostankov in napak
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  rm -f $T/win/data/bin/minigw $T/win/data/bin/minigw.cmd $T/win/data/bin/.verified
+  winrun newer > $T/win/p1.out 2> $T/win/p1.err & p1=$!
+  winrun newer > $T/win/p2.out 2> $T/win/p2.err & p2=$!
+  wait $p1 && wait $p2 || fail "10 parallel $i: exit status"
+  [[ ! -s $T/win/p1.err && ! -s $T/win/p2.err ]] || fail "10 parallel $i: stderr: $(cat $T/win/p1.err $T/win/p2.err)"
+  [[ "$(head -1 $T/win/data/bin/.verified | cut -d' ' -f1)" == "$(shasum -a 256 $T/win/data/bin/minigw | cut -d' ' -f1)" && -f $T/win/data/bin/minigw.cmd ]] || fail "10 parallel $i: no record, or it does not match the shim"
+  [[ "$(<$T/win/data/bin/minigw.exe)" == old && -z "$(find $T/win/data/bin \( -name '*.new.*' -o -name '*.chk.*' -o -name '.aside.lock' -o -name '*.keep' \))" && ! -e $T/win/viol ]] ||
+    fail "10 parallel $i: leftovers or the own exe touched: $(ls -A $T/win/data/bin)"
+done
 [[ -e $T/win/data/bin/minigw.exe && $out == *"connected to Mini Gateway"* ]] || fail "10: the plugin copy was deleted (a kb mcp config points at it) or status not read"
 rm "$exe"; out=$(winrun); print -r -- $out
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd ]] || fail "10: shims kept without an installed minigw"
+[[ ! -e $T/win/viol ]] || fail "10: removing the shims went through the bare name: $(cat $T/win/viol)"  # (the unverified own exe is removed by the reject path, by name)
 # 10b: stari MSI minigw (0.5.20) in prenos ne uspe (ni izdaje): stari ostane, a glasno (enako kot macOS in Linux)
 print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.20; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" 0.5.20
 out=$(winrun); print -r -- $out
@@ -90,18 +124,31 @@ out=$(winrun); print -r -- $out
 print '#!/bin/sh\ntouch '$T'/ran10\necho minigw 9.9.9' > "$exe"; chmod +x "$exe"; rm -f $T/ran10
 out=$(winrun); print -r -- $out
 [[ ! -e $T/ran10 && ! -e $T/win/data/bin/minigw && $out == *"cannot verify the installed minigw and cannot download a verified one"* ]] || fail "10c: a substituted MSI minigw was run or linked"
+[[ ! -e $T/win/data/bin/.verified ]] || fail "10c: the record of the rejected minigw is still there (#153)"
 # 10e: lupini iz seje 1 (overjen nameščeni minigw.exe), potem je exe zamenjan (hash ni v vsotah): lupini izgineta, zažene se kopija vtičnika
 print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
 cp "$exe" $T/win/data/bin/minigw.exe; winrun newer > /dev/null
 [[ -e $T/win/data/bin/minigw && -e $T/win/data/bin/minigw.cmd ]] || fail "10e: session 1 wrote no shims"
 print '#!/bin/sh\ntouch '$T'/ran10e' > "$exe"; rm -f $T/ran10e; out=$(winrun newer); print -r -- $out
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd && ! -e $T/ran10e && -e $T/win/data/bin/minigw.exe ]] || fail "10e: a stale shim still points at the substituted installed minigw"
+# 10f (#153 review 2): star lupina bin/minigw (drug cilj) + zapis lupine se ne zgodi (ključavnica zasedena) → brez .verified, kljuka ne zažene starega cilja
+print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
+print '#!/bin/sh\n# Mini Gateway: the installed minigw\ntouch '$T'/ran10f' > $T/win/data/bin/minigw; chmod +x $T/win/data/bin/minigw; mkdir -p $T/win/data/bin/.aside.lock; rm -f $T/ran10f $T/win/data/bin/.verified
+winrun newer > /dev/null
+[[ ! -e $T/win/data/bin/.verified ]] || fail "10f: a record was written next to a shim this run did not write"
+mkdir -p $T/win/roaming/minigw; print '{"version":1,"enabled":[{"gateway":"g","project":3}]}' > $T/win/roaming/minigw/kb-hooks.json
+print -n '{}' | CLAUDE_PLUGIN_DATA=$T/win/data HOME=$T/win/home APPDATA=$T/win/roaming PATH=$T/win/fake:$PATH sh plugins/minigw/scripts/kb-hook.sh stop > /dev/null 2>&1
+[[ ! -e $T/ran10f ]] || fail "10f: the hook ran the old shim's target"
+rmdir $T/win/data/bin/.aside.lock; winrun newer > /dev/null   # kontrola: ko zapis uspe, je zapis tu
+[[ -s $T/win/data/bin/.verified && ! -e $T/ran10f ]] || fail "10f: no record after a successful shim write"
+rm -f $T/win/roaming/minigw/kb-hooks.json
 # 10d: BREZ vnaprej vpisanih vsot (stanje prave naprave): nameščen minigw.exe z neznanim hashem se ne zažene, a vrstica ponudi posodobitev
 print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.7.0; exit 0' > "$exe"; chmod +x "$exe"; rm -f $T/win/data/bin/SHA256SUMS $T/win/data/bin/SHA256SUMS.sig
 out=$(winrun newer); print -r -- $out
 [[ $out == *"the minigw installed at "*"is not the current release 0.99.0 (or could not be verified); update it: /minigw:gw update"* ]] || fail "10d: no update line for an untrusted installed gateway client"
 rm $T/win/roaming/minigw/serve.json; out=$(winrun newer)
 [[ $out == *"is not the current release 0.99.0 (or could not be verified); update it: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi"* ]] || fail "10d: no MSI line for an untrusted client-only install"
+[[ ! -e $T/win/viol ]] || fail "10: a write/mv/rm on bin/minigw while minigw.exe exists: $(cat $T/win/viol)"
 print "ok 10: Windows shims point at the installed minigw; client-only MSI gets the MSI hint"
 
 docker run --rm -v $T:/t:ro debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 sh -c '
@@ -120,15 +167,39 @@ out=$(run /tmp/d1 evil real); echo "$out"
 [ "$(/tmp/d1/bin/minigw --version | head -1)" = "minigw 0.5.16" ] || fail "1: old minigw replaced"
 echo "$out" | grep -q "not updated: cannot check the release signature" || fail "1: no reason printed"
 echo "ok 1: 0.5.16 minigw does not verify a garbage signature"
+# 1b (#153): brez ssh-keygen se obstoječa lastna kopija obdrži (izjema), a BREZ zapisa .verified; kljuka je tiha (marker odsoten)
+mkdir -p /tmp/d1b/bin /tmp/home/.config/minigw; printf "#!/bin/sh\ntouch /tmp/marker1b\necho minigw 0.5.16\n" > /tmp/d1b/bin/minigw; chmod +x /tmp/d1b/bin/minigw
+echo stale > /tmp/d1b/bin/.verified
+out=$(run /tmp/d1b evil real); echo "$out"
+[ -x /tmp/d1b/bin/minigw ] && [ ! -e /tmp/d1b/bin/.verified ] || fail "1b: the unverified own copy got a record, or was removed"
+echo "{\"version\":1,\"enabled\":[{\"gateway\":\"g\",\"project\":3}]}" > /tmp/home/.config/minigw/kb-hooks.json; rm -f /tmp/marker1b
+echo "{}" | CLAUDE_PLUGIN_DATA=/tmp/d1b HOME=/tmp/home sh /t/kb-hook.sh stop; [ ! -e /tmp/marker1b ] || fail "1b: the hook ran an unverified copy"
+rm -f /tmp/home/.config/minigw/kb-hooks.json
+echo "ok 1b: no record for an unverified own copy, the hook stays silent"
 
+mkdir -p /tmp/d2/bin; echo stale > /tmp/d2/bin/.verified  # #153: zavrnitev zbriše zapis
 out=$(run /tmp/d2 good real); echo "$out"
 [ ! -e /tmp/d2/bin/minigw ] || fail "2: installed without a signature check"
+[ ! -e /tmp/d2/bin/.verified ] || fail "2: the record survived a refused install (#153)"
 echo "ok 2: first install without ssh-keygen refused"
 
 apt-get install -y -qq openssh-client >/dev/null 2>&1
 out=$(run /tmp/d3 good testkey); echo "$out"
 [ -x /tmp/d3/bin/minigw ] || fail "3: not installed with a good signature"
+[ "$(cat /tmp/d3/bin/.verified)" = "$(sha256sum /tmp/d3/bin/minigw | cut -d" " -f1)  /tmp/d3/bin/minigw" ] || fail "3: no record of the accepted download (#153)"
+[ "$(stat -c %a /tmp/d3/bin/.verified)" = 600 ] || fail "3: the record is not mode 600"
 echo "ok 3: good signature installs"
+# 3b (#153): dve seji hkrati v svežih mapah: obe končata 0, zapis ustreza datoteki, brez ostankov in napak
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  d=/tmp/dpar$i
+  run $d good testkey > /tmp/p1.out 2> /tmp/p1.err & p1=$!
+  run $d good testkey > /tmp/p2.out 2> /tmp/p2.err & p2=$!
+  wait $p1 && wait $p2 || fail "3b $i: exit status"
+  [ ! -s /tmp/p1.err ] && [ ! -s /tmp/p2.err ] || fail "3b $i: stderr: $(cat /tmp/p1.err /tmp/p2.err)"
+  [ "$(cut -d" " -f1 $d/bin/.verified)" = "$(sha256sum $d/bin/minigw | cut -d" " -f1)" ] || fail "3b $i: no record, or it does not match"
+  [ -z "$(find $d/bin -name "*.new.*" -o -name "*.chk.*" -o -name .aside.lock)" ] || fail "3b $i: leftovers: $(ls -A $d/bin)"
+done
+echo "ok 3b: two session starts at once keep the record"
 
 mkdir -p /tmp/d4/bin; cp /t/minigw-old /tmp/d4/bin/minigw; cp /t/rel/older/SHA256SUMS /t/rel/older/SHA256SUMS.sig /tmp/d4/bin/  # overjena stara kopija
 out=$(run /tmp/d4 bad testkey); echo "$out"
@@ -184,6 +255,7 @@ mkdir -p /tmp/d9/bin; cp /t/minigw-old /tmp/d9/bin/minigw; cp /t/rel/good/SHA256
 for rel in older good newer; do
   out=$(run /tmp/d9 $rel testkey); echo "$out"
   [ "$(readlink /tmp/d9/bin/minigw)" = /tmp/home/.local/bin/minigw ] || fail "9: plugin bin not linked to the installed minigw ($rel)"
+  [ "$(cat /tmp/d9/bin/.verified)" = "$(sha256sum /tmp/home/.local/bin/minigw | cut -d" " -f1)  /tmp/d9/bin/minigw" ] || fail "9: no record of the linked installed minigw ($rel, #153)"
   ! echo "$out" | grep -q "not updated" || fail "9: downgrade note although the installed minigw is used"
 done
 rm -f /tmp/home/.local/bin/minigw; cp /t/minigw-old /tmp/home/.local/bin/minigw  # rm: the client of the last run may still be running
@@ -194,6 +266,7 @@ rm -f /tmp/home/.local/bin/minigw /tmp/ran9c; printf "#!/bin/sh\ntouch /tmp/ran9
 rm -rf /tmp/d9/bin; mkdir -p /tmp/d9/bin
 out=$(run /tmp/d9 good testkey); echo "$out"
 [ ! -e /tmp/ran9c ] && [ ! -L /tmp/d9/bin/minigw ] && cmp -s /t/rel/good/minigw-linux-arm64 /tmp/d9/bin/minigw || fail "9c: a substituted installed minigw was run or linked"
+[ "$(cut -d" " -f1 /tmp/d9/bin/.verified)" = "$(sha256sum /tmp/d9/bin/minigw | cut -d" " -f1)" ] || fail "9c: the record is not of the downloaded copy (#153)"
 [ -f /tmp/d9/bin/SHA256SUMS.sig ] || fail "9c: the verified sums were not kept next to the downloaded copy"
 rm -rf /tmp/home/.local
 echo "ok 9: installed minigw (verified, not older than MIN) linked, never downloaded; 9c: a substituted one never run"
