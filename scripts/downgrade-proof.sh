@@ -122,13 +122,45 @@ gw() { local c=$1; shift; "$c" gw "$@" --config $CFG 2>&1 || true }
 "$R/wbhelper-old" seed $R/cfg before-upgrade | tee $R/seed.log | grep -q . && fail "2: seed: $(<$R/seed.log)"
 [[ $("$R/wbhelper-old" list $R/cfg) == $'schema=8\nnote=before-upgrade' ]] || fail "2: 0.7.0 database is not schema 8 with the note: $("$R/wbhelper-old" list $R/cfg)"
 start $R/minigw-old $R/serve-070-a.log
-P=$(gw $R/minigw-old project list); stop
+P=$(gw $R/minigw-old project list)
+# 2b. the NEW client against this 0.7.0 gateway (its own HOME: connection.json and device key live there, MINIGW_SECRETS=file)
+TOKEN=$(grep -o "'mgw-[^']*'" $R/init.log | head -1 | tr -d "'")
+HNEW=$R/home-new; WNEW=$R/work-new; mkdir -p $HNEW $WNEW
+cl() { local h=$1 c=$2; shift 2; (cd $WNEW && HOME=$h "$c" "$@" 2>&1) }  # exit status is the client's own
+cl $HNEW $R/minigw-cur connect localhost:$PORT --token "$TOKEN" > $R/connect-new.log || fail "2b: connect: $(<$R/connect-new.log)"
+NS=$(cl $HNEW $R/minigw-cur status)
+[[ $NS == *"gateway 0.7.0"* && $NS == *"Status:    connected"* ]] || fail "2b: status: $NS"
+DEV=$(print -r -- $NS | sed -n 's/^Device: *\([^ ]*\) .*/\1/p')
+[[ -n $DEV ]] || fail "2b: no device id in: $NS"
+# project routes need the device on the approved list (loopback status says "approved" without it) AND bound to a user
+gw $R/minigw-old devices allow $DEV --name proof-client > $R/allow.log; gw $R/minigw-old bind $DEV ana > $R/bind.log
+[[ $(gw $R/minigw-old status) == *"Providers:"*"claude-cli ✗"* || $(gw $R/minigw-old status) != *Providers:*✓* ]] || fail "2b: the temp gateway has a provider"
+HINT_KB="this gateway is 0.7.0; kb needs 0.7.10 or newer: update the gateway (/minigw:gw update there)"
+HINT_TEAM="this gateway is 0.7.0; team needs 0.7.1 or newer: update the gateway (/minigw:gw update there)"
+cl $HNEW $R/minigw-cur project link wb > $R/link-new.log || fail "2b: project link: $(<$R/link-new.log)"
+for c in "kb search test" "kb submit wb --kind finding -" "team list"; do
+  want=$HINT_KB; [[ $c == team* ]] && want=$HINT_TEAM
+  out=$(print "one line" | cl $HNEW $R/minigw-cur ${=c}) && fail "2b: '$c' exited 0: $out"
+  [[ $out == *"$want"* && $out != *"not found or not visible"* ]] || fail "2b: '$c' did not give the hint: $out"
+  print "     new client, 0.7.0 gateway: minigw $c -> $out"
+done
+stop
+ok "2b: the 0.7.37 client against the 0.7.0 gateway: status connected (gateway 0.7.0); kb search, kb submit and team list each fail with the version hint, no model run"
 [[ $P == *wb* ]] || fail "2: 0.7.0 gateway does not list the project: $P"
 ok "2: 0.7.0 database schema 8: user ana, project wb, note before-upgrade; 0.7.0 gateway lists: $P"
 
 # ---- 3. the current gateway migrates ----
 start $R/minigw-cur $R/serve-cur-a.log
-P=$(gw $R/minigw-cur project list); stop
+P=$(gw $R/minigw-cur project list)
+# 3b. the 0.7.0 client against the current gateway (no provider on this gateway: asserted)
+HOLD=$R/home-old; mkdir -p $HOLD
+[[ $(gw $R/minigw-cur status) != *Providers:*✓* ]] || fail "3b: the temp gateway has a provider"
+cl $HOLD $R/minigw-old connect localhost:$PORT --token "$TOKEN" > $R/connect-old.log || fail "3b: 0.7.0 connect: $(<$R/connect-old.log)"
+OS=$(cl $HOLD $R/minigw-old status); [[ $OS == *"Status:    connected"* ]] || fail "3b: 0.7.0 status: $OS"
+OM=$(cl $HOLD $R/minigw-old models) || fail "3b: 0.7.0 models failed: $OM"
+OK=$(cd $WNEW && HOME=$HOLD timeout 2 $R/minigw-old kb search test 2>&1) && OKRC=0 || OKRC=$?
+print "     0.7.0 client, current gateway: status -> ${${(f)OS}[(r)Status:*]}; models -> ${OM//$'\n'/ | } (rc 0); kb search test -> rc=$OKRC: $OK"
+stop
 [[ $P == *wb* ]] || fail "3: current gateway does not list the project: $P (log: $(<$R/serve-cur-a.log))"
 L=$("$R/wbhelper-cur" list $R/cfg)
 SCHEMA=${${(f)L}[1]#schema=}
@@ -136,6 +168,7 @@ SCHEMA=${${(f)L}[1]#schema=}
 [[ $L == *note=before-upgrade* ]] || fail "3: note not readable after the upgrade: $L"
 SNAP8=(${CORE}/core-8-*.db(N)); (( $#SNAP8 == 1 )) || fail "3: expected one core-8 snapshot: $(ls $CORE)"
 "$R/wbhelper-cur" add $R/cfg after-upgrade
+ok "3b: the 0.7.0 client against the current gateway: status connected, models answers (see above); kb search test is a model request there (see above)"
 ok "3: current gateway migrated 8 -> $SCHEMA, note readable, snapshot ${SNAP8[1]:t}; core folder: $(ls $CORE | tr '\n' ' ')"
 
 # ---- 4. three more snapshots; core-8 survives ----
