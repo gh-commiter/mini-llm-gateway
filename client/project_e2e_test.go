@@ -56,7 +56,7 @@ func (c *clientFx) env(user, cwd, stdin string) (*projectEnv, *out, *out) {
 	o, e := &out{}, &out{}
 	return &projectEnv{
 		connect: func() (connection, string) { return conn, "gw-test" },
-		state:   c.state, cwd: cwd, in: strings.NewReader(stdin), out: o, err: e, do: realDo, sleep: func(time.Duration) {},
+		state:   c.state, cwd: cwd, in: strings.NewReader(stdin), out: o, err: e, tty: func() bool { return false }, do: realDo, sleep: func(time.Duration) {},
 	}, o, e
 }
 

@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -99,10 +98,7 @@ func TestRunningCommand(t *testing.T) {
 
 // Shared with the Mac gateway (RunningTests in Tests/RouterCoreTests): client/testdata/running.json and step-marks.json.
 func TestRunningSharedFixture(t *testing.T) {
-	b, err := os.ReadFile("testdata/running.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := srcFile(t, "testdata/running.json")
 	var fx struct {
 		Runs []struct {
 			ID, Owner, Model, Folder string
@@ -136,10 +132,7 @@ func TestRunningSharedFixture(t *testing.T) {
 		}
 	}
 
-	b, err = os.ReadFile("testdata/step-marks.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b = srcFile(t, "testdata/step-marks.json")
 	var sm struct {
 		Cases []struct{ Name, Step, Dir, Scratch, Mark string }
 	}

@@ -239,10 +239,7 @@ func TestStatusCarriesSecretsLine(t *testing.T) {
 // Item names and places that the other programs (the Mac app, minigw on the Mac, the Windows tray) rely on: the same
 // fixture is read by Tests/RouterCoreTests/SecretNamesTests.swift.
 func TestSecretNamesPinned(t *testing.T) {
-	b, err := os.ReadFile("testdata/secret-names.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := srcFile(t, "testdata/secret-names.json")
 	var f struct {
 		AgentLogin, AgentAPIKey, Upstream string
 		WindowsGatewayTarget              string
@@ -275,14 +272,13 @@ func TestSecretNamesPinned(t *testing.T) {
 // The Secret Service and Credential Manager item shapes are in the code of the platform files; pinned by reading them,
 // because a test must not start secret-tool or call the Credential Manager.
 func TestPlatformItemShapesPinned(t *testing.T) {
-	b, _ := os.ReadFile("testdata/secret-names.json")
+	b := srcFile(t, "testdata/secret-names.json")
 	var f struct {
 		WindowsGatewayTarget string
 		SecretToolAttrs      []string
 	}
 	json.Unmarshal(b, &f)
-	win, _ := os.ReadFile("secretstore_windows.go")
-	oth, _ := os.ReadFile("secretstore_other.go")
+	win, oth := srcFile(t, "secretstore_windows.go"), srcFile(t, "secretstore_other.go") // skip without the source tree
 	if !strings.Contains(string(win), `"`+f.WindowsGatewayTarget+`"`) {
 		t.Errorf("Windows target %q not in secretstore_windows.go", f.WindowsGatewayTarget)
 	}

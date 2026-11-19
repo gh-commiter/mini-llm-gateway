@@ -336,10 +336,7 @@ func TestRunClaudeStalledOutput(t *testing.T) {
 // Shared with the Mac client (Tests/RouterCoreTests/ProfilesTests.swift): client/testdata/stream-marks.json. A gateway
 // agent's step is a progress line on stderr and never part of the answer text on stdout (a script reads stdout).
 func TestStreamMarksShared(t *testing.T) {
-	b, err := os.ReadFile("testdata/stream-marks.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := srcFile(t, "testdata/stream-marks.json")
 	var fx struct {
 		Cases []struct {
 			Name     string

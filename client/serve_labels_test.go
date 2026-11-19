@@ -376,12 +376,9 @@ func TestLabelsPromptMarkerNeverPersistedLoggedOrReturned(t *testing.T) {
 }
 
 func TestLabelInputSharedRemindersFirstUserAndCaps(t *testing.T) {
-	b, err := os.ReadFile("testdata/decide-reminders.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := srcFile(t, "testdata/decide-reminders.json")
 	var fixtures []struct{ Name, Input, Expected string }
-	if err = json.Unmarshal(b, &fixtures); err != nil {
+	if err := json.Unmarshal(b, &fixtures); err != nil {
 		t.Fatal(err)
 	}
 	for _, f := range fixtures {

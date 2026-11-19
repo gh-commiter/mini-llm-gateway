@@ -264,6 +264,9 @@ func TestEveryGitInvocationCarriesAGuard(t *testing.T) {
 	}
 	call := regexp.MustCompile(`(?:commandContext|command|exec\.Command|exec\.CommandContext)\(\s*(?:ctx,\s*)?(?:"git"|name\b|exe\b)`)
 	files, _ := filepath.Glob("*.go")
+	if len(files) == 0 {
+		t.Skip("needs the client/ source tree; not in the suite exe")
+	}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue

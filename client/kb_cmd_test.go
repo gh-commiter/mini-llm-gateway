@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"minigw/core"
 	"net/http"
-	"os"
 	"reflect"
 	"regexp"
 	"strings"
@@ -588,10 +587,7 @@ func TestKBReviewPrintsEmojiByteForByte(t *testing.T) {
 
 // The shared fixture of the review printers (the Swift client reads the same file).
 func TestReviewTextFixture(t *testing.T) {
-	data, err := os.ReadFile("testdata/review-text.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := srcFile(t, "testdata/review-text.json")
 	var cases []struct{ Name, In, Out string }
 	if err := json.Unmarshal(data, &cases); err != nil {
 		t.Fatal(err)

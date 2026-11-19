@@ -80,6 +80,9 @@ func TestNoTestListensOutsideLoopbackWithoutAReason(t *testing.T) {
 		}
 		return nil
 	})
+	if len(files) < 2 { // only this file (or none): the sources are not next to the test program
+		t.Skip("needs the source tree; not in the suite exe")
+	}
 	used := map[string]bool{}
 	for _, f := range files {
 		if filepath.Base(f) == "nonloopback_guard_test.go" {

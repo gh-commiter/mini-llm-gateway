@@ -43,10 +43,7 @@ func TestGitignoreNoticeNamesWhatOnlyTheRootGitignoreLeavesOut(t *testing.T) {
 // The shared fixture (client/testdata/sync-gitignore.json, asserted by SyncGitignoreNoticeTests.swift too): what the real push of a sync
 // sends to the gateway and what it says, in every mode (read-write, read-only) and folder kind (plain, git repository).
 func TestSyncPushHonoursTheRootGitignoreInEveryMode(t *testing.T) {
-	data, err := os.ReadFile("testdata/sync-gitignore.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := srcFile(t, "testdata/sync-gitignore.json")
 	var fx struct {
 		Cases []struct {
 			Name   string

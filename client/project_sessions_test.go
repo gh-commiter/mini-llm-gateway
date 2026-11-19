@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"minigw/core"
 	"minigw/coreapi"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -92,30 +91,21 @@ func TestSessionsSlugIsNotASessionPage(t *testing.T) {
 }
 
 func TestSessionTextSharedFixture(t *testing.T) {
-	b, err := os.ReadFile("testdata/project-sessions.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := srcFile(t, "testdata/project-sessions.json")
 	var page core.SessionPage
-	if err = json.Unmarshal(b, &page); err != nil {
+	if err := json.Unmarshal(b, &page); err != nil {
 		t.Fatal(err)
 	}
-	want, err := os.ReadFile("testdata/project-sessions.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
+	want := srcFile(t, "testdata/project-sessions.txt")
 	if got := sessionText(page); got != string(want) {
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
 
 func TestOwnerSessionCommandFollowsPages(t *testing.T) {
-	b, err := os.ReadFile("testdata/project-sessions.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := srcFile(t, "testdata/project-sessions.json")
 	var page core.SessionPage
-	if err = json.Unmarshal(b, &page); err != nil {
+	if err := json.Unmarshal(b, &page); err != nil {
 		t.Fatal(err)
 	}
 	page.Next = "cursor"
@@ -129,7 +119,7 @@ func TestOwnerSessionCommandFollowsPages(t *testing.T) {
 	c.Opts.Device = "d"
 	c.Opts.Model = "a"
 	got := runAdminCase(c)
-	want, _ := os.ReadFile("testdata/project-sessions.txt")
+	want := srcFile(t, "testdata/project-sessions.txt")
 	if got.Exit != 0 || got.Out != string(want) || len(got.Requests) != 3 {
 		t.Fatalf("%+v", got)
 	}
