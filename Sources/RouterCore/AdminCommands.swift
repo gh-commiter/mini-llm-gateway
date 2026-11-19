@@ -25,6 +25,8 @@ public struct AdminOpts {
     public var read = false, noRead = false, acceptReach = false, readClass = "", readSources = "", pullEvery = ""
     /// labels eval: the examples file and --show-errors (the misses with their text, to this terminal only)
     public var file = "", showErrors = false
+    /// note history and restore: --revision, --current (and whether it was given); --class is `classes`
+    public var revision: Int64 = 0, current: Int64 = 0, hasCurrent = false
     public var tokenInput: (() throws -> String)?
     public init(days: String = "7", user: String = "", project: String = "", model: String = "", claudeProbe: String = "",
                 provider: String = "", device: String = "", folder: String = "", sort: String = "", json: Bool = false, csv: Bool = false, history: Bool = false, explain: Bool = false, reason: String = "", team: String = "", by: String = "", phase: String = "", activity: String = "", task: String = "", labelSource: String = "") {
@@ -127,7 +129,7 @@ public final class AdminCommands {
         func need(_ lo: Int, _ hi: Int) throws { if pos.count < lo || pos.count > hi { throw usage } }
         func s(_ n: Int64) -> String { String(n) }
         switch pos[0] {
-        case "kb": try kb(pos, reason: o.reason, team: o.team, version: o.version)
+        case "kb": try kb(pos, reason: o.reason, team: o.team, version: o.version, opts: o)
         case "team": try team(pos)
         case "labels": try labelsCommand(pos, o)
         case "upstream": try upstream(pos, o)

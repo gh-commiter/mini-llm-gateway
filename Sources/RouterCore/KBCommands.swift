@@ -16,6 +16,8 @@ extension ProjectEnv {
         minigw kb reject <id> [--reason text]
         """
     public static let kbAdminHelp = """
+        minigw gw kb history <id> [--revision n] [--json]
+        minigw gw kb restore <id> --revision n [--class c] [--current n]
         minigw gw kb rebuild-search
         minigw gw kb review [<project>|--team <team>]   pending submissions, including bodies
         minigw gw kb accept <id> [--version <hash>]   --version: the whole version line gw kb review showed (without it: only in a terminal, after you confirm the text)
@@ -304,9 +306,27 @@ extension ProjectEnv {
 }
 
 extension AdminCommands {
-    func kb(_ pos: [String], reason: String, team: String = "", version: String = "") throws {
+    func kb(_ pos: [String], reason: String, team: String = "", version: String = "", opts: AdminOpts = AdminOpts()) throws {
         let usage = fail("usage:\n" + ProjectEnv.kbAdminHelp)
         guard pos.count >= 2 else { throw usage }
+        if pos.count == 3 && (pos[1] == "history" || pos[1] == "restore") {  // the owner's saved versions of any note: no project or team selection
+            guard team.isEmpty && opts.project.isEmpty, let id = Int64(pos[2]), id > 0 else { throw usage }
+            do {
+                try ProjectEnv.noteHistoryCommand(pos[1], "/kb/notes/" + pos[2], id: id, revision: opts.revision, current: opts.current, hasCurrent: opts.hasCurrent, cls: opts.classes, asJSON: opts.json,
+                                                  terminal: isTerminal(), out: { out($0) }, answer: readAnswer, stamp: { d in
+                    guard let d else { return "0001-01-01 00:00" }
+                    let f = DateFormatter()
+                    f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = zone; f.dateFormat = "yyyy-MM-dd HH:mm"
+                    return f.string(from: d)
+                }, request: { method, path, body in
+                    let r = call(method, path, body)
+                    guard r.status != 0 else { throw fail("lost the connection to Mini Gateway") }
+                    if r.status >= 300 { throw fail(clean(JSONValue.parse(r.data)?.dict["error"]?.dict["message"]?.string ?? "")) }
+                    return r.data
+                })
+            } catch let e as ProjectError { throw fail(clean(e.message)) }
+            return
+        }
         if pos.count == 2 && pos[1] == "rebuild-search" { _ = try request("POST", "/kb/search/rebuild"); say("search index rebuilt"); return }
         if pos[1] == "review" && pos.count <= 3 && (team.isEmpty || pos.count == 2) {
             var project = pos.count == 3 ? try projectID(pos[2]) : 0

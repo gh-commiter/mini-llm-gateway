@@ -191,11 +191,16 @@ private func fileText(_ p: String) -> String? { FileManager.default.contents(atP
 @Suite struct ProjectCommandParity {
     struct Out { var out = "", err = "" }
 
-    @Test func everyCommandMatchesTheGoOutput() throws {
-        let fx = try fixtureJSON("project-commands.json")
+    @Test func everyCommandMatchesTheGoOutput() throws { try check("project-commands.json", atLeast: 100) }
+
+    /// minigw note history and restore: the shared fixture client/testdata/note-history.json (the Go client's output, byte for byte).
+    @Test func noteHistoryAndRestoreMatchTheGoOutput() throws { try check("note-history.json", atLeast: 20) }
+
+    func check(_ file: String, atLeast: Int) throws {
+        let fx = try fixtureJSON(file)
         let gw = fx["gateway"] as! String
         let cases = fx["cases"] as! [[String: Any]]
-        #expect(cases.count > 100)
+        #expect(cases.count >= atLeast)
         for c in cases {
             let name = c["name"] as! String
             let root = try tempRoot()
@@ -226,6 +231,9 @@ private func fileText(_ p: String) -> String? { FileManager.default.contents(atP
                     return ProjectReply(status: r["status"] as! Int, data: Data((r["body"] as! String).utf8), retryAfter: h?["Retry-After"])
                 }, sleep: { _ in })
             env.zone = TimeZone(identifier: "UTC")!
+            env.isTerminal = { c["tty"] as? Bool == true }  // note restore asks "Restore? [y/N]" only in a terminal; the answer is the case's stdin
+            nonisolated(unsafe) var answers = (c["stdin"] as? String ?? "").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            env.readAnswer = { answers.isEmpty ? nil : answers.removeFirst() }
             env.origin = { _ in c["origin"] as? String ?? "" }  // the folder's raw remote.origin.url
             let args = (c["args"] as! [String]).map(sub)
             var failure = ""

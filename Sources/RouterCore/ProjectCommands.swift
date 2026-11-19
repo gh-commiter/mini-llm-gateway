@@ -39,6 +39,8 @@ public final class ProjectEnv {
         minigw note read <id> [--json]
         minigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)
         minigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]
+        minigw note history <id> [--revision n] [--json] [--project slug|--team team]
+        minigw note restore <id> --revision n [--class c] [--current n] [--project slug|--team team]
         minigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)
            --project <slug> only confirms the project this folder is linked to; classes: structure, data, private
            (private = visible to you and the project admins)
@@ -405,11 +407,11 @@ public final class ProjectEnv {
         if agent && !(runConn != nil && (sub == "list" || sub == "read")) { throw ProjectError(Self.agentRefusal) }
         let usage = ProjectError("usage:\n" + Self.noteHelp)
         guard let fl = try? GoFlags.parse([("class", .string), ("title", .string), ("limit", .int), ("after", .string), ("json", .bool),
-                                           ("project", .string), ("revision", .int64), ("key", .string), ("team", .string)], Array(args.dropFirst())) else { throw usage }
+                                           ("project", .string), ("revision", .int64), ("current", .int64), ("key", .string), ("team", .string)], Array(args.dropFirst())) else { throw usage }
         var pos = fl.positional
-        guard ["list", "read", "push", "edit", "rm"].contains(sub) else { throw ProjectError("unknown command minigw note " + sub + "\n" + Self.noteHelp) }
+        guard ["list", "read", "push", "edit", "rm", "history", "restore"].contains(sub) else { throw ProjectError("unknown command minigw note " + sub + "\n" + Self.noteHelp) }
         var id: Int64 = 0
-        if ["read", "edit", "rm"].contains(sub) {
+        if ["read", "edit", "rm", "history", "restore"].contains(sub) {
             guard let first = pos.first else { throw usage }
             guard let v = GoFlags.parseInt(first), v >= 1 else { throw ProjectError("not a note id: " + first) }
             id = v
@@ -447,6 +449,14 @@ public final class ProjectEnv {
             if asJSON { err(Self.privateNote + "\n") } else { say(Self.privateNote) }
         }
         switch sub {
+        case "history", "restore":
+            guard pos.isEmpty, !(sub == "restore" && fl.int64("revision") < 1) else { throw usage }
+            try Self.noteHistoryCommand(sub, "\(base)/\(id)", id: id, revision: fl.int64("revision"), current: fl.int64("current"), hasCurrent: fl.set.contains("current"), cls: cls, asJSON: asJSON,
+                                        terminal: isTerminal(), out: { out($0) }, answer: readAnswer, stamp: { stamp($0) }, request: { method, path, body in
+                let r = request(c, method, path, [:], body)
+                guard r.status == 200 else { throw gwError(r) }
+                return r.data
+            })
         case "list":
             guard pos.isEmpty else { throw usage }
             var q: [String: String] = [:]

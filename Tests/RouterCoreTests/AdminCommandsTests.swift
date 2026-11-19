@@ -53,6 +53,52 @@ private func fixtureJSON(_ name: String) throws -> [String: Any] {
         }
     }
 
+    /// gw kb history and restore: the "owner" cases of client/testdata/note-history.json (the Go client's output, byte for byte).
+    @Test func ownerNoteHistoryAndRestoreMatchTheGoOutput() throws {
+        let cases = try fixtureJSON("note-history.json")["owner"] as! [[String: Any]]
+        #expect(cases.count >= 10)
+        for c in cases {
+            let name = c["name"] as! String
+            let responses = c["responses"] as! [[String: Any]]
+            nonisolated(unsafe) var requests: [[String]] = []
+            nonisolated(unsafe) var outText = ""
+            let cmd = AdminCommands(call: { method, path, body in
+                requests.append([method, path, body.map { String(decoding: $0, as: UTF8.self) } ?? ""])
+                guard let r = responses.first(where: { ($0["match"] as! String) == method + " " + path }) else {
+                    return (599, Data(#"{"error":{"message":"no such response in the fixture"}}"#.utf8))
+                }
+                return (r["status"] as! Int, Data((r["body"] as! String).utf8))
+            }, out: { outText += $0 })
+            cmd.zone = TimeZone(identifier: "UTC")!
+            let o = c["opts"] as! [String: Any]
+            cmd.isTerminal = { o["tty"] as? Bool == true }
+            nonisolated(unsafe) var answers = (c["stdin"] as? String ?? "").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            cmd.readAnswer = { answers.isEmpty ? nil : answers.removeFirst() }
+            var opts = AdminOpts()
+            opts.json = o["json"] as? Bool ?? false
+            opts.revision = (o["revision"] as? NSNumber)?.int64Value ?? 0
+            opts.current = (o["current"] as? NSNumber)?.int64Value ?? 0
+            opts.hasCurrent = o["current"] != nil
+            opts.classes = o["class"] as? String ?? ""
+            var exit: Int32 = 0, errText = ""
+            do { try cmd.run(c["args"] as! [String], opts) } catch let e as AdminCLIError { exit = e.code; errText = "minigw: " + e.message + "\n" }
+            let want = c["want"] as! [String: Any]
+            #expect(outText == want["out"] as! String, "\(name): stdout")
+            #expect(errText == want["err"] as! String, "\(name): stderr")
+            #expect(Int(exit) == want["exit"] as! Int, "\(name): exit")
+            #expect(requests == want["requests"] as! [[String]], "\(name): requests")
+        }
+        // the owner's commands take neither --team nor --project
+        for team in [true, false] {
+            nonisolated(unsafe) var sent = 0
+            let cmd = AdminCommands(call: { _, _, _ in sent += 1; return (599, Data()) }, out: { _ in })
+            var opts = AdminOpts()
+            if team { opts.team = "garden" } else { opts.project = "orchard" }
+            do { try cmd.run(["kb", "history", "7"], opts); Issue.record("no usage error") } catch let e as AdminCLIError { #expect(e.code == 1 && e.message.contains("usage:")) }
+            #expect(sent == 0)
+        }
+    }
+
     /// labels eval: the file's own limits are checked before anything is sent, and an error names the line, never its text.
     @Test func labelsEvalChecksTheFileBeforeSendingAnything() throws {
         let marker = "LINE-TEXT-MARKER-3321"
