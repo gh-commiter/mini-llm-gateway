@@ -121,7 +121,7 @@ async function run(remote) {
 }
 
 func TestRemoteSettingsBrowserRestrictions(t *testing.T) {
-	for _, s := range []string{`if (REMOTE) throw new Error("File dialogs are unavailable remotely")`, `if (REMOTE && !["remoteHome", "gateway", "addGateway", "devices"].includes(page))`, `if (REMOTE) return;`, `REMOTE ? Promise.resolve({}) : api("GET", "/general")`, `!REMOTE ? group(row(labelSub(t("anyDevice")`} {
+	for _, s := range []string{`if (REMOTE) throw new Error("File dialogs are unavailable remotely")`, `if (REMOTE && !["remoteHome", "gateway", "addGateway", "devices", "remoteTeam"].includes(page))`, `if (REMOTE) return;`, `REMOTE ? Promise.resolve({}) : api("GET", "/general")`, `!REMOTE ? group(row(labelSub(t("anyDevice")`} {
 		if !strings.Contains(settingsPage, s) {
 			t.Fatal("missing remote restriction", s)
 		}

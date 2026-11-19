@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -247,7 +248,7 @@ func TestRemoteSettingsCSRF(t *testing.T) {
 
 func TestRemoteSettingsPathPolicy(t *testing.T) {
 	f := remoteTransport(t)
-	for _, path := range []string{"/v1/messages", "/v1/models", "/minigw/v1/projects", "/minigw/v1/member", "/minigw/sync/file", "/MGW2", adminPrefix + "/sync", adminPrefix + "/projects", adminPrefix + "/users", adminPrefix + "/panels", adminPrefix + "/unknown", adminPrefix + "/general", adminPrefix + "/general/token", adminPrefix + "/status", adminPrefix + "/settings/login", "/minigw/settings/pick", adminPrefix + "/agents/claude", adminPrefix + "/general/scratch/move", adminPrefix + "/providers/../general", adminPrefix + "//providers", adminPrefix + "/providers?token=secret"} {
+	for _, path := range []string{"/v1/messages", "/v1/models", "/minigw/v1/projects", "/minigw/v1/member", "/minigw/sync/file", "/MGW2", adminPrefix + "/sync", adminPrefix + "/panels", adminPrefix + "/unknown", adminPrefix + "/general", adminPrefix + "/general/token", adminPrefix + "/status", adminPrefix + "/settings/login", "/minigw/settings/pick", adminPrefix + "/agents/claude", adminPrefix + "/general/scratch/move", adminPrefix + "/providers/../general", adminPrefix + "//providers", adminPrefix + "/providers?token=secret"} {
 		for _, method := range []string{"GET", "POST", "PATCH", "DELETE", "PUT", "HEAD"} {
 			r := f.request(method, path, `{}`)
 			w := f.run(r)
@@ -256,7 +257,38 @@ func TestRemoteSettingsPathPolicy(t *testing.T) {
 			}
 		}
 	}
-	for _, tc := range []struct{ method, path string }{{"GET", "providers"}, {"POST", "providers"}, {"PATCH", "providers/example"}, {"DELETE", "providers/example"}, {"GET", "providers/example/models"}, {"POST", "providers/example/models"}, {"GET", "devices"}, {"POST", "devices"}, {"PATCH", "devices/id"}, {"DELETE", "devices/id"}, {"GET", "devices/id/history"}} {
+	// The four read-only lists: GET only; every other method, deeper path, encoding, query string and override header stays refused.
+	for _, name := range []string{"users", "bindings", "teams", "projects"} {
+		for _, method := range []string{"POST", "PATCH", "DELETE", "PUT", "HEAD", "OPTIONS"} {
+			if w := f.run(f.request(method, adminPrefix+"/"+name, `{}`)); w.Code != 404 && w.Code != 403 && w.Code != 405 {
+				t.Fatalf("%s %s: %d", method, name, w.Code)
+			}
+		}
+		for _, h := range []string{"X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override"} {
+			for _, method := range []string{"GET", "POST"} {
+				r := f.request(method, adminPrefix+"/"+name, `{}`)
+				r.Header.Set(h, "DELETE")
+				if w := f.run(r); w.Code != 403 {
+					t.Fatalf("override %s %s %s: %d", h, method, name, w.Code)
+				}
+			}
+		}
+		for _, path := range []string{"/" + name + "/", "//" + name, "/" + name + "/1", "/" + name + "?x=1", "/" + name[:1] + "%" + "65" + name[1:], "/" + name + "%2F1", "/%2e%2e/" + name, "/" + name + "\\1"} {
+			for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"} {
+				if w := f.run(f.request(method, adminPrefix+path, `{}`)); w.Code != 404 && w.Code != 403 {
+					t.Fatalf("%s %s: %d", method, path, w.Code)
+				}
+			}
+		}
+	}
+	for _, path := range []string{"/teams/1", "/teams/1/assignments", "/projects/1/members", "/projects/1/depends", "/grants", "/audit", "/kb", "/panels", "/upstreams", "/export"} {
+		for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"} {
+			if w := f.run(f.request(method, adminPrefix+path, `{}`)); w.Code != 404 && w.Code != 403 {
+				t.Fatalf("%s %s: %d", method, path, w.Code)
+			}
+		}
+	}
+	for _, tc := range []struct{ method, path string }{{"GET", "users"}, {"GET", "bindings"}, {"GET", "teams"}, {"GET", "projects"}, {"GET", "providers"}, {"POST", "providers"}, {"PATCH", "providers/example"}, {"DELETE", "providers/example"}, {"GET", "providers/example/models"}, {"POST", "providers/example/models"}, {"GET", "devices"}, {"POST", "devices"}, {"PATCH", "devices/id"}, {"DELETE", "devices/id"}, {"GET", "devices/id/history"}} {
 		if !remoteAdminAllowed(tc.method, adminPrefix+"/"+tc.path) {
 			t.Fatal(tc)
 		}
@@ -791,5 +823,125 @@ func TestRemoteBrokenLockoutsDisableOnlyRemote(t *testing.T) {
 	s.log = log.New(io.Discard, "", 0)
 	if srv, err := s.startRemoteSettings(); srv != nil || err != nil {
 		t.Fatal("remote listener started without lockout state")
+	}
+}
+
+// The four read-only lists end to end with a real core store: 200 with the local shapes, and nothing secret in any answer.
+func TestRemoteReadOnlyListsEndToEnd(t *testing.T) {
+	f := remoteTransport(t)
+	cf := newCoreFx(t, func(c *serveConfig) { c.Token = "gw-token-Zq7xK2"; c.Gateways = []serveGateway{{Name: "prov", BaseURL: "https://upstream.example"}} })
+	cf.s.cfg.RemoteSettings, cf.s.remoteAuth = f.c, f.s.remoteAuth
+	f.s = cf.s
+	password, err := os.ReadFile(remotePasswordPath(f.config))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cf.s.core.CreateTeam(t0, "team-alpha"); err != nil {
+		t.Fatal(err)
+	}
+	secrets := []string{"gw-token-Zq7xK2", cf.s.cfg.Key, remoteTestPassword, string(password), f.token}
+	for name, key := range map[string]string{"users": "users", "bindings": "bindings", "teams": "teams", "projects": "projects"} {
+		w := f.run(f.request("GET", adminPrefix+"/"+name, ""))
+		if w.Code != 200 {
+			t.Fatal(name, w.Code, w.Body.String())
+		}
+		var j map[string]json.RawMessage
+		if json.Unmarshal(w.Body.Bytes(), &j) != nil || j[key] == nil {
+			t.Fatal(name, w.Body.String())
+		}
+		for _, v := range secrets {
+			if v != "" && strings.Contains(w.Body.String(), v) {
+				t.Fatal(name, "leaks a secret")
+			}
+		}
+		for _, d := range cf.dev {
+			if strings.Contains(w.Body.String(), base64url(d.key.Seed())) {
+				t.Fatal(name, "leaks a device key")
+			}
+		}
+	}
+	for _, tc := range []struct {
+		change func(*http.Request)
+		status int
+	}{{func(r *http.Request) { r.Header.Del(remoteSessionHeader) }, 401}, {func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }, 403}} {
+		r := f.request("GET", adminPrefix+"/users", "")
+		tc.change(r)
+		if w := f.run(r); w.Code != tc.status {
+			t.Fatal(w.Code)
+		}
+	}
+	before := f.run(f.request("GET", adminPrefix+"/users", "")).Body.String()
+	f.run(f.request("POST", adminPrefix+"/users", `{"name":"mallory"}`))
+	if after := f.run(f.request("GET", adminPrefix+"/users", "")).Body.String(); after != before {
+		t.Fatal("a refused POST changed the users")
+	}
+}
+
+// remoteCaddyMatchers: the matchers of the Caddyfile (name -> methods and path regexp), the proxy's own allow-list.
+func remoteCaddyMatchers(t *testing.T) map[string]struct {
+	methods []string
+	re      *regexp.Regexp
+} {
+	t.Helper()
+	if _, err := os.Stat("../deploy/docker/Caddyfile"); os.IsNotExist(err) {
+		t.Skip("needs the repository tree (../deploy/docker/Caddyfile)")
+	}
+	out := map[string]struct {
+		methods []string
+		re      *regexp.Regexp
+	}{}
+	cur := ""
+	var m struct {
+		methods []string
+		re      *regexp.Regexp
+	}
+	for _, line := range strings.Split(string(srcFile(t, "../deploy/docker/Caddyfile")), "\n") {
+		f := strings.Fields(line)
+		switch {
+		case len(f) == 2 && f[1] == "{" && (f[0] == "@get" || f[0] == "@post" || f[0] == "@change"):
+			cur = f[0]
+			m.methods, m.re = nil, nil
+		case cur != "" && len(f) > 1 && f[0] == "method":
+			m.methods = f[1:]
+		case cur != "" && len(f) == 2 && f[0] == "path_regexp":
+			m.re = regexp.MustCompile(f[1])
+		case cur != "" && len(f) == 1 && f[0] == "}":
+			if m.re == nil || m.methods == nil {
+				t.Fatal("matcher", cur, "not parsed")
+			}
+			out[cur] = m
+			cur = ""
+		}
+	}
+	if len(out) != 3 {
+		t.Fatal("expected @get, @post, @change, got", len(out))
+	}
+	return out
+}
+
+// A route added to only one of the two allow-lists (gateway or proxy) fails here.
+func TestRemoteAllowListMatchesCaddyfile(t *testing.T) {
+	matchers := remoteCaddyMatchers(t)
+	names := []string{"users", "bindings", "teams", "projects", "providers", "devices", "general", "status", "agents", "settings", "quota", "usage", "kb", "grants", "audit", "core", "export", "import", "upstreams", "upstream-push", "upstream-pull", "upstream-auto", "upstream-resolve", "upstream-links", "panels", "sync", "gateways", "sessions", "unknown"}
+	var paths []string
+	for _, n := range names {
+		for _, form := range []string{"", "/1", "/1/models", "/1/history", "/1/members", "/1/assignments", "/1/depends", "/strings", "/login", "/logout", "/history", "/events"} {
+			paths = append(paths, adminPrefix+"/"+n+form)
+		}
+	}
+	paths = append(paths, "/minigw/settings", "/minigw/settings/login", "/minigw/settings/logout", "/minigw/v1/projects", "/minigw/v1/member", "/v1/messages", "/minigw/sync/file")
+	for _, method := range []string{"GET", "POST", "PATCH", "DELETE", "PUT", "HEAD", "OPTIONS"} {
+		for _, path := range paths {
+			caddy := false
+			for _, m := range matchers {
+				for _, mm := range m.methods {
+					caddy = caddy || mm == method && m.re.MatchString(path)
+				}
+			}
+			gateway := remoteAdminAllowed(method, path) || method == "GET" && path == "/minigw/settings" || method == "POST" && (path == "/minigw/settings/login" || path == "/minigw/settings/logout")
+			if caddy != gateway {
+				t.Errorf("%s %s: proxy allows %v, gateway allows %v", method, path, caddy, gateway)
+			}
+		}
 	}
 }

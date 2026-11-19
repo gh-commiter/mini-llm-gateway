@@ -73,6 +73,11 @@ req() { curl -sS --max-time 15 --cacert $CA --resolve $NAME:$PORT:127.0.0.1 -o $
 for i in {1..30}; do [[ $(req $URL/minigw/settings) == 200 ]] && break; sleep 2; done
 audit() { $DC exec -T minigw cat /var/lib/minigw/config/remote-settings.audit.jsonl 2>/dev/null }
 
+# one user, team and project for the read-only list checks below (the CLI changes them; the remote page only reads)
+$DC exec -T minigw minigw gw user add e2euser >/dev/null 2>&1 && $DC exec -T minigw minigw gw team add e2eteam >/dev/null 2>&1 && $DC exec -T minigw minigw gw project add e2eproj "E2E Project" >/dev/null 2>&1 || setup_fail "gw user/team/project add"
+GWTOKEN=$(docker run --rm --user 10001:10001 -v ${proj}_config:/c:ro $PY python -c "import json;print(json.load(open('/c/serve.json'))['token'])" 2>/dev/null)
+[[ -n $GWTOKEN ]] || setup_fail "gateway token"
+
 # --- cases ---
 c=$(req $URL/minigw/settings)
 [[ $c == 200 ]] && grep -qi password $W/body && pass "login page loads over HTTPS" || bad "login page: $c $(cat $W/err)"
@@ -90,6 +95,25 @@ c=$(req -H "X-Minigw-Remote-Session: $S" $URL/minigw/admin/v1/providers)
 [[ $c == 200 ]] && pass "allowed read route with the session (providers)" || bad "providers answered $c"
 c=$(req $URL/minigw/admin/v1/providers)
 [[ $c == 401 ]] && pass "same route without a session -> 401" || bad "no-session providers answered $c"
+# read-only lists: users, bindings, teams, projects
+SH=(-H "X-Minigw-Remote-Session: $S")
+for pair in users:e2euser bindings:bindings teams:e2eteam projects:e2eproj; do
+  p=${pair%%:*}; want=${pair#*:}
+  c=$(req $SH $URL/minigw/admin/v1/$p)
+  [[ $c == 200 ]] && grep -q "\"$want\"\|$want" $W/body && pass "logged in: GET $p -> 200 with the data" || bad "GET $p answered $c"
+  c=$(req $URL/minigw/admin/v1/$p)
+  [[ $c == 401 ]] && pass "GET $p without a session -> 401" || bad "GET $p without a session answered $c"
+  for m in POST PUT DELETE; do
+    c=$(req -X $m $H $SH -d '{}' $URL/minigw/admin/v1/$p)
+    [[ $c == 404 ]] && pass "$m $p -> 404 at the proxy" || bad "$m $p answered $c"
+  done
+  c=$(req -I $SH $URL/minigw/admin/v1/$p)
+  [[ $c == 404 ]] && pass "HEAD $p -> 404 at the proxy" || bad "HEAD $p answered $c"
+done
+for p in projects/1/members projects/1/grants grants; do
+  c=$(req $SH $URL/minigw/admin/v1/$p)
+  [[ $c == 404 ]] && pass "GET $p -> 404 at the proxy" || bad "GET $p answered $c"
+done
 for p in /minigw/admin/v1/status /minigw/admin/v1/core/projects /minigw/settings/link /v1/models /minigw/settings/; do
   c=$(req -H "X-Minigw-Remote-Session: $S" $URL$p)
   [[ $c == 404 ]] && grep -q 'Not found' $W/body && pass "outside the remote scope: $p -> 404 at the proxy" || bad "$p answered $c"
@@ -151,8 +175,11 @@ sh admin-certs.sh link $W/norenew >/dev/null 2>&1; mv $W/norenew/ca/link-ca.key 
 sh admin-certs.sh renew $W/norenew >/dev/null 2>&1 && bad "renew without the CA key succeeded" || pass "renew refuses when the CA key is absent"
 # no password or session value anywhere in the proxy log after the whole run
 plog=$($DC logs admin-proxy 2>&1)
-leak=0; for v in $S $PW "wrong password here" "wrong password again"; do print -r -- $plog | grep -qF -- $v && leak=1; done
-(( leak )) && bad "a password or session value is in the proxy log" || pass "no password or session value in the proxy log after the run"
+leak=0; for v in $S $PW $GWTOKEN "wrong password here" "wrong password again"; do print -r -- $plog | grep -qF -- $v && leak=1; done
+(( leak )) && bad "a password, session or token value is in the proxy log" || pass "no password, session or gateway token value in the proxy log after the run"
+glog=$($DC logs minigw 2>&1)
+leak=0; for v in $S $PW $GWTOKEN "wrong password here" "wrong password again"; do print -r -- $glog | grep -qF -- $v && leak=1; done
+(( leak )) && bad "a password, session or token value is in the gateway log" || pass "no password, session or gateway token value in the gateway log after the run"
 # client IP outside allowedSourceCIDRs
 setcfg '["203.0.113.0/24"]' || setup_fail "second config / restart"
 for i in {1..15}; do c=$(req $URL/minigw/settings); [[ $c == 403 ]] && break; sleep 2; done

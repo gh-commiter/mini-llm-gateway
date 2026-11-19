@@ -204,13 +204,13 @@ continue), in the same transaction.
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /users` | – | `{"users": [{"id", "name", "active", "owner"}]}` |
+| `GET /users` | – | `{"users": [{"id", "name", "active", "owner"}]}`; also on the remote settings listener, read-only. |
 | `POST /users` | `{"name"}` | `{"user"}`; names are unique, any case; 400 for a name in use |
 | `PATCH /users/{id}` | any of `{"name", "active", "owner"}` | `{"ok": true}`; `active: false` raises the epoch |
-| `GET /bindings` | – | `{"bindings": [{"device", "user"}]}` |
+| `GET /bindings` | – | `{"bindings": [{"device", "user"}]}`; also on the remote settings listener, read-only. |
 | `PUT /bindings/{device id}` | `{"user"}` | `{"ok": true}`; a device has at most one user; changing it to another user raises the epoch |
 | `DELETE /bindings/{device id}` | – | `{"ok": true}`; raises the epoch. Removing a device from the approved list (`DELETE /devices/{id}`) raises the epoch too but keeps the binding |
-| `GET /projects` | – | `{"projects": [{"id", "slug", "name", "archived", "granted": []}]}` |
+| `GET /projects` | – | `{"projects": [{"id", "slug", "name", "archived", "granted": []}]}`; also on the remote settings listener, read-only. |
 | `POST /projects` | `{"slug", "name"}` | `{"project"}`; slug `[a-z0-9][a-z0-9-]{1,62}`, not only digits; the id is never reused |
 | `PATCH /projects/{id}` | `{"archived": bool}` | `{"ok": true}`; archived: nobody writes |
 | `GET /projects/{id}/remotes` | – | `{"remotes": [identity], "entries": [{"remote": identity}]}`: the registered git identities (`host/path`), also as rows |
@@ -360,7 +360,7 @@ uniqueness as for users. Project display names are not unique; projects have sep
 | `GET /projects/{id}/depends` | – | `{depends: [{id, slug, name}], usedBy: [...], teams: [{id, name, archived}]}` |
 | `PUT /projects/{id}/depends/teams/{team}` / `DELETE` | – | `{ok: true}`; the project depends on the notes of a team (the listing above then has `teams: [{id, name, archived}]`); counts toward the same cap of 16; refused for an archived team and for the project's own team (400 with the reason); the notes are searched only for callers on the team's roster, never in a run |
 | `PUT /projects/{id}/depends/{other}` / `DELETE` | – | `{ok: true}`; at most 16 per project, not itself, not an archived project (remove is always allowed); a team's notes (segment ids) are never a side |
-| `GET /teams` | – | `{teams: [{id, name, archived, path, segment, memberCount, projectCount}]}` including archived teams; `segment` is the id of the team's own notes |
+| `GET /teams` | – | `{teams: [{id, name, archived, path, segment, memberCount, projectCount}]}` including archived teams; `segment` is the id of the team's own notes Also on the remote settings listener, read-only. |
 | `POST /teams` | `{name}` | `{team: {id, name, archived, path, segment}}` |
 | `GET /teams/{id}` | – | `{id, name, archived, path, segment, members: [{user, name}], projects: [Project]}` |
 | `PATCH /teams/{id}` | `{name}`, `{archived: bool}` or `{path: string}` (one of them) | `{ok: true}`; archive instead of hard delete. `path` is a free-text label (folded to lower case, at most 128 bytes, no control characters, no leading or trailing `/`; `""` clears); a label never gives access |

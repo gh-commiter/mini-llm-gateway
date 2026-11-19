@@ -272,6 +272,8 @@ func remoteAdminAllowed(method, path string) bool {
 		switch seg[0] {
 		case "providers", "devices":
 			return method == "GET" || method == "POST"
+		case "users", "bindings", "teams", "projects": // read-only lists; changes stay with the CLI
+			return method == "GET"
 		}
 	}
 	if len(seg) == 2 {
@@ -346,6 +348,10 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 		}
 		for key := range r.Header {
 			k := strings.ToLower(key)
+			if k == "x-http-method-override" || k == "x-http-method" || k == "x-method-override" { // Go ignores them; refused so a later proxy or handler cannot turn a GET into a change
+				deny(403)
+				return
+			}
 			if k == "authorization" || k == "proxy-authorization" || strings.HasPrefix(k, "x-claude-") || strings.HasPrefix(k, "x-minigw-") && k != strings.ToLower(remoteSessionHeader) && k != strings.ToLower(remoteClientHeader) && k != strings.ToLower(remoteCSRFHeader) {
 				deny(401)
 				return

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### New
+- Remote web settings (Compose admin profile) show users, device-user bindings, teams and projects read-only, in a new "Team (read-only)" page; changes stay with `docker compose exec minigw minigw gw …`. The listener and the proxy allow exactly four `GET` routes more, a test keeps the two lists equal, and requests with a method-override header are refused.
+
 ## 0.8.2
 
 A beta toward a team gateway in Docker Compose. The gateway and client programs change in one message only; the rest is a rehearsal script and documentation.

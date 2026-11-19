@@ -4,7 +4,8 @@ A Linux gateway (`minigw serve`) in a container, for providers only: Claude CLI,
 are off and stay off (the default container has no user namespaces, so the agent sandbox does not work; the gateway
 refuses them in the settings, in an imported `serve.json` and when a request runs). Providers (LiteLLM, OpenRouter, xAI,
 any OpenAI-compatible endpoint), devices, projects and notes work as on any other gateway. Remote web settings cover
-providers and devices through the optional `compose.admin.yaml` proxy below.
+providers and devices, plus read-only lists of users, bindings, teams and projects (changes stay with
+`docker compose exec minigw minigw gw …`), through the optional `compose.admin.yaml` proxy below.
 Administer users, teams, projects, KB review and upstream with `docker compose exec minigw minigw gw …`.
 The image has no `minigw-tui`: `minigw gw settings` does not work in the container.
 
@@ -264,6 +265,10 @@ An optional second service, a [Caddy](https://caddyserver.com) reverse proxy (im
 file, `compose.admin.yaml`: without it nothing of this exists, and a plain `docker compose up -d` does not touch your
 gateway container (the admin file is what adds the certificate mount and the `admin` network to it; adding it
 recreates the gateway container once, the volumes stay).
+
+The page manages providers and devices and shows users, device-user bindings, teams and projects read-only (menu item
+"Team (read-only)"). Change those with `docker compose exec minigw minigw gw …`; the proxy and the listener allow only
+the four `GET` lists, nothing deeper (no members, assignments or grants).
 
 **Prerequisites:** a DNS name for the page that your browsers resolve to the Docker host (`settings.example.net`
 below), a LAN address of the host to publish on, `openssl`, and the gateway already running. A port other than 443
