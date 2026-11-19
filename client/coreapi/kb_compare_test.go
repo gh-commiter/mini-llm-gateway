@@ -68,30 +68,56 @@ func TestReviewDetailAndAcceptBodyOfAReplacement(t *testing.T) {
 	call(Context{Kind: KindAdmin}, "POST", ownerPath+"/accept", `{"reviewHash":"`+hash+`","currentRevision":1}`, 200)
 }
 
-// The panel's row action offers Accept for a new note only: the owner list marks a replacement row acceptInPanel false.
-func TestKBQueueRowsOfferAcceptOnlyForANewNote(t *testing.T) {
+// The panel's row actions: a new note offers Accept, an eligible replacement only "Accept replacement" (confirmed), anything
+// not eligible (stale, missing, hidden or long current text) neither; Reject is on every row.
+func TestKBQueueRowsOfferTheRightAccept(t *testing.T) {
 	f := newFixture(t)
 	pid := f.pid["fakture"]
 	ana := core.Principal{UserID: f.uid["ana"], DeviceID: "dev-ana"}
-	n, _, _ := f.st.CreateNote(bg, ana, pid, "q-note", core.NoteInput{Class: core.Structure, Title: "Current", Body: "current body"})
-	repl, _, e1 := f.st.Submit(bg, ana, pid, "q-repl", core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Structure, Title: "New", Body: "new"}, Replaces: n.ID, Revision: n.Revision})
-	plain, _, e2 := f.st.Submit(bg, ana, pid, "q-plain", core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Structure, Title: "Plain", Body: "plain"}})
-	if e1 != nil || e2 != nil {
-		t.Fatal(e1, e2)
+	repl := func(key, body string, mutate func(n core.Note)) int64 {
+		n, _, e := f.st.CreateNote(bg, ana, pid, key+"-note", core.NoteInput{Class: core.Structure, Title: "Current " + key, Body: body})
+		if e != nil {
+			t.Fatal(e)
+		}
+		v, _, e := f.st.Submit(bg, ana, pid, key, core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Structure, Title: "New " + key, Body: "new"}, Replaces: n.ID, Revision: n.Revision})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if mutate != nil {
+			mutate(n)
+		}
+		return v.ID
+	}
+	edit := func(n core.Note) {
+		if _, e := f.st.UpdateNote(bg, ana, pid, n.ID, n.Revision, core.NoteInput{Class: core.Structure, Title: n.Title, Body: "edited"}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	plain, _, e := f.st.Submit(bg, ana, pid, "q-plain", core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Structure, Title: "Plain", Body: "plain"}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	want := map[int64][2]bool{ // acceptInPanel, acceptReplacementInPanel
+		plain.ID:                                      {true, false},
+		repl("ok", "current body", nil):               {false, true},
+		repl("stale", "current body", edit):           {false, false},
+		repl("hidden", "a\u200bb", nil):               {false, false},
+		repl("long", strings.Repeat("x", 20001), nil): {false, false},
+		repl("missing", "current body", func(n core.Note) { f.st.DeleteNote(bg, ana, pid, n.ID, n.Revision) }): {false, false},
 	}
 	r := f.api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/kb/submissions", RawQuery: "project=0&after=0"})
 	var pg struct {
 		Submissions []struct {
-			ID            int64
-			AcceptInPanel bool
+			ID                                      int64
+			AcceptInPanel, AcceptReplacementInPanel bool
 		}
 	}
-	if r.Status != 200 || json.Unmarshal(r.Body, &pg) != nil || len(pg.Submissions) != 2 {
+	if r.Status != 200 || json.Unmarshal(r.Body, &pg) != nil || len(pg.Submissions) != len(want) {
 		t.Fatal(r.Status, string(r.Body))
 	}
 	for _, s := range pg.Submissions {
-		if want := s.ID == plain.ID; s.AcceptInPanel != want || s.ID != plain.ID && s.ID != repl.ID {
-			t.Fatalf("submission %d: acceptInPanel %v", s.ID, s.AcceptInPanel)
+		if w, ok := want[s.ID]; !ok || s.AcceptInPanel != w[0] || s.AcceptReplacementInPanel != w[1] {
+			t.Errorf("submission %d: acceptInPanel %v, acceptReplacementInPanel %v, want %v", s.ID, s.AcceptInPanel, s.AcceptReplacementInPanel, w)
 		}
 	}
 }

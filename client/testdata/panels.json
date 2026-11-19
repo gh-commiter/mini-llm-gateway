@@ -1521,6 +1521,30 @@
         }
        },
        {
+        "id": "replace",
+        "label": "builtin.kb.section.queue.action.replace",
+        "method": "POST",
+        "path": "/kb/submissions/{row.id}/accept",
+        "when": {
+         "field": "acceptReplacementInPanel",
+         "equals": true
+        },
+        "body": {
+         "reviewHash": {
+          "row": "reviewHash"
+         },
+         "currentRevision": {
+          "row": "currentRevision"
+         }
+        },
+        "confirm": {
+         "title": "builtin.kb.section.queue.action.replace.confirm.title",
+         "message": "builtin.kb.section.queue.action.replace.confirm.message",
+         "button": "builtin.kb.section.queue.action.replace.confirm.button",
+         "destructive": true
+        }
+       },
+       {
         "id": "reject",
         "label": "builtin.kb.section.queue.action.reject",
         "method": "POST",

@@ -704,9 +704,10 @@ text, `reviewCheck` the overall one (`ok` only when both are ok and the note is 
 `target`). An accept refuses a missing, changed or hidden-text target with its own 400 reason. The member list carries
 none of this. "Long" (a text over 20000 characters, the current text as well as the new one) is a rule of the panel and the remote
 page, enforced for the remote listener by its own check of the read; the core does not refuse it and the owner CLI shows the
-full text and may accept. The Mac panel's queue row offers Accept (`acceptInPanel`, true only when `reviewCheck` is `ok` and
-nothing is replaced) for a new note only; a replacement is accepted with `gw kb accept` or on the remote page, where its current
-text is shown. The remote listener refuses, before its limiter counts and with a `denied` audit row, an accept of a
+full text and may accept. The Mac panel's queue row offers Accept for a new note (`acceptInPanel`: `reviewCheck` is `ok` and nothing is replaced) and, for a
+replacement whose note is unchanged and whose two texts are ok, only "Accept replacement" (`acceptReplacementInPanel`), which asks
+for a confirmation first and sends `reviewHash` and `currentRevision` from the row; a stale, missing, hidden or long replacement
+offers neither (the detail shows both texts; `gw kb accept` and the remote page also work). The remote listener refuses, before its limiter counts and with a `denied` audit row, an accept of a
 replacement without `currentRevision` (or with 0) and an accept of a submission that replaces nothing that carries one.
 
 Acceptance rechecks the authenticated writer binding, current project permissions,

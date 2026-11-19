@@ -638,7 +638,7 @@
    "panel": "builtin.kb",
    "section": "queue",
    "kind": "rowActions",
-   "action": "accept",
+   "action": "replace",
    "row": {
     "id": 6,
     "title": "A replacement",
@@ -651,7 +651,7 @@
     "method": "POST",
     "path": "/kb/submissions/6/accept"
    },
-   "confirm": "none"
+   "confirm": "destructive"
   },
   {
    "panel": "builtin.kb",

@@ -220,6 +220,9 @@ type adminSubmissionJSON struct {
 	// AcceptInPanel: the queue row may offer Accept: the review is ok and nothing is replaced. A replacement is accepted where its
 	// current text is shown in full (minigw gw kb accept, or the remote page), never from a row.
 	AcceptInPanel bool `json:"acceptInPanel"`
+	// AcceptReplacementInPanel: the row may offer "Accept replacement" (with a confirmation): the review is ok and the replaced note
+	// is unchanged, so both texts are ok and the detail shows them.
+	AcceptReplacementInPanel bool `json:"acceptReplacementInPanel"`
 }
 
 type nameMaps struct{ users, projects, teams map[int64]string }
@@ -251,7 +254,7 @@ func (a *API) names(ctx context.Context, st *core.Store) (nameMaps, error) {
 }
 
 func (m nameMaps) submission(v core.Submission) adminSubmissionJSON {
-	j := adminSubmissionJSON{Submission: v, AuthorName: m.users[v.User], Received: v.Provenance.Received, IsReplacement: v.Replaces > 0, AcceptInPanel: v.ReviewCheck == "ok" && v.TargetState == "none", ScopeKind: "project", ScopeName: m.projects[v.Project]}
+	j := adminSubmissionJSON{Submission: v, AuthorName: m.users[v.User], Received: v.Provenance.Received, IsReplacement: v.Replaces > 0, AcceptInPanel: v.ReviewCheck == "ok" && v.TargetState == "none", AcceptReplacementInPanel: v.ReviewCheck == "ok" && v.TargetState == "ok", ScopeKind: "project", ScopeName: m.projects[v.Project]}
 	if team, ok := core.SegmentTeam(v.Project); ok {
 		j.ScopeKind, j.ScopeName = "team", m.teams[team]
 		j.Project, j.Provenance.Project = 0, 0 // the hidden segment id never leaves: scopeKind and scopeName say where it belongs

@@ -682,5 +682,9 @@
  "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.hidden": "Hidden characters: cannot be accepted",
  "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.long": "Too long to review here: use minigw gw kb review",
  "builtin.kb.section.queue.detail.section.replaced.column.currenthidden": "Hidden characters removed",
- "builtin.kb.section.queue.detail.section.replaced.column.currentbody": "Current text"
+ "builtin.kb.section.queue.detail.section.replaced.column.currentbody": "Current text",
+ "builtin.kb.section.queue.action.replace": "Accept replacement…",
+ "builtin.kb.section.queue.action.replace.confirm.title": "Replace a note with {title}?",
+ "builtin.kb.section.queue.action.replace.confirm.message": "This overwrites an existing note. The previous text is saved in its history. Open the submission first to compare the current text with the new one.",
+ "builtin.kb.section.queue.action.replace.confirm.button": "Replace"
 }

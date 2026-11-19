@@ -682,5 +682,9 @@
  "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.hidden": "Skriti znaki: ni mogoče sprejeti",
  "builtin.kb.section.queue.detail.section.replaced.column.currentreviewcheck.value.long": "Predolgo za pregled tukaj: uporabi minigw gw kb review",
  "builtin.kb.section.queue.detail.section.replaced.column.currenthidden": "Odstranjeni skriti znaki",
- "builtin.kb.section.queue.detail.section.replaced.column.currentbody": "Trenutno besedilo"
+ "builtin.kb.section.queue.detail.section.replaced.column.currentbody": "Trenutno besedilo",
+ "builtin.kb.section.queue.action.replace": "Sprejmi nadomestitev…",
+ "builtin.kb.section.queue.action.replace.confirm.title": "Zapisek nadomestim z {title}?",
+ "builtin.kb.section.queue.action.replace.confirm.message": "To prepiše obstoječi zapisek. Prejšnje besedilo ostane v njegovi zgodovini. Najprej odpri prispevek in primerjaj trenutno besedilo z novim.",
+ "builtin.kb.section.queue.action.replace.confirm.button": "Nadomesti"
 }
