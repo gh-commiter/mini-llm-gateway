@@ -2,8 +2,19 @@
 
 ## Unreleased
 
+## 0.8.3
+
+A beta toward a team gateway in Docker Compose: the owner can look at the team's setup from a browser.
+
 ### New
-- Remote web settings (Compose admin profile) show users, device-user bindings, teams and projects read-only, in a new "Team (read-only)" page; changes stay with `docker compose exec minigw minigw gw …`. The listener and the proxy allow exactly four `GET` routes more, a test keeps the two lists equal, and requests with a method-override header are refused. After updating, copy the release's `deploy/docker/Caddyfile` into your deployment folder and run `docker compose restart admin-proxy`; until then the lists show a hint instead of data.
+- Remote web settings (the Compose admin profile) show users, the user each device is bound to, teams and projects, read-only, on a new page "Team (read-only)". Changes stay with `docker compose exec minigw minigw gw …`; the page says so. The gateway's remote listener and the proxy allow exactly four more `GET` routes (`users`, `bindings`, `teams`, `projects`); a test keeps the two lists equal and fails when the `Caddyfile` gets a rule the test does not know. Requests with a method-override header are refused.
+- After an update, copy the release's `deploy/docker/Caddyfile` (and the compose files) into your deployment folder and run `docker compose restart admin-proxy`. With an older `Caddyfile` the new page shows a hint that says this, instead of data. `docs/docker.md` lists the files that belong to a version.
+
+### Known problems
+- The new page was checked by tests of the routes, by reading and by a security review, not yet by a person in a real browser.
+- The page shows the lists only: who is a member of which project, and which team gives which role, still need `minigw gw member` and `minigw gw team` on the server.
+- A device that is bound to a user but that the gateway has not seen is shown by its ID.
+- The known problems of 0.8.2, 0.8.1 and 0.8.0 still apply.
 
 ## 0.8.2
 
