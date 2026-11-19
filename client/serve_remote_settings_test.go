@@ -829,7 +829,10 @@ func TestRemoteBrokenLockoutsDisableOnlyRemote(t *testing.T) {
 // The four read-only lists end to end with a real core store: 200 with the local shapes, and nothing secret in any answer.
 func TestRemoteReadOnlyListsEndToEnd(t *testing.T) {
 	f := remoteTransport(t)
-	cf := newCoreFx(t, func(c *serveConfig) { c.Token = "gw-token-Zq7xK2"; c.Gateways = []serveGateway{{Name: "prov", BaseURL: "https://upstream.example"}} })
+	cf := newCoreFx(t, func(c *serveConfig) {
+		c.Token = "gw-token-Zq7xK2"
+		c.Gateways = []serveGateway{{Name: "prov", BaseURL: "https://upstream.example"}}
+	})
 	cf.s.cfg.RemoteSettings, cf.s.remoteAuth = f.c, f.s.remoteAuth
 	f.s = cf.s
 	password, err := os.ReadFile(remotePasswordPath(f.config))
