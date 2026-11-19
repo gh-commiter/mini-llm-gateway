@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -572,6 +573,24 @@ func (s *Store) GetSubmission(ctx context.Context, p Principal, project, id int6
 	if err != nil {
 		return Submission{}, err
 	}
+	// The owner's review read of a replacement carries the replaced note's current text: when that note is private it is an
+	// owner read of private text like GET kb/notes/{id} and the history reads, with the same audit row (kb.owner.read: the
+	// note id and the project or team, never the text; once per read; lists carry no body and write none).
+	if owner && v.CurrentClass == Private && v.CurrentBody != nil {
+		if err = s.write(ctx, func(tx *sql.Tx) error {
+			detail := map[string]any{"project": v.Project, "submission": v.ID}
+			if team, ok := SegmentTeam(v.Project); ok {
+				var name string
+				if e := tx.QueryRow(`SELECT name FROM teams WHERE id=?`, team).Scan(&name); e != nil {
+					return e
+				}
+				detail = map[string]any{"team": name, "submission": v.ID}
+			}
+			return Audit(tx, adminActor, "kb.owner.read", strconv.FormatInt(v.Replaces, 10), detail)
+		}); err != nil {
+			return Submission{}, err
+		}
+	}
 	return
 }
 func (s *Store) ListSubmissions(ctx context.Context, p Principal, project, after int64, owner bool) (out []Submission, err error) {
@@ -887,12 +906,20 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 			state = "accepted"
 		}
 		if !accept && reason == "" && v.State == "pending" && v.Replaces != 0 { // a lost contribution tells its author why
-			if t, e := readReplaced(tx, &v, rv); e != nil {
+			// The author is told only what the author could see: with the AUTHOR's own access (not the reviewer's or the owner's).
+			if t, e := readReplaced(tx, &v, nil); e != nil {
 				return e
-			} else if t.state == "stale" {
-				reason = fmt.Sprintf("note %d changed after this was written (it expected revision %d, the note is at %d): read the note and propose the change again", v.Replaces, v.Revision, t.revision)
 			} else if t.state == "missing" {
 				reason = fmt.Sprintf("note %d no longer exists", v.Replaces)
+			} else if t.state == "stale" {
+				author := Principal{UserID: v.User, DeviceID: v.Provenance.Device}
+				if ta, e := readReplaced(tx, &v, &author); e != nil {
+					return e
+				} else if ta.state == "stale" {
+					reason = fmt.Sprintf("note %d changed after this was written (it expected revision %d, the note is at %d): read the note and propose the change again", v.Replaces, v.Revision, ta.revision)
+				} else {
+					reason = "the note this would replace changed or is no longer visible to you: read the project's notes and propose the change again"
+				}
 			}
 		}
 		if v.State == state { // a repeat publishes nothing (the stored provenance now names the reviewer)

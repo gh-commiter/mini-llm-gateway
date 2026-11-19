@@ -311,7 +311,10 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 		t.Fatal("a new note with currentRevision", w.Code, w.Body.String())
 	}
 	k.reject(plain, "done")
-	if w = k.acceptAt(repl, vr.ReviewHash, vr.CurrentRevision+1); w.Code != 400 || !strings.Contains(w.Body.String(), "changed since you read it") {
+	// a wrong value is refused at the gateway's door: 403, one denied row, no started row, nothing reaches the core
+	coreRows := k.count(`SELECT COUNT(*) FROM audit_events`)
+	deniedBefore := deniedRows(repl)
+	if w = k.acceptAt(repl, vr.ReviewHash, vr.CurrentRevision+1); w.Code != 403 || !strings.Contains(w.Body.String(), "changed since you read it") || deniedRows(repl) != deniedBefore+1 || k.count(`SELECT COUNT(*) FROM audit_events`) != coreRows || pending(repl) != 1 {
 		t.Fatal("accepted with a wrong currentRevision", w.Code, w.Body.String())
 	}
 	if w = k.acceptAt(repl, vr.ReviewHash, vr.CurrentRevision); w.Code != 200 || k.count(`SELECT COUNT(*) FROM notes WHERE id=? AND body=?`, done.Note, "new text") != 1 || history() != 1 || k.count(`SELECT COUNT(*) FROM note_history WHERE note_id=? AND body=?`, done.Note, hostile) != 1 {

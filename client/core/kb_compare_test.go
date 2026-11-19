@@ -473,3 +473,93 @@ func TestReviewRejectGivesAStaleOrMissingReplacementADefaultReason(t *testing.T)
 		})
 	}
 }
+
+// Catches: an owner review read of a replacement of a PRIVATE note leaving no audit row, an audit row that carries text, a row for
+// a note that is not private, or a row for a list.
+func TestReviewOwnerReadOfAPrivateTargetIsAudited(t *testing.T) {
+	f := newFx(t)
+	ana, pid := f.p("ana"), f.pid["fakture"]
+	n, _, e := f.CreateNote(ctx, ana, pid, "priv-note", NoteInput{Class: Private, Title: "Secret title", Body: "secret body"})
+	f.ok(e)
+	v, _, e := f.Submit(ctx, ana, pid, "priv-repl", SubmissionInput{NoteInput: NoteInput{Class: Private, Title: "New", Body: "new"}, Replaces: n.ID, Revision: n.Revision})
+	f.ok(e)
+	reads := func() (n int, last string) {
+		rows, err := f.DB().Query(`SELECT detail FROM audit_events WHERE action='kb.owner.read' AND subject=?`, fmt.Sprint(n0(f, v)))
+		f.ok(err)
+		defer rows.Close()
+		for rows.Next() {
+			n++
+			f.ok(rows.Scan(&last))
+		}
+		return
+	}
+	if c, _ := reads(); c != 0 {
+		t.Fatal("audited before a read")
+	}
+	if _, e = f.ListSubmissions(ctx, Principal{}, 0, 0, true); e != nil {
+		t.Fatal(e)
+	}
+	if c, _ := reads(); c != 0 {
+		t.Fatal("a list was audited")
+	}
+	ownerRead(f, v.ID)
+	ownerRead(f, v.ID)
+	c, last := reads()
+	if c != 2 || strings.Contains(last, "secret") || strings.Contains(last, "Secret") || !strings.Contains(last, `"submission":`) {
+		t.Fatal(c, last)
+	}
+	// a note that is not private: no audit row
+	n2, v2 := replacement(f, "audit-plain")
+	ownerRead(f, v2.ID)
+	var count int
+	f.ok(f.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action='kb.owner.read' AND subject=?`, fmt.Sprint(n2.ID)).Scan(&count))
+	if count != 0 {
+		t.Fatal("a non-private target was audited")
+	}
+}
+
+func n0(f *fx, v Submission) int64 { return v.Replaces }
+
+// Catches: the default reason telling an author who can no longer see the note its revision (computed with the author's own
+// access), or a missing note being described to someone who never could see it.
+func TestReviewDefaultReasonUsesTheAuthorsAccess(t *testing.T) {
+	reasonOf := func(f *fx, id int64) string {
+		var r string
+		f.ok(f.DB().QueryRow(`SELECT reason FROM kb_submissions WHERE id=?`, id).Scan(&r))
+		return r
+	}
+	t.Run("author can still read the note", func(t *testing.T) {
+		f := newFx(t)
+		n, v := replacement(f, "can-read")
+		_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "moved on"})
+		f.ok(e)
+		_, e = f.ReviewSubmission(ctx, v.ID, false, "", "")
+		f.ok(e)
+		if got := reasonOf(f, v.ID); got != "note 1 changed after this was written (it expected revision 1, the note is at 2): read the note and propose the change again" {
+			t.Fatal(got)
+		}
+	})
+	t.Run("author lost the access", func(t *testing.T) {
+		f := newFx(t)
+		n, v := replacement(f, "lost")
+		_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "moved on"})
+		f.ok(e)
+		f.ok(f.RemoveMember(ctx, n.ProjectID, f.uid["ana"]))
+		_, e = f.ReviewSubmission(ctx, v.ID, false, "", "")
+		f.ok(e)
+		got := reasonOf(f, v.ID)
+		if got != "the note this would replace changed or is no longer visible to you: read the project's notes and propose the change again" || strings.Contains(got, "revision") {
+			t.Fatal(got)
+		}
+	})
+	t.Run("deleted note", func(t *testing.T) {
+		f := newFx(t)
+		n, v := replacement(f, "deleted")
+		f.ok(f.DeleteNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision))
+		_, e := f.ReviewSubmission(ctx, v.ID, false, "", "")
+		f.ok(e)
+		if got := reasonOf(f, v.ID); got != "note 1 no longer exists" {
+			t.Fatal(got)
+		}
+	})
+}
