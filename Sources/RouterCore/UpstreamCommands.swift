@@ -126,7 +126,7 @@ extension AdminCommands {
                 if let e = d["lastError"]?.string, !e.isEmpty { say(clean("  last refusal: " + e)) }
                 if let s = Self.upstreamNotPropagated(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
-                if let w = d["waiting"]?.int, w > 0 { say("  \(w) notes wait for a review upstream (nothing more is sent for them until it is decided there; not a failure)") }
+                if let w = d["waiting"]?.int, w > 0 { say("  \(w) notes wait for a review upstream; they are checked at the next push (not a failure)") }
                 if let s = Self.upstreamForeign(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamSkipped(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamBackwards(d) { say(clean("  " + s)) }
