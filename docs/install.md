@@ -259,6 +259,36 @@ the MSI, or `rm ~/.local/bin/minigw`.
   the systemd user unit. `install.sh --uninstall` runs `minigw uninstall`, which removes the unit, the plugin entries
   and scratch folders, then removes the two files.
 
+## Going back to 0.7.0
+
+0.7.0 refuses a project database that a newer version has migrated (models keep working; projects and notes answer
+503 `core_unavailable`). The upgrade wrote a snapshot of the old database next to it, `core-8-<time>.db` in the `core`
+folder (kept for 30 days from 0.7.37 on; a gateway that went through the earlier betas may no longer have it). Notes,
+members and grants created after the upgrade are not in it and are lost; the approved device list (`serve.json`) is not
+touched.
+
+**`minigw serve` gateway (Windows, Linux).** Proved by `scripts/downgrade-proof.sh` (0.7.0 database, upgraded to 0.7.37,
+back again; run on macOS with `minigw serve`, offline, on 127.0.0.1; the commands are the same on every system):
+
+1. Install the 0.7.0 `minigw` over the new one (Windows: the 0.7.0 MSI; Linux: the 0.7.0 release file in `~/.local/bin`).
+2. Stop the gateway (do not start it yet).
+3. `ls <core>/core-8-*.db`, with `<core>` = Windows `%AppData%\minigw\core`, Linux `~/.config/minigw/core`.
+4. `minigw gw core restore <core>/core-8-<time>.db --yes`. 0.7.0 prints what it brings back and that "the previous
+   database is kept next to it as core-<schema>-<time>.db".
+5. Start the gateway. The project and the notes from before the upgrade are back.
+
+Until step 4 a 0.7.0 gateway on the migrated database shows `gw status`: `projects: off (core database has a newer
+schema than this program (schema 25, program 8))`, `gw project list`: `The project database is not available: …`, and
+logs `WARNING: the core database cannot be used, project routes answer 503 core_unavailable (models work)`. Nothing is
+damaged by that; the newer database stays where it is.
+
+**Mac app (read from the sources, not tried: the installed app and its data were not touched).** The app keeps the
+database in `~/Library/Application Support/Mini Gateway/core/`; its helper `minigw-core` writes the same
+`core-8-<time>.db` snapshot there. The 0.7.0 app has no restore button; its `minigw gw core restore <file> --yes` runs
+`minigw-core restore` and refuses while the app is running. So: quit the app, install the 0.7.0 app (the 0.7.0 DMG from
+the releases page), run `minigw gw core restore "$HOME/Library/Application Support/Mini Gateway/core/core-8-<time>.db"
+--yes` (give the full path: a bare name is looked up in `core/backups`), then open the app.
+
 ## What is new on disk (0.6.0)
 
 - **Mac app:** `Mini Gateway.app/Contents/Helpers/minigw-core` (arm64, signed and notarized with the app, identifier

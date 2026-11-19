@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- `docs/install.md` has the proved steps for going back to 0.7.0 (`scripts/downgrade-proof.sh`: 0.7.0 database, upgrade, three more snapshots, 0.7.0 restore of the `core-8` snapshot, offline on 127.0.0.1).
+
 ## 0.7.37
 
 Fixes from a pass over the upgrade from 0.7.0 and the first week of team use.
