@@ -2,9 +2,29 @@
 
 ## Unreleased
 
-- Upstream push: a note the upstream's reviewers rejected as a replacement (for instance because the note changed there meanwhile) is pushed again as a replacement of the same upstream note, no longer as a new one: accepting it used to leave a second copy beside the original (#166). A replacement the upstream refuses as stale at submit is retried once with the current revision. The report shows the reviewers' reject reason.
-- Upstream push: a note whose first submission is still pending upstream waits for its review without counting as a failure of the link and without a timer of its own: it is looked at again only when a push happens anyway (a manual push, an automatic push after a local change; the periodic pull does not push); `status` shows "N notes wait for a review upstream; they are checked at the next push". `resolve --ours` looks again before it creates anything: a visible-again note or a readable submission is replaced or followed, and the report says whether a NEW note resulted. A refusal for one note (a 403 forbidden, a note that cannot be read) no longer stops the whole run; only an explicit link-wide answer does, among them the new error code `no_submit_access` (still a 403) that a hub of this release sends for an identity whose role allows no hand-in. An older hub sends that as a plain 403 forbidden: an identity downgraded to reader then gets one refusal per changed note per run, with the normal back-off. A time slice that ends inside a request keeps the run's place. The Mac panel shows the new conflict kinds and warns before `Send ours`. A run that sent something is a success for the link even if some notes were refused (no escalating back-off for one note that is too large); `gw upstream link` without `--remote-project` on an existing link keeps its destination; a re-sent rejected text is reported as `create`. No database change.
-- Upstream push, no second copy: the upstream note an accepted submission became is written down as soon as the push learns of it. A note whose earlier submission is still pending, cannot be read, or whose upstream note is deleted or no longer visible is no longer sent as a new note: pending waits for the review, the others show in `status` as a conflict for `gw upstream resolve` (`--ours` then sends a new submission). A refusal to read one note stops only that note. A link that has sent notes refuses to change its destination project.
+## 0.8.9
+
+A beta for gateways that push their notes to an upstream gateway (a team hub). It closes a way to get the same note twice upstream. No database upgrade. The upstream gateway and the pushing gateway should both be updated; mixed versions keep working (see Known problems).
+
+### Fixed
+- A pushed update that the upstream's reviewers REJECTED (for example because the note had changed there) is pushed again as a replacement of the SAME upstream note. Before, the next push sent it as a new note, and accepting that left a second copy next to the original. The same holds when the earlier submission is still waiting for its review or can no longer be read. Tried with two real gateways: every note ends up once.
+- `minigw gw upstream link <project> <upstream> --auto` (or `--manual`, `--class …`) on an existing link keeps the link's destination. Only an explicitly different destination is refused: unlink and link again to change it. The client always sends the destination, read from the existing link, so an older gateway cannot move the link by mistake.
+
+### Changed
+- A note whose first submission still waits for its review upstream is not sent again until it is decided there. This is not a failure of the link and has no timer of its own: waiting notes are checked when a push happens anyway (`minigw gw upstream push`, or an automatic push after a local change). After the review the newest local text goes: as a replacement when it was accepted, as a new submission when it was rejected and the text differs. `status` says "N notes waited for a review upstream at the last push; they are checked at the next push (not a failure)".
+- A run that sent something counts as a success also when one note was refused (for example "Too large"); the refusal is listed as "last refusal". Only a run where everything was refused is a failure with a back-off.
+- A refusal that concerns one note no longer stops the whole run. The run stops only when the upstream says that the link as a whole cannot go on: the gateway's identity is not accepted, it has no role in the project ("the upstream project … was not found or this gateway's identity may not see it there"), or its role allows no hand-in at all ("may no longer hand in to this project upstream").
+- When the upstream's note is deleted or no longer visible to the gateway's identity, or the earlier submission can no longer be read, the note becomes a conflict instead of being sent as new: `minigw gw upstream resolve <project> <id> --theirs` keeps the local text unsent, `--ours` looks again and replaces the upstream note if it is visible again, else sends a new note and says so. The Mini Gateway app's Upstream gateways panel names the three kinds of conflict.
+- The report says `create` for a new submission and `replace` only when an upstream note is replaced.
+
+### Known problems
+- An automatic link whose only unsent note is refused every time (for example a note over the size limit) tries it again with a growing pause (up to about an hour) until the note changes.
+- A conflict "deleted or no longer visible" is not cleared by itself when the note becomes visible again: `resolve --ours` replaces it then.
+- `status` learns about a review upstream at the next push, not before.
+- After restoring an OLDER local database, the gateway no longer knows what it sent after that backup: compare with the upstream before pushing (a push can create second copies).
+- With an upstream gateway older than this release, an identity that was lowered to "reader" gets one refusal per changed note instead of one clear stop.
+- The Mac client's part was checked with the shared tests of both clients, not by hand against two gateways. The retry of a replacement that the upstream refuses as outdated at hand-in was not provoked in the real round (it needs a race); tests cover it.
+- The known problems of 0.8.8 to 0.8.0 still apply.
 
 ## 0.8.8
 
