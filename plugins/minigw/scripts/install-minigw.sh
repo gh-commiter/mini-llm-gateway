@@ -242,6 +242,18 @@ else
     [ -z "$had" ] || mv -f "$k" "$BIN/minigw.exe" || r=1
     rmdir "$l"; return $r
   }
+  # recoverkeep (varnostni pregled L3): zagon, ki ga je ura kljuke (60 s) ubila v aside, pusti overjeno kopijo kot minigw.exe.keep. To se vrne
+  # PRVO, ne glede na stanje lupine: .keep brez exe gre nazaj (pod ključavnico; zasedena = ta zagon preskoči); oba obstajata: .keep izgine
+  # le, če je bajt za bajtom enak exe, sicer gre v minigw.exe.keep.old (morda novejše overjene kopije se nikoli tiho ne zbriše).
+  recoverkeep() {
+    rk="$BIN/minigw.exe.keep"; [ -e "$rk" ] || return 0
+    rl="$BIN/.aside.lock"
+    mkdir "$rl" 2>/dev/null || { [ -n "$(find "$rl" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$rl" 2>/dev/null && mkdir "$rl" 2>/dev/null; } || return 0
+    if [ ! -e "$BIN/minigw.exe" ]; then mv "$rk" "$BIN/minigw.exe"
+    elif cmp -s "$rk" "$BIN/minigw.exe"; then rm -f "$rk"
+    else mv -f "$rk" "$BIN/minigw.exe.keep.old"; fi
+    rmdir "$rl"; return 0
+  }
   # same <besedilo-fn> <pot>: vsebina je natanko to besedilo (cmp na kratki datoteki; exe se razlikuje v prvih bajtih)
   same() { "$1" > "$BIN/minigw.chk.$$" 2>/dev/null; cmp -s "$BIN/minigw.chk.$$" "$2"; ir=$?; rm -f "$BIN/minigw.chk.$$"; return $ir; }
   cmdtext() { printf '@setlocal DisableDelayedExpansion\r\n@"%%LOCALAPPDATA%%\\Programs\\Mini Gateway\\minigw.exe" %%*\r\n'; }
@@ -275,6 +287,7 @@ else
     fi
     return 0
   }
+  [ "$os" = windows ] && recoverkeep
   # Windows: lupini iz prejšnje seje (majhni besedilni datoteki tega skripta) ne smeta preživeti nameščenega minigw, ki ni več overjen.
   if [ "$os" = windows ] && [ -z "$inst" ]; then
     oldshims

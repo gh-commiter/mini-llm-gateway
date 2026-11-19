@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+- Security review of the next stable (nothing high; all fixed): the remote settings section of `docs/docker.md` now lists every route the remote listener allows, with its method, and says plainly that a remote accept publishes to the knowledge base, what cannot be accepted remotely and the two limits; a test keeps that table and the allow-list equal.
+- The owner's review read of a replacement of a PRIVATE note (also over the remote page) writes the same `kb.owner.read` audit row as reading a private note or its history (the note id and the project or team, never the text).
+- The default reason stored when a stale replacement is rejected without a reason tells the author the note's revision only if the author can still read the note; otherwise it says "the note this would replace changed or is no longer visible to you: read the project's notes and propose the change again".
+- A remote accept of a replacement whose `currentRevision` is not the one in the fresh read is refused at the gateway's door (403, one `denied` row, not counted among the 30 decisions).
+- The gateway's database is opened with `secure_delete`: SQLite now overwrites deleted text in the database file as it deletes it. `docs/how-it-works.md` says exactly what that does and does not cover (space freed before, the write-ahead log until it is checkpointed, and every copy made before, including file-level volume backups).
+- Windows plugin: a `minigw.exe.keep` left behind by a session start that the hook's 60 second limit killed is put back at the start of the next run, whatever the state of the shims (both files present: the `.keep` goes only when it is byte-identical, else it moves to `minigw.exe.keep.old`).
+
 ## 0.8.9
 
 A beta for gateways that push their notes to an upstream gateway (a team hub). It closes a way to get the same note twice upstream. No database upgrade. The upstream gateway and the pushing gateway should both be updated; mixed versions keep working (see Known problems).

@@ -149,6 +149,20 @@ out=$(winrun newer); print -r -- $out
 rm $T/win/roaming/minigw/serve.json; out=$(winrun newer)
 [[ $out == *"is not the current release 0.99.0 (or could not be verified); update it: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi"* ]] || fail "10d: no MSI line for an untrusted client-only install"
 [[ ! -e $T/win/viol ]] || fail "10: a write/mv/rm on bin/minigw while minigw.exe exists: $(cat $T/win/viol)"
+# 10g (varnostni pregled L3): minigw.exe.keep, ki ga je pustil ubit zagon, se vrne PRVO in brezpogojno (shim je že pravi, aside se ne kliče)
+print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
+GB=$T/win/data/bin; winrun > /dev/null; rm -f $GB/minigw.exe.keep.old; rmdir $GB/.aside.lock 2>/dev/null || true
+print kept-A > $GB/minigw.exe.keep; rm -f $GB/minigw.exe; winrun > /dev/null   # keep, brez exe, brez ključavnice
+[[ "$(<$GB/minigw.exe)" == kept-A && ! -e $GB/minigw.exe.keep && ! -e $GB/.aside.lock ]] || fail "10g A: the stranded .keep was not put back"
+rm -f $GB/minigw.exe; print kept-B > $GB/minigw.exe.keep; mkdir $GB/.aside.lock; winrun > /dev/null   # keep, brez exe, sveža ključavnica
+[[ ! -e $GB/minigw.exe && "$(<$GB/minigw.exe.keep)" == kept-B && -d $GB/.aside.lock ]] || fail "10g B: a held lock did not make the run skip the recovery"
+rmdir $GB/.aside.lock; winrun > /dev/null
+[[ "$(<$GB/minigw.exe)" == kept-B && ! -e $GB/minigw.exe.keep && ! -e $GB/.aside.lock ]] || fail "10g B: not restored once the lock was free"
+print same-C > $GB/minigw.exe; cp $GB/minigw.exe $GB/minigw.exe.keep; winrun > /dev/null   # oba, enaka
+[[ "$(<$GB/minigw.exe)" == same-C && ! -e $GB/minigw.exe.keep && ! -e $GB/minigw.exe.keep.old ]] || fail "10g C: an identical .keep was not removed"
+print new-D > $GB/minigw.exe; print stray-D > $GB/minigw.exe.keep; winrun > /dev/null   # oba, različna
+[[ "$(<$GB/minigw.exe)" == new-D && ! -e $GB/minigw.exe.keep && "$(<$GB/minigw.exe.keep.old)" == stray-D ]] || fail "10g D: a different .keep was deleted or replaced the exe"
+rm -f $GB/minigw.exe.keep.old
 print "ok 10: Windows shims point at the installed minigw; client-only MSI gets the MSI hint"
 
 docker run --rm -v $T:/t:ro debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 sh -c '
