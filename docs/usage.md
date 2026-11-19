@@ -1417,6 +1417,17 @@ writer changed the pending submission since (also the same text sent again from 
 submission changed since you read it: review it again" and nothing is published; a shortened hash is refused outright.
 Without `--version`, `kb accept` shows the text and asks "Accept this text? [y/N]", and only in a real terminal.
 
+**A replacement shows both texts.** For a submission that replaces a note, `kb review` and `gw kb review` print the note's
+current text first (`Current text: note N  revision C  <class>  <kind>  <title>`, then its text), then
+`New text: <class>  <kind>  <title>` and the new text. You accept that pair: the `version` line also covers the note's
+current revision and text, so if the note is edited, imported over or restored after you read it, the accept is refused
+with "the submission changed since you read it" and you review again. Also refused, each with its reason: the note was
+deleted, the note changed since the submission was written (reject it; the author submits again), or the current text
+has hidden characters (correct it with `minigw note edit` first; the old text stays in its history). After an accepted
+replacement the command prints where the previous text is saved (`minigw note history N`, `minigw note restore N
+--revision C`; `--team <team>` for a team note). A minigw older than 0.8.8 cannot accept a replacement (it shows no
+current text): update it; and a gateway older than 0.8.8 shows none, so the new client refuses the accept there.
+
 What this protects and what it does not: it guarantees that what is published is exactly the version that was read, so a
 text CHANGED after the review is never published by mistake. It does not prove that a person read it: `--version` is how
 scripts and agents accept, and nothing technical makes an agent show you the text first (the minigw skill tells it to);

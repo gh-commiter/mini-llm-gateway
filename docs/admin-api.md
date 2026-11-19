@@ -646,7 +646,7 @@ Owner routes use the existing owner admin authentication and base URL:
 | GET | `/kb/submissions?project=0&after=0` | Pending metadata; project 0 means all; also on the remote settings listener, without a query (the first 100), read-only. |
 | GET | `/kb/submissions/{id}` | Submission with body; also on the remote settings listener, without a query (the first 100), read-only. |
 | GET | `/kb/submissions/{id}/versions/{reviewHash}` | The same, only while the submission is that version (400 "the submission changed since you read it" otherwise): the panel's detail of a list row |
-| POST | `/kb/submissions/{id}/accept` | Publish; JSON `{"reviewHash":"…"}`, the `reviewHash` of the list row or the read (required); also on the remote settings listener: the body keys are exact (one key, spelled exactly), 30 decisions per 10 minutes. |
+| POST | `/kb/submissions/{id}/accept` | Publish; JSON `{"reviewHash":"…"}` (and, for a replacement, `"currentRevision":N`, the revision of the replaced note whose text was shown: without it 400 "update minigw to see its current text before accepting it"), the `reviewHash` of the list row or the read (required); also on the remote settings listener: the body keys are exact (one key, spelled exactly), 30 decisions per 10 minutes. |
 | POST | `/kb/submissions/{id}/reject` | Reject; JSON `{"reason":"text"}`; also on the remote settings listener: the body keys are exact (one key, spelled exactly), 30 decisions per 10 minutes. |
 | GET | `/kb/notes?project={id}&class=&kind=&after=&limit=` | The notes of a project or of a team's own notes, every class (`private` too), 50 per page by default, `{notes, next}` (`next` absent on the last page) |
 | GET | `/kb/notes/{id}/history` | Same history shape as the member route, every class; no list audit |
@@ -691,7 +691,18 @@ submission changed since you read it: review it again". The Knowledge base panel
 When the writer may no longer write the note at accept time (deactivated, device unbound, role or note changed), the
 answer is 409 `writer_lost`, never the writer's own 403 or 404. An admin of an archived project does not write or review
 the team's own notes (when every project of a team is archived, only the owner does). `reviewHash` is the whole SHA-256 of
-the submission id, class, title, kind, body, replaces, revision and its stored provenance, compared whole.
+the submission id, class, title, kind, body, replaces, revision and its stored provenance, compared whole. For a
+submission that replaces a note the hash is versioned (`review/2`) and also covers the note's revision, raw title and text,
+class and kind (or `missing`); a submission that replaces nothing hashes exactly as before.
+
+**The replaced note in a review read.** The owner's list rows and detail, the version-bound detail and the member's
+detail carry `targetState` (`none`, `ok`, `stale` when the note's revision is not the one the submission expected,
+`missing` when it is deleted, of another project, a mirror or not readable by the reviewer), `currentRevision` (0 for
+`none` and `missing`), and for `ok` and `stale` `currentTitle`, `currentClass`, `currentKind`, `currentHidden`,
+`currentReviewCheck` (`ok`, `hidden`, `long`) and, in a detail only, `currentBody`. `proposalCheck` is the check of the new
+text, `reviewCheck` the overall one (`ok` only when both are ok and the note is unchanged; else `hidden`, `long` or
+`target`). An accept refuses a missing, changed or hidden-text target with its own 400 reason. The member list carries
+none of this.
 
 Acceptance rechecks the authenticated writer binding, current project permissions,
 archive status, note limits and replacement revision. Pending entries are separate

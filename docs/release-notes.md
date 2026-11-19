@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### New
+- A reviewer who accepts a submission that REPLACES a note now sees the note's current text and the new text together, and accepts exactly that pair: `minigw kb review` and `gw kb review` print `Current text: note N  revision C  <class>  <kind>  <title>` (with a warning when the current text has hidden characters, or the note changed since the submission was written) and its text, then `New text: ...`. The review hash (`version`) now also covers the replaced note's revision and text, so an edit, an import or a restore of that note after you read it makes the accept answer "the submission changed since you read it". An accept of a replacement is refused with its own reason when the note no longer exists, changed since the submission was written, or has hidden characters in its current text (correct it with `minigw note edit`; the old text stays in its history). After an accepted replacement the command says where the old text is: `minigw note history N` and `minigw note restore N --revision C`.
+- The Mac panel and the remote page show the same two texts one above the other and offer Accept for a replacement only when the replaced note is unchanged and both texts are shown in full (nothing hidden, nothing cut); the remote page's accept body now carries `currentRevision` next to `reviewHash`. The queue shows `note missing or changed` for a replacement that cannot be accepted.
+- The review reads (owner list rows and detail, member detail) carry `targetState` (`none`, `ok`, `stale`, `missing`), `currentRevision`, `currentTitle`, `currentClass`, `currentKind`, `currentHidden`, `currentReviewCheck` and, in a detail, `currentBody`; `proposalCheck` is the old check of the new text and `reviewCheck` is now the overall one (`ok`, `hidden`, `long` or `target`).
+
+### Known problems
+- A client older than 0.8.8 cannot accept a replacement (it never shows the current text): update minigw. Accepting a submission that replaces nothing works as before. A new client against a gateway older than 0.8.8 prints `Current text: not shown (the gateway is older than 0.8.8)` and refuses the accept: update the gateway.
+- Both texts are shown one above the other, with no line difference yet.
+
 ## 0.8.7
 
 A beta that makes the saved versions of notes (kept since 0.8.6) usable: you can look at them and put one back. The gateway and the client both change; no database upgrade.
