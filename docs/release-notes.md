@@ -4,7 +4,7 @@
 
 ## 0.8.0
 
-Mini Gateway 0.8.0 is a stable release. It collects the 39 beta versions 0.7.1 to 0.7.39, which stable users never saw, and is the first stable release since 0.7.0. It is the same code as beta 0.7.39 except the version number. The sections below describe what 0.8.0 is, not how each beta got there. Read **Changed**, **Upgrading from 0.7.0** and **Known problems** before you update a gateway that other people use.
+Mini Gateway 0.8.0 is a stable release. It collects the 39 beta versions 0.7.1 to 0.7.39, which stable users never saw, and is the first stable release since 0.7.0. It is the same product code as beta 0.7.39; only tests and the version number differ. The sections below describe what 0.8.0 is, not how each beta got there. Read **Changed**, **Upgrading from 0.7.0** and **Known problems** before you update a gateway that other people use.
 
 ### New
 **Teams and users**
