@@ -38,6 +38,30 @@ extension ProjectEnv {
     }
     /// A faq is marked at the end of the first line; a finding prints as before.
     static func kindSuffix(_ d: JDict) -> String { d["entrykind"]?.string == "faq" ? "  (faq)" : "" }
+    /// How far back a rejected submission with the same title is still mentioned after a submit.
+    static let rejectedHintDays = 30.0
+    /// After a submit: a submission with the same title was rejected in the last rejectedHintDays days, and why. The author's own rows
+    /// carry no hash or body, so only the title can be compared. Best effort: any failure says nothing. Twin of projectEnv.rejectedHint.
+    func rejectedHint(_ c: ProjectConn, _ project: Int64, _ title: String) {
+        let now = self.now?() ?? Date()
+        var found: JDict?
+        var after: Int64 = 0
+        for _ in 0..<10 {
+            let r = send(c, "GET", "\(Self.apiProjects)/\(project)/kb/submissions?after=\(after)", [:], nil)
+            guard r.status == 200, case .obj(let pg)? = JSONValue.parse(r.data) else { return }
+            for v in pg["submissions"]?.array ?? [] {
+                let d = v.dict
+                guard d["state"]?.string == "rejected", !(d["reason"]?.string ?? "").isEmpty, d["title"]?.string == title,
+                      let stamp = d["provenance"]?.dict["received"]?.string,
+                      let at = ISO8601DateFormatter().date(from: stamp.replacingOccurrences(of: "\\.[0-9]+", with: "", options: .regularExpression)),
+                      now.timeIntervalSince(at) < Self.rejectedHintDays * 86400 else { continue }
+                if found == nil || (d["id"]?.int ?? 0) > (found?["id"]?.int ?? 0) { found = d }
+            }
+            after = pg["next"]?.int ?? 0
+            if after == 0 { break }
+        }
+        if let why = found?["reason"]?.string { say(ProjectText.clean("an earlier submission with this title was rejected: " + why)) }
+    }
     static func submissionResult(_ d: JDict) -> String { "submission \(d["id"]?.int ?? 0) \(d["state"]?.string ?? "")" }
 
     static func kbJSON(_ value: Any) -> String {
@@ -120,7 +144,10 @@ extension ProjectEnv {
             guard r.status == 201 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
             recordSubmitted(gw, project)
             if fl.bool("json") { say(ProjectText.jsonText(ProjectText.trim(String(decoding: r.data, as: UTF8.self)))) }
-            else { say(Self.submissionResult(JSONValue.parse(r.data)?.dict ?? JDict())) }
+            else {
+                say(Self.submissionResult(JSONValue.parse(r.data)?.dict ?? JDict()))
+                rejectedHint(c, project, title)
+            }
             return
         }
         var projects = [project]
@@ -151,7 +178,10 @@ extension ProjectEnv {
             } while after != 0
         }
         if fl.bool("json") { say(ProjectText.jsonText(Self.kbJSON(["submissions": raw]))); return }
-        for v in all { say(Self.submissionLine(v.dict, names)) }
+        for v in all {
+            say(Self.submissionLine(v.dict, names))
+            if v.dict["state"]?.string == "rejected", let why = v.dict["reason"]?.string, !why.isEmpty { say(ProjectText.clean("    reason: " + why)) }  // why it was rejected (#163)
+        }
         if all.isEmpty { say("no submissions") }
     }
 

@@ -262,6 +262,11 @@
           "match": "POST /minigw/v1/projects/1/kb/submissions",
           "status": 201,
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Proposal ž\",\"state\":\"pending\"}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[],\"next\":0}"
         }
       ],
       "out": "submission 7 pending\n",
@@ -275,6 +280,11 @@
           "POST",
           "/minigw/v1/projects/1/kb/submissions",
           "{\"body\":\"Review this\",\"class\":\"data\",\"replaces\":0,\"revision\":0,\"title\":\"Proposal ž\"}"
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=0",
+          ""
         ]
       ]
     },
@@ -569,6 +579,11 @@
           "match": "POST /minigw/v1/projects/1/kb/submissions",
           "status": 201,
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"How do I reset?\",\"state\":\"pending\",\"entryKind\":\"faq\"}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[],\"next\":0}"
         }
       ],
       "out": "submission 7 pending\n",
@@ -582,6 +597,11 @@
           "POST",
           "/minigw/v1/projects/1/kb/submissions",
           "{\"body\":\"Press the button.\",\"class\":\"data\",\"entryKind\":\"faq\",\"replaces\":0,\"revision\":0,\"title\":\"How do I reset?\"}"
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=0",
+          ""
         ]
       ]
     },
@@ -608,6 +628,11 @@
           "match": "POST /minigw/v1/projects/1/kb/submissions",
           "status": 201,
           "body": "{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Found\",\"state\":\"pending\",\"entryKind\":\"finding\"}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[],\"next\":0}"
         }
       ],
       "out": "submission 7 pending\n",
@@ -621,6 +646,11 @@
           "POST",
           "/minigw/v1/projects/1/kb/submissions",
           "{\"body\":\"Text\",\"class\":\"data\",\"entryKind\":\"finding\",\"replaces\":0,\"revision\":0,\"title\":\"Found\"}"
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=0",
+          ""
         ]
       ]
     },
@@ -954,6 +984,11 @@
           "match": "POST /minigw/v1/projects/1099511627777/kb/submissions",
           "status": 201,
           "body": "{\"id\":8,\"project\":1099511627777,\"user\":2,\"class\":\"data\",\"title\":\"Plan\",\"state\":\"pending\"}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1099511627777/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[],\"next\":0}"
         }
       ],
       "out": "submission 8 pending\n",
@@ -967,6 +1002,137 @@
           "POST",
           "/minigw/v1/projects/1099511627777/kb/submissions",
           "{\"body\":\"Team plan\",\"class\":\"data\",\"replaces\":0,\"revision\":0,\"title\":\"Plan\"}"
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1099511627777/kb/submissions?after=0",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "submissions",
+        "demo"
+      ],
+      "input": "",
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":10,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Too vague \\u017e\",\"state\":\"rejected\",\"reason\":\"duplicate of note 3\\u001b[31m \\u202e now\",\"provenance\":{\"received\":\"2026-11-10T09:00:00Z\"}},{\"id\":11,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Still waiting\",\"state\":\"pending\",\"reason\":\"\",\"provenance\":{\"received\":\"2026-11-10T09:00:00Z\"}},{\"id\":12,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Fine\",\"state\":\"accepted\",\"reason\":\"kept reason of an accepted one is not shown\",\"provenance\":{\"received\":\"2026-11-10T09:00:00Z\"}},{\"id\":13,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"No reason given\",\"state\":\"rejected\",\"reason\":\"\",\"provenance\":{\"received\":\"2026-11-10T09:00:00Z\"}}],\"next\":0}"
+        }
+      ],
+      "out": "submission 10  project 1  rejected  data  Too vague \u017e\n    reason: duplicate of note 3[31m  now\nsubmission 11  project 1  pending  data  Still waiting\nsubmission 12  project 1  accepted  data  Fine\nsubmission 13  project 1  rejected  data  No reason given\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=0",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "submit",
+        "demo",
+        "--key",
+        "fixed",
+        "--title",
+        "Same title",
+        "-"
+      ],
+      "input": "Review this",
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/1/kb/submissions",
+          "status": 201,
+          "body": "{\"id\":20,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Same title\",\"state\":\"pending\"}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":5,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Same title\",\"state\":\"rejected\",\"reason\":\"old reason\",\"provenance\":{\"received\":\"2026-10-25T09:00:00Z\"}},{\"id\":9,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Same title\",\"state\":\"rejected\",\"reason\":\"not a note, a duplicate\\u2028 of 3\",\"provenance\":{\"received\":\"2026-11-10T09:00:00Z\"}},{\"id\":20,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Same title\",\"state\":\"pending\",\"reason\":\"\",\"provenance\":{\"received\":\"2026-11-10T09:00:00Z\"}}],\"next\":0}"
+        }
+      ],
+      "out": "submission 20 pending\nan earlier submission with this title was rejected: not a note, a duplicate of 3\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/1/kb/submissions",
+          "{\"body\":\"Review this\",\"class\":\"data\",\"replaces\":0,\"revision\":0,\"title\":\"Same title\"}"
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=0",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "submit",
+        "demo",
+        "--key",
+        "fixed",
+        "--title",
+        "Older",
+        "-"
+      ],
+      "input": "Review this",
+      "responses": [
+        {
+          "match": "GET /minigw/v1/projects/demo",
+          "status": 200,
+          "body": "{\"id\":1}"
+        },
+        {
+          "match": "POST /minigw/v1/projects/1/kb/submissions",
+          "status": 201,
+          "body": "{\"id\":20,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Older\",\"state\":\"pending\"}"
+        },
+        {
+          "match": "GET /minigw/v1/projects/1/kb/submissions?after=0",
+          "status": 200,
+          "body": "{\"submissions\":[{\"id\":5,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Older\",\"state\":\"rejected\",\"reason\":\"too old\",\"provenance\":{\"received\":\"2026-10-01T09:00:00Z\"}},{\"id\":6,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Other title\",\"state\":\"rejected\",\"reason\":\"other\",\"provenance\":{\"received\":\"2026-11-10T09:00:00Z\"}},{\"id\":7,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Older\",\"state\":\"accepted\",\"reason\":\"accepted ones say nothing\",\"provenance\":{\"received\":\"2026-11-10T09:00:00Z\"}},{\"id\":20,\"project\":1,\"user\":2,\"class\":\"data\",\"title\":\"Older\",\"state\":\"pending\",\"reason\":\"\",\"provenance\":{\"received\":\"2026-11-10T09:00:00Z\"}}],\"next\":0}"
+        }
+      ],
+      "out": "submission 20 pending\n",
+      "requests": [
+        [
+          "GET",
+          "/minigw/v1/projects/demo",
+          ""
+        ],
+        [
+          "POST",
+          "/minigw/v1/projects/1/kb/submissions",
+          "{\"body\":\"Review this\",\"class\":\"data\",\"replaces\":0,\"revision\":0,\"title\":\"Older\"}"
+        ],
+        [
+          "GET",
+          "/minigw/v1/projects/1/kb/submissions?after=0",
+          ""
         ]
       ]
     }

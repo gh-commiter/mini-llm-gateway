@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### New
+- `minigw kb submissions` (Go client and Mac client) prints the reason under a rejected submission (`    reason: <text>`), so the author learns why it was rejected (#163); `--json` is unchanged. After a `kb submit`, a line `an earlier submission with this title was rejected: <reason>` appears when a submission of the same project with the same title was rejected in the last 30 days (the author's own rows carry no text hash, so the title is what can be compared). The notes skill tells a session to read the reason before handing the text in again and not to resubmit it unchanged.
+
 ## 0.8.5
 
 A beta toward a team gateway in Docker Compose: the owner can review what the team hands in to the knowledge base from a browser. This is the first action in the remote settings, besides providers and devices, that changes something.

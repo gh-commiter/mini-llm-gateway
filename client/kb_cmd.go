@@ -97,6 +97,44 @@ func teamSubject(project int64, names map[int64]string) string {
 func submissionLine(v core.Submission, names map[int64]string) string {
 	return clean(fmt.Sprintf("submission %d  %s  %s  %s  %s%s", v.ID, teamSubject(v.Project, names), v.State, v.Class, v.Title, kindSuffix(v.EntryKind)))
 }
+
+// rejectedHintDays: how far back a rejected submission with the same title is still mentioned after a submit.
+const rejectedHintDays = 30
+
+// rejectedHint tells the author, after a submit, that a submission with the same title was rejected in the last
+// rejectedHintDays days, and why. The author's own rows carry no hash or body (only the review reads do), so the text itself
+// cannot be compared without a new route: the title is what can be. Best effort: any failure says nothing.
+func (e *projectEnv) rejectedHint(c connection, project int64, title string) {
+	now := time.Now
+	if e.now != nil {
+		now = e.now
+	}
+	var found *core.Submission
+	after := int64(0)
+	for page := 0; page < 10; page++ {
+		st, b, _ := e.do(c, "GET", fmt.Sprintf("%s/%d/kb/submissions?after=%d", apiProjects, project, after), nil, nil)
+		var pg struct {
+			Submissions []core.Submission
+			Next        int64
+		}
+		if st != 200 || json.Unmarshal(b, &pg) != nil {
+			return
+		}
+		for i, v := range pg.Submissions {
+			if v.State == "rejected" && v.Reason != "" && v.Title == title && now().Sub(v.Provenance.Received) < rejectedHintDays*24*time.Hour && (found == nil || v.ID > found.ID) {
+				found = &pg.Submissions[i]
+			}
+		}
+		if pg.Next == 0 {
+			break
+		}
+		after = pg.Next
+	}
+	if found != nil {
+		e.say(clean("an earlier submission with this title was rejected: " + found.Reason))
+	}
+}
+
 func submissionResult(v core.Submission) string {
 	return fmt.Sprintf("submission %d %s", v.ID, v.State)
 }
@@ -226,6 +264,7 @@ func (e *projectEnv) kb(args []string) error {
 			return err
 		}
 		e.say(submissionResult(v))
+		e.rejectedHint(c, project, t)
 		return nil
 	}
 	// Enumerate readable projects only to resolve names; the API returns only the authenticated author's rows.
@@ -297,6 +336,9 @@ func (e *projectEnv) kb(args []string) error {
 	}
 	for _, v := range all {
 		e.say(submissionLine(v, names))
+		if v.State == "rejected" && v.Reason != "" { // why it was rejected: the author reads it before handing the text in again (#163)
+			e.say(clean("    reason: " + v.Reason))
+		}
 	}
 	if len(all) == 0 {
 		e.say("no submissions")

@@ -1297,6 +1297,9 @@ Use `minigw kb submit <project>|--team <team> [--class structure|data|private] [
 For a replacement add `--replaces <note-id> --revision <n>`. Existing project write
 permissions apply; readers cannot submit. `minigw kb submissions [<project>|--team <team>]
 [--json]` lists your submissions, across readable projects and the teams you are on (labelled `team <name>`) when omitted.
+A rejected submission is followed by an indented line `    reason: <text>` (the reviewer's reason; nothing is printed when there is none; `--json` is unchanged). Read it before handing in again: after a `kb submit`,
+a line `an earlier submission with this title was rejected: <reason>` is printed when a submission of the same project with the same title was rejected in the last 30 days
+(your own rows carry no text hash, so only the title can be compared). A session that hands in entries should read the reasons first and not resubmit a rejected text unchanged.
 
 **Entry kinds.** An entry is a `finding` (the default) or a `faq`: the title is the question (at most 256 bytes)
 and the text a short answer (at most 2 KiB). The kind is chosen with `kb submit --kind`, travels with the
