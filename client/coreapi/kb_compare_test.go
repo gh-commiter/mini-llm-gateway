@@ -48,6 +48,14 @@ func TestReviewDetailAndAcceptBodyOfAReplacement(t *testing.T) {
 			call(tc.c, "POST", tc.path+"/accept", bad, 400)
 		}
 	}
+	// an old client's body on the MEMBER route: no currentRevision for a replacement is refused with the update message
+	memberPath := fmt.Sprintf("/minigw/v1/projects/%d/kb/review/%d", pid, v.ID)
+	var md map[string]any
+	json.Unmarshal(call(member("dev-fani"), "GET", memberPath, "", 200).Body, &md)
+	mh, _ := md["reviewHash"].(string)
+	if r := call(member("dev-fani"), "POST", memberPath+"/accept", `{"reviewHash":"`+mh+`"}`, 400); !strings.Contains(string(r.Body), "update minigw") {
+		t.Fatal(string(r.Body))
+	}
 	// no currentRevision: refused with the update message (400, a refusal)
 	ownerPath := fmt.Sprintf("/kb/submissions/%d", v.ID)
 	var d map[string]any
@@ -58,4 +66,32 @@ func TestReviewDetailAndAcceptBodyOfAReplacement(t *testing.T) {
 		t.Fatal(string(r.Body))
 	}
 	call(Context{Kind: KindAdmin}, "POST", ownerPath+"/accept", `{"reviewHash":"`+hash+`","currentRevision":1}`, 200)
+}
+
+// The panel's row action offers Accept for a new note only: the owner list marks a replacement row acceptInPanel false.
+func TestKBQueueRowsOfferAcceptOnlyForANewNote(t *testing.T) {
+	f := newFixture(t)
+	pid := f.pid["fakture"]
+	ana := core.Principal{UserID: f.uid["ana"], DeviceID: "dev-ana"}
+	n, _, _ := f.st.CreateNote(bg, ana, pid, "q-note", core.NoteInput{Class: core.Structure, Title: "Current", Body: "current body"})
+	repl, _, e1 := f.st.Submit(bg, ana, pid, "q-repl", core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Structure, Title: "New", Body: "new"}, Replaces: n.ID, Revision: n.Revision})
+	plain, _, e2 := f.st.Submit(bg, ana, pid, "q-plain", core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Structure, Title: "Plain", Body: "plain"}})
+	if e1 != nil || e2 != nil {
+		t.Fatal(e1, e2)
+	}
+	r := f.api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: "GET", Path: "/kb/submissions", RawQuery: "project=0&after=0"})
+	var pg struct {
+		Submissions []struct {
+			ID            int64
+			AcceptInPanel bool
+		}
+	}
+	if r.Status != 200 || json.Unmarshal(r.Body, &pg) != nil || len(pg.Submissions) != 2 {
+		t.Fatal(r.Status, string(r.Body))
+	}
+	for _, s := range pg.Submissions {
+		if want := s.ID == plain.ID; s.AcceptInPanel != want || s.ID != plain.ID && s.ID != repl.ID {
+			t.Fatalf("submission %d: acceptInPanel %v", s.ID, s.AcceptInPanel)
+		}
+	}
 }

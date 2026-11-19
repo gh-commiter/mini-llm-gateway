@@ -287,9 +287,30 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 	if vr.TargetState != "ok" || vr.Check != "ok" || vr.CurrentRevision != noteRev() || vr.CurrentTitle != "T <b>one</b>" || vr.CurrentBody != hostile || vr.Body != "new text" {
 		t.Fatalf("%+v", vr)
 	}
-	if w = k.accept(repl, vr.ReviewHash); w.Code != 400 || !strings.Contains(w.Body.String(), "update minigw") { // a client that showed no current text
-		t.Fatal("accepted without currentRevision", w.Code, w.Body.String())
+	deniedRows := func(id int64) (n int) {
+		for _, row := range k.remoteAudit() {
+			if row["Subject"] == fmt.Sprint(id) && row["Result"] == "denied" {
+				n++
+			}
+			if row["Subject"] == fmt.Sprint(id) && row["Result"] == "started" {
+				k.t.Fatal("a refused body wrote a started row")
+			}
+		}
+		return
 	}
+	// a replacement without currentRevision (or 0) and a new note with one are refused before the limiter and the core
+	for _, b := range []string{`{"reviewHash":"` + vr.ReviewHash + `"}`, `{"reviewHash":"` + vr.ReviewHash + `","currentRevision":0}`} {
+		before := deniedRows(repl)
+		if w = k.do("POST", fmt.Sprintf("/kb/submissions/%d/accept", repl), b); w.Code != 403 || !strings.Contains(w.Body.String(), "must carry currentRevision") || deniedRows(repl) != before+1 || pending(repl) != 1 {
+			t.Fatal("accepted without currentRevision", w.Code, w.Body.String())
+		}
+	}
+	plain := k.submit("plain with revision", "plain")
+	pr := k.read(plain)
+	if w = k.acceptAt(plain, pr.ReviewHash, 1); w.Code != 403 || !strings.Contains(w.Body.String(), "must not carry currentRevision") || deniedRows(plain) != 1 || pending(plain) != 1 {
+		t.Fatal("a new note with currentRevision", w.Code, w.Body.String())
+	}
+	k.reject(plain, "done")
 	if w = k.acceptAt(repl, vr.ReviewHash, vr.CurrentRevision+1); w.Code != 400 || !strings.Contains(w.Body.String(), "changed since you read it") {
 		t.Fatal("accepted with a wrong currentRevision", w.Code, w.Body.String())
 	}

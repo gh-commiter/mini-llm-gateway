@@ -337,12 +337,17 @@ func remoteRevisionNumber(raw json.RawMessage) bool {
 // both texts read ok; a read without those fields (a gateway that cannot compare) offers nothing. Hidden characters and
 // long texts, on either side, are reviewed on the server. The core still compares the review hash inside its write
 // transaction, and the hash covers the replaced note's revision and text, so nothing can change between this read and the write.
-func (s *server) remoteKBAcceptRefusal(id string) string {
+func (s *server) remoteKBAcceptRefusal(id string, body []byte) string {
 	status, obj := s.adminDo("GET", "/kb/submissions/"+id, nil)
 	m, ok := obj.(map[string]any)
 	if status != 200 || !ok {
 		return "" // not found, no database: the core answers the same way
 	}
+	// The body must match what is replaced, before the limiter and the core: a replacement names the revision shown (a
+	// positive number), a submission that replaces nothing names none.
+	var sent map[string]json.RawMessage
+	json.Unmarshal(body, &sent)
+	cur, has := sent["currentRevision"]
 	if r, _ := m["replaces"].(float64); r != 0 {
 		switch m["targetState"] {
 		case "ok":
@@ -354,6 +359,11 @@ func (s *server) remoteKBAcceptRefusal(id string) string {
 		if rev, _ := m["currentRevision"].(float64); rev < 1 {
 			return fmt.Sprintf("This submission replaces note %d and its current text is not available here: review it on the server, or reject it.", int64(r))
 		}
+		if string(cur) == "" || string(cur) == "0" {
+			return fmt.Sprintf("This submission replaces note %d: the request must carry currentRevision, the revision of the note whose current text was shown.", int64(r))
+		}
+	} else if has {
+		return "This submission replaces no note: the request must not carry currentRevision."
 	}
 	switch m["reviewCheck"] {
 	case "ok":
@@ -602,7 +612,7 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 			operation, subject = "POST kb/submissions/{}/"+pathSeg[3], pathSeg[2]
 			code, msg := 403, remoteKBDecisionRefusal(pathSeg[3] == "accept", body)
 			if msg == "" && pathSeg[3] == "accept" {
-				msg = s.remoteKBAcceptRefusal(pathSeg[2])
+				msg = s.remoteKBAcceptRefusal(pathSeg[2], body)
 			}
 			if msg != "" {
 				wait, limitedRow := s.remoteAuth.allowRefusal()

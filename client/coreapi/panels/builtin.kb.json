@@ -120,8 +120,8 @@
      "method": "POST",
      "path": "/kb/submissions/{row.id}/accept",
      "when": {
-      "field": "reviewCheck",
-      "equals": "ok"
+      "field": "acceptInPanel",
+      "equals": true
      },
      "body": {
       "reviewHash": {

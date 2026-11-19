@@ -289,3 +289,62 @@ func TestReviewEvaluatorIsTheSameOnBothSides(t *testing.T) {
 		}
 	}
 }
+
+// Catches: two pending replacements of one note both being accepted (the second must be stale).
+func TestReviewSecondReplacementOfOneNoteIsStale(t *testing.T) {
+	f := newFx(t)
+	n, a := replacement(f, "two-a")
+	ana, pid := f.p("ana"), f.pid["fakture"]
+	b, _, e := f.Submit(ctx, ana, pid, "two-b", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Other title", Body: "other body"}, Replaces: n.ID, Revision: n.Revision})
+	f.ok(e)
+	seenB := ownerRead(f, b.ID).ReviewHash
+	_, e = f.ReviewSubmissionAt(ctx, a.ID, true, "", ownerRead(f, a.ID).ReviewHash, n.Revision)
+	f.ok(e)
+	_, e = f.ReviewSubmissionAt(ctx, b.ID, true, "", seenB, n.Revision)
+	var ref ErrRefusal
+	if !errors.As(e, &ref) || e.Error() != "note 1 changed since this submission was written (it expected revision 1, the note is at 2): reject it and ask for a new submission" {
+		t.Fatal(e)
+	}
+	if got, e := f.GetNote(ctx, ana, pid, n.ID); e != nil || got.Title != "New title" {
+		t.Fatal(got, e)
+	}
+}
+
+// Catches: a currentRevision on a submission that replaces nothing being taken.
+func TestReviewCurrentRevisionOnANewNoteIsRefused(t *testing.T) {
+	f := newFx(t)
+	ana, pid := f.p("ana"), f.pid["fakture"]
+	v, _, e := f.Submit(ctx, ana, pid, "plain-cur", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "Plain", Body: "plain"}})
+	f.ok(e)
+	seen := ownerRead(f, v.ID).ReviewHash
+	var inv ErrInvalid
+	if _, e = f.ReviewSubmissionAt(ctx, v.ID, true, "", seen, 3); !errors.As(e, &inv) {
+		t.Fatal("owner", e)
+	}
+	if _, e = f.MemberReviewAt(ctx, f.p("fani"), pid, v.ID, true, "", seen, 3); !errors.As(e, &inv) {
+		t.Fatal("member", e)
+	}
+	if _, e = f.ReviewSubmissionAt(ctx, v.ID, true, "", seen, 0); e != nil {
+		t.Fatal(e)
+	}
+}
+
+// Catches: a target of another project being read or accepted.
+func TestReviewTargetOfAnotherProjectCannotBeAccepted(t *testing.T) {
+	f := newFx(t)
+	n, v := replacement(f, "other-project")
+	other := f.mk("cene", "eureko", Structure)
+	exec(t, f.Store, `UPDATE kb_submissions SET replaces=? WHERE id=?`, other.ID, v.ID)
+	d := ownerRead(f, v.ID)
+	if d.TargetState != "missing" || d.CurrentBody != nil || d.ReviewCheck != "target" {
+		t.Fatal(d)
+	}
+	_, e := f.ReviewSubmissionAt(ctx, v.ID, true, "", d.ReviewHash, n.Revision)
+	var ref ErrRefusal
+	if !errors.As(e, &ref) || e.Error() != "the note this submission replaces no longer exists: reject it" {
+		t.Fatal(e)
+	}
+	if got, e := f.GetNote(ctx, f.p("cene"), other.ProjectID, other.ID); e != nil || got.Title != other.Title {
+		t.Fatal("the other project's note changed", got, e)
+	}
+}

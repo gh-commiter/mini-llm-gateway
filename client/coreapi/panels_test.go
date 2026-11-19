@@ -606,6 +606,10 @@ func TestKBPanelReplacedRecordIsVersionBound(t *testing.T) {
 			RowActions []struct {
 				ID   string
 				Body map[string]map[string]string
+				When struct {
+					Field  string
+					Equals any
+				}
 			}
 			Detail struct {
 				Sections []struct {
@@ -634,6 +638,13 @@ func TestKBPanelReplacedRecordIsVersionBound(t *testing.T) {
 		for _, a := range s.RowActions {
 			if a.ID == "accept" && a.Body["currentRevision"]["row"] != "currentRevision" {
 				t.Fatal("accept does not send currentRevision", a.Body)
+			}
+			// a row offers Accept only for a submission that replaces nothing: a replacement is accepted where its current text is shown
+			if a.ID == "accept" && (a.When.Field != "acceptInPanel" || a.When.Equals != true) {
+				t.Fatal("the row's accept is not limited to a new note", a.When)
+			}
+			if a.ID == "reject" && a.When.Field != "" {
+				t.Fatal("reject must stay on every row", a.When)
 			}
 		}
 	}

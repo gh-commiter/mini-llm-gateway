@@ -702,7 +702,12 @@ detail carry `targetState` (`none`, `ok`, `stale` when the note's revision is no
 `currentReviewCheck` (`ok`, `hidden`, `long`) and, in a detail only, `currentBody`. `proposalCheck` is the check of the new
 text, `reviewCheck` the overall one (`ok` only when both are ok and the note is unchanged; else `hidden`, `long` or
 `target`). An accept refuses a missing, changed or hidden-text target with its own 400 reason. The member list carries
-none of this.
+none of this. "Long" (a text over 20000 characters, the current text as well as the new one) is a rule of the panel and the remote
+page, enforced for the remote listener by its own check of the read; the core does not refuse it and the owner CLI shows the
+full text and may accept. The Mac panel's queue row offers Accept (`acceptInPanel`, true only when `reviewCheck` is `ok` and
+nothing is replaced) for a new note only; a replacement is accepted with `gw kb accept` or on the remote page, where its current
+text is shown. The remote listener refuses, before its limiter counts and with a `denied` audit row, an accept of a
+replacement without `currentRevision` (or with 0) and an accept of a submission that replaces nothing that carries one.
 
 Acceptance rechecks the authenticated writer binding, current project permissions,
 archive status, note limits and replacement revision. Pending entries are separate
