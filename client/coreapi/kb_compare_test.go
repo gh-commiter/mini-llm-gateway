@@ -53,7 +53,7 @@ func TestReviewDetailAndAcceptBodyOfAReplacement(t *testing.T) {
 	var md map[string]any
 	json.Unmarshal(call(member("dev-fani"), "GET", memberPath, "", 200).Body, &md)
 	mh, _ := md["reviewHash"].(string)
-	if r := call(member("dev-fani"), "POST", memberPath+"/accept", `{"reviewHash":"`+mh+`"}`, 400); !strings.Contains(string(r.Body), "update minigw") {
+	if r := call(member("dev-fani"), "POST", memberPath+"/accept", `{"reviewHash":"`+mh+`"}`, 400); !strings.Contains(string(r.Body), "too old to accept a replacement") {
 		t.Fatal(string(r.Body))
 	}
 	// no currentRevision: refused with the update message (400, a refusal)
@@ -62,7 +62,7 @@ func TestReviewDetailAndAcceptBodyOfAReplacement(t *testing.T) {
 	json.Unmarshal(call(Context{Kind: KindAdmin}, "GET", ownerPath, "", 200).Body, &d)
 	hash, _ := d["reviewHash"].(string)
 	r := call(Context{Kind: KindAdmin}, "POST", ownerPath+"/accept", `{"reviewHash":"`+hash+`"}`, 400)
-	if !strings.Contains(string(r.Body), "update minigw") {
+	if !strings.Contains(string(r.Body), "too old to accept a replacement") {
 		t.Fatal(string(r.Body))
 	}
 	call(Context{Kind: KindAdmin}, "POST", ownerPath+"/accept", `{"reviewHash":"`+hash+`","currentRevision":1}`, 200)

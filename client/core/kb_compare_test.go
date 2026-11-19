@@ -178,7 +178,7 @@ func TestReviewAcceptRefusals(t *testing.T) {
 			_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "newer"})
 			f.ok(e)
 		}, nil, "note 1 changed since this submission was written (it expected revision 1, the note is at 2): reject it and ask for a new submission"},
-		{"no currentRevision", func(f *fx, n Note) {}, func(Note) int64 { return 0 }, "this submission replaces note 1: update minigw to see its current text before accepting it"},
+		{"no currentRevision", func(f *fx, n Note) {}, func(Note) int64 { return 0 }, ErrOldClientReplacement},
 		{"wrong currentRevision", func(f *fx, n Note) {}, func(n Note) int64 { return n.Revision + 5 }, "the submission changed since you read it: review it again"},
 	} {
 		for _, who := range []string{"owner", "member"} {

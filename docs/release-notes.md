@@ -8,7 +8,7 @@
 - The review reads (owner list rows and detail, member detail) carry `targetState` (`none`, `ok`, `stale`, `missing`), `currentRevision`, `currentTitle`, `currentClass`, `currentKind`, `currentHidden`, `currentReviewCheck` and, in a detail, `currentBody`; `proposalCheck` is the old check of the new text and `reviewCheck` is now the overall one (`ok`, `hidden`, `long` or `target`).
 
 ### Known problems
-- A client older than 0.8.8 cannot accept a replacement (it never shows the current text): update minigw. Accepting a submission that replaces nothing works as before. A new client against a gateway older than 0.8.8 prints `Current text: not shown (the gateway is older than 0.8.8)` and refuses the accept: update the gateway.
+- Reviewers who use a client older than 0.8.8 (the stable 0.8.0 from Homebrew, install.sh or the plugin) cannot accept a replacement until the next stable release: the refusal says so and names the way out (a 0.8.8 or newer beta, the Mini Gateway app's panel or the remote settings page, which come with the gateway, or reject it). Accepting a submission that replaces nothing works as before. A new client against a gateway older than 0.8.8 prints `Current text: not shown (the gateway is older than 0.8.8)` and refuses the accept: update the gateway.
 - Both texts are shown one above the other, with no line difference yet.
 
 ## 0.8.7

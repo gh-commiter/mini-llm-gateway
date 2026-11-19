@@ -664,6 +664,9 @@ func reviewHash(tx *sql.Tx, id int64) (string, error) {
 	return hex.EncodeToString(h[:]), nil
 }
 
+// ErrOldClientReplacement: the answer to an accept of a replacement from a client that sent no currentRevision (older than 0.8.8).
+const ErrOldClientReplacement = "this minigw is too old to accept a replacement (it cannot show the note's current text): use minigw 0.8.8 or newer (a beta: https://github.com/gh-commiter/mini-llm-gateway/releases), review it in the Mini Gateway app or in the remote settings, or reject it"
+
 // The refusals of an accept that does not name what is there now.
 var (
 	ErrReviewHashMissing = ErrRefusal{"name the version you read: read the submission first (minigw kb review), or update minigw"}
@@ -924,7 +927,7 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 			}
 			switch {
 			case v.Replaces != 0 && shown == 0:
-				return ErrRefusal{fmt.Sprintf("this submission replaces note %d: update minigw to see its current text before accepting it", v.Replaces)}
+				return ErrRefusal{ErrOldClientReplacement}
 			case v.Replaces != 0 && shown != target.revision:
 				return ErrSubmissionChanged
 			case v.Replaces == 0 && shown != 0:
