@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Upstream push: when the upstream note changed since the version our text corresponds to (its revision is above the one our last accepted text made), the note is a conflict and nothing is sent, also after a replacement was rejected as stale: the push no longer re-targets the newest revision unseen. `resolve --theirs` keeps our text unsent, `--ours` sends it as a replacement at the upstream's current revision for its reviewers. The remembered version is read from the accepted submission (no database change); a receipt whose version is not known behaves as before until the next accepted submission.
+
 ## 0.8.9
 
 A beta for gateways that push their notes to an upstream gateway (a team hub). It closes a way to get the same note twice upstream. No database upgrade. The upstream gateway and the pushing gateway should both be updated; mixed versions keep working (see Known problems).

@@ -288,7 +288,7 @@ func conflictWhy(rev int64) string {
 	case rev < 0:
 		return "the earlier submission upstream can no longer be read: check on the hub whether it was accepted"
 	}
-	return "changed on the upstream since our last write (revision " + strconv.FormatInt(rev, 10) + "), not overwritten"
+	return "changed on the upstream since our last version (revision " + strconv.FormatInt(rev, 10) + " there), not overwritten"
 }
 
 func conflictText(rev, note int64) string {
@@ -674,12 +674,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		var replaces, revision, supersedes int64
 		action, detail := "create", ""
 		owner := n.Sent != nil && n.Sent.Conflict == 2 // the owner chose "ours": our version goes as a submission, never as an overwrite
-		if owner && n.Sent.RemoteNote > 0 && n.Sent.ConflictRev > 0 {
-			action = "replace"
-			supersedes = n.Sent.RemoteSub
-			replaces, revision = n.Sent.RemoteNote, n.Sent.ConflictRev
-			detail = "resolved as ours: sent as a submission for the upstream's reviewers"
-		} else if n.Sent != nil { // changed since it was sent: a replacement where the upstream's routes allow it
+		if n.Sent != nil {                             // changed since it was sent: a replacement where the upstream's routes allow it
 			action = "replace"
 			supersedes = n.Sent.RemoteSub
 			a := upAnswer{status: 404} // a note written directly (publish mode) has no submission
@@ -690,12 +685,36 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				}
 			}
 			var sub struct {
-				State  string
-				Note   int64
-				Reason string
+				State              string
+				Note               int64
+				Reason             string
+				Replaces, Revision int64
 			}
 			readable := a.status == 200 && json.Unmarshal(a.data, &sub) == nil
 			subID := strconv.FormatInt(n.Sent.RemoteSub, 10)
+			// the base: the upstream revision our last accepted text corresponds to. An accepted submission says it: a replacement was accepted at the
+			// revision it declared (the upstream's own check) and made the next one; a new note starts at 1. An upstream that does not say what a
+			// replacement declared leaves it unknown (0): then the note is rebased as before.
+			base := int64(0)
+			if n.Sent.RemoteRev > 0 {
+				base = n.Sent.RemoteRev
+			}
+			if readable && sub.State == "accepted" && sub.Note > 0 {
+				switch {
+				case sub.Replaces == 0:
+					base = 1
+				case sub.Revision > 0:
+					base = sub.Revision + 1
+				}
+				if base > 0 && base != n.Sent.RemoteRev {
+					if !dry {
+						if e := s.upstreamRecordBase(wctx, l.Project, l.Upstream, n.ID, base); e != nil {
+							return res, e
+						}
+					}
+					n.Sent.RemoteRev = base
+				}
+			}
 			// the hub's note this note is a version of: the note the earlier submission became, else the one we last replaced. A rejected
 			// replacement leaves the link as it was, so a later push is again a replacement, never a second note (#166). What is learned
 			// here is written down before anything else is asked about this note, even when nothing is sent in the end.
@@ -744,6 +763,13 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				}
 				var cur struct{ Revision int64 }
 				switch {
+				case na.status == 200 && json.Unmarshal(na.data, &cur) == nil && cur.Revision > 0 && !owner && base > 0 && cur.Revision > base:
+					// the upstream note changed since the version our text corresponds to: our text never saw that change, so a replacement
+					// declared against the newest revision would pass the upstream's own check unseen. The owner decides (resolve).
+					if e := conflict(cur.Revision); e != nil {
+						return res, e
+					}
+					continue
 				case na.status == 200 && json.Unmarshal(na.data, &cur) == nil && cur.Revision > 0:
 					replaces, revision = target, cur.Revision
 					detail = "replaces the note " + tid + " upstream (revision " + strconv.FormatInt(cur.Revision, 10) + ")"

@@ -1714,8 +1714,18 @@ hand keeps that note from being pushed; they could change or delete it anyway. R
 
 A repeated push sends only what changed: every note is remembered by its content (class, kind, title, text). A changed note is sent
 as a **replacement** of the note the upstream accepted before, at that note's current revision (a replacement the upstream refuses as already
-stale is sent once more with the revision it names). The link to that upstream note stays when the reviewers reject a replacement (for instance
-because the note changed there meanwhile): after the next change here the push is again a replacement of the same note, so a second copy of it
+stale is sent once more with the revision it names), **unless the upstream note changed since the version our text corresponds to**: the gateway
+remembers that version (the upstream revision our last accepted text made: the revision a replacement declared plus one, or 1 for a new note; it
+reads it from the accepted submission, so older receipts get it at their next push), and a note whose upstream revision is above it is a conflict
+("changed on the upstream since our last version (revision R there)"): nothing is sent, because our text never saw that change and a replacement at
+the newest revision would pass the upstream's own "changed since" check unseen. A revision bump without a text change (a restore, a class change)
+counts too. `gw upstream resolve <project> <note> --theirs` keeps our text unsent and takes the upstream's revision as the new base; `--ours` sends
+our text as a replacement at the upstream's current revision, for its reviewers (they see both texts on an upstream of 0.8.8 or later; an older one
+shows only ours, so look at the note there before accepting). Our own accepted replacement is the new base, not a conflict; a note whose text did not
+change here is not sent and not a conflict; a pending replacement of ours keeps the old base. Where the base is not known (the last submission was
+rejected or pending before this version, or an upstream that does not say what a replacement declared) the note is replaced at the newest revision
+as before, and the base is learned from the next accepted submission. The link to that upstream note stays when the reviewers reject a replacement:
+after the next change here the push is again a replacement of the same note (or a conflict, when the note changed there), so a second copy of it
 does not appear; the report says `the earlier submission was rejected upstream (<reason>)`. A note whose text did not change here is not sent again
 (an automatic push does not retry it either). When the push reads an earlier submission and finds it accepted, it writes down the upstream note
 before doing anything else with that note. Two submissions of a note that is not yet there could both be accepted as notes, so a note whose first

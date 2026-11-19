@@ -54,8 +54,13 @@ func sscan(path, format string, id *int) bool {
 	return e == nil && n == 1
 }
 
+// accept: the submission was accepted and the hub note is at revision rev with our text (a new note at 1; else a replacement declared at rev-1).
 func (h *hubFake) accept(sub, note, rev int) {
-	h.subs[sub] = fmt.Sprintf(`{"id":%%d,"state":"accepted","note":%d}`, note)
+	if rev > 1 {
+		h.subs[sub] = fmt.Sprintf(`{"id":%%d,"state":"accepted","note":%d,"replaces":%d,"revision":%d}`, note, note, rev-1)
+	} else {
+		h.subs[sub] = fmt.Sprintf(`{"id":%%d,"state":"accepted","note":%d,"replaces":0,"revision":0}`, note)
+	}
 	h.notes[note] = rev
 }
 
@@ -65,8 +70,8 @@ func (h *hubFake) reject(sub int, reason string) {
 
 func (h *hubFake) lastPost() upCall { return h.posts[len(h.posts)-1] }
 
-// TestUpstreamRejectedReplacementStaysAReplacement: #166. A replacement the hub rejected (stale at review) must not turn into a new note
-// on the next push: the link to the hub's note survives, and the push replaces that note at its current revision.
+// TestUpstreamRejectedReplacementStaysAReplacement: #166. A replacement the hub rejected must not turn into a new note on the next push: the
+// link to the hub's note survives, and the push replaces that note again (the hub note did not change, so our base still holds).
 func TestUpstreamRejectedReplacementStaysAReplacement(t *testing.T) {
 	f, notes := upFx(t)
 	fk := f.pid["fakture"]
@@ -88,35 +93,33 @@ func TestUpstreamRejectedReplacementStaysAReplacement(t *testing.T) {
 	}
 	push(false) // submissions 1 and 2 (Structure one, Data two)
 	structure := 1
-	h.accept(structure, 55, 3) // the hub accepts it as note 55
+	h.accept(structure, 55, 3) // the hub accepts it as note 55 (revision 3 with our text)
 	edit("v2")
-	h.notes[55] = 4 // the hub's own edit: the replacement below is stale at review
 	r := push(false)
 	last := h.lastPost()
-	if r.Replaced != 1 || last.body["replaces"].(float64) != 55 || last.body["revision"].(float64) != 4 {
+	if r.Replaced != 1 || last.body["replaces"].(float64) != 55 || last.body["revision"].(float64) != 3 {
 		t.Fatalf("first replacement: %+v %+v", r, last)
 	}
 	rep := h.next
-	h.reject(rep, "note 55 changed after this was written")
-	h.notes[55] = 5
+	h.reject(rep, "not this time")
 	posts := len(h.posts)
 	if r = push(false); len(h.posts) != posts || r.Skipped != 2 { // rejected, nothing changed here: nothing is sent again
 		t.Fatalf("nothing to send: %+v", r)
 	}
 	edit("v3")
-	if r = push(true); r.Replaced != 1 || r.Created != 0 || !strings.Contains(r.Lines[0], "would replace") || !strings.Contains(r.Lines[0], "note 55") || !strings.Contains(r.Lines[0], "revision 5") || !strings.Contains(r.Lines[0], "rejected") || !strings.Contains(r.Lines[0], "changed after") {
+	if r = push(true); r.Replaced != 1 || r.Created != 0 || !strings.Contains(r.Lines[0], "would replace") || !strings.Contains(r.Lines[0], "note 55") || !strings.Contains(r.Lines[0], "revision 3") || !strings.Contains(r.Lines[0], "rejected") || !strings.Contains(r.Lines[0], "not this time") {
 		t.Fatalf("dry run: %+v", r)
 	}
 	r = push(false)
 	last = h.lastPost()
-	if r.Replaced != 1 || r.Created != 0 || last.body["replaces"].(float64) != 55 || last.body["revision"].(float64) != 5 || !strings.Contains(last.body["body"].(string), "v3") {
+	if r.Replaced != 1 || r.Created != 0 || last.body["replaces"].(float64) != 55 || last.body["revision"].(float64) != 3 || !strings.Contains(last.body["body"].(string), "v3") {
 		t.Fatalf("second replacement is not a replacement of note 55: %+v %+v", r, last)
 	}
 	// and again after another reject: the link still holds
 	h.reject(h.next, "no")
 	edit("v4")
 	push(false)
-	if last = h.lastPost(); last.body["replaces"].(float64) != 55 || last.body["revision"].(float64) != 5 {
+	if last = h.lastPost(); last.body["replaces"].(float64) != 55 || last.body["revision"].(float64) != 3 {
 		t.Fatalf("third: %+v", last)
 	}
 	// the hub's note is gone: nothing is created, the conflict is listed, a dry run says so
@@ -311,7 +314,6 @@ func TestUpstreamPendingOrUnreadableFirstSubmissionIsNotResent(t *testing.T) {
 // Stale at submit: the hub refuses a replacement whose revision is already old (409 with the current one): once more with that revision.
 func TestUpstreamStaleAtSubmitIsRetriedWithTheCurrentRevision(t *testing.T) {
 	f, fk, h := twoNotes(t)
-	h.notes[56] = 3 // Data two: also changed there meanwhile; Structure one is at revision 1
 	racing := true
 	h.hook = func(c upCall) (int, string, bool) {
 		if c.method == "POST" && c.body["replaces"].(float64) == 55 && racing { // the hub's note moved on between the read and the submit

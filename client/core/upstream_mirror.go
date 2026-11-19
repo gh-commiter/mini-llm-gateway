@@ -74,7 +74,7 @@ func readInfo(tx *sql.Tx, now int64, i *UpstreamLinkInfo) error {
 	if e := tx.QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM upstream_mirror WHERE project_id=? AND upstream=?`, i.Project, i.Upstream).Scan(&i.Mirror, &i.MirrorBytes); e != nil {
 		return e
 	}
-	rows, e := tx.Query(`SELECT s.note_id FROM upstream_sent s JOIN upstream_mirror m ON m.project_id=s.project_id AND m.upstream=s.upstream AND m.remote_note=s.remote_note WHERE s.project_id=? AND s.upstream=? AND s.remote_note>0 AND s.remote_rev>0 AND m.remote_rev<s.remote_rev ORDER BY s.note_id LIMIT ?`, i.Project, i.Upstream, maxNotPropagated)
+	rows, e := tx.Query(`SELECT s.note_id FROM upstream_sent s JOIN upstream_mirror m ON m.project_id=s.project_id AND m.upstream=s.upstream AND m.remote_note=s.remote_note WHERE s.project_id=? AND s.upstream=? AND s.remote_note>0 AND s.remote_sub=0 AND s.remote_rev>0 AND m.remote_rev<s.remote_rev ORDER BY s.note_id LIMIT ?`, i.Project, i.Upstream, maxNotPropagated)
 	if e != nil {
 		return e
 	}

@@ -276,7 +276,7 @@ func TestUpstreamPushCreateSkipReplace(t *testing.T) {
 		case c.path == "/minigw/v1/projects/shop":
 			return 200, `{"id":7,"slug":"shop"}`, 0
 		case c.method == "GET" && c.path == "/minigw/v1/projects/7/kb/submissions/1":
-			return 200, `{"id":1,"state":"accepted","note":55}`, 0
+			return 200, `{"id":1,"state":"accepted","note":55,"replaces":55,"revision":2}`, 0
 		case c.method == "GET" && c.path == "/minigw/v1/projects/7/notes/55":
 			return 200, `{"id":55,"revision":3}`, 0
 		case c.method == "POST":
@@ -790,7 +790,7 @@ func TestUpstreamRequestsMatchTheSharedFixture(t *testing.T) {
 		case c.path == "/minigw/v1/projects/shop":
 			return 200, `{"id":7,"slug":"shop"}`, 0
 		case c.method == "GET" && strings.Contains(c.path, "/kb/submissions/"):
-			return 200, `{"id":1,"state":"accepted","note":55}`, 0
+			return 200, `{"id":1,"state":"accepted","note":55,"replaces":55,"revision":2}`, 0
 		case c.method == "GET":
 			return 200, `{"id":55,"revision":3}`, 0
 		}
@@ -905,7 +905,7 @@ func TestResolveOursThenEditStaysOnTheSubmissionPath(t *testing.T) {
 		edit("third")
 		r, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
 		f.ok(e)
-		if r[0].Conflicts != 0 || r[0].Replaced+r[0].Created != 1 { // rejected: the text goes as a new submission (create)
+		if gone && (r[0].Conflicts != 0 || r[0].Replaced+r[0].Created != 1) || !gone && (r[0].Conflicts != 1 || r[0].Replaced+r[0].Created != 0) { // gone: our rejected text goes as a new submission; moved on (revision 9 above our base): a conflict again, nothing is sent
 			t.Fatalf("gone=%v: %+v", gone, r[0])
 		}
 		for _, c := range up.calls[before:] {

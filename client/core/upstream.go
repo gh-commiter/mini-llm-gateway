@@ -197,9 +197,10 @@ ALTER TABLE upstream_sent ADD COLUMN sent_content TEXT NOT NULL DEFAULT ''; -- p
 	return err
 }
 
-// The wait for a review upstream (a note whose first submission is still pending) is derived state kept in a column that has no other meaning
-// for a submission receipt: remote_rev is the upstream note's revision only for a note written directly (publish mode, remote_sub 0); a receipt
-// with a submission and remote_rev -1 waits for the review of that submission. No schema change. Only upstreamNotes counts it (see Waiting).
+// remote_rev on a receipt, no schema change: publish mode (remote_sub 0): the upstream note's revision after our last write. A receipt with a
+// submission (remote_sub>0): the BASE, the upstream note's revision our last accepted text corresponds to (>= 1; learned from the accepted
+// submission: the revision it declared + 1, or 1 for a new note; 0 = not known), or -1: the first submission is still pending (the wait for a
+// review). A note whose upstream revision is above its base has changed there since our last version: a conflict. Only upstreamNotes counts waits.
 
 func (s *Store) ListUpstreams(ctx context.Context) (out []Upstream, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
@@ -999,9 +1000,10 @@ func (s *Store) upstreamPlan(ctx context.Context, project int64, upstream string
 
 func (s *Store) upstreamRecordSent(ctx context.Context, project int64, upstream string, n UpstreamNote, sub, remoteNote int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		// a submission leaves no baseline of the upstream note (remote_rev 0) and no conflict: a later publish update compares again
+		// a submission leaves no conflict; the base (remote_rev, see upstreamRecordBase) of a replacement of a known note stays: it is the upstream
+		// revision our last ACCEPTED text corresponds to, and a pending or rejected replacement does not change it
 		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=0, sent_content='', conflict=0, conflict_rev=0`,
+ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=CASE WHEN excluded.remote_note>0 AND upstream_sent.remote_rev>0 THEN upstream_sent.remote_rev ELSE 0 END, sent_content='', conflict=0, conflict_rev=0`,
 			project, upstream, n.ID, n.Hash, n.Revision, sub, remoteNote, ms(s.now()))
 		return e
 	})
@@ -1144,6 +1146,14 @@ func (s *Store) upstreamRecordWaiting(ctx context.Context, project int64, upstre
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
 		_, e := tx.Exec(`UPDATE upstream_sent SET remote_rev=? WHERE project_id=? AND upstream=? AND note_id=? AND remote_sub>0 AND remote_rev=?`, set, project, upstream, note, from)
+		return e
+	})
+}
+
+// upstreamRecordBase: the pusher learned the upstream revision our last accepted text corresponds to (see the remote_rev comment above).
+func (s *Store) upstreamRecordBase(ctx context.Context, project int64, upstream string, note, base int64) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`UPDATE upstream_sent SET remote_rev=? WHERE project_id=? AND upstream=? AND note_id=? AND remote_sub>0 AND remote_rev<>?`, base, project, upstream, note, base)
 		return e
 	})
 }
