@@ -23,7 +23,8 @@ case "$(uname -s)" in
   *) echo "minigw plugin: no minigw client for $(uname -s)."; exit 0 ;;
 esac
 mkdir -p "$BIN"
-unrecord() { rm -f "$BIN/.verified"; }  # #153: zapis sprejete datoteke za kb-hook.sh; zavrnitev ga zbriše
+tidy() { rm -f "$BIN/.sums.new" "$BIN/.sig.new"; }  # preverjene vsote, ki jih ta zagon ni shranil (keepsums), ne ostanejo
+unrecord() { rm -f "$BIN/.verified"; tidy; }  # #153: zapis sprejete datoteke za kb-hook.sh; zavrnitev ga zbriše
 
 
 ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //; s/[ -].*$//'; }  # »0.7.4-beta (x)« je 0.7.4
@@ -221,6 +222,16 @@ else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
   # Nameščen minigw: Linux povezava; Windows lupini kot minigw plugin install (Git Bash najde bin/minigw brez pripone,
   # ne .cmd; minigw.cmd za cmd/PowerShell), kopija vtičnika (minigw.exe) gre.
+  # Git Bash (MSYS) za obstoječo minigw.exe pozna »minigw« kot isto datoteko: mv/rm/>/test na golem imenu zadene ali ZAMENJA minigw.exe.
+  # aside <ukaz>: ukaz na golem imenu teče, ko je lastna minigw.exe odmaknjena (minigw.exe.keep) in se VEDNO vrne (tudi ob napaki).
+  aside() {
+    k="$BIN/minigw.exe.keep"; had=""
+    [ -e "$k" ] && [ ! -e "$BIN/minigw.exe" ] && mv "$k" "$BIN/minigw.exe"  # ostanek prekinjenega zagona
+    if [ -f "$BIN/minigw.exe" ]; then mv -f "$BIN/minigw.exe" "$k" || return 1; had=1; fi  # tekoče exe Windows ne pusti premakniti: lupina se ne zapiše
+    "$@"; r=$?
+    [ -z "$had" ] || mv -f "$k" "$BIN/minigw.exe" || r=1
+    return $r
+  }
   # shimtext: besedilo lupine bin/minigw za $inst (en vir: zapis ga napiše, zapis .verified ga primerja)
   shimtext() { q=$(cygpath -m "$inst" | sed "s/'/'\\\\''/g"); printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec '$q' \"\$@\""; }
   linkinst() {  # $inst: nameščen minigw (overjen, ali edini, ki ga je mogoče uporabiti)
@@ -231,7 +242,7 @@ else
       # minigw.cmd: brez zakasnjene razširitve, pot MSI kot %LOCALAPPDATA%\… (ASCII; enako kot shimCmd v client/plugin.go)
       { shimtext > "$BIN/minigw.new" &&
         printf '@setlocal DisableDelayedExpansion\r\n@"%%LOCALAPPDATA%%\\Programs\\Mini Gateway\\minigw.exe" %%*\r\n' > "$BIN/minigw.cmd" &&
-        mv -f "$BIN/minigw.new" "$BIN/minigw"; } ||
+        aside mv -f "$BIN/minigw.new" "$BIN/minigw"; } ||
         echo "minigw plugin: could not point $(san "$BIN")/minigw at $(san "$inst")."
       # kopija vtičnika (minigw.exe) ostane: pot vanjo je lahko v nastavitvi »kb mcp --print-config«; bin/minigw ima prednost
       EXE=$inst
@@ -240,15 +251,18 @@ else
   }
   # Windows: lupini iz prejšnje seje (majhni besedilni datoteki tega skripta) ne smeta preživeti nameščenega minigw, ki ni več overjen.
   if [ "$os" = windows ] && [ -z "$inst" ]; then
-    for f in "$BIN/minigw" "$BIN/minigw.cmd"; do
-      [ -f "$f" ] && [ ! -L "$f" ] && [ "$(wc -c < "$f")" -lt 1024 ] && grep -q 'Mini Gateway: the installed minigw\|DisableDelayedExpansion' "$f" && rm -f "$f"
-    done
+    oldshims() {
+      for f in "$BIN/minigw" "$BIN/minigw.cmd"; do
+        [ -f "$f" ] && [ ! -L "$f" ] && [ "$(wc -c < "$f")" -lt 1024 ] && grep -q 'Mini Gateway: the installed minigw\|DisableDelayedExpansion' "$f" && rm -f "$f"
+      done
+    }
+    aside oldshims
   fi
   if [ -n "$inst" ]; then
     linkinst
     [ "$isums" = "$BIN/.sums.new" ] && keepsums  # overjen z vsotami tega zagona: shrani jih za brez omrežja
   elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || ! authexe || { [ -n "$(want "$asset")" ] && { shm "$EXE"; [ "$SH" != "$(want "$asset")" ]; }; }; then
-    [ "$os" = windows ] && rm -f "$BIN/minigw" "$BIN/minigw.cmd"  # brez namestitve: lupini na odstranjeni minigw gresta
+    [ "$os" = windows ] && aside rm -f "$BIN/minigw" "$BIN/minigw.cmd"  # brez namestitve: lupini na odstranjeni minigw gresta
     if [ -n "$sums" ] && [ ! -L "$EXE" ] && [ -x "$EXE" ] && { shm "$EXE"; [ "$SH" = "$(want "$asset")" ]; }; then
       keepsums  # ista datoteka kot v podpisanih vsotah: overjena brez prenosa
     else
@@ -271,8 +285,9 @@ fi
 # Windows z nameščenim minigw: kljuka zažene lupino bin/minigw, ta pa nameščeni minigw: zapis ima obe vrstici (»sha  pot«).
 ent=$EXE; [ "$os" = windows ] && [ -n "$inst" ] && ent="$BIN/minigw"
 if [ "$os" = darwin ]; then valid "$EXE"; else trusted "$EXE"; fi &&
-   { [ "$ent" = "$EXE" ] || { [ -f "$ent" ] && [ ! -L "$ent" ] && [ "$(shimtext)" = "$(cat "$ent")" ]; }; } &&  # lupina je ta, ki jo je zapisal ta zagon
-   shm "$ent" && h1=$SH && h2=$h1 && { [ "$ent" = "$EXE" ] || { shm "$EXE"; h2=$SH; }; } &&
+   { if [ "$ent" = "$EXE" ]; then shm "$ent"; else  # lupina mora biti ta, ki jo je zapisal ta zagon (golo ime: exe odmaknjena)
+       shimok() { [ -f "$ent" ] && [ ! -L "$ent" ] && [ "$(shimtext)" = "$(cat "$ent")" ] && shm "$ent"; }; aside shimok; fi; } && h1=$SH && h2=$h1 &&
+   { [ "$ent" = "$EXE" ] || { shm "$EXE"; h2=$SH; }; } &&
    [ -n "$h1" ] && [ -n "$h2" ] && ( umask 077; { printf '%s  %s\n' "$h1" "$ent"; [ "$ent" = "$EXE" ] || printf '%s  %s\n' "$h2" "$EXE"; } > "$BIN/.verified.new" ) &&
    mv -f "$BIN/.verified.new" "$BIN/.verified" || { unrecord; rm -f "$BIN/.verified.new"; }
 
@@ -353,3 +368,4 @@ if ! command -v claude >/dev/null 2>&1; then
   esac
   echo "minigw plugin: the agent skills need the standalone claude command on PATH (the VS Code extension's bundled CLI is not enough): install it with: $inst"
 fi
+tidy

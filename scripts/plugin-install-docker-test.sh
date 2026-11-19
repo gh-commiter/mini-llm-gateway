@@ -63,12 +63,15 @@ W="$T/win/O'Brien 100%"; mkdir -p $T/win/fake "$W/Programs/Mini Gateway" $T/win/
 print '#!/bin/sh\ncase $1 in -s) echo MINGW64_NT-10.0 ;; *) echo x86_64 ;; esac' > $T/win/fake/uname
 print '#!/bin/sh\ncase $1 in -u) printf "%s\\n" "$2" ;; -m) printf "C:%s\\n" "$2" ;; -w) printf "C:%s\\n" "$2" | tr / "\\\\" ;; esac' > $T/win/fake/cygpath
 print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0" > "$W/Programs/Mini Gateway/minigw.exe"
+# Git Bash zamenja golo ime »minigw« z minigw.exe; POSIX lupina tega ne zna, zato mv/rm ovojnici ujameta klic na golem imenu v bin/, ko minigw.exe obstaja
+# (test/>/cat ostanejo nepreizkušeni: to pokrije le pravi Windows)
+for c in mv rm; do print '#!/bin/sh\nfor a; do case $a in */bin/minigw) [ -e "$a.exe" ] && echo "'$c' $*" >> "$VIOL" ;; esac; done\nexec /bin/'$c' "$@"' > $T/win/fake/$c; done
 chmod +x $T/win/fake/* "$W/Programs/Mini Gateway/minigw.exe"; print old > $T/win/data/bin/minigw.exe
 # Linux in Windows zaženeta le datoteko, ki je v preverjenih SHA256SUMS ob kopiji (podpis testnega ključa): wtrust jo vpiše
 wtrust() { { print "VERSION $2"; print "$(shasum -a 256 "$1" | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > $T/win/data/bin/SHA256SUMS
   ssh-keygen -Y sign -q -f $T/key -n minigw-release < $T/win/data/bin/SHA256SUMS > $T/win/data/bin/SHA256SUMS.sig }
 wtrust "$W/Programs/Mini Gateway/minigw.exe" $MINV
-winrun() { CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE= LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
+winrun() { VIOL=$T/win/viol CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE= LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
 out=$(winrun newer); print -r -- $out
 [[ $out == *"minigw $MINV is installed, 0.99.0 is available: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi (check it first: docs/install.md, Check a download)"* && $out != *"/minigw:gw update"* ]] ||
   fail "10: no MSI update hint for a client-only install"
@@ -81,9 +84,12 @@ exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\''"
 # #153: zapis sprejetega za kb-hook.sh: lupina bin/minigw in nameščeni minigw.exe, vsak z lastnim SHA-256, mode 600
 rec=$T/win/data/bin/.verified; sh_=$(shasum -a 256 $T/win/data/bin/minigw | cut -d" " -f1); ex_=$(shasum -a 256 "$exe" | cut -d" " -f1)
 [[ "$(<$rec)" == "$sh_  $T/win/data/bin/minigw"$'\n'"$ex_  $exe" && "$(ls -l $rec | cut -c1-10)" == -rw------- && ! -e $rec.new ]] || fail "10: .verified: $(<$rec)"
+[[ "$(<$T/win/data/bin/minigw.exe)" == old && ! -e $T/win/data/bin/minigw.exe.keep && ! -e $T/win/viol ]] || fail "10: the plugin's own minigw.exe was touched by a shim write: $(cat $T/win/viol 2>&1)"
+[[ ! -e $T/win/data/bin/.sums.new && ! -e $T/win/data/bin/.sig.new ]] || fail "10: verified sums left behind (#159)"
 [[ -e $T/win/data/bin/minigw.exe && $out == *"connected to Mini Gateway"* ]] || fail "10: the plugin copy was deleted (a kb mcp config points at it) or status not read"
 rm "$exe"; out=$(winrun); print -r -- $out
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd ]] || fail "10: shims kept without an installed minigw"
+[[ ! -e $T/win/viol ]] || fail "10: removing the shims went through the bare name: $(cat $T/win/viol)"  # (the unverified own exe is removed by the reject path, by name)
 # 10b: stari MSI minigw (0.5.20) in prenos ne uspe (ni izdaje): stari ostane, a glasno (enako kot macOS in Linux)
 print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.20; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" 0.5.20
 out=$(winrun); print -r -- $out
@@ -117,6 +123,7 @@ out=$(winrun newer); print -r -- $out
 [[ $out == *"the minigw installed at "*"is not the current release 0.99.0 (or could not be verified); update it: /minigw:gw update"* ]] || fail "10d: no update line for an untrusted installed gateway client"
 rm $T/win/roaming/minigw/serve.json; out=$(winrun newer)
 [[ $out == *"is not the current release 0.99.0 (or could not be verified); update it: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi"* ]] || fail "10d: no MSI line for an untrusted client-only install"
+[[ ! -e $T/win/viol ]] || fail "10: a write/mv/rm on bin/minigw while minigw.exe exists: $(cat $T/win/viol)"
 print "ok 10: Windows shims point at the installed minigw; client-only MSI gets the MSI hint"
 
 docker run --rm -v $T:/t:ro debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 sh -c '
