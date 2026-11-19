@@ -482,3 +482,28 @@ func TestNoteHistoryNamesWriterAndReplacer(t *testing.T) {
 		t.Fatal("written must precede replaced")
 	}
 }
+
+// Catches: a member reviewer shown as "user:<id>", and a vanished user shown as an id.
+func TestNoteHistoryReviewerIsAName(t *testing.T) {
+	f := newFx(t)
+	pid := f.pid["fakture"]
+	ana, fani := f.p("ana"), f.p("fani")
+	n, _, e := f.CreateNote(ctx, ana, pid, "rev", NoteInput{Class: Structure, Title: "t", Body: "one"})
+	f.ok(e)
+	v, _, e := f.Submit(ctx, ana, pid, "rev-replace", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "t", Body: "two"}, Replaces: n.ID, Revision: n.Revision})
+	f.ok(e)
+	var hash string
+	f.ok(f.read(ctx, func(tx *sql.Tx) error { var err error; hash, err = reviewHash(tx, v.ID); return err }))
+	_, e = f.MemberReview(ctx, fani, pid, v.ID, true, "", hash)
+	f.ok(e)
+	h, e := f.ListNoteHistory(ctx, &ana, pid, n.ID)
+	f.ok(e)
+	if got := h.History[0].ReplacedBy; got != "an accepted submission (reviewer fani)" {
+		t.Fatal(got)
+	}
+	var gone string
+	f.ok(f.read(ctx, func(tx *sql.Tx) error { gone = reviewerName(tx, "user:99999"); return nil }))
+	if gone != "a former member" {
+		t.Fatal(gone)
+	}
+}

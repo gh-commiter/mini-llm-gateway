@@ -1233,6 +1233,119 @@
      "orchard:3@proj"
     ]
    }
+  },
+  {
+   "name": "history revision zero",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--revision",
+    "0"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "--revision must be positive",
+    "requests": [],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "history revision negative",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--revision",
+    "-1"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "--revision must be positive",
+    "requests": [],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "restore revision zero",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "0",
+    "--current",
+    "4"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "--revision must be positive",
+    "requests": [],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "accepted by a member admin",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"writtenBy\":\"Ana\",\"replacedBy\":\"an accepted submission (reviewer Ana Admin)\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  written 2026-11-14 10:00 UTC by Ana  replaced 2026-11-14 10:00 UTC by an accepted submission (reviewer Ana Admin)  structure  finding  18 bytes  Saved text\nsome revisions are not listed: not kept (from before 0.8.6, or dropped from a long series of edits) or not readable by you\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
   }
  ],
  "owner": [
@@ -1814,6 +1927,43 @@
       ""
      ]
     ]
+   }
+  },
+  {
+   "name": "owner history revision zero",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {
+    "revision": 0
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: --revision must be positive\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "owner restore revision zero",
+   "args": [
+    "kb",
+    "restore",
+    "7"
+   ],
+   "opts": {
+    "revision": 0,
+    "current": 4
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: --revision must be positive\n",
+    "exit": 1,
+    "requests": []
    }
   }
  ]

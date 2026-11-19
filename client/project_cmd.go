@@ -729,13 +729,18 @@ func (e *projectEnv) note(args []string) error {
 	}
 	switch sub {
 	case "history", "restore":
-		if len(pos) != 0 || sub == "restore" && *rev < 1 {
+		if len(pos) != 0 || sub == "restore" && !set["revision"] {
 			return usage()
 		}
-		return noteHistoryCommand(sub, fmt.Sprintf("%s/%d", base, id), id, *rev, *current, set["current"], *class, *asJSON, e.tty == nil && stdinIsTTY() || e.tty != nil && e.tty(), e.in, e.out, func(method, path string, body []byte) ([]byte, error) {
+		return noteHistoryCommand(sub, fmt.Sprintf("%s/%d", base, id), id, *rev, set["revision"], *current, set["current"], *class, *asJSON, e.tty == nil && stdinIsTTY() || e.tty != nil && e.tty(), e.in, e.out, func(method, path string, body []byte) ([]byte, error) {
 			st, data, h := e.do(c, method, path, nil, body)
 			if st != 200 {
-				return nil, noteScopeHint(e.gwError(st, data, h), e.runConn != nil || *team != "")
+				err := noteScopeHint(e.gwError(st, data, h), e.runConn != nil || *team != "")
+				// The restore flow meets the history route first: the older-gateway sentence names the command that was run.
+				if sub == "restore" && strings.Contains(err.Error(), "; note history needs 0.8.7") {
+					err = gwStatusError{errors.New(strings.Replace(err.Error(), "; note history needs", "; note restore needs", 1)), st}
+				}
+				return nil, err
 			}
 			return data, nil
 		})

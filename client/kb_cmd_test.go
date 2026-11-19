@@ -627,3 +627,34 @@ func TestOlderGatewayNamesTheVersionForNoteHistory(t *testing.T) {
 		}
 	}
 }
+
+// The real command path: `note restore` meets the history route first on an older gateway, and must still name
+// the command that was run; `note history` names itself.
+func TestOlderGatewayNamesTheRunCommandForNoteHistory(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"restore", "7", "--revision", "2", "--current", "4", "--team", "garden"}, "this gateway is 0.8.6; note restore needs 0.8.7 or newer"},
+		{[]string{"history", "7", "--revision", "2", "--team", "garden"}, "this gateway is 0.8.6; note history needs 0.8.7 or newer"},
+		{[]string{"history", "7", "--team", "garden"}, "this gateway is 0.8.6; note history needs 0.8.7 or newer"},
+	} {
+		out := new(bytes.Buffer)
+		env := &projectEnv{out: out, connect: func() (connection, string) { return connection{}, "" },
+			do: olderRouteHint(func(_ connection, m, p string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+				switch p {
+				case "/health/ready":
+					return 200, []byte(`{"version":"0.8.6"}`), nil
+				case "/minigw/v1/teams/garden":
+					return 200, []byte(`{"name":"garden","segment":1099511627777}`), nil
+				case apiProjects + "/1099511627777/notes/7":
+					return 200, []byte(`{"id":7,"revision":4,"class":"data","title":"t"}`), nil
+				}
+				return 404, []byte(`{"error":{"message":"not found"}}`), nil
+			})}
+		err := env.note(tc.args)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%v: %v", tc.args, err)
+		}
+	}
+}

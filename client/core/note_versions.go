@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -356,7 +357,7 @@ func describeReplacer(tx *sql.Tx, savedBy, successor string) string {
 	case p.ActorKind == ActorImport || p.SourceKind == SourceImport:
 		return "an import"
 	case p.Reviewer != "":
-		return "an accepted submission (reviewer " + p.Reviewer + ")"
+		return "an accepted submission (reviewer " + reviewerName(tx, p.Reviewer) + ")"
 	}
 	return "a review or import"
 }
@@ -380,4 +381,18 @@ func (s *Store) mirrorHistory(ctx context.Context, tx *sql.Tx, p *Principal, pro
 		return err
 	}
 	return ErrRefusal{"this note is a copy from the upstream gateway " + n.From + ": its saved versions are on that gateway; run minigw note history there"}
+}
+
+// reviewerName: a member reviewer is stored as "user:<id>" (the owner as "owner"); the row shows the user's name,
+// or "a former member" for a user that no longer exists, never the id.
+func reviewerName(tx *sql.Tx, reviewer string) string {
+	id, ok := strings.CutPrefix(reviewer, "user:")
+	if !ok {
+		return reviewer
+	}
+	var name string
+	if n, err := strconv.ParseInt(id, 10, 64); err != nil || tx.QueryRow(`SELECT name FROM users WHERE id=?`, n).Scan(&name) != nil {
+		return "a former member"
+	}
+	return name
 }

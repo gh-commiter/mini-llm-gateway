@@ -712,7 +712,8 @@ func kbAdmin(a *adminClient, pos []string, o coreOpts) {
 			usage()
 			return
 		}
-		err = noteHistoryCommand(pos[1], "/kb/notes/"+pos[2], id, o.revision, o.current, o.hasCurrent, o.class, o.json, adminTerminal(), o.in, os.Stdout, func(method, path string, body []byte) ([]byte, error) {
+		a.noteCommand = "note " + pos[1]
+		err = noteHistoryCommand(pos[1], "/kb/notes/"+pos[2], id, o.revision, o.hasRevision, o.current, o.hasCurrent, o.class, o.json, adminTerminal(), o.in, os.Stdout, func(method, path string, body []byte) ([]byte, error) {
 			var out json.RawMessage
 			var payload any
 			if body != nil {

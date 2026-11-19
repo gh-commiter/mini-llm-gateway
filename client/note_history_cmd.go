@@ -38,15 +38,15 @@ func orUnknown(s, none string) string {
 }
 
 // Both command families use the same rendering and confirmation rules.
-func noteHistoryCommand(sub, path string, id, revision, current int64, hasCurrent bool, class string, asJSON, terminal bool, in io.Reader, out io.Writer, request func(string, string, []byte) ([]byte, error)) error {
+func noteHistoryCommand(sub, path string, id, revision int64, hasRevision bool, current int64, hasCurrent bool, class string, asJSON, terminal bool, in io.Reader, out io.Writer, request func(string, string, []byte) ([]byte, error)) error {
 	say := func(s string) { fmt.Fprintln(out, clean(s)) }
-	if revision < 0 || sub == "restore" && revision == 0 {
-		return errors.New("revision must be positive")
+	if hasRevision && revision < 1 || sub == "restore" && !hasRevision {
+		return errors.New("--revision must be positive")
 	}
 	if hasCurrent && current < 1 {
 		return errors.New("--current must be positive")
 	}
-	if sub == "history" && revision == 0 {
+	if sub == "history" && !hasRevision {
 		data, err := request("GET", path+"/history", nil)
 		if err != nil {
 			return err
