@@ -19,7 +19,7 @@ const upstreamHelp = `
   minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)
   minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)
   minigw gw upstream unlink <project> <name> | --team <team> <name>
-  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
+  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)
   minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
   minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
   minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
@@ -67,14 +67,16 @@ type upLink struct {
 	Mirror       int
 	MirrorBytes  int64
 
+	Waiting       int
 	NotPropagated []struct {
 		Note int64
 		Why  string
 	}
 	Conflicts []struct {
-		Note      int64
-		RemoteRev int64
-		Gone      bool
+		Note       int64
+		RemoteRev  int64
+		Gone       bool
+		Submission bool
 	}
 }
 
@@ -136,16 +138,13 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			say(clean("unlinked " + local + " from " + name))
 			return
 		}
-		if remote == "" {
-			remote = local // the same name there, unless told
-		}
 		if u.auto && u.manual {
 			fail("--auto and --manual together: choose one")
 		}
 		if u.read && u.noRead {
 			fail("--read and --no-read together: choose one")
 		}
-		req := map[string]any{"team": isTeam, "remote": remote, "classes": u.class, "withPrivate": u.withPrivate}
+		req := map[string]any{"team": isTeam, "classes": u.class, "withPrivate": u.withPrivate}
 		if u.auto {
 			req["auto"] = true
 		} else if u.manual {
@@ -177,8 +176,30 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		if reading || pulling {
 			req["readOnly"] = !pushFlags // an existing link keeps its push settings
 		}
-		var linked struct{ ReadOff bool }
+		if remote == "" { // not told: an existing link keeps its destination, a first link uses the same name there. Always sent, so that an older
+			// gateway (which would default a missing one to the local name and retarget the link) does the same.
+			q := "?project=" + strconv.FormatInt(id, 10)
+			if isTeam {
+				q = "?team=" + strconv.FormatInt(id, 10)
+			}
+			var cur struct{ Links []upLink }
+			a.do("GET", "/upstreams"+q, nil, &cur) // a failing read ends the command: no guessing
+			remote = local
+			for _, l := range cur.Links {
+				if l.Upstream == name && l.Remote != "" {
+					remote = l.Remote
+				}
+			}
+		}
+		req["remote"] = remote
+		var linked struct {
+			ReadOff bool
+			Remote  string
+		}
 		a.do("PUT", fmt.Sprintf("/upstreams/%s/links/%d", url.PathEscape(name), id), req, &linked)
+		if linked.Remote != "" {
+			remote = linked.Remote
+		}
 		if linked.ReadOff {
 			defer say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach"))
 		}
@@ -243,6 +264,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			if s := upstreamConflicts(l); s != "" {
 				say(clean("  " + s))
 			}
+			if l.Waiting > 0 {
+				say(fmt.Sprintf("  %d notes waited for a review upstream at the last push; they are checked at the next push (not a failure)", l.Waiting))
+			}
 			if s := upstreamForeign(l); s != "" {
 				say(clean("  " + s))
 			}
@@ -275,9 +299,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		}
 		a.do("POST", "/upstream-resolve", body, nil)
 		if u.ours {
-			say(fmt.Sprintf("note %d: our version goes to the upstream as a submission at the next push", note))
+			say(fmt.Sprintf("note %d: our version goes to the upstream as a submission at the next push; the push report says whether it replaces the upstream's note or becomes a new one (a new one when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read: a second note if the old one still exists out of sight)", note))
 		} else {
-			say(fmt.Sprintf("note %d: the upstream's version stays, our change is forgotten for it", note))
+			say(fmt.Sprintf("note %d: our text stays unsent (the upstream's text is not fetched here); a later change here is looked at again", note))
 		}
 	case pos[1] == "push" && len(pos) <= 3:
 		body := map[string]any{"dryRun": u.dryRun}
@@ -463,7 +487,7 @@ type upPush struct {
 	Lines                   []string
 	Created, Skipped        int
 	Replaced, Refused       int
-	Conflicts               int
+	Conflicts, Waiting      int
 	Stopped                 string
 	DryRun                  bool
 	More                    bool
@@ -486,6 +510,9 @@ func upstreamPrint(pushes []upPush) {
 		tail := ""
 		if p.Conflicts > 0 {
 			tail = fmt.Sprintf(", conflicts %d", p.Conflicts)
+		}
+		if p.Waiting > 0 {
+			tail += fmt.Sprintf(", waiting for a review %d", p.Waiting)
 		}
 		say(fmt.Sprintf("  %screated %d, replaced %d, skipped %d, refused %d%s", verb, p.Created, p.Replaced, p.Skipped, p.Refused, tail))
 		if p.Stopped != "" {
@@ -622,7 +649,9 @@ func upstreamConflicts(l upLink) string {
 	for _, c := range l.Conflicts {
 		what := "changed there"
 		if c.Gone {
-			what = "deleted there"
+			what = "deleted or no longer visible there"
+		} else if c.Submission {
+			what = "the earlier submission can no longer be read there: check on the hub whether it became a note"
 		}
 		parts = append(parts, fmt.Sprintf("note %d (%s)", c.Note, what))
 	}

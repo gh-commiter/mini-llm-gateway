@@ -1696,7 +1696,7 @@ writes the notes on the upstream directly (the device's user there needs the dev
 there, later pushes update that same note. Before updating, the gateway reads the note there: if its revision is not the one it left (somebody
 changed it on the upstream, or deleted it) the change is **not** written. The note is a conflict: it is listed in `upstream status` (and in the
 push report) as `CONFLICT: note N (changed there)` and is skipped until you decide with `minigw gw upstream resolve <project> <note> --theirs`
-(keep the upstream's version; our change is forgotten for it) or `--ours` (our version is sent as a submission for the upstream's reviewers,
+(keep the upstream's version: our text stays unsent and the upstream's text is not fetched here) or `--ours` (our version is sent as a submission for the upstream's reviewers,
 never as an overwrite). Add `--upstream <name>` to resolve only that link; it is required when the note conflicts on several upstreams.
 Without it, a single conflict is still resolved as before; an ambiguous request lists the upstreams and changes nothing. The mode cannot
 be changed once the link has sent notes: unlink and link again (what was sent stays there). Deleting a
@@ -1713,10 +1713,40 @@ where it becomes a new note that ends with this gateway's trailer, so it never c
 hand keeps that note from being pushed; they could change or delete it anyway. Relaying notes on purpose is not a setting (yet).
 
 A repeated push sends only what changed: every note is remembered by its content (class, kind, title, text). A changed note is sent
-as a **replacement** of the note the upstream accepted before; if that note is still pending there, or cannot be read by the bound
-user, it goes as a new submission that names the earlier one. Notes deleted here, and changes of class to private, are not
+as a **replacement** of the note the upstream accepted before, at that note's current revision (a replacement the upstream refuses as already
+stale is sent once more with the revision it names). The link to that upstream note stays when the reviewers reject a replacement (for instance
+because the note changed there meanwhile): after the next change here the push is again a replacement of the same note, so a second copy of it
+does not appear; the report says `the earlier submission was rejected upstream (<reason>)`. A note whose text did not change here is not sent again
+(an automatic push does not retry it either). When the push reads an earlier submission and finds it accepted, it writes down the upstream note
+before doing anything else with that note. Two submissions of a note that is not yet there could both be accepted as notes, so a note whose first
+submission is still **pending** upstream waits for its review: the report says `wait ... still pending`, `status` says "N notes waited for a review
+upstream at the last push; they are checked at the next push" (status does not ask the upstream). Waiting is not a failure (no back-off, no failure count, the other notes go on) and does not make the
+link due by itself: there is no timer for it, and the periodic pull does not push. A waiting note is looked at again (one request per note) only when a
+push happens anyway: a manual push, or an automatic push caused by a local change. After the upstream has reviewed a waiting note, the newest local text goes
+with the next push; an automatic link pushes when something changes locally, and `gw upstream push` sends it sooner. The latest text goes as follows: accepted, as a replacement of the new note (also when nothing was edited here since the wait began);
+rejected, as a new submission if the text differs from the rejected one. A note whose text is back to what was sent stops waiting, and a note outside
+the link's classes is not counted. This holds also for a note settled with `resolve --ours` whose earlier submission turns out to be pending. A
+replacement of an accepted note may be sent while an earlier replacement is pending (only one of them can be accepted: the other is stale). Where the
+upstream cannot say what became of the earlier submission (deleted or no longer visible there: HTTP 404), or the upstream note is deleted or no longer
+visible, nothing is sent as a new note: `status` lists the note as a conflict, and `gw upstream resolve <project> <note> --ours` sends our text as a submission: before it creates anything the push looks again, and replaces the
+upstream note (at its current revision) when it is visible again, follows an earlier submission that can be read again (accepted: replace; pending: wait;
+rejected: send again), and only when the identity is still unknown makes a **new** note (a second copy if the old note still exists out of your sight); the
+report line says which of these happened (`replace` when it replaces an upstream note, `create` when it becomes a new submission). `--theirs` leaves the local text unsent (it does not fetch the upstream's text).
+If one note cannot be read for another reason (the bound user may not read it, a server error, an answer that makes no sense), that note is `refused`
+with its number and the run goes on with the others; a refusal to write one note (this identity may not write it or its class) refuses that note too. A run ends early only on an explicit link-wide answer: 401, a lost role or an archived project, a missing project, a hub that says the identity may not
+hand in at all (`no_submit_access`: "the upstream identity may no longer hand in to this project: ask its admin"), a rate limit that cannot be waited out, or no
+answer. A 403 forbidden is always about one note (this identity may not write it or its class): that note is refused and the run goes on. Consequence: an
+older upstream (before this release) sends a reader's refusal as a plain 403 forbidden, so an identity downgraded to reader gets one refusal per changed note
+per run, counted as refused; an upstream of this release sends `no_submit_access` and the run stops at once. A run that sent or checked something is a success for the link even when some notes were refused (for instance for their size): the refusals are
+listed in `status` (last refusal and how many), the failure count and back-off do not grow, and an automatic link does not retry the refused note until something
+changes here (a manual push tries it again); a run in which every try was refused is a failure with back-off. Nothing is
+sent for a note that cannot be traced, so a note is never knowingly sent as a new one when it may already exist there. A link that has sent notes cannot
+be pointed at another project on the upstream (unlink it and link it again); `gw upstream link` without `--remote-project` on an existing link keeps
+its destination (only a first link uses the local name). After restoring an older database (see Going back in `docs/install.md`) check
+`gw upstream status` and do not push before comparing with the upstream: what was sent after that backup is not known to the restored database, and a push would create it
+again there. Notes deleted here, and changes of class to private, are not
 propagated; the copy there stays until it is removed there. If the upstream limits writes the push waits and goes on. Every note
-of a run is reported as `create`, `skip`, `replace` or `refused` with the upstream's own text; a refusal that would apply to all
+of a run is reported as `create`, `skip`, `replace`, `wait`, `conflict` or `refused` with the upstream's own text; a refusal that would apply to all
 notes (not allowed, no such project, too many pending submissions) ends the run for that link and is shown by `status`.
 
 What an upstream answers is treated as data: it can make this gateway neither write a note, nor change a setting, nor call another

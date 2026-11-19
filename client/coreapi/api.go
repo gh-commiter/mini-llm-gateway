@@ -165,6 +165,8 @@ func (a *API) errResponse(err error) Response {
 		return jsonErr(403, "no_project_access", "No project access")
 	case errors.Is(err, core.ErrNotFound):
 		return jsonErr(404, "not_found", "Not found")
+	case errors.Is(err, core.ErrNoSubmit):
+		return jsonErr(403, "no_submit_access", "No right to hand in here")
 	case errors.Is(err, core.ErrForbidden):
 		return jsonErr(403, "forbidden", "Not allowed")
 	case errors.Is(err, core.ErrArchived):

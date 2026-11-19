@@ -15,7 +15,7 @@ extension AdminCommands {
           minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)
           minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)
           minigw gw upstream unlink <project> <name> | --team <team> <name>
-          minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
+          minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)
           minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
           minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
           minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
@@ -75,10 +75,9 @@ extension AdminCommands {
                 say(clean("unlinked \(local) from \(name)"))
                 return
             }
-            if remote.isEmpty { remote = local }
             if o.auto && o.manual { throw fail("--auto and --manual together: choose one") }
             if o.read && o.noRead { throw fail("--read and --no-read together: choose one") }
-            var req: [String: Any] = ["team": isTeam, "remote": remote, "classes": o.classes, "withPrivate": o.withPrivate]
+            var req: [String: Any] = ["team": isTeam, "classes": o.classes, "withPrivate": o.withPrivate]
             if o.auto { req["auto"] = true } else if o.manual { req["auto"] = false }
             if !o.mode.isEmpty { req["mode"] = o.mode }
             let reading = o.read || o.noRead || !o.readClass.isEmpty || !o.readSources.isEmpty
@@ -94,7 +93,15 @@ extension AdminCommands {
                 if !o.readSources.isEmpty { req["readSources"] = o.readSources == "none" ? "" : o.readSources }  // omitted keeps; "none" = no extra sources
             }
             if reading || pulling { req["readOnly"] = !pushFlags }  // an existing link keeps its push settings
+            if remote.isEmpty {  // not told: an existing link keeps its destination, a first link uses the same name there; always sent, so that an older
+                // gateway (which would default a missing one to the local name and retarget the link) does the same
+                let cur = try request("GET", "/upstreams" + (isTeam ? "?team=" : "?project=") + String(id))  // a failing read ends the command: no guessing
+                remote = local
+                for l in cur["links"]?.array ?? [] where l.dict["upstream"]?.string == name { if let r = l.dict["remote"]?.string, !r.isEmpty { remote = r } }
+            }
+            req["remote"] = remote
             let linked = try request("PUT", path, req)
+            if let r = linked["remote"]?.string, !r.isEmpty { remote = r }
             defer { if linked["readOff"]?.bool == true { say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach")) } }
             if pulling && !reading && !pushFlags {
                 say(clean("\(local) -> \(name): a link with reading on is pulled every \(o.pullEvery) minutes"))
@@ -126,6 +133,7 @@ extension AdminCommands {
                 if let e = d["lastError"]?.string, !e.isEmpty { say(clean("  last refusal: " + e)) }
                 if let s = Self.upstreamNotPropagated(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
+                if let w = d["waiting"]?.int, w > 0 { say("  \(w) notes waited for a review upstream at the last push; they are checked at the next push (not a failure)") }
                 if let s = Self.upstreamForeign(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamSkipped(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamBackwards(d) { say(clean("  " + s)) }
@@ -137,8 +145,8 @@ extension AdminCommands {
             var body: [String: Any] = ["note": note, "ours": o.ours, team.isEmpty ? "project" : "team": team.isEmpty ? try projectID(pos[2]) : try teamID(team)]
             if !o.upstream.isEmpty { body["upstream"] = o.upstream }
             try request("POST", "/upstream-resolve", body)
-            if o.ours { say("note \(note): our version goes to the upstream as a submission at the next push") }
-            else { say("note \(note): the upstream's version stays, our change is forgotten for it") }
+            if o.ours { say("note \(note): our version goes to the upstream as a submission at the next push; the push report says whether it replaces the upstream's note or becomes a new one (a new one when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read: a second note if the old one still exists out of sight)") }
+            else { say("note \(note): our text stays unsent (the upstream's text is not fetched here); a later change here is looked at again") }
         case ("push", 2...3):
             var body: [String: Any] = ["dryRun": o.dryRun]
             if !team.isEmpty && pos.count == 2 { body["team"] = try teamID(team) }
@@ -159,7 +167,7 @@ extension AdminCommands {
                         say(clean("\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? ""))"))
                         for l in d["lines"]?.array ?? [] { say(clean("  " + (l.string ?? ""))) }
                         let verb = d["dryRun"]?.bool == true ? "would be " : ""
-                        say("  \(verb)created \(d["created"]?.int ?? 0), replaced \(d["replaced"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), refused \(d["refused"]?.int ?? 0)" + ((d["conflicts"]?.int ?? 0) > 0 ? ", conflicts \(d["conflicts"]?.int ?? 0)" : ""))
+                        say("  \(verb)created \(d["created"]?.int ?? 0), replaced \(d["replaced"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), refused \(d["refused"]?.int ?? 0)" + ((d["conflicts"]?.int ?? 0) > 0 ? ", conflicts \(d["conflicts"]?.int ?? 0)" : "") + ((d["waiting"]?.int ?? 0) > 0 ? ", waiting for a review \(d["waiting"]?.int ?? 0)" : ""))
                         if let s = d["stopped"]?.string, !s.isEmpty { say(clean("  stopped: " + s)) }
                     }
                     for p in r["pushes"]?.array ?? [] {
@@ -294,7 +302,11 @@ extension AdminCommands {
 
     /// Publish notes that changed on the upstream and were not overwritten (as Go's upstreamConflicts).
     static func upstreamConflicts(_ d: JDict) -> String? {
-        let parts = (d["conflicts"]?.array ?? []).map { c in "note \(c.dict["note"]?.int ?? 0) (" + (c.dict["gone"]?.bool == true ? "deleted there" : "changed there") + ")" }
+        let parts = (d["conflicts"]?.array ?? []).map { c in
+            let what = c.dict["gone"]?.bool == true ? "deleted or no longer visible there"
+                : c.dict["submission"]?.bool == true ? "the earlier submission can no longer be read there: check on the hub whether it became a note" : "changed there"
+            return "note \(c.dict["note"]?.int ?? 0) (" + what + ")"
+        }
         return parts.isEmpty ? nil : "CONFLICT: " + parts.joined(separator: ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
     }
 

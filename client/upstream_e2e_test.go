@@ -188,19 +188,20 @@ func TestUpstreamEndToEnd(t *testing.T) {
 	if !strings.Contains(out, "created 0, replaced 0, skipped 2, refused 0") {
 		t.Fatal(out)
 	}
-	// a changed note: still pending there, so a new submission that names the old one; after acceptance, a replacement of the note
+	// a changed note: still pending there, so nothing more is sent for it; after acceptance, a replacement of the note
 	n := notes["Invoice numbering"]
 	_, err = f.local.core.UpdateNote(t0, p, project, n.ID, n.Revision, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "second text"})
 	f.must(err)
 	out, _ = f.cmd(coreOpts{}, "push", "shop")
-	if !strings.Contains(out, "replace "+fmt.Sprint(n.ID)) || !strings.Contains(out, "still pending") || !strings.Contains(out, "replaced 1") {
+	if !strings.Contains(out, "waiting for a review 1") || !strings.Contains(out, "still pending") || !strings.Contains(out, "replaced 0") || !strings.Contains(out, "refused 0") {
 		t.Fatal(out)
 	}
-	// the reviewers there accept both submissions of that note; the next change replaces the accepted note
-	for _, id := range []int{1, 3} {
-		if _, err := f.remote.core.ReviewSubmission(t0, int64(id), true, "", seenHash(f.remote.core, int64(id))); err != nil {
-			t.Fatal(id, err)
-		}
+	if n, _ := f.remoteSubmissions(); n != 2 { // a second submission could be accepted as a second note: nothing is sent while the first is pending
+		t.Fatal("sent while the first submission is pending", n)
+	}
+	// the reviewers there accept it; the next change replaces the accepted note
+	if _, err := f.remote.core.ReviewSubmission(t0, 1, true, "", seenHash(f.remote.core, 1)); err != nil {
+		t.Fatal(err)
 	}
 	n, err = f.local.core.GetNote(t0, p, project, n.ID)
 	f.must(err)
@@ -235,7 +236,7 @@ func TestUpstreamBoundUserWithoutWriteRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := f.cmd(coreOpts{}, "push", "shop")
-	if err != nil || !strings.Contains(out, "refused 1") || !strings.Contains(out, "stopped: the upstream says:") {
+	if err != nil || !strings.Contains(out, "refused 1") || !strings.Contains(out, "stopped: the upstream identity may no longer hand in") {
 		t.Fatalf("%q %v", out, err)
 	}
 	if n, _ := f.remoteSubmissions(); n != 0 {
@@ -632,6 +633,10 @@ func TestUpstreamAutoPushBetweenTwoGateways(t *testing.T) {
 	if !strings.Contains(st, ", auto") {
 		t.Fatalf("status after the push: %s", st)
 	}
+	// the reviewers accept the note there: later changes are replacements of it
+	if _, err := f.remote.core.ReviewSubmission(t0, 1, true, "", seenHash(f.remote.core, 1)); err != nil {
+		t.Fatal(err)
+	}
 	// a storm of edits (a member edits the same note 40 times in a quick row): ONE more submission, with the last text
 	n := notes["Invoice numbering"]
 	// no push can be due while the storm runs, however slow the machine is: the quiet window and the max wait are an hour (they are read
@@ -817,10 +822,10 @@ func TestUpstreamPublishModeBetweenTwoGateways(t *testing.T) {
 	rid, rrev, _ := f.remoteNote("Reset steps")
 	f.must(f.remote.core.DeleteNote(t0, rp, rproj, rid, rrev))
 	edit("Reset steps", "changed after their delete")
-	if out, _ = f.cmd(coreOpts{}, "push", "shop"); !strings.Contains(out, "deleted on the upstream, not recreated") {
+	if out, _ = f.cmd(coreOpts{}, "push", "shop"); !strings.Contains(out, "deleted or no longer visible on the upstream, not recreated") {
 		t.Fatal(out)
 	}
-	if out, _ = f.cmd(coreOpts{}, "status", "shop"); !strings.Contains(out, "(deleted there)") {
+	if out, _ = f.cmd(coreOpts{}, "status", "shop"); !strings.Contains(out, "(deleted or no longer visible there)") {
 		t.Fatal(out)
 	}
 }

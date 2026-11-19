@@ -1093,6 +1093,19 @@ private let upstreamAnswers: [(String, Int, String)] = [
         return m
     }
 
+    /// The conflicts record of a link names the three kinds a push can leave: changed there, deleted or no longer visible there, and an
+    /// earlier submission that cannot be read there; a kind this app does not know shows as it is (never as one of the three).
+    @Test(.enabled(if: haveFixtures)) func theConflictKindsHaveTheirOwnTexts() throws {
+        let d = try upstreamsPanel()
+        let links = try #require(d.sections.first { $0.id == "links" })
+        let conflicts = try #require(links.detail?.sections.first { $0.id == "conflicts" })
+        let what = try #require(conflicts.columns?.first { $0.field == "what" })
+        let m = PanelModel(panel: d, strings: try strings("C"), routes: PanelRoutes.builtin, send: { _ in CoreResponse(status: 200, body: Data()) })
+        func cell(_ v: String) -> String { m.cell(what, PanelRow(id: "1", values: ["what": .string(v)])) }
+        #expect(cell("changed") == "Changed there" && cell("deleted") == "Deleted or no longer visible there" && cell("submission") == "The earlier submission can no longer be read there")
+        #expect(cell("something new") == "something new")
+    }
+
     @Test(.enabled(if: haveFixtures)) func everyKeyHasATextAndTheRegistryMarksTheSecretRoute() throws {
         let d = try upstreamsPanel()
         for loc in ["C", "sl_SI"] {

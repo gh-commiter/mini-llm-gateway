@@ -64,15 +64,17 @@ func TestAutoTraversalRetainsEarlierRefusal(t *testing.T) {
 	r, e = f.AutoPush(ctx, up, noSleep)
 	f.ok(e)
 	l := f.link(fk)
-	if r.Push.Refused != 0 || l.DirtySince == nil || l.FailCount == 0 || l.NextAttempt == nil || !l.NextAttempt.After(f.clock) {
-		t.Fatalf("forgot earlier refusal: %+v %+v", r, l)
+	// a traversal that sent notes is a success for the link even though one note was refused in its first batch (no escalating back-off);
+	// the refused note is not retried by the automatic push until something changes
+	if r.Push.Refused != 0 || l.DirtySince != nil || l.FailCount != 0 || l.NextAttempt != nil || l.LastOK == nil {
+		t.Fatalf("a refused note made the traversal a failure: %+v %+v", r, l)
 	}
 	count := up.count("POST")
 	for i := 0; i < 5; i++ {
 		r, e = f.AutoPush(ctx, up, noSleep)
 		f.ok(e)
 		if r.Ran {
-			t.Fatal("retried without back-off")
+			t.Fatal("retried although nothing changed")
 		}
 	}
 	if up.count("POST") != count {

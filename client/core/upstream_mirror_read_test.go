@@ -703,3 +703,23 @@ func TestMirrorRowsOutsideTheAcceptedReachAreHidden(t *testing.T) {
 		}
 	}
 }
+
+// A receipt with a submission has no revision baseline whatever remote_rev holds (-1 while it waits for a review, 0): the hub copy of the
+// note it is the version of, even without our trailer, is hidden.
+func TestMirrorHidesTheHubCopyOfAWaitingReceipt(t *testing.T) {
+	f := newFx(t)
+	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
+	fk := f.pid["fakture"]
+	readingLink(f, fk, 0, "shop")
+	local := f.mk("ana", "fakture", Structure)
+	copyOfOurs := rawMirror(f, fk, "hub", 40, Structure, KindFinding, "project:shop", "orbit copy", "x") // no trailer
+	other := rawMirror(f, fk, "hub", 41, Structure, KindFinding, "project:shop", "orbit other", "x")
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev) VALUES(?,'hub',?,'h',1,5,40,1,-1)`, fk, local.ID)
+		return e
+	}))
+	ids := f.search("ana", fk, "orbit")
+	if hasID(ids, copyOfOurs) || !hasID(ids, other) {
+		t.Fatal(ids)
+	}
+}

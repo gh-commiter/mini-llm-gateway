@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 0.8.9
+
+A beta for gateways that push their notes to an upstream gateway (a team hub). It closes a way to get the same note twice upstream. No database upgrade. The upstream gateway and the pushing gateway should both be updated; mixed versions keep working (see Known problems).
+
+### Fixed
+- A pushed update that the upstream's reviewers REJECTED (for example because the note had changed there) is pushed again as a replacement of the SAME upstream note. Before, the next push sent it as a new note, and accepting that left a second copy next to the original. The same holds when the earlier submission is still waiting for its review or can no longer be read. Tried with two real gateways: every note ends up once.
+- `minigw gw upstream link <project> <upstream> --auto` (or `--manual`, `--class …`) on an existing link keeps the link's destination. Only an explicitly different destination is refused: unlink and link again to change it. The client always sends the destination, read from the existing link, so an older gateway cannot move the link by mistake.
+
+### Changed
+- A note whose first submission still waits for its review upstream is not sent again until it is decided there. This is not a failure of the link and has no timer of its own: waiting notes are checked when a push happens anyway (`minigw gw upstream push`, or an automatic push after a local change). After the review the newest local text goes: as a replacement when it was accepted, as a new submission when it was rejected and the text differs. `status` says "N notes waited for a review upstream at the last push; they are checked at the next push (not a failure)".
+- A run that sent something counts as a success also when one note was refused (for example "Too large"); the refusal is listed as "last refusal". Only a run where everything was refused is a failure with a back-off.
+- A refusal that concerns one note no longer stops the whole run. The run stops only when the upstream says that the link as a whole cannot go on: the gateway's identity is not accepted, it has no role in the project ("the upstream project … was not found or this gateway's identity may not see it there"), or its role allows no hand-in at all ("may no longer hand in to this project upstream").
+- When the upstream's note is deleted or no longer visible to the gateway's identity, or the earlier submission can no longer be read, the note becomes a conflict instead of being sent as new: `minigw gw upstream resolve <project> <id> --theirs` keeps the local text unsent, `--ours` looks again and replaces the upstream note if it is visible again, else sends a new note and says so. The Mini Gateway app's Upstream gateways panel names the three kinds of conflict.
+- The report says `create` for a new submission and `replace` only when an upstream note is replaced.
+
+### Known problems
+- An automatic link whose only unsent note is refused every time (for example a note over the size limit) tries it again with a growing pause (up to about an hour) until the note changes.
+- A conflict "deleted or no longer visible" is not cleared by itself when the note becomes visible again: `resolve --ours` replaces it then.
+- `status` learns about a review upstream at the next push, not before.
+- After restoring an OLDER local database, the gateway no longer knows what it sent after that backup: compare with the upstream before pushing (a push can create second copies).
+- With an upstream gateway older than this release, an identity that was lowered to "reader" gets one refusal per changed note instead of one clear stop.
+- The Mac client's part was checked with the shared tests of both clients, not by hand against two gateways. The retry of a replacement that the upstream refuses as outdated at hand-in was not provoked in the real round (it needs a race); tests cover it.
+- The known problems of 0.8.8 to 0.8.0 still apply.
+
 ## 0.8.8
 
 A beta that closes the gap the last two betas worked toward: a reviewer who accepts a knowledge-base submission that REPLACES a note now sees the note's current text next to the new text, and accepts exactly that pair. No database upgrade.

@@ -194,8 +194,15 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		if b.Team {
 			project, team = 0, id
 		}
-		if method == "PUT" && b.Remote == "" { // the same name there, as the CLI does it (a form leaves it empty to mean that)
+		if method == "PUT" && b.Remote == "" { // not told (a form leaves it empty to mean that): an existing link keeps its destination, a new one gets the same name there
 			b.Remote = a.localName(ctx, st, id, b.Team)
+			if ls, e := st.UpstreamLinks(ctx, project, team); e == nil {
+				for _, l := range ls {
+					if l.Upstream == seg[1] && l.Remote != "" {
+						b.Remote = l.Remote
+					}
+				}
+			}
 		}
 		var err error
 		readOff := false
@@ -208,7 +215,7 @@ func (a *API) adminUpstreams(ctx context.Context, st *core.Store, method string,
 		if err != nil {
 			return failErr(err)
 		}
-		return 200, map[string]any{"ok": true, "readOff": readOff}, true
+		return 200, map[string]any{"ok": true, "readOff": readOff, "remote": b.Remote}, true
 	}
 	return fail(404, "not found")
 }
@@ -452,7 +459,7 @@ type adminConflictJSON struct {
 	Upstream  string `json:"upstream"`
 	Note      int64  `json:"note"`
 	Title     string `json:"title"`
-	What      string `json:"what"` // "changed" or "deleted" (there)
+	What      string `json:"what"` // "changed", "deleted" (or no longer visible) or "submission" (the earlier submission cannot be read) there
 	ProjectID int64  `json:"projectId"`
 	TeamID    int64  `json:"teamId"`
 }
@@ -489,7 +496,9 @@ func (a *API) adminUpstreamLink(ctx context.Context, st *core.Store, method stri
 		for _, c := range l.Conflicts {
 			r := adminConflictJSON{Note: c.Note, What: "changed", ProjectID: j.ProjectID, TeamID: j.TeamID, Upstream: l.Upstream}
 			if c.Gone {
-				r.What = "deleted"
+				r.What = "deleted" // deleted, or no longer visible to the upstream identity
+			} else if c.Submission {
+				r.What = "submission" // the earlier submission can no longer be read there: it is not known whether it became a note
 			}
 			if note, e := st.OwnerGetNote(ctx, c.Note); e == nil {
 				r.Title = note.Title
