@@ -10,8 +10,9 @@ import (
 
 // hubFake is a scripted hub that keeps the state a reviewer would see: submissions by id and the notes (id -> revision, 0 = gone).
 type hubFake struct {
-	subs  map[int]string // id -> JSON of the submission
-	notes map[int]int    // note id -> revision
+	subs  map[int]string    // id -> JSON of the submission
+	notes map[int]int       // note id -> revision
+	text  map[int][3]string // note id -> class, title, body, when a read should return the text too
 	posts []upCall
 	next  int
 	fake  *fakeUp
@@ -19,7 +20,7 @@ type hubFake struct {
 }
 
 func newHubFake() *hubFake {
-	h := &hubFake{subs: map[int]string{}, notes: map[int]int{}}
+	h := &hubFake{subs: map[int]string{}, notes: map[int]int{}, text: map[int][3]string{}}
 	h.fake = &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
 		var id int
 		if h.hook != nil {
@@ -41,6 +42,9 @@ func newHubFake() *hubFake {
 			}
 		case c.method == "GET" && sscan(c.path, "/minigw/v1/projects/7/notes/%d", &id):
 			if r := h.notes[id]; r > 0 {
+				if tx, ok := h.text[id]; ok {
+					return 200, fmt.Sprintf(`{"id":%d,"revision":%d,"class":%q,"title":%q,"body":%q,"entryKind":"finding"}`, id, r, tx[0], tx[1], tx[2]), 0
+				}
 				return 200, fmt.Sprintf(`{"id":%d,"revision":%d}`, id, r), 0
 			}
 		}
@@ -312,27 +316,39 @@ func TestUpstreamPendingOrUnreadableFirstSubmissionIsNotResent(t *testing.T) {
 }
 
 // Stale at submit: the hub refuses a replacement whose revision is already old (409 with the current one): once more with that revision.
-func TestUpstreamStaleAtSubmitIsRetriedWithTheCurrentRevision(t *testing.T) {
+func TestUpstreamStaleAtSubmitIsAConflictUnlessOurs(t *testing.T) {
 	f, fk, h := twoNotes(t)
 	racing := true
 	h.hook = func(c upCall) (int, string, bool) {
 		if c.method == "POST" && c.body["replaces"].(float64) == 55 && racing { // the hub's note moved on between the read and the submit
 			racing = false
-			h.notes[55] = 2
-			return 409, `{"error":{"type":"revision_mismatch","message":"The note has changed","revision":2}}`, true
+			h.notes[55]++
+			return 409, fmt.Sprintf(`{"error":{"type":"revision_mismatch","message":"The note has changed","revision":%d}}`, h.notes[55]), true
 		}
 		return 0, "", false
 	}
+	revs := func() (out []float64) {
+		for _, c := range h.fake.calls {
+			if c.method == "POST" && c.body["replaces"].(float64) == 55 {
+				out = append(out, c.body["revision"].(float64))
+			}
+		}
+		return
+	}
+	// a revision mismatch at submit is "changed there since our last version": no retry at the newer revision, nothing accepted
 	res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
-	var revs []float64
-	for _, c := range h.fake.calls {
-		if c.method == "POST" && c.body["replaces"].(float64) == 55 {
-			revs = append(revs, c.body["revision"].(float64))
-		}
+	if r := res[0]; r.Conflicts != 1 || r.Replaced != 1 || r.Refused != 0 || len(revs()) != 1 || revs()[0] != 1 {
+		t.Fatalf("%+v %v", r, revs())
 	}
-	if res[0].Replaced != 2 || res[0].Refused != 0 || len(revs) != 2 || revs[0] != 1 || revs[1] != 2 {
-		t.Fatalf("%+v %v", res[0], revs)
+	// the owner decided "ours": one retry at the revision the upstream answers
+	f.ok(f.ResolveUpstream(ctx, fk, 0, noteID(f, fk, "Structure one"), true))
+	racing = true
+	res, e = f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
+	f.ok(e)
+	got := revs()
+	if r := res[0]; r.Replaced != 1 || r.Conflicts != 0 || len(got) != 3 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("%+v %v", r, got)
 	}
 }
 

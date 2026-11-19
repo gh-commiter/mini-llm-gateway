@@ -1723,8 +1723,12 @@ counts too. `gw upstream resolve <project> <note> --theirs` keeps our text unsen
 our text as a replacement at the upstream's current revision, for its reviewers (they see both texts on an upstream of 0.8.8 or later; an older one
 shows only ours, so look at the note there before accepting). Our own accepted replacement is the new base, not a conflict; a note whose text did not
 change here is not sent and not a conflict; a pending replacement of ours keeps the old base. Where the base is not known (the last submission was
-rejected or pending before this version, or an upstream that does not say what a replacement declared) the note is replaced at the newest revision
-as before, and the base is learned from the next accepted submission. The link to that upstream note stays when the reviewers reject a replacement:
+rejected or pending before this version, or an upstream that does not say what a replacement declared), it is settled by content: when the
+upstream note holds exactly the text this gateway last sent for the note (compared without the trailer a push adds), its revision is the base and the
+push goes on; when it differs (it changed there, or our last submission was never accepted) or cannot be compared (the answer has no text), the note
+is a conflict that you resolve. A replacement that the upstream refuses at submit because the revision moved is the same conflict, not a retry at the
+newer revision (after `--ours` the push retries once at the revision the upstream answers). The base only moves up, except that an upstream note whose
+revision is BELOW it (restored from a backup) is a conflict too, and `--theirs` takes the revision found there. The link to that upstream note stays when the reviewers reject a replacement:
 after the next change here the push is again a replacement of the same note (or a conflict, when the note changed there), so a second copy of it
 does not appear; the report says `the earlier submission was rejected upstream (<reason>)`. A note whose text did not change here is not sent again
 (an automatic push does not retry it either). When the push reads an earlier submission and finds it accepted, it writes down the upstream note

@@ -122,16 +122,65 @@ func TestWaitingFirstSubmissionThenConflict(t *testing.T) {
 	}
 }
 
-// A receipt whose base is not known (the last submission was rejected before this release, or an upstream that does not say what a replacement
-// declared) behaves as before: the note is rebased onto the newest revision, and the base is learned from the next accepted submission.
-func TestUnknownBaseBehavesAsBefore(t *testing.T) {
+// A receipt with a known hub note but no known base (the last submission was rejected before this version, or a hub that does not say what a
+// replacement declared) is settled by content: when the hub note holds the text this gateway last sent, its revision is the base and the push goes
+// on; when it differs, or cannot be compared, the note is a conflict that the owner resolves.
+func TestUnknownBaseIsSettledByContent(t *testing.T) {
+	for _, c := range []string{"same text", "other text", "no text in the answer"} {
+		f, fk, h := twoNotes(t)
+		h.subs[1] = `{"id":%d,"state":"accepted","note":55,"replaces":55}` // a hub that does not say the revision it declared: the base is unknown
+		h.notes[55] = 4
+		secret, e := f.upstreamKey(ctx)
+		f.ok(e)
+		trailer := "\n\n" + upstreamRefMark + upstreamRef(secret, "hub", fk, noteID(f, fk, "Structure one")) + ", author ana -->\n"
+		switch c {
+		case "same text": // the first push sent "body of Structure one": that is what the hub holds
+			h.text[55] = [3]string{"structure", "Structure one", "body of Structure one" + trailer}
+		case "other text":
+			h.text[55] = [3]string{"structure", "Structure one", "the hub's own words" + trailer}
+		}
+		posts := len(h.posts)
+		r := pushOnce(t, f, fk, h)
+		got := h.postsFor("Structure one", posts)
+		all := strings.Join(r.Lines, "\n")
+		if c == "same text" {
+			if r.Conflicts != 0 || len(got) != 1 || got[0].body["revision"].(float64) != 4 || baseOf(f, fk, "Structure one") != 4 {
+				t.Fatalf("%s: %+v %v", c, r, got)
+			}
+			continue
+		}
+		want := "differs from what this gateway last sent"
+		if c == "no text in the answer" {
+			want = "cannot be compared"
+		}
+		if r.Conflicts != 1 || len(got) != 0 || !strings.Contains(all, want) {
+			t.Fatalf("%s: %+v", c, r)
+		}
+	}
+}
+
+// resolve --theirs takes the upstream's revision as the base; re-reading the same older accepted submission at the next push must not undo it.
+func TestTheirsBaseSurvivesRereadingTheAcceptedSubmission(t *testing.T) {
 	f, fk, h := twoNotes(t)
-	h.subs[1] = `{"id":%d,"state":"accepted","note":55,"replaces":55}` // an upstream that does not say the revision it declared
-	h.notes[55] = 4
+	h.notes[55] = 2
+	if r := pushOnce(t, f, fk, h); r.Conflicts != 1 {
+		t.Fatalf("%+v", r)
+	}
+	f.ok(f.ResolveUpstream(ctx, fk, 0, noteID(f, fk, "Structure one"), false))
+	if baseOf(f, fk, "Structure one") != 2 {
+		t.Fatalf("base %d", baseOf(f, fk, "Structure one"))
+	}
+	f.edit("ana", fk, Note{ID: noteID(f, fk, "Structure one")}, "after theirs")
 	posts := len(h.posts)
 	r := pushOnce(t, f, fk, h)
 	got := h.postsFor("Structure one", posts)
-	if r.Conflicts != 0 || len(got) != 1 || got[0].body["revision"].(float64) != 4 {
+	if r.Conflicts != 0 || len(got) != 1 || got[0].body["replaces"].(float64) != 55 || got[0].body["revision"].(float64) != 2 || baseOf(f, fk, "Structure one") != 2 {
 		t.Fatalf("%+v %v", r, got)
+	}
+	// the hub going BACK below the base (restored from a backup) is a conflict as well
+	h.notes[55] = 1
+	f.edit("ana", fk, Note{ID: noteID(f, fk, "Structure one")}, "once more")
+	if r = pushOnce(t, f, fk, h); r.Conflicts != 1 {
+		t.Fatalf("%+v", r)
 	}
 }

@@ -279,6 +279,31 @@ func refusal(a upAnswer) string {
 	return "the upstream says: " + m
 }
 
+// upNote: an upstream note as its read returns it (the fields that tell whether it holds the text we last sent).
+type upNote struct {
+	Revision               int64
+	Class                  Class
+	Title, Body, EntryKind string
+}
+
+// sameAs: does the note hold the text whose receipt hash is hash (class, kind, title and body, without the trailer a push adds)? 1 yes, 0 no,
+// -1 cannot be told (the answer has no body, or it does not end with our trailer).
+func (u upNote) sameAs(hash string) int {
+	loc := trailerAtEnd.FindStringIndex(u.Body)
+	if hash == "" || u.Body == "" || loc == nil {
+		return -1
+	}
+	kind := u.EntryKind
+	if kind == "" {
+		kind = KindFinding
+	}
+	body := strings.TrimSuffix(u.Body[:loc[0]], "\n\n")
+	if upstreamHash(Note{Class: u.Class, EntryKind: kind, Title: u.Title, Body: body}) == hash {
+		return 1
+	}
+	return 0
+}
+
 // conflictWhy: what a conflict is, by its kind (rev: the upstream's revision seen; 0: deleted or no longer visible; -1: the earlier submission
 // cannot be read). conflictText adds what to do, in the words status uses too.
 func conflictWhy(rev int64) string {
@@ -559,18 +584,19 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			line("conflict", n, conflictText(n.Sent.ConflictRev, n.ID)) // the same words as status, by the kind of the conflict
 			continue
 		}
-		conflict := func(rev int64) error {
+		conflictWith := func(rev int64, why string) error {
 			res.Conflicts++
 			if dry {
-				line("would conflict", n, conflictWhy(rev))
+				line("would conflict", n, why)
 				return nil
 			}
 			if e := s.upstreamRecordConflict(wctx, l.Project, l.Upstream, n.ID, rev); e != nil {
 				return e
 			}
-			line("conflict", n, conflictText(rev, n.ID))
+			line("conflict", n, why+strings.TrimPrefix(conflictText(rev, n.ID), conflictWhy(rev)))
 			return nil
 		}
+		conflict := func(rev int64) error { return conflictWith(rev, conflictWhy(rev)) }
 		if l.Mode == "publish" && n.EntryKind != "faq" && !(n.Sent != nil && (n.Sent.Conflict == 2 || n.Sent.RemoteSub > 0)) { // a note sent as a submission ("ours") stays on the submission path
 			// publish mode: the note is written on the upstream directly (a note, not a submission)
 			notesBase := fmt.Sprintf("/minigw/v1/projects/%d/notes", remote)
@@ -699,12 +725,15 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			if n.Sent.RemoteRev > 0 {
 				base = n.Sent.RemoteRev
 			}
+			learned := int64(0)
 			if readable && sub.State == "accepted" && sub.Note > 0 {
-				switch {
-				case sub.Replaces == 0:
-					base = 1
-				case sub.Revision > 0:
-					base = sub.Revision + 1
+				if sub.Replaces == 0 {
+					learned = 1
+				} else if sub.Revision > 0 {
+					learned = sub.Revision + 1
+				}
+				if learned > base { // the base only moves up for the same upstream note (resolve --theirs may have taken a higher one)
+					base = learned
 				}
 				if base > 0 && base != n.Sent.RemoteRev {
 					if !dry {
@@ -761,16 +790,40 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				if p.more {
 					return limitMore()
 				}
-				var cur struct{ Revision int64 }
+				var cur upNote
 				switch {
-				case na.status == 200 && json.Unmarshal(na.data, &cur) == nil && cur.Revision > 0 && !owner && base > 0 && cur.Revision > base:
-					// the upstream note changed since the version our text corresponds to: our text never saw that change, so a replacement
-					// declared against the newest revision would pass the upstream's own check unseen. The owner decides (resolve).
-					if e := conflict(cur.Revision); e != nil {
-						return res, e
-					}
-					continue
 				case na.status == 200 && json.Unmarshal(na.data, &cur) == nil && cur.Revision > 0:
+					if !owner {
+						if base == 0 { // no base is known: establish it by content (does the upstream hold the text this gateway last sent?)
+							switch cur.sameAs(n.Sent.Hash) {
+							case 1:
+								base = cur.Revision
+								if !dry {
+									if e := s.upstreamRecordBase(wctx, l.Project, l.Upstream, n.ID, base); e != nil {
+										return res, e
+									}
+								}
+							case 0:
+								if e := conflictWith(cur.Revision, "the upstream note differs from what this gateway last sent (it changed there, or our last submission was never accepted)"); e != nil {
+									return res, e
+								}
+								continue
+							default:
+								if e := conflictWith(cur.Revision, "the upstream note cannot be compared with what this gateway last sent (no version of it is known here)"); e != nil {
+									return res, e
+								}
+								continue
+							}
+						}
+						if cur.Revision != base {
+							// the upstream note changed since the version our text corresponds to (or went back: a restore): our text never saw
+							// that, so a replacement declared against the newest revision would pass the upstream's own check unseen
+							if e := conflict(cur.Revision); e != nil {
+								return res, e
+							}
+							continue
+						}
+					}
 					replaces, revision = target, cur.Revision
 					detail = "replaces the note " + tid + " upstream (revision " + strconv.FormatInt(cur.Revision, 10) + ")"
 					switch {
@@ -852,6 +905,12 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		if a.status == 409 && replaces > 0 && !p.more { // stale at submit: the note changed there since we read its revision: once more with the current one
 			var er struct{ Error struct{ Revision int64 } }
 			if json.Unmarshal(a.data, &er) == nil && er.Error.Revision > 0 && er.Error.Revision != revision {
+				if !owner { // a revision mismatch at submit IS "changed on the upstream since our last version": not rebased unseen
+					if e := conflict(er.Error.Revision); e != nil {
+						return res, e
+					}
+					continue
+				}
 				fields["revision"] = er.Error.Revision
 				payload, _ = json.Marshal(fields)
 				a = p.call("POST", base, map[string]string{"Idempotency-Key": p.submissionKey(l.Project, n, supersedes)}, payload)

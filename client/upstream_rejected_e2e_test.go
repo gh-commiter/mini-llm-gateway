@@ -262,5 +262,10 @@ func TestUpstreamHubChangeIsAConflictBetweenTwoGateways(t *testing.T) {
 		if count != 1 || !strings.Contains(now.Body, "our text") {
 			t.Fatalf("%d notes, %q", count, now.Body)
 		}
+		v, err := rc.GetNoteVersion(t0, nil, f.rproj, hubNote, now.Revision-1) // the version our replacement overwrote: the hub's own change
+		f.must(err)
+		if v.Body == nil || !strings.Contains(*v.Body, "the hub's own text") {
+			t.Fatalf("the history lacks the hub's own text: %+v", v)
+		}
 	}
 }

@@ -1150,10 +1150,11 @@ func (s *Store) upstreamRecordWaiting(ctx context.Context, project int64, upstre
 	})
 }
 
-// upstreamRecordBase: the pusher learned the upstream revision our last accepted text corresponds to (see the remote_rev comment above).
+// upstreamRecordBase: the pusher learned the upstream revision our last accepted text corresponds to (see the remote_rev comment above). It only
+// moves up (resolve --theirs takes the upstream's revision directly, also a lower one after a restore).
 func (s *Store) upstreamRecordBase(ctx context.Context, project int64, upstream string, note, base int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`UPDATE upstream_sent SET remote_rev=? WHERE project_id=? AND upstream=? AND note_id=? AND remote_sub>0 AND remote_rev<>?`, base, project, upstream, note, base)
+		_, e := tx.Exec(`UPDATE upstream_sent SET remote_rev=? WHERE project_id=? AND upstream=? AND note_id=? AND remote_sub>0 AND remote_rev<?`, base, project, upstream, note, base)
 		return e
 	})
 }
