@@ -234,12 +234,14 @@ func olderRouteHint(do func(connection, string, string, map[string]string, []byt
 		st, data, h := do(c, method, path, headers, body)
 		family, min := "", ""
 		switch {
-		case st != 404:
+		case st != 404 && !(st == 405 && noteHistoryFamily(path) != ""):
 			return st, data, h
 		case strings.HasPrefix(path, "/minigw/v1/teams"):
 			family, min = "team", "0.7.1"
 		case strings.HasPrefix(path, apiProjects+"/") && strings.Contains(path, "/kb/"):
 			family, min = "kb", "0.7.10"
+		case noteHistoryFamily(path) != "":
+			family, min = noteHistoryFamily(path), "0.8.7"
 		default:
 			return st, data, h
 		}
@@ -260,6 +262,19 @@ func olderRouteHint(do func(connection, string, string, map[string]string, []byt
 			"message": fmt.Sprintf("this gateway is %s; %s needs %s or newer: update the gateway (/minigw:gw update there)", version, family, min)}})
 		return st, msg, h
 	}
+}
+
+var noteHistoryPath = regexp.MustCompile(`^/minigw/v1/projects/[0-9]+/notes/[0-9]+/(history(/[0-9]+)?|restore)$`)
+
+// noteHistoryFamily names the command a note history route belongs to ("" for any other path).
+func noteHistoryFamily(path string) string {
+	switch {
+	case !noteHistoryPath.MatchString(path):
+		return ""
+	case strings.HasSuffix(path, "/restore"):
+		return "note restore"
+	}
+	return "note history"
 }
 
 // olderGatewayHint: the gateway's version (/health/ready) when it is below 0.6.0, else "". A gateway that reports none is older still.
@@ -718,7 +733,7 @@ func (e *projectEnv) note(args []string) error {
 		return noteHistoryCommand(sub, fmt.Sprintf("%s/%d", base, id), id, *rev, *current, set["current"], *class, *asJSON, e.tty == nil && stdinIsTTY() || e.tty != nil && e.tty(), e.in, e.out, func(method, path string, body []byte) ([]byte, error) {
 			st, data, h := e.do(c, method, path, nil, body)
 			if st != 200 {
-				return nil, e.gwError(st, data, h)
+				return nil, noteScopeHint(e.gwError(st, data, h), e.runConn != nil || *team != "")
 			}
 			return data, nil
 		})

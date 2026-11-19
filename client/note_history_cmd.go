@@ -9,16 +9,32 @@ import (
 	"minigw/core"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const historyTail = "older revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them"
 const restoreNeedsCurrent = "not restored: without a terminal, name the current revision: --current <n>"
 
-func savedBy(name string) string {
-	if name == "" {
-		return "a review or import"
+// historyTime: a time of these commands, to the minute, always with its zone: UTC, or the offset from it.
+func historyTime(t time.Time) string {
+	t = t.Local()
+	if _, off := t.Zone(); off == 0 {
+		return t.Format("2006-01-02 15:04") + " UTC"
 	}
-	return name
+	return t.Format("2006-01-02 15:04 -07:00")
+}
+
+// versionWho: written <time> by <who>  replaced <time> by <who>. Written is when this text became the note's text,
+// replaced is when something else did; the names are the ones the gateway gave (never the same fact twice).
+func versionWho(v core.NoteVersion) string {
+	return fmt.Sprintf("written %s by %s  replaced %s by %s", historyTime(v.Updated), orUnknown(v.WrittenBy, "unknown"), historyTime(v.Saved), orUnknown(v.ReplacedBy, "a review or import"))
+}
+
+func orUnknown(s, none string) string {
+	if s == "" {
+		return none
+	}
+	return s
 }
 
 // Both command families use the same rendering and confirmation rules.
@@ -45,7 +61,7 @@ func noteHistoryCommand(sub, path string, id, revision, current int64, hasCurren
 		}
 		say(fmt.Sprintf("note %d  revision %d (current)  %s  %s", h.Note.ID, h.Note.Revision, h.Note.Class, oneLine(h.Note.Title)))
 		for _, v := range h.History {
-			say(fmt.Sprintf("revision %d  saved %s  by %s  %s  %s  %d bytes  %s", v.Revision, noteTime(v.Saved), savedBy(v.SavedBy), v.Class, v.EntryKind, v.Bytes, oneLine(v.Title)))
+			say(fmt.Sprintf("revision %d  %s  %s  %s  %d bytes  %s", v.Revision, versionWho(v), v.Class, v.EntryKind, v.Bytes, oneLine(v.Title)))
 		}
 		if len(h.History) == 0 {
 			say("no saved revisions you may read")
@@ -74,7 +90,7 @@ func noteHistoryCommand(sub, path string, id, revision, current int64, hasCurren
 		return err
 	}
 	if sub == "history" {
-		say(fmt.Sprintf("note %d  revision %d of %d  %s  %s  saved %s by %s", id, v.Revision, cur.Revision, v.Class, v.EntryKind, noteTime(v.Saved), savedBy(v.SavedBy)))
+		say(fmt.Sprintf("note %d  revision %d of %d  %s  %s  %s", id, v.Revision, cur.Revision, v.Class, v.EntryKind, versionWho(v)))
 		say(oneLine(v.Title))
 		body := ""
 		if v.Body != nil {
@@ -126,6 +142,13 @@ func noteHistoryCommand(sub, path string, id, revision, current int64, hasCurren
 	if err = json.Unmarshal(data, &n); err != nil {
 		return err
 	}
-	say(fmt.Sprintf("note %d restored from revision %d (%s, revision %d)", id, revision, n.Class, n.Revision))
+	line := fmt.Sprintf("restored revision %d as revision %d; the note is %s", revision, n.Revision, n.Class)
+	switch {
+	case target != cur.Class:
+		line += fmt.Sprintf(" (class changed from %s to %s)", cur.Class, target)
+	case string(v.Class) != cur.Class:
+		line += fmt.Sprintf(" (current class kept; use --class %s to restore the saved class)", v.Class)
+	}
+	say(line)
 	return nil
 }

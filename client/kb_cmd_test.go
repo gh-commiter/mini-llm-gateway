@@ -598,3 +598,32 @@ func TestReviewTextFixture(t *testing.T) {
 		}
 	}
 }
+
+// A new client against a gateway older than 0.8.7: the note history routes say which version has them instead of
+// "not found or not visible" (a 404, or a 405 for restore); a 0.8.7 gateway's own 404 stays as it is.
+func TestOlderGatewayNamesTheVersionForNoteHistory(t *testing.T) {
+	for _, tc := range []struct {
+		version, method, path string
+		status                int
+		want                  string
+	}{
+		{"0.8.6", "GET", apiProjects + "/3/notes/7/history", 404, "this gateway is 0.8.6; note history needs 0.8.7 or newer"},
+		{"0.8.6", "GET", apiProjects + "/3/notes/7/history/2", 404, "this gateway is 0.8.6; note history needs 0.8.7 or newer"},
+		{"0.8.6", "POST", apiProjects + "/3/notes/7/restore", 405, "this gateway is 0.8.6; note restore needs 0.8.7 or newer"},
+		{"0.8.6", "POST", apiProjects + "/3/notes/7/restore", 404, "this gateway is 0.8.6; note restore needs 0.8.7 or newer"},
+		{"0.8.7", "GET", apiProjects + "/3/notes/7/history", 404, "not found"},
+		{"0.8.6", "GET", apiProjects + "/3/notes/7", 404, "not found"},
+		{"0.8.6", "GET", apiProjects + "/3/notes/7/other", 404, "not found"},
+	} {
+		do := olderRouteHint(func(_ connection, m, p string, _ map[string]string, _ []byte) (int, []byte, http.Header) {
+			if p == "/health/ready" {
+				return 200, []byte(`{"version":"` + tc.version + `"}`), nil
+			}
+			return tc.status, []byte(`{"error":{"message":"not found"}}`), nil
+		})
+		st, body, _ := do(connection{}, tc.method, tc.path, nil, nil)
+		if st != tc.status || !strings.Contains(string(body), tc.want) {
+			t.Errorf("%s %s %s: %d %s", tc.version, tc.method, tc.path, st, body)
+		}
+	}
+}

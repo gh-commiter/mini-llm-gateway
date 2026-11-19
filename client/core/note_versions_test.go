@@ -415,3 +415,70 @@ func TestRestoredNoteSurvivesABundleRoundTrip(t *testing.T) {
 		t.Fatal("restored text lost in the bundle", body)
 	}
 }
+
+// Catches: a mirrored note answering "not found" to someone who can read it, or telling someone who cannot that it exists.
+func TestNoteHistoryOfAMirroredNote(t *testing.T) {
+	f := newFx(t)
+	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
+	fk, eu := f.pid["fakture"], f.pid["eureko"]
+	readingLink(f, fk, 0, "shop")
+	mine := rawMirror(f, fk, "hub", 1, Structure, KindFinding, "project:shop", "orbit one", "x")
+	ana, fani, cene := f.p("ana"), f.p("fani"), f.p("cene")
+	want := "this note is a copy from the upstream gateway hub:hub (there: project:shop): its saved versions are on that gateway; run minigw note history there"
+	_, e := f.ListNoteHistory(ctx, &ana, fk, mine)
+	var ref ErrRefusal
+	if !errors.As(e, &ref) || e.Error() != want {
+		t.Fatal("list", e)
+	}
+	_, e = f.GetNoteVersion(ctx, &ana, fk, mine, 1)
+	if !errors.As(e, &ref) || e.Error() != want {
+		t.Fatal("version", e)
+	}
+	_, e = f.RestoreNote(ctx, &fani, fk, mine, 1, 3, Structure)
+	if !errors.As(e, &ref) || e.Error() != want {
+		t.Fatal("restore", e)
+	}
+	// not readable by cene through eureko (no link there): the same answer as an unknown id
+	_, e = f.ListNoteHistory(ctx, &cene, eu, mine)
+	_, unknown := f.ListNoteHistory(ctx, &cene, eu, 999999)
+	if !errors.Is(e, ErrNotFound) || e.Error() != unknown.Error() {
+		t.Fatal("unreadable mirror", e, unknown)
+	}
+}
+
+// Catches: the list naming only the overwriter, or a review or an import passing for an edit.
+func TestNoteHistoryNamesWriterAndReplacer(t *testing.T) {
+	f := newFx(t)
+	pid := f.pid["fakture"]
+	ana, fani := f.p("ana"), f.p("fani")
+	n, _, e := f.CreateNote(ctx, ana, pid, "who", NoteInput{Class: Structure, Title: "t", Body: "one"})
+	f.ok(e)
+	f.clock = f.clock.Add(time.Hour)
+	n, e = f.UpdateNote(ctx, fani, pid, n.ID, n.Revision, NoteInput{Class: Structure, Title: "t", Body: "two"})
+	f.ok(e)
+	v, _, e := f.Submit(ctx, ana, pid, "who-replace", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: "t", Body: "three"}, Replaces: n.ID, Revision: n.Revision})
+	f.ok(e)
+	_, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
+	f.ok(e)
+	n, e = f.GetNote(ctx, ana, pid, n.ID)
+	f.ok(e)
+	_, e = f.RestoreNote(ctx, &fani, pid, n.ID, 1, n.Revision, Structure)
+	f.ok(e)
+	h, e := f.ListNoteHistory(ctx, &ana, pid, n.ID)
+	f.ok(e)
+	if len(h.History) != 3 {
+		t.Fatal(h)
+	}
+	for _, c := range []struct {
+		i             int
+		written, repl string
+	}{{0, "ana", "fani (restore)"}, {1, "fani", "an accepted submission (reviewer owner)"}, {2, "ana", "fani"}} {
+		v := h.History[c.i]
+		if v.WrittenBy != c.written || v.ReplacedBy != c.repl {
+			t.Fatalf("row %d: written %q replaced %q", c.i, v.WrittenBy, v.ReplacedBy)
+		}
+	}
+	if !h.History[2].Updated.Before(h.History[2].Saved) {
+		t.Fatal("written must precede replaced")
+	}
+}
