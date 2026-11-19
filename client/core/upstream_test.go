@@ -102,6 +102,8 @@ func okUp() *fakeUp {
 		case c.method == "POST" && c.path == "/minigw/v1/projects/7/kb/submissions":
 			next++
 			return 201, fmt.Sprintf(`{"id":%d,"state":"pending"}`, next), 0
+		case c.method == "GET" && strings.HasPrefix(c.path, "/minigw/v1/projects/7/kb/submissions/"): // an earlier submission was rejected: sent again
+			return 200, `{"state":"rejected","note":0}`, 0
 		}
 		return 404, `{"error":{"message":"not found"}}`, 0
 	}}
@@ -241,7 +243,7 @@ func TestUpstreamPushCreateSkipReplace(t *testing.T) {
 	if res[0].Skipped != 2 || res[0].Created != 0 || up2.count("POST") != 0 {
 		t.Fatalf("%+v", res)
 	}
-	// a changed note, earlier submission still pending: sent again as a new submission that names the old one
+	// a changed note, the first submission still pending: nothing more is sent for it (a second submission could be accepted too: two notes)
 	n := notes["Structure one"]
 	f.clock = f.clock.Add(time.Second)
 	_, e = f.UpdateNote(ctx, f.p("ana"), fk, n.ID, n.Revision, NoteInput{Class: Structure, Title: "Structure one", Body: "changed body"})
@@ -259,15 +261,10 @@ func TestUpstreamPushCreateSkipReplace(t *testing.T) {
 	}}
 	res, e = f.PushUpstream(ctx, up3, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
+	if res[0].Replaced != 0 || res[0].Refused != 1 || up3.count("POST") != 0 || !strings.Contains(res[0].Lines[0], "still pending") {
+		t.Fatalf("%+v", res)
+	}
 	var post upCall
-	for _, c := range up3.calls {
-		if c.method == "POST" {
-			post = c
-		}
-	}
-	if res[0].Replaced != 1 || res[0].Skipped != 1 || post.body["replaces"].(float64) != 0 || !strings.Contains(post.body["body"].(string), "supersedes submission 1") || !strings.Contains(res[0].Lines[0], "still pending") {
-		t.Fatalf("%+v %+v", res, post)
-	}
 	// the earlier submission was accepted as remote note 55 (revision 3): the change goes as its replacement
 	f.clock = f.clock.Add(time.Second)
 	n, e = f.GetNote(ctx, f.p("ana"), fk, n.ID)
@@ -278,8 +275,8 @@ func TestUpstreamPushCreateSkipReplace(t *testing.T) {
 		switch {
 		case c.path == "/minigw/v1/projects/shop":
 			return 200, `{"id":7,"slug":"shop"}`, 0
-		case c.method == "GET" && c.path == "/minigw/v1/projects/7/kb/submissions/9":
-			return 200, `{"id":9,"state":"accepted","note":55}`, 0
+		case c.method == "GET" && c.path == "/minigw/v1/projects/7/kb/submissions/1":
+			return 200, `{"id":1,"state":"accepted","note":55}`, 0
 		case c.method == "GET" && c.path == "/minigw/v1/projects/7/notes/55":
 			return 200, `{"id":55,"revision":3}`, 0
 		case c.method == "POST":
@@ -881,7 +878,7 @@ func TestResolveOursThenEditStaysOnTheSubmissionPath(t *testing.T) {
 			case c.method == "POST":
 				return 201, `{"id":55,"revision":1}`, 0
 			case strings.Contains(c.path, "/kb/submissions/"):
-				return 200, `{"id":31,"state":"pending"}`, 0
+				return 200, `{"id":31,"state":"rejected"}`, 0
 			case c.method == "GET" && !first:
 				return remote(c)
 			}

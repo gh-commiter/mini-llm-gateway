@@ -254,12 +254,14 @@ type NotPropagated struct {
 
 const maxNotPropagated = 50
 
-// UpstreamConflict: Gone = the upstream note no longer exists; RemoteRev is the revision seen there. State 2 (resolved "ours") is not
+// UpstreamConflict: Gone = the upstream note is deleted or no longer visible; RemoteRev is the revision seen there. State 2 (resolved "ours") is not
 // listed: it is waiting to be sent.
 type UpstreamConflict struct {
 	Note      int64 `json:"note"`
 	RemoteRev int64 `json:"remoteRev"`
 	Gone      bool  `json:"gone,omitempty"`
+	// Submission: the earlier submission can no longer be read there, so it is not known whether it became a note
+	Submission bool `json:"submission,omitempty"`
 }
 
 // UpstreamLinkInfo is a link with what a status shows.
@@ -494,6 +496,17 @@ func (s *Store) LinkUpstreamReport(ctx context.Context, sp LinkSpec) (turnedOff 
 				return "", e
 			}
 			return "", setLinkRead(tx, s.now(), local, upstream, sp, readOn, readOff, readCls, readSrc, detail)
+		}
+		var curRemote string
+		var curTeam, sentN int
+		switch e := tx.QueryRow(`SELECT remote,remote_team,(SELECT count(*) FROM upstream_sent WHERE project_id=?1 AND upstream=?2) FROM upstream_links WHERE project_id=?1 AND upstream=?2`, local, upstream).Scan(&curRemote, &curTeam, &sentN); e {
+		case nil:
+			if (curRemote != remote || curTeam != t) && sentN > 0 { // the remembered submission and note numbers are those of the old destination
+				return "", ErrRefusal{"the link already sent notes to " + curRemote + ": unlink it and link it again to change the destination (what was sent stays on the upstream)"}
+			}
+		case sql.ErrNoRows:
+		default:
+			return "", e
 		}
 		var au any
 		if sp.Auto != nil {
@@ -933,7 +946,7 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 					cr.Close()
 					return e
 				}
-				c.Gone = c.RemoteRev == 0
+				c.Gone, c.Submission = c.RemoteRev == 0, c.RemoteRev < 0
 				info.Conflicts = append(info.Conflicts, c)
 			}
 			cr.Close()
@@ -1066,7 +1079,7 @@ func (s *Store) ResolveUpstream(ctx context.Context, project, team, note int64, 
 			case gone: // gone here too: nothing left to settle
 				_, e = tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, local, x.up, note)
 			default:
-				_, e = tx.Exec(`UPDATE upstream_sent SET hash=?, remote_rev=?, sent_content='', conflict=0, conflict_rev=0 WHERE project_id=? AND upstream=? AND note_id=?`, upstreamHash(n), x.rev, local, x.up, note)
+				_, e = tx.Exec(`UPDATE upstream_sent SET hash=?, remote_rev=max(?,0), sent_content='', conflict=0, conflict_rev=0 WHERE project_id=? AND upstream=? AND note_id=?`, upstreamHash(n), x.rev, local, x.up, note)
 			}
 			if e != nil {
 				return "", e
@@ -1101,4 +1114,12 @@ func (s *Store) upstreamKey(ctx context.Context) (k []byte, err error) {
 		return tx.QueryRow(`SELECT k FROM upstream_key WHERE id=1`).Scan(&k)
 	})
 	return
+}
+
+// upstreamRecordRemoteNote: the pusher learned that the earlier submission of this note was accepted as the upstream's note remoteNote.
+func (s *Store) upstreamRecordRemoteNote(ctx context.Context, project int64, upstream string, note, remoteNote int64) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`UPDATE upstream_sent SET remote_note=? WHERE project_id=? AND upstream=? AND note_id=?`, remoteNote, project, upstream, note)
+		return e
+	})
 }

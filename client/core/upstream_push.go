@@ -500,8 +500,11 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		conflict := func(rev int64) error {
 			res.Conflicts++
 			why := "changed on the upstream since our last write (revision " + strconv.FormatInt(rev, 10) + "), not overwritten"
-			if rev == 0 {
-				why = "deleted on the upstream, not recreated"
+			switch {
+			case rev == 0:
+				why = "deleted or no longer visible on the upstream, not recreated"
+			case rev < 0:
+				why = "the earlier submission upstream can no longer be read: check on the hub whether it was accepted"
 			}
 			if dry {
 				line("would conflict", n, why)
@@ -635,14 +638,43 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				Reason string
 			}
 			readable := a.status == 200 && json.Unmarshal(a.data, &sub) == nil
+			subID := strconv.FormatInt(n.Sent.RemoteSub, 10)
 			// the hub's note this note is a version of: the note the earlier submission became, else the one we last replaced. A rejected
-			// or pending replacement leaves the link as it was, so a later push is again a replacement, never a second note (#166).
+			// replacement leaves the link as it was, so a later push is again a replacement, never a second note (#166). What is learned
+			// here is written down before anything else is asked about this note, even when nothing is sent in the end.
 			target := n.Sent.RemoteNote
 			if readable && sub.State == "accepted" && sub.Note > 0 {
 				target = sub.Note
+				if target != n.Sent.RemoteNote {
+					if !dry {
+						if e := s.upstreamRecordRemoteNote(wctx, l.Project, l.Upstream, n.ID, target); e != nil {
+							return res, e
+						}
+					}
+					n.Sent.RemoteNote = target
+				}
+			}
+			// fail: a request about THIS note failed; the run goes on with the others unless the failure concerns everything
+			fail := func(a upAnswer, what string) (r UpstreamPush, done bool, e error) {
+				if p.more {
+					r, e = more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+					return r, true, e
+				}
+				res.Refused++
+				msg := what + ": " + refusal(a)
+				if a.status == 403 {
+					msg = what + ": the upstream identity may not read it (its class or role there?): ask the upstream's admin"
+				}
+				line("refused", n, msg)
+				if a.status == 0 || a.status == 401 || a.status == 429 || a.errType == "pending_limit" {
+					r, e = stop(refusal(a))
+					return r, true, e
+				}
+				return res, false, nil
 			}
 			switch {
 			case target > 0:
+				tid := strconv.FormatInt(target, 10)
 				na := p.call("GET", fmt.Sprintf("/minigw/v1/projects/%d/notes/%d", remote, target), nil, nil)
 				if p.more {
 					return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
@@ -651,34 +683,47 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				switch {
 				case na.status == 200 && json.Unmarshal(na.data, &cur) == nil && cur.Revision > 0:
 					replaces, revision = target, cur.Revision
-					detail = "replaces the note " + strconv.FormatInt(target, 10) + " upstream (revision " + strconv.FormatInt(cur.Revision, 10) + ")"
+					detail = "replaces the note " + tid + " upstream (revision " + strconv.FormatInt(cur.Revision, 10) + ")"
 					switch {
 					case readable && sub.State == "accepted":
 						detail = strings.Replace(detail, "replaces the note", "replaces the accepted note", 1)
 					case readable && sub.State == "rejected":
 						detail = "the earlier submission was rejected upstream" + upReason(sub.Reason) + ": " + detail
-					case readable && sub.State == "pending":
+					case readable && sub.State == "pending": // two replacements of one note cannot both be accepted: the second is stale
 						detail = "the earlier submission is still pending: " + detail
 					}
-				case na.status == 404: // gone: never silently a new note; the owner decides (resolve --ours sends it as new)
+				case na.status == 404: // gone or no longer visible: never silently a new note; the owner decides
 					if e := conflict(0); e != nil {
 						return res, e
 					}
 					continue
 				default: // not readable now: a new submission would fork the note, so this one waits for the next push
-					res.Refused++
-					line("refused", n, "the note "+strconv.FormatInt(target, 10)+" upstream cannot be read: "+refusal(na))
-					if na.status == 0 || na.status == 401 || na.status == 403 || na.status == 429 {
-						return stop(refusal(na))
+					if r, done, e := fail(na, "the note "+tid+" upstream cannot be read"); done {
+						return r, e
 					}
 					continue
 				}
+			case readable && sub.State == "rejected": // definitely no note came of it
+				detail = "the earlier submission was rejected upstream" + upReason(sub.Reason) + ": sent again"
 			case readable && sub.State == "pending":
-				detail = "the earlier submission is still pending: a new one is sent"
-			case readable:
-				detail = "the earlier submission was not accepted: sent again"
-			default:
-				detail = "the earlier submission cannot be read there: sent as a new submission"
+				// a second submission of a note that is not yet there could be accepted too: two notes. So it waits for the review.
+				res.Refused++
+				line("refused", n, "the earlier submission "+subID+" is still pending upstream: nothing more is sent for this note until it is reviewed there")
+				continue
+			case a.status == 404: // deleted, or no longer visible: was it accepted? only the hub knows
+				if e := conflict(-1); e != nil {
+					return res, e
+				}
+				continue
+			default: // unreadable, or a state that decides nothing: a new note could be a second copy of an accepted one
+				what := "the earlier submission " + subID + " cannot be read"
+				if readable {
+					what = "the state of the earlier submission " + subID + " is not known (" + upText(sub.State, 40) + ")"
+				}
+				if r, done, e := fail(a, what); done {
+					return r, e
+				}
+				continue
 			}
 		}
 		if dry {
@@ -696,6 +741,14 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		}
 		payload, _ := json.Marshal(fields)
 		a := p.call("POST", base, map[string]string{"Idempotency-Key": p.submissionKey(l.Project, n, supersedes)}, payload)
+		if a.status == 409 && replaces > 0 && !p.more { // stale at submit: the note changed there since we read its revision: once more with the current one
+			var er struct{ Error struct{ Revision int64 } }
+			if json.Unmarshal(a.data, &er) == nil && er.Error.Revision > 0 && er.Error.Revision != revision {
+				fields["revision"] = er.Error.Revision
+				payload, _ = json.Marshal(fields)
+				a = p.call("POST", base, map[string]string{"Idempotency-Key": p.submissionKey(l.Project, n, supersedes)}, payload)
+			}
+		}
 		if a.status != 201 {
 			if p.more { // a write limit that cannot be waited out in this call: not a refusal of the note
 				return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))

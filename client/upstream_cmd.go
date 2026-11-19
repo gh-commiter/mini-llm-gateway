@@ -72,9 +72,10 @@ type upLink struct {
 		Why  string
 	}
 	Conflicts []struct {
-		Note      int64
-		RemoteRev int64
-		Gone      bool
+		Note       int64
+		RemoteRev  int64
+		Gone       bool
+		Submission bool
 	}
 }
 
@@ -623,6 +624,8 @@ func upstreamConflicts(l upLink) string {
 		what := "changed there"
 		if c.Gone {
 			what = "deleted there"
+		} else if c.Submission {
+			what = "the earlier submission can no longer be read there: check on the hub whether it became a note"
 		}
 		parts = append(parts, fmt.Sprintf("note %d (%s)", c.Note, what))
 	}

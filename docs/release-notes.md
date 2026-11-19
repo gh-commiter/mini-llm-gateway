@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Upstream push: a note the upstream's reviewers rejected as a replacement (for instance because the note changed there meanwhile) is pushed again as a replacement of the same upstream note, no longer as a new one: accepting it used to leave a second copy beside the original (#166). If the upstream note is gone, the push stops for that note with a conflict (`status`, `resolve`) instead of creating a new note; a dry run says `would replace note N upstream (revision R)`, and the report shows the reviewers' reject reason.
+- Upstream push: a note the upstream's reviewers rejected as a replacement (for instance because the note changed there meanwhile) is pushed again as a replacement of the same upstream note, no longer as a new one: accepting it used to leave a second copy beside the original (#166). A replacement the upstream refuses as stale at submit is retried once with the current revision. The report shows the reviewers' reject reason.
+- Upstream push, no second copy: the upstream note an accepted submission became is written down as soon as the push learns of it. A note whose earlier submission is still pending, cannot be read, or whose upstream note is deleted or no longer visible is no longer sent as a new note: pending waits for the review, the others show in `status` as a conflict for `gw upstream resolve` (`--ours` then sends a new submission). A refusal to read one note stops only that note. A link that has sent notes refuses to change its destination project.
 
 ## 0.8.7
 
