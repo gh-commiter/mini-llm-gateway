@@ -621,7 +621,7 @@ private let kbAnswers: [(String, Int, String)] = [
     ("GET /teams", 200, #"{"teams":[{"id":4,"name":"web","archived":false,"path":"","segment":1099511627780}]}"#),
     ("GET /kb/submissions", 200, ##"{"submissions":[{"id":5,"title":"<script>alert(1)</script>","scopeName":"Acme","scopeKind":"project","class":"data","entryKind":"finding","authorName":"ana","received":"2026-11-17T10:00:00Z","isReplacement":false,"replaces":0,"reviewHash":"h5","currentRevision":0,"acceptInPanel":true,"acceptReplacementInPanel":false},{"id":6,"title":"**b** [x](https://evil.example)","scopeName":"web","scopeKind":"team","class":"structure","entryKind":"faq","authorName":"a\u202eb","received":"2026-11-17T11:00:00Z","isReplacement":true,"replaces":77,"reviewHash":"h6","currentRevision":4,"acceptInPanel":false,"acceptReplacementInPanel":true}],"next":0}"##),
     ("GET /kb/submissions/5/versions/h5", 200, #"{"id":5,"title":"t5","body":"text five","isReplacement":false}"#),
-    ("GET /kb/submissions/6/versions/h6", 200, #"{"id":6,"title":"t6","body":"new text","isReplacement":true,"replaces":77,"targetState":"ok","currentRevision":4,"currentTitle":"old","currentClass":"data","currentKind":"finding","currentReviewCheck":"ok","currentBody":"old text"}"#),
+    ("GET /kb/submissions/6/versions/h6", 200, #"{"id":6,"title":"t6","body":"new text","isReplacement":true,"replaces":77,"targetState":"ok","currentRevision":4,"currentTitle":"old","currentClass":"data","currentKind":"finding","currentReviewCheck":"ok","currentBody":"old text","linesChange":"212 -> 141","charsChange":"11429 -> 7602"}"#),
     ("GET /kb/notes/77", 200, #"{"id":77,"title":"old","class":"data","updated":"2026-11-01T10:00:00Z","body":"old text"}"#),
     ("GET /kb/notes", 200, #"{"notes":[{"id":9,"title":"n9","class":"private","entryKind":"finding","author":"ana","updated":"2026-11-01T10:00:00Z"}],"next":"c2"}"#),
     ("GET /kb/faq", 200, #"{"entries":[{"id":3,"title":"Q?","answer":"A.","class":"data","updated":"2026-11-01T10:00:00Z"}],"next":""}"#),
@@ -762,7 +762,9 @@ private let kbAnswers: [(String, Int, String)] = [
         #expect(await fake.log == ["GET /kb/submissions/6/versions/h6", "GET /kb/submissions/6/versions/h6"])  // both records read the version-bound detail: the one hash binds both texts
         let text = PanelRow(id: "", values: m.record("queue/submission", parent: replacement).values!)
         let oldText = PanelRow(id: "", values: m.record("queue/replaced", parent: replacement).values!)
-        #expect(sub.columns!.last.map { m.cell($0, text) } == "new text" && old.columns!.last.map { m.cell($0, oldText) } == "old text")
+        #expect(sub.columns!.last.map { m.cell($0, text) } == "new text" && old.columns!.first { $0.field == "currentBody" }.map { m.cell($0, oldText) } == "old text")
+        // the sizes of both texts are two columns of the replaced-note record (the queue row has them too)
+        #expect(old.columns!.suffix(2).map { m.cell($0, oldText) } == ["212 -> 141", "11429 -> 7602"] && old.columns!.suffix(2).map(\.field) == ["linesChange", "charsChange"])
     }
 
     @Test(.enabled(if: haveFixtures)) func aLongTextIsCutWithAMarkerAndMarkupStaysPlain() async throws {

@@ -53,7 +53,7 @@ extension ProjectEnv {
             guard r.status == 200, case .obj(let pg)? = JSONValue.parse(r.data) else { return }
             for v in pg["submissions"]?.array ?? [] {
                 let d = v.dict
-                guard d["state"]?.string == "rejected", !(d["reason"]?.string ?? "").isEmpty, d["title"]?.string == title,
+                guard d["state"]?.string == "rejected", d["title"]?.string == title,
                       let stamp = d["provenance"]?.dict["received"]?.string,
                       let at = ISO8601DateFormatter().date(from: stamp.replacingOccurrences(of: "\\.[0-9]+", with: "", options: .regularExpression)),
                       now.timeIntervalSince(at) < Self.rejectedHintDays * 86400 else { continue }
@@ -62,7 +62,10 @@ extension ProjectEnv {
             after = pg["next"]?.int ?? 0
             if after == 0 { break }
         }
-        if let why = found?["reason"]?.string { say(ProjectText.clean("an earlier submission with this title was rejected: " + why)) }
+        if let f = found {
+            let why = f["reason"]?.string ?? ""
+            say(why.isEmpty ? "an earlier submission with this title was rejected (no reason given)" : ProjectText.clean("an earlier submission with this title was rejected: " + why))
+        }
     }
     static func submissionResult(_ d: JDict) -> String { "submission \(d["id"]?.int ?? 0) \(d["state"]?.string ?? "")" }
 
@@ -224,7 +227,9 @@ extension ProjectEnv {
         let hash = full["reviewHash"]?.string ?? ""
         say(ProjectText.clean("writer \(full["authorName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? String(full["user"]?.int ?? 0))  device \(full["provenance"]?.dict["device"]?.string ?? "")  replaces \(full["replaces"]?.int ?? 0)  revision \(full["revision"]?.int ?? 0)"))
         if !hash.isEmpty { say(ProjectText.clean("version " + hash)) }  // on its own line, to copy whole into kb accept --version
-        if (full["replaces"]?.int ?? 0) != 0 {  // a replacement: the note's current text first, then the new text
+        if full["reviewCheck"]?.string == "long" { say("long text: the app and the remote page do not offer accept for it") }
+        if (full["replaces"]?.int ?? 0) != 0 {  // a replacement: the sizes of both texts, the note's current text, then the new text
+            if let line = sizesLine(full) { say(line) }
             printCurrent(say, full)
             say(ProjectText.oneLine("New text: \(full["class"]?.string ?? "")  \(kindOf(full["entryKind"]?.string ?? ""))  \(full["title"]?.string ?? "")"))
         }
@@ -233,6 +238,15 @@ extension ProjectEnv {
     }
 
     static func kindOf(_ k: String) -> String { k.isEmpty ? "finding" : k }
+
+    /// How much the replacement shortens or lengthens the note, from the sizes the gateway counted; nil when a side is not there (an older
+    /// gateway, a missing note). Twin of Go's sizesLine.
+    static func sizesLine(_ v: JDict) -> String? {
+        guard let cl = v["currentLines"]?.int, let cc = v["currentChars"]?.int, let nl = v["newLines"]?.int, let nc = v["newChars"]?.int else { return nil }
+        var line = "current: \(cl) lines, \(cc) characters -> new: \(nl) lines, \(nc) characters"
+        if nl < cl { line += " (lines shorter: \(cl - nl))" } else if nl > cl { line += " (lines longer: \(nl - cl))" }
+        return line
+    }
 
     /// The note a replacement overwrites, as the gateway's review read shows it. A gateway older than 0.8.8 sends none of it: that is said,
     /// and the accept is refused locally (acceptNeedsCurrent). Twin of Go's printCurrent.
@@ -243,8 +257,9 @@ extension ProjectEnv {
         case "missing": say("Current text: note \(replaces) no longer exists: this submission cannot be accepted")
         default:  // ok, stale
             let rev = v["currentRevision"]?.int ?? 0
-            say(ProjectText.oneLine("Current text: note \(replaces)  revision \(rev)  \(v["currentClass"]?.string ?? "")  \(kindOf(v["currentKind"]?.string ?? ""))  \(v["currentTitle"]?.string ?? "")"))
-            if let n = v["currentHidden"]?.int, n > 0 { say("current text contains hidden characters: \(n) removed from the text shown; correct the note first (minigw note edit), then review again") }
+            let head = v["targetState"]?.string == "ok" ? "Current text (will be replaced)" : "Current text"
+            say(ProjectText.oneLine("\(head): note \(replaces)  revision \(rev)  \(v["currentClass"]?.string ?? "")  \(kindOf(v["currentKind"]?.string ?? ""))  \(v["currentTitle"]?.string ?? "")"))
+            if let n = v["currentHidden"]?.int, n > 0 { say("the current text has \(n) hidden characters (not shown); accepting this replacement removes them from the note") }
             if v["targetState"]?.string == "stale" { say("the note changed since this submission was written (it expected revision \(v["revision"]?.int ?? 0), the note is at \(rev)): it cannot be accepted") }
             if let body = v["currentBody"]?.string { say(ProjectText.reviewText(body)) }
         }
@@ -306,7 +321,11 @@ extension ProjectEnv {
             shown = full
         }
         let r = send(c, "POST", "\(Self.apiProjects)/0/kb/review/\(id)/\(pos[0])", [:], try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]))
-        guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+        guard r.status == 200 else {
+            var err = Self.gatewayError(r.status, r.data, r.retryAfter)
+            if pos[0] == "accept" && r.status == 400 { err = ProjectError(err.message.replacingOccurrences(of: "rejected: ", with: "not accepted: ", options: [], range: err.message.range(of: "rejected: ")), gatewayStatus: err.gatewayStatus) }  // a refused accept is not a rejection
+            throw err
+        }
         say(Self.submissionResult(JSONValue.parse(r.data)?.dict ?? JDict()))
         if pos[0] == "accept" && (shown["replaces"]?.int ?? 0) != 0 {
             var team = ""
