@@ -267,6 +267,9 @@ const S = {
   rvBytes: ["%s of 1024 bytes", "%s od 1024 bajtov"], rvTooLong: ["The reason is longer than 1024 bytes: shorten it.", "Razlog je daljši od 1024 bajtov: skrajšaj ga."],
   rvReplaceNote: ["This submission replaces note %s. Accepting it overwrites that note, and its current text cannot be shown here (the server's kb review does not show it either), so it cannot be accepted on this page: compare it first (read the note with minigw note read %s as a member of the project, or on the server) and accept it there, or reject it here.", "Ta prispevek nadomesti zapisek %s. Sprejem prepiše zapisek, njegovega trenutnega besedila tu ni mogoče prikazati (tudi kb review na strežniku ga ne), zato ga na tej strani ni mogoče sprejeti: najprej ga primerjaj (zapisek preberi z minigw note read %s kot član projekta, ali na strežniku) in ga sprejmi tam, ali pa ga tu zavrni."],
   rvLimited: ["Too many decisions in a short time: continue after %s.", "Preveč odločitev v kratkem času: nadaljuj po %s."],
+  rvLimitedNoTime: ["Too many decisions in a short time: continue in a few minutes.", "Preveč odločitev v kratkem času: nadaljuj čez nekaj minut."],
+  rvDone_accepted: ["Accepted and published (reviewer %s, %s).", "Sprejeto in objavljeno (pregledovalec %s, %s)."], rvDone_rejected: ["Rejected (reviewer %s, %s).", "Zavrnjeno (pregledovalec %s, %s)."],
+  rvAlready_accepted: ["Already accepted by %s at %s: nothing was published again.", "Že sprejeto (%s, %s): ponovno ni bilo nič objavljeno."], rvAlready_rejected: ["Already rejected by %s at %s.", "Že zavrnjeno (%s, %s)."],
   rvAccepted: ["Accepted and published.", "Sprejeto in objavljeno."], rvRejected: ["Rejected.", "Zavrnjeno."],
   rvChanged: ["The submission changed since you read it: review it again.", "Prispevek se je spremenil, odkar si ga prebral: preglej ga znova."],
   roUnavailable: ["The project database is not available.", "Projektna zbirka ni na voljo."],
@@ -1987,81 +1990,112 @@ const pages = {
   async remoteReview() {  // review of pending KB submissions: the exact version read is the one accepted; text only, nothing built from data but textContent
     const box = el("div");
     const drafts = new Map();  // the typed reason per submission: kept when a decision fails or the view changes
+    let ids = [], lastIdx = 0, onEscape = null;  // the list as shown (to put focus on the next row after a decision), and what Escape does in this view
     const bytes = s => new TextEncoder().encode(s).length;
-    const rvErr = e => e.message.startsWith("The project database is not available") ? t("roUnavailable") : e.message === "HTTP 404" ? t("roProxyOld") : e.message.includes("changed since you read it") ? t("rvChanged") : e.message;
+    // every request of this page goes through rv(): one error mapping (rvMsg), one place for the sign-in form (a 401) and the Retry-After of a 429
+    const rv = async (method, path, body) => {
+      const r = await fetch("/minigw/admin/v1" + path, {method, credentials: "omit", redirect: "error", headers: settingsRequestHeaders(), body: body === undefined ? undefined : JSON.stringify(body)});
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401) { remoteExpired(); throw new Error("Sign in again"); }
+      if (!r.ok) { const e = new Error((j.error && j.error.message) || ("HTTP " + r.status)); e.status = r.status; e.retry = Number(r.headers.get("Retry-After")) || 0; throw e; }
+      return {j, date: Date.parse(r.headers.get("Date") || "") || Date.now()};
+    };
+    const clock = ms => new Date(ms).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+    const rvMsg = e => e.status === 429 ? (e.retry ? t("rvLimited", clock(Date.now() + e.retry * 1000)) : t("rvLimitedNoTime"))
+      : e.message.startsWith("The project database is not available") ? t("roUnavailable") : e.message === "HTTP 404" ? t("roProxyOld")
+      : e.message.includes("changed since you read it") ? t("rvChanged") : e.message;  // "HTTP 404" = the proxy's own non-JSON refusal (older Caddyfile)
     const text = (cls, s) => el("div", {class: cls, dir: "ltr", textContent: s});
+    const heading = (tag, s) => el(tag, {textContent: s, tabIndex: -1});  // focus goes here when a view opens
     const checkText = v => v.reviewCheck === "ok" ? t("rvOk") : v.reviewCheck === "hidden" ? t("rvHiddenCheck") : t("rvLongCheck");
     const scopeLabel = v => (v.scopeKind === "team" ? t("rvTeam") : t("rvProject")) + ": " + v.scopeName;
-    const set = (...kids) => box.replaceChildren(...kids.flat().filter(k => k !== null && k !== undefined && k !== false));
+    const set = (focus, ...kids) => { box.replaceChildren(...kids.flat().filter(k => k !== null && k !== undefined && k !== false)); if (focus) focus.focus(); };
+    box.addEventListener("keydown", ev => { if (ev.key === "Escape" && onEscape) { ev.preventDefault(); onEscape(); } });
     const meta = v => el("div", {class: "group ro"}, row(t("rvAuthor"), value(v.authorName)), row(scopeLabel(v)), row(t("rvClass") + " / " + t("rvKind"), value(v.class + " / " + v.entryKind)),
       row(t("rvReceived"), value(new Date(v.received).toLocaleString())), v.isReplacement ? row(t("rvReplaces", v.replaces)) : null);
-    async function showList(msg) {
+    async function showList(msg, focusId) {
+      onEscape = null;
       let r;
-      try { r = await api("GET", "/kb/submissions"); } catch (e) { if (!SESSION) throw e; set(note(rvErr(e))); return; }
+      try { r = (await rv("GET", "/kb/submissions")).j; } catch (e) { if (!SESSION) throw e; const n = heading("div", rvMsg(e)); n.className = "note err"; set(n, n); return; }
+      ids = r.submissions.map(v => v.id);
       const rows = r.submissions.map(v => {
         const x = row(labelSub(v.title, scopeLabel(v)), value([v.class, v.entryKind, v.authorName, checkText(v)].join(" · ")));
         x.classList.add("clickable"); x.tabIndex = 0; x.setAttribute("role", "button");
-        const open = () => showDetail(v.id);
+        const open = () => { lastIdx = ids.indexOf(v.id); showDetail(v.id); };
         x.addEventListener("click", open);
         x.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); } });
         return x;
       });
-      set(msg ? note(msg) : null, rows.length ? el("div", {class: "group ro"}, ...rows) : note(t("rvNone")), r.next ? note(t("rvMore")) : null);
+      const top = heading("div", msg || ""); top.className = "note";
+      // focus: the row just left (Back), else the row now at the same place (after a decision: the next one), else the message
+      const at = ids.indexOf(focusId) >= 0 ? ids.indexOf(focusId) : Math.min(lastIdx, rows.length - 1);
+      set(rows[at] || top, msg ? top : null, rows.length ? el("div", {class: "group ro"}, ...rows) : note(t("rvNone")), r.next ? note(t("rvMore")) : null);
     }
     async function showDetail(id, msg) {
       let v;
-      try { v = await api("GET", "/kb/submissions/" + encodeURIComponent(id)); } catch (e) { if (!SESSION) return; set(note(rvErr(e)), buttons(button(t("rvBack"), () => showList()))); return; }
+      try { v = (await rv("GET", "/kb/submissions/" + encodeURIComponent(id))).j; } catch (e) { if (!SESSION) return; const n = heading("div", rvMsg(e)); n.className = "note err"; onEscape = () => showList(); set(n, n, buttons(button(t("rvBack"), () => showList()))); return; }
+      onEscape = () => showList(undefined, v.id);
       // one line like the Mac panel: pasted line breaks and tabs become spaces; the counter is in bytes (what the server limits)
       const reason = el("input", {type: "text", class: "rv-reason", placeholder: t("rvReason"), value: drafts.get(v.id) || ""});
-      const counter = note(), rejectBtn = button(t("rvReject"), () => confirm(v, false, reason.value));
+      const counter = note(), rejectBtns = [];
+      // the action row sits above the text too (long texts put the bottom one thousands of pixels down); the same handlers and states
+      const bar = () => {
+        const rb = button(t("rvReject"), () => confirm(v, false, reason.value));
+        rejectBtns.push(rb);
+        // no Accept at all unless the core's review read says "ok" and nothing is replaced (hidden, long and replacing ones are handled on the server)
+        return el("div", {class: "rv-buttons"}, button(t("rvBack"), () => onEscape()), v.reviewCheck === "ok" && !v.isReplacement ? button(t("rvAccept"), () => confirm(v, true, "")) : null, rb);
+      };
       const sync = () => {
         reason.value = reason.value.replace(/\p{Cc}/gu, " ");
         drafts.set(v.id, reason.value);
         const n = bytes(reason.value);
         counter.textContent = n > 1024 ? t("rvTooLong") : t("rvBytes", n);
         counter.className = n > 1024 ? "note err" : "note";
-        rejectBtn.disabled = n > 1024;
+        rejectBtns.forEach(b => { b.disabled = n > 1024; });
       };
       reason.addEventListener("input", sync);
-      // no Accept at all unless the core's review read says "ok" (hidden characters are refused by the core, long ones are reviewed on the server)
-      set(msg ? note(msg) : null, text("rv-title", v.title), meta(v), text("rv-text", v.body || ""),
+      const title = text("rv-title", v.title); title.tabIndex = -1;
+      set(title, msg ? note(msg) : null, title, bar(), meta(v), text("rv-text", v.body || ""),
         v.hidden > 0 ? note(t("rvHidden", v.hidden)) : null, v.reviewCheck === "long" ? note(t("rvLong")) : null, v.isReplacement ? note(t("rvReplaceNote", v.replaces, v.replaces)) : null,
-        reason, counter,
-        el("div", {class: "rv-buttons"}, button(t("rvBack"), () => showList()),
-          v.reviewCheck === "ok" && !v.isReplacement ? button(t("rvAccept"), () => confirm(v, true, "")) : null,  // no Accept for a hidden, long or replacing submission
-          rejectBtn));
+        reason, counter, bar());
       sync();
     }
     function confirm(v, accept, why) {
-      const status = note();
-      const go = el("button", {class: "btn primary", textContent: accept ? t("rvPublish", v.scopeName) : t("rvRejectDo")});
-      const cancel = button(t("rvCancel"), () => showDetail(v.id));
-      go.addEventListener("click", async () => {
-        go.disabled = cancel.disabled = true;  // at once: a second click sends nothing; on any error the decision buttons stay disabled (no retry)
+      onEscape = () => showDetail(v.id);
+      const gos = [], cancels = [], statuses = [note(), note()];
+      const bar = () => {
+        const go = el("button", {class: "btn primary", textContent: accept ? t("rvPublish", v.scopeName) : t("rvRejectDo")});
+        const cancel = button(t("rvCancel"), () => showDetail(v.id));
+        go.addEventListener("click", decide); gos.push(go); cancels.push(cancel);
+        return el("div", {class: "rv-buttons"}, go, cancel);
+      };
+      async function decide() {
+        gos.forEach(b => { b.disabled = true; }); cancels.forEach(b => { b.disabled = true; });  // at once: a second click sends nothing; on any error the decision buttons stay disabled (no retry)
         try {
-          // a plain fetch, not api(): the 429 needs its Retry-After header
-          const r = await fetch("/minigw/admin/v1/kb/submissions/" + encodeURIComponent(v.id) + (accept ? "/accept" : "/reject"), {method: "POST", credentials: "omit", redirect: "error",
-            headers: settingsRequestHeaders(), body: JSON.stringify(accept ? {reviewHash: v.reviewHash} : {reason: why})});
-          const j = await r.json().catch(() => ({}));
-          if (r.status === 401) { remoteExpired(); return; }
-          if (!r.ok) {
-            const err = new Error((j.error && j.error.message) || ("HTTP " + r.status));
-            err.status = r.status; err.retry = Number(r.headers.get("Retry-After")) || 0;
-            throw err;
-          }
+          const sent = Date.now();
+          const {date} = await rv("POST", "/kb/submissions/" + encodeURIComponent(v.id) + (accept ? "/accept" : "/reject"), accept ? {reviewHash: v.reviewHash} : {reason: why});
           drafts.delete(v.id);
-          await showList(t(accept ? "rvAccepted" : "rvRejected"));
+          // a 200 does not say whether this click decided it or another session already had (a repeat is a no-op 200): read the record and show it
+          let msg = t(accept ? "rvAccepted" : "rvRejected");
+          try {
+            const rec = (await rv("GET", "/kb/submissions/" + encodeURIComponent(v.id))).j, pv = rec.provenance || {}, at = Date.parse(pv.reviewed || "");
+            if ((rec.state === "accepted" || rec.state === "rejected") && at) {
+              const early = at < Math.min(date, sent) - 10000;  // reviewed well before this request: someone else decided it
+              msg = t((early ? "rvAlready_" : "rvDone_") + rec.state, pv.reviewer || "?", new Date(at).toLocaleString());
+            }
+          } catch (e) { if (!SESSION) return; }
+          await showList(msg);
         } catch (e) {
           if (!SESSION) return;
           if (e.message.includes("changed since you read it")) { showDetail(v.id, t("rvChanged")); return; }  // a fresh read, then decide again
-          // the confirmation view and the typed reason stay; the decision button stays disabled (no retry), Cancel goes back to the detail
-          status.textContent = e.status === 429 && e.retry ? t("rvLimited", new Date(Date.now() + e.retry * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})) : rvErr(e);
-          status.className = "note err"; cancel.disabled = false;
+          // the confirmation view and the typed reason stay; the decision buttons stay disabled (no retry), Cancel goes back to the detail
+          statuses.forEach(n => { n.textContent = rvMsg(e); n.className = "note err"; });
+          cancels.forEach(b => { b.disabled = false; });
         }
-      });
-      set(el("h3", {textContent: accept ? t("rvConfirmAccept", v.scopeName) : t("rvConfirmReject")}), text("rv-title", v.title), meta(v),
+      }
+      const head = heading("h3", accept ? t("rvConfirmAccept", v.scopeName) : t("rvConfirmReject"));
+      set(head, head, bar(), statuses[0], text("rv-title", v.title), meta(v),
         accept ? note(t("rvVersion", v.reviewHash.slice(0, 8))) : null, !accept && why ? note(t("rvReasonIs") + ": " + why) : null,
-        text("rv-text", v.body || ""), el("div", {class: "rv-buttons"}, go, cancel), status);
+        text("rv-text", v.body || ""), bar(), statuses[1]);
     }
     await showList();
     return [el("h2", {textContent: t("remoteReview")}), note(t("rvNote")), box];
