@@ -78,6 +78,14 @@ The script checks the download against the signed `SHA256SUMS` (on Linux it need
 
 Run the same line again to update the client.
 
+### Updating when the plugin is old
+
+`minigw serve install` installs the version of the minigw that runs it; it never looks for a newer release. If the session
+start offers a newer release but `/minigw:gw update` answers that the installed version is the same as this minigw, the
+plugin is old. Either update the plugin (`claude plugin marketplace update mini-gateway`, then
+`claude plugin update minigw@mini-gateway`, then a new session) and run `/minigw:gw update` again, or (Windows) install the
+MSI of the new release.
+
 With Homebrew (tap as above; also installs Claude Code if missing):
 
 ```sh

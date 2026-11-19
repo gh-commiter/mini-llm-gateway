@@ -312,9 +312,9 @@ func TestServeInstallWithMSI(t *testing.T) {
 	}
 	// Vrstica 9: ista različica → nič; novejša nameščena → ne nazaj (brez prenosa in msiexec).
 	calls, got = nil, nil
-	for v, want := range map[string]string{version: "already up to date", "99.0.0": "is newer than this minigw"} {
+	for v, want := range map[string]string{version: "is the same version as this minigw (" + version + ")", "99.0.0": "is newer than this minigw"} {
 		installedVersion = func(string) string { return v }
-		if msg, err := installWindows(os.Args[0], cfg); err != nil || !strings.Contains(msg, want) || len(calls) != 0 || len(got) != 0 {
+		if msg, err := installWindows(os.Args[0], cfg); err != nil || !strings.Contains(msg, want) || (v == version && !strings.Contains(msg, "/minigw:gw update")) || len(calls) != 0 || len(got) != 0 {
 			t.Fatalf("%s: %v %q %v %v", v, err, msg, calls, got)
 		}
 	}
