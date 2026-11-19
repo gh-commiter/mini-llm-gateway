@@ -722,3 +722,26 @@ private final class Captured: @unchecked Sendable {
         #expect(ProjectEnv.historyTime(t, TimeZone(secondsFromGMT: 5 * 3600 + 1800)!) == "2026-11-17 14:42 +05:30")
     }
 }
+
+extension NoteHistoryHints {
+    /// The real command path: `note restore` meets the history route first on an older gateway, and must still name the command that was
+    /// run; `note history` names itself (twin of Go's TestOlderGatewayNamesTheRunCommandForNoteHistory).
+    @Test func olderGatewayNamesTheRunCommandForNoteHistory() {
+        let cases: [([String], String)] = [
+            (["restore", "7", "--revision", "2", "--current", "4", "--team", "garden"], "this gateway is 0.8.6; note restore needs 0.8.7 or newer"),
+            (["history", "7", "--revision", "2", "--team", "garden"], "this gateway is 0.8.6; note history needs 0.8.7 or newer"),
+            (["history", "7", "--team", "garden"], "this gateway is 0.8.6; note history needs 0.8.7 or newer")]
+        for (args, want) in cases {
+            let send = ProjectEnv.olderRouteHint { _, _, p, _, _ in
+                switch p {
+                case "/health/ready": return ProjectReply(status: 200, data: Data(#"{"version":"0.8.6"}"#.utf8))
+                case "/minigw/v1/teams/garden": return ProjectReply(status: 200, data: Data(#"{"name":"garden","segment":1099511627777}"#.utf8))
+                case "/minigw/v1/projects/1099511627777/notes/7": return ProjectReply(status: 200, data: Data(#"{"id":7,"revision":4,"class":"data","title":"t"}"#.utf8))
+                default: return ProjectReply(status: 404, data: Data(#"{"error":{"message":"not found"}}"#.utf8))
+                }
+            }
+            let env = ProjectEnv(connect: { (ProjectConn(url: "", token: ""), "") }, state: "", cwd: "", stdin: { Data() }, out: { _ in }, err: { _ in }, agent: false, send: send)
+            do { try env.note(args); Issue.record("\(args): no error") } catch { #expect((error as? ProjectError)?.message.contains(want) == true, "\(args): \(error)") }
+        }
+    }
+}

@@ -77,6 +77,7 @@ private func fixtureJSON(_ name: String) throws -> [String: Any] {
             var opts = AdminOpts()
             opts.json = o["json"] as? Bool ?? false
             opts.revision = (o["revision"] as? NSNumber)?.int64Value ?? 0
+            opts.hasRevision = o["revision"] != nil
             opts.current = (o["current"] as? NSNumber)?.int64Value ?? 0
             opts.hasCurrent = o["current"] != nil
             opts.classes = o["class"] as? String ?? ""

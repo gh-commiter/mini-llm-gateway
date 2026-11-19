@@ -456,11 +456,18 @@ public final class ProjectEnv {
         }
         switch sub {
         case "history", "restore":
-            guard pos.isEmpty, !(sub == "restore" && fl.int64("revision") < 1) else { throw usage }
-            try Self.noteHistoryCommand(sub, "\(base)/\(id)", id: id, revision: fl.int64("revision"), current: fl.int64("current"), hasCurrent: fl.set.contains("current"), cls: cls, asJSON: asJSON,
+            guard pos.isEmpty, !(sub == "restore" && !fl.set.contains("revision")) else { throw usage }
+            try Self.noteHistoryCommand(sub, "\(base)/\(id)", id: id, revision: fl.int64("revision"), hasRevision: fl.set.contains("revision"), current: fl.int64("current"), hasCurrent: fl.set.contains("current"), cls: cls, asJSON: asJSON,
                                         terminal: isTerminal(), out: { out($0) }, answer: readAnswer, zone: zone, request: { method, path, body in
                 let r = request(c, method, path, [:], body)
-                guard r.status == 200 else { throw Self.scopeHint(gwError(r), scoped: runConn != nil || !team.isEmpty) }
+                guard r.status == 200 else {
+                    var err = Self.scopeHint(gwError(r), scoped: runConn != nil || !team.isEmpty)
+                    // the restore flow meets the history route first: the older-gateway sentence names the command that was run
+                    if sub == "restore" && err.message.contains("; note history needs 0.8.7") {
+                        err = ProjectError(err.message.replacingOccurrences(of: "; note history needs", with: "; note restore needs"), gatewayStatus: err.gatewayStatus)
+                    }
+                    throw err
+                }
                 return r.data
             })
         case "list":

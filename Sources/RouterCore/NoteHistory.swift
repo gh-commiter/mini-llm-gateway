@@ -30,14 +30,14 @@ extension ProjectEnv {
     static let forbiddenRoleText = "not allowed: your role in this project does not permit it (a grant alone only lets you read; linking needs a direct role)"
 
     /// `request` sends one call and returns the answer's body, or throws the gateway's error as it should be printed.
-    static func noteHistoryCommand(_ sub: String, _ path: String, id: Int64, revision: Int64, current: Int64, hasCurrent: Bool, cls: String, asJSON: Bool,
+    static func noteHistoryCommand(_ sub: String, _ path: String, id: Int64, revision: Int64, hasRevision: Bool, current: Int64, hasCurrent: Bool, cls: String, asJSON: Bool,
                                    terminal: Bool, out: (String) -> Void, answer: () -> String?, zone: TimeZone,
                                    request: (String, String, Data?) throws -> Data) throws {
         func say(_ s: String) { out(ProjectText.clean(s) + "\n") }
         func json(_ d: Data) { say(ProjectText.jsonText(ProjectText.trim(String(decoding: d, as: UTF8.self)))) }
-        if revision < 0 || sub == "restore" && revision == 0 { throw ProjectError("revision must be positive") }
+        if hasRevision && revision < 1 || sub == "restore" && !hasRevision { throw ProjectError("--revision must be positive") }
         if hasCurrent && current < 1 { throw ProjectError("--current must be positive") }
-        if sub == "history" && revision == 0 {
+        if sub == "history" && !hasRevision {
             let data = try request("GET", path + "/history", nil)
             if asJSON { json(data); return }
             let h = JSONValue.parse(data)?.dict ?? JDict()

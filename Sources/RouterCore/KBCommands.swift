@@ -313,7 +313,7 @@ extension AdminCommands {
         let r = call("GET", "/status", nil)
         guard r.status == 200, let d = JSONValue.parse(r.data)?.dict, let v = d["Version"]?.string ?? d["version"]?.string,
               !v.isEmpty, v.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }), ProjectEnv.versionLess(v, "0.8.7") else { return nil }
-        return "this gateway is \(v); \(path.hasSuffix("/restore") ? "note restore" : "note history") needs 0.8.7 or newer: update the gateway (/minigw:gw update there)"
+        return "this gateway is \(v); \(path.hasSuffix("/restore") || noteCommand == "note restore" ? "note restore" : "note history") needs 0.8.7 or newer: update the gateway (/minigw:gw update there)"
     }
 
     func kb(_ pos: [String], reason: String, team: String = "", version: String = "", opts: AdminOpts = AdminOpts()) throws {
@@ -321,8 +321,9 @@ extension AdminCommands {
         guard pos.count >= 2 else { throw usage }
         if pos.count == 3 && (pos[1] == "history" || pos[1] == "restore") {  // the owner's saved versions of any note: no project or team selection
             guard team.isEmpty && opts.project.isEmpty, let id = Int64(pos[2]), id > 0 else { throw usage }
+            noteCommand = "note " + pos[1]
             do {
-                try ProjectEnv.noteHistoryCommand(pos[1], "/kb/notes/" + pos[2], id: id, revision: opts.revision, current: opts.current, hasCurrent: opts.hasCurrent, cls: opts.classes, asJSON: opts.json,
+                try ProjectEnv.noteHistoryCommand(pos[1], "/kb/notes/" + pos[2], id: id, revision: opts.revision, hasRevision: opts.hasRevision, current: opts.current, hasCurrent: opts.hasCurrent, cls: opts.classes, asJSON: opts.json,
                                                   terminal: isTerminal(), out: { out($0) }, answer: readAnswer, zone: zone, request: { method, path, body in
                     let r = call(method, path, body)
                     guard r.status != 0 else { throw fail("lost the connection to Mini Gateway") }
