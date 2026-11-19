@@ -2,8 +2,25 @@
 
 ## Unreleased
 
+## 0.8.5
+
+A beta toward a team gateway in Docker Compose: the owner can review what the team hands in to the knowledge base from a browser. This is the first action in the remote settings, besides providers and devices, that changes something.
+
 ### New
-- The remote settings page has a "Review" page: it lists the pending knowledge-base submissions of all projects and teams, shows one as the owner's review read gives it, and accepts or rejects exactly the version read (a confirmation view first; hidden characters cannot be accepted). A submission that replaces a note and a long one are reviewed on the server (accept is refused remotely; reject works), the reason is one line of up to 1024 bytes, Decisions the core refuses (the text changed since the read, an unknown id) count toward the 30 per 10 minutes; malformed ones do not and have their own limit of 300 per 10 minutes (one `limited` audit row per window). When two reviewers accept the same version within about ten seconds, the second sees "Accepted and published" too (nothing is published twice). A rejected author sees the reason only with `minigw kb submissions --json` today. The listener and the proxy allow four more routes (`GET kb/submissions`, `GET kb/submissions/{id}`, `POST kb/submissions/{id}/accept|reject`), the body keys are checked exactly, at most 30 decisions are taken in 10 minutes, and the remote audit log names the submission. After updating, copy the release's `deploy/docker/Caddyfile` into your deployment folder and run `docker compose restart admin-proxy`.
+- The remote settings page has a "Review" page. It lists the knowledge-base submissions that wait for review in all projects and teams, shows one exactly as the owner's review read gives it, and accepts or rejects exactly the version that was read, after a confirmation view. The published note is the text that was shown: if the submission changed in between, the accept is refused and the new text is shown.
+- What cannot be accepted from the browser, by the page and by the gateway itself: a submission with hidden characters (it can only be rejected), a long one (over 20,000 characters) and one that replaces an existing note. Those are reviewed on the server; reject works everywhere. The reason for a reject is one line of at most 1024 bytes.
+- Limits: at most 30 decisions in 10 minutes for the whole listener; the page then says from when you can continue. Decisions that the knowledge base itself refuses (the text changed since the read, an unknown number) count toward the 30. Requests with a malformed body do not; they have their own limit of 300 in 10 minutes.
+- The gateway's remote listener and the proxy allow four more routes (`GET kb/submissions`, `GET kb/submissions/{id}`, `POST kb/submissions/{id}/accept`, `POST …/reject`). The request body may hold exactly one key, spelled exactly. Every decision, also a refused one, is written to the remote audit log with the submission's number and the address it came from.
+- After updating, copy the release's `deploy/docker/Caddyfile` into your deployment folder and run `docker compose restart admin-proxy`; until then the page shows a hint instead of the list.
+
+### Known problems
+- A submission that replaces a note: accepting it (on the server) overwrites the note's text, and the old text is not kept anywhere. Neither the page nor `minigw gw kb review` shows the old text next to the new one: read the note first (`minigw note read <id>`). This is why the browser does not offer accept for replacements.
+- The author of a rejected submission sees the reason only with `minigw kb submissions --json`; the plain list says "rejected".
+- When two reviewers accept the same version within about ten seconds, the second also sees "Accepted and published"; nothing is published twice. After a longer gap the page says that it was already accepted.
+- The list shows the first 100 waiting submissions, oldest first, without paging.
+- The times on the Slovenian page (24-hour) and the text shown when the gateway gives no waiting time were changed after the last check in a browser and are covered by tests of the page's source only.
+- The page was tried in one browser engine (Chromium).
+- The known problems of 0.8.4 to 0.8.0 still apply.
 
 ## 0.8.4
 
