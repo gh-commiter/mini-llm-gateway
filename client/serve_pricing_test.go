@@ -124,10 +124,12 @@ func TestCatalogPricesWithKnownWindows(t *testing.T) {
 	s.gateways.mu.Lock()
 	done := s.gateways.m[g.Name].loading
 	s.gateways.mu.Unlock()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("refresh not bounded")
+	if done != nil { // nil: the refresh had already ended (a refused connection fails at once); a nil channel would block forever
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("refresh not bounded")
+		}
 	}
 	if s.gatewayModels(g, false)[0].price.ID != frozen.ID {
 		t.Fatal("failure replaced snapshot")
