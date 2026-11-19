@@ -180,7 +180,7 @@ func TestNoteHistoryMigration25(t *testing.T) {
 			}
 			s := openT(t, dir)
 			defer s.Close()
-			want := 27
+			want := 26
 			if fail {
 				want = 25
 			}
@@ -206,7 +206,7 @@ func TestNoteHistoryMigration25(t *testing.T) {
 				migrations = base
 				retried := openT(t, dir)
 				defer retried.Close()
-				if v, err := schemaVersion(ctx, retried.DB()); err != nil || v != 27 || historyCount(t, retried, n.ID) != 0 {
+				if v, err := schemaVersion(ctx, retried.DB()); err != nil || v != 26 || historyCount(t, retried, n.ID) != 0 {
 					t.Fatal("migration retry", v, err)
 				}
 			}

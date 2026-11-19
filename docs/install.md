@@ -269,7 +269,7 @@ the MSI, or `rm ~/.local/bin/minigw`.
 
 ## Going back
 
-The project database now uses schema 27 (26 up to beta 0.8.7). Going back to 0.8.5 or older requires the snapshot or full database backup from before the update. An older program refuses the newer database. Restore the pre-update copy while the gateway is stopped; changes made after that copy, including note history, are not in it. Markdown exports and bundles do not carry note history.
+The project database now uses schema 26. Going back to 0.8.5 or older requires the snapshot or full database backup from before the update. An older program refuses the newer database. Restore the pre-update copy while the gateway is stopped; changes made after that copy, including note history, are not in it. Markdown exports and bundles do not carry note history.
 
 After restoring an older database on a gateway that pushes notes to an upstream (`gw upstream`), check `gw upstream status` and do not push before comparing with the upstream: what was sent after the backup is not known to the restored database, so a push would create those notes there again. Unlink and link again only after you have compared.
 

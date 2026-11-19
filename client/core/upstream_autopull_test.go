@@ -512,7 +512,7 @@ func TestMigration24To25KeepsReadLinksDue(t *testing.T) {
 	if snaps, _ := filepath.Glob(filepath.Join(dir, "core-24-*.db")); len(snaps) != 1 {
 		t.Fatal("no snapshot of schema 24", snaps)
 	}
-	if v, _ := schemaVersion(ctx, s.DB()); v != 27 || len(migrations) != 27 {
+	if v, _ := schemaVersion(ctx, s.DB()); v != 26 || len(migrations) != 26 {
 		t.Fatal("schema", v)
 	}
 	var every, fails, next int64

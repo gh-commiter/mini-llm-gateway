@@ -197,15 +197,10 @@ ALTER TABLE upstream_sent ADD COLUMN sent_content TEXT NOT NULL DEFAULT ''; -- p
 	return err
 }
 
-// migrate27: a note whose first submission is still pending upstream waits for its review (waiting=1): not a failure of the link, and the link
-// keeps looking at the earlier submission at a quiet pace until it is decided.
-// waitingSQL counts the notes of a link that wait for a review upstream (a note deleted here waits for nothing).
-const waitingSQL = `SELECT count(*) FROM upstream_sent s JOIN notes n ON n.id=s.note_id AND n.project_id=s.project_id WHERE s.project_id=? AND s.upstream=? AND s.waiting=1`
-
-func migrate27(tx *sql.Tx) error {
-	_, err := tx.Exec(`ALTER TABLE upstream_sent ADD COLUMN waiting INTEGER NOT NULL DEFAULT 0 CHECK(waiting IN(0,1))`)
-	return err
-}
+// waitingSQL counts the notes of a link that wait for a review upstream (a note deleted here waits for nothing). The wait is derived state kept
+// in a column that has no other meaning for a submission receipt: remote_rev is the upstream note's revision only for a note written directly
+// (publish mode, remote_sub 0); a receipt with a submission and remote_rev -1 waits for the review of that submission. No schema change.
+const waitingSQL = `SELECT count(*) FROM upstream_sent s JOIN notes n ON n.id=s.note_id AND n.project_id=s.project_id WHERE s.project_id=? AND s.upstream=? AND s.remote_sub>0 AND s.remote_rev=-1 AND s.conflict=0`
 
 func (s *Store) ListUpstreams(ctx context.Context) (out []Upstream, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
@@ -848,9 +843,10 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 			}
 			var sent UpstreamSent
 			var at int64
-			switch e := tx.QueryRow(`SELECT hash,revision,remote_sub,remote_note,sent,remote_rev,conflict,conflict_rev,waiting FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID).Scan(&sent.Hash, &sent.Revision, &sent.RemoteSub, &sent.RemoteNote, &at, &sent.RemoteRev, &sent.Conflict, &sent.ConflictRev, &sent.Waiting); e {
+			switch e := tx.QueryRow(`SELECT hash,revision,remote_sub,remote_note,sent,remote_rev,conflict,conflict_rev FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID).Scan(&sent.Hash, &sent.Revision, &sent.RemoteSub, &sent.RemoteNote, &at, &sent.RemoteRev, &sent.Conflict, &sent.ConflictRev); e {
 			case nil:
 				sent.Sent = fromMs(at)
+				sent.Waiting = sent.RemoteSub > 0 && sent.RemoteRev == -1
 				u.Sent = &sent
 			case sql.ErrNoRows:
 			default:
@@ -1005,7 +1001,7 @@ func (s *Store) upstreamRecordSent(ctx context.Context, project int64, upstream 
 	return s.write(ctx, func(tx *sql.Tx) error {
 		// a submission leaves no baseline of the upstream note (remote_rev 0) and no conflict: a later publish update compares again
 		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=0, sent_content='', conflict=0, conflict_rev=0, waiting=0`,
+ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=0, sent_content='', conflict=0, conflict_rev=0`,
 			project, upstream, n.ID, n.Hash, n.Revision, sub, remoteNote, ms(s.now()))
 		return e
 	})
@@ -1016,7 +1012,7 @@ ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revis
 func (s *Store) upstreamRecordPublished(ctx context.Context, project int64, upstream string, n UpstreamNote, remoteNote, remoteRev int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev,sent_content) VALUES(?,?,?,?,?,0,?,?,?,?)
-ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=0, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=excluded.remote_rev, sent_content=excluded.sent_content, conflict=0, conflict_rev=0, waiting=0`,
+ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=0, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=excluded.remote_rev, sent_content=excluded.sent_content, conflict=0, conflict_rev=0`,
 			project, upstream, n.ID, n.Hash, n.Revision, remoteNote, ms(s.now()), remoteRev, sentContentHash(n.Class, n.EntryKind, n.Title, n.Body))
 		return e
 	})
@@ -1025,7 +1021,7 @@ ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revis
 // upstreamRecordConflict: the upstream note changed (or is gone: rev 0) since our last write; it is not overwritten.
 func (s *Store) upstreamRecordConflict(ctx context.Context, project int64, upstream string, note, rev int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`UPDATE upstream_sent SET conflict=1, conflict_rev=?, waiting=0 WHERE project_id=? AND upstream=? AND note_id=?`, rev, project, upstream, note)
+		_, e := tx.Exec(`UPDATE upstream_sent SET conflict=1, conflict_rev=? WHERE project_id=? AND upstream=? AND note_id=?`, rev, project, upstream, note)
 		return e
 	})
 }
@@ -1142,12 +1138,12 @@ func (s *Store) upstreamRecordRemoteNote(ctx context.Context, project int64, ups
 
 // upstreamRecordWaiting: the earlier submission of this note is still pending upstream; waiting=0 (a decision, a reverted text) ends it.
 func (s *Store) upstreamRecordWaiting(ctx context.Context, project int64, upstream string, note int64, waiting bool) error {
-	w := 0
+	set, from := int64(0), int64(-1) // waiting: remote_rev -1 (see waitingSQL); not waiting: 0
 	if waiting {
-		w = 1
+		set, from = -1, 0
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`UPDATE upstream_sent SET waiting=? WHERE project_id=? AND upstream=? AND note_id=? AND waiting<>?`, w, project, upstream, note, w)
+		_, e := tx.Exec(`UPDATE upstream_sent SET remote_rev=? WHERE project_id=? AND upstream=? AND note_id=? AND remote_sub>0 AND remote_rev=?`, set, project, upstream, note, from)
 		return e
 	})
 }
