@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Docker Compose backup: the old backup recipe in `docs/docker.md` built the volume name from the folder name, while the Compose project is named `minigw` by default. In a folder such as `deploy/docker` it could archive an empty, newly created volume. Backups made with that recipe must be checked: `tar -tf minigw-config.tar | grep serve.json` has to print the file; if it prints nothing, that backup is empty.
+- New `deploy/docker/backup.sh` backs up and restores both volumes of a team gateway (needs Python 3 on the server): volume names come from Compose, a wrong project, other containers using the volumes, unsafe archives and non-empty restore targets are refused. See "Backup" in `docs/docker.md`.
+- Container logs of the Compose deployment are bounded (`json-file`, 10 MB, 3 files).
+
 ## 0.8.0
 
 Mini Gateway 0.8.0 is a stable release. It collects the 39 beta versions 0.7.1 to 0.7.39, which stable users never saw, and is the first stable release since 0.7.0. It is the same product code as beta 0.7.39; only tests and the version number differ. The sections below describe what 0.8.0 is, not how each beta got there. Read **Changed**, **Upgrading from 0.7.0** and **Known problems** before you update a gateway that other people use.

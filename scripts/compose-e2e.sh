@@ -19,12 +19,14 @@ STUB=minigw-docker2-stub-$$
 SKIPPED=()
 BACKUP_PROJECTS=()
 BACKUP_DIRS=()
+BACKUP_CONTAINERS=()
 fail() { print -u2 "FAIL $*"; exit 1 }
 ok() { print "ok   $*" }
 cleanup() {
   docker stop $FIX $STUB >/dev/null 2>&1
+  for c in $BACKUP_CONTAINERS; do docker rm -f $c >/dev/null 2>&1; done
   for p in $BACKUP_PROJECTS; do
-    COMPOSE_PROJECT_NAME=$p MINIGW_VERSION=local docker compose -f $ROOT/deploy/docker/compose.yaml down -v >/dev/null 2>&1
+    COMPOSE_PROJECT_NAME=$p MINIGW_VERSION=local docker compose -f $ROOT/deploy/docker/compose.yaml down -v --remove-orphans >/dev/null 2>&1
   done
   for dir in $BACKUP_DIRS; do rm -rf -- "$dir"; done # only directories made by mktemp below
   (cd $ROOT/deploy/docker; for p in arm64 amd64 arm64-rel amd64-rel; do COMPOSE_PROJECT_NAME=minigw-docker2-$p MINIGW_VERSION=$V docker compose stop >/dev/null 2>&1; done)
@@ -48,6 +50,7 @@ backup_contract() {
   [[ -d $work ]] || fail 'mktemp backup workspace'
   BACKUP_DIRS+=($work)
   local prefix=minigw-backup-e2e-$(date +%s)-$RANDOM name target before after out archive identity
+  BACKUP_CONTAINERS+=($prefix-writer)
   BACKUP_PROJECTS+=($prefix-default $prefix-override $prefix-restored-default $prefix-restored-override)
   # Exercise the unset-variable default without touching an operator's minigw project.
   # The production default itself is checked separately; only its literal is namespaced here.
@@ -59,7 +62,9 @@ backup_contract() {
   (
     cd $work || exit 1
     export MINIGW_VERSION=local MINIGW_BIND=127.0.0.1 MINIGW_PORT=$PORT
-    unset COMPOSE_FILE
+    # two services (the gateway and a sidecar) so that --stop can be checked to start only what ran before
+    print -rl -- 'services:' '  sidecar:' '    image: python:3-alpine' '    command: ["sleep","3600"]' '    init: true' > $work/compose.extra.yaml
+    export COMPOSE_FILE=compose.yaml:compose.extra.yaml
     safe_project() {
       docker compose config --format json | python3 -c 'import json,sys; c=json.load(sys.stdin); p=sys.argv[1]; assert c["name"]==p; assert all(c["volumes"][k]["name"]==p+"_"+k for k in ("config","scratch"))' "$1"
     }
@@ -67,16 +72,31 @@ backup_contract() {
       docker compose exec -T minigw cat /var/lib/minigw/config/serve.json |
         python3 -c 'import json,sys,hashlib; c=json.load(sys.stdin); print(hashlib.sha256(json.dumps([c["key"],c["instance"]]).encode()).hexdigest())'
     }
-    mkdir "$work/helper-failure"
+    modes() { # volume: mode, uid:gid and name of every entry, sorted (stat does not follow links)
+      docker run --rm --network none --mount type=volume,src=$1,dst=/v,readonly python:3-alpine sh -c 'cd /v && find . -exec stat -c "%a %u:%g %n" {} + | sort'
+    }
+    running_services() { docker compose ps --status running --services | sort | tr '\n' ' ' }
+    mkdir "$work/helper-failure" "$work/find-failure"
     export BACKUP_REAL_DOCKER=$(command -v docker)
     print -rl -- '#!/bin/sh' 'case "$*" in *"tar -C /v -cf - ."*) exit 71;; esac' 'exec "$BACKUP_REAL_DOCKER" "$@"' > "$work/helper-failure/docker"
-    chmod 700 "$work/helper-failure/docker"
-    refuse() {
+    print -rl -- '#!/bin/sh' 'case "$*" in *"find /v -mindepth"*) exit 71;; esac' 'exec "$BACKUP_REAL_DOCKER" "$@"' > "$work/find-failure/docker"
+    chmod 700 "$work/helper-failure/docker" "$work/find-failure/docker"
+    refuse() { # message, then the backup.sh arguments: must fail with the message and create no volume
       local message=$1; shift
       before=$(docker volume ls -q | sort)
       out=$(sh ./backup.sh "$@" 2>&1); local rc=$?
       after=$(docker volume ls -q | sort)
-      [[ $rc != 0 && $out == *$message* && $before == $after ]] || fail "backup refusal: $message"
+      [[ $rc != 0 && $out == *$message* && $before == $after ]] || { print -u2 -r -- "$out"; fail "backup refusal: $message"; }
+    }
+    badarchive() { # kind: a copy of $archive whose scratch.tar carries one more entry; checksums recomputed so only the content check can refuse it
+      local d=$work/bad-$1-$name
+      mkdir -m 700 $d && cp $archive/config.tar $archive/scratch.tar $archive/manifest.txt $d/ || return 1
+      python3 -c '
+import tarfile,sys
+t=tarfile.open(sys.argv[1],"a"); k=sys.argv[2]
+n,ty,l={"abs":("/abs-file",tarfile.REGTYPE,""),"dotdot":("a/../b",tarfile.REGTYPE,""),"fifo":("fifo0",tarfile.FIFOTYPE,""),"dev":("dev0",tarfile.CHRTYPE,""),"hard":("hard0",tarfile.LNKTYPE,"work/deep/marker.txt"),"symesc":("esc0",tarfile.SYMTYPE,"../../etc/x"),"symabs":("abs0",tarfile.SYMTYPE,"/etc/passwd")}[k]
+i=tarfile.TarInfo(n); i.type=ty; i.linkname=l; t.addfile(i); t.close()' $d/scratch.tar $1 || return 1
+      (cd $d && shasum -a 256 config.tar scratch.tar > SHA256SUMS)
     }
     for name in default override; do
       if [[ $name == default ]]; then unset COMPOSE_PROJECT_NAME; else export COMPOSE_PROJECT_NAME=$prefix-override; fi
@@ -90,6 +110,9 @@ backup_contract() {
       identity=$(identity_hash) || fail 'source identity'
       refuse 'service is running' ./running
       docker compose stop >/dev/null || fail 'stop for note fixture'
+      # distinct scratch content (a file and a relative link, as scratch copies of work trees have) and a note in the core database
+      docker run --rm --label com.docker.compose.project=$target --network none --user 10001:10001 --mount type=volume,src=${target}_scratch,dst=/s python:3-alpine \
+        sh -c "mkdir -p /s/work/deep && printf 'scratch-$name-bytes' > /s/work/deep/marker.txt && ln -s deep/marker.txt /s/work/rel-link" || fail 'scratch fixture'
       docker run --rm --label com.docker.compose.project=$target --network none --user 10001:10001 --mount type=volume,src=${target}_config,dst=/c python:3-alpine python -c "
 import sqlite3
 c=sqlite3.connect('/c/core/core.db')
@@ -98,21 +121,62 @@ c.execute(\"INSERT INTO note_revisions(note_id,revision,provenance) SELECT id,re
 c.commit()" || fail 'note fixture'
       docker compose start >/dev/null || fail 'start note fixture'
       healthy $target || fail 'note fixture health'
+      # another writer (not of this project) mounts the volume: refused, named, and the services come back
+      docker run -d --name $prefix-writer --mount type=volume,src=${target}_scratch,dst=/s python:3-alpine sleep 600 >/dev/null || fail 'foreign writer'
+      refuse "container $prefix-writer is running and mounts volume" --stop ./writer
+      docker rm -f $prefix-writer >/dev/null || fail 'remove foreign writer'
+      healthy $target || fail 'foreign writer refusal did not restart service'
+      [[ $(running_services) == 'minigw sidecar ' ]] || fail 'foreign writer refusal: services not restored'
       PATH=$work/helper-failure:$PATH refuse 'archive failed' --stop ./failed
       healthy $target || fail 'archive failure did not restart service'
+      [[ $(running_services) == 'minigw sidecar ' ]] || fail 'archive failure: services not restored'
+      # --stop starts again only what ran before: the sidecar was stopped on purpose and stays stopped
+      docker compose stop sidecar >/dev/null || fail 'stop sidecar'
       sh ./backup.sh --stop ./good-$name || fail 'backup --stop'
       healthy $target || fail 'backup did not restart service'
+      [[ $(running_services) == 'minigw ' ]] || fail "--stop restarted more than what ran before: $(running_services)"
       archive=($work/good-$name/minigw-backup-*(N)); archive=$archive[1]
       python3 -c 'import pathlib,stat,sys; p=pathlib.Path(sys.argv[1]); assert stat.S_IMODE(p.stat().st_mode)==0o700; assert all(stat.S_IMODE((p/n).stat().st_mode)==0o600 for n in ("config.tar","scratch.tar","SHA256SUMS","manifest.txt"))' $archive || fail 'backup permissions'
-      docker compose stop >/dev/null || fail 'stop backup source'
+      # a project with no container at all (here: after `down`, which keeps the volumes) is refused unless --offline
+      docker compose down >/dev/null || fail 'down backup source'
+      refuse 'has no containers' ./nocontainer
+      sh ./backup.sh --offline ./offline-$name | grep -q '^Backup: ' || fail 'backup --offline'
+      modes ${target}_config > $work/modes-config-$name || fail 'modes of source config'
+      modes ${target}_scratch > $work/modes-scratch-$name || fail 'modes of source scratch'
+      # restore into the source itself: another writer, a failing listing and a non-empty target are each refused
+      docker run -d --name $prefix-writer --mount type=volume,src=${target}_config,dst=/c python:3-alpine sleep 600 >/dev/null || fail 'foreign writer for restore'
+      refuse "container $prefix-writer is running and mounts volume" --restore $archive
+      docker rm -f $prefix-writer >/dev/null || fail 'remove foreign writer'
+      PATH=$work/find-failure:$PATH refuse 'cannot inspect volume' --restore $archive
       refuse 'target volume is not empty' --restore $archive
       export COMPOSE_PROJECT_NAME=$prefix-restored-$name
       safe_project $COMPOSE_PROJECT_NAME || fail 'unsafe restore project or volumes'
+      # a backup of another project is restored only with --into-project naming the current one
+      refuse 'made in project' --restore $archive
+      refuse '--into-project must name the current project' --restore --into-project $prefix-elsewhere $archive
       cp $archive/config.tar $work/config.saved
       printf x >> $archive/config.tar
-      refuse 'checksum verification failed' --restore $archive
+      refuse 'checksum verification failed' --restore --into-project $COMPOSE_PROJECT_NAME $archive
       mv $work/config.saved $archive/config.tar
-      sh ./backup.sh --restore $archive || fail 'restore separate project'
+      # decoy names (configXtar) listed in SHA256SUMS with valid hashes, while the real archives are unchecked
+      mkdir -m 700 $work/decoy-$name && cp $archive/config.tar $archive/scratch.tar $archive/manifest.txt $work/decoy-$name/ || fail 'decoy'
+      printf x >> $work/decoy-$name/config.tar
+      cp $archive/config.tar $work/decoy-$name/configXtar; cp $archive/scratch.tar $work/decoy-$name/scratchXtar
+      (cd $work/decoy-$name && shasum -a 256 configXtar scratchXtar > SHA256SUMS)
+      refuse 'checksum verification failed' --restore --into-project $COMPOSE_PROJECT_NAME $work/decoy-$name
+      # archive content, checked before anything is written
+      for k in abs dotdot; do badarchive $k || fail "bad archive $k"; refuse 'absolute path or .. component' --restore --into-project $COMPOSE_PROJECT_NAME $work/bad-$k-$name; done
+      for k in fifo dev hard; do badarchive $k || fail "bad archive $k"; refuse 'hard link, device, FIFO or other special entry' --restore --into-project $COMPOSE_PROJECT_NAME $work/bad-$k-$name; done
+      for k in symesc symabs; do badarchive $k || fail "bad archive $k"; refuse 'symbolic link that leaves the volume' --restore --into-project $COMPOSE_PROJECT_NAME $work/bad-$k-$name; done
+      sh ./backup.sh --restore --into-project $COMPOSE_PROJECT_NAME $archive || fail 'restore separate project'
+      # before the gateway starts: same modes and owners, all 10001:10001, secrets keep 600/700, scratch bytes and link intact
+      modes ${COMPOSE_PROJECT_NAME}_config > $work/restored-config-$name || fail 'modes of restored config'
+      modes ${COMPOSE_PROJECT_NAME}_scratch > $work/restored-scratch-$name || fail 'modes of restored scratch'
+      cmp -s $work/modes-config-$name $work/restored-config-$name || { diff $work/modes-config-$name $work/restored-config-$name >&2; fail 'config modes changed by the restore'; }
+      cmp -s $work/modes-scratch-$name $work/restored-scratch-$name || { diff $work/modes-scratch-$name $work/restored-scratch-$name >&2; fail 'scratch modes changed by the restore'; }
+      grep -q '^600 ' $work/restored-config-$name && grep -q '^700 ' $work/restored-config-$name || fail 'no 600/700 entries in the restored config volume'
+      [[ -z $(grep -hv ' 10001:10001 ' $work/restored-config-$name $work/restored-scratch-$name) ]] || fail 'restored entries not owned by 10001:10001'
+      [[ $(docker run --rm --network none --mount type=volume,src=${COMPOSE_PROJECT_NAME}_scratch,dst=/s,readonly python:3-alpine sh -c 'cat /s/work/deep/marker.txt; echo; readlink /s/work/rel-link') == "scratch-$name-bytes"$'\n'deep/marker.txt ]] || fail 'restored scratch content'
       docker compose up -d --no-build || fail 'restored up'
       healthy $COMPOSE_PROJECT_NAME || fail 'restored health'
       [[ $(identity_hash) == $identity ]] || fail 'restored identity'

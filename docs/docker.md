@@ -116,8 +116,8 @@ reports `unhealthy`. Use a release whose notes mention Docker Compose.
 
 ## Backup
 
-Install Python 3 on the host (the script reads Compose JSON). Run next to `compose.yaml`, with the
-same `.env` and `COMPOSE_FILE` as the deployment:
+`backup.sh` needs Python 3 on the server (it reads `docker compose config --format json`). Run it next to
+`compose.yaml`:
 
 ```sh
 sh backup.sh --stop ./backups
@@ -127,10 +127,26 @@ sh backup.sh --restore ./backups/minigw-backup-<UTC time>
 docker compose up -d
 ```
 
-The script resolves real volume names from Compose, refuses missing backup sources, and checks
-checksums before restoring. `--stop` starts services again even if archiving fails. A failed backup
-is incomplete and must not be used. Both volumes belong together. The config volume holds provider
-keys in protected files: a backup is a secret. Keep it private and copy it to protected storage.
+**Use the same Compose environment as the deployment.** The script cannot know how the deployment was started,
+only what Compose resolves in the current folder and environment. Run it from the same folder with the same `.env`,
+or set the same `COMPOSE_PROJECT_NAME` and `COMPOSE_FILE`, including the admin overlay
+(`COMPOSE_FILE=compose.yaml:compose.admin.yaml`) if you use it. Its first line is
+`Project: <name>; volumes: <config>, <scratch>`: check that these are the volumes you mean. A wrong project
+usually has the volumes of another deployment or none, and never a container of this deployment, so a backup
+refuses when the project has no container at all. If you took the deployment down on purpose
+(`docker compose down` keeps the volumes but removes the containers), add `--offline`. A restore refuses a
+backup made in another project unless you give `--into-project <current project>`: that is how you restore
+into a separate project, for example as a recovery drill.
+
+The script resolves real volume names from Compose, refuses missing backup sources, and checks checksums before
+restoring. With `--stop` it always runs `docker compose stop`, then refuses if any container (of any project)
+still mounts either volume, and afterwards starts only the services that were running before, also when archiving
+fails. Restore also refuses while any container mounts either volume. Before it writes anything, restore lists
+both archives and refuses absolute names, `..` components, hard links, devices and FIFOs, and symbolic links
+whose target leaves the volume (scratch can hold ordinary relative links). A backup directory is as trusted as the
+volume itself: this is a guard against a damaged or mixed-up archive, not a signature. A failed backup is
+incomplete and must not be used. Both volumes belong together. The config volume holds provider keys in protected
+files: a backup is a secret. Keep it private and copy it to protected storage.
 `docker compose down` keeps volumes; `down -v` deletes all their data.
 If a restore fails during extraction, its targets may be partially populated. Keep the backup,
 inspect the failure and remove only those failed restore volumes before retrying into empty targets.
