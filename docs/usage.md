@@ -1721,9 +1721,9 @@ does not appear; the report says `the earlier submission was rejected upstream (
 before doing anything else with that note. Two submissions of a note that is not yet there could both be accepted as notes, so a note whose first
 submission is still **pending** upstream waits for its review: the report says `wait ... still pending`, `status` says "N notes wait for a review
 upstream; they are checked at the next push". Waiting is not a failure (no back-off, no failure count, the other notes go on) and does not make the
-link due by itself: there is no timer for it. A waiting note is looked at again (one request per note) whenever a push happens anyway: a manual push,
-an automatic push caused by a local change, or the periodic pull of a link that is read and set to automatic. A link with none of these keeps the wait
-until the next push. Then the latest text goes: accepted, as a replacement of the new note (also when nothing was edited here since the wait began);
+link due by itself: there is no timer for it, and the periodic pull does not push. A waiting note is looked at again (one request per note) only when a
+push happens anyway: a manual push, or an automatic push caused by a local change. After the upstream has reviewed a waiting note, the newest local text goes
+with the next push; an automatic link pushes when something changes locally, and `gw upstream push` sends it sooner. The latest text goes as follows: accepted, as a replacement of the new note (also when nothing was edited here since the wait began);
 rejected, as a new submission if the text differs from the rejected one. A note whose text is back to what was sent stops waiting, and a note outside
 the link's classes is not counted. This holds also for a note settled with `resolve --ours` whose earlier submission turns out to be pending. A
 replacement of an accepted note may be sent while an earlier replacement is pending (only one of them can be accepted: the other is stale). Where the
@@ -1733,10 +1733,11 @@ upstream note (at its current revision) when it is visible again, follows an ear
 rejected: send again), and only when the identity is still unknown makes a **new** note (a second copy if the old note still exists out of your sight); the
 report line says which of these happened. `--theirs` leaves the local text unsent (it does not fetch the upstream's text).
 If one note cannot be read for another reason (the bound user may not read it, a server error, an answer that makes no sense), that note is `refused`
-with its number and the run goes on with the others; a refusal to write one note (this identity may not write it or its class) refuses that note too
-once the run has had a note accepted or when it names an existing note. An answer that says the gateway itself is not allowed (401, lost role, archived project), a first
-refusal of a new note before anything was accepted, a hub that says the identity may not hand in at all (`no_submit_access`: the report says the upstream
-identity may no longer hand in to this project: ask its admin), three refusals of a write in a row with nothing accepted in the run (an older hub), or a rate limit ends the run. Nothing is
+with its number and the run goes on with the others; a refusal to write one note (this identity may not write it or its class) refuses that note too. A run ends early only on an explicit link-wide answer: 401, a lost role or an archived project, a missing project, a hub that says the identity may not
+hand in at all (`no_submit_access`: "the upstream identity may no longer hand in to this project: ask its admin"), a rate limit that cannot be waited out, or no
+answer. A 403 forbidden is always about one note (this identity may not write it or its class): that note is refused and the run goes on. Consequence: an
+older upstream (before this release) sends a reader's refusal as a plain 403 forbidden, so an identity downgraded to reader gets one refusal per changed note
+per run, counted as refused, with the normal back-off of a run without progress; an upstream of this release sends `no_submit_access` and the run stops at once. Nothing is
 sent for a note that cannot be traced, so a note is never knowingly sent as a new one when it may already exist there. A link that has sent notes cannot
 be pointed at another project on the upstream (unlink it and link it again). After restoring an older database (see Going back in `docs/install.md`) check
 `gw upstream status` and do not push before comparing with the upstream: what was sent after that backup is not known to the restored database, and a push would create it

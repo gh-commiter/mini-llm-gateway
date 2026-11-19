@@ -305,11 +305,6 @@ func (s *Store) AutoPull(ctx context.Context, tr UpstreamTransport, sleep func(t
 			return run, err
 		}
 		run.Ran, run.Pull = true, &res
-		if l.Auto && l.Waiting > 0 { // notes wait for a review upstream: this periodic cycle is when it is looked at again (no timer of its own)
-			if pr, e := s.pushLink(ctx, tr, l.UpstreamLink, l.Label, 0, false, sleep, true); e == nil {
-				run.Push = &pr
-			}
-		}
 		break
 	}
 	next()

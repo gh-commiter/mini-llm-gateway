@@ -332,12 +332,12 @@ func TestUpstreamRefusalStopsAndIsRemembered(t *testing.T) {
 	f, _ := upFx(t)
 	fk := f.pid["fakture"]
 	f.ok(f.LinkUpstream(ctx, fk, 0, "hub", "shop", "", false))
-	// the bound user there is only a reader: the upstream refuses; the text is the upstream's, as one clean line
+	// the bound user lost its role there (the hub's explicit link-wide answer, no_project_access; a plain forbidden concerns one note only); the text is the upstream's, as one clean line
 	up := &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
 		if c.method == "GET" {
 			return 200, `{"id":7,"slug":"shop"}`, 0
 		}
-		return 403, `{"error":{"type":"forbidden","message":"not allowed:\u001b[31m your role\n in this project  does not permit it"}}`, 0
+		return 403, `{"error":{"type":"no_project_access","message":"not allowed:\u001b[31m your role\n in this project  does not permit it"}}`, 0
 	}}
 	res, e := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
 	f.ok(e)

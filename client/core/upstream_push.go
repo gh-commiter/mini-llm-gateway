@@ -279,23 +279,14 @@ func refusal(a upAnswer) string {
 	return "the upstream says: " + m
 }
 
-// maxDeniedWrites: this many refusals (403) of a write in a row, with no note accepted in the run, end it: the upstream identity has lost the
-// right to hand in (a hub that says so, no_submit_access, ends the run at the first).
-const maxDeniedWrites = 3
-
-const deniedWhy = "the upstream refused several writes in a row (HTTP 403) and accepted none: the upstream identity may no longer hand in to this project there: ask the upstream's admin"
-
-// linkWide: a refusal that ends the whole run (nothing else would be accepted either), as against one that concerns only the note it came
-// for (this identity may not write it, it is not visible): 401, a rate limit, no usable answer, a lost role or an archived project always stop;
-// a 403 that does not say which, too. A "forbidden" (this identity may not write this note or class) and a 404 concern the note when it names
-// an existing note, or when this run has already had a note accepted (the identity can write there): else it is taken as the identity's (a
-// reader's refusal would be the same for every note) and the run ends.
+// linkWide: a refusal that ends the whole run, and only an explicit one: 401, a rate limit, no usable answer, a lost role (no_project_access), a
+// role that allows no hand-in (no_submit_access), an archived project, and a 404 that is not about a note we named (the project itself is gone).
+// Everything else (a 403 forbidden, any other 403, a 5xx, a 404 about a note) concerns the one note it came for: that note is refused and the
+// run goes on. An old upstream sends a reader's refusal as a plain 403 forbidden: then every changed note is refused, once per run.
 func linkWide(a upAnswer, noteScoped bool) bool {
 	switch {
 	case a.status == 0 || a.status == 401 || a.status == 429 || a.errType == "pending_limit" || a.errType == "no_project_access" || a.errType == "no_submit_access" || a.errType == "archived":
 		return true
-	case a.status == 403:
-		return a.errType != "forbidden" || !noteScoped
 	case a.status == 404:
 		return !noteScoped
 	}
@@ -480,14 +471,6 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		return UpstreamPush{}, err
 	}
 	p := &pusher{s: s, tr: tr, up: l.Upstream, sleep: sleep, ctx: ctx, secret: secret, slice: true}
-	denied := 0 // 403 refusals of a write in a row with nothing accepted in this run: an identity that lost the right to hand in (an old upstream does not say so)
-	tooManyDenied := func(a upAnswer) bool {
-		if a.status != 403 {
-			return false
-		}
-		denied++
-		return denied >= maxDeniedWrites && res.Created+res.Replaced == 0
-	}
 	limitMore := func() (UpstreamPush, error) { // the run stops without a fault: a write limit to wait out, or the slice of this call is used
 		if p.expired {
 			return more("time budget of this call used: push again", 0)
@@ -586,10 +569,6 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 					r, e = stop(refusal(a))
 					return r, true, e
 				}
-				if tooManyDenied(a) {
-					r, e = stop(deniedWhy)
-					return r, true, e
-				}
 				return res, false, nil
 			}
 			text := n.Body + p.trailer(l.Project, n, 0)
@@ -660,7 +639,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			a := p.call("POST", notesBase, map[string]string{"Idempotency-Key": p.submissionKey(l.Project, n, 0)}, payload)
 			var out struct{ ID, Revision int64 }
 			if a.status != 201 || json.Unmarshal(a.data, &out) != nil || out.ID <= 0 || out.Revision <= 0 {
-				if r, done, e := refused(a, res.Created+res.Replaced > 0); done {
+				if r, done, e := refused(a, false); done {
 					return r, e
 				}
 				continue
@@ -829,11 +808,8 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			}
 			res.Refused++
 			line("refused", n, refusal(a))
-			if linkWide(a, replaces > 0 || res.Created+res.Replaced > 0) {
+			if linkWide(a, replaces > 0) {
 				return stop(refusal(a)) // nothing else would be accepted either
-			}
-			if tooManyDenied(a) {
-				return stop(deniedWhy)
 			}
 			continue
 		}
