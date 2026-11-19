@@ -7,16 +7,16 @@
 A beta that stops a silent loss in the knowledge base: until now an edit, an accepted replacement or a re-import overwrote a note's text and the old text was kept nowhere. **This beta upgrades the gateway's database (schema 25 to 26). Going back to 0.8.5 or older afterwards needs the snapshot or backup made before the update** (see "Going back" in `docs/install.md`; in Docker Compose run `backup.sh --stop` before changing the version).
 
 ### New
-- The gateway keeps the previous version of a note before an edit, an accepted replacement or a re-import overwrites it: title, text, class, kind and where it came from. It keeps the newest 100 versions per note, at most 8 MiB per note and 500 MiB per project; older versions go first. An overwrite is never refused because of these limits. A burst of edits by one person within ten minutes keeps one version: the one from before the burst.
+- The gateway keeps the previous version of a note before an edit, an accepted replacement or a re-import overwrites it: title, text, class, kind and where it came from. Every overwrite saves the previous version: at most 100 versions per note, 8 MiB per note and 500 MiB per project. When a note has more than 100 saved versions, versions from the middle of a quick series of edits by one person (each less than ten minutes after the one before) go first, then the oldest: a storm of rewrites keeps the version from before it and the newest ones. An overwrite is never refused because of these limits.
 - Nothing shows or restores these versions yet: the commands `minigw note history` and `minigw note restore` come in the next beta. From this beta on, the text is no longer lost.
 - `minigw kb submissions` (both clients) prints the reason under a rejected submission (`    reason: <text>`), so the author learns why it was rejected; `--json` is unchanged. After `minigw kb submit`, a line says so when a submission with the same title in the same project was rejected in the last 30 days. The plugin's notes skill tells a session to read the reason before handing in again, and not to hand in the same text unchanged.
 
 ### Known problems
 - Text that was removed from a note, also something pasted by mistake, and the text of a note that was later made private, stays in the note's saved versions until it leaves the 100 or the note is deleted. That removes it from the database; backups made before still hold it. There is no command yet to remove one saved version.
-- Many people editing one note in turns can push its oldest saved version out of the 100. Within a project, the oldest saved versions of any note go first when the project's 500 MiB are reached. The limits count the stored text, not the size of the database file.
+- Many people editing one note in turns, or a long series of edits each ten minutes or more apart, can push its oldest saved version out of the 100. Within a project, the oldest saved versions of any note go first when the project's 500 MiB are reached. The limits count the stored text, not the size of the database file.
 - Export, bundles and what a gateway sends upstream carry the current text only; a database backup carries the saved versions.
 - The remote "Review" page and `minigw gw kb review` still do not show the old text next to a replacement (the browser still does not offer accept for one). That comes after the history commands.
-- The hint after `kb submit` compares titles, not texts.
+- The hint after `kb submit` compares titles, not texts. It can be missing for an author with more than 1,000 submissions in one project, and for a submission that waited more than 30 days for its review.
 - The known problems of 0.8.5 to 0.8.0 still apply.
 
 ## 0.8.5
