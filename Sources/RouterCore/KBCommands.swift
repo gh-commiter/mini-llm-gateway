@@ -244,7 +244,7 @@ extension ProjectEnv {
     static func sizesLine(_ v: JDict) -> String? {
         guard let cl = v["currentLines"]?.int, let cc = v["currentChars"]?.int, let nl = v["newLines"]?.int, let nc = v["newChars"]?.int else { return nil }
         var line = "current: \(cl) lines, \(cc) characters -> new: \(nl) lines, \(nc) characters"
-        if nl < cl { line += " (lines shorter: \(cl - nl))" } else if nl > cl { line += " (lines longer: \(nl - cl))" }
+        if nl < cl { line += " (lines shorter: \(cl - nl), \(((cl - nl) * 100 + cl / 2) / cl) %)" } else if nl > cl { line += " (lines longer: \(nl - cl))" }
         return line
     }
 
