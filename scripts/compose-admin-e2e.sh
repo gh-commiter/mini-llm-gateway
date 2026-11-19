@@ -75,6 +75,10 @@ audit() { $DC exec -T minigw cat /var/lib/minigw/config/remote-settings.audit.js
 
 # one user, team and project for the read-only list checks below (the CLI changes them; the remote page only reads)
 $DC exec -T minigw minigw gw user add e2euser >/dev/null 2>&1 && $DC exec -T minigw minigw gw team add e2eteam >/dev/null 2>&1 && $DC exec -T minigw minigw gw project add e2eproj "E2E Project" >/dev/null 2>&1 || setup_fail "gw user/team/project add"
+# a team member, a team assignment and a direct member, for the access views
+$DC exec -T minigw minigw gw user add e2eother >/dev/null 2>&1 && $DC exec -T minigw minigw gw team member add e2eteam e2eother >/dev/null 2>&1 \
+  && $DC exec -T minigw minigw gw team project add e2eteam e2eproj >/dev/null 2>&1 && $DC exec -T minigw minigw gw team access set e2eteam e2eproj e2eother reader >/dev/null 2>&1 \
+  && $DC exec -T minigw minigw gw member e2eproj set e2euser developer >/dev/null 2>&1 || setup_fail "gw team member / access / member set"
 BINDDEV=$(printf 'A%.0s' {1..43})   # a well-formed device id (32 zero bytes); the binding is what is listed
 $DC exec -T minigw minigw gw bind $BINDDEV e2euser >/dev/null 2>&1 || setup_fail "gw bind"
 GWTOKEN=$(docker run --rm --user 10001:10001 -v ${proj}_config:/c:ro $PY python -c "import json;print(json.load(open('/c/serve.json'))['token'])" 2>/dev/null)
@@ -112,7 +116,26 @@ for pair in users:e2euser bindings:$BINDDEV teams:e2eteam projects:e2eproj; do
   c=$(req -I $SH $URL/minigw/admin/v1/$p)
   [[ $c == 404 ]] && pass "HEAD $p -> 404 at the proxy" || bad "HEAD $p answered $c"
 done
-for p in projects/1/members projects/1/grants grants; do
+c=$(req $SH $URL/minigw/admin/v1/teams); TID=$(sed -n 's/.*"id":\([0-9]*\),"memberCount":[0-9]*,"name":"e2eteam".*/\1/p' $W/body)
+c=$(req $SH $URL/minigw/admin/v1/projects); PID=$(sed -n 's/.*"id":\([0-9]*\),"memberCount":[0-9]*,"name":"E2E Project".*/\1/p' $W/body)
+[[ $TID == <-> && $PID == <-> ]] && pass "found the team ($TID) and the project ($PID) in the remote lists" || setup_fail "team/project id ($TID/$PID)"
+# who has access to a project and who is in a team: three read-only GETs with one numeric id
+for pair in teams/${TID}:e2eother teams/${TID}/assignments:e2eother projects/${PID}/members:e2euser projects/${PID}/members:e2eother; do
+  p=${pair%%:*}; want=${pair#*:}
+  c=$(req $SH $URL/minigw/admin/v1/$p)
+  [[ $c == 200 ]] && grep -qF -- "$want" $W/body && pass "logged in: GET $p -> 200 with $want" || bad "GET $p answered $c"
+  c=$(req $URL/minigw/admin/v1/$p)
+  [[ $c == 401 ]] && pass "GET $p without a session -> 401" || bad "GET $p without a session answered $c"
+  for m in POST PUT PATCH DELETE; do
+    c=$(req -X $m $H $SH -d '{}' $URL/minigw/admin/v1/$p)
+    [[ $c == 404 ]] && pass "$m $p -> 404 at the proxy" || bad "$m $p answered $c"
+  done
+  c=$(req -I $SH $URL/minigw/admin/v1/$p)
+  [[ $c == 404 ]] && pass "HEAD $p -> 404 at the proxy" || bad "HEAD $p answered $c"
+done
+c=$(req $SH $URL/minigw/admin/v1/projects/$PID/members)
+grep -q '"origins"' $W/body && grep -qF -- '"directRole":"developer"' $W/body && grep -qF -- 'e2eteam (reader)' $W/body && pass "the project members say why: direct role and the team" || bad "project members origins: $(cat $W/body)"
+for p in projects/$PID/grants grants projects/$PID/depends teams/$TID/members teams/$TID/projects teams/abc projects/${PID}a/members teams/+$TID teams/1234567890123456789 projects/1234567890123456789/members projects/$PID/members/$TID projects/$PID/members/ teams/$TID/assignments/1 projects/$PID projects/members; do
   c=$(req $SH $URL/minigw/admin/v1/$p)
   [[ $c == 404 ]] && pass "GET $p -> 404 at the proxy" || bad "GET $p answered $c"
 done

@@ -273,7 +273,7 @@ func TestRemoteSettingsPathPolicy(t *testing.T) {
 				}
 			}
 		}
-		for _, path := range []string{"/" + name + "/", "//" + name, "/" + name + "/1", "/" + name + "?x=1", "/" + name[:1] + "%" + "65" + name[1:], "/" + name + "%2F1", "/%2e%2e/" + name, "/" + name + "\\1"} {
+		for _, path := range []string{"/" + name + "/", "//" + name, "/" + name + "?x=1", "/" + name[:1] + "%" + "65" + name[1:], "/" + name + "%2F1", "/%2e%2e/" + name, "/" + name + "\\1"} {
 			for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"} {
 				if w := f.run(f.request(method, adminPrefix+path, `{}`)); w.Code != 404 && w.Code != 403 {
 					t.Fatalf("%s %s: %d", method, path, w.Code)
@@ -281,8 +281,32 @@ func TestRemoteSettingsPathPolicy(t *testing.T) {
 			}
 		}
 	}
-	for _, path := range []string{"/teams/1", "/teams/1/assignments", "/projects/1/members", "/projects/1/depends", "/grants", "/audit", "/kb", "/panels", "/upstreams", "/export"} {
+	for _, path := range []string{"/users/1", "/bindings/1", "/projects/1", "/projects/1/depends", "/grants", "/audit", "/kb", "/panels", "/upstreams", "/export"} {
 		for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"} {
+			if w := f.run(f.request(method, adminPrefix+path, `{}`)); w.Code != 404 && w.Code != 403 {
+				t.Fatalf("%s %s: %d", method, path, w.Code)
+			}
+		}
+	}
+	// The three id routes: GET only, exactly one numeric id (1-18 digits), the same in the Caddyfile.
+	for _, path := range []string{"/teams/1", "/teams/0", "/teams/123456789012345678", "/teams/1/assignments", "/projects/1/members", "/projects/123456789012345678/members"} {
+		if !remoteAdminAllowed("GET", adminPrefix+path) {
+			t.Fatal("GET refused", path)
+		}
+		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"} {
+			if remoteAdminAllowed(method, adminPrefix+path) {
+				t.Fatal(method, "allowed", path)
+			}
+			if w := f.run(f.request(method, adminPrefix+path, `{}`)); w.Code != 404 && w.Code != 403 && w.Code != 405 {
+				t.Fatalf("%s %s: %d", method, path, w.Code)
+			}
+		}
+	}
+	for _, path := range []string{"/teams/1234567890123456789", "/teams/1a", "/teams/-1", "/teams/+1", "/teams/%31", "/teams/1/", "/teams/1/members", "/teams/1/members/2", "/teams/1/assignments/2", "/teams/1/depends", "/teams/1/projects", "/projects/1", "/projects/1a/members", "/projects/-1/members", "/projects/+1/members", "/projects/%31/members", "/projects/1234567890123456789/members", "/projects/1/members/", "/projects/1/members/2", "/projects/1/grants", "/projects/1/depends", "/projects/1/remotes", "/projects/1/assignments", "/projects/members", "/teams/%201", "/teams/١"} {
+		for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"} {
+			if remoteAdminAllowed(method, adminPrefix+path) {
+				t.Fatal(method, "allowed", path)
+			}
 			if w := f.run(f.request(method, adminPrefix+path, `{}`)); w.Code != 404 && w.Code != 403 {
 				t.Fatalf("%s %s: %d", method, path, w.Code)
 			}
@@ -839,8 +863,18 @@ func TestRemoteReadOnlyListsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cf.s.core.CreateTeam(t0, "team-alpha"); err != nil {
+	team, err := cf.s.core.CreateTeam(t0, "team-alpha")
+	if err != nil {
 		t.Fatal(err)
+	}
+	prj, err := cf.s.core.CreateProject(t0, "remoteprj", "Remote project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []error{cf.s.core.AddTeamMember(t0, team.ID, cf.uid["bor"]), cf.s.core.AddTeamProject(t0, team.ID, prj.ID), cf.s.core.SetTeamAssignment(t0, team.ID, prj.ID, cf.uid["bor"], "reader"), cf.s.core.SetMember(t0, prj.ID, cf.uid["ana"], "developer")} {
+		if e != nil {
+			t.Fatal(e)
+		}
 	}
 	secrets := []string{"gw-token-Zq7xK2", cf.s.cfg.Key, remoteTestPassword, string(password), f.token}
 	for name, key := range map[string]string{"users": "users", "bindings": "bindings", "teams": "teams", "projects": "projects"} {
@@ -872,6 +906,37 @@ func TestRemoteReadOnlyListsEndToEnd(t *testing.T) {
 		if w := f.run(r); w.Code != tc.status {
 			t.Fatal(w.Code)
 		}
+	}
+	// who has access to a project and why, who is in a team and what it assigns: read-only
+	members := adminPrefix + "/projects/" + fmt.Sprint(prj.ID) + "/members"
+	detail := adminPrefix + "/teams/" + fmt.Sprint(team.ID)
+	for path, want := range map[string][]string{
+		members:                 {`"name":"ana"`, `"directRole":"developer"`, `"name":"bor"`, `"fromTeams":"team-alpha (reader)"`, `"kind":"direct"`, `"kind":"team"`},
+		detail:                  {`"name":"team-alpha"`, `"members":[{"name":"bor","user":` + fmt.Sprint(cf.uid["bor"]) + `}]`, `"slug":"remoteprj"`},
+		detail + "/assignments": {`"projectName":"Remote project"`, `"userName":"bor"`, `"role":"reader"`},
+	} {
+		w := f.run(f.request("GET", path, ""))
+		if w.Code != 200 {
+			t.Fatal(path, w.Code, w.Body.String())
+		}
+		for _, v := range append(append([]string{}, secrets...), want...) {
+			if has := strings.Contains(w.Body.String(), v); has == (v == secrets[0] || v == secrets[1] || v == secrets[2] || v == secrets[3] || v == secrets[4]) {
+				t.Fatal(path, "unexpected presence of", v, w.Body.String())
+			}
+		}
+		r := f.request("GET", path, "")
+		r.Header.Del(remoteSessionHeader)
+		if w := f.run(r); w.Code != 401 {
+			t.Fatal(path, "without a session", w.Code)
+		}
+		for _, method := range []string{"POST", "PUT", "DELETE"} {
+			if w := f.run(f.request(method, path, `{}`)); w.Code != 404 && w.Code != 403 {
+				t.Fatal(method, path, w.Code)
+			}
+		}
+	}
+	if w := f.run(f.request("GET", adminPrefix+"/teams/99999", "")); w.Code != 404 {
+		t.Fatal("a deleted team id:", w.Code)
 	}
 	if w := f.run(f.request("GET", adminPrefix+"/bindings", "")); !strings.Contains(w.Body.String(), `"device":"`+devID(cf.dev["ana"])+`","user":`+fmt.Sprint(cf.uid["ana"])) {
 		t.Fatal("the binding is not listed", w.Body.String())
@@ -962,7 +1027,7 @@ func TestRemoteAllowListMatchesCaddyfile(t *testing.T) {
 	}
 	var paths []string
 	for _, n := range names {
-		for _, form := range []string{"", "/1", "/1/models", "/1/history", "/1/members", "/1/assignments", "/1/depends", "/strings", "/login", "/logout", "/history", "/events"} {
+		for _, form := range []string{"", "/1", "/1/models", "/1/history", "/1/members", "/1/assignments", "/1/depends", "/strings", "/login", "/logout", "/history", "/events", "/0", "/0/members", "/0/assignments", "/123456789012345678", "/123456789012345678/members", "/1234567890123456789", "/1234567890123456789/members", "/1a", "/1a/members", "/-1", "/-1/assignments", "/+1", "/+1/members", "/%31", "/%31/members", "/1/", "/1/members/2", "/1/assignments/2", "/1/grants", "/1/projects"} {
 			paths = append(paths, adminPrefix+"/"+n+form)
 		}
 	}
@@ -971,6 +1036,9 @@ func TestRemoteAllowListMatchesCaddyfile(t *testing.T) {
 		for _, path := range paths {
 			caddy := false
 			for _, m := range matchers {
+				if strings.Contains(path, "%") { // @dirty answers 404 to any percent-encoding before the matchers
+					break
+				}
 				for _, mm := range m.methods {
 					caddy = caddy || mm == method && m.re.MatchString(path)
 				}

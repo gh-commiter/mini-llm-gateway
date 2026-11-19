@@ -74,7 +74,7 @@ https://{$MINIGW_ADMIN_NAME}:8443 {
 
 	@get {
 		method GET
-		path_regexp ^/minigw/(settings|admin/v1/(providers|devices|users|bindings|teams|projects)|admin/v1/providers/[^/]+/models|admin/v1/devices/[^/]+/history)$
+		path_regexp ^/minigw/(settings|admin/v1/(providers|devices|users|bindings|teams|projects)|admin/v1/providers/[^/]+/models|admin/v1/(teams/[0-9]{1,18}(/assignments)?|projects/[0-9]{1,18}/members)|admin/v1/devices/[^/]+/history)$
 	}
 	@post {
 		method POST

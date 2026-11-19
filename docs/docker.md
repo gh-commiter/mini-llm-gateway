@@ -4,7 +4,7 @@ A Linux gateway (`minigw serve`) in a container, for providers only: Claude CLI,
 are off and stay off (the default container has no user namespaces, so the agent sandbox does not work; the gateway
 refuses them in the settings, in an imported `serve.json` and when a request runs). Providers (LiteLLM, OpenRouter, xAI,
 any OpenAI-compatible endpoint), devices, projects and notes work as on any other gateway. Remote web settings cover
-providers and devices, plus read-only lists of users, bindings, teams and projects (changes stay with
+providers and devices, plus read-only lists of users, bindings, teams and projects and who is in a team and who has access to a project (changes stay with
 `docker compose exec minigw minigw gw …`), through the optional `compose.admin.yaml` proxy below.
 Administer users, teams, projects, KB review and upstream with `docker compose exec minigw minigw gw …`.
 The image has no `minigw-tui`: `minigw gw settings` does not work in the container.
@@ -273,7 +273,9 @@ recreates the gateway container once, the volumes stay).
 
 The page manages providers and devices and shows users, device-user bindings, teams and projects read-only (menu item
 "Team (read-only)"). Change those with `docker compose exec minigw minigw gw …`; the proxy and the listener allow only
-the four `GET` lists, nothing deeper (no members, assignments or grants). After an update copy the release's
+the four `GET` lists plus three `GET` views with one numeric id (who is in a team, what a team assigns, who has access to
+a project and why), nothing deeper (no grants, dependencies or member changes). Rows of teams and projects open on a
+click or Enter. After an update copy the release's
 `Caddyfile` into your deployment folder and run `docker compose restart admin-proxy`, otherwise those lists answer 404.
 
 **Prerequisites:** a DNS name for the page that your browsers resolve to the Docker host (`settings.example.net`

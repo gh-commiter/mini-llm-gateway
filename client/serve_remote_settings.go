@@ -257,6 +257,19 @@ func remoteProviderPatchRefusal(body []byte) string {
 	return ""
 }
 
+// remoteNumericID: 1 to 18 ASCII digits (no sign, no space), the same as [0-9]{1,18} in the Caddyfile.
+func remoteNumericID(s string) bool {
+	if len(s) < 1 || len(s) > 18 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // Keep core, agents, host actions and loopback link creation outside this listener.
 func remoteAdminAllowed(method, path string) bool {
 	if !strings.HasPrefix(path, adminPrefix+"/") {
@@ -275,6 +288,12 @@ func remoteAdminAllowed(method, path string) bool {
 		case "users", "bindings", "teams", "projects": // read-only lists; changes stay with the CLI
 			return method == "GET"
 		}
+	}
+	if len(seg) == 2 && seg[0] == "teams" { // read-only team detail: one numeric id, GET only
+		return method == "GET" && remoteNumericID(seg[1])
+	}
+	if len(seg) == 3 && method == "GET" && remoteNumericID(seg[1]) && (seg[0] == "teams" && seg[2] == "assignments" || seg[0] == "projects" && seg[2] == "members") {
+		return true // who is in a team, what it assigns, who has access to a project and why: read-only
 	}
 	if len(seg) == 2 {
 		switch seg[0] {

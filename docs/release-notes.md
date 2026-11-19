@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### New
+- The remote "Team (read-only)" page opens a team (its members and what it assigns) and a project (who has access and why: directly or through which team) on a click or Enter. The listener and the proxy allow three more `GET` routes, each with exactly one numeric id (`/teams/{id}`, `/teams/{id}/assignments`, `/projects/{id}/members`). After updating, copy the release's `deploy/docker/Caddyfile` into your deployment folder and run `docker compose restart admin-proxy`; until then the page shows the hint instead of the detail.
+- Narrow screens (settings page, local and remote): below 700 px the navigation sits above the content, so the content gets the full width; on the remote Team page a value drops under its label when the row is narrow.
+
 ## 0.8.3
 
 A beta toward a team gateway in Docker Compose: the owner can look at the team's setup from a browser.

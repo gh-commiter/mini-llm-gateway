@@ -224,9 +224,9 @@ the panels natively. Tried so far only in a headless Chromium browser on one Win
 
 `minigw serve` can opt in to a separate HTTPS settings listener. It is disabled by default and is not a web page in
 the Mac app. The loopback settings link and CLI proof keep their existing authentication. The remote page has a password
-form, its own session storage and a Sign out button; this version manages providers, models and devices, and lists users, bindings, teams and projects read-only (`GET` only,
+form, its own session storage and a Sign out button; this version manages providers, models and devices, and lists users, bindings, teams and projects read-only, with the members of a team, its assignments and the members of a project with their origins (`GET` only, one numeric id of 1-18 digits;
 no changes).
-Host service installation, file dialogs, agents, core panels, project/member routes other than those four lists, sync and inference are unavailable
+Host service installation, file dialogs, agents, core panels, project/member routes other than those lists and views, sync and inference are unavailable
 on this listener. Gateway tokens, local settings sessions, device credentials and agent headers cannot authenticate here.
 
 Set a password locally with `minigw gw settings password` (hidden terminal input, or stdin); it also works while the

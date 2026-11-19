@@ -51,7 +51,12 @@ h3 { font-size: 13px; margin: 18px 4px 6px; display: flex; align-items: center; 
 .row + .row { border-top: 1px solid var(--line); }
 .row .label { flex: 1; min-width: 0; }
 .row .sub { color: var(--muted); font-size: 12px; }
-.ro .label, .ro .value { overflow-wrap: anywhere; white-space: normal; }  /* remote Team page: a long id wraps at phone width */
+.ro .label, .ro .value { overflow-wrap: break-word; white-space: normal; }  /* remote Team page: labels wrap at word boundaries, ids anywhere */
+.ro .id { overflow-wrap: anywhere; }
+.ro-item + .ro-item { border-top: 1px solid var(--line); }
+.ro-detail { border-top: 1px solid var(--line); }
+.ro-detail .row + .row { border-top: 1px solid var(--line); }
+.ro .row[aria-expanded]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .value { color: var(--muted); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
@@ -111,6 +116,20 @@ a.btn { text-decoration: none; text-align: center; display: inline-block; }
 :root { --chart0:#176ac6; --chart1:#a33cac; --chart2:#16806a; --chart3:#ad6100; --chart4:#d14659; --chart5:#6654c0; --chart6:#777780; }
 @media(prefers-color-scheme:dark) { :root { --chart0:#68adff; --chart1:#dd8ee6; --chart2:#54cbb0; --chart3:#efb459; --chart4:#ff8898; --chart5:#b0a2ff; --chart6:#ababba; } }
 @media(max-width:900px) { .usage-grid { grid-template-columns:1fr; } }
+/* #161 narrow screens: the navigation goes above the content and the content gets the full width; the wide layout is untouched (this block applies only below 700px) */
+@media(max-width:700px) {
+  body { flex-direction: column; }
+  nav { width: 100%; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; padding: 8px 10px; }
+  nav .title, nav input.search { flex: 0 0 100%; margin: 0 4px 4px; }
+  nav .item { width: auto; }
+  nav .spacer { display: none; }
+  nav .footer { margin: 0 0 0 auto; }
+  nav .menu { bottom: auto; top: 28px; left: auto; right: 0; }
+  main { padding: 12px 12px 32px; }
+  .ro .row { flex-wrap: wrap; }
+  .ro .label { flex: 1 1 12em; }
+  .ro .value { text-align: left; }
+}
 </style>
 </head>
 <body>
@@ -221,6 +240,7 @@ const S = {
   roUsers: ["Users", "Uporabniki"], roBindings: ["Devices and users", "Naprave in uporabniki"], roTeams: ["Teams", "Ekipe"], roProjects: ["Projects", "Projekti"],
   roActive: ["active", "aktiven"], roInactive: ["inactive", "neaktiven"], roOwner: ["owner", "lastnik"], roArchived: ["archived", "arhiviran"],
   roMembers: ["Members: %s", "Člani: %s"], roProjectsN: ["Projects: %s", "Projekti: %s"], roProxyOld: ["The proxy in front of this gateway does not allow this list yet: update deploy/docker/Caddyfile to this version and run docker compose restart admin-proxy.", "Posrednik pred tem prehodom tega seznama še ne dovoli: posodobi deploy/docker/Caddyfile na to različico in zaženi docker compose restart admin-proxy."], roNone: ["none", "ni vnosov"],
+  roNotFound: ["Not found: it may have been deleted.", "Ni najdeno: morda je izbrisano."], roMembersH: ["Members", "Člani"], roAssignH: ["Assignments (project, user, role)", "Dodelitve (projekt, uporabnik, vloga)"], roDirect: ["Direct: %s", "Neposredno: %s"], roFromTeam: ["From team %s: %s", "Iz ekipe %s: %s"],
   roUnavailable: ["The project database is not available.", "Projektna zbirka ni na voljo."],
   general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Providers", "Ponudniki"], claude: ["Claude CLI", "Claude CLI"],
   about: ["About", "O aplikaciji"], license: ["License", "Licenca"], copyToken: ["Copy Token", "Kopiraj žeton"],
@@ -1885,19 +1905,56 @@ const pages = {
   // devices: enako kot podokno Devices na Macu: vsaka naprava z žetonom in naslovi odjemalcev, čakajoče (Allow, Reject),
   // dovoljene (ime, ID, zadnji stik; Copy ID, Remove).
   async remoteTeam() {  // read-only lists of the team server: text only, no control that changes anything
+    // "HTTP 404" = the proxy's own non-JSON refusal (older Caddyfile); "not found" = the gateway's answer for a deleted id
+    const roErr = e => e.message.startsWith("The project database is not available") ? t("roUnavailable") : e.message === "HTTP 404" ? t("roProxyOld") : e.message === "not found" ? t("roNotFound") : e.message;
     const get = name => api("GET", "/" + name).catch(e => {
       if (!SESSION) throw e;  // signed out (401): leave the sign-in form alone
-      return {error: e.message.startsWith("The project database is not available") ? t("roUnavailable") : e.message === "HTTP 404" ? t("roProxyOld") : e.message};  // "HTTP 404" = the proxy's own non-JSON refusal
+      return {error: roErr(e)};
     });
+    const sr = (...a) => { const r = row(...a); r.classList.add("sub-row"); return r; };
+    const none = () => sr(t("roNone"));
+    // opens: a row that shows its detail on the first click or Enter (loaded once, GET only); keyboard reachable, nothing here changes anything
+    const opens = (r, load) => {
+      const detail = el("div", {class: "ro-detail", hidden: true});
+      let loaded = false;
+      r.classList.add("clickable");
+      r.tabIndex = 0;
+      r.setAttribute("role", "button");
+      r.setAttribute("aria-expanded", "false");
+      const toggle = async () => {
+        const opening = detail.hidden;
+        detail.hidden = !opening;
+        r.setAttribute("aria-expanded", String(opening));
+        if (!opening || loaded) return;
+        loaded = true;
+        try { detail.replaceChildren(...await load()); } catch (e) {
+          loaded = false;  // the next opening tries again
+          if (!SESSION) return;  // signed out: the sign-in form stays
+          detail.replaceChildren(note(roErr(e)));
+        }
+      };
+      r.addEventListener("click", toggle);
+      r.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); } });
+      return el("div", {class: "ro-item"}, r, detail);
+    };
+    const why = m => (m.origins || []).map(o => o.kind === "direct" ? t("roDirect", o.role) : t("roFromTeam", o.name, o.role)).join(" · ");
+    const teamDetail = x => async () => {
+      const [d, a] = await Promise.all([api("GET", "/teams/" + x.id), api("GET", "/teams/" + x.id + "/assignments")]);
+      return [note(t("roMembersH")), ...(d.members.length ? d.members.map(m => sr(m.name)) : [none()]),
+        note(t("roAssignH")), ...(a.assignments.length ? a.assignments.map(y => sr(y.projectName, value(y.userName + " · " + y.role))) : [none()])];
+    };
+    const projectDetail = x => async () => {
+      const m = (await api("GET", "/projects/" + x.id + "/members")).members;
+      return m.length ? m.map(y => sr(labelSub(y.name, why(y)), value(y.role))) : [none()];
+    };
     const [u, b, tm, pr, dv] = await Promise.all([get("users"), get("bindings"), get("teams"), get("projects"), get("devices")]);
     const user = id => ((u.users || []).find(x => x.id === id) || {}).name || String(id);
-    const device = id => ((dv.devices || []).find(x => x.id === id) || {}).name || id;
     const list = (title, r, key, line) => [section(title), r.error ? note(r.error) : el("div", {class: "group ro"}, ...(r[key].length ? r[key].map(line) : [row(t("roNone"))]))];
     return [el("h2", {textContent: t("remoteTeam")}), note(t("roNote")),
       ...list(t("roUsers"), u, "users", x => row(x.name, value([x.active ? t("roActive") : t("roInactive"), x.owner ? t("roOwner") : ""].filter(Boolean).join(" · ")))),
-      ...list(t("roBindings"), b, "bindings", x => row(device(x.device), value(user(x.user)))),
-      ...list(t("roTeams"), tm, "teams", x => row(x.name + (x.path ? " (" + x.path + ")" : ""), value([t("roMembers", x.memberCount), t("roProjectsN", x.projectCount), x.archived ? t("roArchived") : ""].filter(Boolean).join(" · ")))),
-      ...list(t("roProjects"), pr, "projects", x => row(x.name + " (" + x.slug + ")", value([x.teamName, t("roMembers", x.memberCount), x.archived ? t("roArchived") : ""].filter(Boolean).join(" · "))))];
+      ...list(t("roBindings"), b, "bindings", x => row(((dv.devices || []).find(d => d.id === x.device) || {}).name || el("span", {class: "label mono id", textContent: x.device}), value(user(x.user)))),
+      ...list(t("roTeams"), tm, "teams", x => opens(row(x.name + (x.path ? " (" + x.path + ")" : ""), value([t("roMembers", x.memberCount), t("roProjectsN", x.projectCount), x.archived ? t("roArchived") : ""].filter(Boolean).join(" · "))), teamDetail(x))),
+      ...list(t("roProjects"), pr, "projects", x => opens(row(x.name + " (" + x.slug + ")", value([x.teamName, t("roMembers", x.memberCount), x.archived ? t("roArchived") : ""].filter(Boolean).join(" · "))), projectDetail(x)))];
   },
   async devices() {
     const [d, g] = await Promise.all([api("GET", "/devices"), REMOTE ? Promise.resolve({}) : api("GET", "/general")]);

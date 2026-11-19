@@ -121,7 +121,7 @@ async function run(remote) {
 }
 
 func TestRemoteSettingsBrowserRestrictions(t *testing.T) {
-	for _, s := range []string{`if (REMOTE) throw new Error("File dialogs are unavailable remotely")`, `if (REMOTE && !["remoteHome", "gateway", "addGateway", "devices", "remoteTeam"].includes(page))`, `if (REMOTE) return;`, `REMOTE ? Promise.resolve({}) : api("GET", "/general")`, `if (REMOTE && !SESSION) return;  // the session ended while loading`, `if (!SESSION) throw e;  // signed out (401)`, `t("roProxyOld")`, `!REMOTE ? group(row(labelSub(t("anyDevice")`} {
+	for _, s := range []string{`if (REMOTE) throw new Error("File dialogs are unavailable remotely")`, `if (REMOTE && !["remoteHome", "gateway", "addGateway", "devices", "remoteTeam"].includes(page))`, `if (REMOTE) return;`, `REMOTE ? Promise.resolve({}) : api("GET", "/general")`, `if (REMOTE && !SESSION) return;  // the session ended while loading`, `if (!SESSION) throw e;  // signed out (401)`, `t("roProxyOld")`, `r.setAttribute("aria-expanded", "false")`, `ev.key === "Enter"`, `t("roNotFound")`, `t("roFromTeam", o.name, o.role)`, `@media(max-width:700px)`, `.ro .id { overflow-wrap: anywhere; }`, `api("GET", "/projects/" + x.id + "/members")`, `api("GET", "/teams/" + x.id + "/assignments")`, `!REMOTE ? group(row(labelSub(t("anyDevice")`} {
 		if !strings.Contains(settingsPage, s) {
 			t.Fatal("missing remote restriction", s)
 		}

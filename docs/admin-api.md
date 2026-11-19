@@ -215,7 +215,7 @@ continue), in the same transaction.
 | `PATCH /projects/{id}` | `{"archived": bool}` | `{"ok": true}`; archived: nobody writes |
 | `GET /projects/{id}/remotes` | – | `{"remotes": [identity], "entries": [{"remote": identity}]}`: the registered git identities (`host/path`), also as rows |
 | `POST /projects/{id}/remotes` | `{"add": [url], "remove": [url]}`; the owner route also takes one value as `{"addRemote": url}` or `{"removeRemote": url}` (a form sends one value) | `{"remotes": [...], "added": [...], "removed": [...]}`; one transaction, audit `project.remotes`; at most 8 per project, the same identity may belong to several projects; an archived project: 403 `archived` |
-| `GET /projects/{id}/members` | – | `{"members": [{"user", "name", "role", "origins", "directRole", "fromTeams"}]}`; `directRole` is the role given directly (`none` when there is none) and `fromTeams` the teams that give one as display text (`acme (reader), web (developer)`; `teams` has the same as `[{team, role}]`), so a role and where it comes from can be shown flat |
+| `GET /projects/{id}/members` | – | `{"members": [{"user", "name", "role", "origins", "directRole", "fromTeams"}]}`; `directRole` is the role given directly (`none` when there is none) and `fromTeams` the teams that give one as display text (`acme (reader), web (developer)`; `teams` has the same as `[{team, role}]`), so a role and where it comes from can be shown flat; also on the remote settings listener, read-only (one numeric id). |
 | `PUT /projects/{id}/members/{user}` | `{"role": "reader"\|"developer"\|"admin"}` | `{"ok": true}`; lowering the role raises the epoch |
 | `DELETE /projects/{id}/members/{user}` | – | `{"ok": true}`; raises the epoch |
 | `GET /grants` | – | `{"grants": [{"source", "reader", "class", "id", "sourceName", "readerName"}]}` |
@@ -362,7 +362,7 @@ uniqueness as for users. Project display names are not unique; projects have sep
 | `PUT /projects/{id}/depends/{other}` / `DELETE` | – | `{ok: true}`; at most 16 per project, not itself, not an archived project (remove is always allowed); a team's notes (segment ids) are never a side |
 | `GET /teams` | – | `{teams: [{id, name, archived, path, segment, memberCount, projectCount}]}` including archived teams; `segment` is the id of the team's own notes Also on the remote settings listener, read-only. |
 | `POST /teams` | `{name}` | `{team: {id, name, archived, path, segment}}` |
-| `GET /teams/{id}` | – | `{id, name, archived, path, segment, members: [{user, name}], projects: [Project]}` |
+| `GET /teams/{id}` | – | `{id, name, archived, path, segment, members: [{user, name}], projects: [Project]}`; also on the remote settings listener, read-only (one numeric id). |
 | `PATCH /teams/{id}` | `{name}`, `{archived: bool}` or `{path: string}` (one of them) | `{ok: true}`; archive instead of hard delete. `path` is a free-text label (folded to lower case, at most 128 bytes, no control characters, no leading or trailing `/`; `""` clears); a label never gives access |
 | `GET /teams/{id}/members` | – | `{members: [{user, name}]}` |
 | `PUT /teams/{id}/members/{user}` | – | `{ok: true}` |
@@ -606,7 +606,7 @@ For temporary-folder tests, record the copy IDs before and after the run and rem
 
 | Route | Body | Result |
 |---|---|---|
-| `GET /teams/{id}/assignments` | – | `{assignments: [{project, user, role, id, userName, projectName}]}`, sorted by project/user |
+| `GET /teams/{id}/assignments` | – | `{assignments: [{project, user, role, id, userName, projectName}]}`, sorted by project/user; also on the remote settings listener, read-only (one numeric id). |
 | `PUT /teams/{id}/assignments` | `{project, user, role}` | `{ok: true}` |
 | `DELETE /teams/{id}/assignments` | `{project, user}`, or without a body `?project=&user=` (both together: 400) | `{ok: true}`; absent assignment is 404 |
 
