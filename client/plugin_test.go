@@ -898,8 +898,10 @@ func TestInstallScriptLinuxOldClientOffline(t *testing.T) {
 
 func TestInstallScriptWindowsOldClientOffline(t *testing.T) {
 	r := runInstallScript(t, installRun{goos: "windows", installed: "minigw 0.7.0", latest: "0.7.32", trustInst: true})
-	if _, err := os.Stat(r.exe); err != nil { // the shim bin/minigw
-		t.Errorf("no shim for the installed client:\n%s", r.out)
+	// Windows: the verified installed client reaches the skills as the plugin's own copy bin/minigw.exe (Git Bash finds it as
+	// "minigw"); the script writes no shim named bin/minigw.
+	if _, err := os.Stat(filepath.Join(r.data, "bin", "minigw.exe")); err != nil {
+		t.Errorf("the installed client was not put into place for the skills:\n%s", r.out)
 	}
 	r.mustSay(t, "using the installed minigw 0.7.0, older than 0.7.32")
 }
@@ -950,7 +952,11 @@ func TestInstallScriptUnverifiedCandidatesAreNeverRun(t *testing.T) {
 func TestInstallScriptVerifiedCandidateIsUsed(t *testing.T) {
 	for _, goos := range []string{"linux", "windows"} {
 		r := runInstallScript(t, installRun{goos: goos, installed: "minigw 0.7.99", latest: "0.7.99", trustInst: true})
-		if _, err := os.Stat(r.exe); err != nil {
+		used := r.exe // linux: the link bin/minigw; windows: the copy bin/minigw.exe (no shim is written)
+		if goos == "windows" {
+			used = filepath.Join(r.data, "bin", "minigw.exe")
+		}
+		if _, err := os.Stat(used); err != nil {
 			t.Errorf("%s: the verified installed client is not used:\n%s", goos, r.out)
 		}
 		if strings.Contains(r.out, "cannot verify") || strings.Contains(r.out, "older") {

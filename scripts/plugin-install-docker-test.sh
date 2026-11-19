@@ -145,11 +145,19 @@ for i in 1 2; do out=$(FAILMV=1 winrun wnew); print -r -- "6c $i: $out"; [[ $out
 out=$(winrun); print -r -- "6c offline: $out"
 [[ $out == *"connected to Mini Gateway"* && $out != *"cannot verify"* ]] && cmp -s $RELEXE $GB/minigw.exe || fail "10 S6c: the old verified exe was lost or unverifiable: $out"
 winrun wnew > /dev/null; cmp -s $T/rel/wnew/minigw-windows-amd64.exe $GB/minigw.exe || fail "10 S6c: the later online run did not finish the update"
-# S6d: exe, ki ga nič ne overi, brez omrežja: ostane (se ne zažene, brez zapisa), povedano; z omrežjem in podpisanimi vsotami (ni izdaja) ga zamenja prenos
-clear10; rm -f $T/win/ran6d; print '#!/bin/sh\ntouch '$T'/win/ran6d\necho minigw '$MINV > $GB/minigw.exe; chmod +x $GB/minigw.exe
-out=$(winrun); print -r -- "6d offline: $out"
-[[ -e $GB/minigw.exe && ! -e $T/win/ran6d && ! -e $GB/.verified && $out == *"cannot verify"* && $out == *"stays, unused"* ]] || fail "10 S6d: an unverifiable exe was removed offline, run, or recorded: $out"
-winrun wdl > /dev/null; cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $T/win/ran6d ]] || fail "10 S6d: online, the foreign exe was not replaced by the release (or it ran)"
+# S3b: nameščen minigw, ki ga podpisane vsote overijo, BREZ zagonske datoteke in brez omrežja: KOPIRA se kot lastna kopija (ena zamenjava mv),
+# .verified imenuje bin/minigw.exe, nič na golem imenu; ko MSI posodobi nameščeni exe, naslednji zagon kopira znova; neoverjene datoteke ne kopira
+clear10; wtrust "$exe" $MINV; rm -f $T/win/ops
+out=$(winrun); print -r -- $out
+cmp -s "$exe" $GB/minigw.exe && [[ $out == *"connected to Mini Gateway"* && ! -e $GB/minigw && "$(head -1 $GB/.verified)" == "$(shasum -a 256 $GB/minigw.exe | cut -d' ' -f1)  $GB/minigw.exe" ]] || fail "10 S3b: the verified installed client was not copied into place: $out"
+[[ "$(wc -l < $T/win/ops)" -eq 1 ]] || fail "10 S3b: not exactly one mv onto minigw.exe: $(cat $T/win/ops)"
+nobare "10 S3b"
+cp "$exe" $T/win/exe.keep; print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0 # updated by the MSI" > "$exe"; wtrust "$exe" $MINV
+winrun > /dev/null; cmp -s "$exe" $GB/minigw.exe || fail "10 S3b: an updated installed client was not copied again"
+cp $T/win/exe.keep "$exe"
+print '#!/bin/sh\ntouch '$T'/win/ran3b' > "$exe"; clear10; wtrust $RELEXE $MINV   # sums vouch for ANOTHER file: the installed one is unverified
+winrun > /dev/null; [[ ! -e $T/win/ran3b && ! -e $GB/minigw.exe ]] || fail "10 S3b: an unverified installed client was copied or run"
+cp $T/win/exe.keep "$exe"
 # S7: ostanek 0.8.1-0.8.9: .keep brez minigw.exe in .aside.lock: .keep gre nazaj, ključavnica izgine, nič drugega
 clear10; winrun wdl > /dev/null; mv $GB/minigw.exe $GB/minigw.exe.keep; mkdir $GB/.aside.lock; print 1 > $GB/.aside.lock/pid
 winrun > /dev/null

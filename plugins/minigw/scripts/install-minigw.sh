@@ -14,7 +14,7 @@ EXE="$BIN/minigw"
 base="${MINIGW_RELEASE_BASE:-https://github.com/$REPO/releases/latest/download}"  # testi: lažna izdaja (podpis je pripet)
 # #8: SHA256SUMS je podpisan s ključem Mini Gateway (ssh-keygen -Y sign -n minigw-release); ključ je pripet tu.
 SIGNER='minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINt++OHn+HHmR9mmA2UI+B0osuilO2GP0ddEzNp0GTrH'
-sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" 2>/dev/null | cut -d' ' -f1; else shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1; fi; }
 case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
 case "$(uname -s)" in
   Darwin) os=darwin ;;
@@ -145,7 +145,7 @@ keepsums() {
   if [ -f "$SN" ] && [ -f "$SG" ]; then
     # Samo par, ki zdaj jamči za exe na mestu, postane PREJŠNJA generacija; če zanj jamči že .prev (ali nihče), se .prev ne dotakne
     # (sicer bi dva zaporedna neuspela prenosa pustila oba para novo izdajo in exe stare: nič ga ne bi overilo).
-    kts=$tsums; trustedby "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig" "$EXE"; kr=$?; tsums=$kts
+    kr=1; [ -f "$EXE" ] && { kts=$tsums; trustedby "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig" "$EXE"; kr=$?; tsums=$kts; }
     if [ $kr -eq 0 ]; then
       cp "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.prev.new.$$" && cp "$BIN/SHA256SUMS.sig" "$BIN/SHA256SUMS.prev.sig.new.$$" &&
         mv -f "$BIN/SHA256SUMS.prev.new.$$" "$BIN/SHA256SUMS.prev" && mv -f "$BIN/SHA256SUMS.prev.sig.new.$$" "$BIN/SHA256SUMS.prev.sig"
@@ -188,7 +188,7 @@ fi
 # besedilom in s kazalcem na minigw.exe, ki ga overijo podpisane vsote. Sicer velja lastna kopija bin/minigw.exe.
 same() { "$1" > "$BIN/minigw.chk.$$" 2>/dev/null; cmp -s "$BIN/minigw.chk.$$" "$2"; ir=$?; rm -f "$BIN/minigw.chk.$$"; return $ir; }
 shimtext() { q=$(cygpath -w "$inst" | tr '\\' / | sed "s/'/'\\\\''/g"); printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec '$q' \"\$@\""; }
-launcher=""  # Windows: ime minigw je v imeniku (prava datoteka)
+launcher="" usedlauncher="" viamsi=""  # Windows: ime minigw je v imeniku (prava datoteka); zagonska datoteka je veljala; nameščeni MSI brez nje
 winlauncher() {
   for n in $(ls -A "$BIN" 2>/dev/null); do [ "$n" = minigw ] && launcher=1; done
   [ -n "$launcher" ] || return 0
@@ -196,7 +196,7 @@ winlauncher() {
   [ -n "$wp" ] || return 0
   wp=$(printf '%s\n' "$wp" | sed "s/'\\\\''/'/g")  # '\'' -> ' (kot ga napiše Go odjemalec); celotno besedilo se spodaj primerja natanko
   inst=$(cygpath -u "$wp" 2>/dev/null) || { inst=""; return 0; }
-  same shimtext "$BIN/minigw" || inst=""  # natanko besedilo zagonske datoteke Go odjemalca
+  same shimtext "$BIN/minigw" && usedlauncher=1 || inst=""  # natanko besedilo zagonske datoteke Go odjemalca
 }
 # dropshims: zagonska datoteka, ki ne velja, bi zasenčila lastno kopijo: odstrani se (majhna datoteka z znamenjem; prava datoteka obstaja,
 # zato rm na tem imenu zadene zagonsko datoteko, ne minigw.exe) skupaj z minigw.cmd. Le če seznam imenika pokaže ime minigw.
@@ -210,7 +210,10 @@ dropshims() {
 }
 inst="" iv=""
 case $os in
-  windows) command -v cygpath >/dev/null 2>&1 && winlauncher ;;
+  windows)
+    command -v cygpath >/dev/null 2>&1 && winlauncher
+    # brez veljavne zagonske datoteke: nameščeni MSI minigw, če ga podpisane vsote overijo, se KOPIRA kot lastna kopija (copyinst); nič na golem imenu
+    [ -z "$inst" ] && [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1 && { inst="$(cygpath -u "$LOCALAPPDATA")/Programs/Mini Gateway/minigw.exe"; viamsi=1; } ;;
   linux) inst="$HOME/.local/bin/minigw" ;;
 esac
 # #48: Linux ~/.local/bin/minigw (in njegova mapa) le, če je last uporabnika in ni zapisljiv za skupino ali druge (pred
@@ -303,27 +306,39 @@ else
       [ "$(readlink "$EXE" 2>/dev/null)" = "$inst" ] || { rm -f "$EXE"; forget; ln -s "$inst" "$EXE"; } ||
         echo "minigw plugin: could not link $(san "$EXE") to $(san "$inst")."
     else
+      if [ -n "$viamsi" ]; then copyinst; return $?; fi
       EXE=$inst  # Windows: zagonska datoteka že obstaja (jo je napisal minigw plugin install); tu se ne piše nič
     fi
     return 0
   }
+  # copyinst (Windows, nameščeni minigw brez zagonske datoteke): overjeni nameščeni minigw se KOPIRA kot lastna kopija bin/minigw.exe: cp v
+  # minigw.exe.new.<pid>, kopija se preveri z istim parom vsot, vsote se objavijo PRED premikom (glej keepsums), ENA zamenjava mv -f. Kopija je
+  # »najnovejši overjeni odjemalec, ki ga imamo«; ko MSI posodobi nameščenega, naslednji zagon kopira znova. Neoverjene datoteke se ne kopira.
+  copyinst() {
+    shm "$inst"; hi=$SH
+    if [ -f "$EXE" ] && [ ! -L "$EXE" ] && { shm "$EXE"; [ "$SH" = "$hi" ]; }; then [ "$isums" = "$SN" ] && keepsums; return 0; fi  # že ta kopija
+    ft="$BIN/${EXE##*/}.new.$$"
+    if cp "$inst" "$ft" 2>/dev/null && chmod +x "$ft" && trusted "$ft"; then
+      [ "$isums" = "$SN" ] && keepsums
+      if mv -f "$ft" "$EXE"; then forget; return 0; fi
+      forget; rm -f "$ft"; echo "minigw plugin: could not replace $(san "$EXE") (in use?); it stays and the installed minigw is copied again in the next session."; return 1
+    fi
+    rm -f "$ft"; echo "minigw plugin: could not copy the installed minigw into place."; return 1
+  }
+  [ -n "$inst" ] && { linkinst || inst=""; }
   if [ -n "$inst" ]; then
-    linkinst
-    [ "$isums" = "$SN" ] && keepsums  # overjen z vsotami tega zagona: shrani jih za brez omrežja
+    [ -z "$viamsi" ] && [ "$isums" = "$SN" ] && keepsums  # overjen z vsotami tega zagona: shrani jih za brez omrežja
   elif [ -L "$EXE" ] || [ ! -x "$EXE" ] || ! authexe || { [ -n "$(want "$asset")" ] && { shm "$EXE"; [ "$SH" != "$(want "$asset")" ]; }; }; then
     if [ -n "$sums" ] && [ ! -L "$EXE" ] && [ -x "$EXE" ] && { shm "$EXE"; [ "$SH" = "$(want "$asset")" ]; }; then
       keepsums  # ista datoteka kot v podpisanih vsotah: overjena brez prenosa
     else
       fetch "$asset" || { authexe && [ -x "$EXE" ]; } || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {
         if [ -n "$instx" ] || [ -e "$EXE" ] || [ -L "$EXE" ]; then
-          # Kopija, ki je nihče ne overi, se zbriše le, dokler podpisane vsote ENAKEGA zagona (sums) povedo, da ni izdaja; brez omrežja ostane
-          # (neoverjena: skripta je ne zažene, kljuka je ne zažene brez zapisa .verified), da »neoverjena do povezave« ne postane »je ni«.
-          kept=""; if [ -n "$sums" ] || [ -L "$EXE" ]; then rm -f "$EXE"; forget; else [ -e "$EXE" ] && kept=1; fi
-          unrecord  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
+          rm -f "$EXE"; forget; unrecord  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
           if [ -n "$unsigned" ]; then why="$unsigned; gateway skills are unavailable until the release can be verified"
           elif [ -n "$sums" ]; then why="the download failed or did not match the signed checksum; gateway skills are unavailable until it works"
           else why="github.com/$REPO could not be reached; gateway skills are unavailable until the network is back"; fi
-          echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why${kept:+ (the copy in bin stays, unused, until it can be verified)}."
+          echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why."
         else
           echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."
         fi; dropshims; unrecord; exit 0; }
@@ -331,13 +346,13 @@ else
   fi
   # Windows: zagonska datoteka, ki ne velja (neoverjen ali prestar odjemalec, ni besedila Go odjemalca), bi zasenčila lastno kopijo, ki
   # jo zdaj uporabljamo: odstrani se (dropshims). Veljavna ostane (inst je nastavljen), stara a overjena tudi (uporabljena kot stale).
-  [ -z "$inst" ] && dropshims
+  [ -n "$launcher" ] && { [ -z "$inst" ] || [ -n "$viamsi" ]; } && dropshims
 fi
 
 # #153: zapis bin/.verified (za kb-hook.sh) le, če je preverjanje v tem zagonu res uspelo: macOS podpis Developer ID; Linux/Windows SHA-256
 # v podpisanih vsotah (trusted). Izjema brez ssh-keygen (neoverjena lastna kopija) zapisa NIMA. SHA-256 (po povezavi) gre atomarno, 600.
 # Windows z nameščenim minigw: kljuka zažene lupino bin/minigw, ta pa nameščeni minigw: zapis ima obe vrstici (»sha  pot«).
-ent=$EXE; [ "$os" = windows ] && [ -n "$inst" ] && ent="$BIN/minigw"
+ent=$EXE; [ "$os" = windows ] && [ -n "$usedlauncher" ] && [ -n "$inst" ] && ent="$BIN/minigw"
 # Pravilo: preverjanje ali zagonska datoteka v nasprotju = zapis se zbriše; sicer se napiše (neuspel zapis pusti obstoječega: neskladje po
 # hashu kljuko tako ali tako utiša). Zagonska datoteka (Windows, inst) mora imeti natanko besedilo Go odjemalca; zapis je atomaren (.new.<pid> + mv).
 if { if [ "$os" = darwin ]; then valid "$EXE"; else trusted "$EXE"; fi; } &&
