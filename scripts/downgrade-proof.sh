@@ -15,7 +15,7 @@ emulate -L zsh; set -eu
 cd ${0:A:h}/..
 REPO=$PWD
 OLDREV=71cfd5fb
-W="${WAYBACK_SCRATCH:-/Volumes/SAMSUNG990PRO/Mini Gateway Scratch/dev-builds/wayback-0738}"
+W="${WAYBACK_SCRATCH:-${TMPDIR:-/tmp}/minigw-downgrade-proof}"
 R="$W/run-$(date +%Y%m%dT%H%M%S)"
 PIDS=(); T0=$SECONDS
 trap 'for p in $PIDS; do kill $p 2>/dev/null || true; done' EXIT  # exactly the pids this script started
