@@ -126,6 +126,7 @@ extension AdminCommands {
                 if let e = d["lastError"]?.string, !e.isEmpty { say(clean("  last refusal: " + e)) }
                 if let s = Self.upstreamNotPropagated(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
+                if let w = d["waiting"]?.int, w > 0 { say("  \(w) notes wait for a review upstream (nothing more is sent for them until it is decided there; not a failure)") }
                 if let s = Self.upstreamForeign(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamSkipped(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamBackwards(d) { say(clean("  " + s)) }
@@ -159,7 +160,7 @@ extension AdminCommands {
                         say(clean("\(d["label"]?.string ?? "") -> \(d["upstream"]?.string ?? "") (\(d["remote"]?.string ?? ""))"))
                         for l in d["lines"]?.array ?? [] { say(clean("  " + (l.string ?? ""))) }
                         let verb = d["dryRun"]?.bool == true ? "would be " : ""
-                        say("  \(verb)created \(d["created"]?.int ?? 0), replaced \(d["replaced"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), refused \(d["refused"]?.int ?? 0)" + ((d["conflicts"]?.int ?? 0) > 0 ? ", conflicts \(d["conflicts"]?.int ?? 0)" : ""))
+                        say("  \(verb)created \(d["created"]?.int ?? 0), replaced \(d["replaced"]?.int ?? 0), skipped \(d["skipped"]?.int ?? 0), refused \(d["refused"]?.int ?? 0)" + ((d["conflicts"]?.int ?? 0) > 0 ? ", conflicts \(d["conflicts"]?.int ?? 0)" : "") + ((d["waiting"]?.int ?? 0) > 0 ? ", waiting for a review \(d["waiting"]?.int ?? 0)" : ""))
                         if let s = d["stopped"]?.string, !s.isEmpty { say(clean("  stopped: " + s)) }
                     }
                     for p in r["pushes"]?.array ?? [] {
