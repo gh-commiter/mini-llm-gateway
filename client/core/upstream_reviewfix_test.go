@@ -254,7 +254,8 @@ func TestSentContentHashIsTheSameOnBothSides(t *testing.T) {
 	p := &pusher{secret: []byte("k"), up: "hub"}
 	n := UpstreamNote{ID: 7, Class: Structure, Title: "Plan​ ", Body: "Line one\n\nLine two \n", EntryKind: KindFinding, Author: "ana"}
 	hubBody := n.Body + p.trailer(1, n, 0)
-	if sentContentHash(n.Class, n.EntryKind, n.Title, n.Body) != sentContentHash(n.Class, n.EntryKind, upText(n.Title, maxTitle), mirrorBody(hubBody)) {
+	own, ok := ownTrailerSplit(hubBody, upstreamRef(p.secret, p.up, 1, n.ID), trailerAuthor(n.Author), 0) // the caller takes our trailer off, knowing the receipt
+	if !ok || sentContentHash(n.Class, n.EntryKind, n.Title, n.Body) != sentContentHash(n.Class, n.EntryKind, upText(n.Title, maxTitle), mirrorBody(own)) {
 		t.Fatal("the two sides disagree")
 	}
 	if sentContentHash(n.Class, n.EntryKind, n.Title, n.Body) == sentContentHash(n.Class, n.EntryKind, n.Title, n.Body+"x") {

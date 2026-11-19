@@ -58,16 +58,14 @@ func mirrorMarker(from string, asOf time.Time) string {
 
 // sentContentHash is the ONE canonical form of a note's content, used where a push records what it sent and where the read side looks at the
 // upstream's copy: sha256 over class, kind, the title as the upstream serves it (control characters removed, at most 256 bytes) and the
-// body as the upstream serves it (invisible characters removed) WITHOUT the trailer our push appends, with trailing whitespace trimmed.
+// body as the upstream serves it (invisible characters removed) WITHOUT the trailer our push appends (the caller takes it off, by
+// ownTrailerSplit, when it knows the receipt), with trailing whitespace trimmed.
 // A copy whose hash equals the recorded one is our own text, whatever its revision number says.
 func sentContentHash(class Class, kind, title, body string) string {
 	if kind != KindFAQ {
 		kind = KindFinding
 	}
 	body = lineEndings(body) // a note stored with CRLF before line endings were normalised hashes like its LF copy on the hub
-	if loc := trailerExactAtEnd.FindStringIndex(body); loc != nil {
-		body = body[:loc[0]]
-	}
 	body = strings.TrimRight(mirrorBody(body), " \t\r\n")
 	h := sha256.Sum256([]byte(string(class) + "\x00" + kind + "\x00" + upText(title, maxTitle) + "\x00" + body))
 	return hex.EncodeToString(h[:])
@@ -170,9 +168,30 @@ type mirrorEntry struct {
 	differs      int64 // the hub's copy of a note we sent, changed there since: the local note it differs from
 }
 
+// ownRef: what the exact check of a trailer needs besides its reference: the author's name as trailer() writes it, and the receipt's submission id.
+type ownRef struct {
+	author string
+	sub    int64
+}
+
+// trailerRef: the 12 hex digits after the LAST trailer opening of a text, "" when there is none (no pattern is applied: ownTrailerSplit decides).
+func trailerRef(s string) string {
+	i := strings.LastIndex(s, "\n\n"+upstreamRefMark)
+	if i < 0 || len(s) < i+2+len(upstreamRefMark)+12 {
+		return ""
+	}
+	r := s[i+2+len(upstreamRefMark) : i+2+len(upstreamRefMark)+12]
+	for _, c := range r {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return ""
+		}
+	}
+	return r
+}
+
 // ourRefs: the trailer references of every note this gateway sent on the links of the local projects and teams in scope. Nothing when
 // this gateway never sent anything.
-func ourRefs(ctx context.Context, tx *sql.Tx, scope []readable) (map[string]bool, error) {
+func ourRefs(ctx context.Context, tx *sql.Tx, scope []readable) (map[string]ownRef, error) {
 	var secret []byte
 	switch e := tx.QueryRow(`SELECT k FROM upstream_key WHERE id=1`).Scan(&secret); e {
 	case nil:
@@ -185,19 +204,19 @@ func ourRefs(ctx context.Context, tx *sql.Tx, scope []readable) (map[string]bool
 	for _, r := range scope {
 		ids = append(ids, r.project)
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT project_id,upstream,note_id FROM upstream_sent WHERE project_id IN (`+marks(len(ids))+`)`, ids...)
+	rows, err := tx.QueryContext(ctx, `SELECT s.project_id,s.upstream,s.note_id,s.remote_sub,coalesce(u.name,'') FROM upstream_sent s LEFT JOIN notes n ON n.id=s.note_id AND n.project_id=s.project_id LEFT JOIN users u ON u.id=n.author_id WHERE s.project_id IN (`+marks(len(ids))+`)`, ids...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]bool{}
+	out := map[string]ownRef{}
 	for rows.Next() {
-		var project, note int64
-		var up string
-		if err = rows.Scan(&project, &up, &note); err != nil {
+		var project, note, sub int64
+		var up, author string
+		if err = rows.Scan(&project, &up, &note, &sub, &author); err != nil {
 			return nil, err
 		}
-		out[upstreamRef(secret, up, project, note)] = true
+		out[upstreamRef(secret, up, project, note)] = ownRef{author: trailerAuthor(author), sub: sub}
 	}
 	return out, rows.Err()
 }
@@ -274,29 +293,53 @@ func mirrorRows(ctx context.Context, tx *sql.Tx, now time.Time, scope []readable
 	if err != nil {
 		return nil, err
 	}
-	var refs map[string]bool
+	var refs map[string]ownRef
 	asked := false
+	var secret []byte
+	secretRead := false
 	teams := map[int64]string{}
 	var out []mirrorEntry
 	for _, c := range cs {
 		if len(out) == limit {
 			break
 		}
-		if c.rnote > 0 { // a receipt with a content hash: the copy is ours only when its text is what we sent
-			if sentContentHash(c.x.class, c.x.kind, c.x.title, c.rbody) == c.rcontent {
+		if c.rnote > 0 { // a receipt with a content hash: the copy is ours only when its text is what we sent (and ends with the trailer we wrote)
+			body := c.rbody
+			if !secretRead {
+				switch e := tx.QueryRow(`SELECT k FROM upstream_key WHERE id=1`).Scan(&secret); e {
+				case nil, sql.ErrNoRows:
+				default:
+					return nil, e
+				}
+				secretRead = true
+			}
+			var sub int64
+			var author string
+			switch e := tx.QueryRow(`SELECT s.remote_sub,u.name FROM upstream_sent s JOIN notes n ON n.id=s.note_id AND n.project_id=s.project_id JOIN users u ON u.id=n.author_id WHERE s.project_id=? AND s.upstream=? AND s.note_id=?`, c.x.project, c.x.upstream, c.rnote).Scan(&sub, &author); e {
+			case nil:
+				if t, ok := ownTrailerSplit(c.rbody, upstreamRef(secret, c.x.upstream, c.x.project, c.rnote), trailerAuthor(author), sub); ok {
+					body = t
+				}
+			case sql.ErrNoRows:
+			default:
+				return nil, e
+			}
+			if sentContentHash(c.x.class, c.x.kind, c.x.title, body) == c.rcontent {
 				continue
 			}
 			c.x.differs = c.rnote
 		}
-		if m := trailerExactAtEnd.FindStringSubmatch(c.tail); m != nil && c.x.differs == 0 { // a copy that differs from our note is shown even when it still ends with our trailer
+		if ref := trailerRef(c.tail); ref != "" && c.x.differs == 0 { // a copy that differs from our note is shown even when it still ends with our trailer
 			if !asked { // the references are computed once, and only when a candidate ends with a trailer
 				if refs, err = ourRefs(ctx, tx, scope); err != nil {
 					return nil, err
 				}
 				asked = true
 			}
-			if refs[m[1]] {
-				continue
+			if own, ok := refs[ref]; ok {
+				if _, exact := ownTrailerSplit(c.tail, ref, own.author, own.sub); exact {
+					continue
+				}
 			}
 		}
 		x := c.x

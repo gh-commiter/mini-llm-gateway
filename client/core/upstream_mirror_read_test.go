@@ -741,3 +741,69 @@ func TestMirrorHidesTheHubCopyOfAReceiptWithABase(t *testing.T) {
 		t.Fatal(ids)
 	}
 }
+
+// A hub copy is hidden as "ours" only with the exact trailer we wrote for that note (its reference and author; a supersedes id below the
+// receipt's submission id): text added on the trailer's line, a supersedes id the receipt cannot have, or another author shows the copy.
+func TestMirrorOwnershipNeedsTheExactTrailer(t *testing.T) {
+	f := newFx(t)
+	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
+	fk := f.pid["fakture"]
+	readingLink(f, fk, 0, "shop")
+	local := f.mk("ana", "fakture", Structure)
+	secret, err := f.upstreamKey(ctx)
+	f.ok(err)
+	ref := upstreamRef(secret, "hub", fk, local.ID)
+	tr := func(author, sup string) string {
+		return "\n\n" + upstreamRefMark + ref + ", author " + author + sup + " -->\n"
+	}
+	exact := rawMirror(f, fk, "hub", 40, Structure, KindFinding, "project:shop", "orbit exact", "x"+tr("ana", ""))
+	withSup := rawMirror(f, fk, "hub", 41, Structure, KindFinding, "project:shop", "orbit sup", "x"+tr("ana", "; supersedes submission 3"))
+	badSup := rawMirror(f, fk, "hub", 42, Structure, KindFinding, "project:shop", "orbit badsup", "x"+tr("ana", "; supersedes submission 9"))
+	zeroSup := rawMirror(f, fk, "hub", 43, Structure, KindFinding, "project:shop", "orbit zerosup", "x"+tr("ana", "; supersedes submission 03"))
+	appended := rawMirror(f, fk, "hub", 44, Structure, KindFinding, "project:shop", "orbit appended", "x"+strings.TrimSuffix(tr("ana", ""), "\n")+" HUB EDIT <!-- extra -->\n")
+	otherAuthor := rawMirror(f, fk, "hub", 45, Structure, KindFinding, "project:shop", "orbit author", "x"+tr("someone else", ""))
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,'hub',?,'h',1,5,0,1)`, fk, local.ID)
+		return e
+	}))
+	ids := f.search("ana", fk, "orbit")
+	for _, id := range []int64{exact, withSup} {
+		if hasID(ids, id) {
+			t.Fatal("an exact trailer of ours did not hide the copy", id, ids)
+		}
+	}
+	for _, id := range []int64{badSup, zeroSup, appended, otherAuthor} {
+		if !hasID(ids, id) {
+			t.Fatal("a copy without our exact trailer was hidden", id, ids)
+		}
+	}
+}
+
+// A receipt with a content hash (publish mode): the hub copy is ours only when its text AND its trailer are what we wrote; text added on the
+// trailer's line makes it a copy that differs.
+func TestMirrorContentHashNeedsTheExactTrailer(t *testing.T) {
+	f := newFx(t)
+	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
+	fk := f.pid["fakture"]
+	readingLink(f, fk, 0, "shop")
+	local, local2 := f.mk("ana", "fakture", Structure), f.mk("ana", "fakture", Structure)
+	secret, err := f.upstreamKey(ctx)
+	f.ok(err)
+	tr := func(id int64) string {
+		return "\n\n" + upstreamRefMark + upstreamRef(secret, "hub", fk, id) + ", author ana -->\n"
+	}
+	exact := rawMirror(f, fk, "hub", 40, Structure, KindFinding, "project:shop", "orbit exact", "same words"+tr(local.ID))
+	appended := rawMirror(f, fk, "hub", 41, Structure, KindFinding, "project:shop", "orbit appended", "same words"+strings.TrimSuffix(tr(local2.ID), "\n")+" HUB EDIT <!-- extra -->\n")
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		for i, title := range []string{"orbit exact", "orbit appended"} {
+			if _, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev,sent_content) VALUES(?,'hub',?,'h',1,0,?,1,1,?)`, fk, []int64{local.ID, local2.ID}[i], 40+i, sentContentHash(Structure, KindFinding, title, "same words")); e != nil {
+				return e
+			}
+		}
+		return nil
+	}))
+	ids := f.search("ana", fk, "orbit")
+	if hasID(ids, exact) || !hasID(ids, appended) {
+		t.Fatal(ids)
+	}
+}
