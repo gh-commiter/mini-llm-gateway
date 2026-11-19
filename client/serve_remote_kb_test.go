@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -92,6 +94,12 @@ type kbRead struct {
 	Author     string `json:"authorName"`
 	Scope      string `json:"scopeName"`
 	Reason     string `json:"reason"`
+	// the replaced note, as the page receives it
+	TargetState     string `json:"targetState"`
+	CurrentRevision int64  `json:"currentRevision"`
+	CurrentTitle    string `json:"currentTitle"`
+	CurrentBody     string `json:"currentBody"`
+	CurrentHidden   int    `json:"currentHidden"`
 }
 
 func (k *kbRemote) read(id int64) kbRead {
@@ -106,6 +114,10 @@ func (k *kbRemote) read(id int64) kbRead {
 
 func (k *kbRemote) accept(id int64, hash string) *httptest.ResponseRecorder {
 	return k.do("POST", fmt.Sprintf("/kb/submissions/%d/accept", id), `{"reviewHash":"`+hash+`"}`)
+}
+
+func (k *kbRemote) acceptAt(id int64, hash string, current int64) *httptest.ResponseRecorder {
+	return k.do("POST", fmt.Sprintf("/kb/submissions/%d/accept", id), fmt.Sprintf(`{"reviewHash":"%s","currentRevision":%d}`, hash, current))
 }
 
 func (k *kbRemote) reject(id int64, reason string) *httptest.ResponseRecorder {
@@ -240,19 +252,115 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 		t.Fatal("a long submission accepted remotely", w.Code, w.Body.String())
 	}
 
-	// a replacement overwrites the note it replaces and keeps the old text nowhere: it cannot be accepted here, only rejected
-	repl, _, err := k.cf.s.core.Submit(t0, k.ana, k.pid, "remote-kb-repl", core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Data, Title: "T <b>one</b>", Body: "new text"}, Replaces: done.Note, Revision: 1})
-	if err != nil {
+	// a replacement is offered for accept only while the note it replaces is unchanged and both texts read ok
+	noteRev := func() int64 { return int64(k.count(`SELECT revision FROM notes WHERE id=?`, done.Note)) }
+	replace := func(title, body string) int64 {
+		k.t.Helper()
+		k.n++
+		v, _, err := k.cf.s.core.Submit(t0, k.ana, k.pid, fmt.Sprintf("remote-kb-repl-%d", k.n), core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Data, Title: title, Body: body}, Replaces: done.Note, Revision: noteRev()})
+		if err != nil {
+			k.t.Fatal(err)
+		}
+		return v.ID
+	}
+	edit := func(body string) {
+		k.t.Helper()
+		if _, err := k.cf.s.core.UpdateNote(t0, k.ana, k.pid, done.Note, noteRev(), core.NoteInput{Class: core.Data, Title: "T <b>one</b>", Body: body}); err != nil {
+			k.t.Fatal(err)
+		}
+	}
+	history := func() int { return k.count(`SELECT COUNT(*) FROM note_history WHERE note_id=?`, done.Note) }
+	refuseAccept := func(what string, rid int64, want string) {
+		k.t.Helper()
+		got := k.read(rid)
+		before := history()
+		if w := k.acceptAt(rid, got.ReviewHash, got.CurrentRevision); w.Code != 403 || !strings.Contains(w.Body.String(), want) || pending(rid) != 1 || history() != before {
+			k.t.Errorf("%s: %d %s", what, w.Code, w.Body.String())
+		}
+		if w := k.reject(rid, "not here"); w.Code != 200 {
+			k.t.Errorf("%s: reject %d", what, w.Code)
+		}
+	}
+	// eligible: both texts are in the read, accept with the revision shown publishes and keeps the old text
+	repl := replace("T <b>one</b>", "new text")
+	vr := k.read(repl)
+	if vr.TargetState != "ok" || vr.Check != "ok" || vr.CurrentRevision != noteRev() || vr.CurrentTitle != "T <b>one</b>" || vr.CurrentBody != hostile || vr.Body != "new text" {
+		t.Fatalf("%+v", vr)
+	}
+	if w = k.accept(repl, vr.ReviewHash); w.Code != 400 || !strings.Contains(w.Body.String(), "update minigw") { // a client that showed no current text
+		t.Fatal("accepted without currentRevision", w.Code, w.Body.String())
+	}
+	if w = k.acceptAt(repl, vr.ReviewHash, vr.CurrentRevision+1); w.Code != 400 || !strings.Contains(w.Body.String(), "changed since you read it") {
+		t.Fatal("accepted with a wrong currentRevision", w.Code, w.Body.String())
+	}
+	if w = k.acceptAt(repl, vr.ReviewHash, vr.CurrentRevision); w.Code != 200 || k.count(`SELECT COUNT(*) FROM notes WHERE id=? AND body=?`, done.Note, "new text") != 1 || history() != 1 || k.count(`SELECT COUNT(*) FROM note_history WHERE note_id=? AND body=?`, done.Note, hostile) != 1 {
+		t.Fatal("an eligible replacement", w.Code, w.Body.String())
+	}
+	// not eligible: stale, missing, hidden or long current text, an edit after the read
+	stale := replace("T <b>one</b>", "for a stale target")
+	edit("edited after the proposal")
+	refuseAccept("stale", stale, "missing or changed")
+	hiddenCur := replace("T <b>one</b>", "for a hidden current text")
+	k.exec(`UPDATE notes SET body=? WHERE id=?`, "cur‮rent​", done.Note)
+	if got := k.read(hiddenCur); got.CurrentHidden != 2 || got.Check != "hidden" || got.CurrentBody != "current" {
+		t.Fatalf("%+v", got)
+	}
+	refuseAccept("hidden current", hiddenCur, "hidden characters")
+	k.exec(`UPDATE notes SET body=? WHERE id=?`, "plain again", done.Note)
+	longCur := replace("T <b>one</b>", "for a long current text")
+	k.exec(`UPDATE notes SET body=? WHERE id=?`, strings.Repeat("z", 64<<10), done.Note)
+	if got := k.read(longCur); got.Check != "long" || got.TargetState != "ok" {
+		t.Fatalf("%+v", got)
+	}
+	refuseAccept("long current", longCur, "too long to review here")
+	k.exec(`UPDATE notes SET body=? WHERE id=?`, "plain again", done.Note)
+	moved := replace("T <b>one</b>", "edited between the read and the accept")
+	vm := k.read(moved)
+	edit("edited by somebody else")
+	if w = k.acceptAt(moved, vm.ReviewHash, vm.CurrentRevision); w.Code != 403 || pending(moved) != 1 {
+		t.Fatal("an accept after an edit of the target", w.Code, w.Body.String())
+	}
+	k.reject(moved, "stale")
+	// a hand-made accept with the hash of the 0.8.7 formula never passes the core's comparison
+	old := replace("T <b>one</b>", "old formula")
+	var cls, ttl, kd, bd, prov string
+	var rp, rv int64
+	db, _ := sql.Open("sqlite", filepath.Join(k.cf.s.cfgDir, "core", "core.db")+"?mode=ro")
+	if err := db.QueryRow(`SELECT class,title,entry_kind,body,replaces,revision,provenance FROM kb_submissions WHERE id=?`, old).Scan(&cls, &ttl, &kd, &bd, &rp, &rv, &prov); err != nil {
 		t.Fatal(err)
 	}
-	vr := k.read(repl.ID)
-	oldBody := k.count(`SELECT COUNT(*) FROM notes WHERE id=? AND body=?`, done.Note, hostile)
-	if w = k.accept(repl.ID, vr.ReviewHash); w.Code != 403 || !strings.Contains(w.Body.String(), fmt.Sprintf("replaces note %d", done.Note)) || pending(repl.ID) != 1 || k.count(`SELECT COUNT(*) FROM notes WHERE id=? AND body=?`, done.Note, hostile) != oldBody || oldBody != 1 {
-		t.Fatal("a replacement accepted remotely", w.Code, w.Body.String())
+	db.Close()
+	ob, _ := json.Marshal([]any{old, cls, ttl, kd, bd, rp, rv, prov})
+	sum := sha256.Sum256(ob)
+	if w = k.acceptAt(old, hex.EncodeToString(sum[:]), noteRev()); w.Code != 400 || !strings.Contains(w.Body.String(), "changed since you read it") || pending(old) != 1 {
+		t.Fatal("an old-formula hash", w.Code, w.Body.String())
 	}
-	if w = k.reject(repl.ID, "compare on the server"); w.Code != 200 {
-		t.Fatal("reject of a replacement", w.Code)
+	k.reject(old, "done")
+	// every case of the shared review fixture applied to the current text as the page receives it
+	var curCases []struct{ Name, In, Out, Side string }
+	if err := json.Unmarshal(srcFile(t, "testdata/review-text.json"), &curCases); err != nil {
+		t.Fatal(err)
 	}
+	cur := replace("T <b>one</b>", "fixture")
+	for _, c := range curCases {
+		k.exec(`UPDATE notes SET body=?, title=? WHERE id=?`, c.In, "T "+c.In, done.Note)
+		got := k.read(cur)
+		if got.CurrentBody != c.Out || got.CurrentHidden < 0 {
+			t.Errorf("%s: current body %q, want %q", c.Name, got.CurrentBody, c.Out)
+		}
+		if got.CurrentHidden > 0 && got.Check != "hidden" {
+			t.Errorf("%s: hidden current text but check %q", c.Name, got.Check)
+		}
+	}
+	k.reject(cur, "done")
+	k.exec(`UPDATE notes SET body=?, title=? WHERE id=?`, "plain again", "T <b>one</b>", done.Note)
+	// a missing target
+	gone := replace("T <b>one</b>", "for a deleted note")
+	k.exec(`DELETE FROM notes WHERE id=?`, done.Note)
+	if got := k.read(gone); got.TargetState != "missing" || got.Check != "target" {
+		t.Fatalf("%+v", got)
+	}
+	refuseAccept("missing", gone, "missing or changed")
 
 	// other bodies and routes never reach the core
 	id5 := k.submit("five", "strict")
@@ -264,6 +372,9 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 		`{"reviewHash":"` + h5 + `","ReviewHash":"` + h5 + `"}`, `{"ReviewHash":"` + h5 + `"}`, `{"reviewhash":"` + h5 + `"}`, `{"reviewHash":"` + h5 + `","reviewHash":"` + h5 + `"}`,
 		`{"reviewHash":"` + h5 + `","reason":"x"}`, `{"reviewHash":123}`, `{"reviewHash":null}`, `{"reviewHash":"` + h5[:63] + `"}`, `{"reviewHash":"` + h5 + `0"}`,
 		`{"reviewHash":"` + strings.ToUpper(h5) + `"}`, `{"reviewHash":"` + strings.Repeat("g", 64) + `"}`, `{"reviewHash":""}`, `{}`, ``, `[]`, `"x"`, `{"reviewHash":"` + h5 + `"} {}`, `{"reviewHash":"` + h5 + `"}x`,
+		`{"reviewHash":"` + h5 + `","currentRevision":"7"}`, `{"reviewHash":"` + h5 + `","currentRevision":-1}`, `{"reviewHash":"` + h5 + `","currentRevision":1.5}`, `{"reviewHash":"` + h5 + `","currentRevision":1e3}`,
+		`{"reviewHash":"` + h5 + `","currentRevision":9007199254740993}`, `{"reviewHash":"` + h5 + `","currentRevision":null}`, `{"reviewHash":"` + h5 + `","currentRevision":01}`, `{"reviewHash":"` + h5 + `","currentRevision":1,"currentRevision":1}`,
+		`{"reviewHash":"` + h5 + `","CurrentRevision":1}`, `{"reviewHash":"` + h5 + `","currentRevision":1,"reason":"x"}`, `{"reviewHash":"` + h5 + `","currentRevision":[1]}`,
 	} {
 		if w = k.do("POST", accept, b); w.Code != 403 {
 			t.Errorf("accept body %q: %d", b, w.Code)
@@ -334,7 +445,7 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 			t.Fatal("a refused body wrote a started row")
 		}
 	}
-	if refused != 18 { // the 18 refused accept bodies above each left one denied row
+	if refused != 29 { // the 29 refused accept bodies above (18 before currentRevision, 11 after) each left one denied row
 		t.Fatal("denied rows of refused bodies:", refused)
 	}
 	if started != 2 || ok != 2 || denied != 1 { // the accept and its replay; the changed one denied

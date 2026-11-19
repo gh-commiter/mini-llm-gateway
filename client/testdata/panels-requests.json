@@ -623,13 +623,33 @@
    "row": {
     "id": 5,
     "title": "<script>alert(1)</script>",
-    "reviewHash": "h5"
+    "reviewHash": "h5",
+    "currentRevision": 0
    },
    "want": {
     "query": "",
-    "body": "{\"reviewHash\":\"h5\"}",
+    "body": "{\"currentRevision\":0,\"reviewHash\":\"h5\"}",
     "method": "POST",
     "path": "/kb/submissions/5/accept"
+   },
+   "confirm": "none"
+  },
+  {
+   "panel": "builtin.kb",
+   "section": "queue",
+   "kind": "rowActions",
+   "action": "accept",
+   "row": {
+    "id": 6,
+    "title": "A replacement",
+    "reviewHash": "h6",
+    "currentRevision": 4
+   },
+   "want": {
+    "query": "",
+    "body": "{\"currentRevision\":4,\"reviewHash\":\"h6\"}",
+    "method": "POST",
+    "path": "/kb/submissions/6/accept"
    },
    "confirm": "none"
   },
