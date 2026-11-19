@@ -3058,7 +3058,8 @@
            "label": "builtin.upstreams.section.links.detail.section.conflicts.column.what",
            "values": {
             "changed": "builtin.upstreams.section.links.detail.section.conflicts.column.what.value.changed",
-            "deleted": "builtin.upstreams.section.links.detail.section.conflicts.column.what.value.deleted"
+            "deleted": "builtin.upstreams.section.links.detail.section.conflicts.column.what.value.deleted",
+            "submission": "builtin.upstreams.section.links.detail.section.conflicts.column.what.value.submission"
            }
           }
          ],

@@ -193,7 +193,7 @@ func TestUpstreamEndToEnd(t *testing.T) {
 	_, err = f.local.core.UpdateNote(t0, p, project, n.ID, n.Revision, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "second text"})
 	f.must(err)
 	out, _ = f.cmd(coreOpts{}, "push", "shop")
-	if !strings.Contains(out, "refused 1") || !strings.Contains(out, "still pending") || !strings.Contains(out, "replaced 0") {
+	if !strings.Contains(out, "waiting for a review 1") || !strings.Contains(out, "still pending") || !strings.Contains(out, "replaced 0") || !strings.Contains(out, "refused 0") {
 		t.Fatal(out)
 	}
 	if n, _ := f.remoteSubmissions(); n != 2 { // a second submission could be accepted as a second note: nothing is sent while the first is pending

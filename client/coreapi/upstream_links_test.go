@@ -170,3 +170,50 @@ func TestUpstreamLinkDetailListsConflicts(t *testing.T) {
 		t.Fatalf("a member read the owner's link: %d %s", r.Status, r.Body)
 	}
 }
+
+// A submission that can no longer be read there is its own kind of conflict row (not "changed"), and a note out of sight is "deleted".
+func TestUpstreamLinkDetailNamesTheKindOfConflict(t *testing.T) {
+	f := newFixture(t)
+	h := &methodHost{secretHost: secretHost{secrets: map[string]string{}}}
+	h.answer = func(method, path string) (int, string) {
+		switch {
+		case path == "/minigw/v1/projects/shop":
+			return 200, `{"id":7,"slug":"shop"}`
+		case method == "POST":
+			return 201, `{"id":5,"state":"pending"}`
+		}
+		return 404, `{"error":{"message":"gone"}}`
+	}
+	api := New(Options{Store: func() *core.Store { return f.st }, Upstream: h})
+	call := func(method, path, body string) []byte {
+		t.Helper()
+		r := api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: method, Path: path, Body: []byte(body)})
+		if r.Status != 200 {
+			t.Fatalf("%s %s: %d %s", method, path, r.Status, r.Body)
+		}
+		return r.Body
+	}
+	fk := f.pid["fakture"]
+	call("PUT", "/upstreams/hub", `{"address":"127.0.0.1:8766","token":"tok#key"}`)
+	call("PUT", fmt.Sprintf("/upstreams/hub/links/%d", fk), `{"remote":"shop"}`)
+	call("POST", "/upstream-push", fmt.Sprintf(`{"project":%d}`, fk))
+	p := core.Principal{UserID: f.uid["ana"], DeviceID: "dev-ana"}
+	n, e := f.st.GetNote(bg, p, fk, f.nid["structure"])
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.st.UpdateNote(bg, p, fk, n.ID, n.Revision, core.NoteInput{Class: n.Class, Title: n.Title, Body: "edited"}); e != nil {
+		t.Fatal(e)
+	}
+	call("POST", "/upstream-push", fmt.Sprintf(`{"project":%d}`, fk)) // the earlier submission cannot be read
+	var detail struct {
+		ConflictRows []struct {
+			Note int64
+			What string
+		}
+	}
+	json.Unmarshal(call("GET", fmt.Sprintf("/upstream-links/project-%d-hub", fk), ""), &detail)
+	if len(detail.ConflictRows) != 1 || detail.ConflictRows[0].What != "submission" || detail.ConflictRows[0].Note != n.ID {
+		t.Fatalf("%+v", detail)
+	}
+}

@@ -452,7 +452,7 @@ type adminConflictJSON struct {
 	Upstream  string `json:"upstream"`
 	Note      int64  `json:"note"`
 	Title     string `json:"title"`
-	What      string `json:"what"` // "changed" or "deleted" (there)
+	What      string `json:"what"` // "changed", "deleted" (or no longer visible) or "submission" (the earlier submission cannot be read) there
 	ProjectID int64  `json:"projectId"`
 	TeamID    int64  `json:"teamId"`
 }
@@ -489,7 +489,9 @@ func (a *API) adminUpstreamLink(ctx context.Context, st *core.Store, method stri
 		for _, c := range l.Conflicts {
 			r := adminConflictJSON{Note: c.Note, What: "changed", ProjectID: j.ProjectID, TeamID: j.TeamID, Upstream: l.Upstream}
 			if c.Gone {
-				r.What = "deleted"
+				r.What = "deleted" // deleted, or no longer visible to the upstream identity
+			} else if c.Submission {
+				r.What = "submission" // the earlier submission can no longer be read there: it is not known whether it became a note
 			}
 			if note, e := st.OwnerGetNote(ctx, c.Note); e == nil {
 				r.Title = note.Title

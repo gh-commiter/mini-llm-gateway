@@ -38,8 +38,10 @@ type UpstreamPush struct {
 	Skipped  int      `json:"skipped"`
 	Replaced int      `json:"replaced"`
 	Refused  int      `json:"refused"`
-	Stopped  string   `json:"stopped,omitempty"` // why the run ended before the last note
-	DryRun   bool     `json:"dryRun"`
+	// Waiting: notes whose earlier submission is still pending upstream: nothing more is sent for them until it is reviewed. Not a failure.
+	Waiting int    `json:"waiting,omitempty"`
+	Stopped string `json:"stopped,omitempty"` // why the run ended before the last note
+	DryRun  bool   `json:"dryRun"`
 	// More: the run used its time budget (or must wait out the upstream's write limit) and stopped without a fault: push again
 	// (after Wait seconds). The notes done so far are remembered, so the next run goes on where this one ended.
 	More bool `json:"more,omitempty"`
@@ -269,6 +271,23 @@ func refusal(a upAnswer) string {
 	return "the upstream says: " + m
 }
 
+// linkWide: a refusal that ends the whole run (nothing else would be accepted either), as against one that concerns only the note it came
+// for (this identity may not write it, it is not visible): 401, a rate limit, no usable answer, a lost role or an archived project always stop;
+// a 403 that does not say which, too. A "forbidden" (this identity may not write this note or class) and a 404 concern the note when it names
+// an existing note, or when this run has already had a note accepted (the identity can write there): else it is taken as the identity's (a
+// reader's refusal would be the same for every note) and the run ends.
+func linkWide(a upAnswer, noteScoped bool) bool {
+	switch {
+	case a.status == 0 || a.status == 401 || a.status == 429 || a.errType == "pending_limit" || a.errType == "no_project_access" || a.errType == "archived":
+		return true
+	case a.status == 403:
+		return a.errType != "forbidden" || !noteScoped
+	case a.status == 404:
+		return !noteScoped
+	}
+	return false
+}
+
 // resolve: the id of the remote project or of the team's own notes, as the upstream names it to this device.
 func (p *pusher) resolve(l UpstreamLink) (int64, string) {
 	if l.Team {
@@ -488,6 +507,11 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			continue
 		}
 		if n.Unchanged {
+			if n.Sent != nil && n.Sent.Waiting && !dry { // the text is as the pending submission has it again: nothing to wait for
+				if e := s.upstreamRecordWaiting(wctx, l.Project, l.Upstream, n.ID, false); e != nil {
+					return res, e
+				}
+			}
 			res.Skipped++
 			line("skip", n, "unchanged since the last push")
 			continue
@@ -523,14 +547,14 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
 			}
 			// refused: counts a refusal; done=true ends the run (nothing else would be accepted either)
-			refused := func(a upAnswer) (r UpstreamPush, done bool, e error) {
+			refused := func(a upAnswer, noteScoped bool) (r UpstreamPush, done bool, e error) {
 				if p.more {
 					r, e = waitMsg()
 					return r, true, e
 				}
 				res.Refused++
 				line("refused", n, refusal(a))
-				if a.status == 0 || a.status == 401 || a.status == 403 || a.status == 404 || a.errType == "pending_limit" || a.status == 429 {
+				if linkWide(a, noteScoped) {
 					r, e = stop(refusal(a))
 					return r, true, e
 				}
@@ -578,7 +602,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 					}
 					var out struct{ Revision int64 }
 					if u.status != 200 || json.Unmarshal(u.data, &out) != nil || out.Revision <= 0 {
-						if r, done, e := refused(u); done {
+						if r, done, e := refused(u, true); done {
 							return r, e
 						}
 						continue
@@ -589,7 +613,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 					res.Replaced++
 					line("replace", n, "updated the note "+strconv.FormatInt(n.Sent.RemoteNote, 10)+" on the upstream")
 				default:
-					if r, done, e := refused(a); done {
+					if r, done, e := refused(a, true); done {
 						return r, e
 					}
 				}
@@ -604,7 +628,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			a := p.call("POST", notesBase, map[string]string{"Idempotency-Key": p.submissionKey(l.Project, n, 0)}, payload)
 			var out struct{ ID, Revision int64 }
 			if a.status != 201 || json.Unmarshal(a.data, &out) != nil || out.ID <= 0 || out.Revision <= 0 {
-				if r, done, e := refused(a); done {
+				if r, done, e := refused(a, res.Created+res.Replaced > 0); done {
 					return r, e
 				}
 				continue
@@ -618,19 +642,21 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		}
 		var replaces, revision, supersedes int64
 		action, detail := "create", ""
-		if n.Sent != nil && n.Sent.Conflict == 2 { // the owner chose "ours": our version goes as a submission, never as an overwrite
+		owner := n.Sent != nil && n.Sent.Conflict == 2 // the owner chose "ours": our version goes as a submission, never as an overwrite
+		if owner && n.Sent.RemoteNote > 0 && n.Sent.ConflictRev > 0 {
 			action = "replace"
 			supersedes = n.Sent.RemoteSub
-			if n.Sent.RemoteNote > 0 && n.Sent.ConflictRev > 0 {
-				replaces, revision = n.Sent.RemoteNote, n.Sent.ConflictRev
-			}
+			replaces, revision = n.Sent.RemoteNote, n.Sent.ConflictRev
 			detail = "resolved as ours: sent as a submission for the upstream's reviewers"
 		} else if n.Sent != nil { // changed since it was sent: a replacement where the upstream's routes allow it
 			action = "replace"
 			supersedes = n.Sent.RemoteSub
-			a := p.call("GET", fmt.Sprintf("%s/%d", base, n.Sent.RemoteSub), nil, nil)
-			if p.more {
-				return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+			a := upAnswer{status: 404} // a note written directly (publish mode) has no submission
+			if n.Sent.RemoteSub > 0 {
+				a = p.call("GET", fmt.Sprintf("%s/%d", base, n.Sent.RemoteSub), nil, nil)
+				if p.more {
+					return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
+				}
 			}
 			var sub struct {
 				State  string
@@ -662,11 +688,11 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				}
 				res.Refused++
 				msg := what + ": " + refusal(a)
-				if a.status == 403 {
+				if a.status == 403 && !linkWide(a, true) {
 					msg = what + ": the upstream identity may not read it (its class or role there?): ask the upstream's admin"
 				}
 				line("refused", n, msg)
-				if a.status == 0 || a.status == 401 || a.status == 429 || a.errType == "pending_limit" {
+				if linkWide(a, true) {
 					r, e = stop(refusal(a))
 					return r, true, e
 				}
@@ -693,10 +719,14 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 						detail = "the earlier submission is still pending: " + detail
 					}
 				case na.status == 404: // gone or no longer visible: never silently a new note; the owner decides
-					if e := conflict(0); e != nil {
-						return res, e
+					if !owner {
+						if e := conflict(0); e != nil {
+							return res, e
+						}
+						continue
 					}
-					continue
+					replaces, revision = 0, 0
+					detail = "the upstream's note " + tid + " is still deleted or out of sight: sent as a NEW note (a second note if it still exists out of sight)"
 				default: // not readable now: a new submission would fork the note, so this one waits for the next push
 					if r, done, e := fail(na, "the note "+tid+" upstream cannot be read"); done {
 						return r, e
@@ -706,15 +736,24 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			case readable && sub.State == "rejected": // definitely no note came of it
 				detail = "the earlier submission was rejected upstream" + upReason(sub.Reason) + ": sent again"
 			case readable && sub.State == "pending":
-				// a second submission of a note that is not yet there could be accepted too: two notes. So it waits for the review.
-				res.Refused++
-				line("refused", n, "the earlier submission "+subID+" is still pending upstream: nothing more is sent for this note until it is reviewed there")
-				continue
-			case a.status == 404: // deleted, or no longer visible: was it accepted? only the hub knows
-				if e := conflict(-1); e != nil {
-					return res, e
+				// a second submission of a note that is not yet there could be accepted too: two notes. So it waits for the review; that is
+				// not a failure (no back-off), and the link looks at the submission again at a quiet pace.
+				res.Waiting++
+				line("wait", n, "the earlier submission "+subID+" is still pending upstream: nothing more is sent for this note until it is reviewed there")
+				if !dry {
+					if e := s.upstreamRecordWaiting(wctx, l.Project, l.Upstream, n.ID, true); e != nil {
+						return res, e
+					}
 				}
 				continue
+			case a.status == 404: // deleted, or no longer visible: was it accepted? only the hub knows
+				if !owner {
+					if e := conflict(-1); e != nil {
+						return res, e
+					}
+					continue
+				}
+				detail = "the earlier submission " + subID + " cannot be read, so it is not known whether it became a note: sent as a NEW note (a second note if it did)"
 			default: // unreadable, or a state that decides nothing: a new note could be a second copy of an accepted one
 				what := "the earlier submission " + subID + " cannot be read"
 				if readable {
@@ -725,6 +764,9 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				}
 				continue
 			}
+		}
+		if owner && !strings.HasPrefix(detail, "resolved as ours") {
+			detail = "resolved as ours, " + detail
 		}
 		if dry {
 			if action == "replace" {
@@ -755,7 +797,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			}
 			res.Refused++
 			line("refused", n, refusal(a))
-			if a.status == 0 || a.status == 401 || a.status == 403 || a.status == 404 || a.errType == "pending_limit" || a.status == 429 {
+			if linkWide(a, replaces > 0 || res.Created+res.Replaced > 0) {
 				return stop(refusal(a)) // nothing else would be accepted either
 			}
 			continue

@@ -2602,11 +2602,11 @@
     {
      "match": "POST /upstream-push",
      "status": 200,
-     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"refused 12 Invoice numbering: the earlier submission 3 is still pending upstream: nothing more is sent for this note until it is reviewed there\", \"refused 13 Reset steps: the note 56 upstream cannot be read: the upstream identity may not read it (its class or role there?): ask the upstream's admin\", \"refused 14 Faq: the earlier submission 5 cannot be read: the upstream says: boom\"], \"created\": 0, \"skipped\": 0, \"replaced\": 0, \"refused\": 3, \"dryRun\": false}]}"
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"refused 13 Reset steps: the note 56 upstream cannot be read: the upstream identity may not read it (its class or role there?): ask the upstream's admin\", \"refused 14 Faq: the earlier submission 5 cannot be read: the upstream says: boom\"], \"created\": 0, \"skipped\": 0, \"replaced\": 0, \"refused\": 2, \"dryRun\": false}]}"
     }
    ],
    "want": {
-    "out": "shop -> hub (shop)\n  refused 12 Invoice numbering: the earlier submission 3 is still pending upstream: nothing more is sent for this note until it is reviewed there\n  refused 13 Reset steps: the note 56 upstream cannot be read: the upstream identity may not read it (its class or role there?): ask the upstream's admin\n  refused 14 Faq: the earlier submission 5 cannot be read: the upstream says: boom\n  created 0, replaced 0, skipped 0, refused 3\n",
+    "out": "shop -> hub (shop)\n  refused 13 Reset steps: the note 56 upstream cannot be read: the upstream identity may not read it (its class or role there?): ask the upstream's admin\n  refused 14 Faq: the earlier submission 5 cannot be read: the upstream says: boom\n  created 0, replaced 0, skipped 0, refused 2\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -2697,6 +2697,120 @@
       "POST",
       "/upstream-push",
       "{\"dryRun\":true,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "push with a note waiting for a review",
+   "args": [
+    "upstream",
+    "push",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-push",
+     "status": 200,
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"wait 12 Invoice numbering: the earlier submission 3 is still pending upstream: nothing more is sent for this note until it is reviewed there\", \"skip 13 Reset steps: unchanged since the last push\"], \"created\": 0, \"skipped\": 1, \"replaced\": 0, \"refused\": 0, \"dryRun\": false, \"waiting\": 1}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  wait 12 Invoice numbering: the earlier submission 3 is still pending upstream: nothing more is sent for this note until it is reviewed there\n  skip 13 Reset steps: unchanged since the last push\n  created 0, replaced 0, skipped 1, refused 0, waiting for a review 1\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-push",
+      "{\"dryRun\":false,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "push resolved as ours",
+   "args": [
+    "upstream",
+    "push",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-push",
+     "status": 200,
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"replace 12 Invoice numbering: resolved as ours, replaces the accepted note 55 upstream (revision 7)\", \"replace 13 Reset steps: resolved as ours, the upstream's note 56 is still deleted or out of sight: sent as a NEW note (a second note if it still exists out of sight)\", \"replace 14 Faq: resolved as ours, the earlier submission 5 cannot be read, so it is not known whether it became a note: sent as a NEW note (a second note if it did)\"], \"created\": 0, \"skipped\": 0, \"replaced\": 3, \"refused\": 0, \"dryRun\": false}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  replace 12 Invoice numbering: resolved as ours, replaces the accepted note 55 upstream (revision 7)\n  replace 13 Reset steps: resolved as ours, the upstream's note 56 is still deleted or out of sight: sent as a NEW note (a second note if it still exists out of sight)\n  replace 14 Faq: resolved as ours, the earlier submission 5 cannot be read, so it is not known whether it became a note: sent as a NEW note (a second note if it did)\n  created 0, replaced 3, skipped 0, refused 0\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-push",
+      "{\"dryRun\":false,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "status with notes waiting for a review",
+   "args": [
+    "upstream",
+    "status",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"label\": \"shop\", \"pending\": 0, \"total\": 3, \"auto\": true, \"mode\": \"publish\", \"conflicts\": [], \"waiting\": 2}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure,data, auto, publish\n  read: off\n  2 notes wait for a review upstream (nothing more is sent for them until it is decided there; not a failure)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstreams?project=3",
+      ""
      ]
     ]
    }

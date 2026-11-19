@@ -197,6 +197,16 @@ ALTER TABLE upstream_sent ADD COLUMN sent_content TEXT NOT NULL DEFAULT ''; -- p
 	return err
 }
 
+// migrate27: a note whose first submission is still pending upstream waits for its review (waiting=1): not a failure of the link, and the link
+// keeps looking at the earlier submission at a quiet pace until it is decided.
+// waitingSQL counts the notes of a link that wait for a review upstream (a note deleted here waits for nothing).
+const waitingSQL = `SELECT count(*) FROM upstream_sent s JOIN notes n ON n.id=s.note_id AND n.project_id=s.project_id WHERE s.project_id=? AND s.upstream=? AND s.waiting=1`
+
+func migrate27(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE upstream_sent ADD COLUMN waiting INTEGER NOT NULL DEFAULT 0 CHECK(waiting IN(0,1))`)
+	return err
+}
+
 func (s *Store) ListUpstreams(ctx context.Context) (out []Upstream, err error) {
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		rows, e := tx.Query(`SELECT name,address FROM upstreams ORDER BY name`)
@@ -270,9 +280,11 @@ type UpstreamLinkInfo struct {
 	NotPropagated []NotPropagated `json:"notPropagated,omitempty"`
 	// Conflicts: publish mode notes that changed (or were deleted) on the upstream since our last write; they are not overwritten.
 	Conflicts []UpstreamConflict `json:"conflicts,omitempty"`
-	Label     string             `json:"label"`   // the project's short name, or "team <name>"
-	Pending   int                `json:"pending"` // notes that a push would send now (new or changed)
-	Total     int                `json:"total"`   // published notes the link covers
+	// Waiting: notes whose earlier submission is still pending upstream: nothing more is sent for them until it is reviewed (not a failure).
+	Waiting int    `json:"waiting,omitempty"`
+	Label   string `json:"label"`   // the project's short name, or "team <name>"
+	Pending int    `json:"pending"` // notes that a push would send now (new or changed)
+	Total   int    `json:"total"`   // published notes the link covers
 	// Foreign: published notes that arrived from another gateway (they end with its trailer): never pushed onward, not in Total.
 	Foreign int `json:"foreign,omitempty"`
 	// Step C: reading the upstream's notes into the mirror (nothing of it is shown to members yet).
@@ -732,6 +744,7 @@ type UpstreamSent struct {
 	RemoteRev   int64
 	Conflict    int
 	ConflictRev int64
+	Waiting     bool // waits for the review of the earlier submission upstream
 }
 
 func upstreamHash(n Note) string {
@@ -835,7 +848,7 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 			}
 			var sent UpstreamSent
 			var at int64
-			switch e := tx.QueryRow(`SELECT hash,revision,remote_sub,remote_note,sent,remote_rev,conflict,conflict_rev FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID).Scan(&sent.Hash, &sent.Revision, &sent.RemoteSub, &sent.RemoteNote, &at, &sent.RemoteRev, &sent.Conflict, &sent.ConflictRev); e {
+			switch e := tx.QueryRow(`SELECT hash,revision,remote_sub,remote_note,sent,remote_rev,conflict,conflict_rev,waiting FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID).Scan(&sent.Hash, &sent.Revision, &sent.RemoteSub, &sent.RemoteNote, &at, &sent.RemoteRev, &sent.Conflict, &sent.ConflictRev, &sent.Waiting); e {
 			case nil:
 				sent.Sent = fromMs(at)
 				u.Sent = &sent
@@ -936,6 +949,9 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 				}
 			}
 			nr.Close()
+			if e = tx.QueryRow(waitingSQL, l.Project, l.Upstream).Scan(&info.Waiting); e != nil {
+				return e
+			}
 			cr, e := tx.Query(`SELECT note_id, conflict_rev FROM upstream_sent WHERE project_id=? AND upstream=? AND conflict=1 ORDER BY note_id LIMIT ?`, l.Project, l.Upstream, maxNotPropagated)
 			if e != nil {
 				return e
@@ -989,7 +1005,7 @@ func (s *Store) upstreamRecordSent(ctx context.Context, project int64, upstream 
 	return s.write(ctx, func(tx *sql.Tx) error {
 		// a submission leaves no baseline of the upstream note (remote_rev 0) and no conflict: a later publish update compares again
 		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=0, sent_content='', conflict=0, conflict_rev=0`,
+ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=0, sent_content='', conflict=0, conflict_rev=0, waiting=0`,
 			project, upstream, n.ID, n.Hash, n.Revision, sub, remoteNote, ms(s.now()))
 		return e
 	})
@@ -1000,7 +1016,7 @@ ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revis
 func (s *Store) upstreamRecordPublished(ctx context.Context, project int64, upstream string, n UpstreamNote, remoteNote, remoteRev int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev,sent_content) VALUES(?,?,?,?,?,0,?,?,?,?)
-ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=0, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=excluded.remote_rev, sent_content=excluded.sent_content, conflict=0, conflict_rev=0`,
+ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=0, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=excluded.remote_rev, sent_content=excluded.sent_content, conflict=0, conflict_rev=0, waiting=0`,
 			project, upstream, n.ID, n.Hash, n.Revision, remoteNote, ms(s.now()), remoteRev, sentContentHash(n.Class, n.EntryKind, n.Title, n.Body))
 		return e
 	})
@@ -1009,7 +1025,7 @@ ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revis
 // upstreamRecordConflict: the upstream note changed (or is gone: rev 0) since our last write; it is not overwritten.
 func (s *Store) upstreamRecordConflict(ctx context.Context, project int64, upstream string, note, rev int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`UPDATE upstream_sent SET conflict=1, conflict_rev=? WHERE project_id=? AND upstream=? AND note_id=?`, rev, project, upstream, note)
+		_, e := tx.Exec(`UPDATE upstream_sent SET conflict=1, conflict_rev=?, waiting=0 WHERE project_id=? AND upstream=? AND note_id=?`, rev, project, upstream, note)
 		return e
 	})
 }
@@ -1120,6 +1136,18 @@ func (s *Store) upstreamKey(ctx context.Context) (k []byte, err error) {
 func (s *Store) upstreamRecordRemoteNote(ctx context.Context, project int64, upstream string, note, remoteNote int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		_, e := tx.Exec(`UPDATE upstream_sent SET remote_note=? WHERE project_id=? AND upstream=? AND note_id=?`, remoteNote, project, upstream, note)
+		return e
+	})
+}
+
+// upstreamRecordWaiting: the earlier submission of this note is still pending upstream; waiting=0 (a decision, a reverted text) ends it.
+func (s *Store) upstreamRecordWaiting(ctx context.Context, project int64, upstream string, note int64, waiting bool) error {
+	w := 0
+	if waiting {
+		w = 1
+	}
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`UPDATE upstream_sent SET waiting=? WHERE project_id=? AND upstream=? AND note_id=? AND waiting<>?`, w, project, upstream, note, w)
 		return e
 	})
 }

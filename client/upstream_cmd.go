@@ -67,6 +67,7 @@ type upLink struct {
 	Mirror       int
 	MirrorBytes  int64
 
+	Waiting       int
 	NotPropagated []struct {
 		Note int64
 		Why  string
@@ -243,6 +244,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			}
 			if s := upstreamConflicts(l); s != "" {
 				say(clean("  " + s))
+			}
+			if l.Waiting > 0 {
+				say(fmt.Sprintf("  %d notes wait for a review upstream (nothing more is sent for them until it is decided there; not a failure)", l.Waiting))
 			}
 			if s := upstreamForeign(l); s != "" {
 				say(clean("  " + s))
@@ -464,7 +468,7 @@ type upPush struct {
 	Lines                   []string
 	Created, Skipped        int
 	Replaced, Refused       int
-	Conflicts               int
+	Conflicts, Waiting      int
 	Stopped                 string
 	DryRun                  bool
 	More                    bool
@@ -487,6 +491,9 @@ func upstreamPrint(pushes []upPush) {
 		tail := ""
 		if p.Conflicts > 0 {
 			tail = fmt.Sprintf(", conflicts %d", p.Conflicts)
+		}
+		if p.Waiting > 0 {
+			tail += fmt.Sprintf(", waiting for a review %d", p.Waiting)
 		}
 		say(fmt.Sprintf("  %screated %d, replaced %d, skipped %d, refused %d%s", verb, p.Created, p.Replaced, p.Skipped, p.Refused, tail))
 		if p.Stopped != "" {

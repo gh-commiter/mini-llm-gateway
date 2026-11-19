@@ -261,7 +261,7 @@ func TestUpstreamPushCreateSkipReplace(t *testing.T) {
 	}}
 	res, e = f.PushUpstream(ctx, up3, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
-	if res[0].Replaced != 0 || res[0].Refused != 1 || up3.count("POST") != 0 || !strings.Contains(res[0].Lines[0], "still pending") {
+	if res[0].Replaced != 0 || res[0].Created != 0 || res[0].Waiting != 1 || res[0].Refused != 0 || res[0].Skipped != 1 || up3.count("POST") != 0 || !strings.Contains(res[0].Lines[0], "still pending") {
 		t.Fatalf("%+v", res)
 	}
 	var post upCall

@@ -303,7 +303,7 @@ func TestUpstreamPendingOrUnreadableFirstSubmissionIsNotResent(t *testing.T) {
 	posts := len(h.posts)
 	res, e := f.PushUpstream(ctx, h.fake, fk, 0, "", 0, false, noSleep)
 	f.ok(e)
-	if res[0].Refused != 2 || len(h.posts) != posts || res[0].Conflicts != 0 {
+	if res[0].Refused != 1 || res[0].Waiting != 1 || len(h.posts) != posts || res[0].Conflicts != 0 {
 		t.Fatalf("%+v", res[0])
 	}
 }
