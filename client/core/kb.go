@@ -551,7 +551,20 @@ func getSubmission(tx *sql.Tx, p Principal, project, id int64, owner, body bool)
 	}
 	return
 }
-func (s *Store) GetSubmission(ctx context.Context, p Principal, project, id int64, owner bool) (v Submission, err error) {
+func (s *Store) GetSubmission(ctx context.Context, p Principal, project, id int64, owner bool) (Submission, error) {
+	v, err := s.readSubmission(ctx, p, project, id, owner)
+	if err != nil {
+		return Submission{}, err
+	}
+	if err := s.auditPrivateTarget(ctx, v, owner); err != nil {
+		return Submission{}, err
+	}
+	return v, nil
+}
+
+// readSubmission is the read of GetSubmission without the audit row, so that a caller can check what it wants of the answer
+// (GetSubmissionVersion: the hash) before a private read is recorded.
+func (s *Store) readSubmission(ctx context.Context, p Principal, project, id int64, owner bool) (v Submission, err error) {
 	lim := s.rate(p.UserID, false)
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		var e error
@@ -573,25 +586,28 @@ func (s *Store) GetSubmission(ctx context.Context, p Principal, project, id int6
 	if err != nil {
 		return Submission{}, err
 	}
-	// The owner's review read of a replacement carries the replaced note's current text: when that note is private it is an
-	// owner read of private text like GET kb/notes/{id} and the history reads, with the same audit row (kb.owner.read: the
-	// note id and the project or team, never the text; once per read; lists carry no body and write none).
-	if owner && v.CurrentClass == Private && v.CurrentBody != nil {
-		if err = s.write(ctx, func(tx *sql.Tx) error {
-			detail := map[string]any{"project": v.Project, "submission": v.ID}
-			if team, ok := SegmentTeam(v.Project); ok {
-				var name string
-				if e := tx.QueryRow(`SELECT name FROM teams WHERE id=?`, team).Scan(&name); e != nil {
-					return e
-				}
-				detail = map[string]any{"team": name, "submission": v.ID}
-			}
-			return Audit(tx, adminActor, "kb.owner.read", strconv.FormatInt(v.Replaces, 10), detail)
-		}); err != nil {
-			return Submission{}, err
-		}
-	}
 	return
+}
+
+// auditPrivateTarget: the owner's review read of a replacement carries the replaced note's current text; when that note is
+// private it is an owner read of private text like GET kb/notes/{id} and the history reads, with the same audit row
+// (kb.owner.read: the note id and the project or team, never the text; once per read; lists carry no body and write none).
+// It is written only for a read whose answer is returned.
+func (s *Store) auditPrivateTarget(ctx context.Context, v Submission, owner bool) error {
+	if !owner || v.CurrentClass != Private || v.CurrentBody == nil {
+		return nil
+	}
+	return s.write(ctx, func(tx *sql.Tx) error {
+		detail := map[string]any{"project": v.Project, "submission": v.ID}
+		if team, ok := SegmentTeam(v.Project); ok {
+			var name string
+			if e := tx.QueryRow(`SELECT name FROM teams WHERE id=?`, team).Scan(&name); e != nil {
+				return e
+			}
+			detail = map[string]any{"team": name, "submission": v.ID}
+		}
+		return Audit(tx, adminActor, "kb.owner.read", strconv.FormatInt(v.Replaces, 10), detail)
+	})
 }
 func (s *Store) ListSubmissions(ctx context.Context, p Principal, project, after int64, owner bool) (out []Submission, err error) {
 	out = []Submission{}
@@ -708,11 +724,17 @@ func (e ErrWriterLost) Unwrap() error { return e.Cause }
 // the submission only while it still is that version, else ErrSubmissionChanged, so the detail never shows a text the
 // row's Accept would not publish.
 func (s *Store) GetSubmissionVersion(ctx context.Context, id int64, hash string) (Submission, error) {
-	v, err := s.GetSubmission(ctx, Principal{}, 0, id, true)
-	if err == nil && v.ReviewHash != hash {
+	v, err := s.readSubmission(ctx, Principal{}, 0, id, true)
+	if err != nil {
+		return Submission{}, err
+	}
+	if v.ReviewHash != hash { // refused before anything is audited: no text goes out
 		return Submission{}, ErrSubmissionChanged
 	}
-	return v, err
+	if err := s.auditPrivateTarget(ctx, v, true); err != nil {
+		return Submission{}, err
+	}
+	return v, nil
 }
 
 // reviewAccess: a member reviews the submissions of a project (or a team's own notes) only with the role admin there,
@@ -906,20 +928,31 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 			state = "accepted"
 		}
 		if !accept && reason == "" && v.State == "pending" && v.Replaces != 0 { // a lost contribution tells its author why
-			// The author is told only what the author could see: with the AUTHOR's own access (not the reviewer's or the owner's).
-			if t, e := readReplaced(tx, &v, nil); e != nil {
+			// The author is told only what the author may know NOW. First: may the author see anything of this project at all (an
+			// active user, a bound device, a role or team seat that still reads it)? If not, the one generic reason covers a changed AND a
+			// deleted note: nothing about the note's existence or revision. An author who can read the project is told the specific
+			// facts the project's own members could see: a deleted note ("no longer exists": the author named it) or a changed one with its
+			// revision, the latter only when the author can read that note too (class, someone else's private note); else the generic one.
+			author := Principal{UserID: v.User, DeviceID: v.Provenance.Device}
+			generic := "the note this would replace changed or is no longer available to you: read the project's notes and propose the change again"
+			t, e := readReplaced(tx, &v, nil)
+			if e != nil {
 				return e
+			}
+			if t.state == "ok" { // nothing is wrong with the target: no default reason
+			} else if _, e := memberAccess(tx, author, v.Project); e != nil {
+				if !errors.Is(e, ErrNoProjectAccess) && !errors.Is(e, ErrNotFound) && !errors.Is(e, ErrForbidden) && !errors.Is(e, ErrDeviceNotBound) {
+					return e
+				}
+				reason = generic
 			} else if t.state == "missing" {
 				reason = fmt.Sprintf("note %d no longer exists", v.Replaces)
-			} else if t.state == "stale" {
-				author := Principal{UserID: v.User, DeviceID: v.Provenance.Device}
-				if ta, e := readReplaced(tx, &v, &author); e != nil {
-					return e
-				} else if ta.state == "stale" {
-					reason = fmt.Sprintf("note %d changed after this was written (it expected revision %d, the note is at %d): read the note and propose the change again", v.Replaces, v.Revision, ta.revision)
-				} else {
-					reason = "the note this would replace changed or is no longer visible to you: read the project's notes and propose the change again"
-				}
+			} else if ta, e := readReplaced(tx, &v, &author); e != nil {
+				return e
+			} else if ta.state == "stale" {
+				reason = fmt.Sprintf("note %d changed after this was written (it expected revision %d, the note is at %d): read the note and propose the change again", v.Replaces, v.Revision, ta.revision)
+			} else {
+				reason = generic
 			}
 		}
 		if v.State == state { // a repeat publishes nothing (the stored provenance now names the reviewer)

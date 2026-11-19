@@ -548,7 +548,43 @@ func TestReviewDefaultReasonUsesTheAuthorsAccess(t *testing.T) {
 		_, e = f.ReviewSubmission(ctx, v.ID, false, "", "")
 		f.ok(e)
 		got := reasonOf(f, v.ID)
-		if got != "the note this would replace changed or is no longer visible to you: read the project's notes and propose the change again" || strings.Contains(got, "revision") {
+		if got != "the note this would replace changed or is no longer available to you: read the project's notes and propose the change again" || strings.Contains(got, "revision") {
+			t.Fatal(got)
+		}
+	})
+	generic := "the note this would replace changed or is no longer available to you: read the project's notes and propose the change again"
+	t.Run("deactivated author", func(t *testing.T) {
+		f := newFx(t)
+		n, v := replacement(f, "inactive")
+		_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "moved on"})
+		f.ok(e)
+		f.ok(f.SetUserActive(ctx, f.uid["ana"], false)) // still a member, but deactivated
+		_, e = f.ReviewSubmission(ctx, v.ID, false, "", "")
+		f.ok(e)
+		if got := reasonOf(f, v.ID); got != generic {
+			t.Fatal(got)
+		}
+	})
+	t.Run("removed member, note deleted", func(t *testing.T) {
+		f := newFx(t)
+		n, v := replacement(f, "removed-deleted")
+		f.ok(f.DeleteNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision))
+		f.ok(f.RemoveMember(ctx, n.ProjectID, f.uid["ana"]))
+		_, e := f.ReviewSubmission(ctx, v.ID, false, "", "")
+		f.ok(e)
+		if got := reasonOf(f, v.ID); got != generic { // stale and deleted look the same to someone who may not see the project
+			t.Fatal(got)
+		}
+	})
+	t.Run("someone else's private note", func(t *testing.T) {
+		f := newFx(t)
+		n, v := replacement(f, "elses")
+		_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "moved on"})
+		f.ok(e)
+		exec(t, f.Store, `UPDATE notes SET class='private',author_id=? WHERE id=?`, f.uid["fani"], n.ID)
+		_, e = f.ReviewSubmission(ctx, v.ID, false, "", "")
+		f.ok(e)
+		if got := reasonOf(f, v.ID); got != generic {
 			t.Fatal(got)
 		}
 	})
@@ -562,4 +598,26 @@ func TestReviewDefaultReasonUsesTheAuthorsAccess(t *testing.T) {
 			t.Fatal(got)
 		}
 	})
+}
+
+// Catches: a version-bound detail with a stale hash recording a private read although no text was returned.
+func TestReviewVersionDetailAuditsOnlyWhenItReturnsText(t *testing.T) {
+	f := newFx(t)
+	ana, pid := f.p("ana"), f.pid["fakture"]
+	n, _, e := f.CreateNote(ctx, ana, pid, "ver-note", NoteInput{Class: Private, Title: "Secret", Body: "secret body"})
+	f.ok(e)
+	v, _, e := f.Submit(ctx, ana, pid, "ver-repl", SubmissionInput{NoteInput: NoteInput{Class: Private, Title: "New", Body: "new"}, Replaces: n.ID, Revision: n.Revision})
+	f.ok(e)
+	reads := func() (c int) {
+		f.ok(f.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action='kb.owner.read'`).Scan(&c))
+		return
+	}
+	hash := ownerRead(f, v.ID).ReviewHash // one audited read
+	before := reads()
+	if _, e := f.GetSubmissionVersion(ctx, v.ID, "0"+hash[1:]); !errors.Is(e, ErrSubmissionChanged) || reads() != before {
+		t.Fatal("a refused stale hash was audited", e, reads(), before)
+	}
+	if _, e := f.GetSubmissionVersion(ctx, v.ID, hash); e != nil || reads() != before+1 {
+		t.Fatal("a returned read was not audited exactly once", e, reads(), before)
+	}
 }
