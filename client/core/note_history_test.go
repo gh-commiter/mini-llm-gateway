@@ -613,7 +613,8 @@ func TestNoteHistoryStormEvictsItsInteriorFirst(t *testing.T) {
 		f.clock = f.clock.Add(300 * time.Millisecond)
 	}
 	got := historyRevisions(t, f.Store, n.ID)
-	if len(got) != 100 || got[0] != 1 || got[1] != 102 || got[99] != 200 || got[99]-got[1] != 98 {
+	// the merged gaps of evicted neighbours make the survivors spread over the storm; the first and the newest stay
+	if len(got) != 100 || got[0] != 1 || got[99] != 200 {
 		t.Fatal("rows", len(got), got[:3], got[len(got)-1])
 	}
 	checkHistory(t, f.Store, n)
@@ -652,7 +653,7 @@ func TestNoteHistoryInteriorGoesBeforeSparseRows(t *testing.T) {
 		f.clock = f.clock.Add(11 * time.Minute)
 		cur = f.edit("ana", n.ProjectID, cur, fmt.Sprint("s", cur.Revision))
 	}
-	for _, want := range [][]int64{{1, 2, 3, 4, 5}, {1, 2, 3, 4, 5, 6}, {1, 3, 4, 5, 6, 7}, {1, 4, 5, 6, 7, 8}, {1, 5, 6, 7, 8, 9}, {5, 6, 7, 8, 9, 10}} {
+	for _, want := range [][]int64{{1, 2, 3, 4, 5}, {1, 2, 3, 4, 5, 6}, {1, 3, 4, 5, 6, 7}, {1, 3, 5, 6, 7, 8}, {1, 5, 6, 7, 8, 9}, {5, 6, 7, 8, 9, 10}} {
 		sparse()
 		if got := historyRevisions(t, f.Store, n.ID); !reflect.DeepEqual(got, want) {
 			t.Fatal("rows", got, "want", want)
@@ -696,6 +697,49 @@ func TestPickVictim(t *testing.T) {
 		{"clock went back is not", []historyRow{row(1, time.Hour, 7), row(2, 0, 7), row(3, time.Minute, 8)}, 0},
 		{"the newest row is never chosen", []historyRow{row(1, 0, 7), row(2, time.Second, 7)}, 0},
 		{"only the newest left", []historyRow{row(1, 0, 7)}, -1},
+	}
+	for _, c := range cases {
+		if got := pickVictim(c.rows); got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// Catches: a version that lived two minutes being evicted before the ones that lived 100 ms.
+func TestNoteHistoryLongerLivedVersionOutlivesAStorm(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	cur := f.edit("ana", n.ProjectID, n, "B1") // row 1: the original
+	f.clock = f.clock.Add(2 * time.Minute)
+	cur = f.edit("ana", n.ProjectID, cur, "storm start") // row 2: B1, lived two minutes
+	for i := 0; i < 150; i++ {
+		f.clock = f.clock.Add(100 * time.Millisecond)
+		cur = f.edit("ana", n.ProjectID, cur, fmt.Sprint("storm ", i))
+	}
+	got := historyRevisions(t, f.Store, n.ID)
+	if len(got) != 100 || got[0] != 1 || got[1] != 2 || got[99] != cur.Revision-1 {
+		t.Fatal("rows", len(got), got[:3], got[len(got)-1])
+	}
+	var body string
+	f.ok(f.DB().QueryRow(`SELECT body FROM note_history WHERE note_id=? AND revision=2`, n.ID).Scan(&body))
+	if body != "B1" {
+		t.Fatal("B1 lost", body)
+	}
+}
+
+func TestPickVictimShortestLived(t *testing.T) {
+	row := func(rev int64, saved time.Duration, by int64) historyRow {
+		return historyRow{rev: rev, saved: saved.Milliseconds(), by: by}
+	}
+	cases := []struct {
+		name string
+		rows []historyRow
+		want int
+	}{
+		{"shortest gap beats older", []historyRow{row(1, 0, 7), row(2, 2*time.Minute, 7), row(3, 2*time.Minute+100*time.Millisecond, 7), row(4, time.Hour, 9)}, 2},
+		{"equal gaps: the oldest", []historyRow{row(1, 0, 7), row(2, time.Second, 7), row(3, 2*time.Second, 7), row(4, time.Hour, 9)}, 1},
+		{"9:59 loses to 1 s", []historyRow{row(1, 0, 7), row(2, 9*time.Minute+59*time.Second, 7), row(3, 9*time.Minute+60*time.Second, 7), row(4, time.Hour, 9)}, 2},
+		{"non-interior untouched while an interior exists", []historyRow{row(1, 0, 8), row(2, time.Hour, 7), row(3, time.Hour+time.Second, 7), row(4, 5*time.Hour, 9)}, 2},
 	}
 	for _, c := range cases {
 		if got := pickVictim(c.rows); got != c.want {

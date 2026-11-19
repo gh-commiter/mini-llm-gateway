@@ -83,14 +83,23 @@ func saveNoteHistory(tx *sql.Tx, id int64, in NoteInput, now time.Time, by int64
 type historyRow struct{ rev, saved, by, size int64 }
 
 // pickVictim returns the index of the row to evict from rows (ordered by revision, the last one is the row just
-// saved and is never chosen), or -1. The oldest burst interior goes first: a row whose predecessor has the same
-// non-zero author and was saved 0 < d < historyBurst earlier (a zero or negative d, a clock that went back, is
-// not interior). Without one, the oldest row goes.
+// saved and is never chosen), or -1. Among the burst interiors it picks the version that lived the shortest, the
+// smallest gap to the row before it (ties: the oldest). An interior is a row whose predecessor has the same
+// non-zero author and was saved 0 < gap < historyBurst earlier (a zero or negative gap, a clock that went back, is
+// not interior). Without an interior, the oldest row goes.
 func pickVictim(rows []historyRow) int {
+	best, bestGap := -1, int64(0)
 	for i := 1; i < len(rows)-1; i++ {
-		if d := time.Duration(rows[i].saved-rows[i-1].saved) * time.Millisecond; rows[i].by != 0 && rows[i].by == rows[i-1].by && d > 0 && d < historyBurst {
-			return i
+		gap := rows[i].saved - rows[i-1].saved
+		if rows[i].by == 0 || rows[i].by != rows[i-1].by || gap <= 0 || time.Duration(gap)*time.Millisecond >= historyBurst {
+			continue
 		}
+		if best < 0 || gap < bestGap {
+			best, bestGap = i, gap
+		}
+	}
+	if best >= 0 {
+		return best
 	}
 	if len(rows) > 1 {
 		return 0
