@@ -150,6 +150,13 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
 }
 
 // An incomplete check never changes the owner's index: the staged paths came from a read that failed in part (a committed .envrc looked staged, 0.7.36 flake).
+// G3: every name the watcher prints is escaped (the shared fixture rows assert the lines; this the function, the same cases as Go gitEsc).
+@Test func gitWatchEscapesWhatCanRewriteATerminalLine() {
+    let cases: [(String, String)] = [("plain/name.txt", "plain/name.txt"), ("a\u{1b}[2K\r", "a\\x1b[2K\\x0d"), ("x\u{1b}]52;c;AAAA\u{7}", "x\\x1b]52;c;AAAA\\x07"), ("a\u{202e}b", "a\\u{202e}b"),
+        ("a\u{2028}b", "a\\u{2028}b"), ("back\\slash", "back\\\\slash"), ("c1\u{85}", "c1\\x85"), ("é", "é"), ("del\u{7f}", "del\\x7f")]
+    for (i, w) in cases { #expect(GitWatch.esc(i) == w, "\(i.debugDescription)") }
+}
+
 @Test func gitWatchLeavesTheIndexAloneWhenAReadFailed() {
     var s = GitWatch.State(), e = GitWatch.State()
     s.refs = ["refs/heads/main": "a"]; s.index = ["a.txt": "100644 aaaa 0"]

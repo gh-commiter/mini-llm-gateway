@@ -54,7 +54,21 @@ public struct GitWatch: Sendable {
     static let maxCommitsDefault = 200, maxOutputDefault = 1 << 20
     static func list(_ l: [String]) -> String {
         let s = l.sorted()
-        return s.count > names ? s.prefix(names).joined(separator: ", ") + " and \(s.count - names) more" : s.joined(separator: ", ")
+        return s.count > names ? s.prefix(names).map(esc).joined(separator: ", ") + " and \(s.count - names) more" : s.map(esc).joined(separator: ", ")
+    }
+
+    /// Every name the watcher prints (a path, a branch, a tag: the agent chooses them) goes through this: control characters (C0, DEL, C1) as \xNN, a backslash as \\, the bidi controls
+    /// and the line and paragraph separators as \u{...}, so that a name cannot erase or rewrite the warning in the owner's terminal and stays recognisable. Go gitEsc is the same.
+    static func esc(_ s: String) -> String {
+        var o = ""
+        for u in s.unicodeScalars {
+            let v = u.value
+            if u == "\\" { o += "\\\\" }
+            else if v < 0x20 || v == 0x7f || (0x80...0x9f).contains(v) { o += "\\x" + (v < 16 ? "0" : "") + String(v, radix: 16) }
+            else if v == 0x61c || v == 0x200e || v == 0x200f || v == 0x2028 || v == 0x2029 || (0x202a...0x202e).contains(v) || (0x2066...0x206f).contains(v) { o += "\\u{" + String(v, radix: 16) + "}" }
+            else { o.unicodeScalars.append(u) }
+        }
+        return o
     }
 
     /// A path that gets a printed command: only letters, digits and . _ / @ + - (no space, nothing a shell or cmd.exe reads as syntax), and not starting with "-". The owner may paste the
@@ -94,7 +108,7 @@ public struct GitWatch: Sendable {
         for (p, v) in end.index where counted(p) && start.index[p] != v && notCommitted(p) { staged.append(p) }
         for p in start.index.keys where end.index[p] == nil && counted(p) && notCommitted(p) { staged.append(p) }
         var parts: [String] = []
-        if end.head != start.head { parts.append(end.head.isEmpty ? "HEAD is detached" : "HEAD now on " + end.head) }
+        if end.head != start.head { parts.append(end.head.isEmpty ? "HEAD is detached" : "HEAD now on " + esc(end.head)) }
         else if end.head.isEmpty, end.headId != start.headId { parts.append("detached HEAD moved") }  // no branch moves with it: only the object id says so
         if !commits.isEmpty { parts.append("\(commits.count) new commit(s)") }
         for (what, l) in [("new branches", newBranches), ("moved branches", moved), ("new tags", newTags), ("moved tags", movedTags), ("other refs changed", other), ("deleted refs", deleted)] where !l.isEmpty { parts.append(what + ": " + list(l)) }

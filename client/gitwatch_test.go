@@ -805,3 +805,15 @@ func TestGitUnstageWarningPrintsNoCommandForAHostilePath(t *testing.T) {
 		t.Error("a plain path is refused")
 	}
 }
+
+// G3: every name the watcher prints is escaped (the fixture rows assert the lines; this the function).
+func TestGitEscEscapesWhatCanRewriteATerminalLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain/name.txt": "plain/name.txt", "a\x1b[2K\r": `a\x1b[2K\x0d`, "x\x1b]52;c;AAAA\x07": `x\x1b]52;c;AAAA\x07`, "a‮b": `a\u{202e}b`, "a b": `a\u{2028}b`,
+		`back\slash`: `back\\slash`, "c1\u0085": `c1\x85`, "é": "é", "\xff": `\xff`, "del\x7f": `del\x7f`,
+	} {
+		if got := gitEsc(in); got != want {
+			t.Errorf("gitEsc(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

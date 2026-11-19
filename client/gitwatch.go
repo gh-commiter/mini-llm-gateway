@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Direct mode lets the agent write git's own data (gitDirWritable), so the owner always sees what it did in the repository and is warned about what git could
@@ -59,10 +60,39 @@ var (
 
 func gitNames(l []string) string {
 	sort.Strings(l)
+	more := ""
 	if len(l) > gitWatchNames {
-		return strings.Join(l[:gitWatchNames], ", ") + fmt.Sprintf(" and %d more", len(l)-gitWatchNames)
+		more = fmt.Sprintf(" and %d more", len(l)-gitWatchNames)
+		l = l[:gitWatchNames]
 	}
-	return strings.Join(l, ", ")
+	e := make([]string, len(l))
+	for i, n := range l {
+		e[i] = gitEsc(n)
+	}
+	return strings.Join(e, ", ") + more
+}
+
+// gitEsc: every name the watcher prints (a path, a branch, a tag: the agent chooses them) goes through this: control characters (C0, DEL, C1) as \xNN, a backslash as \\, the bidi controls
+// and the line and paragraph separators as \u{...}, so that a name cannot erase or rewrite the warning in the owner's terminal and stays recognisable. Swift GitWatch.esc is the same.
+func gitEsc(s string) string {
+	var o strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n == 1: // not UTF-8: the byte
+			fmt.Fprintf(&o, "\\x%02x", s[i])
+		case r == '\\':
+			o.WriteString("\\\\")
+		case r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f:
+			fmt.Fprintf(&o, "\\x%02x", r)
+		case r == 0x61c || r == 0x200e || r == 0x200f || r == 0x2028 || r == 0x2029 || r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x206f:
+			fmt.Fprintf(&o, "\\u{%x}", r)
+		default:
+			o.WriteString(s[i : i+n])
+		}
+		i += n
+	}
+	return o.String()
 }
 
 // gitCommandSafe: a path that gets a printed command: only letters, digits and . _ / @ + - (no space, nothing a shell or cmd.exe reads as syntax), and not starting with "-". The owner
@@ -153,7 +183,7 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 		if end.Head == "" {
 			parts = append(parts, "HEAD is detached")
 		} else {
-			parts = append(parts, "HEAD now on "+end.Head)
+			parts = append(parts, "HEAD now on "+gitEsc(end.Head))
 		}
 	} else if end.Head == "" && end.HeadID != start.HeadID {
 		parts = append(parts, "detached HEAD moved") // no branch moves with it: only the object id says so
