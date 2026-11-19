@@ -619,7 +619,7 @@ private func panelKeys(_ d: PanelDescription) -> Set<String> {
 private let kbAnswers: [(String, Int, String)] = [
     ("GET /projects", 200, #"{"projects":[{"id":1,"slug":"acme","name":"Acme"},{"id":2,"slug":"shop","name":"Shop"}]}"#),
     ("GET /teams", 200, #"{"teams":[{"id":4,"name":"web","archived":false,"path":"","segment":1099511627780}]}"#),
-    ("GET /kb/submissions", 200, ##"{"submissions":[{"id":5,"title":"<script>alert(1)</script>","scopeName":"Acme","scopeKind":"project","class":"data","entryKind":"finding","authorName":"ana","received":"2026-11-17T10:00:00Z","isReplacement":false,"replaces":0,"reviewHash":"h5","currentRevision":0},{"id":6,"title":"**b** [x](https://evil.example)","scopeName":"web","scopeKind":"team","class":"structure","entryKind":"faq","authorName":"a\u202eb","received":"2026-11-17T11:00:00Z","isReplacement":true,"replaces":77,"reviewHash":"h6","currentRevision":4}],"next":0}"##),
+    ("GET /kb/submissions", 200, ##"{"submissions":[{"id":5,"title":"<script>alert(1)</script>","scopeName":"Acme","scopeKind":"project","class":"data","entryKind":"finding","authorName":"ana","received":"2026-11-17T10:00:00Z","isReplacement":false,"replaces":0,"reviewHash":"h5","currentRevision":0,"acceptInPanel":true,"acceptReplacementInPanel":false},{"id":6,"title":"**b** [x](https://evil.example)","scopeName":"web","scopeKind":"team","class":"structure","entryKind":"faq","authorName":"a\u202eb","received":"2026-11-17T11:00:00Z","isReplacement":true,"replaces":77,"reviewHash":"h6","currentRevision":4,"acceptInPanel":false,"acceptReplacementInPanel":true}],"next":0}"##),
     ("GET /kb/submissions/5/versions/h5", 200, #"{"id":5,"title":"t5","body":"text five","isReplacement":false}"#),
     ("GET /kb/submissions/6/versions/h6", 200, #"{"id":6,"title":"t6","body":"new text","isReplacement":true,"replaces":77,"targetState":"ok","currentRevision":4,"currentTitle":"old","currentClass":"data","currentKind":"finding","currentReviewCheck":"ok","currentBody":"old text"}"#),
     ("GET /kb/notes/77", 200, #"{"id":77,"title":"old","class":"data","updated":"2026-11-01T10:00:00Z","body":"old text"}"#),
@@ -701,7 +701,7 @@ private let kbAnswers: [(String, Int, String)] = [
         let m = try await model(fake)
         let queue = m.panel.sections[1]
         let row = m.data("queue").rows[0]
-        let accept = queue.rowActions![0], reject = queue.rowActions![1]
+        let accept = queue.rowActions![0], reject = queue.rowActions![2]  // accept, replace, reject
         #expect(try m.request(accept, row: row).get() == CoreRequest(method: "POST", path: "/kb/submissions/5/accept", body: Data(#"{"currentRevision":0,"reviewHash":"h5"}"#.utf8)))  // the version on screen, and the revision of the replaced note it showed (0: none)
         #expect(m.confirmation(accept, row: row) == nil)  // accepting asks nothing
         #expect(m.defaults(reject, row: row) == ["reason": .string("")])
@@ -717,6 +717,33 @@ private let kbAnswers: [(String, Int, String)] = [
         #expect(await m.perform(accept, section: "queue", row: row))
         let log = await fake.log
         #expect(log.first == #"POST /kb/submissions/5/accept {"currentRevision":0,"reviewHash":"h5"}"# && log.contains("GET /kb/submissions"))
+    }
+
+    /// A new note offers Accept, a replacement its own confirmed Accept replacement, any other row only Reject: the two accepts are chosen by
+    /// two boolean fields of the row, and the replacement's confirmation names the submission (#162 step 3).
+    @Test(.enabled(if: haveFixtures)) func aReplacementIsAcceptedByItsOwnConfirmedAction() async throws {
+        let fake = Fake()
+        let m = try await model(fake)
+        let queue = m.panel.sections[1]
+        let plain = m.data("queue").rows[0], replacement = m.data("queue").rows[1]
+        func ids(_ row: PanelRow) -> [String] { m.rowActions(queue, row).map(\.id) }
+        #expect(ids(plain) == ["accept", "reject"] && ids(replacement) == ["replace", "reject"])
+        var flags = plain.values  // a long text, hidden characters or a changed or missing target: neither flag is true
+        flags["acceptInPanel"] = .bool(false)
+        flags["acceptReplacementInPanel"] = .bool(false)
+        let neither = PanelRow(id: plain.id, values: flags)
+        #expect(ids(neither) == ["reject"])
+        let replace = try #require(queue.rowActions!.first { $0.id == "replace" })
+        #expect(try m.request(replace, row: replacement).get() == CoreRequest(method: "POST", path: "/kb/submissions/6/accept", body: Data(#"{"currentRevision":4,"reviewHash":"h6"}"#.utf8)))
+        let c = m.confirmation(replace, row: replacement)
+        #expect(c?.destructive == true && c?.title == "Replace a note with **b** [x](https://evil.example)?")  // the title of the row, filled in once, as plain text
+        // without the confirmation nothing is sent; confirmed, it goes out
+        await fake.clear()
+        #expect(await !m.perform(replace, section: "queue", row: replacement))
+        #expect(await fake.log.isEmpty)
+        await fake.set("POST /kb/submissions/6/accept", 200, "{}")
+        #expect(await m.perform(replace, section: "queue", row: replacement, confirmed: true))
+        #expect(await fake.log.first == #"POST /kb/submissions/6/accept {"currentRevision":4,"reviewHash":"h6"}"#)
     }
 
     @Test(.enabled(if: haveFixtures)) func theDetailPageReadsTheSubmissionAndOnlyAReplacementsOldNote() async throws {
