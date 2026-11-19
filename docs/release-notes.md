@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+- The search rebuild (`kb rebuild-search`, a restore) and the removal of a read link with thousands of mirrored notes no longer take seconds: with FTS5's secure-delete on, deleting a whole search table was roughly quadratic (3000 notes of 400 words: about 5 s, now about 0.4 s). A bulk delete now runs with the option off, merges the index afterwards (so the deleted postings leave the file) and turns it back on in the same transaction; deleting one note still overwrites its postings at once.
+- Documentation: the remote settings page is described as it is: it also shows teams and projects read-only and has the "Review" page; a replacement can be accepted there while its note is unchanged and both texts are shown in full (only long texts, hidden characters and a note that changed or is gone are rejected-only). `scripts/serve-docker-e2e.sh` pins its Debian image by digest like the other test scripts.
+
 ## 0.8.11
 
 ### Fixed

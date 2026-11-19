@@ -664,7 +664,7 @@ func parseReadSources(csv string) (string, error) {
 
 // purgeMirror deletes the mirror of one link (rows and search postings); purgeUpstreamMirror that of every link of an upstream.
 func purgeMirror(tx *sql.Tx, project int64, upstream string) (int64, error) {
-	if _, e := tx.Exec(`DELETE FROM upstream_mirror_search WHERE rowid IN (SELECT id FROM upstream_mirror WHERE project_id=? AND upstream=?)`, project, upstream); e != nil {
+	if e := deleteMirrorSearch(tx, `project_id=? AND upstream=?`, project, upstream); e != nil {
 		return 0, e
 	}
 	r, e := tx.Exec(`DELETE FROM upstream_mirror WHERE project_id=? AND upstream=?`, project, upstream)
@@ -675,12 +675,33 @@ func purgeMirror(tx *sql.Tx, project int64, upstream string) (int64, error) {
 }
 
 func purgeUpstreamMirror(tx *sql.Tx, upstream string) error {
-	if _, e := tx.Exec(`DELETE FROM upstream_mirror_search WHERE rowid IN (SELECT id FROM upstream_mirror WHERE upstream=?)`, upstream); e != nil {
+	if e := deleteMirrorSearch(tx, `upstream=?`, upstream); e != nil {
 		return e
 	}
 	_, e := tx.Exec(`DELETE FROM upstream_mirror WHERE upstream=?`, upstream)
 	return e
 }
+
+// deleteMirrorSearch removes the search postings of the mirror rows matching where. A few rows are deleted one by one with FTS5's
+// secure-delete on (the usual guarantee); a bulk delete (a link of thousands of notes) runs with it off around the delete and merges
+// afterwards (ftsBulk), because with it on such a delete is quadratic (3000 rows: 5 s instead of well under 1 s).
+func deleteMirrorSearch(tx *sql.Tx, where string, args ...any) error {
+	var n int
+	if err := tx.QueryRow(`SELECT count(*) FROM upstream_mirror WHERE `+where, args...).Scan(&n); err != nil {
+		return err
+	}
+	del := func() error {
+		_, e := tx.Exec(`DELETE FROM upstream_mirror_search WHERE rowid IN (SELECT id FROM upstream_mirror WHERE `+where+`)`, args...)
+		return e
+	}
+	if n < bulkMirrorRows {
+		return del()
+	}
+	return ftsBulk(tx, "upstream_mirror_search", del)
+}
+
+// bulkMirrorRows: from this many rows a mirror delete takes the bulk path (the per-row path is as fast below it).
+const bulkMirrorRows = 200
 
 func contains(cs []Class, c Class) bool {
 	for _, x := range cs {

@@ -57,20 +57,47 @@ func ftsSecureDelete(tx *sql.Tx) error {
 	return nil
 }
 
+// ftsBulk runs fn, which deletes the WHOLE content (or a whole link's rows) of an FTS5 table, with the table's secure-delete option
+// off: with it on, a bulk delete is roughly quadratic (2000 notes of 400 words: 3 s instead of 0.1 s). A merge ('optimize') follows,
+// which drops the deleted postings from the segments and frees their pages, and the database's own secure_delete zeroes freed pages,
+// so the deleted text does not stay in the file. All in the caller's transaction: the option row changes back with it, a crash or an
+// error leaves it as it was, and ftsSecureDelete at open sets it again in any case. Deletes of single rows keep the option on.
+func ftsBulk(tx *sql.Tx, table string, fn func() error) error {
+	set := func(v int) error {
+		_, err := tx.Exec(`INSERT INTO `+table+`(`+table+`, rank) VALUES('secure-delete', ?)`, v)
+		return err
+	}
+	if err := set(0); err != nil {
+		return err
+	}
+	if err := fn(); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO ` + table + `(` + table + `) VALUES('optimize')`); err != nil {
+		return err
+	}
+	return set(1)
+}
+
 // rebuildSearch replaces every posting with one built from the notes.
 func rebuildSearch(tx *sql.Tx) error {
 	if err := ftsSecureDelete(tx); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM note_search; ` + searchInsert); err != nil {
+	if err := ftsBulk(tx, "note_search", func() error {
+		_, err := tx.Exec(`DELETE FROM note_search; ` + searchInsert)
+		return err
+	}); err != nil {
 		return err
 	}
 	var mirror int // the index of the upstream mirror has its own copy of the text: rebuilt from the mirror rows too (a backup of schema 24 or later)
 	if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='upstream_mirror_search'`).Scan(&mirror); err != nil || mirror == 0 {
 		return err
 	}
-	_, err := tx.Exec(`DELETE FROM upstream_mirror_search; INSERT INTO upstream_mirror_search(rowid,title,body) SELECT id,title,body FROM upstream_mirror`)
-	return err
+	return ftsBulk(tx, "upstream_mirror_search", func() error {
+		_, err := tx.Exec(`DELETE FROM upstream_mirror_search; INSERT INTO upstream_mirror_search(rowid,title,body) SELECT id,title,body FROM upstream_mirror`)
+		return err
+	})
 }
 func (s *Store) RebuildSearch(ctx context.Context) error {
 	return s.write(ctx, func(tx *sql.Tx) error {

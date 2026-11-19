@@ -69,13 +69,13 @@ func main() {
 EOF
 (cd $T/fakegw && go mod init fakegw >/dev/null 2>&1 && GOOS=linux GOARCH=arm64 go build -o $T/bin/fakegw .)
 
-dock() { docker run --rm -v $T/bin:/opt/mgw:ro -v $T/cfg:/cfg debian:stable-slim /opt/mgw/minigw "$@" }
+dock() { docker run --rm -v $T/bin:/opt/mgw:ro -v $T/cfg:/cfg debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 /opt/mgw/minigw "$@" }
 LINE=$(dock serve init --config /cfg/serve.json | grep "minigw connect")
 TOKEN=${${LINE#*--token \'}%\'}
 start() {
   docker rm -f $NAME >/dev/null 2>&1 || true
   docker run -d --name $NAME -p $PORT:8765 -e PATH=/opt/mgw:/usr/bin:/bin -v $T/bin:/opt/mgw:ro -v $T/cfg:/cfg \
-    debian:stable-slim sh -c '/opt/mgw/fakegw & exec /opt/mgw/minigw serve --config /cfg/serve.json' >/dev/null
+    debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 sh -c '/opt/mgw/fakegw & exec /opt/mgw/minigw serve --config /cfg/serve.json' >/dev/null
   for i in {1..50}; do curl -s -o /dev/null http://127.0.0.1:$PORT/health/live && return; sleep 0.2; done
   fail "gateway did not start"
 }

@@ -28,7 +28,7 @@ minigw gw bind <device id> ana                          # a device belongs to on
 
 Submissions from colleagues wait for you: `minigw gw kb review shop` (or `--team acme`), then `minigw gw kb accept <id>` or `minigw gw kb reject <id> --reason "..."`. You can review everything. A project admin reviews the submissions of their project too, with `minigw kb review|accept|reject` (never their own submission; `accept` names the version that was read), so giving someone the role `admin` makes them a reviewer of that project's knowledge base: give `developer` when that is not wanted. A team's notes are written, and reviewed, by a project admin of the team.
 
-The same things are in the Settings window of the Mac app and on the settings page of `minigw serve` (`minigw gw settings link` prints a one-time link): four panes, Users and devices, Teams and projects, Knowledge base and Upstream gateways. Remote settings (`minigw gw settings password`) show providers and devices only, not teams or review.
+The same things are in the Settings window of the Mac app and on the settings page of `minigw serve` (`minigw gw settings link` prints a one-time link): four panes, Users and devices, Teams and projects, Knowledge base and Upstream gateways. Remote settings (`minigw gw settings password`) manage providers and devices, show users, bindings, teams and projects read-only (menu item "Team (read-only)"), and review pending knowledge-base submissions (menu item "Review": accept or reject the version you read); everything else stays with the CLI.
 
 ## 2. Colleague
 
