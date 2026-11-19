@@ -78,6 +78,9 @@ out=$(winrun newer); print -r -- $out
 exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\''"
 [[ "$(<$T/win/data/bin/minigw)" == "#!/bin/sh"$'\n'"# Mini Gateway: the installed minigw"$'\n'"exec 'C:${exe//$sq/$rep}' \"\$@\"" ]] || fail "10: sh shim: $(<$T/win/data/bin/minigw)"
 [[ "$(<$T/win/data/bin/minigw.cmd)" == "@setlocal DisableDelayedExpansion"$'\r\n'"@\"%LOCALAPPDATA%\\Programs\\Mini Gateway\\minigw.exe\" %*"$'\r' ]] || fail "10: cmd shim: $(<$T/win/data/bin/minigw.cmd)"
+# #153: zapis sprejetega za kb-hook.sh: lupina bin/minigw in nameščeni minigw.exe, vsak z lastnim SHA-256, mode 600
+rec=$T/win/data/bin/.verified; sh_=$(shasum -a 256 $T/win/data/bin/minigw | cut -d" " -f1); ex_=$(shasum -a 256 "$exe" | cut -d" " -f1)
+[[ "$(<$rec)" == "$sh_  $T/win/data/bin/minigw"$'\n'"$ex_  $exe" && "$(ls -l $rec | cut -c1-10)" == -rw------- && ! -e $rec.new ]] || fail "10: .verified: $(<$rec)"
 [[ -e $T/win/data/bin/minigw.exe && $out == *"connected to Mini Gateway"* ]] || fail "10: the plugin copy was deleted (a kb mcp config points at it) or status not read"
 rm "$exe"; out=$(winrun); print -r -- $out
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd ]] || fail "10: shims kept without an installed minigw"
@@ -90,6 +93,7 @@ out=$(winrun); print -r -- $out
 print '#!/bin/sh\ntouch '$T'/ran10\necho minigw 9.9.9' > "$exe"; chmod +x "$exe"; rm -f $T/ran10
 out=$(winrun); print -r -- $out
 [[ ! -e $T/ran10 && ! -e $T/win/data/bin/minigw && $out == *"cannot verify the installed minigw and cannot download a verified one"* ]] || fail "10c: a substituted MSI minigw was run or linked"
+[[ ! -e $T/win/data/bin/.verified ]] || fail "10c: the record of the rejected minigw is still there (#153)"
 # 10e: lupini iz seje 1 (overjen nameščeni minigw.exe), potem je exe zamenjan (hash ni v vsotah): lupini izgineta, zažene se kopija vtičnika
 print '#!/bin/sh\n[ "$1" = --version ] && echo minigw '$MINV'; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$exe"; chmod +x "$exe"; wtrust "$exe" $MINV
 cp "$exe" $T/win/data/bin/minigw.exe; winrun newer > /dev/null
@@ -121,13 +125,17 @@ out=$(run /tmp/d1 evil real); echo "$out"
 echo "$out" | grep -q "not updated: cannot check the release signature" || fail "1: no reason printed"
 echo "ok 1: 0.5.16 minigw does not verify a garbage signature"
 
+mkdir -p /tmp/d2/bin; echo stale > /tmp/d2/bin/.verified  # #153: zavrnitev zbriše zapis
 out=$(run /tmp/d2 good real); echo "$out"
 [ ! -e /tmp/d2/bin/minigw ] || fail "2: installed without a signature check"
+[ ! -e /tmp/d2/bin/.verified ] || fail "2: the record survived a refused install (#153)"
 echo "ok 2: first install without ssh-keygen refused"
 
 apt-get install -y -qq openssh-client >/dev/null 2>&1
 out=$(run /tmp/d3 good testkey); echo "$out"
 [ -x /tmp/d3/bin/minigw ] || fail "3: not installed with a good signature"
+[ "$(cat /tmp/d3/bin/.verified)" = "$(sha256sum /tmp/d3/bin/minigw | cut -d" " -f1)  /tmp/d3/bin/minigw" ] || fail "3: no record of the accepted download (#153)"
+[ "$(stat -c %a /tmp/d3/bin/.verified)" = 600 ] || fail "3: the record is not mode 600"
 echo "ok 3: good signature installs"
 
 mkdir -p /tmp/d4/bin; cp /t/minigw-old /tmp/d4/bin/minigw; cp /t/rel/older/SHA256SUMS /t/rel/older/SHA256SUMS.sig /tmp/d4/bin/  # overjena stara kopija
@@ -184,6 +192,7 @@ mkdir -p /tmp/d9/bin; cp /t/minigw-old /tmp/d9/bin/minigw; cp /t/rel/good/SHA256
 for rel in older good newer; do
   out=$(run /tmp/d9 $rel testkey); echo "$out"
   [ "$(readlink /tmp/d9/bin/minigw)" = /tmp/home/.local/bin/minigw ] || fail "9: plugin bin not linked to the installed minigw ($rel)"
+  [ "$(cat /tmp/d9/bin/.verified)" = "$(sha256sum /tmp/home/.local/bin/minigw | cut -d" " -f1)  /tmp/d9/bin/minigw" ] || fail "9: no record of the linked installed minigw ($rel, #153)"
   ! echo "$out" | grep -q "not updated" || fail "9: downgrade note although the installed minigw is used"
 done
 rm -f /tmp/home/.local/bin/minigw; cp /t/minigw-old /tmp/home/.local/bin/minigw  # rm: the client of the last run may still be running
@@ -194,6 +203,7 @@ rm -f /tmp/home/.local/bin/minigw /tmp/ran9c; printf "#!/bin/sh\ntouch /tmp/ran9
 rm -rf /tmp/d9/bin; mkdir -p /tmp/d9/bin
 out=$(run /tmp/d9 good testkey); echo "$out"
 [ ! -e /tmp/ran9c ] && [ ! -L /tmp/d9/bin/minigw ] && cmp -s /t/rel/good/minigw-linux-arm64 /tmp/d9/bin/minigw || fail "9c: a substituted installed minigw was run or linked"
+[ "$(cut -d" " -f1 /tmp/d9/bin/.verified)" = "$(sha256sum /tmp/d9/bin/minigw | cut -d" " -f1)" ] || fail "9c: the record is not of the downloaded copy (#153)"
 [ -f /tmp/d9/bin/SHA256SUMS.sig ] || fail "9c: the verified sums were not kept next to the downloaded copy"
 rm -rf /tmp/home/.local
 echo "ok 9: installed minigw (verified, not older than MIN) linked, never downloaded; 9c: a substituted one never run"

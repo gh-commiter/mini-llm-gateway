@@ -23,6 +23,7 @@ case "$(uname -s)" in
   *) echo "minigw plugin: no minigw client for $(uname -s)."; exit 0 ;;
 esac
 mkdir -p "$BIN"
+unrecord() { rm -f "$BIN/.verified"; }  # #153: zapis sprejete datoteke za kb-hook.sh; zavrnitev ga zbriše
 
 
 ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //; s/[ -].*$//'; }  # »0.7.4-beta (x)« je 0.7.4
@@ -214,7 +215,7 @@ if [ "$os" = darwin ]; then
       if [ -n "$stale" ]; then rm -f "$EXE"; forget; ln -s "$stale" "$EXE"
       else
         { [ -e "$EXE" ] || [ -L "$EXE" ]; } && { mv -f "$EXE" "$BIN/minigw.rejected"; forget; }  # nepodpisana kopija: ne sme ostati, kjer jo zaženejo skilli
-        echo "minigw plugin: could not download or verify minigw from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; fi; }
+        echo "minigw plugin: could not download or verify minigw from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; unrecord; exit 0; fi; }
   fi
 else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
@@ -252,17 +253,24 @@ else
     else
       fetch "$asset" || { authexe && [ -x "$EXE" ]; } || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {
         if [ -n "$instx" ] || [ -e "$EXE" ] || [ -L "$EXE" ]; then
-          rm -f "$EXE"; forget  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
+          rm -f "$EXE"; forget; unrecord  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
           if [ -n "$unsigned" ]; then why="$unsigned; gateway skills are unavailable until the release can be verified"
           elif [ -n "$sums" ]; then why="the download failed or did not match the signed checksum; gateway skills are unavailable until it works"
           else why="github.com/$REPO could not be reached; gateway skills are unavailable until the network is back"; fi
           echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why."
         else
           echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."
-        fi; exit 0; }
+        fi; unrecord; exit 0; }
     fi
   fi
 fi
+
+# #153: vsaka pot do sem je sprejela $EXE (zavrnitve so izstopile zgoraj): SHA-256 (po povezavi) gre v bin/.verified, atomarno, 600.
+# Windows z nameščenim minigw: kljuka zažene lupino bin/minigw, ta pa nameščeni minigw: zapis ima obe vrstici (»sha  pot«).
+ent=$EXE; [ "$os" = windows ] && [ -n "$inst" ] && ent="$BIN/minigw"
+shm "$ent"; h1=$SH; h2=$h1; [ "$ent" != "$EXE" ] && { shm "$EXE"; h2=$SH; }
+if [ -n "$h1" ] && [ -n "$h2" ] && ( umask 077; { printf '%s  %s\n' "$h1" "$ent"; [ "$ent" = "$EXE" ] || printf '%s  %s\n' "$h2" "$EXE"; } > "$BIN/.verified.new" ) &&
+   mv -f "$BIN/.verified.new" "$BIN/.verified"; then :; else unrecord; rm -f "$BIN/.verified.new"; fi
 
 # Izbran minigw (že overjen na macOS) je lahko prestar (brez prenosa, zadnja izdaja starejša, ali ga namestitev še ni posodobila):
 # nikoli tiho, ena vrstica iz dejanskega izida. Različica le v strogi obliki.
