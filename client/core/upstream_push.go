@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -286,18 +287,23 @@ type upNote struct {
 	Title, Body, EntryKind string
 }
 
-// sameAs: does the note hold the text whose receipt hash is hash (class, kind, title and body, without the trailer a push adds)? 1 yes, 0 no,
-// -1 cannot be told (the answer has no body, or it does not end with our trailer).
-func (u upNote) sameAs(hash string) int {
-	loc := trailerAtEnd.FindStringIndex(u.Body)
-	if hash == "" || u.Body == "" || loc == nil {
+// sameAs: does the note hold the text whose receipt hash is hash (class, kind, title and body, without the trailer a push adds, which must carry
+// this note's reference ref and its author's name as trailer() writes it)? 1 yes, 0 no,
+// -1 cannot be told (the answer has no body); a text that does not end with exactly our trailer is a different text.
+func (u upNote) sameAs(hash, ref, author string) int {
+	if hash == "" || u.Body == "" {
 		return -1
 	}
+	m := trailerAtEnd.FindStringSubmatchIndex(u.Body)
+	if m == nil || u.Body[m[2]:m[3]] != ref || u.Body[m[4]:m[5]] != author { // what we sent ends with OUR trailer: another one, or none, is another text
+		return 0
+	}
+	loc := m
 	kind := u.EntryKind
 	if kind == "" {
 		kind = KindFinding
 	}
-	body := strings.TrimSuffix(u.Body[:loc[0]], "\n\n")
+	body := u.Body[:loc[0]]
 	if upstreamHash(Note{Class: u.Class, EntryKind: kind, Title: u.Title, Body: body}) == hash {
 		return 1
 	}
@@ -396,6 +402,16 @@ func (p *pusher) mac(parts ...any) []byte {
 // of a note this gateway sent (upstream_mirror_read.go).
 const upstreamRefMark = "<!-- minigw upstream ref "
 
+// trailerSupersedes: the optional part of the trailer that names the submission a new one replaces.
+const trailerSupersedes = "; supersedes submission "
+
+// trailerAtEnd matches exactly ONE complete trailer in the format trailer() writes, and only as the END of the text: the two line feeds before it,
+// the opening, the 12 hex digits of the reference (group 1), ", author " and the author's name (group 2; no line feed, and no hyphen: trailer() writes
+// every "-" of it as U+2010, so no "-->" can be inside), the optional supersedes part, " -->" and at most one final line feed. Text after the
+// closing on the same line, a second comment, a trailer-like comment earlier in the body or other field values are not a trailer of ours: the
+// copy then counts as changed. The match starts at the first line feed, so everything before it is the text we sent.
+var trailerAtEnd = regexp.MustCompile(`\n\n` + regexp.QuoteMeta(upstreamRefMark) + `([0-9a-f]{12}), author ([^\n-]*?)(?:` + regexp.QuoteMeta(trailerSupersedes) + `[0-9]+)? -->\n?$`)
+
 func upstreamRef(secret []byte, up string, project, note int64) string {
 	return hex.EncodeToString((&pusher{secret: secret}).mac("ref|", up, "|", project, "|", note)[:6])
 }
@@ -404,14 +420,17 @@ func (p *pusher) submissionKey(project int64, n UpstreamNote, supersedes int64) 
 	return "up-" + hex.EncodeToString(p.mac("idem|", p.up, "|", project, "|", n.ID, "|", n.Hash, "|", supersedes)[:16])
 }
 
+// trailerAuthor: the author's name as the trailer carries it: one clean line, and never a "-" (so never "-->").
+func trailerAuthor(name string) string { return strings.ReplaceAll(upText(name, 64), "-", "\u2010") }
+
 // trailer: where the text came from, as display only, and as little as possible: an opaque reference (stable for this note on this
 // link, so that reviewers see two submissions are the same note; it says nothing about this gateway) and the local author's name. No
 // gateway id, note id or revision leaves with it. It carries no identity: that is the bound device.
 func (p *pusher) trailer(project int64, n UpstreamNote, supersedes int64) string {
-	author := strings.ReplaceAll(upText(n.Author, 64), "-", "\u2010") // never "-->"
+	author := trailerAuthor(n.Author)
 	t := "\n\n" + upstreamRefMark + upstreamRef(p.secret, p.up, project, n.ID) + ", author " + author
 	if supersedes > 0 {
-		t += fmt.Sprintf("; supersedes submission %d", supersedes)
+		t += trailerSupersedes + strconv.FormatInt(supersedes, 10)
 	}
 	return t + " -->\n"
 }
@@ -795,7 +814,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				case na.status == 200 && json.Unmarshal(na.data, &cur) == nil && cur.Revision > 0:
 					if !owner {
 						if base == 0 { // no base is known: establish it by content (does the upstream hold the text this gateway last sent?)
-							switch cur.sameAs(n.Sent.Hash) {
+							switch cur.sameAs(n.Sent.Hash, upstreamRef(p.secret, p.up, l.Project, n.ID), trailerAuthor(n.Author)) {
 							case 1:
 								base = cur.Revision
 								if !dry {

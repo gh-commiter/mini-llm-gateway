@@ -1708,7 +1708,8 @@ accepted. Such a note is never sent by any push, automatic or manual, in either 
 linked to each other would otherwise copy each other's notes back and forth until both projects were full) and not to any other upstream
 (that would hand a note, and its author's name, to a gateway its origin never chose). `upstream status` counts them ("N notes not sent:
 arrived from another gateway, never pushed onward"), and the push report lists each as `skip … arrived from another gateway`. A member who
-takes such a note over and removes that last line makes it local work: it is sent like any other note (to the gateway it came from too,
+takes such a note over and removes that last line, or changes it in any way (text added after its closing on the same line, a second comment, other
+fields: the line is recognized only in the exact form a push writes, alone at the very end), makes it local work: it is sent like any other note (to the gateway it came from too,
 where it becomes a new note that ends with this gateway's trailer, so it never comes back). A member who ends a note with such a line by
 hand keeps that note from being pushed; they could change or delete it anyway. Relaying notes on purpose is not a setting (yet).
 

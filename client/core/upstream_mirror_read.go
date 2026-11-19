@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -170,10 +169,6 @@ type mirrorEntry struct {
 	end          string
 	differs      int64 // the hub's copy of a note we sent, changed there since: the local note it differs from
 }
-
-// trailerAtEnd: the reference of the trailer our push writes, only when it is the END of the body (a body that merely quotes one has it
-// somewhere else).
-var trailerAtEnd = regexp.MustCompile(`<!-- minigw upstream ref ([0-9a-f]{12}), author [^\n]*-->\n?$`)
 
 // ourRefs: the trailer references of every note this gateway sent on the links of the local projects and teams in scope. Nothing when
 // this gateway never sent anything.
