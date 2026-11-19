@@ -233,31 +233,53 @@ else
   # BRANJE je neškodljivo, če vsebina odloči (lupina je majhna in ima besedilo; 19 MB exe ne): same, oldshims. Edini zapis na golo ime
   # (prvi prehod, lupina še ni prava) teče v aside: minigw.exe se odmakne (.keep), ukaz teče, vrne se VEDNO. Ključavnica mkdir (atomarna)
   # varuje prehod pred drugo sejo; zasedena = ta zagon lupine ne zapiše (izhod 3, brez izpisa); starejša od 5 min (find -mmin) je zastarela.
-  # Ključavnica (mkdir, atomarna) varuje VSAKO zamenjavo bin/minigw.exe in lupin (prenos, vrnitev .keep, aside): ta zagon jo drži ves čas
-  # (acqlock), drug svež zagon pa se ne dotakne ničesar (busy). Sprosti jo release ob izhodu; ubit zagon jo pusti, starejša od 5 min je zastarela.
-  release() { [ -n "$held" ] && rmdir "$BIN/.aside.lock" 2>/dev/null; held=""; return 0; }
+  # Ključavnica (mkdir, atomarna; le Windows) varuje VSAKO zamenjavo bin/minigw.exe in lupin (prenos, vrnitev .keep, aside): ta zagon jo drži
+  # ves čas (acqlock), drug zagon živega lastnika se ne dotakne ničesar (busy). Lastnik je zapisan v .aside.lock/pid (»pid epoha«): mrtev
+  # lastnik (kill -0) = ključavnica je zastarela TAKOJ (ubit zagon, ura kljuke 60 s); živ lastnik starejši od 2 min = zastarela (ponovno
+  # uporabljen pid ali obvisel zagon: ps v Git Bashu ne daje zanesljivega ukaza, zato le starost); brez uporabne datoteke pid: starost 5 min.
+  release() { [ -n "$held" ] && { rm -f "$BIN/.aside.lock/pid"; rmdir "$BIN/.aside.lock" 2>/dev/null; }; held=""; return 0; }
+  lockstale() {
+    lf="$BIN/.aside.lock/pid"; lp="" ls=""
+    [ -f "$lf" ] && read -r lp ls < "$lf" 2>/dev/null
+    case $lp in ''|*[!0-9]*) ;; *)
+      case $ls in ''|*[!0-9]*) ls=0 ;; esac
+      kill -0 "$lp" 2>/dev/null || return 0                  # lastnik je mrtev
+      [ $(( $(date +%s) - ls )) -gt 120 ] && return 0        # živ, a predolgo (ponovno uporabljen pid, obvisel zagon)
+      return 1 ;; esac
+    [ -n "$(find "$BIN/.aside.lock" -maxdepth 0 -mmin +5 2>/dev/null)" ]  # brez uporabne datoteke pid: starost
+  }
+  lockinfo() {  # »process N since HH:MM« za izpis (iz datoteke pid)
+    lp="" ls=""; [ -f "$BIN/.aside.lock/pid" ] && read -r lp ls < "$BIN/.aside.lock/pid" 2>/dev/null
+    case $lp in ''|*[!0-9]*) echo "another session" ; return ;; esac
+    case $ls in ''|*[!0-9]*) echo "process $lp"; return ;; esac
+    echo "process $lp since $(date -d "@$ls" +%H:%M 2>/dev/null || date -r "$ls" +%H:%M 2>/dev/null || echo '?')"
+  }
   acqlock() {
     wl="$BIN/.aside.lock"
-    mkdir "$wl" 2>/dev/null || { [ -n "$(find "$wl" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$wl" 2>/dev/null && mkdir "$wl" 2>/dev/null; } || return 1
+    if ! mkdir "$wl" 2>/dev/null; then
+      # zastarela ključavnica: z atomarnim premikom jo prevzame natanko en zagon (ponovni pregled tik pred premikom)
+      lockstale && lockstale && mv "$wl" "$wl.dead.$$" 2>/dev/null && { rm -f "$wl.dead.$$/pid"; rmdir "$wl.dead.$$" 2>/dev/null; } && mkdir "$wl" 2>/dev/null || return 1
+    fi
+    printf '%s %s\n' "$$" "$(date +%s)" > "$wl/pid"
     held=1; trap release EXIT; trap 'release; exit 1' HUP INT TERM; return 0
   }
   aside() {
-    l="$BIN/.aside.lock"; k="$BIN/minigw.exe.keep"; had=""; own=""
-    if [ -z "$held" ]; then mkdir "$l" 2>/dev/null || { [ -n "$(find "$l" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$l" 2>/dev/null && mkdir "$l" 2>/dev/null; } || return 3; own=1; fi
+    k="$BIN/minigw.exe.keep"; had=""; own=""
+    if [ -z "$held" ]; then acqlock || return 3; own=1; fi
     [ -e "$k" ] && [ ! -e "$BIN/minigw.exe" ] && mv "$k" "$BIN/minigw.exe"  # ostanek prekinjenega zagona (le pod ključavnico)
-    if [ -f "$BIN/minigw.exe" ]; then mv -f "$BIN/minigw.exe" "$k" || { [ -z "$own" ] || rmdir "$l"; return 1; }; had=1; fi  # tekoče exe Windows ne pusti premakniti: lupina se ne zapiše
+    if [ -f "$BIN/minigw.exe" ]; then mv -f "$BIN/minigw.exe" "$k" || { [ -z "$own" ] || release; return 1; }; had=1; fi  # tekoče exe Windows ne pusti premakniti: lupina se ne zapiše
     "$@"; r=$?
     [ -z "$had" ] || mv -f "$k" "$BIN/minigw.exe" || r=1
-    [ -z "$own" ] || rmdir "$l"; return $r
+    [ -z "$own" ] || release; return $r
   }
   # recoverkeep (varnostni pregled L3), pod ključavnico: zagon, ki ga je ura kljuke (60 s) ubila v aside, pusti overjeno kopijo kot
-  # minigw.exe.keep; vrne se PRVO, ne glede na stanje lupine. .keep brez exe gre nazaj; oba obstajata: .keep izgine le, če je bajt za bajtom
-  # enak exe, sicer gre pod EDINSTVENO ime minigw.exe.keep.old.<pid> (nikoli prepis druge kopije). Take ostanke zbriše šele zagon, ko so enaki
-  # trenutnemu exe ali starejši od 10 min (kot ostanki mrtvih zagonov v tidy), štetje od premika.
+  # minigw.exe.keep; vrne se PRVO, ne glede na stanje lupine. .keep brez exe gre nazaj (in to pove); oba obstajata: .keep izgine le, če je
+  # bajt za bajtom enak exe, sicer gre pod EDINSTVENO ime minigw.exe.keep.old.<pid> (nikoli prepis druge kopije). Take ostanke zbriše šele
+  # zagon, ko so enaki trenutnemu exe ali starejši od 10 min (kot ostanki mrtvih zagonov v tidy), štetje od premika.
   recoverkeep() {
     rk="$BIN/minigw.exe.keep"
     if [ -e "$rk" ]; then
-      if [ ! -e "$BIN/minigw.exe" ]; then mv "$rk" "$BIN/minigw.exe"
+      if [ ! -e "$BIN/minigw.exe" ]; then mv "$rk" "$BIN/minigw.exe" && echo "minigw plugin: recovered the client left aside by an interrupted start."
       elif cmp -s "$rk" "$BIN/minigw.exe"; then rm -f "$rk"
       else mv "$rk" "$BIN/minigw.exe.keep.old.$$" && touch "$BIN/minigw.exe.keep.old.$$"; fi
     fi
@@ -305,11 +327,12 @@ else
   if [ -n "$busy" ]; then
     # drug svež zagon drži ključavnico: ta zagon se NE dotakne minigw.exe, lupin ne zapisa; uporabi, kar je zdaj uporabno (zapis odloča)
     # Ostalo (PATH, vrstica o stanju) teče kot sicer, a le z odjemalcem, ki je overjen ŽE: nameščeni (inst) ali lastna kopija, ki jo overijo
-    # podpisane vsote (authexe); neoverjene kopije (npr. .keep, ki ga drug zagon šele vrača) se ne zažene.
+    # podpisane vsote (authexe); neoverjene kopije (npr. .keep, ki ga drug zagon šele vrača) se ne zažene. Vedno ena vrstica, ki pove, da je tako.
     locked=1
     if [ -n "$inst" ]; then EXE=$inst
     elif [ -x "$EXE" ] && [ ! -L "$EXE" ] && authexe; then :
-    else echo "minigw plugin: another session is setting up the minigw client; its commands work once that is done (start a new session)."; tidy; exit 0; fi
+    else echo "minigw plugin: another session is setting up the minigw client ($(lockinfo)); its commands work once that is done (start a new session)."; tidy; exit 0; fi
+    echo "minigw plugin: another session is setting up the minigw client ($(lockinfo)); this start changes nothing and uses the verified client."
   else
     # Windows: lupini iz prejšnje seje (majhni besedilni datoteki tega skripta) ne smeta preživeti nameščenega minigw, ki ni več overjen.
     if [ "$os" = windows ] && [ -z "$inst" ]; then
@@ -358,12 +381,18 @@ else unrecord; fi
 [ "$os" != darwin ] && ! command -v ssh-keygen >/dev/null 2>&1 && [ -x "$EXE" ] &&
   echo "minigw plugin: ssh-keygen is not installed, so the plugin's minigw could not be verified against the release signature; install OpenSSH to enable the check"
 cur=$(exever "$EXE")
+# Kateri minigw se res uporablja: nameščeni (Windows/Linux inst, macOS brew/aplikacija: other) ali lastna kopija vtičnika.
+usedinst=""
+case $os in darwin) { [ -n "${other:-}" ] || [ -L "$EXE" ]; } && usedinst=1 ;; *) [ -n "$inst" ] && usedinst=1 ;; esac
+if [ -n "$usedinst" ]; then src="the installed minigw"; else src="the plugin's own copy of minigw"; fi
 if ! goodver "$cur"; then
-  echo "minigw plugin: using the installed minigw, whose version could not be read; this plugin's commands need $MIN or newer and may not work until it is updated ($(how))"
-elif older "$cur" "$MIN"; then
+  echo "minigw plugin: using $src, whose version could not be read; this plugin's commands need $MIN or newer and may not work until it is updated ($(how))"
+elif older "$cur" "$MIN" && [ -n "$usedinst" ]; then
   echo "minigw plugin: using the installed minigw $cur, older than $MIN which this plugin's commands need; some commands will not work until it is updated ($(how))"
+elif older "$cur" "$MIN"; then
+  echo "minigw plugin: using the plugin's own copy of minigw $cur (the latest release), older than $MIN which this plugin's commands need; some commands will not work until a newer minigw is released or you install a beta from https://github.com/$REPO/releases${stale:+ (the installed minigw is older still: $(how))}"
 elif [ -n "$stale" ]; then
-  echo "minigw plugin: using its own minigw $cur; the installed minigw is older than $MIN or its version could not be read: update it ($(how))"
+  echo "minigw plugin: the installed minigw is older than $MIN or its version could not be read, so the plugin uses its own copy $cur; update the installed one: $(how)"
 fi
 
 # L4 (0.5.17): posodobitev zavrnjena (podpis), obstoječa ostane: povej, zakaj.

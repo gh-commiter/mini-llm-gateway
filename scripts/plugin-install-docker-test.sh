@@ -188,7 +188,7 @@ cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/.aside.lock ]] || fail "10h H2: not
 clear10h; winrun wdl > /dev/null   # lastna kopija, vsote in zapis
 mkdir $GB/.aside.lock; touch $T/win/mark4; sleep 1.1; : > $T/win/env4
 out=$(WENV=$T/win/env4 winrun); print -r -- $out
-[[ $out == *"connected to Mini Gateway"* && $out != *"another session"* ]] || fail "10h H4: no normal status line while another session holds the lock: $out"
+[[ $out == *"connected to Mini Gateway"* && $out == *"another session is setting up the minigw client"*"this start changes nothing and uses the verified client"* ]] || fail "10h H4: no normal status line (and the one explaining line) while another session holds the lock: $out"
 grep -q '^export PATH=' $T/win/env4 || fail "10h H4: PATH was not written for the session"
 [[ -d $GB/.aside.lock && -z "$(find $GB -type f -newer $T/win/mark4)" ]] || fail "10h H4: a busy run touched bin: $(find $GB -type f -newer $T/win/mark4)"
 rmdir $GB/.aside.lock
@@ -197,6 +197,45 @@ clear10h; mkdir $GB/.aside.lock; : > $T/win/env5
 out=$(WENV=$T/win/env5 winrun); print -r -- $out
 [[ $out == *"another session is setting up the minigw client"* && ! -s $T/win/env5 ]] || fail "10h H5: no client, held lock: $out"
 rmdir $GB/.aside.lock
+# 10i (pravi Windows, krog 2): ključavnica pozna lastnika (.aside.lock/pid = »pid epoha«): mrtev lastnik = takoj prevzem in vrnitev .keep; živ = busy
+deadpid() { (exit 0) & dp=$!; wait $dp; print -r -- $dp }
+aside10i() { clear10h; winrun wdl > /dev/null; mv $GB/minigw.exe $GB/minigw.exe.keep; mkdir $GB/.aside.lock }   # lastna kopija odmaknjena, ključavnica
+recovered10i() { cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/minigw.exe.keep && ! -e $GB/.aside.lock ]] }
+aside10i; print "$(deadpid) $(date +%s)" > $GB/.aside.lock/pid
+out=$(winrun); print -r -- $out
+recovered10i && [[ $out == *"recovered the client left aside by an interrupted start"* && $out == *"connected to Mini Gateway"* ]] || fail "10i dead owner: not recovered at once: $out $(ls -A $GB)"
+aside10i; sleep 60 & lp=$!; print "$lp $(date +%s)" > $GB/.aside.lock/pid
+out=$(winrun); print -r -- $out
+[[ ! -e $GB/minigw.exe && -e $GB/minigw.exe.keep && -d $GB/.aside.lock && $out == *"another session is setting up the minigw client (process $lp since "* ]] || fail "10i live owner: not busy: $out"
+print "$lp $(( $(date +%s) - 300 ))" > $GB/.aside.lock/pid   # živ pid, a starejši od 2 min: ponovno uporabljen pid ali obvisel zagon
+winrun > /dev/null; recovered10i || fail "10i live but old owner: not taken over"
+aside10i; kill $lp 2>/dev/null || true; rm -f $GB/.aside.lock/pid   # brez datoteke pid: svež = busy, star = zastarel
+out=$(winrun); print -r -- $out
+[[ ! -e $GB/minigw.exe && -e $GB/minigw.exe.keep && -d $GB/.aside.lock && $out == *"another session is setting up"* ]] || fail "10i no pid file, fresh: not busy"
+touch -t 200001010000 $GB/.aside.lock; winrun > /dev/null; recovered10i || fail "10i no pid file, old: not taken over"
+# prava ubita seja znotraj ključavnice: ena seja se ubije, ko ključavnica obstaja; naslednja jo prevzame takoj in dokonča
+killed=0
+for i in {1..40}; do
+  clear10h; rm -f $GB/.aside.lock/pid
+  winrun wdl > /dev/null 2>&1 & rp=$!
+  for j in {1..400}; do [[ -s $GB/.aside.lock/pid ]] && break; sleep 0.005; done
+  kp=$(cut -d' ' -f1 $GB/.aside.lock/pid 2>/dev/null || true)
+  if [[ -n $kp ]] && kill -9 $kp 2>/dev/null; then killed=$((killed+1)); fi
+  wait $rp || true
+  if [[ -d $GB/.aside.lock ]]; then
+    winrun wdl > /dev/null || fail "10i kill $i: the next run failed"
+    cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $GB/.aside.lock && ! -e $GB/minigw.exe.keep ]] || fail "10i kill $i: not recovered by the next run: $(ls -A $GB)"
+  fi
+  (( killed >= 3 )) && break
+done
+(( killed >= 1 )) || fail "10i: no run could be killed inside the lock"
+clear10h
+# 10j: lastna kopija je (zadnja izdaja) starejša od MIN, nameščenega ni: stavek pove, da je to lastna kopija, ne nameščeni minigw
+mkdir -p $T/rel/wold; print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.20; [ "$1" = status ] && echo "Status:    connected"; exit 0' > $T/rel/wold/minigw-windows-amd64.exe; chmod +x $T/rel/wold/minigw-windows-amd64.exe
+(cd $T/rel/wold && { print "VERSION 0.5.20"; print "$(shasum -a 256 minigw-windows-amd64.exe | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > SHA256SUMS && ssh-keygen -Y sign -q -f $T/key -n minigw-release < SHA256SUMS > SHA256SUMS.sig)
+clear10h; out=$(winrun wold); print -r -- $out
+[[ $out == *"using the plugin's own copy of minigw 0.5.20 (the latest release), older than $MINV which this plugin's commands need"* && $out != *"using the installed minigw"* ]] || fail "10j: the sentence does not say it is the plugin's own copy"
+clear10h
 # H3: dva različna ostanka .keep: oba ostaneta pod edinstvenima imenoma (nobenega prepisa)
 clear10h; cp $RELEXE $GB/minigw.exe; winrun wdl > /dev/null   # overjen exe
 print leftover-A > $GB/minigw.exe.keep; winrun wdl > /dev/null
