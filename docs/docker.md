@@ -187,6 +187,11 @@ docker compose exec minigw minigw gw status
 docker compose exec minigw minigw gw project list
 ```
 
+`deploy/docker/Caddyfile` and the compose files (`compose.yaml`, `compose.local.yaml`, `compose.admin.yaml`) belong to
+the version. If you use the admin profile, copy those files of the new release into your deployment folder too and run
+`docker compose restart admin-proxy`: Caddy keeps the old `Caddyfile` until then, and a proxy that is older than the
+gateway answers 404 to the new read-only lists on the "Team (read-only)" page.
+
 Wait for health and check `projects: on`, then check your users, memberships, notes and pending review. Liveness alone
 does not prove the project database opened. `gw status` does not print its schema number when the core is available.
 The rehearsal below checks the schema in an archived copy of the stopped database too.
@@ -268,7 +273,8 @@ recreates the gateway container once, the volumes stay).
 
 The page manages providers and devices and shows users, device-user bindings, teams and projects read-only (menu item
 "Team (read-only)"). Change those with `docker compose exec minigw minigw gw …`; the proxy and the listener allow only
-the four `GET` lists, nothing deeper (no members, assignments or grants).
+the four `GET` lists, nothing deeper (no members, assignments or grants). After an update copy the release's
+`Caddyfile` into your deployment folder and run `docker compose restart admin-proxy`, otherwise those lists answer 404.
 
 **Prerequisites:** a DNS name for the page that your browsers resolve to the Docker host (`settings.example.net`
 below), a LAN address of the host to publish on, `openssl`, and the gateway already running. A port other than 443

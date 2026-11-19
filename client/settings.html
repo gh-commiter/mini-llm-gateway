@@ -51,6 +51,7 @@ h3 { font-size: 13px; margin: 18px 4px 6px; display: flex; align-items: center; 
 .row + .row { border-top: 1px solid var(--line); }
 .row .label { flex: 1; min-width: 0; }
 .row .sub { color: var(--muted); font-size: 12px; }
+.ro .label, .ro .value { overflow-wrap: anywhere; white-space: normal; }  /* remote Team page: a long id wraps at phone width */
 .value { color: var(--muted); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
@@ -219,7 +220,7 @@ const S = {
   roNote: ["Read-only. Change users, teams and projects on the server: docker compose exec minigw minigw gw …", "Samo branje. Uporabnike, ekipe in projekte spremeniš na strežniku: docker compose exec minigw minigw gw …"],
   roUsers: ["Users", "Uporabniki"], roBindings: ["Devices and users", "Naprave in uporabniki"], roTeams: ["Teams", "Ekipe"], roProjects: ["Projects", "Projekti"],
   roActive: ["active", "aktiven"], roInactive: ["inactive", "neaktiven"], roOwner: ["owner", "lastnik"], roArchived: ["archived", "arhiviran"],
-  roMembers: ["%s members", "%s članov"], roProjectsN: ["%s projects", "%s projektov"], roNone: ["none", "ni vnosov"],
+  roMembers: ["Members: %s", "Člani: %s"], roProjectsN: ["Projects: %s", "Projekti: %s"], roProxyOld: ["The proxy in front of this gateway does not allow this list yet: update deploy/docker/Caddyfile to this version and run docker compose restart admin-proxy.", "Posrednik pred tem prehodom tega seznama še ne dovoli: posodobi deploy/docker/Caddyfile na to različico in zaženi docker compose restart admin-proxy."], roNone: ["none", "ni vnosov"],
   roUnavailable: ["The project database is not available.", "Projektna zbirka ni na voljo."],
   general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Providers", "Ponudniki"], claude: ["Claude CLI", "Claude CLI"],
   about: ["About", "O aplikaciji"], license: ["License", "Licenca"], copyToken: ["Copy Token", "Kopiraj žeton"],
@@ -1884,11 +1885,14 @@ const pages = {
   // devices: enako kot podokno Devices na Macu: vsaka naprava z žetonom in naslovi odjemalcev, čakajoče (Allow, Reject),
   // dovoljene (ime, ID, zadnji stik; Copy ID, Remove).
   async remoteTeam() {  // read-only lists of the team server: text only, no control that changes anything
-    const get = name => api("GET", "/" + name).catch(e => ({error: e.message.startsWith("The project database is not available") ? t("roUnavailable") : e.message}));
+    const get = name => api("GET", "/" + name).catch(e => {
+      if (!SESSION) throw e;  // signed out (401): leave the sign-in form alone
+      return {error: e.message.startsWith("The project database is not available") ? t("roUnavailable") : e.message === "HTTP 404" ? t("roProxyOld") : e.message};  // "HTTP 404" = the proxy's own non-JSON refusal
+    });
     const [u, b, tm, pr, dv] = await Promise.all([get("users"), get("bindings"), get("teams"), get("projects"), get("devices")]);
     const user = id => ((u.users || []).find(x => x.id === id) || {}).name || String(id);
     const device = id => ((dv.devices || []).find(x => x.id === id) || {}).name || id;
-    const list = (title, r, key, line) => [section(title), r.error ? note(r.error) : group(...(r[key].length ? r[key].map(line) : [row(t("roNone"))]))];
+    const list = (title, r, key, line) => [section(title), r.error ? note(r.error) : el("div", {class: "group ro"}, ...(r[key].length ? r[key].map(line) : [row(t("roNone"))]))];
     return [el("h2", {textContent: t("remoteTeam")}), note(t("roNote")),
       ...list(t("roUsers"), u, "users", x => row(x.name, value([x.active ? t("roActive") : t("roInactive"), x.owner ? t("roOwner") : ""].filter(Boolean).join(" · ")))),
       ...list(t("roBindings"), b, "bindings", x => row(device(x.device), value(user(x.user)))),
@@ -2241,7 +2245,9 @@ async function show(page, arg) {
   await nav();
   if (REMOTE && !SESSION) return;
   try {
-    document.getElementById("page").replaceChildren(...(await pages[page](arg)).filter(k => k !== null && k !== undefined && k !== false));  // kot el(): replaceChildren bi null izpisal kot »null«
+    const content = await pages[page](arg);
+    if (REMOTE && !SESSION) return;  // the session ended while loading: the sign-in form stays
+    document.getElementById("page").replaceChildren(...content.filter(k => k !== null && k !== undefined && k !== false));  // kot el(): replaceChildren bi null izpisal kot »null«
   } catch (e) { toast(e.message); }
 }
 // Devices in Claude CLI: spremembe od drugod (minigw gw …, tray) se pokažejo; Claude CLI le ob spremembi (ohrani izbiro mape).
