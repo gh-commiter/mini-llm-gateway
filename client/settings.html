@@ -265,7 +265,13 @@ const S = {
   rvProject: ["Project", "Projekt"], rvTeam: ["Team", "Ekipa"], rvAuthor: ["Author", "Avtor"], rvClass: ["Class", "Razred"], rvKind: ["Kind", "Vrsta"], rvReceived: ["Received", "Prejeto"],
   rvReplaces: ["Replaces note %s", "Nadomesti zapisek %s"], rvVersion: ["Version %s", "Različica %s"], rvReasonIs: ["Reason", "Razlog"],
   rvBytes: ["%s of 1024 bytes", "%s od 1024 bajtov"], rvTooLong: ["The reason is longer than 1024 bytes: shorten it.", "Razlog je daljši od 1024 bajtov: skrajšaj ga."],
-  rvReplaceNote: ["This submission replaces note %s. Accepting it overwrites that note, and its current text cannot be shown here (the server's kb review does not show it either), so it cannot be accepted on this page: compare it first (read the note with minigw note read %s as a member of the project, or on the server) and accept it there, or reject it here.", "Ta prispevek nadomesti zapisek %s. Sprejem prepiše zapisek, njegovega trenutnega besedila tu ni mogoče prikazati (tudi kb review na strežniku ga ne), zato ga na tej strani ni mogoče sprejeti: najprej ga primerjaj (zapisek preberi z minigw note read %s kot član projekta, ali na strežniku) in ga sprejmi tam, ali pa ga tu zavrni."],
+  rvCurrent: ["Current text (note %s, revision %s)", "Trenutno besedilo (zapisek %s, revizija %s)"], rvNew: ["New text", "Novo besedilo"],
+  rvCurrentHidden: ["The current text of the note contains hidden characters: %s removed from the text shown; it cannot be accepted (correct the note first, then review again).", "Trenutno besedilo zapiska vsebuje skrite znake: %s odstranjenih iz prikazanega besedila; ni ga mogoče sprejeti (najprej popravi zapisek, nato preglej znova)."],
+  rvCurrentLong: ["The current text is too long to review here: use minigw gw kb review and kb accept on the server.", "Trenutno besedilo je predolgo za pregled tukaj: uporabi minigw gw kb review in kb accept na strežniku."],
+  rvTarget: ["The note this submission replaces is missing or changed since it was written: reject it.", "Zapisek, ki ga ta prispevek nadomesti, manjka ali se je spremenil, odkar je prispevek nastal: zavrni ga."],
+  rvNoCurrent: ["This gateway cannot show the current text of the note this submission replaces, so it cannot be accepted here: update the gateway, or reject it.", "Ta prehod ne more pokazati trenutnega besedila zapiska, ki ga prispevek nadomesti, zato ga tu ni mogoče sprejeti: posodobi prehod ali ga zavrni."],
+  rvTargetCheck: ["note missing or changed", "zapisek manjka ali je spremenjen"],
+  rvSaved: ["Previous text saved as revision %s of note %s.", "Prejšnje besedilo je shranjeno kot revizija %s zapiska %s."],
   rvLimited: ["Too many decisions in a short time: continue after %s.", "Preveč odločitev v kratkem času: nadaljuj po %s."],
   rvLimitedNoTime: ["Too many decisions in a short time: continue in a few minutes.", "Preveč odločitev v kratkem času: nadaljuj čez nekaj minut."],
   rvDone_accepted: ["Accepted and published (reviewer %s, %s).", "Sprejeto in objavljeno (pregledovalec %s, %s)."], rvDone_rejected: ["Rejected (reviewer %s, %s).", "Zavrnjeno (pregledovalec %s, %s)."],
@@ -2008,12 +2014,23 @@ const pages = {
       : e.message.includes("changed since you read it") ? t("rvChanged") : e.message;  // "HTTP 404" = the proxy's own non-JSON refusal (older Caddyfile)
     const text = (cls, s) => el("div", {class: cls, dir: "ltr", textContent: s});
     const heading = (tag, s) => el(tag, {textContent: s, tabIndex: -1});  // focus goes here when a view opens
-    const checkText = v => v.reviewCheck === "ok" ? t("rvOk") : v.reviewCheck === "hidden" ? t("rvHiddenCheck") : t("rvLongCheck");
+    const checkText = v => v.reviewCheck === "ok" ? t("rvOk") : v.reviewCheck === "hidden" ? t("rvHiddenCheck") : v.reviewCheck === "target" ? t("rvTargetCheck") : t("rvLongCheck");
     const scopeLabel = v => (v.scopeKind === "team" ? t("rvTeam") : t("rvProject")) + ": " + v.scopeName;
     const set = (focus, ...kids) => { box.replaceChildren(...kids.flat().filter(k => k !== null && k !== undefined && k !== false)); if (focus) focus.focus(); };
     box.addEventListener("keydown", ev => { if (ev.key === "Escape" && onEscape) { ev.preventDefault(); onEscape(); } });
     const meta = v => el("div", {class: "group ro"}, row(t("rvAuthor"), value(v.authorName)), row(scopeLabel(v)), row(t("rvClass") + " / " + t("rvKind"), value(v.class + " / " + v.entryKind)),
       row(t("rvReceived"), value(stamp(v.received))), v.isReplacement ? row(t("rvReplaces", v.replaces)) : null);
+    // the replaced note and the new text one above the other; every value through textContent. Nothing is offered unless the
+    // read carries the replaced note's state and revision (a gateway older than 0.8.8 sends neither).
+    const canAccept = v => v.reviewCheck === "ok" && (!v.isReplacement || v.targetState === "ok" && Number.isInteger(v.currentRevision) && v.currentRevision > 0);
+    const currentBlock = v => {
+      if (!v.isReplacement) return [];
+      if (v.targetState !== "ok" && v.targetState !== "stale") return [note(t(v.targetState === "missing" ? "rvTarget" : "rvNoCurrent"))];
+      return [heading("h3", t("rvCurrent", v.replaces, v.currentRevision)), el("div", {class: "group ro"}, row(t("rvClass") + " / " + t("rvKind"), value(v.currentClass + " / " + v.currentKind))),
+        text("rv-title", v.currentTitle || ""), v.currentHidden > 0 ? note(t("rvCurrentHidden", v.currentHidden)) : null, text("rv-text", v.currentBody || ""),
+        v.currentReviewCheck === "long" ? note(t("rvCurrentLong")) : null, v.targetState === "stale" ? note(t("rvTarget")) : null];
+    };
+    const newBlock = v => v.isReplacement ? [heading("h3", t("rvNew")), el("div", {class: "group ro"}, row(t("rvClass") + " / " + t("rvKind"), value(v.class + " / " + v.entryKind)))] : [];
     async function showList(msg, focusId) {
       onEscape = null;
       let r;
@@ -2043,8 +2060,8 @@ const pages = {
       const bar = () => {
         const rb = button(t("rvReject"), () => confirm(v, false, reason.value));
         rejectBtns.push(rb);
-        // no Accept at all unless the core's review read says "ok" and nothing is replaced (hidden, long and replacing ones are handled on the server)
-        return el("div", {class: "rv-buttons"}, button(t("rvBack"), () => onEscape()), v.reviewCheck === "ok" && !v.isReplacement ? button(t("rvAccept"), () => confirm(v, true, "")) : null, rb);
+        // no Accept at all unless the core's review read says "ok" and, for a replacement, the replaced note is unchanged with its revision in the read
+        return el("div", {class: "rv-buttons"}, button(t("rvBack"), () => onEscape()), canAccept(v) ? button(t("rvAccept"), () => confirm(v, true, "")) : null, rb);
       };
       const sync = () => {
         reason.value = reason.value.replace(/\p{Cc}/gu, " ");
@@ -2056,8 +2073,8 @@ const pages = {
       };
       reason.addEventListener("input", sync);
       const title = text("rv-title", v.title); title.tabIndex = -1;
-      set(title, msg ? note(msg) : null, title, bar(), meta(v), text("rv-text", v.body || ""),
-        v.hidden > 0 ? note(t("rvHidden", v.hidden)) : null, v.reviewCheck === "long" ? note(t("rvLong")) : null, v.isReplacement ? note(t("rvReplaceNote", v.replaces, v.replaces)) : null,
+      set(title, msg ? note(msg) : null, title, bar(), meta(v), currentBlock(v), newBlock(v), text("rv-text", v.body || ""),
+        v.hidden > 0 ? note(t("rvHidden", v.hidden)) : null, v.reviewCheck === "long" && v.currentReviewCheck !== "long" ? note(t("rvLong")) : null, v.reviewCheck === "target" ? note(t("rvTarget")) : null,
         reason, counter, bar());
       sync();
     }
@@ -2074,7 +2091,7 @@ const pages = {
         gos.forEach(b => { b.disabled = true; }); cancels.forEach(b => { b.disabled = true; });  // at once: a second click sends nothing; on any error the decision buttons stay disabled (no retry)
         try {
           const sent = Date.now();
-          const {date} = await rv("POST", "/kb/submissions/" + encodeURIComponent(v.id) + (accept ? "/accept" : "/reject"), accept ? {reviewHash: v.reviewHash} : {reason: why});
+          const {date} = await rv("POST", "/kb/submissions/" + encodeURIComponent(v.id) + (accept ? "/accept" : "/reject"), accept ? (v.isReplacement ? {reviewHash: v.reviewHash, currentRevision: v.currentRevision} : {reviewHash: v.reviewHash}) : {reason: why});
           drafts.delete(v.id);
           // a 200 does not say whether this click decided it or another session already had (a repeat is a no-op 200): read the record and show it
           let msg = t(accept ? "rvAccepted" : "rvRejected");
@@ -2083,6 +2100,7 @@ const pages = {
             if ((rec.state === "accepted" || rec.state === "rejected") && at) {
               const early = at < Math.min(date, sent) - 10000;  // reviewed well before this request: someone else decided it
               msg = t((early ? "rvAlready_" : "rvDone_") + rec.state, pv.reviewer || "?", stamp(at));
+              if (accept && !early && v.isReplacement) msg += " " + t("rvSaved", v.currentRevision, v.replaces);  // the replaced text is in the note's history
             }
           } catch (e) { if (!SESSION) return; }
           await showList(msg);
@@ -2096,6 +2114,7 @@ const pages = {
       }
       const head = heading("h3", accept ? t("rvConfirmAccept", v.scopeName) : t("rvConfirmReject"));
       set(head, head, bar(), statuses[0], text("rv-title", v.title), meta(v),
+        accept ? currentBlock(v) : null, accept ? newBlock(v) : null,
         accept ? note(t("rvVersion", v.reviewHash.slice(0, 8))) : null, !accept && why ? note(t("rvReasonIs") + ": " + why) : null,
         text("rv-text", v.body || ""), bar(), statuses[1]);
     }
