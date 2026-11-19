@@ -612,7 +612,8 @@ func TestUpstreamAutoPushBetweenTwoGateways(t *testing.T) {
 	f.allow()
 	p, project, notes := f.seed()
 	// timing: a quarter of a second quiet, the loop looks every 30 ms
-	f.local.core.SetAutoTiming(core.AutoTiming{Debounce: 300 * time.Millisecond, MaxWait: 5 * time.Second, BackoffBase: 250 * time.Millisecond, BackoffMax: time.Second})
+	timing := core.AutoTiming{Debounce: 300 * time.Millisecond, MaxWait: 5 * time.Second, BackoffBase: 250 * time.Millisecond, BackoffMax: time.Second}
+	f.local.core.SetAutoTiming(timing)
 	f.local.autoTick.Store(int64(30 * time.Millisecond))
 	out, err := f.cmd(coreOpts{auto: true}, "link", "shop", "hub")
 	f.must(err)
@@ -633,13 +634,22 @@ func TestUpstreamAutoPushBetweenTwoGateways(t *testing.T) {
 	}
 	// a storm of edits (a member edits the same note 40 times in a quick row): ONE more submission, with the last text
 	n := notes["Invoice numbering"]
+	// no push can be due while the storm runs, however slow the machine is: the quiet window and the max wait are an hour (they are read
+	// at every look, the dirty mark only stores times), then the real timing comes back and the one push must follow
 	before, _ := f.remoteSubmissions()
+	stormTiming := timing
+	stormTiming.Debounce, stormTiming.MaxWait = time.Hour, time.Hour
+	f.local.core.SetAutoTiming(stormTiming)
 	for i := 0; i < 40; i++ {
 		cur, err := f.local.core.GetNote(t0, p, project, n.ID)
 		f.must(err)
 		_, err = f.local.core.UpdateNote(t0, p, project, n.ID, cur.Revision, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: fmt.Sprint("storm ", i)})
 		f.must(err)
 	}
+	if n, _ := f.remoteSubmissions(); n != before {
+		t.Fatalf("a push went out during the storm (%d)", n-before)
+	}
+	f.local.core.SetAutoTiming(timing)
 	waitUntil(t, "the push after the storm", 10*time.Second, func() bool { n, _ := f.remoteSubmissions(); return n > before })
 	time.Sleep(1200 * time.Millisecond) // long enough for a second (wrong) push to show
 	after, titles := f.remoteSubmissions()
