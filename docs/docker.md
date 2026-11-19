@@ -149,6 +149,10 @@ rename them). Restore prints `Restoring backup of <project> (<volumes>) into <pr
 confirm the project: the printed `Project:` line is what you must check. The checksums guard against a damaged or
 mixed-up archive; a backup directory must be protected like the volume itself (it holds the keys), and restore
 does not inspect archive content.
+The script streams the archives through a helper container and bind-mounts no host folder. Where to put backups:
+not on the Docker data disk if that is small (a failed backup removes its own incomplete directory, but a full disk
+stops the gateway too); a root_squash NFS target must be writable by the user who runs the script. A helper that
+cannot start (image missing and not pullable, a remote Docker context) is reported with Docker's own message.
 A failed backup is
 incomplete and must not be used. Both volumes belong together. The config volume holds provider keys in protected
 files: a backup is a secret. Keep it private and copy it to protected storage.
