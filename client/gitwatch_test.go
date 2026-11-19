@@ -792,3 +792,16 @@ func TestGitWatchResetsWhenOnlyTheLimitsWereReached(t *testing.T) {
 		}
 	})
 }
+
+// G2: a printed command only for a conservative path; a hostile name (cmd.exe, PowerShell) gets none.
+func TestGitUnstageWarningPrintsNoCommandForAHostilePath(t *testing.T) {
+	for _, hostile := range []string{".githooks/x & calc.exe & rem ", ".githooks/x'; Start-Process calc; '", "-rf", ".githooks/x\ty", ".githooks/é"} {
+		w := gitUnstageWarning([]string{hostile, ".envrc"}, false)
+		if gitCommandSafe(hostile) || strings.Contains(w, "restore --staged -- '"+hostile) || !strings.Contains(w, "restore --staged -- '.envrc'") || !strings.Contains(w, "No command is printed for 1 path(s)") {
+			t.Errorf("%q:\n%s", hostile, w)
+		}
+	}
+	if !gitCommandSafe(".github/workflows/a-b_c.yml") || !gitCommandSafe("a@b+c") {
+		t.Error("a plain path is refused")
+	}
+}

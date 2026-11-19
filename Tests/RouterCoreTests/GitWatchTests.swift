@@ -161,8 +161,10 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     let r = GitWatch.report(start: s, end: e, commits: [], isProtected: prot)
     #expect(r.reset.isEmpty)
     #expect(r.lines.contains { $0.contains("a protected path looks staged: .envrc - NOT removed from the index") && $0.contains("git --literal-pathspecs restore --staged -- '.envrc'") && $0.contains("your own staged change of that path too") })
-    let w = GitWatch.unstageWarning([".vscode/it's.json", ".vscode/x\ty.json"], indexCut: true)
-    #expect(w.contains("restore --staged -- '.vscode/it'\\''s.json'") && !w.contains("x\ty") && w.contains("1 path(s) with a control character") && w.contains("may be staged that are not listed"), "\(w)")
+    for hostile in [".githooks/x & calc.exe & rem ", ".githooks/x'; Start-Process calc; '", "-rf", ".githooks/x\ty", ".githooks/\u{e9}"] {
+        let w = GitWatch.unstageWarning([hostile, ".envrc"], indexCut: false)
+        #expect(!GitWatch.commandSafe(hostile) && !w.contains("restore --staged -- '" + hostile) && w.contains("restore --staged -- '.envrc'") && w.contains("No command is printed for 1 path(s)"), "\(w)")
+    }
     #expect(GitWatch.unstageWarning((1...7).map { ".envrc\($0)" }, indexCut: false).contains("and 2 more"))
 }
 

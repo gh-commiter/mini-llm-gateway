@@ -65,35 +65,42 @@ func gitNames(l []string) string {
 	return strings.Join(l, ", ")
 }
 
-// gitUnstageWarning: nothing was removed from the index; the literal command per path (the first five), no command for a name with a control character.
+// gitCommandSafe: a path that gets a printed command: only letters, digits and . _ / @ + - (no space, nothing a shell or cmd.exe reads as syntax), and not starting with "-". The owner
+// may paste the command into sh, cmd.exe or PowerShell; any other path is named without a command.
+func gitCommandSafe(p string) bool {
+	return p != "" && !strings.HasPrefix(p, "-") && !strings.ContainsFunc(p, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._/@+-", r))
+	})
+}
+
+// gitUnstageWarning: nothing was removed from the index; the literal command per path (the first five) for the paths that are safe to paste, no command for the others.
 func gitUnstageWarning(paths []string, indexCut bool) string {
-	var plain []string
+	var safe []string
 	for _, p := range paths {
-		if strings.IndexFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) < 0 {
-			plain = append(plain, p)
+		if gitCommandSafe(p) {
+			safe = append(safe, p)
 		}
 	}
-	odd := len(paths) - len(plain)
+	sort.Strings(safe)
+	other := len(paths) - len(safe)
 	m := "minigw: WARNING: "
 	if len(paths) == 0 {
 		return m + "protected paths may be staged that are not listed (the index listing was cut): look at git status before your next commit"
 	}
-	m += "a protected path looks staged: " + gitNames(slices.Clone(plain)) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit."
-	var cmds []string
-	for i, p := range plain {
-		if i < 5 {
-			cmds = append(cmds, "git --literal-pathspecs restore --staged -- '"+strings.ReplaceAll(p, "'", "'\\''")+"'")
+	m += "a protected path looks staged: " + gitNames(slices.Clone(paths)) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit."
+	if len(safe) > 0 {
+		var cmds []string
+		for _, p := range safe[:min(5, len(safe))] {
+			cmds = append(cmds, "git --literal-pathspecs restore --staged -- '"+p+"'")
 		}
-	}
-	if len(cmds) > 0 {
 		m += " To unstage by hand (this unstages your own staged change of that path too): " + strings.Join(cmds, "; ")
-		if len(plain) > 5 {
-			m += fmt.Sprintf(" and %d more", len(plain)-5)
+		if len(safe) > 5 {
+			m += fmt.Sprintf(" and %d more", len(safe)-5)
 		}
 		m += "."
 	}
-	if odd > 0 {
-		m += fmt.Sprintf(" %d path(s) with a control character in the name: no command printed, use git status.", odd)
+	if other > 0 {
+		m += fmt.Sprintf(" No command is printed for %d path(s) whose names have characters other than letters, digits and . _ / @ + -: unstage them from git status or your git tool.", other)
 	}
 	if indexCut {
 		m += " The index listing was cut: protected paths may be staged that are not listed."
@@ -431,9 +438,9 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 	}
 	lines, reset := gitWatchReport(w.start, end, commits, protectedPath)
 	if len(reset) > 0 && !restore {
-		lines = append(lines, "minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): run git reset -- "+strings.Join(reset, " "))
+		lines = append(lines, "minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): unstage them from git status or your git tool: "+gitNames(slices.Clone(reset)))
 	} else if len(reset) > 0 && !w.resetIndex(reset) {
-		lines = append(lines, "minigw: could not remove the staged protected paths from the index: run git reset -- "+strings.Join(reset, " "))
+		lines = append(lines, "minigw: could not remove the staged protected paths from the index: unstage them from git status or your git tool: "+gitNames(slices.Clone(reset)))
 	}
 	return lines, len(end.Incomplete) == 0
 }

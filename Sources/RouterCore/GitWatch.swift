@@ -57,17 +57,20 @@ public struct GitWatch: Sendable {
         return s.count > names ? s.prefix(names).joined(separator: ", ") + " and \(s.count - names) more" : s.joined(separator: ", ")
     }
 
-    /// The warning when the staged protected paths could not be told reliably: nothing was removed from the index; the literal command per path (the first five), no command for a
-    /// name with a control character.
+    /// A path that gets a printed command: only letters, digits and . _ / @ + - (no space, nothing a shell or cmd.exe reads as syntax), and not starting with "-". The owner may paste the
+    /// command into sh, cmd.exe or PowerShell; any other path is named without a command.
+    static func commandSafe(_ p: String) -> Bool { !p.isEmpty && !p.hasPrefix("-") && p.unicodeScalars.allSatisfy { $0.isASCII && ($0.properties.isAlphabetic || ("0"..."9").contains($0) || "._/@+-".unicodeScalars.contains($0)) } }
+
+    /// The warning when the staged protected paths could not be told reliably: nothing was removed from the index; the literal command per path (the first five) for the paths that are
+    /// safe to paste, no command for the others.
     static func unstageWarning(_ paths: [String], indexCut: Bool) -> String {
-        let plain = paths.filter { !$0.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } }, odd = paths.count - plain.count
+        let safe = paths.filter(commandSafe), other = paths.count - safe.count
         var m = "minigw: WARNING: "
         if paths.isEmpty { m += "protected paths may be staged that are not listed (the index listing was cut): look at git status before your next commit" }
         else {
-            m += "a protected path looks staged: " + list(plain) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit."
-            let cmds = plain.prefix(5).map { "git --literal-pathspecs restore --staged -- '" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-            if !cmds.isEmpty { m += " To unstage by hand (this unstages your own staged change of that path too): " + cmds.joined(separator: "; ") + (plain.count > 5 ? " and \(plain.count - 5) more" : "") + "." }
-            if odd > 0 { m += " \(odd) path(s) with a control character in the name: no command printed, use git status." }
+            m += "a protected path looks staged: " + list(paths) + " - NOT removed from the index, because the check of git was incomplete; look at git status before your next commit."
+            if !safe.isEmpty { m += " To unstage by hand (this unstages your own staged change of that path too): " + safe.sorted().prefix(5).map { "git --literal-pathspecs restore --staged -- '" + $0 + "'" }.joined(separator: "; ") + (safe.count > 5 ? " and \(safe.count - 5) more" : "") + "." }
+            if other > 0 { m += " No command is printed for \(other) path(s) whose names have characters other than letters, digits and . _ / @ + -: unstage them from git status or your git tool." }
             if indexCut { m += " The index listing was cut: protected paths may be staged that are not listed." }
         }
         return m
@@ -242,8 +245,8 @@ public struct GitWatch: Sendable {
         }
         var (lines, reset) = Self.report(start: start, end: end, commits: commits, isProtected: { Sync.isProtected($0) })
         if !reset.isEmpty, !restore {
-            lines.append("minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): run git reset -- " + reset.joined(separator: " "))
-        } else if !reset.isEmpty, !resetIndex(reset) { lines.append("minigw: could not remove the staged protected paths from the index: run git reset -- " + reset.joined(separator: " ")) }
+            lines.append("minigw: the staged protected paths were NOT removed from the index (a request of the agent was still running): unstage them from git status or your git tool: " + Self.list(reset))
+        } else if !reset.isEmpty, !resetIndex(reset) { lines.append("minigw: could not remove the staged protected paths from the index: unstage them from git status or your git tool: " + Self.list(reset)) }
         return (lines, end.incomplete.isEmpty)
     }
 
