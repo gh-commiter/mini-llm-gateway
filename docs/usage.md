@@ -1698,8 +1698,13 @@ where it becomes a new note that ends with this gateway's trailer, so it never c
 hand keeps that note from being pushed; they could change or delete it anyway. Relaying notes on purpose is not a setting (yet).
 
 A repeated push sends only what changed: every note is remembered by its content (class, kind, title, text). A changed note is sent
-as a **replacement** of the note the upstream accepted before; if that note is still pending there, or cannot be read by the bound
-user, it goes as a new submission that names the earlier one. Notes deleted here, and changes of class to private, are not
+as a **replacement** of the note the upstream accepted before, at that note's current revision. The link to that upstream note stays
+when the reviewers reject a replacement (for instance because the note changed there meanwhile): after the next change here the push is again a
+replacement of the same note, so a second copy of the note never appears; the report says `the earlier submission was rejected upstream
+(<reason>)`. A rejected text that is not changed here is not sent again (an automatic push does not retry it either). If the upstream note no longer
+exists, the note is not sent as a new one: `status` lists it as a conflict (deleted on the upstream) and `gw upstream resolve --ours` sends it as a new submission
+when you want that. If the upstream note cannot be read right now the note waits for the next push (`refused`). Only a note that was never accepted there
+(the earlier submission is still pending or was never accepted) goes as a new submission that names the earlier one. Notes deleted here, and changes of class to private, are not
 propagated; the copy there stays until it is removed there. If the upstream limits writes the push waits and goes on. Every note
 of a run is reported as `create`, `skip`, `replace` or `refused` with the upstream's own text; a refusal that would apply to all
 notes (not allowed, no such project, too many pending submissions) ends the run for that link and is shown by `status`.

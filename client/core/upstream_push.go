@@ -407,6 +407,14 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 	return res, err
 }
 
+// upReason: the hub's reject reason for a report line (data from the upstream: bounded, one line).
+func upReason(r string) string {
+	if r = upText(r, 200); r != "" {
+		return " (" + r + ")"
+	}
+	return ""
+}
+
 func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, after int64, dry bool, sleep func(time.Duration) bool) (UpstreamPush, error) {
 	limit := maxPushNotes // notes to SEND per run; a dry run sends nothing and reports them all
 	if dry {
@@ -489,6 +497,22 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			line("conflict", n, "changed on the upstream since our last write, not overwritten: minigw gw upstream resolve <project> "+strconv.FormatInt(n.ID, 10)+" --theirs|--ours")
 			continue
 		}
+		conflict := func(rev int64) error {
+			res.Conflicts++
+			why := "changed on the upstream since our last write (revision " + strconv.FormatInt(rev, 10) + "), not overwritten"
+			if rev == 0 {
+				why = "deleted on the upstream, not recreated"
+			}
+			if dry {
+				line("would conflict", n, why)
+				return nil
+			}
+			if e := s.upstreamRecordConflict(wctx, l.Project, l.Upstream, n.ID, rev); e != nil {
+				return e
+			}
+			line("conflict", n, why+": minigw gw upstream resolve <project> "+strconv.FormatInt(n.ID, 10)+" --theirs|--ours")
+			return nil
+		}
 		if l.Mode == "publish" && n.EntryKind != "faq" && !(n.Sent != nil && (n.Sent.Conflict == 2 || n.Sent.RemoteSub > 0)) { // a note sent as a submission ("ours") stays on the submission path
 			// publish mode: the note is written on the upstream directly (a note, not a submission)
 			notesBase := fmt.Sprintf("/minigw/v1/projects/%d/notes", remote)
@@ -508,22 +532,6 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 					return r, true, e
 				}
 				return res, false, nil
-			}
-			conflict := func(rev int64) error {
-				res.Conflicts++
-				why := "changed on the upstream since our last write (revision " + strconv.FormatInt(rev, 10) + "), not overwritten"
-				if rev == 0 {
-					why = "deleted on the upstream, not recreated"
-				}
-				if dry {
-					line("would conflict", n, why)
-					return nil
-				}
-				if e := s.upstreamRecordConflict(wctx, l.Project, l.Upstream, n.ID, rev); e != nil {
-					return e
-				}
-				line("conflict", n, why+": minigw gw upstream resolve <project> "+strconv.FormatInt(n.ID, 10)+" --theirs|--ours")
-				return nil
 			}
 			text := n.Body + p.trailer(l.Project, n, 0)
 			if n.Sent != nil && n.Sent.RemoteNote > 0 { // an update of the note we wrote: only when it is still as we left it
@@ -622,21 +630,52 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
 			}
 			var sub struct {
-				State string
-				Note  int64
+				State  string
+				Note   int64
+				Reason string
+			}
+			readable := a.status == 200 && json.Unmarshal(a.data, &sub) == nil
+			// the hub's note this note is a version of: the note the earlier submission became, else the one we last replaced. A rejected
+			// or pending replacement leaves the link as it was, so a later push is again a replacement, never a second note (#166).
+			target := n.Sent.RemoteNote
+			if readable && sub.State == "accepted" && sub.Note > 0 {
+				target = sub.Note
 			}
 			switch {
-			case a.status == 200 && json.Unmarshal(a.data, &sub) == nil && sub.State == "accepted" && sub.Note > 0:
-				na := p.call("GET", fmt.Sprintf("/minigw/v1/projects/%d/notes/%d", remote, sub.Note), nil, nil)
-				var cur struct{ Revision int64 }
-				if na.status == 200 && json.Unmarshal(na.data, &cur) == nil && cur.Revision > 0 {
-					replaces, revision, detail = sub.Note, cur.Revision, "replaces the accepted note "+strconv.FormatInt(sub.Note, 10)
-				} else {
-					detail = "the accepted note cannot be read there: sent as a new submission"
+			case target > 0:
+				na := p.call("GET", fmt.Sprintf("/minigw/v1/projects/%d/notes/%d", remote, target), nil, nil)
+				if p.more {
+					return more("the upstream's write limit: push again in "+strconv.Itoa(int(p.wait/time.Second))+" seconds", int(p.wait/time.Second))
 				}
-			case a.status == 200 && sub.State == "pending":
+				var cur struct{ Revision int64 }
+				switch {
+				case na.status == 200 && json.Unmarshal(na.data, &cur) == nil && cur.Revision > 0:
+					replaces, revision = target, cur.Revision
+					detail = "replaces the note " + strconv.FormatInt(target, 10) + " upstream (revision " + strconv.FormatInt(cur.Revision, 10) + ")"
+					switch {
+					case readable && sub.State == "accepted":
+						detail = strings.Replace(detail, "replaces the note", "replaces the accepted note", 1)
+					case readable && sub.State == "rejected":
+						detail = "the earlier submission was rejected upstream" + upReason(sub.Reason) + ": " + detail
+					case readable && sub.State == "pending":
+						detail = "the earlier submission is still pending: " + detail
+					}
+				case na.status == 404: // gone: never silently a new note; the owner decides (resolve --ours sends it as new)
+					if e := conflict(0); e != nil {
+						return res, e
+					}
+					continue
+				default: // not readable now: a new submission would fork the note, so this one waits for the next push
+					res.Refused++
+					line("refused", n, "the note "+strconv.FormatInt(target, 10)+" upstream cannot be read: "+refusal(na))
+					if na.status == 0 || na.status == 401 || na.status == 403 || na.status == 429 {
+						return stop(refusal(na))
+					}
+					continue
+				}
+			case readable && sub.State == "pending":
 				detail = "the earlier submission is still pending: a new one is sent"
-			case a.status == 200:
+			case readable:
 				detail = "the earlier submission was not accepted: sent again"
 			default:
 				detail = "the earlier submission cannot be read there: sent as a new submission"

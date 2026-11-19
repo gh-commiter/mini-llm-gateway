@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Upstream push: a note the upstream's reviewers rejected as a replacement (for instance because the note changed there meanwhile) is pushed again as a replacement of the same upstream note, no longer as a new one: accepting it used to leave a second copy beside the original (#166). If the upstream note is gone, the push stops for that note with a conflict (`status`, `resolve`) instead of creating a new note; a dry run says `would replace note N upstream (revision R)`, and the report shows the reviewers' reject reason.
+
 ## 0.8.7
 
 A beta that makes the saved versions of notes (kept since 0.8.6) usable: you can look at them and put one back. The gateway and the client both change; no database upgrade.
