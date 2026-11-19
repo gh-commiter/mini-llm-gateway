@@ -75,10 +75,10 @@ extension AdminCommands {
                 say(clean("unlinked \(local) from \(name)"))
                 return
             }
-            if remote.isEmpty { remote = local }
             if o.auto && o.manual { throw fail("--auto and --manual together: choose one") }
             if o.read && o.noRead { throw fail("--read and --no-read together: choose one") }
-            var req: [String: Any] = ["team": isTeam, "remote": remote, "classes": o.classes, "withPrivate": o.withPrivate]
+            var req: [String: Any] = ["team": isTeam, "classes": o.classes, "withPrivate": o.withPrivate]
+            if !remote.isEmpty { req["remote"] = remote }  // not told: the gateway keeps the destination of an existing link, or uses the same name there for a new one
             if o.auto { req["auto"] = true } else if o.manual { req["auto"] = false }
             if !o.mode.isEmpty { req["mode"] = o.mode }
             let reading = o.read || o.noRead || !o.readClass.isEmpty || !o.readSources.isEmpty
@@ -95,6 +95,7 @@ extension AdminCommands {
             }
             if reading || pulling { req["readOnly"] = !pushFlags }  // an existing link keeps its push settings
             let linked = try request("PUT", path, req)
+            if let r = linked["remote"]?.string, !r.isEmpty { remote = r } else if remote.isEmpty { remote = local }
             defer { if linked["readOff"]?.bool == true { say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach")) } }
             if pulling && !reading && !pushFlags {
                 say(clean("\(local) -> \(name): a link with reading on is pulled every \(o.pullEvery) minutes"))
@@ -126,7 +127,7 @@ extension AdminCommands {
                 if let e = d["lastError"]?.string, !e.isEmpty { say(clean("  last refusal: " + e)) }
                 if let s = Self.upstreamNotPropagated(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
-                if let w = d["waiting"]?.int, w > 0 { say("  \(w) notes wait for a review upstream; they are checked at the next push (not a failure)") }
+                if let w = d["waiting"]?.int, w > 0 { say("  \(w) notes waited for a review upstream at the last push; they are checked at the next push (not a failure)") }
                 if let s = Self.upstreamForeign(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamSkipped(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamBackwards(d) { say(clean("  " + s)) }
@@ -138,7 +139,7 @@ extension AdminCommands {
             var body: [String: Any] = ["note": note, "ours": o.ours, team.isEmpty ? "project" : "team": team.isEmpty ? try projectID(pos[2]) : try teamID(team)]
             if !o.upstream.isEmpty { body["upstream"] = o.upstream }
             try request("POST", "/upstream-resolve", body)
-            if o.ours { say("note \(note): our version goes to the upstream as a submission at the next push (when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read, it becomes a NEW note there: a second note if the old one still exists out of sight)") }
+            if o.ours { say("note \(note): our version goes to the upstream as a submission at the next push; the push report says whether it replaces the upstream's note or becomes a new one (a new one when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read: a second note if the old one still exists out of sight)") }
             else { say("note \(note): our text stays unsent (the upstream's text is not fetched here); a later change here is looked at again") }
         case ("push", 2...3):
             var body: [String: Any] = ["dryRun": o.dryRun]
