@@ -570,6 +570,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
     let key = Noise.newKey()
     private(set) var port: UInt16 = 0
     private var fd: Int32 = -1
+    private let loop = TestAcceptLoop("UpstreamTests fake router")
     private let lock = NSLock()
     private var _heads: [String] = [], _devices: [Noise.Device] = [], _accepted = 0
     var heads: [String] { lock.withLock { _heads } }
@@ -591,16 +592,12 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &l) } }
         port = UInt16(bigEndian: a.sin_port)
         let listener = fd
-        Thread { [self] in
-            while true {
-                let c = accept(listener, nil, nil)
-                if c < 0 { return }
-                lock.withLock { _accepted += 1 }
-                Thread { self.serve(c) }.start()
-            }
-        }.start()
+        loop.start(listener: listener) { [self] c in
+            lock.withLock { _accepted += 1 }
+            Thread { self.serve(c) }.start()
+        }
     }
-    func stop() { close(fd) }
+    func stop() { loop.markStopped(); close(fd) }
 
     private func serve(_ c: Int32) {
         defer { close(c) }
