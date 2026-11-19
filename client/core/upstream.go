@@ -883,7 +883,13 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 // copy elsewhere then ends with OUR trailer, so no copy can travel more hops than people made edits. The text is the signal because it is
 // all both sides have: the receiving gateway records no "this user is a gateway" (a device's "gateway, minigw" description is what the
 // device says of itself). A member who ends a note with a trailer by hand only keeps a note they may change or delete anyway from going.
-func fromGateway(body string) bool { return trailerAtEnd.MatchString(body) }
+func fromGateway(body string) bool { return looksFromGateway.MatchString(body) }
+
+// looksFromGateway is SUSPICION, as trailerExactAtEnd (upstream_push.go) is proof: relay protection must err toward "this came from a gateway", so
+// that anything a gateway or a version writes or stores slightly differently (a normaliser, an older format, a future field, text added on that
+// line) does not turn a received copy into local work that could travel on and loop between automatic links. A note whose LAST line has the
+// opening mark of the trailer and ends with the closing is not pushed onward, however the line continues in between or after the mark.
+var looksFromGateway = regexp.MustCompile(`<!-- minigw upstream ref ([0-9a-f]{12}), author [^\n]*-->\n?$`)
 
 // UpstreamLinks lists the links of one project or team segment (local = 0: all) with how many notes would go.
 func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []UpstreamLinkInfo, err error) {

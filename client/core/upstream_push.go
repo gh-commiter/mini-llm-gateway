@@ -294,7 +294,7 @@ func (u upNote) sameAs(hash, ref, author string) int {
 	if hash == "" || u.Body == "" {
 		return -1
 	}
-	m := trailerAtEnd.FindStringSubmatchIndex(u.Body)
+	m := trailerExactAtEnd.FindStringSubmatchIndex(u.Body)
 	if m == nil || u.Body[m[2]:m[3]] != ref || u.Body[m[4]:m[5]] != author { // what we sent ends with OUR trailer: another one, or none, is another text
 		return 0
 	}
@@ -405,12 +405,12 @@ const upstreamRefMark = "<!-- minigw upstream ref "
 // trailerSupersedes: the optional part of the trailer that names the submission a new one replaces.
 const trailerSupersedes = "; supersedes submission "
 
-// trailerAtEnd matches exactly ONE complete trailer in the format trailer() writes, and only as the END of the text: the two line feeds before it,
+// trailerExactAtEnd is PROOF (sameness of a hub copy, ownership of a mirror copy; relay protection uses the lenient looksFromGateway). It matches exactly ONE complete trailer in the format trailer() writes, and only as the END of the text: the two line feeds before it,
 // the opening, the 12 hex digits of the reference (group 1), ", author " and the author's name (group 2; no line feed, and no hyphen: trailer() writes
 // every "-" of it as U+2010, so no "-->" can be inside), the optional supersedes part, " -->" and at most one final line feed. Text after the
 // closing on the same line, a second comment, a trailer-like comment earlier in the body or other field values are not a trailer of ours: the
 // copy then counts as changed. The match starts at the first line feed, so everything before it is the text we sent.
-var trailerAtEnd = regexp.MustCompile(`\n\n` + regexp.QuoteMeta(upstreamRefMark) + `([0-9a-f]{12}), author ([^\n-]*?)(?:` + regexp.QuoteMeta(trailerSupersedes) + `[0-9]+)? -->\n?$`)
+var trailerExactAtEnd = regexp.MustCompile(`\n\n` + regexp.QuoteMeta(upstreamRefMark) + `([0-9a-f]{12}), author ([^\n-]*?)(?:` + regexp.QuoteMeta(trailerSupersedes) + `[0-9]+)? -->\n?$`)
 
 func upstreamRef(secret []byte, up string, project, note int64) string {
 	return hex.EncodeToString((&pusher{secret: secret}).mac("ref|", up, "|", project, "|", note)[:6])

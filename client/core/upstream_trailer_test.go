@@ -51,7 +51,10 @@ func TestTrailerMatchIsExact(t *testing.T) {
 	if same("our text", "our text\n\n"+fake) == 1 || same("our text", "our text"+strings.Replace(trailer, ", author ", ", author someone else", 1)) == 1 || same("our text", "our text"+"\n\n"+fake+"more") == 1 || same("our text", "our text<!-- minigw upstream ref 0123456789ab, author x -->\n") == 1 {
 		t.Error("a forged or unseparated trailer was taken for ours")
 	}
-	if fromGateway("text"+trailer) != true || fromGateway("text"+strings.TrimSuffix(trailer, "\n")+" edited <!-- x -->\n") {
-		t.Error("fromGateway must follow the exact trailer")
+	// relay protection is lenient (suspicion), the comparison exact (proof): text appended on the trailer's line is still "from a gateway", never
+	// pushed onward, while the same text is not equal to what we sent
+	appended := "our text" + strings.TrimSuffix(trailer, "\n") + " IMPORTANT HUB EDIT <!-- extra -->\n"
+	if !fromGateway("text"+trailer) || !fromGateway(appended) || same("our text", appended) == 1 || fromGateway("plain text") {
+		t.Error("fromGateway must stay lenient while sameAs stays exact")
 	}
 }

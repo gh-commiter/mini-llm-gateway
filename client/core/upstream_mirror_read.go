@@ -65,7 +65,7 @@ func sentContentHash(class Class, kind, title, body string) string {
 		kind = KindFinding
 	}
 	body = lineEndings(body) // a note stored with CRLF before line endings were normalised hashes like its LF copy on the hub
-	if loc := trailerAtEnd.FindStringIndex(body); loc != nil {
+	if loc := trailerExactAtEnd.FindStringIndex(body); loc != nil {
 		body = body[:loc[0]]
 	}
 	body = strings.TrimRight(mirrorBody(body), " \t\r\n")
@@ -288,7 +288,7 @@ func mirrorRows(ctx context.Context, tx *sql.Tx, now time.Time, scope []readable
 			}
 			c.x.differs = c.rnote
 		}
-		if m := trailerAtEnd.FindStringSubmatch(c.tail); m != nil && c.x.differs == 0 { // a copy that differs from our note is shown even when it still ends with our trailer
+		if m := trailerExactAtEnd.FindStringSubmatch(c.tail); m != nil && c.x.differs == 0 { // a copy that differs from our note is shown even when it still ends with our trailer
 			if !asked { // the references are computed once, and only when a candidate ends with a trailer
 				if refs, err = ourRefs(ctx, tx, scope); err != nil {
 					return nil, err
