@@ -143,7 +143,10 @@ testexit() { [ "${MINIGW_TEST_EXIT_AT:-}" = "$1" ] && exit 9; return 0; }
 # Stari odjemalec je do 4. koraka overljiv s PREJŠNJO generacijo (.prev), novi po njem s tekočo; neoverjen je le .new.<pid>, ki ga ne zažene nihče.
 keepsums() {
   if [ -f "$SN" ] && [ -f "$SG" ]; then
-    if [ -f "$BIN/SHA256SUMS" ] && [ -f "$BIN/SHA256SUMS.sig" ] && verify_sums "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig"; then
+    # Samo par, ki zdaj jamči za exe na mestu, postane PREJŠNJA generacija; če zanj jamči že .prev (ali nihče), se .prev ne dotakne
+    # (sicer bi dva zaporedna neuspela prenosa pustila oba para novo izdajo in exe stare: nič ga ne bi overilo).
+    kts=$tsums; trustedby "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig" "$EXE"; kr=$?; tsums=$kts
+    if [ $kr -eq 0 ]; then
       cp "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.prev.new.$$" && cp "$BIN/SHA256SUMS.sig" "$BIN/SHA256SUMS.prev.sig.new.$$" &&
         mv -f "$BIN/SHA256SUMS.prev.new.$$" "$BIN/SHA256SUMS.prev" && mv -f "$BIN/SHA256SUMS.prev.sig.new.$$" "$BIN/SHA256SUMS.prev.sig"
       vp=""
@@ -313,11 +316,14 @@ else
     else
       fetch "$asset" || { authexe && [ -x "$EXE" ]; } || { [ -n "$stale" ] && { inst=$stale; linkinst; }; } || {
         if [ -n "$instx" ] || [ -e "$EXE" ] || [ -L "$EXE" ]; then
-          rm -f "$EXE"; forget; unrecord  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
+          # Kopija, ki je nihče ne overi, se zbriše le, dokler podpisane vsote ENAKEGA zagona (sums) povedo, da ni izdaja; brez omrežja ostane
+          # (neoverjena: skripta je ne zažene, kljuka je ne zažene brez zapisa .verified), da »neoverjena do povezave« ne postane »je ni«.
+          kept=""; if [ -n "$sums" ] || [ -L "$EXE" ]; then rm -f "$EXE"; forget; else [ -e "$EXE" ] && kept=1; fi
+          unrecord  # zapis v kopijo vedno sledi forget; tu sledi le izhod brez nove odločitve o zaupanju
           if [ -n "$unsigned" ]; then why="$unsigned; gateway skills are unavailable until the release can be verified"
           elif [ -n "$sums" ]; then why="the download failed or did not match the signed checksum; gateway skills are unavailable until it works"
           else why="github.com/$REPO could not be reached; gateway skills are unavailable until the network is back"; fi
-          echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why."
+          echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why${kept:+ (the copy in bin stays, unused, until it can be verified)}."
         else
           echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."
         fi; dropshims; unrecord; exit 0; }

@@ -68,7 +68,7 @@ print '#!/bin/sh\ncase $1 in -u) p=$2; printf "%s\\n" "${p#C:}" ;; -m) printf "C
 exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\\''"
 print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0" > "$exe"
 # OPS: vsak mv/rm na minigw, minigw.exe, .keep (v ustaljenem stanju prazno); VIOL: klic na GOLEM imenu »minigw«, ko ta ne obstaja, a minigw.exe obstaja
-for c in mv rm; do print '#!/bin/sh\nfor a; do case $a in */bin/minigw|*/bin/minigw.exe|*/bin/minigw.exe.keep) echo "'$c' $*" >> "$OPS" ;; esac\ncase $a in */bin/minigw) [ ! -e "$a" ] && [ -e "$a.exe" ] && echo "'$c' $*" >> "$VIOL" ;; esac; done\nexec /bin/'$c' "$@"' > $T/win/fake/$c; done
+for c in mv rm; do print '#!/bin/sh\nif [ -n "${FAILMV:-}" ] && [ '$c' = mv ]; then for last; do :; done; case $last in */bin/minigw.exe) echo busy >\&2; exit 1 ;; esac; fi\nfor a; do case $a in */bin/minigw|*/bin/minigw.exe|*/bin/minigw.exe.keep) echo "'$c' $*" >> "$OPS" ;; esac\ncase $a in */bin/minigw) [ ! -e "$a" ] && [ -e "$a.exe" ] && echo "'$c' $*" >> "$VIOL" ;; esac; done\nexec /bin/'$c' "$@"' > $T/win/fake/$c; done
 chmod +x $T/win/fake/* "$exe"
 # izdaja z lažnim minigw-windows-amd64.exe (različica, oznaka vsebine), podpisana s testnim ključem
 mkrel() { mkdir -p $T/rel/$1; print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $2; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0 # $1" > $T/rel/$1/minigw-windows-amd64.exe; chmod +x $T/rel/$1/minigw-windows-amd64.exe
@@ -77,7 +77,7 @@ mkrel wdl $MINV; mkrel wnew 0.99.0; mkrel wold 0.5.20
 RELEXE=$T/rel/wdl/minigw-windows-amd64.exe
 # shrani podpisane vsote ob kopijo (kot po prenosu): wtrust <datoteka> <različica>
 wtrust() { { print "VERSION $2"; print "$(shasum -a 256 "$1" | cut -d' ' -f1)  minigw-windows-amd64.exe"; } > $GB/SHA256SUMS; ssh-keygen -Y sign -q -f $T/key -n minigw-release < $GB/SHA256SUMS > $GB/SHA256SUMS.sig }
-winrun() { OPS=$T/win/ops VIOL=$T/win/viol CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE=${WENV:-} LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
+winrun() { FAILMV=${FAILMV:-} OPS=$T/win/ops VIOL=$T/win/viol CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE=${WENV:-} LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
 clear10() { rm -f $GB/* $GB/.[a-z]* $T/win/ops $T/win/viol 2>/dev/null || true; rmdir $GB/.aside.lock 2>/dev/null || true }
 golauncher() { printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec 'C:${1//$sq/$rep}' \"\$@\"" > $GB/minigw; printf '@setlocal DisableDelayedExpansion\r\n@"%s" %%*\r\n' "$1" > $GB/minigw.cmd }
 # nobenega ukaza na golem imenu bin/minigw (OPS/VIOL), razen kjer test to izrecno dovoli
@@ -131,6 +131,25 @@ for step in dl prev sums sig exe; do
   winrun wnew > /dev/null; cmp -s $T/rel/wnew/minigw-windows-amd64.exe $GB/minigw.exe || fail "10 S6 $step: the next online run did not finish the update"
   [[ -z "$(find $GB \( -name '*.new.*' -o -name '*.chk.*' \) -mmin +10)" ]] || true
 done
+# S6b: ubit zagon na sig (trenutni par = nova izdaja, .prev = stara, exe stara), nato spet prenos, ubit na vsakem koraku: nikoli »cannot verify«
+for step in prev sums sig exe; do
+  clear10; winrun wdl > /dev/null
+  MINIGW_TEST_EXIT_AT=sig winrun wnew > /dev/null 2>&1 || true
+  MINIGW_TEST_EXIT_AT=$step winrun wnew > /dev/null 2>&1 || true
+  out=$(winrun); print -r -- "6b $step: $out"
+  [[ $out == *"connected to Mini Gateway"* && $out != *"cannot verify"* && -x $GB/minigw.exe ]] || fail "10 S6b $step: a second killed update left no verifiable client: $out"
+done
+# S6c: exe zaseden (mv ne uspe) dvakrat zapored: stari overjeni exe ostane, brez povezave je vse še »connected«, kasnejši prenos dokonča
+clear10; winrun wdl > /dev/null
+for i in 1 2; do out=$(FAILMV=1 winrun wnew); print -r -- "6c $i: $out"; [[ $out == *"could not replace"* ]] || fail "10 S6c $i: no line about the busy exe: $out"; done
+out=$(winrun); print -r -- "6c offline: $out"
+[[ $out == *"connected to Mini Gateway"* && $out != *"cannot verify"* ]] && cmp -s $RELEXE $GB/minigw.exe || fail "10 S6c: the old verified exe was lost or unverifiable: $out"
+winrun wnew > /dev/null; cmp -s $T/rel/wnew/minigw-windows-amd64.exe $GB/minigw.exe || fail "10 S6c: the later online run did not finish the update"
+# S6d: exe, ki ga nič ne overi, brez omrežja: ostane (se ne zažene, brez zapisa), povedano; z omrežjem in podpisanimi vsotami (ni izdaja) ga zamenja prenos
+clear10; rm -f $T/win/ran6d; print '#!/bin/sh\ntouch '$T'/win/ran6d\necho minigw '$MINV > $GB/minigw.exe; chmod +x $GB/minigw.exe
+out=$(winrun); print -r -- "6d offline: $out"
+[[ -e $GB/minigw.exe && ! -e $T/win/ran6d && ! -e $GB/.verified && $out == *"cannot verify"* && $out == *"stays, unused"* ]] || fail "10 S6d: an unverifiable exe was removed offline, run, or recorded: $out"
+winrun wdl > /dev/null; cmp -s $RELEXE $GB/minigw.exe && [[ ! -e $T/win/ran6d ]] || fail "10 S6d: online, the foreign exe was not replaced by the release (or it ran)"
 # S7: ostanek 0.8.1-0.8.9: .keep brez minigw.exe in .aside.lock: .keep gre nazaj, ključavnica izgine, nič drugega
 clear10; winrun wdl > /dev/null; mv $GB/minigw.exe $GB/minigw.exe.keep; mkdir $GB/.aside.lock; print 1 > $GB/.aside.lock/pid
 winrun > /dev/null
