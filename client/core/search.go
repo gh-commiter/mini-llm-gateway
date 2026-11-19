@@ -30,8 +30,38 @@ func syncSearch(tx *sql.Tx, id int64) error {
 	return err
 }
 
+// ftsSecureDelete turns on FTS5's own secure-delete for the two full-text tables (SQLite 3.42 or newer: the driver embeds a
+// newer one): without it a deleted note's words stay in the tables' shadow pages even with the database's secure_delete. It is a
+// persistent option kept in the table's own _config row: data, not schema, so no migration is needed and the schema checks of
+// a restore do not see it. Idempotent: it writes only while the option is not set (at every open, and after a rebuild).
+func ftsSecureDelete(tx *sql.Tx) error {
+	for _, t := range []string{"note_search", "upstream_mirror_search"} {
+		var n int
+		if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name=?`, t).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			continue
+		}
+		var v int64
+		if err := tx.QueryRow(`SELECT coalesce((SELECT v FROM ` + t + `_config WHERE k='secure-delete'),0)`).Scan(&v); err != nil {
+			return err
+		}
+		if v == 1 {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO ` + t + `(` + t + `, rank) VALUES('secure-delete', 1)`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // rebuildSearch replaces every posting with one built from the notes.
 func rebuildSearch(tx *sql.Tx) error {
+	if err := ftsSecureDelete(tx); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM note_search; ` + searchInsert); err != nil {
 		return err
 	}

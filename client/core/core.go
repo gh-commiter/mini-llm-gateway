@@ -215,6 +215,9 @@ func (s *Store) open() error {
 	if s.rdb, err = sql.Open("sqlite", dsn(path, "_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)&_pragma=query_only(1)&_pragma=trusted_schema(0)")); err != nil {
 		return err
 	}
+	if err := s.write(ctx, ftsSecureDelete); err != nil {
+		return err
+	}
 	return s.write(ctx, func(tx *sql.Tx) error { return s.persist(tx) })
 }
 
