@@ -1997,10 +1997,12 @@ const pages = {
       const r = await fetch("/minigw/admin/v1" + path, {method, credentials: "omit", redirect: "error", headers: settingsRequestHeaders(), body: body === undefined ? undefined : JSON.stringify(body)});
       const j = await r.json().catch(() => ({}));
       if (r.status === 401) { remoteExpired(); throw new Error("Sign in again"); }
-      if (!r.ok) { const e = new Error((j.error && j.error.message) || ("HTTP " + r.status)); e.status = r.status; e.retry = Number(r.headers.get("Retry-After")) || 0; throw e; }
+      if (!r.ok) { const e = new Error((j.error && j.error.message) || ("HTTP " + r.status)); e.status = r.status; const ra = Number(r.headers.get("Retry-After")); e.retry = Number.isFinite(ra) && ra > 0 ? Math.min(ra, 600) : 0; throw e; }  // only a finite positive number of seconds, at most the 10 minute window
       return {j, date: Date.parse(r.headers.get("Date") || "") || Date.now()};
     };
-    const clock = ms => new Date(ms).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+    const lang = SL ? "sl" : undefined;  // the page's language (the one t() uses) for times and dates; Slovenian is 24-hour
+    const clock = ms => new Date(ms).toLocaleTimeString(lang, {hour: "2-digit", minute: "2-digit"});
+    const stamp = ms => new Date(ms).toLocaleString(lang);
     const rvMsg = e => e.status === 429 ? (e.retry ? t("rvLimited", clock(Date.now() + e.retry * 1000)) : t("rvLimitedNoTime"))
       : e.message.startsWith("The project database is not available") ? t("roUnavailable") : e.message === "HTTP 404" ? t("roProxyOld")
       : e.message.includes("changed since you read it") ? t("rvChanged") : e.message;  // "HTTP 404" = the proxy's own non-JSON refusal (older Caddyfile)
@@ -2011,7 +2013,7 @@ const pages = {
     const set = (focus, ...kids) => { box.replaceChildren(...kids.flat().filter(k => k !== null && k !== undefined && k !== false)); if (focus) focus.focus(); };
     box.addEventListener("keydown", ev => { if (ev.key === "Escape" && onEscape) { ev.preventDefault(); onEscape(); } });
     const meta = v => el("div", {class: "group ro"}, row(t("rvAuthor"), value(v.authorName)), row(scopeLabel(v)), row(t("rvClass") + " / " + t("rvKind"), value(v.class + " / " + v.entryKind)),
-      row(t("rvReceived"), value(new Date(v.received).toLocaleString())), v.isReplacement ? row(t("rvReplaces", v.replaces)) : null);
+      row(t("rvReceived"), value(stamp(v.received))), v.isReplacement ? row(t("rvReplaces", v.replaces)) : null);
     async function showList(msg, focusId) {
       onEscape = null;
       let r;
@@ -2080,7 +2082,7 @@ const pages = {
             const rec = (await rv("GET", "/kb/submissions/" + encodeURIComponent(v.id))).j, pv = rec.provenance || {}, at = Date.parse(pv.reviewed || "");
             if ((rec.state === "accepted" || rec.state === "rejected") && at) {
               const early = at < Math.min(date, sent) - 10000;  // reviewed well before this request: someone else decided it
-              msg = t((early ? "rvAlready_" : "rvDone_") + rec.state, pv.reviewer || "?", new Date(at).toLocaleString());
+              msg = t((early ? "rvAlready_" : "rvDone_") + rec.state, pv.reviewer || "?", stamp(at));
             }
           } catch (e) { if (!SESSION) return; }
           await showList(msg);

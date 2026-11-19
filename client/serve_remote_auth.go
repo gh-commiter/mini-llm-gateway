@@ -157,12 +157,39 @@ type remoteAuth struct {
 	disabled   bool
 	derive     func([]byte, remotePassword) []byte
 	decisions  []time.Time // KB review decisions in the last remoteDecisionWindow (under mu)
+	refusals   []time.Time // decisions refused before the core (malformed, not acceptable here): their own, looser counter (under mu)
+	limitedRow time.Time   // when the last `limited` audit row of the refusal counter was written (under mu)
 }
 
 const (
 	remoteDecisionLimit  = 30
+	remoteRefusalLimit   = 300 // refused decisions per window: enough for a human, too few to rotate the audit log
 	remoteDecisionWindow = 10 * time.Minute
 )
+
+// allowRefusal counts one refused decision (a malformed body, an accept that cannot be accepted here). It is independent of
+// allowDecision: garbage never locks a real decision out. Returns 0 when it may be answered (403), else how long to wait, and
+// whether this is the first over-limit answer of the window (the only one that writes an audit row).
+func (a *remoteAuth) allowRefusal() (wait time.Duration, row bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := a.now()
+	keep := a.refusals[:0]
+	for _, t := range a.refusals {
+		if now.Sub(t) < remoteDecisionWindow {
+			keep = append(keep, t)
+		}
+	}
+	a.refusals = keep
+	if len(a.refusals) >= remoteRefusalLimit {
+		if now.Sub(a.limitedRow) >= remoteDecisionWindow {
+			a.limitedRow, row = now, true
+		}
+		return a.refusals[0].Add(remoteDecisionWindow).Sub(now), row
+	}
+	a.refusals = append(a.refusals, now)
+	return 0, false
+}
 
 // allowDecision counts one review decision for the whole listener: at most remoteDecisionLimit per remoteDecisionWindow.
 // It returns 0 when the decision may go on, else how long until the oldest counted one leaves the window.

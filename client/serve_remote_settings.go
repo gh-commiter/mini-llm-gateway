@@ -576,11 +576,23 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 				msg = s.remoteKBAcceptRefusal(pathSeg[2])
 			}
 			if msg != "" {
-				s.remoteAuth.mu.Lock()
-				err = s.remoteAuth.auditOperation("mutation", "denied", ip, rid, operation, subject)
-				s.remoteAuth.mu.Unlock()
-				if err != nil {
-					deny(500)
+				wait, limitedRow := s.remoteAuth.allowRefusal()
+				result := "denied"
+				if wait > 0 {
+					result = "limited"
+				}
+				if wait == 0 || limitedRow { // over the refusal limit: one `limited` row per window, no `denied` rows
+					s.remoteAuth.mu.Lock()
+					err = s.remoteAuth.auditOperation("mutation", result, ip, rid, operation, subject)
+					s.remoteAuth.mu.Unlock()
+					if err != nil {
+						deny(500)
+						return
+					}
+				}
+				if wait > 0 {
+					w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
+					writeError(w, rid, 429, "Too many refused review decisions in a short time: wait a few minutes.")
 					return
 				}
 				writeError(w, rid, code, msg)

@@ -471,3 +471,49 @@ func TestRemoteKBRefusalsDoNotCountAgainstTheLimiter(t *testing.T) {
 		t.Fatal(w.Code, w.Header())
 	}
 }
+
+// Refused decisions have their own looser limit (so garbage cannot rotate the audit log), independent of the 30 real ones:
+// over it the answer is 429 with Retry-After and one `limited` row per window; a real decision still goes through.
+func TestRemoteKBRefusalLimiterIsIndependent(t *testing.T) {
+	k := newKBRemote(t)
+	id := k.submit("flood", "text")
+	bad := func() *httptest.ResponseRecorder {
+		return k.do("POST", fmt.Sprintf("/kb/submissions/%d/accept", id), `{"reviewHash":"abc"}`)
+	}
+	for i := 1; i <= remoteRefusalLimit; i++ {
+		if w := bad(); w.Code != 403 {
+			t.Fatal(i, w.Code)
+		}
+	}
+	w := bad()
+	if w.Code != 429 || w.Header().Get("Retry-After") != fmt.Sprint(int(remoteDecisionWindow/time.Second)+1) {
+		t.Fatal("the 301st refused decision", w.Code, w.Header())
+	}
+	for i := 0; i < 50; i++ {
+		if w = bad(); w.Code != 429 {
+			t.Fatal(w.Code)
+		}
+	}
+	denied, limited := 0, 0
+	for _, row := range k.remoteAudit() {
+		switch row["Result"] {
+		case "denied":
+			denied++
+		case "limited":
+			limited++
+		}
+	}
+	if denied != remoteRefusalLimit || limited != 1 {
+		t.Fatal("audit rows: denied", denied, "limited", limited)
+	}
+	// a real decision is not locked out by it, and it is governed by its own counter
+	if w = k.reject(id, "a real decision"); w.Code != 200 || len(k.f.s.remoteAuth.decisions) != 1 {
+		t.Fatal("a real decision during a flood of refused ones", w.Code, w.Body.String())
+	}
+	// after the window refused ones are answered (403) again, and the next window may write its own `limited` row
+	k.clock = k.clock.Add(remoteDecisionWindow + time.Second)
+	k.f.token = remoteLogin(t, k.f.s.remoteAuth)
+	if w = bad(); w.Code != 403 {
+		t.Fatal("after the window", w.Code)
+	}
+}
