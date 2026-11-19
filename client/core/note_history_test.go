@@ -39,7 +39,7 @@ func checkHistory(t *testing.T, s *Store, old Note) {
 	if title != old.Title || body != old.Body || class != string(old.Class) || kind != old.EntryKind || updated != ms(old.Updated) || provenance != original || provenance != string(want) {
 		t.Fatalf("snapshot differs: %q %q %s %s %d %s; old %+v", title, body, class, kind, updated, provenance, old)
 	}
-	if charge != int64(len(title)+len(body)+len(class)+len(kind)+len(provenance)+32) {
+	if charge != int64(len(title)+len(body)+len(class)+len(kind)+len(provenance)+48) {
 		t.Fatalf("wrong byte charge: %d", charge)
 	}
 }
@@ -141,7 +141,7 @@ func TestNoteHistoryConflictAndInsertFailure(t *testing.T) {
 		t.Fatal("revision conflict", e)
 	}
 	// A duplicate key makes the snapshot insert fail after the checks, before the overwrite.
-	exec(t, f.Store, `INSERT INTO note_history SELECT id,revision,title,body,class,entry_kind,updated,1,'{}',0,0 FROM notes WHERE id=?`, n.ID)
+	exec(t, f.Store, `INSERT INTO note_history(note_id,revision,title,body,class,entry_kind,updated,bytes,provenance,saved,saved_by,project_id) SELECT id,revision,title,body,class,entry_kind,updated,1,'{}',0,0,project_id FROM notes WHERE id=?`, n.ID)
 	_, e = f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, in)
 	if e == nil {
 		t.Fatal("insert failure ignored")
@@ -462,5 +462,149 @@ func TestNoteHistoryNoteWithoutProvenance(t *testing.T) {
 	f.ok(f.DB().QueryRow(`SELECT provenance FROM note_history WHERE note_id=? AND revision=?`, n.ID, n.Revision).Scan(&prov))
 	if prov != "" {
 		t.Fatal("provenance", prov)
+	}
+}
+
+func historyTotal(t *testing.T, s *Store, project int64) (kept, sum int64) {
+	t.Helper()
+	if err := s.DB().QueryRow(`SELECT coalesce((SELECT bytes FROM note_history_totals WHERE project_id=?),0),coalesce((SELECT sum(bytes) FROM note_history WHERE project_id=?),0)`, project, project).Scan(&kept, &sum); err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
+// Catches: an off-by-one at the ten-minute edge (9:59.999 coalesces, 10:00.000 adds).
+func TestNoteHistoryExactBurstBoundary(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	cur := f.edit("ana", n.ProjectID, n, "one")
+	saved := f.clock
+	f.clock = saved.Add(historyBurst - 2*time.Millisecond)
+	cur = f.edit("ana", n.ProjectID, cur, "two") // 9:59.999 after the saved row
+	if got := historyRevisions(t, f.Store, n.ID); len(got) != 1 {
+		t.Fatal("9:59.999 added a row", got)
+	}
+	f.clock = saved.Add(historyBurst - time.Millisecond)
+	f.edit("ana", n.ProjectID, cur, "three") // exactly 10:00.000
+	if got := historyRevisions(t, f.Store, n.ID); len(got) != 2 {
+		t.Fatal("10:00 did not add a row", got)
+	}
+}
+
+// Catches: a clock that went backwards silencing history until it catches up.
+func TestNoteHistoryBackwardsClock(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	cur := f.edit("ana", n.ProjectID, n, "one")
+	f.clock = f.clock.Add(-time.Hour)
+	f.edit("ana", n.ProjectID, cur, "two")
+	if got := historyRevisions(t, f.Store, n.ID); len(got) != 2 {
+		t.Fatal("backwards clock coalesced", got)
+	}
+}
+
+// Catches: a failure after the history insert leaving the snapshot (or the new text) behind.
+func TestNoteHistoryRollsBackWithTheOverwrite(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	exec(t, f.Store, `CREATE TRIGGER failing BEFORE UPDATE ON notes BEGIN SELECT RAISE(ABORT,'injected'); END`)
+	_, e := f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "changed"})
+	if e == nil {
+		t.Fatal("injected failure ignored")
+	}
+	after, e := f.GetNote(ctx, f.p("ana"), n.ProjectID, n.ID)
+	f.ok(e)
+	if !reflect.DeepEqual(after, n) || historyCount(t, f.Store, n.ID) != 0 {
+		t.Fatal("history row or note survived the rollback")
+	}
+	if kept, sum := historyTotal(t, f.Store, n.ProjectID); kept != 0 || sum != 0 {
+		t.Fatal("total survived the rollback", kept, sum)
+	}
+}
+
+// Catches: the burst's only row being evicted and the next edit then finding a burst that is gone.
+func TestNoteHistoryEvictionDuringABurst(t *testing.T) {
+	limitsRestored(t)
+	f := newFx(t)
+	a, b := f.mk("ana", "fakture", Structure), f.mk("ana", "fakture", Structure)
+	pid := a.ProjectID
+	a = f.edit("ana", pid, a, "e1")
+	var c int64
+	f.ok(f.DB().QueryRow(`SELECT bytes FROM note_history WHERE note_id=?`, a.ID).Scan(&c))
+	maxHistoryProjectBytes = c + 100 // room for one row, not two
+	f.edit("ana", pid, b, "e1")      // its row pushes a's only row out
+	if historyCount(t, f.Store, a.ID) != 0 {
+		t.Fatal("a's row was not evicted")
+	}
+	f.edit("ana", pid, a, "e2") // inside the burst, but nothing left to anchor it: snapshot again
+	if got := historyRevisions(t, f.Store, a.ID); !reflect.DeepEqual(got, []int64{2}) {
+		t.Fatal("rows", got)
+	}
+}
+
+// Documented limitation, asserted so a change is deliberate: alternating authors push the original out of the 100.
+func TestNoteHistoryAlternatingAuthorsEvictTheOriginal(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	cur := n
+	for i := 0; i < 200; i++ {
+		who := "ana"
+		if i%2 == 1 {
+			who = "fani"
+		}
+		cur = f.edit(who, n.ProjectID, cur, fmt.Sprint("alt ", i))
+	}
+	got := historyRevisions(t, f.Store, n.ID)
+	if len(got) != 100 || got[0] != 101 || got[99] != 200 {
+		t.Fatal("window", len(got), got[0], got[len(got)-1])
+	}
+}
+
+// Catches: one project's noise evicting another's rows, and totals drifting from the rows (also on cascade).
+func TestNoteHistoryProjectsAreIsolated(t *testing.T) {
+	limitsRestored(t)
+	f := newFx(t)
+	other := f.mk("cene", "eureko", Structure)
+	f.edit("cene", other.ProjectID, other, "e1")
+	var c int64
+	f.ok(f.DB().QueryRow(`SELECT bytes FROM note_history WHERE note_id=?`, other.ID).Scan(&c))
+	maxHistoryProjectBytes = c
+	n := f.mk("ana", "fakture", Structure)
+	cur := n
+	for i := 0; i < 5; i++ {
+		f.clock = f.clock.Add(11 * time.Minute)
+		cur = f.edit("ana", n.ProjectID, cur, fmt.Sprint("n", i))
+	}
+	if historyCount(t, f.Store, other.ID) != 1 {
+		t.Fatal("another project's history was evicted")
+	}
+	for _, p := range []int64{n.ProjectID, other.ProjectID} {
+		if kept, sum := historyTotal(t, f.Store, p); kept != sum || kept > maxHistoryProjectBytes {
+			t.Fatal("total", p, kept, sum)
+		}
+	}
+	f.ok(f.DeleteNote(ctx, f.p("ana"), n.ProjectID, n.ID, cur.Revision))
+	if kept, sum := historyTotal(t, f.Store, n.ProjectID); kept != 0 || sum != 0 {
+		t.Fatal("note delete left a total", kept, sum)
+	}
+}
+
+// Catches: a kind-only change losing the old kind, and an equivalent CRLF write counting as a change.
+func TestNoteHistoryKindOnlyAndCRLFNoop(t *testing.T) {
+	f := newFx(t)
+	n, _, e := f.CreateNote(ctx, f.p("ana"), f.pid["fakture"], "crlf", NoteInput{Class: Structure, Title: "t", Body: "a\nb"})
+	f.ok(e)
+	_, e = f.UpdateNote(ctx, f.p("ana"), n.ProjectID, n.ID, n.Revision, NoteInput{Class: Structure, Title: "t", Body: "a\r\nb"})
+	f.ok(e)
+	if historyCount(t, f.Store, n.ID) != 0 {
+		t.Fatal("CRLF-equivalent write saved history")
+	}
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		return saveNoteHistory(tx, n.ID, NoteInput{Class: Structure, Title: "t", Body: "a\nb", EntryKind: "faq"}, f.now(), 0, false)
+	}))
+	var kind string
+	f.ok(f.DB().QueryRow(`SELECT entry_kind FROM note_history WHERE note_id=?`, n.ID).Scan(&kind))
+	if kind != n.EntryKind || n.EntryKind == "faq" {
+		t.Fatal("kind", kind)
 	}
 }
