@@ -351,8 +351,12 @@ func (s *server) remoteKBAcceptRefusal(id string, body []byte) string {
 	if r, _ := m["replaces"].(float64); r != 0 {
 		switch m["targetState"] {
 		case "ok":
-		case "stale", "missing":
-			return fmt.Sprintf("The note this submission replaces (note %d) is missing or changed since it was written: reject it.", int64(r))
+		case "stale":
+			sr, _ := m["revision"].(float64)
+			cr, _ := m["currentRevision"].(float64)
+			return fmt.Sprintf("The note this submission replaces (note %d) changed after this was written (expected revision %d, now %d): reject it.", int64(r), int64(sr), int64(cr))
+		case "missing":
+			return fmt.Sprintf("The note this submission replaces (note %d) no longer exists: reject it.", int64(r))
 		default:
 			return fmt.Sprintf("This submission replaces note %d and its current text is not available here: review it on the server, or reject it.", int64(r))
 		}

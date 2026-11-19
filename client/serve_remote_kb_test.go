@@ -320,7 +320,7 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 	// not eligible: stale, missing, hidden or long current text, an edit after the read
 	stale := replace("T <b>one</b>", "for a stale target")
 	edit("edited after the proposal")
-	refuseAccept("stale", stale, "missing or changed")
+	refuseAccept("stale", stale, "changed after this was written")
 	// a reject without a typed reason of a stale replacement tells its author why (the same core rule as the CLI's)
 	stale2 := replace("T <b>one</b>", "for a second stale target")
 	edit("edited again after the proposal")
@@ -392,7 +392,7 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 	if got := k.read(gone); got.TargetState != "missing" || got.Check != "target" {
 		t.Fatalf("%+v", got)
 	}
-	refuseAccept("missing", gone, "missing or changed")
+	refuseAccept("missing", gone, "no longer exists")
 
 	// other bodies and routes never reach the core
 	id5 := k.submit("five", "strict")

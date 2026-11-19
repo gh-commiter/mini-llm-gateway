@@ -421,6 +421,9 @@ func printReview(say func(string), v core.Submission, authorName string, names m
 	if v.ReviewHash != "" { // on its own line, to copy whole into kb accept --version
 		say(clean("version " + v.ReviewHash))
 	}
+	if v.ReviewCheck == "long" {
+		say("long text: the app and the remote page do not offer accept for it")
+	}
 	if v.Replaces != 0 { // a replacement: the sizes of both texts, the note's current text, then the new text
 		if line := sizesLine(v); line != "" {
 			say(line)
@@ -597,7 +600,11 @@ func (e *projectEnv) kbDecide(pos []string, team, reason, version string) error 
 	body, _ := json.Marshal(fields)
 	st, b, h := e.do(c, "POST", fmt.Sprintf("%s/0/kb/review/%d/%s", apiProjects, id, pos[0]), nil, body)
 	if st != 200 {
-		return gatewayError(st, b, h)
+		err := gatewayError(st, b, h)
+		if pos[0] == "accept" && st == 400 { // a refused accept is not a rejection: nothing was decided
+			err = gwStatusError{errors.New(strings.Replace(err.Error(), "rejected: ", "not accepted: ", 1)), st}
+		}
+		return err
 	}
 	var v core.Submission
 	if err := json.Unmarshal(b, &v); err != nil {

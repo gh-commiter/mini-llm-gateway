@@ -1771,7 +1771,7 @@
         "--version",
         "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
-      "error": "rejected: note 5 changed since this submission was written (it expected revision 3, the note is at 4): reject it and ask for a new submission",
+      "error": "not accepted: note 5 changed since this submission was written (it expected revision 3, the note is at 4): reject it and ask for a new submission",
       "name": "replacement stale",
       "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\ncurrent: 1 lines, 12 characters -> new: 1 lines, 8 characters\nCurrent text: note 5  revision 4  structure  finding  Current title\nthe note changed since this submission was written (it expected revision 3, the note is at 4): it cannot be accepted\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\n",
       "requests": [
@@ -1806,7 +1806,7 @@
         "--version",
         "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
-      "error": "rejected: the note this submission replaces no longer exists: reject it",
+      "error": "not accepted: the note this submission replaces no longer exists: reject it",
       "name": "replacement missing",
       "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nCurrent text: note 5 no longer exists: this submission cannot be accepted\nNew text: data  finding  Proposal ž\nNew body\n",
       "requests": [
@@ -1876,7 +1876,7 @@
         "3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000"
       ],
       "name": "replacement current long",
-      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\ncurrent: 1 lines, 12 characters -> new: 1 lines, 8 characters\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
+      "out": "submission 7  project 1  pending  data  Proposal ž\nwriter ana  device dev-ana  replaces 5  revision 3\nversion 3f9a0c1d2b7e0000000000000000000000000000000000000000000000000000\nlong text: the app and the remote page do not offer accept for it\ncurrent: 1 lines, 12 characters -> new: 1 lines, 8 characters\nCurrent text (will be replaced): note 5  revision 3  structure  finding  Current title\nCurrent body\nNew text: data  finding  Proposal ž\nNew body\nsubmission 7 accepted\nthe previous text of note 5 is saved as revision 3: minigw note history 5 shows it, minigw note restore 5 --revision 3 puts it back\n",
       "requests": [
         [
           "GET",

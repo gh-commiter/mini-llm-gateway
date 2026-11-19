@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -249,6 +250,11 @@ func TestReviewAcceptReplacement(t *testing.T) {
 			f.ok(e)
 			if got.Title != "New title" || got.Body != "new body" || got.Revision != n.Revision+1 || got.Provenance.Reviewer != reviewer {
 				t.Fatal(got)
+			}
+			var detail string
+			f.ok(f.DB().QueryRow(`SELECT detail FROM audit_events WHERE action='kb.accepted' ORDER BY rowid DESC LIMIT 1`).Scan(&detail))
+			if !strings.Contains(detail, `"replaced":true`) || !strings.Contains(detail, fmt.Sprintf(`"savedRevision":%d`, n.Revision)) || strings.Contains(detail, "body") || strings.Contains(detail, "title") {
+				t.Fatal("audit detail", detail)
 			}
 			var old, title string
 			f.ok(f.DB().QueryRow(`SELECT title,body FROM note_history WHERE note_id=? AND revision=?`, n.ID, n.Revision).Scan(&title, &old))

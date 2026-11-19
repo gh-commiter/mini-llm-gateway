@@ -899,6 +899,7 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 			return ErrInvalid{"submission already reviewed"}
 		}
 		var target replacedNote
+		var savedRevision int64
 		if accept && v.Replaces != 0 { // the replaced note first: each refusal says what is wrong with it
 			if target, e = readReplaced(tx, &v, rv); e != nil {
 				return e
@@ -1004,6 +1005,7 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 				}
 				v.NoteID = v.Replaces
 				rev = old.Revision + 1
+				savedRevision = old.Revision
 			}
 			if e = s.markUpstreamDirty(tx, v.Project); e != nil {
 				return e
@@ -1023,7 +1025,11 @@ func (s *Store) review(ctx context.Context, rv *Principal, project, id int64, ac
 		if _, e = tx.Exec(`UPDATE kb_submissions SET state=?,reason=?,provenance=?,note_id=? WHERE id=?`, state, reason, string(b), v.NoteID, id); e != nil {
 			return e
 		}
-		return Audit(tx, reviewer, "kb."+state, i64(id), map[string]any{"project": v.Project, "note": v.NoteID})
+		detail := map[string]any{"project": v.Project, "note": v.NoteID}
+		if accept && v.Replaces != 0 { // numbers only: the audit says a note was replaced and which revision was saved, never the text
+			detail["replaced"], detail["savedRevision"] = true, savedRevision
+		}
+		return Audit(tx, reviewer, "kb."+state, i64(id), detail)
 	})
 	if err != nil {
 		return Submission{}, err
