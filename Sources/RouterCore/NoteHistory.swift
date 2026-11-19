@@ -24,11 +24,11 @@ extension ProjectEnv {
             if asJSON { json(data); return }
             let h = JSONValue.parse(data)?.dict ?? JDict()
             let n = h["note"]?.dict ?? JDict()
-            say("note \(n["id"]?.int ?? 0)  revision \(n["revision"]?.int ?? 0) (current)  \(n["class"]?.string ?? "")  \(n["title"]?.string ?? "")")
+            say("note \(n["id"]?.int ?? 0)  revision \(n["revision"]?.int ?? 0) (current)  \(n["class"]?.string ?? "")  \(ProjectText.oneLine(n["title"]?.string ?? ""))")
             let rows = h["history"]?.array ?? []
             for r in rows {
                 let v = r.dict
-                say("revision \(v["revision"]?.int ?? 0)  saved \(saved(v))  by \(savedBy(v["savedBy"]?.string ?? ""))  \(v["class"]?.string ?? "")  \(v["entryKind"]?.string ?? "")  \(v["bytes"]?.int ?? 0) bytes  \(v["title"]?.string ?? "")")
+                say("revision \(v["revision"]?.int ?? 0)  saved \(saved(v))  by \(savedBy(v["savedBy"]?.string ?? ""))  \(v["class"]?.string ?? "")  \(v["entryKind"]?.string ?? "")  \(v["bytes"]?.int ?? 0) bytes  \(ProjectText.oneLine(v["title"]?.string ?? ""))")
             }
             if rows.isEmpty { say("no saved revisions you may read") }
             say(historyTail)
@@ -41,7 +41,7 @@ extension ProjectEnv {
         let vClass = v["class"]?.string ?? ""
         if sub == "history" {
             say("note \(id)  revision \(v["revision"]?.int ?? 0) of \(cur.revision)  \(vClass)  \(v["entryKind"]?.string ?? "")  saved \(saved(v)) by \(savedBy(v["savedBy"]?.string ?? ""))")
-            say(v["title"]?.string ?? "")
+            say(ProjectText.oneLine(v["title"]?.string ?? ""))
             let body = v["body"]?.string ?? ""
             out(ProjectText.clean(body.replacingOccurrences(of: "\t", with: "    ")))
             if !body.hasSuffix("\n") { say("") }

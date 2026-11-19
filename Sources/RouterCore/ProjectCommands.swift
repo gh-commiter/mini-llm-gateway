@@ -469,14 +469,14 @@ public final class ProjectEnv {
             let pg = JSONValue.parse(r.data)?.dict ?? JDict()
             let notes = (pg["notes"]?.array ?? []).map { NoteView($0.dict) }
             for n in notes {
-                say(ProjectText.clean("\(ProjectText.pad(String(n.id), 6)) \(ProjectText.pad(n.cls, 9)) r\(ProjectText.pad(String(n.revision), 3)) \(stamp(n.updated))  \(ProjectText.pad(n.author, 12)) \(n.title)\(n.editor.isEmpty ? "" : "  (edited: \(n.editor))")"))
+                say(ProjectText.clean("\(ProjectText.pad(String(n.id), 6)) \(ProjectText.pad(n.cls, 9)) r\(ProjectText.pad(String(n.revision), 3)) \(stamp(n.updated))  \(ProjectText.pad(n.author, 12)) \(ProjectText.oneLine(n.title))\(n.editor.isEmpty ? "" : "  (edited: \(n.editor))")"))
             }
             if notes.isEmpty { say("no notes") }
             if let next = pg["next"]?.string, !next.isEmpty { say("more: minigw note list --after " + next) }
         case "read":
             emit(try one("GET")) { n in
                 let body = n.body ?? ""
-                say(ProjectText.clean("note \(n.id)  \(n.cls)  revision \(n.revision)  by \(n.author)\(n.editor.isEmpty ? "" : ", last changed by \(n.editor)")  \(stamp(n.updated))\n\(n.upstream.isEmpty ? "" : "> ")\(n.title)\n"))  // another gateway's title is quoted like its text
+                say(ProjectText.clean("note \(n.id)  \(n.cls)  revision \(n.revision)  by \(n.author)\(n.editor.isEmpty ? "" : ", last changed by \(n.editor)")  \(stamp(n.updated))\n\(n.upstream.isEmpty ? "" : "> ")\(ProjectText.oneLine(n.title))\n"))  // another gateway's title is quoted like its text
                 out(ProjectText.clean(body.replacingOccurrences(of: "\t", with: "    ")))
                 if !body.hasSuffix("\n") { say("") }
             }

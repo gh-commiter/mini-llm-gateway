@@ -264,7 +264,7 @@ extension ProjectEnv {
     }
 
     func searchLine(_ d: JDict) -> String {
-        ProjectText.clean("\(d["id"]?.int ?? 0)  \(d["title"]?.string ?? "")  \(Self.subjectOf(d["project"]?.int ?? 0, d["team"]?.string ?? ""))  \(d["class"]?.string ?? "")  \(stamp(d["updated"]?.string.flatMap(ProjectText.parseTime)))\(Self.kindSuffix(d))\(d["from"]?.string.flatMap { $0.isEmpty ? nil : "  from " + $0 } ?? "")\n\(d["snippet"]?.string ?? "")")
+        ProjectText.clean("\(d["id"]?.int ?? 0)  \(ProjectText.oneLine(d["title"]?.string ?? ""))  \(Self.subjectOf(d["project"]?.int ?? 0, d["team"]?.string ?? ""))  \(d["class"]?.string ?? "")  \(stamp(d["updated"]?.string.flatMap(ProjectText.parseTime)))\(Self.kindSuffix(d))\(d["from"]?.string.flatMap { $0.isEmpty ? nil : "  from " + $0 } ?? "")\n\(d["snippet"]?.string ?? "")")
     }
     func kbSearch(_ args: [String]) throws {
         let usage = ProjectError("usage: minigw kb search [<project>|--team <team>] <query> [--json]")
