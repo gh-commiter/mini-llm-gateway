@@ -15,7 +15,7 @@ extension AdminCommands {
           minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)
           minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)
           minigw gw upstream unlink <project> <name> | --team <team> <name>
-          minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a publish link: a note changed on the upstream (--theirs: keep theirs, forget our change; --ours: send ours as a submission)
+          minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)
           minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
           minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
           minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
@@ -137,8 +137,8 @@ extension AdminCommands {
             var body: [String: Any] = ["note": note, "ours": o.ours, team.isEmpty ? "project" : "team": team.isEmpty ? try projectID(pos[2]) : try teamID(team)]
             if !o.upstream.isEmpty { body["upstream"] = o.upstream }
             try request("POST", "/upstream-resolve", body)
-            if o.ours { say("note \(note): our version goes to the upstream as a submission at the next push") }
-            else { say("note \(note): the upstream's version stays, our change is forgotten for it") }
+            if o.ours { say("note \(note): our version goes to the upstream as a submission at the next push (when the upstream's note is deleted or no longer visible, or its earlier submission cannot be read, it becomes a NEW note there: a second note if the old one still exists out of sight)") }
+            else { say("note \(note): our text stays unsent (the upstream's text is not fetched here); a later change here is looked at again") }
         case ("push", 2...3):
             var body: [String: Any] = ["dryRun": o.dryRun]
             if !team.isEmpty && pos.count == 2 { body["team"] = try teamID(team) }
@@ -294,7 +294,11 @@ extension AdminCommands {
 
     /// Publish notes that changed on the upstream and were not overwritten (as Go's upstreamConflicts).
     static func upstreamConflicts(_ d: JDict) -> String? {
-        let parts = (d["conflicts"]?.array ?? []).map { c in "note \(c.dict["note"]?.int ?? 0) (" + (c.dict["gone"]?.bool == true ? "deleted there" : "changed there") + ")" }
+        let parts = (d["conflicts"]?.array ?? []).map { c in
+            let what = c.dict["gone"]?.bool == true ? "deleted or no longer visible there"
+                : c.dict["submission"]?.bool == true ? "the earlier submission can no longer be read there: check on the hub whether it became a note" : "changed there"
+            return "note \(c.dict["note"]?.int ?? 0) (" + what + ")"
+        }
         return parts.isEmpty ? nil : "CONFLICT: " + parts.joined(separator: ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
     }
 
