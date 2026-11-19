@@ -107,7 +107,9 @@ public final class ProjectEnv {
         let e = JSONValue.parse(data)?.dict["error"]?.dict ?? JDict()
         let type = e["type"]?.string ?? "", message = e["message"]?.string ?? ""
         switch st {
-        case 0: return ProjectError("no answer from the gateway")
+        case 0:  // the body of a status 0 is the short cause (ProjectHTTP.cause), if there is one
+            let cause = ProjectText.oneLine(String(decoding: data.prefix(60), as: UTF8.self))
+            return ProjectError(cause.isEmpty ? "no answer from the gateway" : "no answer from the gateway (\(cause))")
         case 400: return ProjectError("rejected: " + ProjectText.oneLine(message))
         case 403:
             switch type {

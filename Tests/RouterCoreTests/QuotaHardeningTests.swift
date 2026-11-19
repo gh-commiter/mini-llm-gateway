@@ -191,7 +191,7 @@ private final class SocketServer: @unchecked Sendable {
             }.start()
         }
     }
-    func stop() { loop.markStopped(); close(fd) }
+    func stop() { loop.stop() }
 }
 
 /// What the fake server managed to write, and whether it saw the client close the connection.

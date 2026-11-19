@@ -7,12 +7,15 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -114,7 +118,7 @@ func runProjectCmd(kind string, args []string) {
 func realDo(c connection, method, path string, headers map[string]string, body []byte) (int, []byte, http.Header) {
 	req, err := http.NewRequest(method, c.URL+path, strings.NewReader(string(body)))
 	if err != nil {
-		return 0, nil, nil
+		return 0, []byte("bad gateway address"), nil
 	}
 	req.Header.Set("authorization", "Bearer "+c.Token)
 	req.Header.Set("X-Minigw-Client", clientInfo())
@@ -126,11 +130,46 @@ func realDo(c connection, method, path string, headers map[string]string, body [
 	}
 	resp, err := (&http.Client{Timeout: 30 * time.Second, CheckRedirect: noRedirect}).Do(req)
 	if err != nil {
-		return 0, nil, nil
+		return 0, []byte(transportCause(err, 30*time.Second)), nil // status 0 carries the short cause as its body
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	return resp.StatusCode, data, resp.Header
+}
+
+// hasErrno: err wraps this errno, or the Windows socket error (WSAE...) with the number `wsa` (Windows does not map those to the syscall constants).
+func hasErrno(err error, unix syscall.Errno, wsa syscall.Errno) bool {
+	var en syscall.Errno
+	return errors.Is(err, unix) || errors.As(err, &en) && en == wsa
+}
+
+// transportCause: why there was no answer, in a few fixed words the Swift client uses too (ProjectHTTP.cause): never the URL, a header or the
+// system's own text. "" = none of the known causes.
+func transportCause(err error, timeout time.Duration) string {
+	var ne net.Error
+	var dns *net.DNSError
+	var ua x509.UnknownAuthorityError
+	var ci x509.CertificateInvalidError
+	var he x509.HostnameError
+	var rh tls.RecordHeaderError
+	var oe *net.OpError
+	switch {
+	case errors.As(err, &dns):
+		return "could not resolve the host"
+	case hasErrno(err, syscall.ECONNREFUSED, 10061):
+		return "connection refused"
+	case hasErrno(err, syscall.ECONNRESET, 10054), hasErrno(err, syscall.EPIPE, 10053), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection reset"
+	case hasErrno(err, syscall.ENETUNREACH, 10051), hasErrno(err, syscall.EHOSTUNREACH, 10065):
+		return "network unreachable"
+	case errors.As(err, &ua), errors.As(err, &ci), errors.As(err, &he):
+		return "TLS: certificate not trusted"
+	case errors.As(err, &rh), errors.As(err, &oe) && oe.Op == "remote error":
+		return "TLS: handshake failed"
+	case errors.As(err, &ne) && ne.Timeout(), errors.Is(err, context.DeadlineExceeded):
+		return fmt.Sprintf("timed out after %d s", int(timeout.Seconds()))
+	}
+	return ""
 }
 
 func (e *projectEnv) say(s string) { fmt.Fprintln(e.out, s) }
@@ -183,7 +222,10 @@ func gatewayAnswer(st int, data []byte, h http.Header) error {
 	}
 	json.Unmarshal(data, &b)
 	switch st {
-	case 0:
+	case 0: // the body of a status 0 is the short cause (transportCause), if there is one
+		if cause := shortLine(string(data), 60); cause != "" {
+			return errors.New("no answer from the gateway (" + cause + ")")
+		}
 		return errors.New("no answer from the gateway")
 	case 400:
 		return errors.New("rejected: " + oneLine(b.Error.Message))
