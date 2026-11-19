@@ -149,4 +149,22 @@ print -n '{}' | CLAUDE_PLUGIN_DATA=$E HOME=$T/nohome sh $SCRIPT stop > /dev/null
 mv -f $M $T/marker.old; print "#!/bin/sh\ntouch '$M'\necho 'minigw 0.8.0 tampered'" > $T/target
 nobody $T/nohome "link target replaced after the record"
 
+# 7b (#153 review): cilj je pot iz zapisa (minigw ali minigw.exe), ne -x na »minigw«; zadnja vrstica brez konca vrstice se preveri tudi
+E=$T/data7b; mkdir -p $E/bin; M2=$T/marker2
+print "#!/bin/sh\ntouch '$M'\n[ \"\$1\" = --version ] && echo 'minigw 0.8.0'\nexit 0" > $E/bin/minigw.exe; chmod +x $E/bin/minigw.exe
+print "#!/bin/sh\ntouch '$M2'\n[ \"\$1\" = --version ] && echo 'minigw 0.8.0'\nexit 0" > $E/bin/minigw; chmod +x $E/bin/minigw
+hx() { print -n -- "$(shasum -a 256 $E/bin/minigw.exe | cut -d' ' -f1)  $E/bin/minigw.exe" > $E/bin/.verified }  # brez konca vrstice
+hx; rm -f $M $M2 2> /dev/null; print -n '{}' | CLAUDE_PLUGIN_DATA=$E HOME=$T/nohome sh $SCRIPT stop > /dev/null 2>&1
+[[ -e $M && ! -e $M2 ]] || fail "7b: record for minigw.exe (a shim minigw next to it): exe not run, or the shim was"
+mv -f $M $T/marker.old
+print -r -- "$(shasum -a 256 $E/bin/minigw | cut -d' ' -f1)  $E/bin/minigw" > $E/bin/.verified
+print -n '{}' | CLAUDE_PLUGIN_DATA=$E HOME=$T/nohome sh $SCRIPT stop > /dev/null 2>&1; [[ -e $M2 && ! -e $M ]] || fail "7b: record for the shim did not run the shim"
+mv -f $M2 $T/marker2.old
+print -r -- "$(shasum -a 256 $E/bin/minigw.exe | cut -d' ' -f1)  $E/bin/minigw.exe" > $E/bin/.verified; print -rn -- "0000000000000000000000000000000000000000000000000000000000000000  $X" >> $E/bin/.verified
+nobody7() { for ev in start stop; do print -n '{}' | CLAUDE_PLUGIN_DATA=$E HOME=$T/nohome sh $SCRIPT $ev > /dev/null 2>&1; [[ ! -e $M && ! -e $M2 ]] || fail "7b: $1 ($ev)"; done }
+nobody7 "unterminated bad second line was accepted"
+print -r -- "x  $E/bin/minigw.exe.evil" > $E/bin/.verified; nobody7 "a first line naming another file was accepted"
+print -r -- "$(shasum -a 256 $E/bin/minigw.exe | cut -d' ' -f1)  $E/bin/minigw.exe" > $E/bin/.verified; print -r -- "0000  /nonexistent" >> $E/bin/.verified
+nobody7 "bad second line (terminated) was accepted"
+
 print "ok: kb-hook.sh"

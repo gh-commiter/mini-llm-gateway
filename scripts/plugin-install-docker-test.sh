@@ -55,7 +55,7 @@ print '#!/bin/sh\nexit 0' > $T/fakebin/systemctl; cp $T/fakebin/systemctl $T/fak
 # Kot v pravem vtičniku: MIN_CLIENT leži poleg skripte (brez njega bi skripta uporabila rezervno vrednost in to povedala).
 MINV=$(<plugins/minigw/scripts/MIN_CLIENT); print -r -- $MINV > $T/MIN_CLIENT; print -r -- $MINV > $T/minv
 [[ $V == $MINV ]] || fail "9: the client built from the source ($V) is not MIN_CLIENT ($MINV): the \"installed current\" client would be too old"
-cp plugins/minigw/scripts/install-minigw.sh $T/real.sh
+cp plugins/minigw/scripts/install-minigw.sh $T/real.sh; cp plugins/minigw/scripts/kb-hook.sh $T/kb-hook.sh
 sed "s|^SIGNER=.*|SIGNER='minigw-release namespaces=\"minigw-release\" $(cut -d' ' -f1,2 $T/key.pub)'|" $T/real.sh > $T/testkey.sh
 
 # 10: Windows brez Windows: lažna uname (MINGW64) in cygpath (-u: ista pot, -m/-w: C: spredaj); pot z ' in %.
@@ -124,6 +124,15 @@ out=$(run /tmp/d1 evil real); echo "$out"
 [ "$(/tmp/d1/bin/minigw --version | head -1)" = "minigw 0.5.16" ] || fail "1: old minigw replaced"
 echo "$out" | grep -q "not updated: cannot check the release signature" || fail "1: no reason printed"
 echo "ok 1: 0.5.16 minigw does not verify a garbage signature"
+# 1b (#153): brez ssh-keygen se obstoječa lastna kopija obdrži (izjema), a BREZ zapisa .verified; kljuka je tiha (marker odsoten)
+mkdir -p /tmp/d1b/bin /tmp/home/.config/minigw; printf "#!/bin/sh\ntouch /tmp/marker1b\necho minigw 0.5.16\n" > /tmp/d1b/bin/minigw; chmod +x /tmp/d1b/bin/minigw
+echo stale > /tmp/d1b/bin/.verified
+out=$(run /tmp/d1b evil real); echo "$out"
+[ -x /tmp/d1b/bin/minigw ] && [ ! -e /tmp/d1b/bin/.verified ] || fail "1b: the unverified own copy got a record, or was removed"
+echo "{\"version\":1,\"enabled\":[{\"gateway\":\"g\",\"project\":3}]}" > /tmp/home/.config/minigw/kb-hooks.json; rm -f /tmp/marker1b
+echo "{}" | CLAUDE_PLUGIN_DATA=/tmp/d1b HOME=/tmp/home sh /t/kb-hook.sh stop; [ ! -e /tmp/marker1b ] || fail "1b: the hook ran an unverified copy"
+rm -f /tmp/home/.config/minigw/kb-hooks.json
+echo "ok 1b: no record for an unverified own copy, the hook stays silent"
 
 mkdir -p /tmp/d2/bin; echo stale > /tmp/d2/bin/.verified  # #153: zavrnitev zbriše zapis
 out=$(run /tmp/d2 good real); echo "$out"

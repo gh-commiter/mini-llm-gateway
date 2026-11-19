@@ -6,11 +6,10 @@
 # ukaze preda claudu prek prehoda: vsak dogodek v vsaki mapi bi sprožil tek. Zato se kliče le minigw, ki je dovolj nov.
 MIN=0.7.13  # najnižji minigw z ukazom `kb hook` (preveri ob izdaji: prva izdaja s tem ukazom)
 B="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/minigw}/bin"
-EXE="$B/minigw"; [ -x "$EXE" ] || EXE="$B/minigw.exe"
-[ -x "$EXE" ] || exit 0
 # #153: iz podatkovne mape se NIC ne zažene, dokler (a) kljuke niso vklopljene za vsaj en projekt (kb-hooks.json, ista mapa kot
 # os.UserConfigDir v odjemalcu; le lupinska orodja) in (b) SHA-256 datoteke ni enak zapisu, ki ga je install-minigw.sh napisal ob
-# sprejemu (bin/.verified, vrstice »sha  pot«, prva je $EXE). Dirka ob SessionStart: nova datoteka brez novega zapisa = neskladje = tiho.
+# sprejemu (bin/.verified, vrstice »sha  pot«). Dirka ob SessionStart: nova datoteka brez novega zapisa = neskladje = tiho.
+# Tarča je pot iz prve vrstice zapisa (le $B/minigw ali $B/minigw.exe, dobesedno): -x na »minigw« bi v Git Bash zadel minigw.exe.
 case $(uname -s) in
   Darwin) C="$HOME/Library/Application Support" ;;
   MINGW*|MSYS*|CYGWIN*) C=$(cygpath -u "${APPDATA:-}" 2>/dev/null) ;;
@@ -19,14 +18,14 @@ esac
 grep -Eq '"project"[[:space:]]*:' "$C/minigw/kb-hooks.json" 2>/dev/null || exit 0
 [ -f "$B/.verified" ] || exit 0
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" 2>/dev/null | cut -d' ' -f1; else shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1; fi; }
-ok=0
-while read -r h p; do
+ok=0 EXE=""
+while h= p=; read -r h p || [ -n "$h$p" ]; do  # tudi zadnja vrstica brez konca vrstice
   p=${p%"$(printf '\r')"}
-  if [ $ok = 0 ]; then [ "$p" = "$EXE" ] || break; fi
+  if [ -z "$EXE" ]; then case $p in "$B/minigw"|"$B/minigw.exe") EXE=$p ;; *) break ;; esac; fi
   [ -n "$h" ] && [ "$(sha "$p")" = "$h" ] || { ok=0; break; }
   ok=1
 done < "$B/.verified"
-[ $ok = 1 ] || exit 0
+[ $ok = 1 ] && [ -x "$EXE" ] || exit 0
 # older a b: a < b po številskih poljih (kot v install-minigw.sh; awk, BusyBox nima sort -V)
 older() { [ -n "$1" ] && [ -n "$2" ] && awk -v a="$1" -v b="$2" 'BEGIN { n = split(a, x, "."); m = split(b, y, "."); if (m > n) n = m
   for (i = 1; i <= n; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }; exit 1 }'; }
