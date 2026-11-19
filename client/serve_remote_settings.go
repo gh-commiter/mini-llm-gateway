@@ -276,8 +276,9 @@ func remoteBodyObject(body []byte, refuse func(key string) string) (map[string]j
 	return out, ""
 }
 
-// remoteKBDecisionRefusal: the body of a remote review decision. Accept carries exactly {"reviewHash": 64 lowercase hex} (the
-// version the owner read), reject exactly {"reason": text up to 1024 bytes}. The core's decoder matches keys case-insensitively
+// remoteKBDecisionRefusal: the body of a remote review decision. Accept carries {"reviewHash": 64 lowercase hex} (the
+// version the owner read) and optionally "currentRevision" (an integer 0 to 2^53: the revision of the replaced note whose text
+// was shown), reject exactly {"reason": text up to 1024 bytes}. The core's decoder matches keys case-insensitively
 // and lets the last duplicate win, so the keys are checked here, before anything is dispatched.
 func remoteKBDecisionRefusal(accept bool, body []byte) string {
 	want := "reason"
@@ -285,13 +286,16 @@ func remoteKBDecisionRefusal(accept bool, body []byte) string {
 		want = "reviewHash"
 	}
 	vals, msg := remoteBodyObject(body, func(key string) string {
-		if key == want {
+		if key == want || accept && key == "currentRevision" {
 			return ""
 		}
 		return "The request body may only carry " + strconv.Quote(want) + ", spelled exactly so."
 	})
 	if msg != "" {
 		return msg
+	}
+	if raw, ok := vals["currentRevision"]; ok && !remoteRevisionNumber(raw) {
+		return "currentRevision must be a whole number from 0 to 9007199254740992."
 	}
 	raw, ok := vals[want]
 	var v string
@@ -315,26 +319,65 @@ func remoteKBDecisionRefusal(accept bool, body []byte) string {
 	return ""
 }
 
+// remoteRevisionNumber: a JSON integer literal from 0 to 2^53 (no sign, fraction, exponent or quotes).
+func remoteRevisionNumber(raw json.RawMessage) bool {
+	s := string(raw)
+	if s == "0" {
+		return true
+	}
+	if s == "" || len(s) > 16 || s[0] == '0' || strings.Trim(s, "0123456789") != "" {
+		return false
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	return err == nil && n <= 1<<53
+}
+
 // remoteKBAcceptRefusal: the answer of a fresh review read (the one GET uses) decides whether a remote accept is even offered:
-// only a text that reads "ok" and replaces no note. A replacement overwrites the note it replaces and keeps the old text
-// nowhere, and this listener cannot show that text; hidden characters and long texts are reviewed on the server. The core still
-// compares the review hash inside its write transaction, and the hash covers the replaced id, so nothing can change between this read and the write.
-func (s *server) remoteKBAcceptRefusal(id string) string {
+// only a text that reads "ok". A replacement is offered only when the note it replaces is unchanged ("targetState" ok) and
+// both texts read ok; a read without those fields (a gateway that cannot compare) offers nothing. Hidden characters and
+// long texts, on either side, are reviewed on the server. The core still compares the review hash inside its write
+// transaction, and the hash covers the replaced note's revision and text, so nothing can change between this read and the write.
+func (s *server) remoteKBAcceptRefusal(id string, body []byte) string {
 	status, obj := s.adminDo("GET", "/kb/submissions/"+id, nil)
 	m, ok := obj.(map[string]any)
 	if status != 200 || !ok {
 		return "" // not found, no database: the core answers the same way
 	}
+	// The body must match what is replaced, before the limiter and the core: a replacement names the revision shown (a
+	// positive number), a submission that replaces nothing names none.
+	var sent map[string]json.RawMessage
+	json.Unmarshal(body, &sent)
+	cur, has := sent["currentRevision"]
 	if r, _ := m["replaces"].(float64); r != 0 {
-		return fmt.Sprintf("This submission replaces note %d: accepting it overwrites that note, and its current text cannot be shown here. Review it on the server, or reject it.", int64(r))
+		switch m["targetState"] {
+		case "ok":
+		case "stale":
+			sr, _ := m["revision"].(float64)
+			cr, _ := m["currentRevision"].(float64)
+			return fmt.Sprintf("The note this submission replaces (note %d) changed after this was written (expected revision %d, now %d): reject it.", int64(r), int64(sr), int64(cr))
+		case "missing":
+			return fmt.Sprintf("The note this submission replaces (note %d) no longer exists: reject it.", int64(r))
+		default:
+			return fmt.Sprintf("This submission replaces note %d and its current text is not available here: review it on the server, or reject it.", int64(r))
+		}
+		if rev, _ := m["currentRevision"].(float64); rev < 1 {
+			return fmt.Sprintf("This submission replaces note %d and its current text is not available here: review it on the server, or reject it.", int64(r))
+		}
+		if string(cur) == "" || string(cur) == "0" {
+			return fmt.Sprintf("This submission replaces note %d: the request must carry currentRevision, the revision of the note whose current text was shown.", int64(r))
+		}
+	} else if has {
+		return "This submission replaces no note: the request must not carry currentRevision."
 	}
 	switch m["reviewCheck"] {
 	case "ok":
 		return ""
 	case "hidden":
 		return "This submission contains hidden characters and cannot be accepted: reject it and ask for the text without them."
+	case "target":
+		return "The note this submission replaces is missing or changed since it was written: reject it."
 	}
-	return "This submission is too long to review here: review it on the server (minigw gw kb review, kb accept), or reject it."
+	return "This submission, or the note it replaces, is too long to review here: review it on the server (minigw gw kb review, kb accept), or reject it."
 }
 
 // remoteKBDecisionPath: POST kb/submissions/{id}/accept|reject (seg is the path below the admin prefix, split).
@@ -573,7 +616,7 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 			operation, subject = "POST kb/submissions/{}/"+pathSeg[3], pathSeg[2]
 			code, msg := 403, remoteKBDecisionRefusal(pathSeg[3] == "accept", body)
 			if msg == "" && pathSeg[3] == "accept" {
-				msg = s.remoteKBAcceptRefusal(pathSeg[2])
+				msg = s.remoteKBAcceptRefusal(pathSeg[2], body)
 			}
 			if msg != "" {
 				wait, limitedRow := s.remoteAuth.allowRefusal()

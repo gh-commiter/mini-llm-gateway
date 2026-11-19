@@ -108,5 +108,6 @@
   "name": "unassigned U+E01F0",
   "in": "a\udb40\uddf0b",
   "out": "ab"
- }
+ },
+  {"name": "current text: bidi override and zero-width space", "side": "current", "in": "cur‮rent​ text", "out": "current text"}
 ]

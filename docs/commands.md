@@ -187,7 +187,7 @@ only on the gateway computer.
 | `minigw gw kb history <id> [--revision <n>] [--json]` | Owner: saved versions, every class |
 | `minigw gw kb restore <id> --revision <n> [--class <c>] [--current <n>]` | Owner: restore as a new revision of an active project; same class and confirmation rules as `note restore` |
 | `minigw gw kb review [<project>\|--team <team>]` | Pending submissions of a project (or a team's own notes), including bodies |
-| `minigw gw kb accept <id>` | Publish a pending submission as a note or replacement revision |
+| `minigw gw kb accept <id>` | Publish a pending submission as a note or replacement revision; a replacement shows the note's current text and the new text first and sends the revision it showed (a client older than 0.8.8 cannot accept one) |
 | `minigw gw kb reject <id> [--reason text]` | Refuse a pending submission, with an optional reason |
 
 Every `minigw gw` command also takes `--config FILE` (default: the `minigw serve` config). `minigw serve allow`, `deny`, `devices`,

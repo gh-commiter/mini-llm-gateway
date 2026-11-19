@@ -58,6 +58,14 @@ h3 { font-size: 13px; margin: 18px 4px 6px; display: flex; align-items: center; 
 .ro .value { white-space: normal; }
 main:has(.ro) { min-width: 0; }  /* belt and braces, only where the Team page is shown */
 .rv-text { white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; unicode-bidi: isolate; background: var(--panel); border-radius: 10px; padding: 10px 12px; margin: 6px 0; }
+.rv-block { border-left: 6px solid var(--line); border-radius: 4px; padding: 2px 0 2px 10px; margin: 16px 0; }
+.rv-block.cur { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.rv-block.new { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.rv-label { font-weight: 700; margin: 8px 0; overflow-wrap: anywhere; }
+/* D3: the top label of a block stays at the top of the viewport while its block is on screen (nav is static below 700px and a side column above it: no collision), so a WORD always says which block this is; the bottom label scrolls normally */
+.rv-block > .rv-label:first-child { position: sticky; top: 0; z-index: 2; margin: 0 0 6px; padding: 6px 4px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.rv-buttons button, .rv-reason { scroll-margin-top: 3em; }  /* focus never scrolls under the sticky label */
+.rv-short { color: var(--warn); font-size: 13px; margin: 6px 4px 0; overflow-wrap: anywhere; }
 .rv-title { font-weight: 600; overflow-wrap: anywhere; unicode-bidi: isolate; margin: 10px 0 4px; }
 .rv-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .rv-reason { width: 100%; min-height: 4em; }
@@ -265,7 +273,19 @@ const S = {
   rvProject: ["Project", "Projekt"], rvTeam: ["Team", "Ekipa"], rvAuthor: ["Author", "Avtor"], rvClass: ["Class", "Razred"], rvKind: ["Kind", "Vrsta"], rvReceived: ["Received", "Prejeto"],
   rvReplaces: ["Replaces note %s", "Nadomesti zapisek %s"], rvVersion: ["Version %s", "Različica %s"], rvReasonIs: ["Reason", "Razlog"],
   rvBytes: ["%s of 1024 bytes", "%s od 1024 bajtov"], rvTooLong: ["The reason is longer than 1024 bytes: shorten it.", "Razlog je daljši od 1024 bajtov: skrajšaj ga."],
-  rvReplaceNote: ["This submission replaces note %s. Accepting it overwrites that note, and its current text cannot be shown here (the server's kb review does not show it either), so it cannot be accepted on this page: compare it first (read the note with minigw note read %s as a member of the project, or on the server) and accept it there, or reject it here.", "Ta prispevek nadomesti zapisek %s. Sprejem prepiše zapisek, njegovega trenutnega besedila tu ni mogoče prikazati (tudi kb review na strežniku ga ne), zato ga na tej strani ni mogoče sprejeti: najprej ga primerjaj (zapisek preberi z minigw note read %s kot član projekta, ali na strežniku) in ga sprejmi tam, ali pa ga tu zavrni."],
+  rvCurrent: ["Current text (note %s, revision %s)", "Trenutno besedilo (zapisek %s, revizija %s)"], rvNew: ["New text", "Novo besedilo"],
+  rvCurrentHidden: ["The current text of the note has %s hidden characters (not shown); accepting this replacement removes them from the note.", "Trenutno besedilo zapiska ima %s skritih znakov (niso prikazani); sprejem nadomestitve jih odstrani iz zapiska."],
+  rvShorterLines: ["Shorter by %s lines (%s %)", "Krajše za %s vrstic (%s %)"], rvShorterChars: ["Shorter by %s characters (%s %)", "Krajše za %s znakov (%s %)"],
+  rvSizes: ["Lines: %s -> %s, characters: %s -> %s (current -> new)", "Vrstice: %s -> %s, znaki: %s -> %s (trenutno -> novo)"],
+  rvCurrentLong: ["The current text is too long to review here: use minigw gw kb review and kb accept on the server.", "Trenutno besedilo je predolgo za pregled tukaj: uporabi minigw gw kb review in kb accept na strežniku."],
+  rvTargetStale: ["The note changed after this was written (expected revision %s, now %s): reject it.", "Zapisek se je spremenil, odkar je prispevek nastal (pričakovana revizija %s, zdaj %s): zavrni ga."],
+  rvTargetMissing: ["The note this submission replaces no longer exists: reject it.", "Zapisek, ki ga prispevek nadomesti, ne obstaja več: zavrni ga."],
+  rvLabelCurrent: ["Current text of note %s, revision %s: will be replaced", "Trenutno besedilo zapiska %s, revizija %s: bo nadomeščeno"],
+  rvLabelCurrentStale: ["Current text of note %s, revision %s: not what this was written against", "Trenutno besedilo zapiska %s, revizija %s: ni tisto, na katerega se prispevek nanaša"],
+  rvLabelNew: ["New text: will be published", "Novo besedilo: bo objavljeno"],
+  rvNoCurrent: ["This gateway cannot show the current text of the note this submission replaces, so it cannot be accepted here: update the gateway, or reject it.", "Ta prehod ne more pokazati trenutnega besedila zapiska, ki ga prispevek nadomesti, zato ga tu ni mogoče sprejeti: posodobi prehod ali ga zavrni."],
+  rvTargetCheck: ["note missing or changed", "zapisek manjka ali je spremenjen"],
+  rvSaved: ["Previous text saved as revision %s of note %s.", "Prejšnje besedilo je shranjeno kot revizija %s zapiska %s."],
   rvLimited: ["Too many decisions in a short time: continue after %s.", "Preveč odločitev v kratkem času: nadaljuj po %s."],
   rvLimitedNoTime: ["Too many decisions in a short time: continue in a few minutes.", "Preveč odločitev v kratkem času: nadaljuj čez nekaj minut."],
   rvDone_accepted: ["Accepted and published (reviewer %s, %s).", "Sprejeto in objavljeno (pregledovalec %s, %s)."], rvDone_rejected: ["Rejected (reviewer %s, %s).", "Zavrnjeno (pregledovalec %s, %s)."],
@@ -2008,19 +2028,53 @@ const pages = {
       : e.message.includes("changed since you read it") ? t("rvChanged") : e.message;  // "HTTP 404" = the proxy's own non-JSON refusal (older Caddyfile)
     const text = (cls, s) => el("div", {class: cls, dir: "ltr", textContent: s});
     const heading = (tag, s) => el(tag, {textContent: s, tabIndex: -1});  // focus goes here when a view opens
-    const checkText = v => v.reviewCheck === "ok" ? t("rvOk") : v.reviewCheck === "hidden" ? t("rvHiddenCheck") : t("rvLongCheck");
+    const checkText = v => v.reviewCheck === "ok" ? t("rvOk") : v.reviewCheck === "hidden" ? t("rvHiddenCheck") : v.reviewCheck === "target" ? t("rvTargetCheck") : t("rvLongCheck");
     const scopeLabel = v => (v.scopeKind === "team" ? t("rvTeam") : t("rvProject")) + ": " + v.scopeName;
     const set = (focus, ...kids) => { box.replaceChildren(...kids.flat().filter(k => k !== null && k !== undefined && k !== false)); if (focus) focus.focus(); };
     box.addEventListener("keydown", ev => { if (ev.key === "Escape" && onEscape) { ev.preventDefault(); onEscape(); } });
     const meta = v => el("div", {class: "group ro"}, row(t("rvAuthor"), value(v.authorName)), row(scopeLabel(v)), row(t("rvClass") + " / " + t("rvKind"), value(v.class + " / " + v.entryKind)),
       row(t("rvReceived"), value(stamp(v.received))), v.isReplacement ? row(t("rvReplaces", v.replaces)) : null);
+    // the replaced note and the new text one above the other; every value through textContent. Nothing is offered unless the
+    // read carries the replaced note's state and revision (a gateway older than 0.8.8 sends neither).
+    const canAccept = v => v.reviewCheck === "ok" && (!v.isReplacement || v.targetState === "ok" && Number.isInteger(v.currentRevision) && v.currentRevision > 0);
+    // D2: when the new text is shorter by at least one line, or (lines equal or more) its characters are down by 20 % or more, the size line gets words and the warning colour
+    const shortText = v => {
+      const [cl, nl, cc, nc] = [v.currentLines, v.newLines, v.currentChars, v.newChars];
+      if (![cl, nl, cc, nc].every(Number.isInteger)) return "";
+      if (cl > 0 && nl < cl) return t("rvShorterLines", cl - nl, Math.round((cl - nl) * 100 / cl));
+      if (cc > 0 && (cc - nc) * 5 >= cc) return t("rvShorterChars", (cc - nc).toLocaleString(lang), Math.round((cc - nc) * 100 / cc));
+      return "";
+    };
+    const shortNote = v => { const s = shortText(v); return s ? el("div", {class: "rv-short", textContent: s}) : null; };
+    const sizesText = v => [v.currentLines, v.newLines, v.currentChars, v.newChars].every(Number.isInteger) ? t("rvSizes", v.currentLines, v.newLines, v.currentChars, v.newChars) : "";
+    const currentBlock = v => {
+      if (!v.isReplacement) return [];
+      if (v.targetState === "missing") return [note(t("rvTargetMissing"))];
+      if (v.targetState !== "ok" && v.targetState !== "stale") return [note(t("rvNoCurrent"))];
+      const stale = v.targetState === "stale";
+      return [shortNote(v), sizesText(v) ? note(sizesText(v)) : null, block("cur", t(stale ? "rvLabelCurrentStale" : "rvLabelCurrent", v.replaces, v.currentRevision),
+        el("div", {class: "group ro"}, row(t("rvClass") + " / " + t("rvKind"), value(v.currentClass + " / " + v.currentKind))),
+        text("rv-title", v.currentTitle || ""), v.currentHidden > 0 ? note(t("rvCurrentHidden", v.currentHidden)) : null, text("rv-text", v.currentBody || ""),
+        v.currentReviewCheck === "long" ? note(t("rvCurrentLong")) : null, stale ? note(t("rvTargetStale", v.revision, v.currentRevision)) : null)];
+    };
+    // each block carries its label at the top AND the bottom, its own border and tint (the label says it; colour only helps), and its own title
+    const label = s => el("div", {class: "rv-label", textContent: s});
+    const block = (cls, s, ...kids) => el("div", {class: "rv-block " + cls}, label(s), ...kids, label(s));
+    const newBlock = v => v.isReplacement ? [block("new", t("rvLabelNew"), el("div", {class: "group ro"}, row(t("rvClass") + " / " + t("rvKind"), value(v.class + " / " + v.entryKind))),
+      text("rv-title", v.title), text("rv-text", v.body || ""), v.hidden > 0 ? note(t("rvHidden", v.hidden)) : null, v.proposalCheck === "long" ? note(t("rvLong")) : null)] : [];
     async function showList(msg, focusId) {
       onEscape = null;
       let r;
       try { r = (await rv("GET", "/kb/submissions")).j; } catch (e) { if (!SESSION) throw e; const n = heading("div", rvMsg(e)); n.className = "note err"; set(n, n); return; }
       ids = r.submissions.map(v => v.id);
       const rows = r.submissions.map(v => {
-        const x = row(labelSub(v.title, scopeLabel(v)), value([v.class, v.entryKind, v.authorName, checkText(v)].join(" · ")));
+        // a replacement's extra information goes on a second small line under the title (the label side); the value column is the same as a new note's, so the title is never narrower
+        const lab = labelSub(v.title, scopeLabel(v));
+        if (v.isReplacement) {
+          lab.append(el("div", {class: "sub", textContent: [t("rvReplaces", v.replaces), sizesText(v)].filter(Boolean).join(" · ")}));
+          if (shortText(v)) lab.append(el("div", {class: "rv-short", textContent: shortText(v)}));
+        }
+        const x = row(lab, value([v.class, v.entryKind, v.authorName, checkText(v)].join(" · ")));
         x.classList.add("clickable"); x.tabIndex = 0; x.setAttribute("role", "button");
         const open = () => { lastIdx = ids.indexOf(v.id); showDetail(v.id); };
         x.addEventListener("click", open);
@@ -2043,8 +2097,8 @@ const pages = {
       const bar = () => {
         const rb = button(t("rvReject"), () => confirm(v, false, reason.value));
         rejectBtns.push(rb);
-        // no Accept at all unless the core's review read says "ok" and nothing is replaced (hidden, long and replacing ones are handled on the server)
-        return el("div", {class: "rv-buttons"}, button(t("rvBack"), () => onEscape()), v.reviewCheck === "ok" && !v.isReplacement ? button(t("rvAccept"), () => confirm(v, true, "")) : null, rb);
+        // no Accept at all unless the core's review read says "ok" and, for a replacement, the replaced note is unchanged with its revision in the read
+        return el("div", {class: "rv-buttons"}, button(t("rvBack"), () => onEscape()), canAccept(v) ? button(t("rvAccept"), () => confirm(v, true, "")) : null, rb);
       };
       const sync = () => {
         reason.value = reason.value.replace(/\p{Cc}/gu, " ");
@@ -2055,9 +2109,9 @@ const pages = {
         rejectBtns.forEach(b => { b.disabled = n > 1024; });
       };
       reason.addEventListener("input", sync);
-      const title = text("rv-title", v.title); title.tabIndex = -1;
-      set(title, msg ? note(msg) : null, title, bar(), meta(v), text("rv-text", v.body || ""),
-        v.hidden > 0 ? note(t("rvHidden", v.hidden)) : null, v.reviewCheck === "long" ? note(t("rvLong")) : null, v.isReplacement ? note(t("rvReplaceNote", v.replaces, v.replaces)) : null,
+      const title = v.isReplacement ? heading("h3", t("rvReplaces", v.replaces)) : text("rv-title", v.title); title.tabIndex = -1;  // a replacement shows each title inside its own block
+      set(title, msg ? note(msg) : null, title, bar(), meta(v), currentBlock(v), newBlock(v), v.isReplacement ? null : text("rv-text", v.body || ""),
+        !v.isReplacement && v.hidden > 0 ? note(t("rvHidden", v.hidden)) : null, !v.isReplacement && v.reviewCheck === "long" ? note(t("rvLong")) : null,
         reason, counter, bar());
       sync();
     }
@@ -2074,7 +2128,7 @@ const pages = {
         gos.forEach(b => { b.disabled = true; }); cancels.forEach(b => { b.disabled = true; });  // at once: a second click sends nothing; on any error the decision buttons stay disabled (no retry)
         try {
           const sent = Date.now();
-          const {date} = await rv("POST", "/kb/submissions/" + encodeURIComponent(v.id) + (accept ? "/accept" : "/reject"), accept ? {reviewHash: v.reviewHash} : {reason: why});
+          const {date} = await rv("POST", "/kb/submissions/" + encodeURIComponent(v.id) + (accept ? "/accept" : "/reject"), accept ? (v.isReplacement ? {reviewHash: v.reviewHash, currentRevision: v.currentRevision} : {reviewHash: v.reviewHash}) : {reason: why});
           drafts.delete(v.id);
           // a 200 does not say whether this click decided it or another session already had (a repeat is a no-op 200): read the record and show it
           let msg = t(accept ? "rvAccepted" : "rvRejected");
@@ -2083,6 +2137,7 @@ const pages = {
             if ((rec.state === "accepted" || rec.state === "rejected") && at) {
               const early = at < Math.min(date, sent) - 10000;  // reviewed well before this request: someone else decided it
               msg = t((early ? "rvAlready_" : "rvDone_") + rec.state, pv.reviewer || "?", stamp(at));
+              if (accept && !early && v.isReplacement) msg += " " + t("rvSaved", v.currentRevision, v.replaces);  // the replaced text is in the note's history
             }
           } catch (e) { if (!SESSION) return; }
           await showList(msg);
@@ -2095,9 +2150,11 @@ const pages = {
         }
       }
       const head = heading("h3", accept ? t("rvConfirmAccept", v.scopeName) : t("rvConfirmReject"));
-      set(head, head, bar(), statuses[0], text("rv-title", v.title), meta(v),
+      const both = accept && v.isReplacement;  // the confirmation of a replacement shows the two labelled blocks
+      set(head, head, bar(), statuses[0], both ? null : text("rv-title", v.title), meta(v),
+        accept ? currentBlock(v) : null, accept ? newBlock(v) : null,
         accept ? note(t("rvVersion", v.reviewHash.slice(0, 8))) : null, !accept && why ? note(t("rvReasonIs") + ": " + why) : null,
-        text("rv-text", v.body || ""), bar(), statuses[1]);
+        both ? null : text("rv-text", v.body || ""), bar(), statuses[1]);
     }
     await showList();
     return [el("h2", {textContent: t("remoteReview")}), note(t("rvNote")), box];

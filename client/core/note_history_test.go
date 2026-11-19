@@ -249,8 +249,8 @@ func TestNoteHistoryStaleReviewAndLocalImport(t *testing.T) {
 	_, e = f.UpdateNote(ctx, p, pid, n.ID, n.Revision, NoteInput{Class: Structure, Title: n.Title, Body: "local edit"})
 	f.ok(e)
 	_, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
-	var conflict ErrRevision
-	if !errors.As(e, &conflict) || historyCount(t, f.Store, n.ID) != 1 {
+	var refusal ErrRefusal
+	if !errors.As(e, &refusal) || !strings.Contains(e.Error(), "changed since this submission was written") || historyCount(t, f.Store, n.ID) != 1 {
 		t.Fatal("stale replacement added history", e)
 	}
 	r, e = f.ImportMarkdown(ctx, p, pid, MarkdownInput{Path: "stale.md", Class: Structure, Markdown: "changed remotely"})

@@ -169,6 +169,26 @@ c=$(req -X POST $H $SH -d "{\"reviewHash\":\"$KH\"}" $KB/1/accept)
 c=$(req -X POST $H $SH -d '{"reason":"e2e reject"}' $KB/2/reject)
 [[ $c == 200 ]] && grep -qF -- '"state":"rejected"' $W/body && pass "reject with a reason -> 200 rejected" || bad "reject answered $c"
 c=$(req $SH $KB); [[ $c == 200 ]] && ! grep -qF -- 'E2E review' $W/body && pass "no submission is pending afterwards" || bad "list after decisions answered $c"
+# a replacement: the detail carries the replaced note's state and both titles; accept names the revision shown; the old text is in the history
+print 'Replacement text needle2' | member kb submit e2eproj --title 'E2E replacement' --replaces 1 --revision 1 - >/dev/null 2>&1 || setup_fail "member kb submit --replaces"
+c=$(req $SH $KB/3)
+RH=$(sed -n 's/.*"reviewHash":"\([0-9a-f]*\)".*/\1/p' $W/body)
+[[ $c == 200 ]] && grep -qF -- '"targetState":"ok"' $W/body && grep -qF -- '"currentTitle":"E2E review one"' $W/body && grep -qF -- 'E2E replacement' $W/body && grep -qF -- '"currentRevision":1' $W/body && [[ ${#RH} == 64 ]] \
+  && pass "GET kb/submissions/3 (a replacement) -> targetState ok and both titles" || bad "replacement detail answered $c $(cat $W/body)"
+c=$(req -X POST $H $SH -d "{\"reviewHash\":\"$RH\",\"currentRevision\":\"1\"}" $KB/3/accept)
+[[ $c == 403 ]] && pass "accept with currentRevision as a string -> 403" || bad "string currentRevision answered $c"
+c=$(req -X POST $H $SH -d "{\"reviewHash\":\"$RH\",\"currentRevision\":1}" $KB/3/accept)
+[[ $c == 200 ]] && grep -qF -- '"state":"accepted"' $W/body && pass "accept of the replacement with its revision -> 200 accepted" || bad "replacement accept answered $c $(cat $W/body)"
+gw kb history 1 2>/dev/null | grep -q '^revision 1 ' && pass "gw kb history shows the replaced revision" || bad "gw kb history 1: $(gw kb history 1 2>&1)"
+# a second replacement made stale by an edit of the note: accept is refused with the stale reason
+print 'Second replacement' | member kb submit e2eproj --title 'E2E stale' --replaces 1 --revision 2 - >/dev/null 2>&1 || setup_fail "member kb submit --replaces (second)"
+print 'Edited meanwhile' | member note edit 1 - >/dev/null 2>&1 || setup_fail "member note edit"
+c=$(req $SH $KB/4)
+RH=$(sed -n 's/.*"reviewHash":"\([0-9a-f]*\)".*/\1/p' $W/body)
+[[ $c == 200 ]] && grep -qF -- '"targetState":"stale"' $W/body && grep -qF -- '"reviewCheck":"target"' $W/body && pass "the detail of a stale replacement says stale" || bad "stale detail answered $c $(cat $W/body)"
+c=$(req -X POST $H $SH -d "{\"reviewHash\":\"$RH\",\"currentRevision\":3}" $KB/4/accept)
+[[ $c == 403 ]] && grep -qiF -- 'changed' $W/body && pass "accept of a stale replacement -> 403 with the reason" || bad "stale accept answered $c $(cat $W/body)"
+c=$(req -X POST $H $SH -d '{"reason":"e2e stale"}' $KB/4/reject); [[ $c == 200 ]] && pass "reject of the stale replacement -> 200" || bad "reject of the stale one answered $c"
 for pm in "POST $KB/1/versions/x" "POST $URL/minigw/admin/v1/kb/notes" "GET $URL/minigw/admin/v1/kb/notes" "POST $URL/minigw/admin/v1/kb/search/rebuild" "PUT $KB" "DELETE $KB" "PUT $KB/1" "DELETE $KB/1" "PATCH $KB/1/accept" "PUT $KB/1/reject" "DELETE $KB/1/accept" "POST $KB" "POST $KB/1" "GET $KB/1/accept" "GET $KB/1x" "GET $KB/1/versions/$KH" "POST $KB/1/accept/2" "POST ${KB}/1a/accept"; do
   c=$(req -X ${pm%% *} $H $SH -d '{}' ${pm#* })
   [[ $c == 404 ]] && pass "${pm% *} ${pm#*/minigw/admin/v1/} -> 404 at the proxy" || bad "$pm answered $c"

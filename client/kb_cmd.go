@@ -123,7 +123,7 @@ func (e *projectEnv) rejectedHint(c connection, project int64, title string) {
 			return
 		}
 		for i, v := range pg.Submissions {
-			if v.State == "rejected" && v.Reason != "" && v.Title == title && now().Sub(v.Provenance.Received) < rejectedHintDays*24*time.Hour && (found == nil || v.ID > found.ID) {
+			if v.State == "rejected" && v.Title == title && now().Sub(v.Provenance.Received) < rejectedHintDays*24*time.Hour && (found == nil || v.ID > found.ID) {
 				found = &pg.Submissions[i]
 			}
 		}
@@ -133,7 +133,11 @@ func (e *projectEnv) rejectedHint(c connection, project int64, title string) {
 		after = pg.Next
 	}
 	if found != nil {
-		e.say(clean("an earlier submission with this title was rejected: " + found.Reason))
+		if found.Reason == "" {
+			e.say("an earlier submission with this title was rejected (no reason given)")
+		} else {
+			e.say(clean("an earlier submission with this title was rejected: " + found.Reason))
+		}
 	}
 }
 
@@ -417,12 +421,110 @@ func printReview(say func(string), v core.Submission, authorName string, names m
 	if v.ReviewHash != "" { // on its own line, to copy whole into kb accept --version
 		say(clean("version " + v.ReviewHash))
 	}
+	if v.ReviewCheck == "long" {
+		say("long text: the app and the remote page do not offer accept for it")
+	}
+	if v.Replaces != 0 { // a replacement: the sizes of both texts, the note's current text, then the new text
+		if line := sizesLine(v); line != "" {
+			say(line)
+		}
+		printCurrent(say, v)
+		say(oneLine(fmt.Sprintf("New text: %s  %s  %s", v.Class, kindOf(v.EntryKind), v.Title)))
+	}
 	if v.Hidden > 0 {
 		say(fmt.Sprintf(hiddenLine, v.Hidden))
 	}
 	if v.Body != nil {
 		say(core.ReviewText(*v.Body))
 	}
+}
+
+func kindOf(k string) string {
+	if k == "" {
+		return "finding"
+	}
+	return k
+}
+
+// sizesLine: how much the replacement shortens or lengthens the note, from the sizes the gateway counted (the texts as shown:
+// characters are runes, lines the text's lines). Nothing when a side is not there (an older gateway, a missing note).
+func sizesLine(v core.Submission) string {
+	if v.CurrentLines == nil || v.CurrentChars == nil || v.NewLines == nil || v.NewChars == nil {
+		return ""
+	}
+	line := fmt.Sprintf("current: %d lines, %d characters -> new: %d lines, %d characters", *v.CurrentLines, *v.CurrentChars, *v.NewLines, *v.NewChars)
+	switch d := *v.NewLines - *v.CurrentLines; {
+	case d < 0:
+		line += fmt.Sprintf(" (lines shorter: %d, %d %%)", -d, (-d*100+*v.CurrentLines/2) / *v.CurrentLines)
+	case d > 0:
+		line += fmt.Sprintf(" (lines longer: %d)", d)
+	}
+	return line
+}
+
+// printCurrent prints the note a replacement overwrites, as the gateway's review read shows it. A gateway older than
+// 0.8.8 sends none of it: that is said, and the accept is refused locally (acceptNeedsCurrent).
+func printCurrent(say func(string), v core.Submission) {
+	switch v.TargetState {
+	case "":
+		say("Current text: not shown (the gateway is older than 0.8.8)")
+	case "missing":
+		say(fmt.Sprintf("Current text: note %d no longer exists: this submission cannot be accepted", v.Replaces))
+	default: // ok, stale
+		rev := int64(0)
+		if v.CurrentRevision != nil {
+			rev = *v.CurrentRevision
+		}
+		head := "Current text"
+		if v.TargetState == "ok" {
+			head += " (will be replaced)"
+		}
+		say(oneLine(fmt.Sprintf("%s: note %d  revision %d  %s  %s  %s", head, v.Replaces, rev, v.CurrentClass, kindOf(v.CurrentKind), v.CurrentTitle)))
+		if v.CurrentHidden > 0 {
+			say(fmt.Sprintf("the current text has %d hidden characters (not shown); accepting this replacement removes them from the note", v.CurrentHidden))
+		}
+		if v.TargetState == "stale" {
+			say(fmt.Sprintf("the note changed since this submission was written (it expected revision %d, the note is at %d): it cannot be accepted", v.Revision, rev))
+		}
+		if v.CurrentBody != nil {
+			say(core.ReviewText(*v.CurrentBody))
+		}
+	}
+}
+
+// acceptNeedsCurrent: an accept of a replacement needs the current text the gateway shows; an older gateway shows none.
+func acceptNeedsCurrent(v core.Submission) error {
+	if v.Replaces != 0 && v.TargetState == "" {
+		return fmt.Errorf("not accepted: this gateway cannot show the current text of note %d; update the gateway, or reject it", v.Replaces)
+	}
+	return nil
+}
+
+// acceptFields adds what an accept of v states: the review hash and, for a replacement, the revision of the note whose
+// current text was shown (a non-replacement sends neither more nor less than before).
+func acceptFields(fields map[string]any, v core.Submission) {
+	fields["reviewHash"] = v.ReviewHash
+	if v.Replaces != 0 && v.CurrentRevision != nil {
+		fields["currentRevision"] = *v.CurrentRevision
+	}
+}
+
+// savedLine tells where the replaced text went after an accepted replacement. team: the team name of a team note ("" for
+// a project's note); owner: the commands of the gateway owner.
+func savedLine(v core.Submission, team string, owner bool) string {
+	rev := int64(0)
+	if v.CurrentRevision != nil {
+		rev = *v.CurrentRevision
+	}
+	scope := ""
+	if team != "" {
+		scope = " --team " + team
+	}
+	show, restore := "minigw note history", "minigw note restore"
+	if owner {
+		show, restore, scope = "minigw gw kb history", "minigw gw kb restore", ""
+	}
+	return clean(fmt.Sprintf("the previous text of note %d is saved as revision %d: %s %d%s shows it, %s %d --revision %d%s puts it back", v.Replaces, rev, show, v.Replaces, scope, restore, v.Replaces, rev, scope))
 }
 
 const (
@@ -471,6 +573,7 @@ func (e *projectEnv) kbDecide(pos []string, team, reason, version string) error 
 	}
 	c, _ := e.connect()
 	fields := map[string]any{"reason": reason}
+	var shown core.Submission // what an accept showed: its replaced note
 	if pos[0] == "accept" {
 		st, b, h := e.do(c, "GET", fmt.Sprintf("%s/0/kb/review/%d", apiProjects, id), nil, nil)
 		if st != 200 {
@@ -484,23 +587,55 @@ func (e *projectEnv) kbDecide(pos []string, team, reason, version string) error 
 			return err
 		}
 		printReview(e.say, full.Submission, full.AuthorName, nil)
+		if err := acceptNeedsCurrent(full.Submission); err != nil {
+			return err
+		}
 		terminal := e.tty == nil && stdinIsTTY() || e.tty != nil && e.tty()
 		if err := confirmAccept(full.ReviewHash, version, terminal, e.in, e.out); err != nil {
 			return err
 		}
-		fields["reviewHash"] = full.ReviewHash
+		acceptFields(fields, full.Submission)
+		shown = full.Submission
 	}
 	body, _ := json.Marshal(fields)
 	st, b, h := e.do(c, "POST", fmt.Sprintf("%s/0/kb/review/%d/%s", apiProjects, id, pos[0]), nil, body)
 	if st != 200 {
-		return gatewayError(st, b, h)
+		err := gatewayError(st, b, h)
+		if pos[0] == "accept" && st == 400 { // a refused accept is not a rejection: nothing was decided
+			err = gwStatusError{errors.New(strings.Replace(err.Error(), "rejected: ", "not accepted: ", 1)), st}
+		}
+		return err
 	}
 	var v core.Submission
 	if err := json.Unmarshal(b, &v); err != nil {
 		return err
 	}
 	e.say(submissionResult(v))
+	if pos[0] == "accept" && shown.Replaces != 0 {
+		team := ""
+		if t, seg := core.SegmentTeam(shown.Project); seg {
+			team = e.teamName(c, t)
+		}
+		e.say(savedLine(shown, team, false))
+	}
 	return nil
+}
+
+// teamName: the name of team id among the teams of this user ("" when not found).
+func (e *projectEnv) teamName(c connection, id int64) string {
+	st, b, _ := e.do(c, "GET", "/minigw/v1/teams", nil, nil)
+	var ts []struct {
+		Name    string
+		Segment int64
+	}
+	if st == 200 && json.Unmarshal(b, &ts) == nil {
+		for _, t := range ts {
+			if tid, ok := core.SegmentTeam(t.Segment); ok && tid == id {
+				return t.Name
+			}
+		}
+	}
+	return ""
 }
 
 func searchLine(v core.SearchHit) string {
@@ -790,6 +925,7 @@ func kbAdmin(a *adminClient, pos []string, o coreOpts) {
 			return
 		}
 		fields := map[string]any{"reason": reason}
+		var shown core.Submission
 		if pos[1] == "accept" { // what is accepted, and the version read: the gateway refuses a text changed since
 			var full struct {
 				core.Submission
@@ -797,15 +933,23 @@ func kbAdmin(a *adminClient, pos []string, o coreOpts) {
 			}
 			a.do("GET", "/kb/submissions/"+strconv.FormatInt(id, 10), nil, &full)
 			printReview(say, full.Submission, full.AuthorName, nil)
+			if err := acceptNeedsCurrent(full.Submission); err != nil {
+				fail(err.Error())
+				return
+			}
 			if err := confirmAccept(full.ReviewHash, o.version, adminTerminal(), o.in, os.Stdout); err != nil {
 				fail(err.Error())
 				return
 			}
-			fields["reviewHash"] = full.ReviewHash
+			acceptFields(fields, full.Submission)
+			shown = full.Submission
 		}
 		var v core.Submission
 		a.do("POST", fmt.Sprintf("/kb/submissions/%d/%s", id, pos[1]), fields, &v)
 		say(submissionResult(v))
+		if pos[1] == "accept" && shown.Replaces != 0 {
+			say(savedLine(shown, "", true))
+		}
 		return
 	}
 	usage()

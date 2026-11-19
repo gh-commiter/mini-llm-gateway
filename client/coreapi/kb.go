@@ -91,13 +91,17 @@ func (a *API) reviewRoute(ctx context.Context, st *core.Store, p core.Principal,
 			return a.errResponse(core.ErrNotFound)
 		}
 		var b struct {
-			Reason     string `json:"reason"`
-			ReviewHash string `json:"reviewHash"`
+			Reason          string `json:"reason"`
+			ReviewHash      string `json:"reviewHash"`
+			CurrentRevision int64  `json:"currentRevision"`
 		}
 		if e := payload(r, &b); e != nil {
 			return a.errResponse(e)
 		}
-		v, e := st.MemberReview(ctx, p, project, id, rest[1] == "accept", b.Reason, b.ReviewHash)
+		if b.CurrentRevision < 0 {
+			return a.errResponse(core.ErrInvalid{What: "currentRevision"})
+		}
+		v, e := st.MemberReviewAt(ctx, p, project, id, rest[1] == "accept", b.Reason, b.ReviewHash, b.CurrentRevision)
 		if e != nil {
 			return a.errResponse(e)
 		}
@@ -184,13 +188,17 @@ func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []
 	}
 	if len(seg) == 4 && method == "POST" && (seg[3] == "accept" || seg[3] == "reject") {
 		var b struct {
-			Reason     string `json:"reason"`
-			ReviewHash string `json:"reviewHash"`
+			Reason          string `json:"reason"`
+			ReviewHash      string `json:"reviewHash"`
+			CurrentRevision int64  `json:"currentRevision"`
 		}
 		if e := payload(Request{Body: body}, &b); e != nil {
 			return a.errResponse(e)
 		}
-		v, e := st.ReviewSubmission(ctx, id, seg[3] == "accept", b.Reason, b.ReviewHash)
+		if b.CurrentRevision < 0 {
+			return a.errResponse(core.ErrInvalid{What: "currentRevision"})
+		}
+		v, e := st.ReviewSubmissionAt(ctx, id, seg[3] == "accept", b.Reason, b.ReviewHash, b.CurrentRevision)
 		if e != nil {
 			return a.errResponse(e)
 		}
@@ -209,6 +217,29 @@ type adminSubmissionJSON struct {
 	ScopeName     string    `json:"scopeName"`
 	Received      time.Time `json:"received"`
 	IsReplacement bool      `json:"isReplacement"`
+	// AcceptInPanel: the queue row may offer Accept: the review is ok and nothing is replaced. A replacement is accepted where its
+	// current text is shown in full (minigw gw kb accept, or the remote page), never from a row.
+	AcceptInPanel bool `json:"acceptInPanel"`
+	// AcceptReplacementInPanel: the row may offer "Accept replacement" (with a confirmation): the review is ok and the replaced note
+	// is unchanged, so both texts are ok and the detail shows them.
+	AcceptReplacementInPanel bool `json:"acceptReplacementInPanel"`
+	// LinesChange and CharsChange: "current -> new" for a replacement ("-" for a side that is not there), "" otherwise: what a panel
+	// row shows so that a shortened rewrite is seen (the numbers are the review read's currentLines/newLines and chars).
+	LinesChange string `json:"linesChange"`
+	CharsChange string `json:"charsChange"`
+}
+
+func sizeChange(cur, now *int) string {
+	s := func(p *int) string {
+		if p == nil {
+			return "-"
+		}
+		return strconv.Itoa(*p)
+	}
+	if cur == nil && now == nil {
+		return ""
+	}
+	return s(cur) + " -> " + s(now)
 }
 
 type nameMaps struct{ users, projects, teams map[int64]string }
@@ -240,7 +271,7 @@ func (a *API) names(ctx context.Context, st *core.Store) (nameMaps, error) {
 }
 
 func (m nameMaps) submission(v core.Submission) adminSubmissionJSON {
-	j := adminSubmissionJSON{Submission: v, AuthorName: m.users[v.User], Received: v.Provenance.Received, IsReplacement: v.Replaces > 0, ScopeKind: "project", ScopeName: m.projects[v.Project]}
+	j := adminSubmissionJSON{Submission: v, AuthorName: m.users[v.User], Received: v.Provenance.Received, IsReplacement: v.Replaces > 0, AcceptInPanel: v.ReviewCheck == "ok" && v.TargetState == "none", AcceptReplacementInPanel: v.ReviewCheck == "ok" && v.TargetState == "ok", LinesChange: sizeChange(v.CurrentLines, v.NewLines), CharsChange: sizeChange(v.CurrentChars, v.NewChars), ScopeKind: "project", ScopeName: m.projects[v.Project]}
 	if team, ok := core.SegmentTeam(v.Project); ok {
 		j.ScopeKind, j.ScopeName = "team", m.teams[team]
 		j.Project, j.Provenance.Project = 0, 0 // the hidden segment id never leaves: scopeKind and scopeName say where it belongs

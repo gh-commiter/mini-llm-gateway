@@ -6,6 +6,27 @@
 - Upstream push: a note whose first submission is still pending upstream now waits for its review without counting as a failure of the link (no back-off; `status` shows "N notes wait for a review upstream"; an automatic link looks again every five debounce periods). `resolve --ours` looks again before it creates anything: a visible-again note or a readable submission is replaced or followed, and the report says whether a NEW note resulted. A refusal for one note (403 forbidden, 404 on a note) no longer stops the whole run. The Mac panel shows the new conflict kinds and warns before `Send ours`. No database change.
 - Upstream push, no second copy: the upstream note an accepted submission became is written down as soon as the push learns of it. A note whose earlier submission is still pending, cannot be read, or whose upstream note is deleted or no longer visible is no longer sent as a new note: pending waits for the review, the others show in `status` as a conflict for `gw upstream resolve` (`--ours` then sends a new submission). A refusal to read one note stops only that note. A link that has sent notes refuses to change its destination project.
 
+## 0.8.8
+
+A beta that closes the gap the last two betas worked toward: a reviewer who accepts a knowledge-base submission that REPLACES a note now sees the note's current text next to the new text, and accepts exactly that pair. No database upgrade.
+
+### New
+- Review of a replacement shows both texts, on every surface. `minigw kb review` and `minigw gw kb review` (both clients) print the sizes, then `Current text (will be replaced): note N  revision C …` with its text, then `New text: …`:
+  `current: 212 lines, 11429 characters -> new: 141 lines, 7602 characters (lines shorter: 71, 33 %)`.
+  The Mini Gateway app's Knowledge base panel shows both texts in the detail and the sizes on the queue row. The remote web page shows two separately labelled and coloured blocks, each with its label kept in view while you scroll, and says "Shorter by 66 lines (33 %)" when a rewrite drops text.
+- The accept is bound to the pair. The review version (hash) of a replacement now also covers the replaced note's revision and text, and the accept carries the note's current revision. If the note was edited, restored, re-imported, changed in class or deleted after you read it, the accept is refused ("the submission changed since you read it") and nothing is published. A replacement written against an older revision of the note ("stale") or of a note that no longer exists cannot be accepted: reject it. When you reject such a one without typing a reason, the gateway stores the reason itself ("note N changed after this was written …: read the note and propose the change again"), so the author sees why with `minigw kb submissions`.
+- The remote web page offers Accept for a replacement again (0.8.5 to 0.8.7 refused all of them), when the replaced note is unchanged and both texts are shown in full. The app's panel has a separate action "Accept replacement…" with a confirmation. After an accepted replacement the output names the saved revision and the commands that show and restore it (`note history`, `note restore`).
+- Hidden characters in the note's CURRENT text do not block a replacement: the review says how many there are and that accepting removes them from the note; the old text stays in the note's history as it was. Hidden characters in the NEW text still cannot be accepted.
+- The audit entry of an accepted replacement says that a note was replaced and which revision was saved (numbers only).
+
+### Known problems
+- Reviewers who use a client older than 0.8.8 (the stable 0.8.0 from Homebrew, `install.sh` or the plugin) cannot accept a replacement until the next stable release. The refusal says so and names the ways out: a 0.8.8 or newer beta client, the Mini Gateway app's panel or the remote settings page (they come with the gateway), or reject it. Accepting a submission that replaces nothing works as before. A new client with a gateway older than 0.8.8 shows `Current text: not shown (the gateway is older than 0.8.8)` and refuses the accept: update the gateway.
+- Both texts are shown one above the other; there is no line-by-line difference yet. In the app's panel the confirmation of "Accept replacement…" names the new title, not the note that is replaced: open the submission to compare first.
+- A local gateway that pushes notes to an upstream gateway: when a pushed update is REJECTED upstream (for example as stale) and the note is then changed again locally, the next push sends it as a NEW note; accepting that upstream creates a second note next to the original. Until this is fixed (next beta): after rejecting a pushed update on the upstream gateway, do not accept a later submission of the same note that shows no "replaces"; fix the note upstream by hand or accept the next one only if it replaces the note.
+- The app's "Accept replacement…" action was checked in the tests of both clients, not yet by hand in the app's window. The remote page was tried in one browser engine (Chromium).
+- The "Shorter by …" line also appears for very short texts (15 to 11 characters).
+- The known problems of 0.8.7 to 0.8.0 still apply.
+
 ## 0.8.7
 
 A beta that makes the saved versions of notes (kept since 0.8.6) usable: you can look at them and put one back. The gateway and the client both change; no database upgrade.

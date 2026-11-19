@@ -589,3 +589,72 @@ func TestBuiltinConfirmRoutesAreRequired(t *testing.T) {
 		t.Fatalf("only %d confirmed actions", n)
 	}
 }
+
+// The queue's replaced-note record reads the version-bound detail (so the one hash binds both texts), no section reads the
+// note by its id, and the accept action carries the revision of the replaced note.
+func TestKBPanelReplacedRecordIsVersionBound(t *testing.T) {
+	raw, err := os.ReadFile("panels/builtin.kb.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "/kb/notes/{parent.replaces}") {
+		t.Fatal("a section still reads the replaced note by its id")
+	}
+	var p struct {
+		Sections []struct {
+			ID         string
+			RowActions []struct {
+				ID   string
+				Body map[string]map[string]string
+				When struct {
+					Field  string
+					Equals any
+				}
+				Confirm *struct{ Title, Message, Button string }
+			}
+			Detail struct {
+				Sections []struct {
+					ID     string
+					Source struct{ Path string }
+				}
+			}
+		}
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, s := range p.Sections {
+		if s.ID != "queue" {
+			continue
+		}
+		for _, d := range s.Detail.Sections {
+			if d.ID == "replaced" {
+				found = true
+				if d.Source.Path != "/kb/submissions/{parent.id}/versions/{parent.reviewHash}" {
+					t.Fatal(d.Source.Path)
+				}
+			}
+		}
+		for _, a := range s.RowActions {
+			if a.ID == "accept" && a.Body["currentRevision"]["row"] != "currentRevision" {
+				t.Fatal("accept does not send currentRevision", a.Body)
+			}
+			// a row offers Accept only for a submission that replaces nothing: a replacement is accepted where its current text is shown
+			if a.ID == "accept" && (a.When.Field != "acceptInPanel" || a.When.Equals != true) {
+				t.Fatal("the row's accept is not limited to a new note", a.When)
+			}
+			if a.ID == "replace" {
+				if a.When.Field != "acceptReplacementInPanel" || a.When.Equals != true || a.Body["currentRevision"]["row"] != "currentRevision" || a.Body["reviewHash"]["row"] != "reviewHash" || a.Confirm == nil || a.Confirm.Message == "" {
+					t.Fatal("the replacement action is not bound, limited and confirmed", a.When, a.Body)
+				}
+			}
+			if a.ID == "reject" && a.When.Field != "" {
+				t.Fatal("reject must stay on every row", a.When)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no replaced record")
+	}
+}
