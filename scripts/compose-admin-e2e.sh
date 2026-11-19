@@ -239,10 +239,10 @@ sh admin-certs.sh link $W/norenew >/dev/null 2>&1; mv $W/norenew/ca/link-ca.key 
 sh admin-certs.sh renew $W/norenew >/dev/null 2>&1 && bad "renew without the CA key succeeded" || pass "renew refuses when the CA key is absent"
 # no password or session value anywhere in the proxy log after the whole run
 plog=$($DC logs admin-proxy 2>&1)
-leak=0; for v in $S $PW $GWTOKEN "Body one needle1" "wrong password here" "wrong password again"; do [[ $plog == *"$v"* ]] && leak=1; done
+leak=0; for v in $S $PW $GWTOKEN $MTOKEN "Body one needle1" "wrong password here" "wrong password again"; do [[ $plog == *"$v"* ]] && leak=1; done
 (( leak )) && bad "a password, session or token value is in the proxy log" || pass "no password, session or gateway token value in the proxy log after the run"
 glog=$($DC logs minigw 2>&1)
-leak=0; for v in $S $PW $GWTOKEN "Body one needle1" "wrong password here" "wrong password again"; do [[ $glog == *"$v"* ]] && leak=1; done
+leak=0; for v in $S $PW $GWTOKEN $MTOKEN "Body one needle1" "wrong password here" "wrong password again"; do [[ $glog == *"$v"* ]] && leak=1; done
 (( leak )) && bad "a password, session or token value is in the gateway log" || pass "no password, session or gateway token value in the gateway log after the run"
 # client IP outside allowedSourceCIDRs
 setcfg '["203.0.113.0/24"]' || setup_fail "second config / restart"

@@ -207,7 +207,7 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 	if v4.Body != "abc" || v4.Hidden != 2 || v4.Check != "hidden" {
 		t.Fatalf("%+v", v4)
 	}
-	if w = k.accept(id4, v4.ReviewHash); w.Code != 400 || notes() != 1 || pending(id4) != 1 {
+	if w = k.accept(id4, v4.ReviewHash); w.Code != 403 || !strings.Contains(w.Body.String(), "hidden characters") || notes() != 1 || pending(id4) != 1 {
 		t.Fatal("hidden accepted", w.Code, w.Body.String())
 	}
 	if w = k.reject(id4, "hidden characters"); w.Code != 200 {
@@ -226,7 +226,7 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 		if got.Body != c.Out || got.Hidden != len([]rune(c.In))-len([]rune(c.Out)) {
 			t.Errorf("%s: %q hidden %d, want %q", c.Name, got.Body, got.Hidden, c.Out)
 		}
-		if w = k.accept(cid, got.ReviewHash); got.Hidden > 0 && (w.Code != 400 || pending(cid) != 1) {
+		if w = k.accept(cid, got.ReviewHash); got.Hidden > 0 && (w.Code != 403 || pending(cid) != 1) {
 			t.Errorf("%s: accepted with hidden characters: %d", c.Name, w.Code)
 		}
 	}
@@ -236,6 +236,22 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 	k.exec(`UPDATE kb_submissions SET body=? WHERE id=?`, strings.Repeat("y", 64<<10), big)
 	if got := k.read(big); got.Check != "long" {
 		t.Fatalf("check %q", got.Check)
+	} else if w = k.accept(big, got.ReviewHash); w.Code != 403 || !strings.Contains(w.Body.String(), "too long to review here") || pending(big) != 1 {
+		t.Fatal("a long submission accepted remotely", w.Code, w.Body.String())
+	}
+
+	// a replacement overwrites the note it replaces and keeps the old text nowhere: it cannot be accepted here, only rejected
+	repl, _, err := k.cf.s.core.Submit(t0, k.ana, k.pid, "remote-kb-repl", core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Data, Title: "T <b>one</b>", Body: "new text"}, Replaces: done.Note, Revision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vr := k.read(repl.ID)
+	oldBody := k.count(`SELECT COUNT(*) FROM notes WHERE id=? AND body=?`, done.Note, hostile)
+	if w = k.accept(repl.ID, vr.ReviewHash); w.Code != 403 || !strings.Contains(w.Body.String(), fmt.Sprintf("replaces note %d", done.Note)) || pending(repl.ID) != 1 || k.count(`SELECT COUNT(*) FROM notes WHERE id=? AND body=?`, done.Note, hostile) != oldBody || oldBody != 1 {
+		t.Fatal("a replacement accepted remotely", w.Code, w.Body.String())
+	}
+	if w = k.reject(repl.ID, "compare on the server"); w.Code != 200 {
+		t.Fatal("reject of a replacement", w.Code)
 	}
 
 	// other bodies and routes never reach the core
@@ -308,6 +324,18 @@ func TestRemoteKBReviewEndToEnd(t *testing.T) {
 		if row["Subject"] == fmt.Sprint(id3) && row["Result"] == "denied" && row["Operation"] == "POST kb/submissions/{}/accept" {
 			denied++
 		}
+	}
+	refused := 0
+	for _, row := range k.remoteAudit() {
+		if row["Subject"] == fmt.Sprint(id5) && row["Result"] == "denied" && row["Operation"] == "POST kb/submissions/{}/accept" {
+			refused++
+		}
+		if row["Subject"] == fmt.Sprint(id5) && row["Result"] == "started" {
+			t.Fatal("a refused body wrote a started row")
+		}
+	}
+	if refused != 18 { // the 18 refused accept bodies above each left one denied row
+		t.Fatal("denied rows of refused bodies:", refused)
 	}
 	if started != 2 || ok != 2 || denied != 1 { // the accept and its replay; the changed one denied
 		t.Fatal(started, ok, denied, k.remoteAudit())
@@ -405,5 +433,41 @@ func TestRemoteKBPolicy(t *testing.T) {
 				t.Fatal("override", h, path, w.Code)
 			}
 		}
+	}
+}
+
+// A body or an accept the gateway refuses before the core is asked never uses up one of the 30 decisions; the reason is one line of at most 1024 bytes.
+func TestRemoteKBRefusalsDoNotCountAgainstTheLimiter(t *testing.T) {
+	k := newKBRemote(t)
+	count := func() int { return len(k.f.s.remoteAuth.decisions) }
+	id := k.submit("limiter", "text")
+	h := k.read(id).ReviewHash
+	for _, why := range []string{"two\nlines", "tab\there", "carriage\rreturn", "esc\u001b[0m", strings.Repeat("é", 512) + "x", strings.Repeat("r", 1025)} {
+		if w := k.reject(id, why); w.Code != 403 || count() != 0 || k.read(id).State != "pending" {
+			t.Fatalf("reason %q: %d %s (count %d)", why, w.Code, w.Body.String(), count())
+		}
+	}
+	for _, b := range []string{`{"reviewHash":"abc"}`, `{"ReviewHash":"` + h + `"}`, `{}`} {
+		if w := k.do("POST", fmt.Sprintf("/kb/submissions/%d/accept", id), b); w.Code != 403 || count() != 0 {
+			t.Fatal(b, w.Code, count())
+		}
+	}
+	k.exec(`UPDATE kb_submissions SET body=? WHERE id=?`, "a\u200bb", id) // hidden: refused before the limiter too
+	if w := k.accept(id, k.read(id).ReviewHash); w.Code != 403 || count() != 0 {
+		t.Fatal("hidden", w.Code, count())
+	}
+	// 1024 bytes of two-byte characters is allowed, and it counts
+	if w := k.reject(id, strings.Repeat("é", 512)); w.Code != 200 || count() != 1 {
+		t.Fatal("a 1024 byte reason", w.Code, w.Body.String(), count())
+	}
+	// the 31st: 429 with a Retry-After the page turns into a time of day
+	k.f.s.remoteAuth.decisions = nil
+	for i := 1; i <= remoteDecisionLimit; i++ {
+		k.accept(int64(1000+i), strings.Repeat("a", 64))
+	}
+	k.clock = k.clock.Add(90 * time.Second)
+	w := k.reject(id, "again")
+	if w.Code != 429 || w.Header().Get("Retry-After") != fmt.Sprint(int(remoteDecisionWindow/time.Second)-90+1) {
+		t.Fatal(w.Code, w.Header())
 	}
 }

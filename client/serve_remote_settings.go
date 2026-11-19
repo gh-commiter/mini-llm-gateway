@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const remoteClientHeader = "X-Minigw-Client-IP"
@@ -301,10 +302,39 @@ func remoteKBDecisionRefusal(accept bool, body []byte) string {
 		if len(v) != 64 || strings.Trim(v, "0123456789abcdef") != "" {
 			return "reviewHash must be the 64 lowercase hexadecimal characters of the version you read."
 		}
-	} else if len(v) > 1024 {
-		return "The reason is longer than 1024 bytes."
+	} else {
+		if len(v) > 1024 {
+			return "The reason is longer than 1024 bytes."
+		}
+		for _, r := range v { // the core refuses these too; refused here they never use up a decision
+			if unicode.IsControl(r) {
+				return "The reason may not contain line breaks, tabs or other control characters."
+			}
+		}
 	}
 	return ""
+}
+
+// remoteKBAcceptRefusal: the answer of a fresh review read (the one GET uses) decides whether a remote accept is even offered:
+// only a text that reads "ok" and replaces no note. A replacement overwrites the note it replaces and keeps the old text
+// nowhere, and this listener cannot show that text; hidden characters and long texts are reviewed on the server. The core still
+// compares the review hash inside its write transaction, and the hash covers the replaced id, so nothing can change between this read and the write.
+func (s *server) remoteKBAcceptRefusal(id string) string {
+	status, obj := s.adminDo("GET", "/kb/submissions/"+id, nil)
+	m, ok := obj.(map[string]any)
+	if status != 200 || !ok {
+		return "" // not found, no database: the core answers the same way
+	}
+	if r, _ := m["replaces"].(float64); r != 0 {
+		return fmt.Sprintf("This submission replaces note %d: accepting it overwrites that note, and its current text cannot be shown here. Review it on the server, or reject it.", int64(r))
+	}
+	switch m["reviewCheck"] {
+	case "ok":
+		return ""
+	case "hidden":
+		return "This submission contains hidden characters and cannot be accepted: reject it and ask for the text without them."
+	}
+	return "This submission is too long to review here: review it on the server (minigw gw kb review, kb accept), or reject it."
 }
 
 // remoteKBDecisionPath: POST kb/submissions/{id}/accept|reject (seg is the path below the admin prefix, split).
@@ -536,26 +566,41 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 				return
 			}
 		}
+		operation, subject := "", ""
 		if kbDecision {
-			if msg := remoteKBDecisionRefusal(pathSeg[3] == "accept", body); msg != "" {
-				writeError(w, rid, 403, msg)
+			// Every refusal a decision can get without the core being asked comes first and never counts against the limiter:
+			// a malformed body, and an accept that a fresh review read says cannot be accepted here.
+			operation, subject = "POST kb/submissions/{}/"+pathSeg[3], pathSeg[2]
+			code, msg := 403, remoteKBDecisionRefusal(pathSeg[3] == "accept", body)
+			if msg == "" && pathSeg[3] == "accept" {
+				msg = s.remoteKBAcceptRefusal(pathSeg[2])
+			}
+			if msg != "" {
+				s.remoteAuth.mu.Lock()
+				err = s.remoteAuth.auditOperation("mutation", "denied", ip, rid, operation, subject)
+				s.remoteAuth.mu.Unlock()
+				if err != nil {
+					deny(500)
+					return
+				}
+				writeError(w, rid, code, msg)
 				return
 			}
 		}
 		// Audit intent before dispatch, so a broken audit log prevents mutations.
-		operation, subject := "", ""
 		if mutation {
 			seg := pathSeg
-			operation = r.Method + " " + seg[0]
-			if len(seg) > 1 {
-				operation += "/{}"
-			}
-			if len(seg) > 2 {
-				operation += "/models"
+			if !kbDecision { // a decision's operation and subject are set above
+				operation = r.Method + " " + seg[0]
+				if len(seg) > 1 {
+					operation += "/{}"
+				}
+				if len(seg) > 2 {
+					operation += "/models"
+				}
 			}
 			if kbDecision {
-				operation, subject = "POST kb/submissions/{}/"+seg[3], seg[2]
-				if !s.remoteAuth.allowDecision() {
+				if wait := s.remoteAuth.allowDecision(); wait > 0 {
 					s.remoteAuth.mu.Lock()
 					err = s.remoteAuth.auditOperation("mutation", "limited", ip, rid, operation, subject)
 					s.remoteAuth.mu.Unlock()
@@ -563,7 +608,8 @@ func (s *server) remoteSettingsHandler(c remoteSettingsConfig) http.Handler {
 						deny(500)
 						return
 					}
-					writeError(w, rid, 429, "Too many review decisions: wait a few minutes.")
+					w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
+					writeError(w, rid, 429, "Too many review decisions in a short time: wait a few minutes.")
 					return
 				}
 			}

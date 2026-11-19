@@ -264,6 +264,9 @@ const S = {
   rvConfirmAccept: ["Publish exactly this text to everyone who can read %s?", "Objavim natanko to besedilo vsem, ki lahko berejo %s?"], rvConfirmReject: ["Reject this submission?", "Zavrnem ta prispevek?"],
   rvProject: ["Project", "Projekt"], rvTeam: ["Team", "Ekipa"], rvAuthor: ["Author", "Avtor"], rvClass: ["Class", "Razred"], rvKind: ["Kind", "Vrsta"], rvReceived: ["Received", "Prejeto"],
   rvReplaces: ["Replaces note %s", "Nadomesti zapisek %s"], rvVersion: ["Version %s", "Različica %s"], rvReasonIs: ["Reason", "Razlog"],
+  rvBytes: ["%s of 1024 bytes", "%s od 1024 bajtov"], rvTooLong: ["The reason is longer than 1024 bytes: shorten it.", "Razlog je daljši od 1024 bajtov: skrajšaj ga."],
+  rvReplaceNote: ["This submission replaces note %s. Accepting it overwrites that note, and its current text cannot be shown here (the server's kb review does not show it either), so it cannot be accepted on this page: compare it first (read the note with minigw note read %s as a member of the project, or on the server) and accept it there, or reject it here.", "Ta prispevek nadomesti zapisek %s. Sprejem prepiše zapisek, njegovega trenutnega besedila tu ni mogoče prikazati (tudi kb review na strežniku ga ne), zato ga na tej strani ni mogoče sprejeti: najprej ga primerjaj (zapisek preberi z minigw note read %s kot član projekta, ali na strežniku) in ga sprejmi tam, ali pa ga tu zavrni."],
+  rvLimited: ["Too many decisions in a short time: continue after %s.", "Preveč odločitev v kratkem času: nadaljuj po %s."],
   rvAccepted: ["Accepted and published.", "Sprejeto in objavljeno."], rvRejected: ["Rejected.", "Zavrnjeno."],
   rvChanged: ["The submission changed since you read it: review it again.", "Prispevek se je spremenil, odkar si ga prebral: preglej ga znova."],
   roUnavailable: ["The project database is not available.", "Projektna zbirka ni na voljo."],
@@ -1983,6 +1986,8 @@ const pages = {
   },
   async remoteReview() {  // review of pending KB submissions: the exact version read is the one accepted; text only, nothing built from data but textContent
     const box = el("div");
+    const drafts = new Map();  // the typed reason per submission: kept when a decision fails or the view changes
+    const bytes = s => new TextEncoder().encode(s).length;
     const rvErr = e => e.message.startsWith("The project database is not available") ? t("roUnavailable") : e.message === "HTTP 404" ? t("roProxyOld") : e.message.includes("changed since you read it") ? t("rvChanged") : e.message;
     const text = (cls, s) => el("div", {class: cls, dir: "ltr", textContent: s});
     const checkText = v => v.reviewCheck === "ok" ? t("rvOk") : v.reviewCheck === "hidden" ? t("rvHiddenCheck") : t("rvLongCheck");
@@ -2006,13 +2011,26 @@ const pages = {
     async function showDetail(id, msg) {
       let v;
       try { v = await api("GET", "/kb/submissions/" + encodeURIComponent(id)); } catch (e) { if (!SESSION) return; set(note(rvErr(e)), buttons(button(t("rvBack"), () => showList()))); return; }
-      const reason = el("textarea", {class: "rv-reason", maxLength: 1024, placeholder: t("rvReason")});
+      // one line like the Mac panel: pasted line breaks and tabs become spaces; the counter is in bytes (what the server limits)
+      const reason = el("input", {type: "text", class: "rv-reason", placeholder: t("rvReason"), value: drafts.get(v.id) || ""});
+      const counter = note(), rejectBtn = button(t("rvReject"), () => confirm(v, false, reason.value));
+      const sync = () => {
+        reason.value = reason.value.replace(/\p{Cc}/gu, " ");
+        drafts.set(v.id, reason.value);
+        const n = bytes(reason.value);
+        counter.textContent = n > 1024 ? t("rvTooLong") : t("rvBytes", n);
+        counter.className = n > 1024 ? "note err" : "note";
+        rejectBtn.disabled = n > 1024;
+      };
+      reason.addEventListener("input", sync);
       // no Accept at all unless the core's review read says "ok" (hidden characters are refused by the core, long ones are reviewed on the server)
       set(msg ? note(msg) : null, text("rv-title", v.title), meta(v), text("rv-text", v.body || ""),
-        v.hidden > 0 ? note(t("rvHidden", v.hidden)) : null, v.reviewCheck === "long" ? note(t("rvLong")) : null, reason,
+        v.hidden > 0 ? note(t("rvHidden", v.hidden)) : null, v.reviewCheck === "long" ? note(t("rvLong")) : null, v.isReplacement ? note(t("rvReplaceNote", v.replaces, v.replaces)) : null,
+        reason, counter,
         el("div", {class: "rv-buttons"}, button(t("rvBack"), () => showList()),
-          v.reviewCheck === "ok" ? button(t("rvAccept"), () => confirm(v, true, "")) : null,
-          button(t("rvReject"), () => confirm(v, false, reason.value))));
+          v.reviewCheck === "ok" && !v.isReplacement ? button(t("rvAccept"), () => confirm(v, true, "")) : null,  // no Accept for a hidden, long or replacing submission
+          rejectBtn));
+      sync();
     }
     function confirm(v, accept, why) {
       const status = note();
@@ -2021,12 +2039,24 @@ const pages = {
       go.addEventListener("click", async () => {
         go.disabled = cancel.disabled = true;  // at once: a second click sends nothing; on any error the decision buttons stay disabled (no retry)
         try {
-          await api("POST", "/kb/submissions/" + encodeURIComponent(v.id) + (accept ? "/accept" : "/reject"), accept ? {reviewHash: v.reviewHash} : {reason: why});
+          // a plain fetch, not api(): the 429 needs its Retry-After header
+          const r = await fetch("/minigw/admin/v1/kb/submissions/" + encodeURIComponent(v.id) + (accept ? "/accept" : "/reject"), {method: "POST", credentials: "omit", redirect: "error",
+            headers: settingsRequestHeaders(), body: JSON.stringify(accept ? {reviewHash: v.reviewHash} : {reason: why})});
+          const j = await r.json().catch(() => ({}));
+          if (r.status === 401) { remoteExpired(); return; }
+          if (!r.ok) {
+            const err = new Error((j.error && j.error.message) || ("HTTP " + r.status));
+            err.status = r.status; err.retry = Number(r.headers.get("Retry-After")) || 0;
+            throw err;
+          }
+          drafts.delete(v.id);
           await showList(t(accept ? "rvAccepted" : "rvRejected"));
         } catch (e) {
           if (!SESSION) return;
           if (e.message.includes("changed since you read it")) { showDetail(v.id, t("rvChanged")); return; }  // a fresh read, then decide again
-          status.textContent = e.message; status.className = "note err"; cancel.disabled = false;
+          // the confirmation view and the typed reason stay; the decision button stays disabled (no retry), Cancel goes back to the detail
+          status.textContent = e.status === 429 && e.retry ? t("rvLimited", new Date(Date.now() + e.retry * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})) : rvErr(e);
+          status.className = "note err"; cancel.disabled = false;
         }
       });
       set(el("h3", {textContent: accept ? t("rvConfirmAccept", v.scopeName) : t("rvConfirmReject")}), text("rv-title", v.title), meta(v),

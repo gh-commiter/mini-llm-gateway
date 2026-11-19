@@ -165,7 +165,8 @@ const (
 )
 
 // allowDecision counts one review decision for the whole listener: at most remoteDecisionLimit per remoteDecisionWindow.
-func (a *remoteAuth) allowDecision() bool {
+// It returns 0 when the decision may go on, else how long until the oldest counted one leaves the window.
+func (a *remoteAuth) allowDecision() time.Duration {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := a.now()
@@ -177,10 +178,10 @@ func (a *remoteAuth) allowDecision() bool {
 	}
 	a.decisions = keep
 	if len(a.decisions) >= remoteDecisionLimit {
-		return false
+		return a.decisions[0].Add(remoteDecisionWindow).Sub(now)
 	}
 	a.decisions = append(a.decisions, now)
-	return true
+	return 0
 }
 
 func newRemoteAuth(config string, now func() time.Time) (*remoteAuth, error) {
