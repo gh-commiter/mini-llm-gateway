@@ -508,7 +508,7 @@ func searchLine(v core.SearchHit) string {
 	if v.From != "" {
 		from = "  from " + v.From
 	}
-	return clean(fmt.Sprintf("%d  %s  %s  %s  %s%s%s\n%s", v.ID, v.Title, subjectOf(v.Project, v.Team), v.Class, noteTime(v.Updated), kindSuffix(v.EntryKind), from, v.Snippet))
+	return clean(fmt.Sprintf("%d  %s  %s  %s  %s%s%s\n%s", v.ID, oneLine(v.Title), subjectOf(v.Project, v.Team), v.Class, noteTime(v.Updated), kindSuffix(v.EntryKind), from, v.Snippet))
 }
 
 // kbFAQ: minigw kb faq [<project>] [--json]. The pages are followed (at most faqPages).
@@ -591,7 +591,7 @@ func (e *projectEnv) kbFAQ(args []string) error {
 		if v.From != "" { // another gateway's entry: its answer starts with the marker line
 			from = "  from " + v.From
 		}
-		e.say(clean(fmt.Sprintf("%d  %s  %s  %s%s", v.ID, v.Title, v.Class, noteTime(v.Updated), from)))
+		e.say(clean(fmt.Sprintf("%d  %s  %s  %s%s", v.ID, oneLine(v.Title), v.Class, noteTime(v.Updated), from)))
 		e.say(clean(v.Answer))
 	}
 	if len(entries) == 0 {

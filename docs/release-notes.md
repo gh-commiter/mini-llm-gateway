@@ -10,6 +10,8 @@
 
 ### Known problems
 - There is still no command to remove one saved version, and the review of a replacement does not show before and after yet.
+- Revision numbers are kept, so a gap in the numbers of `note history` shows that versions exist which you may not read or which were not kept; nothing else about them is shown.
+- Within a project the older saved versions of any note go first when the project's history budget is reached, so one member who edits in a loop can push out the older saved versions of other notes in the same project (issue #164).
 
 ## 0.8.6
 

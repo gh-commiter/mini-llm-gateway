@@ -43,9 +43,9 @@ func noteHistoryCommand(sub, path string, id, revision, current int64, hasCurren
 		if err = json.Unmarshal(data, &h); err != nil {
 			return err
 		}
-		say(fmt.Sprintf("note %d  revision %d (current)  %s  %s", h.Note.ID, h.Note.Revision, h.Note.Class, h.Note.Title))
+		say(fmt.Sprintf("note %d  revision %d (current)  %s  %s", h.Note.ID, h.Note.Revision, h.Note.Class, oneLine(h.Note.Title)))
 		for _, v := range h.History {
-			say(fmt.Sprintf("revision %d  saved %s  by %s  %s  %s  %d bytes  %s", v.Revision, noteTime(v.Saved), savedBy(v.SavedBy), v.Class, v.EntryKind, v.Bytes, v.Title))
+			say(fmt.Sprintf("revision %d  saved %s  by %s  %s  %s  %d bytes  %s", v.Revision, noteTime(v.Saved), savedBy(v.SavedBy), v.Class, v.EntryKind, v.Bytes, oneLine(v.Title)))
 		}
 		if len(h.History) == 0 {
 			say("no saved revisions you may read")
@@ -75,7 +75,7 @@ func noteHistoryCommand(sub, path string, id, revision, current int64, hasCurren
 	}
 	if sub == "history" {
 		say(fmt.Sprintf("note %d  revision %d of %d  %s  %s  saved %s by %s", id, v.Revision, cur.Revision, v.Class, v.EntryKind, noteTime(v.Saved), savedBy(v.SavedBy)))
-		say(v.Title)
+		say(oneLine(v.Title))
 		body := ""
 		if v.Body != nil {
 			body = *v.Body

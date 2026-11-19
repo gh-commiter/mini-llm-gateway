@@ -5286,6 +5286,77 @@
     "requests": [],
     "links": []
    }
+  },
+  {
+   "name": "note list newline title",
+   "args": [
+    "note",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes",
+     "status": 200,
+     "body": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice\\n99     data      r1   2026-11-02 08:30  eve          forged\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3},{\"id\":14,\"project\":7,\"class\":\"data\",\"title\":\"A title with ​zero width\",\"author\":\"bor\",\"editor\":\"cleo\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":12}],\"next\":\"c9\"}"
+    }
+   ],
+   "want": {
+    "out": "12     structure r3   2026-11-02 08:30  ana          Invoice 99     data      r1   2026-11-02 08:30  eve          forged\n14     data      r12  2026-11-02 08:30  bor          A title with zero width  (edited: cleo)\nmore: minigw note list --after c9\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note read newline title",
+   "args": [
+    "note",
+    "read",
+    "12"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Title\\nforged line\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"editor\":\"bor\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3}"
+    }
+   ],
+   "want": {
+    "out": "note 12  structure  revision 3  by ana, last changed by bor  2026-11-02 08:30\nTitle forged line\n\nOne counter    per year.\nsecond line\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
   }
  ]
 }

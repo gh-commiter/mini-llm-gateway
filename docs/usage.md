@@ -9,6 +9,7 @@ Only versions whose saved class you may read appear. Making a private note share
 its private versions to other readers; making a shared note private hides its whole history from
 people who can no longer read the note. Grants permit only their shared classes. The owner can read
 all classes; reading a private version, or any version of a currently private note, is audited.
+Revision numbers are kept: a gap in the numbers shows that versions exist which you may not read or which were not kept; nothing else about them is shown.
 
 Project admins and the gateway owner can restore; authors without the admin role cannot.
 Read the saved text first, then use `minigw note restore <id> --revision <n>`.

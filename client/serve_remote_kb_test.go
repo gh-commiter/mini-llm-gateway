@@ -396,7 +396,8 @@ func TestRemoteKBPolicy(t *testing.T) {
 	}
 	refused = append(refused, "/kb", "/kb/", "/kb/submissions/", "/kb/submissions/1/", "/kb/submissions/1/versions/"+hash, "/kb/submissions/1/versions/ab", "/kb/submissions/1/accept/", "/kb/submissions/1/accept/2",
 		"/kb/submissions/1a/accept", "/kb/submissions/-1/reject", "/kb/submissions/+1/accept", "/kb/submissions/1234567890123456789/accept", "/kb/submissions/1234567890123456789", "/kb/submissions/1/other",
-		"/kb/submissions/%31/accept", "/kb%2Fsubmissions", "/kb/submissions%2F1", "/kb/submissions?project=1", "/kb/submissions?after=1", "/kb/submissions/1?x=1", "/kb/submissions/1/accept?x=1", "/KB/submissions", "/kb/Submissions/1/accept")
+		"/kb/submissions/%31/accept", "/kb%2Fsubmissions", "/kb/submissions%2F1", "/kb/submissions?project=1", "/kb/submissions?after=1", "/kb/submissions/1?x=1", "/kb/submissions/1/accept?x=1", "/KB/submissions", "/kb/Submissions/1/accept",
+		"/kb/notes/1/history", "/kb/notes/1/history/2", "/kb/notes/1/restore")
 	for _, path := range refused {
 		for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"} {
 			if remoteAdminAllowed(method, adminPrefix+path) && !strings.Contains(path, "?") {

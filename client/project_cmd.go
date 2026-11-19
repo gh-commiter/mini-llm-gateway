@@ -754,7 +754,7 @@ func (e *projectEnv) note(args []string) error {
 		}
 		json.Unmarshal(data, &pg)
 		for _, n := range pg.Notes {
-			e.say(clean(fmt.Sprintf("%-6d %-9s r%-3d %s  %-12s %s", n.ID, n.Class, n.Revision, noteTime(n.Updated), n.Author, n.Title+editedBy(n, "  (edited: %s)"))))
+			e.say(clean(fmt.Sprintf("%-6d %-9s r%-3d %s  %-12s %s", n.ID, n.Class, n.Revision, noteTime(n.Updated), n.Author, oneLine(n.Title)+editedBy(n, "  (edited: %s)"))))
 		}
 		if len(pg.Notes) == 0 {
 			e.say("no notes")
@@ -776,7 +776,7 @@ func (e *projectEnv) note(args []string) error {
 			if n.Upstream != "" {
 				quote = "> "
 			}
-			e.say(clean(fmt.Sprintf("note %d  %s  revision %d  by %s%s  %s\n%s%s\n", n.ID, n.Class, n.Revision, n.Author, editedBy(n, ", last changed by %s"), noteTime(n.Updated), quote, n.Title)))
+			e.say(clean(fmt.Sprintf("note %d  %s  revision %d  by %s%s  %s\n%s%s\n", n.ID, n.Class, n.Revision, n.Author, editedBy(n, ", last changed by %s"), noteTime(n.Updated), quote, oneLine(n.Title))))
 			fmt.Fprint(e.out, clean(strings.ReplaceAll(body, "\t", "    ")))
 			if !strings.HasSuffix(body, "\n") {
 				e.say("")

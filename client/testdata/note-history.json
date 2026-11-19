@@ -373,6 +373,7 @@
    }
   },
   {
+   "tty": true,
    "name": "terminal yes",
    "args": [
     "note",
@@ -381,6 +382,7 @@
     "--revision",
     "2"
    ],
+   "stdin": "y\n",
    "link": {
     "slug": "orchard",
     "project": 3,
@@ -430,11 +432,10 @@
     "links": [
      "orchard:3@proj"
     ]
-   },
-   "tty": true,
-   "stdin": "y\n"
+   }
   },
   {
+   "tty": true,
    "name": "terminal no",
    "args": [
     "note",
@@ -443,6 +444,7 @@
     "--revision",
     "2"
    ],
+   "stdin": "n\n",
    "link": {
     "slug": "orchard",
     "project": 3,
@@ -481,9 +483,7 @@
     "links": [
      "orchard:3@proj"
     ]
-   },
-   "tty": true,
-   "stdin": "n\n"
+   }
   },
   {
    "name": "current",
@@ -864,6 +864,91 @@
      "orchard:3@proj"
     ]
    }
+  },
+  {
+   "name": "newline title forges a row",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  18 bytes  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "newline title in one revision",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--revision",
+    "2"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 2 of 4  structure  finding  saved 2026-11-14 10:00 by Robin\nPlain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nOld body\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
   }
  ],
  "owner": [
@@ -1027,6 +1112,7 @@
     "revision": 2,
     "tty": true
    },
+   "stdin": "y\n",
    "responses": [
     {
      "match": "GET /kb/notes/7",
@@ -1065,8 +1151,7 @@
       "{\"revision\":2,\"expectedRevision\":4,\"class\":\"data\"}"
      ]
     ]
-   },
-   "stdin": "y\n"
+   }
   },
   {
    "name": "owner terminal no",
@@ -1079,6 +1164,7 @@
     "revision": 2,
     "tty": true
    },
+   "stdin": "n\n",
    "responses": [
     {
      "match": "GET /kb/notes/7",
@@ -1107,8 +1193,7 @@
       ""
      ]
     ]
-   },
-   "stdin": "n\n"
+   }
   },
   {
    "name": "owner no terminal",
@@ -1321,6 +1406,34 @@
     "err": "minigw: --current must be positive\n",
     "exit": 1,
     "requests": []
+   }
+  },
+  {
+   "name": "owner newline title forges a row",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /kb/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Plain\\nrevision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  18 bytes  Plain revision 9  saved 2026-11-14 10:00  by Admin  data  finding  1 bytes  forged\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7/history",
+      ""
+     ]
+    ]
    }
   }
  ]
