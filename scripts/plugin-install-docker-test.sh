@@ -149,6 +149,9 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   cmp -s $RELEXE $GB/minigw.exe && [[ -s $GB/.verified && -z "$(find $GB \( -name '*.new.*' -o -name '*.chk.*' -o -name '.aside.lock' -o -name '*.keep' \))" ]] || fail "10 S8 $i: leftovers: $(ls -A $GB)"
   nobare "10 S8 $i"
 done
+# 10j: lastna kopija je (zadnja izdaja) starejša od MIN, nameščenega ni: stavek pove, da je to lastna kopija, ne nameščeni minigw
+clear10; out=$(winrun wold); print -r -- $out
+[[ $out == *"using the plugin's own copy of minigw 0.5.20 (the latest release), older than $MINV which this plugin's commands need"* && $out != *"using the installed minigw"* ]] || fail "10j: the sentence does not say it is the plugin's own copy: $out"
 print "ok 10: Windows: the script never writes bin/minigw; own exe or the Go launcher; one mv; kills at every step stay verifiable"
 
 docker run --rm -v $T:/t:ro debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 sh -c '
