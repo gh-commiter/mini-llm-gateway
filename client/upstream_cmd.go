@@ -145,9 +145,6 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			fail("--read and --no-read together: choose one")
 		}
 		req := map[string]any{"team": isTeam, "classes": u.class, "withPrivate": u.withPrivate}
-		if remote != "" { // not told: the gateway keeps the destination of an existing link, or uses the same name there for a new one
-			req["remote"] = remote
-		}
 		if u.auto {
 			req["auto"] = true
 		} else if u.manual {
@@ -179,6 +176,22 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		if reading || pulling {
 			req["readOnly"] = !pushFlags // an existing link keeps its push settings
 		}
+		if remote == "" { // not told: an existing link keeps its destination, a first link uses the same name there. Always sent, so that an older
+			// gateway (which would default a missing one to the local name and retarget the link) does the same.
+			q := "?project=" + strconv.FormatInt(id, 10)
+			if isTeam {
+				q = "?team=" + strconv.FormatInt(id, 10)
+			}
+			var cur struct{ Links []upLink }
+			a.do("GET", "/upstreams"+q, nil, &cur) // a failing read ends the command: no guessing
+			remote = local
+			for _, l := range cur.Links {
+				if l.Upstream == name && l.Remote != "" {
+					remote = l.Remote
+				}
+			}
+		}
+		req["remote"] = remote
 		var linked struct {
 			ReadOff bool
 			Remote  string
@@ -186,8 +199,6 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		a.do("PUT", fmt.Sprintf("/upstreams/%s/links/%d", url.PathEscape(name), id), req, &linked)
 		if linked.Remote != "" {
 			remote = linked.Remote
-		} else if remote == "" {
-			remote = local
 		}
 		if linked.ReadOff {
 			defer say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach"))
