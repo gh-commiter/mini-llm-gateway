@@ -10,6 +10,32 @@ import Testing
 
 private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
+@Suite struct UpstreamLinkDestination {
+    /// Version skew: a gateway from before this release defaults a missing `remote` to the LOCAL name and has no destination guard, so a command
+    /// that omitted it would silently retarget an existing link. The CLI therefore always sends `remote`: the destination of the existing link
+    /// (read first), else the local name. Checked over every `link` case of the shared fixture (twin of Go's TestLinkCommandNeverSendsAMissingDestination).
+    @Test func linkCommandNeverSendsAMissingDestination() throws {
+        let fx = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("client/testdata/upstream-commands.json"))) as! [String: Any]
+        var seen = 0
+        for c in fx["cases"] as! [[String: Any]] {
+            let args = c["args"] as! [String], name = c["name"] as! String
+            guard args.count >= 2, args[1] == "link", let want = c["want"] as? [String: Any] else { continue }
+            let opts = c["opts"] as? [String: Any] ?? [:]
+            for r in want["requests"] as! [[String]] where r[0] == "PUT" {
+                seen += 1
+                let body = try #require(JSONSerialization.jsonObject(with: Data(r[2].utf8)) as? [String: Any], "\(name): \(r[2])")
+                let remote = body["remote"] as? String ?? ""
+                #expect(!remote.isEmpty, "\(name): an old gateway would use the local name: \(r[2])")
+                if name == "link auto on an existing link keeps its destination" { #expect(remote == "shared", "\(name): \(r[2])") }
+                if name.hasPrefix("link ") && !name.contains("existing") && (opts["remoteProject"] as? String ?? "").isEmpty && (opts["remoteTeam"] as? String ?? "").isEmpty && body["team"] as? Bool == false {
+                    #expect(remote == "shop", "\(name): a first link uses the local name: \(r[2])")
+                }
+            }
+        }
+        #expect(seen >= 10, "only \(seen) link requests")
+    }
+}
+
 @Suite struct UpstreamCommandParity {
     @Test func everyCommandMatchesTheGoOutput() throws {
         let fx = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("client/testdata/upstream-commands.json"))) as! [String: Any]

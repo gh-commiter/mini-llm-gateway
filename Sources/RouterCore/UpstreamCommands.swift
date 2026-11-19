@@ -78,7 +78,6 @@ extension AdminCommands {
             if o.auto && o.manual { throw fail("--auto and --manual together: choose one") }
             if o.read && o.noRead { throw fail("--read and --no-read together: choose one") }
             var req: [String: Any] = ["team": isTeam, "classes": o.classes, "withPrivate": o.withPrivate]
-            if !remote.isEmpty { req["remote"] = remote }  // not told: the gateway keeps the destination of an existing link, or uses the same name there for a new one
             if o.auto { req["auto"] = true } else if o.manual { req["auto"] = false }
             if !o.mode.isEmpty { req["mode"] = o.mode }
             let reading = o.read || o.noRead || !o.readClass.isEmpty || !o.readSources.isEmpty
@@ -94,8 +93,15 @@ extension AdminCommands {
                 if !o.readSources.isEmpty { req["readSources"] = o.readSources == "none" ? "" : o.readSources }  // omitted keeps; "none" = no extra sources
             }
             if reading || pulling { req["readOnly"] = !pushFlags }  // an existing link keeps its push settings
+            if remote.isEmpty {  // not told: an existing link keeps its destination, a first link uses the same name there; always sent, so that an older
+                // gateway (which would default a missing one to the local name and retarget the link) does the same
+                let cur = try request("GET", "/upstreams" + (isTeam ? "?team=" : "?project=") + String(id))  // a failing read ends the command: no guessing
+                remote = local
+                for l in cur["links"]?.array ?? [] where l.dict["upstream"]?.string == name { if let r = l.dict["remote"]?.string, !r.isEmpty { remote = r } }
+            }
+            req["remote"] = remote
             let linked = try request("PUT", path, req)
-            if let r = linked["remote"]?.string, !r.isEmpty { remote = r } else if remote.isEmpty { remote = local }
+            if let r = linked["remote"]?.string, !r.isEmpty { remote = r }
             defer { if linked["readOff"]?.bool == true { say(clean("reading was turned off and the mirror deleted: the link now reaches another project or team than the one you accepted; repeat with --read --accept-reach to accept the new reach")) } }
             if pulling && !reading && !pushFlags {
                 say(clean("\(local) -> \(name): a link with reading on is pulled every \(o.pullEvery) minutes"))
