@@ -187,15 +187,45 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     #expect(git(root.path, "git ls-files -s .envrc").isEmpty, "still in the index")
 }
 
-// The index listing is cut (small output limit): no reset, and the owner is told that paths may be staged that are not listed.
-@Test func gitWatchLeavesTheIndexAloneWhenTheListingIsCut() throws {
+// The index listing is cut (small output limit): the protected paths are read on their own, so a big index does not switch the protection off.
+@Test func gitWatchStillUnstagesWhenTheListingIsCut() throws {
     let (root, state) = try watched("cut1"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     var w = try #require(GitWatch.begin(root.path, stateDir: state))
-    _ = git(root.path, "echo 'echo hi' > .envrc; for i in $(seq 1 30); do echo x > file-with-a-long-name-$i.txt; done; git add .")
+    _ = git(root.path, "echo 'echo hi' > .envrc; mkdir .githooks; echo x > .githooks/pre-commit; for i in $(seq 1 30); do echo x > file-with-a-long-name-$i.txt; done; git add .")
     w.maxOutput = 300
     let out = w.finish().joined(separator: "\n")
-    #expect(out.contains("NOT removed from the index") && out.contains("may be staged that are not listed"), "\(out)")
+    #expect(out.contains("INCOMPLETE") && out.contains("index not read in full") && out.contains("removed from the index for you"), "\(out)")
+    #expect(git(root.path, "git ls-files -s .envrc .githooks").isEmpty, "a protected path is still in the index: \(out)")
+}
+
+// Every read fails (output limit of 5 bytes): no way to tell what is staged, nothing is removed.
+@Test func gitWatchLeavesTheIndexAloneWhenNoReadWorks() throws {
+    let (root, state) = try watched("cut2"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    var w = try #require(GitWatch.begin(root.path, stateDir: state))
+    _ = git(root.path, "echo 'echo hi' > .envrc; git add .envrc")
+    w.maxOutput = 5
+    let out = w.finish().joined(separator: "\n")
+    #expect(out.contains("may be staged that are not listed"), "\(out)")
     #expect(!git(root.path, "git ls-files -s .envrc").isEmpty, "the watcher took a path out of the index: \(out)")
+}
+
+// G1: a refs read or a history read that hits the output limit keeps INCOMPLETE but cannot switch the protection off: the agent decides how many refs and how big a commit is.
+@Test func gitWatchStillUnstagesWhenRefsOrHistoryHitTheLimit() throws {
+    let (root, state) = try watched("lim5"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
+    var w = try #require(GitWatch.begin(root.path, stateDir: state))
+    // many refs: for-each-ref is over the limit; one commit with a long diff-tree listing; then a staged .envrc
+    _ = git(root.path, "for i in $(seq 1 12); do git branch a-branch-with-a-long-name-$i; done; for i in $(seq 1 12); do echo x > a-file-with-a-long-name-$i.txt; done; git add . && git commit -qm many && echo 'echo hi' > .envrc && git add .envrc")
+    w.maxOutput = 600
+    let out = w.finish().joined(separator: "\n")
+    #expect(out.contains("refs not read in full") && out.contains("removed from the index for you"), "\(out)")
+    #expect(git(root.path, "git ls-files -s .envrc").isEmpty, "still in the index: \(out)")
+    let (root2, state2) = try watched("lim6"); defer { try? FileManager.default.removeItem(at: root2); try? FileManager.default.removeItem(atPath: state2) }
+    var w2 = try #require(GitWatch.begin(root2.path, stateDir: state2))
+    _ = git(root2.path, "for i in $(seq 1 12); do echo x > a-file-with-a-long-name-$i.txt; done; git add . && git commit -qm many && git rm -q a-file-with-a-long-name-*.txt && git commit -qm gone && echo 'echo hi' > .envrc && git add .envrc")
+    w2.maxOutput = 400
+    let out2 = w2.finish().joined(separator: "\n")
+    #expect(out2.contains("files of a commit not read in full") && out2.contains("removed from the index for you"), "\(out2)")
+    #expect(git(root2.path, "git ls-files -s .envrc").isEmpty, "still in the index: \(out2)")
 }
 
 @Test func gitWatchSaysWhenALimitWasReached() throws {

@@ -49,6 +49,8 @@ public struct GitWatch: Sendable {
 
     static let names = 20  // names shown per list
     static let keepIncomplete: TimeInterval = 7 * 24 * 3600  // how long a baseline that could not be compared in full is kept
+    /// Pathspecs that select every path that can be protected, and more (a protected name starts with "." or is a Windows short name with "~"; a leading HFS-ignorable character before the dot is the known gap).
+    static let candidateSpecs = [":(glob)**/.*", ":(glob)**/.*/**", ":(glob)**/*~*", ":(glob)**/*~*/**"]
     static let maxCommitsDefault = 200, maxOutputDefault = 1 << 20
     static func list(_ l: [String]) -> String {
         let s = l.sorted()
@@ -157,23 +159,37 @@ public struct GitWatch: Sendable {
         let refs = git(root, maxOutput: maxOutput, ["for-each-ref", "--format=%(refname) %(objectname)"])  // every namespace: heads, tags, stash, notes, replace, packed refs too
         guard refs.ok || !refs.out.isEmpty else { return nil }
         var s = State()
-        if !refs.ok { s.incomplete.append("refs not read in full"); s.unreliable = true }
+        if !refs.ok { s.incomplete.append("refs not read in full") }  // refs and history cannot make the index picture wrong: INCOMPLETE, but the reset stays
         for l in refs.out.split(separator: "\n") { let p = l.split(separator: " ", maxSplits: 1).map(String.init); if p.count == 2 { s.refs[p[0]] = p[1] } }
         let h = git(root, maxOutput: maxOutput, ["symbolic-ref", "-q", "--short", "HEAD"])
         if h.ok { s.head = h.out.trimmingCharacters(in: .whitespacesAndNewlines) }
         let hid = git(root, maxOutput: maxOutput, ["rev-parse", "-q", "--verify", "HEAD"])  // also when HEAD is detached: no ref names that commit
         if hid.ok { s.headId = hid.out.trimmingCharacters(in: .whitespacesAndNewlines) }
         let ls = git(root, maxOutput: maxOutput, ["ls-files", "-s", "-z"])
-        if !ls.ok { s.incomplete.append("index not read in full"); s.unreliable = true; s.indexCut = true }
-        let idx = ls.out
-        s.indexHash = SHA256.hash(data: Data(idx.utf8)).map { String(format: "%02x", $0) }.joined()
-        for e in idx.split(separator: "\0") {
+        if !ls.ok { s.incomplete.append("index not read in full") }
+        func parseIndex(_ out: String) { for e in out.split(separator: "\0") {
             let parts = e.split(separator: "\t", maxSplits: 1).map(String.init)
             if parts.count == 2 { let f = parts[0].split(separator: " ").map(String.init); if f.count == 3 { s.index[parts[1]] = f.joined(separator: " ") } }
-        }
-        let cached = git(root, maxOutput: maxOutput, ["diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z"])
-        if !cached.ok { s.incomplete.append("staged paths not read in full"); s.unreliable = true; s.indexCut = true }
+        } }
+        s.indexHash = SHA256.hash(data: Data(ls.out.utf8)).map { String(format: "%02x", $0) }.joined()
+        parseIndex(ls.out)
+        // The tree HEAD has, resolved once, before `diff --cached`, which then compares the index with that tree id: both reads see the same tree, or the watcher knows it has none.
+        // A HEAD that cannot be resolved in a repository that has commits (a flake once listed a committed .envrc as staged) makes the index picture unreliable: nothing is reset.
+        let tr = git(root, maxOutput: maxOutput, ["rev-parse", "-q", "--verify", "HEAD^{tree}"])
+        let tid = tr.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        let unborn = !hid.ok && refs.ok && refs.out.isEmpty
+        var tree: [String] = []
+        if tr.ok, !tid.isEmpty, tid.allSatisfy({ $0.isHexDigit }) { tree = [tid] } else if !unborn { s.unreliable = true; s.indexCut = true }
+        let diffArgs = ["diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z"] + tree
+        let cached = git(root, maxOutput: maxOutput, diffArgs)
+        if !cached.ok { s.incomplete.append("staged paths not read in full") }
         s.cached = cached.out.split(separator: "\0").map(String.init)
+        if !ls.ok || !cached.ok, !s.unreliable {
+            // The listing was cut: read only the paths that can be protected (a pathspec over-approximation; Sync.isProtected stays the one definition) so that a big index does not switch the protection off.
+            let l2 = git(root, maxOutput: maxOutput, ["ls-files", "-s", "-z", "--"] + Self.candidateSpecs)
+            let c2 = git(root, maxOutput: maxOutput, diffArgs + ["--"] + Self.candidateSpecs)
+            if l2.ok, c2.ok { parseIndex(l2.out); s.cached = Array(Set(s.cached ?? []).union(c2.out.split(separator: "\0").map(String.init))) } else { s.unreliable = true; s.indexCut = true }
+        }
         for n in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] where lstat(root + "/.git/" + n, &st) == 0 { s.pending.append(n) }
         return s
     }
@@ -210,7 +226,7 @@ public struct GitWatch: Sendable {
         if !tips.isEmpty {
             // Framing that a file name cannot forge: the commit ids come alone (rev-list), then each commit's names alone (diff-tree, NUL-separated, raw, no header at all).
             let r = Self.git(root, maxOutput: maxOutput, ["rev-list", "-n", String(maxCommits + 1)] + tips + (old.isEmpty ? [] : ["--not"] + old))
-            if !r.ok { end.incomplete.append("history not read in full"); end.unreliable = true }
+            if !r.ok { end.incomplete.append("history not read in full") }
             var ids = r.out.split(whereSeparator: \.isWhitespace).map(String.init)
             if ids.count > maxCommits {
                 ids = Array(ids.prefix(maxCommits))
@@ -219,7 +235,7 @@ public struct GitWatch: Sendable {
             for id in ids {
                 // -m: a merge is diffed against each parent; --root: the first commit has files too
                 let n = Self.git(root, maxOutput: maxOutput, ["diff-tree", "-m", "-r", "-z", "--raw", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id])
-                if !n.ok { end.incomplete.append("files of a commit not read in full"); end.unreliable = true }
+                if !n.ok { end.incomplete.append("files of a commit not read in full") }
                 let (files, modes) = Self.parseRaw(n.out)
                 commits.append(Commit(id: id, files: files, modes: modes))
             }

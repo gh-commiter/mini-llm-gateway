@@ -730,3 +730,65 @@ func TestParseGitRawReportsLinksAndExecutablesAddedOrDeleted(t *testing.T) {
 		t.Errorf("%v %v", files, modes)
 	}
 }
+
+// G1: a cut index listing, a refs read and a history read over the output limit keep INCOMPLETE but cannot switch the protection off; an unresolvable HEAD or no working read can.
+func TestGitWatchResetsWhenOnlyTheLimitsWereReached(t *testing.T) {
+	defer func(o int64) { gitWatchMaxOutput = o }(gitWatchMaxOutput)
+	stage := func(t *testing.T, root string) {
+		os.WriteFile(filepath.Join(root, ".envrc"), []byte("echo hi"), 0o644)
+		gitIn(t, root, "add", ".envrc")
+	}
+	t.Run("listing cut", func(t *testing.T) {
+		root := watchRepo(t)
+		w := gitWatchStart(root)
+		for i := 0; i < 30; i++ {
+			os.WriteFile(filepath.Join(root, fmt.Sprintf("file-with-a-long-name-%02d.txt", i)), []byte("x"), 0o644)
+		}
+		stage(t, root)
+		gitIn(t, root, "add", ".")
+		gitWatchMaxOutput = 300
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "INCOMPLETE", "index not read in full", "removed from the index for you")
+		if gitIn(t, root, "ls-files", "-s", ".envrc") != "" {
+			t.Errorf("still in the index:\n%s", out)
+		}
+	})
+	t.Run("refs cut", func(t *testing.T) {
+		root := watchRepo(t)
+		w := gitWatchStart(root)
+		for i := 0; i < 12; i++ {
+			gitIn(t, root, "branch", fmt.Sprintf("a-branch-with-a-long-name-%d", i))
+		}
+		stage(t, root)
+		gitWatchMaxOutput = 600
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "refs not read in full", "removed from the index for you")
+		if gitIn(t, root, "ls-files", "-s", ".envrc") != "" {
+			t.Errorf("still in the index:\n%s", out)
+		}
+	})
+	t.Run("no read works", func(t *testing.T) {
+		root := watchRepo(t)
+		w := gitWatchStart(root)
+		stage(t, root)
+		gitWatchMaxOutput = 5
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "may be staged that are not listed")
+		if gitIn(t, root, "ls-files", "-s", ".envrc") == "" {
+			t.Errorf("the watcher took a path out of the index:\n%s", out)
+		}
+	})
+	t.Run("HEAD does not resolve", func(t *testing.T) {
+		root := watchRepo(t)
+		gitWatchMaxOutput = 1 << 20
+		w := gitWatchStart(root)
+		gitIn(t, root, "branch", "other")
+		stage(t, root)
+		gitIn(t, root, "symbolic-ref", "HEAD", "refs/heads/ghost")
+		out := captureStderr(t, func() { w.report(true) })
+		wantAll(t, out, "NOT removed from the index")
+		if gitIn(t, root, "ls-files", "-s", ".envrc") == "" {
+			t.Errorf("the watcher took a path out of the index:\n%s", out)
+		}
+	})
+}

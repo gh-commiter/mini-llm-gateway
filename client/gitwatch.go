@@ -46,6 +46,10 @@ type gitCommit struct {
 	Modes []string `json:"modes"` // "path old->new": the file mode or type changed in this commit (0.7.1: a typechange, 120000 -> 100644, is named)
 }
 
+// gitWatchCandidateSpecs: pathspecs that select every path that can be protected, and more (a protected name starts with "." or is a Windows short name with "~"; a leading
+// HFS-ignorable character before the dot is the known gap). protectedPath stays the one definition.
+var gitWatchCandidateSpecs = []string{":(glob)**/.*", ":(glob)**/.*/**", ":(glob)**/*~*", ":(glob)**/*~*/**"}
+
 const gitWatchNames = 20 // names shown per list
 
 var (
@@ -280,13 +284,12 @@ func gitWatchState(root string) (gitState, bool) {
 	if fi, err := os.Lstat(filepath.Join(root, ".git")); err != nil || !fi.IsDir() {
 		return st, false
 	}
-	refs, ok := gitWatchRun(root, "", "for-each-ref", "--format=%(refname) %(objectname)") // every namespace: heads, tags, stash, notes, replace, packed refs too
-	if !ok && refs == "" {
+	refs, refsOK := gitWatchRun(root, "", "for-each-ref", "--format=%(refname) %(objectname)") // every namespace: heads, tags, stash, notes, replace, packed refs too
+	if !refsOK && refs == "" {
 		return st, false
 	}
-	if !ok {
-		st.Incomplete = append(st.Incomplete, "refs not read in full")
-		st.Unreliable = true
+	if !refsOK {
+		st.Incomplete = append(st.Incomplete, "refs not read in full") // refs and history cannot make the index picture wrong: INCOMPLETE, but the reset stays
 	}
 	for _, l := range strings.Split(refs, "\n") {
 		if r, id, ok := strings.Cut(l, " "); ok {
@@ -296,32 +299,60 @@ func gitWatchState(root string) (gitState, bool) {
 	if h, ok := gitWatchRun(root, "", "symbolic-ref", "-q", "--short", "HEAD"); ok {
 		st.Head = strings.TrimSpace(h)
 	}
-	if id, ok := gitWatchRun(root, "", "rev-parse", "-q", "--verify", "HEAD"); ok { // also when HEAD is detached: no ref names that commit
+	id, headOK := gitWatchRun(root, "", "rev-parse", "-q", "--verify", "HEAD")
+	if headOK { // also when HEAD is detached: no ref names that commit
 		st.HeadID = strings.TrimSpace(id)
 	}
 	idx, ok := gitWatchRun(root, "", "ls-files", "-s", "-z")
 	if !ok {
 		st.Incomplete = append(st.Incomplete, "index not read in full")
-		st.Unreliable, st.IndexCut = true, true
 	}
 	sum := sha256.Sum256([]byte(idx))
 	st.IndexHash = hex.EncodeToString(sum[:])
-	for _, e := range strings.Split(idx, "\x00") {
-		if meta, p, ok := strings.Cut(e, "\t"); ok {
-			if f := strings.Fields(meta); len(f) == 3 {
-				st.Index[p] = f[0] + " " + f[1] + " " + f[2]
+	parseIndex := func(out string) {
+		for _, e := range strings.Split(out, "\x00") {
+			if meta, p, ok := strings.Cut(e, "\t"); ok {
+				if f := strings.Fields(meta); len(f) == 3 {
+					st.Index[p] = f[0] + " " + f[1] + " " + f[2]
+				}
 			}
 		}
 	}
-	cached, ok := gitWatchRun(root, "", "diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z")
-	if !ok {
-		st.Incomplete = append(st.Incomplete, "staged paths not read in full")
+	parseIndex(idx)
+	// The tree HEAD has, resolved once, before `diff --cached`, which then compares the index with that tree id: both reads see the same tree, or the watcher knows it has none.
+	// A HEAD that cannot be resolved in a repository that has commits (a flake once listed a committed .envrc as staged) makes the index picture unreliable: nothing is reset.
+	tr, trOK := gitWatchRun(root, "", "rev-parse", "-q", "--verify", "HEAD^{tree}")
+	tid := strings.TrimSpace(tr)
+	unborn := !headOK && refsOK && refs == ""
+	var tree []string
+	if _, err := hex.DecodeString(tid); trOK && tid != "" && err == nil {
+		tree = []string{tid}
+	} else if !unborn {
 		st.Unreliable, st.IndexCut = true, true
 	}
+	diffArgs := append([]string{"diff", "--cached", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "-z"}, tree...)
+	cached, cachedOK := gitWatchRun(root, "", diffArgs...)
+	if !cachedOK {
+		st.Incomplete = append(st.Incomplete, "staged paths not read in full")
+	}
 	st.Cached = []string{}
-	for _, p := range strings.Split(cached, "\x00") {
-		if p != "" {
-			st.Cached = append(st.Cached, p)
+	addCached := func(out string) {
+		for _, p := range strings.Split(out, "\x00") {
+			if p != "" && !slices.Contains(st.Cached, p) {
+				st.Cached = append(st.Cached, p)
+			}
+		}
+	}
+	addCached(cached)
+	if (!ok || !cachedOK) && !st.Unreliable {
+		// The listing was cut: read only the paths that can be protected (a pathspec over-approximation; protectedPath stays the one definition) so that a big index does not switch the protection off.
+		l2, l2OK := gitWatchRun(root, "", append([]string{"ls-files", "-s", "-z", "--"}, gitWatchCandidateSpecs...)...)
+		c2, c2OK := gitWatchRun(root, "", append(append([]string{}, diffArgs...), append([]string{"--"}, gitWatchCandidateSpecs...)...)...)
+		if l2OK && c2OK {
+			parseIndex(l2)
+			addCached(c2)
+		} else {
+			st.Unreliable, st.IndexCut = true, true
 		}
 	}
 	for _, n := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"} {
@@ -382,7 +413,6 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 		out, ok := gitWatchRun(w.root, "", args...)
 		if !ok {
 			end.Incomplete = append(end.Incomplete, "history not read in full")
-			end.Unreliable = true
 		}
 		ids := strings.Fields(out)
 		if len(ids) > gitWatchMaxCommits {
@@ -394,7 +424,6 @@ func (w *gitWatch) compare(incomplete []string, restore bool) ([]string, bool) {
 			raw, ok := gitWatchRun(w.root, "", "diff-tree", "-m", "-r", "-z", "--raw", "--no-renames", "--root", "--no-commit-id", "--no-ext-diff", id)
 			if !ok {
 				end.Incomplete = append(end.Incomplete, "files of a commit not read in full")
-				end.Unreliable = true
 			}
 			files, modes := parseGitRaw(raw)
 			commits = append(commits, gitCommit{ID: id, Files: files, Modes: modes})
