@@ -89,6 +89,8 @@ func projectID(a *adminClient, ref string) int64 {
 
 // coreOpts: the flags of usage-events and usage.
 type coreOpts struct {
+	revision, current                                                                                                                      int64
+	hasCurrent                                                                                                                             bool
 	upstream                                                                                                                               string
 	days, user, project, model, claudeProbe, provider, device, folder, sort, reason, version, team, by, phase, activity, task, labelSource string
 	json, csv, history, explain                                                                                                            bool

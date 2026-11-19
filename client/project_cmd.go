@@ -40,6 +40,8 @@ minigw project sessions [<project>] [--days n] [--model m] [--device d] [--phase
 minigw note read <id> [--json]
 minigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)
 minigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]
+minigw note history <id> [--revision n] [--json] [--project slug|--team team]
+minigw note restore <id> --revision n [--class c] [--current n] [--project slug|--team team]
 minigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)
    --project <slug> only confirms the project this folder is linked to; classes: structure, data, private
    (private = visible to you and the project admins)
@@ -633,6 +635,7 @@ func (e *projectEnv) note(args []string) error {
 	proj := fs.String("project", "", "the linked project's slug")
 	team := fs.String("team", "", "a team's own notes, in place of the linked project")
 	rev := fs.Int64("revision", 0, "revision")
+	current := fs.Int64("current", 0, "confirmed current revision")
 	key := fs.String("key", "", "idempotency key")
 	pos, err := parseFlags(fs, args[1:])
 	if err != nil {
@@ -642,11 +645,11 @@ func (e *projectEnv) note(args []string) error {
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	usage := func() error { return errors.New("usage:\n" + noteHelp) }
 	sub := args[0]
-	if sub != "list" && sub != "read" && sub != "push" && sub != "edit" && sub != "rm" {
+	if sub != "list" && sub != "read" && sub != "push" && sub != "edit" && sub != "rm" && sub != "history" && sub != "restore" {
 		return errors.New("unknown command minigw note " + sub + "\n" + noteHelp)
 	}
 	var id int64
-	if sub == "read" || sub == "edit" || sub == "rm" {
+	if sub == "read" || sub == "edit" || sub == "rm" || sub == "history" || sub == "restore" {
 		if len(pos) < 1 {
 			return usage()
 		}
@@ -708,6 +711,17 @@ func (e *projectEnv) note(args []string) error {
 		}
 	}
 	switch sub {
+	case "history", "restore":
+		if len(pos) != 0 || sub == "restore" && *rev < 1 {
+			return usage()
+		}
+		return noteHistoryCommand(sub, fmt.Sprintf("%s/%d", base, id), id, *rev, *current, set["current"], *class, *asJSON, e.tty == nil && stdinIsTTY() || e.tty != nil && e.tty(), e.in, e.out, func(method, path string, body []byte) ([]byte, error) {
+			st, data, h := e.do(c, method, path, nil, body)
+			if st != 200 {
+				return nil, e.gwError(st, data, h)
+			}
+			return data, nil
+		})
 	case "list":
 		if len(pos) != 0 {
 			return usage()

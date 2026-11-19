@@ -211,6 +211,7 @@ type cmdResp struct {
 }
 
 type cmdCase struct {
+	TTY       bool              `json:"tty,omitempty"`
 	Name      string            `json:"name"`
 	Args      []string          `json:"args"`
 	Stdin     string            `json:"stdin,omitempty"`
@@ -238,12 +239,16 @@ type cmdWant struct {
 	Links    []string   `json:"links"`    // slug:project@folder after the command
 }
 
-func TestProjectParityCommands(t *testing.T) {
+func TestProjectParityCommands(t *testing.T)     { projectCommandParity(t, "project-commands.json") }
+func TestNoteHistoryParityCommands(t *testing.T) { projectCommandParity(t, "note-history.json") }
+
+func projectCommandParity(t *testing.T, fixture string) {
 	var fx struct {
-		Gateway string     `json:"gateway"`
-		Cases   []*cmdCase `json:"cases"`
+		Owner   json.RawMessage `json:"owner,omitempty"`
+		Gateway string          `json:"gateway"`
+		Cases   []*cmdCase      `json:"cases"`
 	}
-	readFixture(t, "project-commands.json", &fx)
+	readFixture(t, fixture, &fx)
 	saved := time.Local
 	time.Local = time.UTC // note times are printed in local time; the fixture is in UTC
 	defer func() { time.Local = saved }()
@@ -274,6 +279,7 @@ func TestProjectParityCommands(t *testing.T) {
 			e := &projectEnv{
 				connect: func() (connection, string) { return conn, fx.Gateway },
 				state:   statePath, cwd: filepath.Join(root, cwd), in: strings.NewReader(sub(c.Stdin)), out: &out, err: &errw,
+				tty:   func() bool { return c.TTY },
 				agent: c.Agent != "", sleep: func(time.Duration) {},
 				origin: func(string) string { return c.Origin },
 			}
@@ -343,7 +349,7 @@ func TestProjectParityCommands(t *testing.T) {
 		})
 	}
 	if updateFixtures() {
-		writeFixture(t, "project-commands.json", fx)
+		writeFixture(t, fixture, fx)
 	}
 }
 

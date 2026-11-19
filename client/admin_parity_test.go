@@ -20,6 +20,8 @@ type admCase struct {
 	Name string   `json:"name"`
 	Args []string `json:"args"`
 	Opts struct {
+		Revision    int64  `json:"revision,omitempty"`
+		Current     *int64 `json:"current,omitempty"`
 		Reason      string `json:"reason,omitempty"`
 		Version     string `json:"version,omitempty"`
 		TTY         bool   `json:"tty,omitempty"`
@@ -120,9 +122,13 @@ func runAdminCase(c *admCase) *admWant {
 		}
 		return 599, []byte(`{"error":{"message":"no such response in the fixture"}}`)
 	}}
-	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
+	o := coreOpts{revision: c.Opts.Revision, days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
 		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, version: c.Opts.Version, team: c.Opts.Team, by: c.Opts.By, labelSource: c.Opts.LabelSource, phase: c.Opts.Phase, activity: c.Opts.Activity, task: c.Opts.Task,
 		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, deviceName: c.Opts.DeviceName, auto: c.Opts.Auto, manual: c.Opts.Manual, theirs: c.Opts.Theirs, ours: c.Opts.Ours, mode: c.Opts.Mode, upstream: c.Opts.Upstream, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun, read: c.Opts.Read, noRead: c.Opts.NoRead, readClass: c.Opts.ReadClass, readSources: c.Opts.ReadSources, pullEvery: c.Opts.PullEvery, acceptReach: c.Opts.AcceptReach, file: c.path, showErrors: c.Opts.ShowErrors}
+	if c.Opts.Current != nil {
+		o.current = *c.Opts.Current
+		o.hasCurrent = true
+	}
 	if c.Opts.Days != "" {
 		o.days = c.Opts.Days
 	}
@@ -239,5 +245,49 @@ func TestUpstreamCommandParity(t *testing.T) {
 	}
 	if updateFixtures() {
 		writeFixture(t, "upstream-commands.json", fx)
+	}
+}
+
+func TestNoteHistoryOwnerParity(t *testing.T) {
+	var fx struct {
+		Gateway string          `json:"gateway"`
+		Cases   json.RawMessage `json:"cases"`
+		Owner   []*admCase      `json:"owner"`
+	}
+	readFixture(t, "note-history.json", &fx)
+	saved := time.Local
+	time.Local = time.UTC
+	defer func() { time.Local = saved }()
+	for _, c := range fx.Owner {
+		t.Run(c.Name, func(t *testing.T) {
+			got := runAdminCase(c)
+			if updateFixtures() {
+				c.Want = got
+				return
+			}
+			gj, _ := json.Marshal(got)
+			wj, _ := json.Marshal(c.Want)
+			if !bytes.Equal(gj, wj) {
+				t.Fatalf("got %s want %s", gj, wj)
+			}
+		})
+	}
+	if updateFixtures() {
+		writeFixture(t, "note-history.json", fx)
+	}
+}
+
+func TestNoteHistoryOwnerRejectsScope(t *testing.T) {
+	for _, scope := range []string{"team", "project"} {
+		c := &admCase{Args: []string{"kb", "history", "7"}}
+		if scope == "team" {
+			c.Opts.Team = "garden"
+		} else {
+			c.Opts.Project = "orchard"
+		}
+		got := runAdminCase(c)
+		if got.Exit != 1 || len(got.Requests) != 0 || !strings.Contains(got.Err, "usage:") {
+			t.Fatal(scope, got)
+		}
 	}
 }

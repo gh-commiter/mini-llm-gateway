@@ -385,7 +385,7 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 			return a.errResponse(core.ErrInvalid{What: "project id"})
 		}
 		return a.submissionRoute(ctx, st, p, pid, seg[3:], q, r)
-	case len(seg) >= 2 && seg[1] == "notes" && len(seg) <= 3:
+	case len(seg) >= 2 && seg[1] == "notes" && len(seg) <= 5:
 		pid, ok := posID(seg[0])
 		if !ok {
 			return a.errResponse(core.ErrInvalid{What: "project id"})
@@ -439,6 +439,9 @@ func (a *API) noteRoute(ctx context.Context, st *core.Store, p core.Principal, p
 	nid, ok := posID(rest[0])
 	if !ok {
 		return a.errResponse(core.ErrInvalid{What: "note id"})
+	}
+	if len(rest) > 1 {
+		return a.noteHistoryRoute(ctx, st, &p, pid, nid, rest[1:], r)
 	}
 	// A bad payload or revision about a note the caller may not see or change is still 404 or 403 (visible first).
 	payloadErr := func(err error) Response {

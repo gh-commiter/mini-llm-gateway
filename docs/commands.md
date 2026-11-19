@@ -43,6 +43,8 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw kb faq [<project>\|--team <team>] [--json]` | The published questions and answers (faqs), newest first; an upstream mirror's entries follow on the first page, marked `from hub:<name> (there: ...)`, the answer quoted (`> `) between the gateway's first and last line |
 | `minigw kb hooks on\|off\|status [<project>]` | The Claude Code plugin's hooks that ask a session to hand findings in (off by default; per project, gateway and user; stored on this computer) |
 | `minigw note push [--class structure\|data\|private] [--title t] [--key k] [--team <team>] <file\|->` | Create a note (default class `data`); `--key` repeats a push whose answer was lost; `--team`: push to the team's own notes |
+| `minigw note history <id> [--revision <n>] [--json] [--project <slug>\|--team <team>]` | Saved versions you may read; newest first, at most 100, no paging |
+| `minigw note restore <id> --revision <n> [--class <c>] [--current <n>] [--project <slug>\|--team <team>]` | Admins: restore saved text and kind as a new revision; keeps the current class unless the saved class is requested. Confirm in a terminal or supply the checked current revision. No automatic retry |
 | `minigw note edit <id> [--class c] [--title t] [--revision n] [--team <team>] [<file\|->]` / `rm <id> [--revision n] [--team <team>]` | Change or delete a note (not inside an agent run) |
 | `minigw usage [--project slug] [--days n] [--json]` | Your model usage per day and model: the linked project's, or your own events in all projects (see [usage.md](usage.md#projects-and-notes)) |
 | `minigw project sessions [<project>] [--days n] [--model m] [--device d] [--phase p] [--activity a] [--task t] [--json]` | Recorded request chains for the selected or linked project; metadata only, readers and developers see their own history |
@@ -182,6 +184,8 @@ only on the gateway computer.
 | `minigw gw upstream link <project> <name> --no-read` | Stop reading and delete the mirror of the link |
 | `minigw gw upstream pull [<project>\|--team <team>] [--dry-run]` | For links with `--read`: read the linked project's notes into the mirror (at most 200 note requests per run; the command asks again until the pull is through, at most 25 runs and 10 minutes, then "more remains: run the pull again"), delete what the upstream no longer lists, and delete the mirror at once when the upstream withdraws the right; `--dry-run` only asks which notes this gateway's device user could read (counts per source, class and kind) and stores nothing |
 | `minigw gw kb rebuild-search` | Rebuild the published-note index (repairs search; grants no search access) |
+| `minigw gw kb history <id> [--revision <n>] [--json]` | Owner: saved versions, every class |
+| `minigw gw kb restore <id> --revision <n> [--class <c>] [--current <n>]` | Owner: restore as a new revision of an active project; same class and confirmation rules as `note restore` |
 | `minigw gw kb review [<project>\|--team <team>]` | Pending submissions of a project (or a team's own notes), including bodies |
 | `minigw gw kb accept <id>` | Publish a pending submission as a note or replacement revision |
 | `minigw gw kb reject <id> [--reason text]` | Refuse a pending submission, with an optional reason |
@@ -341,3 +345,5 @@ and searches only its run capability. Results contain at most 20 hits and 8 KiB,
 with note ID, title, project, class, a bounded preview and revision time, ordered
 by revision time then ID. `note list|read` remain available. The owner rebuild
 command repairs the published-note index; it grants no search access.
+
+The history and restore client contract is `client/testdata/note-history.json`: `cases` uses the project-command fixture shape; `owner` uses the admin-command shape. Member cases carry `tty` for terminal confirmation; owner cases carry `opts.revision`, `opts.current`, `opts.class`, `opts.json` and `opts.tty`. History detail first reads the current note, then the saved row (also with `--json`); restore does the same, then sends exactly `{revision, expectedRevision, class}` once. `--current` is sent unchanged, even when the read reports a different revision. Lists contain `{note: {id, revision, class, title, team?}, history: [{revision, saved, savedBy, class, entryKind, bytes, title, updated}]}`. A detail is one row with `body` and stored decoded `provenance` added. Times on the wire are RFC 3339 UTC; text displays local time to the minute. Every printed value is cleaned; body tabs become four spaces and the body ends in a newline. `savedBy` identifies the overwriter, with an empty value printed as `a review or import`. Called agents cannot use either command.

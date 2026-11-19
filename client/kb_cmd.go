@@ -32,7 +32,9 @@ minigw kb hooks on|off|status [<project>]   the plugin's hooks that ask a Claude
 minigw kb review [<project>|--team <team>]   project admins: the pending submissions you may review (never your own), including bodies
 minigw kb accept <id> [--version <hash>]   project admins: publish a submission of another member; --version: the whole version line kb review showed (without it: only in a terminal, after you confirm the text)
 minigw kb reject <id> [--reason text]`
-const kbAdminHelp = `minigw gw kb rebuild-search
+const kbAdminHelp = `minigw gw kb history <id> [--revision n] [--json]
+minigw gw kb restore <id> --revision n [--class c] [--current n]
+minigw gw kb rebuild-search
 minigw gw kb review [<project>|--team <team>]   pending submissions, including bodies
 minigw gw kb accept <id> [--version <hash>]   --version: the whole version line gw kb review showed (without it: only in a terminal, after you confirm the text)
 minigw gw kb reject <id> [--reason text]`
@@ -698,6 +700,30 @@ func kbAdmin(a *adminClient, pos []string, o coreOpts) {
 	usage := func() { fail("usage:\n" + kbAdminHelp) }
 	if len(pos) < 2 {
 		usage()
+		return
+	}
+	if len(pos) == 3 && (pos[1] == "history" || pos[1] == "restore") {
+		if o.team != "" || o.project != "" {
+			usage()
+			return
+		}
+		id, err := strconv.ParseInt(pos[2], 10, 64)
+		if err != nil || id < 1 {
+			usage()
+			return
+		}
+		err = noteHistoryCommand(pos[1], "/kb/notes/"+pos[2], id, o.revision, o.current, o.hasCurrent, o.class, o.json, adminTerminal(), o.in, os.Stdout, func(method, path string, body []byte) ([]byte, error) {
+			var out json.RawMessage
+			var payload any
+			if body != nil {
+				payload = json.RawMessage(body)
+			}
+			a.do(method, path, payload, &out)
+			return []byte(out), nil
+		})
+		if err != nil {
+			fail(clean(err.Error()))
+		}
 		return
 	}
 	if len(pos) == 2 && pos[1] == "rebuild-search" {

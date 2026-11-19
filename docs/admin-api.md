@@ -400,6 +400,9 @@ body), 403 `forbidden`, 403 `archived`, 409 `revision_mismatch` (with `revision`
 | `GET /projects/{id-or-slug}` | one project; digits are always an id |
 | `POST /projects/{id-or-slug}/link-check` | the project, only if the user has a direct role (a grant alone: 403 `forbidden`); for `minigw project link` |
 | `GET /projects/{id}/notes?class=&after=&limit=` | `{notes: [{id, project, class, title, author, editor (only when someone other than the author last changed the note), created, updated, revision}], next?}`, updated descending then id, default 50, max 100 |
+| `GET /projects/{id}/notes/{note}/history` | `{note: {id, revision, class, title, team?}, history: [{revision, saved, savedBy, class, entryKind, bytes, title, updated}]}`; newest first, at most 100, no cursor; current note and each saved class must be readable through the same source |
+| `GET /projects/{id}/notes/{note}/history/{rev}` | One saved row with `body` and decoded stored `provenance`; missing and unreadable rows both return 404 |
+| `POST /projects/{id}/notes/{note}/restore` | Admins only: exact body `{"revision": saved, "expectedRevision": current, "class": "current or saved class"}`; 200 NoteJSON, 409 on a stale current revision; new revision, original author, saved text and kind |
 | `GET /projects/{id}/notes/{note}` | the note with `body` |
 | `POST /projects/{id}/notes` | 201; header `Idempotency-Key` (1-64 bytes); body `{"class", "title", "body"}`; a repeat of the same key and payload within 24 h reauthorizes the current note before answering the first result; deleted or reclassified notes return 404, including after a class is changed back (header `Idempotent-Replay: true`) |
 | `PUT /projects/{id}/notes/{note}` | 200; body `{"revision", "class", "title", "body"}` |
@@ -646,6 +649,9 @@ Owner routes use the existing owner admin authentication and base URL:
 | POST | `/kb/submissions/{id}/accept` | Publish; JSON `{"reviewHash":"…"}`, the `reviewHash` of the list row or the read (required); also on the remote settings listener: the body keys are exact (one key, spelled exactly), 30 decisions per 10 minutes. |
 | POST | `/kb/submissions/{id}/reject` | Reject; JSON `{"reason":"text"}`; also on the remote settings listener: the body keys are exact (one key, spelled exactly), 30 decisions per 10 minutes. |
 | GET | `/kb/notes?project={id}&class=&kind=&after=&limit=` | The notes of a project or of a team's own notes, every class (`private` too), 50 per page by default, `{notes, next}` (`next` absent on the last page) |
+| GET | `/kb/notes/{id}/history` | Same history shape as the member route, every class; no list audit |
+| GET | `/kb/notes/{id}/history/{rev}` | Saved row with body and provenance; `kb.owner.read` once per read when the row or the current note is private, detail `{project or team, revision}` |
+| POST | `/kb/notes/{id}/restore` | Same exact payload and response as member restore; owner only, active project, mirrors refused |
 | GET | `/kb/notes/{id}` | One note with body and provenance, any class |
 | GET | `/kb/faq?project={id}&after=` | The `faq` notes of a project or a team, newest first, `{entries: [{id, title, class, answer, updated}], next}` |
 
@@ -792,3 +798,5 @@ Member exports page the existing list route and fetch each note with the existin
 The client opens each file once without following links, checks the open descriptor is a regular file and
 reads fewer than 96 KiB; a folder import allows at most 10,000 total entries and 32 path components.
 Folder reads use a held root directory so replacing a parent with an external link cannot redirect reads.
+
+Note restore keeps the current class when the client omits `--class`; the API requires an explicit current or saved class. It writes provenance `sourceKind: restored` and `restoredFromRevision`, and audits `note.restore` with scope, `from`, new `revision`, target `class` and saved `fromClass`, never title or body. Normal note and project limits apply; history budgets evict as on an edit. Unchanged title/body/class/kind returns 400 `revision N has the same text as the current note: nothing to restore`. History bytes count title plus body, not the storage budget charge; `savedBy` is the overwriting user name, empty for a review or import. History and restore are refused on the run and internal channels and on the remote settings listener.

@@ -27,6 +27,7 @@ const (
 
 // Provenance records the authenticated writer of a revision. UNKNOWN means not recorded.
 type Provenance struct {
+	RestoredFrom    int64      `json:"restoredFromRevision,omitempty"`
 	OriginGateway   string     `json:"originGateway,omitempty"`
 	Exported        string     `json:"exported,omitempty"`
 	ActorKind       string     `json:"actorKind"`

@@ -300,6 +300,8 @@ func routerCommand(args []string, in io.Reader) {
 	asCSV := fs.Bool("csv", false, "usage: one CSV row per day, provider and model")
 	legacy := fs.Bool("legacy", false, "usage: the counters per folder and device")
 	reason := fs.String("reason", "", "submission rejection reason")
+	noteRevision := fs.Int64("revision", 0, "saved note revision")
+	noteCurrent := fs.Int64("current", 0, "confirmed current note revision")
 	version := fs.String("version", "", "kb accept: the version tag of the submission you read (kb review shows it)")
 	evTeam := fs.String("team", "", "kb review: only the notes of this team")
 	evBy := fs.String("by", "", "usage: group by phase, activity, task, project or model (one or two, comma separated)")
@@ -872,7 +874,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota", "upstream", "labels":
-		coreCommand(a, pos, coreOpts{file: *evFile, showErrors: *evShowErrors, in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, read: *upRead, noRead: *upNoRead, readClass: *upReadClass, readSources: *upReadSources, pullEvery: *upPullEvery, acceptReach: *upAcceptReach, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, version: *version, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
+		coreCommand(a, pos, coreOpts{revision: *noteRevision, current: *noteCurrent, hasCurrent: set["current"], file: *evFile, showErrors: *evShowErrors, in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, read: *upRead, noRead: *upNoRead, readClass: *upReadClass, readSources: *upReadSources, pullEvery: *upPullEvery, acceptReach: *upAcceptReach, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, version: *version, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

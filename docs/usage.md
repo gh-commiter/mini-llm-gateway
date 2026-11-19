@@ -1,5 +1,29 @@
 # Using Mini Gateway
 
+## Note history
+
+`minigw note history <id>` lists saved revisions of a note you can read now, newest first.
+`--revision <n>` reads one saved version; `--json` prints the API answer. Use the linked project
+(`--project <slug>` only confirms that link), or `--team <team>` for a team's own notes.
+Only versions whose saved class you may read appear. Making a private note shared does not expose
+its private versions to other readers; making a shared note private hides its whole history from
+people who can no longer read the note. Grants permit only their shared classes. The owner can read
+all classes; reading a private version, or any version of a currently private note, is audited.
+
+Project admins and the gateway owner can restore; authors without the admin role cannot.
+Read the saved text first, then use `minigw note restore <id> --revision <n>`.
+Restore keeps the current class by default. `--class <saved class>` explicitly restores the saved
+class too, which can widen who may read the note. Restore copies title, body and entry kind into
+a new revision, keeps the author, and saves the outgoing version. It never rewinds the revision number.
+In a terminal, confirm with `y`. In a script, supply `--current <n>` with the current revision you
+checked: the gateway refuses a stale revision with no change, and the client never retries a restore.
+
+The owner's commands are `minigw gw kb history <id> [--revision <n>] [--json]` and
+`minigw gw kb restore <id> --revision <n> [--class <c>] [--current <n>]`.
+Called agents cannot use history or restore. At most 100 saved versions remain, subject to the
+history byte budgets; missing versions may predate 0.8.6, have been evicted, or be unreadable.
+There is no command to remove one saved version yet.
+
 ## Quota history
 
 `minigw gw quota --history [--days N] [--provider P] [--json]` shows existing probes without running one, on both

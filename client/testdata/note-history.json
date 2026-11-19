@@ -1,0 +1,1327 @@
+{
+ "gateway": "fixture-gateway",
+ "cases": [
+  {
+   "name": "list",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "list empty",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Current text\nno saved revisions you may read\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "review or import",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  saved 2026-11-14 10:00  by a review or import  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "one revision",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--revision",
+    "2"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 2 of 4  structure  finding  saved 2026-11-14 10:00 by Robin\nSaved text\nOld body\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "list json",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--json"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "revision json",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--revision",
+    "2",
+    "--json"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    }
+   ],
+   "want": {
+    "out": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "team",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--team",
+    "garden"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/teams/garden",
+     "status": 200,
+     "body": "{\"id\":1,\"name\":\"garden\",\"segment\":1099511627777}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/1099511627777/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"team\":\"garden\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/teams/garden",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/1099511627777/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "hostile list",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current\\u001b‮​\\ttext\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Ro\\u001b‮​\\tbin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":32,\"title\":\"Saved\\u001b‮​\\ttext\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Currenttext\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  32 bytes  Savedtext\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "hostile detail",
+   "args": [
+    "note",
+    "history",
+    "7",
+    "--revision",
+    "2"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current\\u001b‮​\\ttext\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Ro\\u001b‮​\\tbin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":32,\"title\":\"Saved\\u001b‮​\\ttext\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"old\\ttext\\u001b‮​\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 2 of 4  structure  finding  saved 2026-11-14 10:00 by Robin\nSavedtext\nold    text\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "terminal yes",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/3/notes/7/restore",
+     "status": 200,
+     "body": "{\"id\":7,\"class\":\"data\",\"revision\":5}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nRestore? [y/N] note 7 restored from revision 2 (data, revision 5)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/3/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":4,\"class\":\"data\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   },
+   "tty": true,
+   "stdin": "y\n"
+  },
+  {
+   "name": "terminal no",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nRestore? [y/N] ",
+    "err": "",
+    "error": "not restored",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   },
+   "tty": true,
+   "stdin": "n\n"
+  },
+  {
+   "name": "current",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2",
+    "--current",
+    "4"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/3/notes/7/restore",
+     "status": 200,
+     "body": "{\"id\":7,\"class\":\"data\",\"revision\":5}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nnote 7 restored from revision 2 (data, revision 5)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/3/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":4,\"class\":\"data\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "no terminal",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "err": "",
+    "error": "not restored: without a terminal, name the current revision: --current <n>",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "saved class",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2",
+    "--current",
+    "4",
+    "--class",
+    "structure"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/3/notes/7/restore",
+     "status": 200,
+     "body": "{\"id\":7,\"class\":\"structure\",\"revision\":5}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data -> structure\nnote 7 restored from revision 2 (structure, revision 5)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/3/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":4,\"class\":\"structure\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "stale",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2",
+    "--current",
+    "3"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/3/notes/7/restore",
+     "status": 409,
+     "body": "{\"error\":{\"type\":\"revision_mismatch\",\"message\":\"revision mismatch (current 5)\",\"revision\":5}}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "err": "",
+    "error": "the note has changed: its current revision is 5 (read it again, then retry)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/3/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":3,\"class\":\"data\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "same text",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2",
+    "--current",
+    "4"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /minigw/v1/projects/3/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /minigw/v1/projects/3/notes/7/restore",
+     "status": 400,
+     "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"revision 2 has the same text as the current note: nothing to restore\"}}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "err": "",
+    "error": "rejected: revision 2 has the same text as the current note: nothing to restore",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/minigw/v1/projects/3/notes/7/history/2",
+      "",
+      ""
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/3/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":4,\"class\":\"data\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  },
+  {
+   "name": "not linked",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this folder is not linked to a project: run minigw project link <slug>",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "called agent refusal",
+   "args": [
+    "note",
+    "history",
+    "7"
+   ],
+   "agent": "run",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "called agent restore refusal",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2",
+    "--current",
+    "4"
+   ],
+   "agent": "run",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw kb search, note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "invalid current zero",
+   "args": [
+    "note",
+    "restore",
+    "7",
+    "--revision",
+    "2",
+    "--current",
+    "0"
+   ],
+   "link": {
+    "slug": "orchard",
+    "project": 3,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "revision must be positive",
+    "requests": [],
+    "links": [
+     "orchard:3@proj"
+    ]
+   }
+  }
+ ],
+ "owner": [
+  {
+   "name": "owner history",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /kb/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 4 (current)  data  Current text\nrevision 2  saved 2026-11-14 10:00  by Robin  structure  finding  18 bytes  Saved text\nolder revisions are not listed: their text was not kept (before 0.8.6 or beyond the last 100) or you may not read them\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7/history",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner revision",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {
+    "revision": 2
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /kb/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    }
+   ],
+   "want": {
+    "out": "note 7  revision 2 of 4  structure  finding  saved 2026-11-14 10:00 by Robin\nSaved text\nOld body\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7",
+      ""
+     ],
+     [
+      "GET",
+      "/kb/notes/7/history/2",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner history json",
+   "args": [
+    "kb",
+    "history",
+    "7"
+   ],
+   "opts": {
+    "json": true
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7/history",
+     "status": 200,
+     "body": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "{\"note\":{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\"},\"history\":[{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\"}]}\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7/history",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner restore",
+   "args": [
+    "kb",
+    "restore",
+    "7"
+   ],
+   "opts": {
+    "revision": 2,
+    "current": 4
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /kb/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /kb/notes/7/restore",
+     "status": 200,
+     "body": "{\"id\":7,\"class\":\"data\",\"revision\":5}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nnote 7 restored from revision 2 (data, revision 5)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7",
+      ""
+     ],
+     [
+      "GET",
+      "/kb/notes/7/history/2",
+      ""
+     ],
+     [
+      "POST",
+      "/kb/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":4,\"class\":\"data\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner terminal yes",
+   "args": [
+    "kb",
+    "restore",
+    "7"
+   ],
+   "opts": {
+    "revision": 2,
+    "tty": true
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /kb/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /kb/notes/7/restore",
+     "status": 200,
+     "body": "{\"id\":7,\"class\":\"data\",\"revision\":5}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nRestore? [y/N] note 7 restored from revision 2 (data, revision 5)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7",
+      ""
+     ],
+     [
+      "GET",
+      "/kb/notes/7/history/2",
+      ""
+     ],
+     [
+      "POST",
+      "/kb/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":4,\"class\":\"data\"}"
+     ]
+    ]
+   },
+   "stdin": "y\n"
+  },
+  {
+   "name": "owner terminal no",
+   "args": [
+    "kb",
+    "restore",
+    "7"
+   ],
+   "opts": {
+    "revision": 2,
+    "tty": true
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /kb/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\nRestore? [y/N] ",
+    "err": "minigw: not restored\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7",
+      ""
+     ],
+     [
+      "GET",
+      "/kb/notes/7/history/2",
+      ""
+     ]
+    ]
+   },
+   "stdin": "n\n"
+  },
+  {
+   "name": "owner no terminal",
+   "args": [
+    "kb",
+    "restore",
+    "7"
+   ],
+   "opts": {
+    "revision": 2
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /kb/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "err": "minigw: not restored: without a terminal, name the current revision: --current <n>\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7",
+      ""
+     ],
+     [
+      "GET",
+      "/kb/notes/7/history/2",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner saved class",
+   "args": [
+    "kb",
+    "restore",
+    "7"
+   ],
+   "opts": {
+    "revision": 2,
+    "current": 4,
+    "class": "structure"
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /kb/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /kb/notes/7/restore",
+     "status": 200,
+     "body": "{\"id\":7,\"class\":\"structure\",\"revision\":5}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data -> structure\nnote 7 restored from revision 2 (structure, revision 5)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7",
+      ""
+     ],
+     [
+      "GET",
+      "/kb/notes/7/history/2",
+      ""
+     ],
+     [
+      "POST",
+      "/kb/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":4,\"class\":\"structure\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner stale",
+   "args": [
+    "kb",
+    "restore",
+    "7"
+   ],
+   "opts": {
+    "revision": 2,
+    "current": 3
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /kb/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /kb/notes/7/restore",
+     "status": 409,
+     "body": "{\"error\":{\"type\":\"revision_mismatch\",\"message\":\"revision mismatch (current 5)\",\"revision\":5}}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "err": "minigw: revision mismatch (current 5)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7",
+      ""
+     ],
+     [
+      "GET",
+      "/kb/notes/7/history/2",
+      ""
+     ],
+     [
+      "POST",
+      "/kb/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":3,\"class\":\"data\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner same text",
+   "args": [
+    "kb",
+    "restore",
+    "7"
+   ],
+   "opts": {
+    "revision": 2,
+    "current": 4
+   },
+   "responses": [
+    {
+     "match": "GET /kb/notes/7",
+     "status": 200,
+     "body": "{\"id\":7,\"revision\":4,\"class\":\"data\",\"title\":\"Current text\",\"entryKind\":\"finding\",\"body\":\"Current body\"}"
+    },
+    {
+     "match": "GET /kb/notes/7/history/2",
+     "status": 200,
+     "body": "{\"revision\":2,\"saved\":\"2026-11-14T10:00:00Z\",\"savedBy\":\"Robin\",\"class\":\"structure\",\"entryKind\":\"finding\",\"bytes\":18,\"title\":\"Saved text\",\"updated\":\"2026-11-14T10:00:00Z\",\"body\":\"Old body\",\"provenance\":{\"actorKind\":\"member\",\"sourceKind\":\"pushed note\"}}"
+    },
+    {
+     "match": "POST /kb/notes/7/restore",
+     "status": 400,
+     "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"revision 2 has the same text as the current note: nothing to restore\"}}"
+    }
+   ],
+   "want": {
+    "out": "restore note 7 to the text of revision 2 (now revision 4, becomes 5)\nclass: data (kept)\n",
+    "err": "minigw: revision 2 has the same text as the current note: nothing to restore\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/kb/notes/7",
+      ""
+     ],
+     [
+      "GET",
+      "/kb/notes/7/history/2",
+      ""
+     ],
+     [
+      "POST",
+      "/kb/notes/7/restore",
+      "{\"revision\":2,\"expectedRevision\":4,\"class\":\"data\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "owner invalid current zero",
+   "args": [
+    "kb",
+    "restore",
+    "7"
+   ],
+   "opts": {
+    "revision": 2,
+    "current": 0
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: revision must be positive\n",
+    "exit": 1,
+    "requests": []
+   }
+  }
+ ]
+}

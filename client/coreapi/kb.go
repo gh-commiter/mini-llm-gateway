@@ -129,6 +129,13 @@ func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []
 		}
 		return resp(200, map[string]bool{"rebuilt": true})
 	}
+	if len(seg) >= 4 && seg[1] == "notes" {
+		id, ok := posID(seg[2])
+		if !ok {
+			return a.errResponse(core.ErrNotFound)
+		}
+		return a.noteHistoryRoute(ctx, st, nil, 0, id, seg[3:], Request{Method: method, Body: body})
+	}
 	if len(seg) >= 2 && (seg[1] == "notes" || seg[1] == "faq") {
 		return a.adminKBRead(ctx, st, method, seg, q)
 	}
