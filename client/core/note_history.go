@@ -11,7 +11,7 @@ var (
 	maxHistoryRevisions    = int64(100)
 	maxHistoryNoteBytes    = int64(8 << 20)
 	maxHistoryProjectBytes = int64(500 << 20)
-	historyBurst           = 10 * time.Minute // edits by one author this soon after the newest saved version add no version
+	historyBurst           = 10 * time.Minute // a version saved this soon after the one before it, by the same author, is a burst interior
 )
 
 func migrate26(tx *sql.Tx) error {
@@ -45,12 +45,12 @@ END;`)
 }
 
 // saveNoteHistory runs before an overwrite, in the same write transaction, and never refuses it for size. Mirrors
-// live in upstream_mirror, never in notes. An unchanged write needs no snapshot. burst is true only for a direct
-// edit: it adds no version when the same author (by) saved the newest version less than historyBurst ago, so the
-// text from before a storm of small edits survives. A reviewed replacement or an import passes burst=false, by=0.
+// live in upstream_mirror, never in notes. An unchanged write needs no snapshot; every other overwrite saves the
+// previous version. A storm of small edits is handled at eviction (see pickVictim), not by skipping versions.
+// by is the editing user, 0 for a reviewed replacement or an import.
 // Cost per overwrite: O(historyRevisions) rows of this note and one totals lookup; the project's rows are read
 // only when its budget is exceeded, through note_history_project, and only as many as must go.
-func saveNoteHistory(tx *sql.Tx, id int64, in NoteInput, now time.Time, by int64, burst bool) error {
+func saveNoteHistory(tx *sql.Tx, id int64, in NoteInput, now time.Time, by int64) error {
 	var project, revision, updated int64
 	var title, body, class, kind, provenance string
 	// A note without a provenance row (older databases) is kept with an empty provenance.
@@ -61,17 +61,6 @@ func saveNoteHistory(tx *sql.Tx, id int64, in NoteInput, now time.Time, by int64
 	}
 	if title == in.Title && body == in.Body && class == string(in.Class) && kind == in.EntryKind {
 		return nil
-	}
-	if burst {
-		var saved, savedBy int64
-		err := tx.QueryRow(`SELECT saved,saved_by FROM note_history WHERE note_id=? ORDER BY revision DESC LIMIT 1`, id).Scan(&saved, &savedBy)
-		if err != nil && err != sql.ErrNoRows {
-			return err
-		}
-		// A clock that went backwards (negative elapsed) never coalesces.
-		if elapsed := now.Sub(fromMs(saved)); err == nil && savedBy == by && elapsed >= 0 && elapsed < historyBurst {
-			return nil
-		}
 	}
 	// A logical byte budget, not the size on disk: UTF-8 text bytes plus the seven stored integers (id, revision, updated, charge, saved, saved_by, project).
 	charge := int64(len(title)+len(body)+len(class)+len(kind)+len(provenance)) + 7*8
@@ -85,33 +74,45 @@ func saveNoteHistory(tx *sql.Tx, id int64, in NoteInput, now time.Time, by int64
 		return err
 	}
 	// Rolling window: the oldest versions go; the one just saved (the note's newest revision) stays.
-	if err := trimNote(tx, id, revision); err != nil {
+	if err := trimNote(tx, id); err != nil {
 		return err
 	}
 	return trimProject(tx, project, id, revision)
 }
 
-func trimNote(tx *sql.Tx, id, keep int64) error {
-	var count, total int64
-	if err := tx.QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM note_history WHERE note_id=?`, id).Scan(&count, &total); err != nil {
-		return err
+type historyRow struct{ rev, saved, by, size int64 }
+
+// pickVictim returns the index of the row to evict from rows (ordered by revision, the last one is the row just
+// saved and is never chosen), or -1. The oldest burst interior goes first: a row whose predecessor has the same
+// non-zero author and was saved 0 < d < historyBurst earlier (a zero or negative d, a clock that went back, is
+// not interior). Without one, the oldest row goes.
+func pickVictim(rows []historyRow) int {
+	for i := 1; i < len(rows)-1; i++ {
+		if d := time.Duration(rows[i].saved-rows[i-1].saved) * time.Millisecond; rows[i].by != 0 && rows[i].by == rows[i-1].by && d > 0 && d < historyBurst {
+			return i
+		}
 	}
-	if count <= maxHistoryRevisions && total <= maxHistoryNoteBytes {
-		return nil
+	if len(rows) > 1 {
+		return 0
 	}
-	type row struct{ rev, size int64 }
-	var rows []row
-	rs, err := tx.Query(`SELECT revision,bytes FROM note_history WHERE note_id=? AND revision<>? ORDER BY revision`, id, keep)
+	return -1
+}
+
+func trimNote(tx *sql.Tx, id int64) error {
+	var rows []historyRow
+	var total int64
+	rs, err := tx.Query(`SELECT revision,saved,saved_by,bytes FROM note_history WHERE note_id=? ORDER BY revision`, id)
 	if err != nil {
 		return err
 	}
 	for rs.Next() {
-		var r row
-		if err := rs.Scan(&r.rev, &r.size); err != nil {
+		var r historyRow
+		if err := rs.Scan(&r.rev, &r.saved, &r.by, &r.size); err != nil {
 			rs.Close()
 			return err
 		}
 		rows = append(rows, r)
+		total += r.size
 	}
 	if err := rs.Err(); err != nil { // before any deletion: a failed iteration must not leave a partial eviction
 		rs.Close()
@@ -120,15 +121,20 @@ func trimNote(tx *sql.Tx, id, keep int64) error {
 	if err := rs.Close(); err != nil {
 		return err
 	}
-	for _, r := range rows {
-		if count <= maxHistoryRevisions && total <= maxHistoryNoteBytes {
+	var drop []int64
+	for int64(len(rows)) > maxHistoryRevisions || total > maxHistoryNoteBytes {
+		i := pickVictim(rows)
+		if i < 0 {
 			break
 		}
-		if _, err := tx.Exec(`DELETE FROM note_history WHERE note_id=? AND revision=?`, id, r.rev); err != nil {
+		drop = append(drop, rows[i].rev)
+		total -= rows[i].size
+		rows = append(rows[:i:i], rows[i+1:]...)
+	}
+	for _, rev := range drop {
+		if _, err := tx.Exec(`DELETE FROM note_history WHERE note_id=? AND revision=?`, id, rev); err != nil {
 			return err
 		}
-		count--
-		total -= r.size
 	}
 	return nil
 }

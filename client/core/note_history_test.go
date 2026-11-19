@@ -324,72 +324,6 @@ func limitsRestored(t *testing.T) {
 	t.Cleanup(func() { maxHistoryRevisions, maxHistoryNoteBytes, maxHistoryProjectBytes, historyBurst = r, n, p, b })
 }
 
-// Catches: a storm pushing the original out of the window, or an edit being refused.
-func TestNoteHistoryStormKeepsTheTextFromBeforeIt(t *testing.T) {
-	f := newFx(t)
-	n := f.mk("ana", "fakture", Structure)
-	pid := n.ProjectID
-	cur := n
-	for i := 0; i < 200; i++ {
-		cur = f.edit("ana", pid, cur, fmt.Sprint("storm ", i))
-		f.clock = f.clock.Add(300 * time.Millisecond)
-	}
-	if got := historyRevisions(t, f.Store, n.ID); len(got) != 1 || got[0] != n.Revision {
-		t.Fatal("storm rows", got)
-	}
-	checkHistory(t, f.Store, n)
-	if cur.Revision != n.Revision+200 {
-		t.Fatal("not every edit succeeded", cur.Revision)
-	}
-}
-
-// Catches: the burst measured from the last edit instead of from the saved row, a window that never ends, and
-// authors sharing a burst.
-func TestNoteHistoryBurstBoundaries(t *testing.T) {
-	f := newFx(t)
-	n := f.mk("ana", "fakture", Structure)
-	pid := n.ProjectID
-	cur := f.edit("ana", pid, n, "one") // saves revision 1 at t0
-	f.clock = f.clock.Add(9 * time.Minute)
-	cur = f.edit("ana", pid, cur, "two") // inside the burst
-	f.clock = f.clock.Add(2 * time.Minute)
-	cur = f.edit("ana", pid, cur, "three") // 11 minutes after the row was saved, though 2 after the last edit
-	if got := historyRevisions(t, f.Store, n.ID); !reflect.DeepEqual(got, []int64{1, 3}) {
-		t.Fatal("rows", got)
-	}
-	cur = f.edit("fani", pid, cur, "four") // another author: always a row
-	cur = f.edit("ana", pid, cur, "five")
-	cur = f.edit("fani", pid, cur, "six")
-	if got := historyRevisions(t, f.Store, n.ID); !reflect.DeepEqual(got, []int64{1, 3, 4, 5, 6}) {
-		t.Fatal("alternating authors", got)
-	}
-	f.clock = f.clock.Add(11 * time.Minute)
-	f.edit("fani", pid, cur, "seven")
-	if got := historyRevisions(t, f.Store, n.ID); len(got) != 6 {
-		t.Fatal("11 minutes later", got)
-	}
-}
-
-// Catches: an accepted replacement being coalesced into a burst, or the next edit comparing with an older row.
-func TestNoteHistoryReplacementStartsANewBurst(t *testing.T) {
-	f := newFx(t)
-	p := f.p("ana")
-	n := f.mk("ana", "fakture", Structure)
-	pid := n.ProjectID
-	cur := f.edit("ana", pid, n, "one") // row for revision 1
-	v, _, e := f.Submit(ctx, p, pid, "burst-replace", SubmissionInput{NoteInput: NoteInput{Class: Structure, Title: n.Title, Body: "replaced"}, Replaces: n.ID, Revision: cur.Revision})
-	f.ok(e)
-	_, e = f.ReviewSubmission(ctx, v.ID, true, "", f.seen(v.ID))
-	f.ok(e)
-	f.clock = f.clock.Add(time.Second)
-	cur, e = f.GetNote(ctx, p, pid, n.ID)
-	f.ok(e)
-	f.edit("ana", pid, cur, "after") // within seconds of the same author's earlier row, but after the replacement
-	if got := historyRevisions(t, f.Store, n.ID); !reflect.DeepEqual(got, []int64{1, 2, 3}) {
-		t.Fatal("rows", got)
-	}
-}
-
 // Catches: the 101st version being refused, a gap in the kept revisions, or the newest being dropped.
 func TestNoteHistoryKeepsTheNewestHundred(t *testing.T) {
 	f := newFx(t)
@@ -474,36 +408,6 @@ func historyTotal(t *testing.T, s *Store, project int64) (kept, sum int64) {
 	return
 }
 
-// Catches: an off-by-one at the ten-minute edge (9:59.999 coalesces, 10:00.000 adds).
-func TestNoteHistoryExactBurstBoundary(t *testing.T) {
-	f := newFx(t)
-	n := f.mk("ana", "fakture", Structure)
-	cur := f.edit("ana", n.ProjectID, n, "one")
-	saved := f.clock
-	f.clock = saved.Add(historyBurst - 2*time.Millisecond)
-	cur = f.edit("ana", n.ProjectID, cur, "two") // 9:59.999 after the saved row
-	if got := historyRevisions(t, f.Store, n.ID); len(got) != 1 {
-		t.Fatal("9:59.999 added a row", got)
-	}
-	f.clock = saved.Add(historyBurst - time.Millisecond)
-	f.edit("ana", n.ProjectID, cur, "three") // exactly 10:00.000
-	if got := historyRevisions(t, f.Store, n.ID); len(got) != 2 {
-		t.Fatal("10:00 did not add a row", got)
-	}
-}
-
-// Catches: a clock that went backwards silencing history until it catches up.
-func TestNoteHistoryBackwardsClock(t *testing.T) {
-	f := newFx(t)
-	n := f.mk("ana", "fakture", Structure)
-	cur := f.edit("ana", n.ProjectID, n, "one")
-	f.clock = f.clock.Add(-time.Hour)
-	f.edit("ana", n.ProjectID, cur, "two")
-	if got := historyRevisions(t, f.Store, n.ID); len(got) != 2 {
-		t.Fatal("backwards clock coalesced", got)
-	}
-}
-
 // Catches: a failure after the history insert leaving the snapshot (or the new text) behind.
 func TestNoteHistoryRollsBackWithTheOverwrite(t *testing.T) {
 	f := newFx(t)
@@ -520,26 +424,6 @@ func TestNoteHistoryRollsBackWithTheOverwrite(t *testing.T) {
 	}
 	if kept, sum := historyTotal(t, f.Store, n.ProjectID); kept != 0 || sum != 0 {
 		t.Fatal("total survived the rollback", kept, sum)
-	}
-}
-
-// Catches: the burst's only row being evicted and the next edit then finding a burst that is gone.
-func TestNoteHistoryEvictionDuringABurst(t *testing.T) {
-	limitsRestored(t)
-	f := newFx(t)
-	a, b := f.mk("ana", "fakture", Structure), f.mk("ana", "fakture", Structure)
-	pid := a.ProjectID
-	a = f.edit("ana", pid, a, "e1")
-	var c int64
-	f.ok(f.DB().QueryRow(`SELECT bytes FROM note_history WHERE note_id=?`, a.ID).Scan(&c))
-	maxHistoryProjectBytes = c + 100 // room for one row, not two
-	f.edit("ana", pid, b, "e1")      // its row pushes a's only row out
-	if historyCount(t, f.Store, a.ID) != 0 {
-		t.Fatal("a's row was not evicted")
-	}
-	f.edit("ana", pid, a, "e2") // inside the burst, but nothing left to anchor it: snapshot again
-	if got := historyRevisions(t, f.Store, a.ID); !reflect.DeepEqual(got, []int64{2}) {
-		t.Fatal("rows", got)
 	}
 }
 
@@ -601,7 +485,7 @@ func TestNoteHistoryKindOnlyAndCRLFNoop(t *testing.T) {
 		t.Fatal("CRLF-equivalent write saved history")
 	}
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
-		return saveNoteHistory(tx, n.ID, NoteInput{Class: Structure, Title: "t", Body: "a\nb", EntryKind: "faq"}, f.now(), 0, false)
+		return saveNoteHistory(tx, n.ID, NoteInput{Class: Structure, Title: "t", Body: "a\nb", EntryKind: "faq"}, f.now(), 0)
 	}))
 	var kind string
 	f.ok(f.DB().QueryRow(`SELECT entry_kind FROM note_history WHERE note_id=?`, n.ID).Scan(&kind))
@@ -698,5 +582,124 @@ func TestNoteHistoryRollbackAfterEviction(t *testing.T) {
 	f.ok(f.DB().QueryRow(`SELECT (SELECT bytes FROM note_history_totals WHERE project_id=?),count(*) FROM note_history`, pid).Scan(&kept1, &rows1))
 	if kept0 != kept1 || rows0 != rows1 {
 		t.Fatal("eviction survived the rollback", kept0, kept1, rows0, rows1)
+	}
+}
+
+// Catches: the middle of a short series being thrown away at write time (a human edit then an agent's edit).
+func TestNoteHistoryEverySuccessiveEditIsSaved(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	b1 := f.edit("ana", n.ProjectID, n, "B1")
+	f.clock = f.clock.Add(2 * time.Minute)
+	f.edit("ana", n.ProjectID, b1, "B2")
+	got := historyRevisions(t, f.Store, n.ID)
+	if !reflect.DeepEqual(got, []int64{1, 2}) {
+		t.Fatal("rows", got)
+	}
+	var body string
+	f.ok(f.DB().QueryRow(`SELECT body FROM note_history WHERE note_id=? AND revision=2`, n.ID).Scan(&body))
+	if body != "B1" {
+		t.Fatal("the in-between text was not kept", body)
+	}
+}
+
+// Catches: a storm pushing the original out, an edit refused, or the wrong rows dropped.
+func TestNoteHistoryStormEvictsItsInteriorFirst(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	cur := n
+	for i := 0; i < 200; i++ {
+		cur = f.edit("ana", n.ProjectID, cur, fmt.Sprint("storm ", i))
+		f.clock = f.clock.Add(300 * time.Millisecond)
+	}
+	got := historyRevisions(t, f.Store, n.ID)
+	if len(got) != 100 || got[0] != 1 || got[1] != 102 || got[99] != 200 || got[99]-got[1] != 98 {
+		t.Fatal("rows", len(got), got[:3], got[len(got)-1])
+	}
+	checkHistory(t, f.Store, n)
+	if cur.Revision != n.Revision+200 {
+		t.Fatal("not every edit succeeded", cur.Revision)
+	}
+}
+
+// Catches: spaced edits not being plain oldest-first.
+func TestNoteHistorySpacedEditsAreOldestFirst(t *testing.T) {
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	cur := n
+	for i := 0; i < 150; i++ {
+		f.clock = f.clock.Add(11 * time.Minute)
+		cur = f.edit("ana", n.ProjectID, cur, fmt.Sprint("v", i))
+	}
+	got := historyRevisions(t, f.Store, n.ID)
+	if len(got) != 100 || got[0] != 51 || got[99] != 150 {
+		t.Fatal("rows", len(got), got[0], got[len(got)-1])
+	}
+}
+
+// Catches: a sparse row going before the interior rows of an earlier storm.
+func TestNoteHistoryInteriorGoesBeforeSparseRows(t *testing.T) {
+	limitsRestored(t)
+	maxHistoryRevisions = 6
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	cur := n
+	for i := 0; i < 4; i++ { // rows 1..4, one second apart
+		f.clock = f.clock.Add(time.Second)
+		cur = f.edit("ana", n.ProjectID, cur, fmt.Sprint("q", i))
+	}
+	sparse := func() {
+		f.clock = f.clock.Add(11 * time.Minute)
+		cur = f.edit("ana", n.ProjectID, cur, fmt.Sprint("s", cur.Revision))
+	}
+	for _, want := range [][]int64{{1, 2, 3, 4, 5}, {1, 2, 3, 4, 5, 6}, {1, 3, 4, 5, 6, 7}, {1, 4, 5, 6, 7, 8}, {1, 5, 6, 7, 8, 9}, {5, 6, 7, 8, 9, 10}} {
+		sparse()
+		if got := historyRevisions(t, f.Store, n.ID); !reflect.DeepEqual(got, want) {
+			t.Fatal("rows", got, "want", want)
+		}
+	}
+}
+
+// Catches: the byte budget using another victim order than the row limit.
+func TestNoteHistoryByteBudgetEvictsInteriorFirst(t *testing.T) {
+	limitsRestored(t)
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Structure)
+	cur := f.edit("ana", n.ProjectID, n, "q1")
+	cur = f.edit("ana", n.ProjectID, cur, "q2")
+	var sum int64
+	f.ok(f.DB().QueryRow(`SELECT sum(bytes) FROM note_history WHERE note_id=?`, n.ID).Scan(&sum))
+	maxHistoryNoteBytes = sum + 50 // a third row does not fit
+	f.edit("ana", n.ProjectID, cur, "q3")
+	if got := historyRevisions(t, f.Store, n.ID); !reflect.DeepEqual(got, []int64{1, 3}) {
+		t.Fatal("rows", got)
+	}
+}
+
+// Catches: wrong interior rules: replacement rows (author 0), the exact ten-minute edge, zero and negative gaps.
+func TestPickVictim(t *testing.T) {
+	ms := func(d time.Duration) int64 { return d.Milliseconds() }
+	row := func(rev int64, saved time.Duration, by int64) historyRow {
+		return historyRow{rev: rev, saved: ms(saved), by: by}
+	}
+	cases := []struct {
+		name string
+		rows []historyRow
+		want int
+	}{
+		{"interior goes first", []historyRow{row(1, 0, 7), row(2, time.Minute, 7), row(3, 2*time.Minute, 7), row(4, time.Hour, 9)}, 1},
+		{"author 0 is never interior", []historyRow{row(1, 0, 0), row(2, time.Second, 0), row(3, 2*time.Second, 0)}, 0},
+		{"different authors alternate", []historyRow{row(1, 0, 7), row(2, time.Second, 8), row(3, 2*time.Second, 7), row(4, 3*time.Second, 8)}, 0},
+		{"9:59.999 is interior", []historyRow{row(1, 0, 7), row(2, historyBurst-time.Millisecond, 7), row(3, time.Hour, 7)}, 1},
+		{"10:00.000 is not", []historyRow{row(1, 0, 7), row(2, historyBurst, 7), row(3, 2*time.Hour, 7)}, 0},
+		{"zero gap is not", []historyRow{row(1, 0, 7), row(2, 0, 7), row(3, time.Hour, 7)}, 0},
+		{"clock went back is not", []historyRow{row(1, time.Hour, 7), row(2, 0, 7), row(3, time.Minute, 8)}, 0},
+		{"the newest row is never chosen", []historyRow{row(1, 0, 7), row(2, time.Second, 7)}, 0},
+		{"only the newest left", []historyRow{row(1, 0, 7)}, -1},
+	}
+	for _, c := range cases {
+		if got := pickVictim(c.rows); got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, got, c.want)
+		}
 	}
 }
