@@ -20,20 +20,51 @@ extension ProjectEnv {
         n == 1 ? "1 submission waits for your review in \(slug): minigw kb review \(slug)" : "\(n) submissions wait for your review in \(slug): minigw kb review \(slug)"
     }
 
-    private final class WaitingBox: @unchecked Sendable { var n = 0 }
+    /// A team name that is safe to put into the hook's line and into a command as it stands (team names are free text, so the hook
+    /// says nothing for any other; team show quotes it). The same rule in the Go client.
+    static func isPlainTeamName(_ s: String) -> Bool {
+        let u = Array(s.utf8)
+        guard (1...63).contains(u.count), let f = u.first, (f >= 48 && f <= 57) || (f >= 65 && f <= 90) || (f >= 97 && f <= 122) else { return false }
+        return u.allSatisfy { ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 90) || ($0 >= 97 && $0 <= 122) || $0 == 46 || $0 == 95 || $0 == 45 }
+    }
+
+    /// The line for a team's own notes (the same in the Go client); team is already cleaned and, unless it is a plain word, put in
+    /// double quotes in the command.
+    static func teamWaitingLine(_ n: Int, _ team: String) -> String {
+        let cmd = isPlainTeamName(team) ? team : "\"" + team + "\""
+        return n == 1 ? "1 submission waits for your review in team \(team): minigw kb review --team \(cmd)"
+            : "\(n) submissions wait for your review in team \(team): minigw kb review --team \(cmd)"
+    }
+
+    private final class WaitingBox: @unchecked Sendable { var n = 0; var teams: [(name: String, waiting: Int)] = [] }
 
     /// How many submissions wait for this caller's review in project (a team's segment id works too), 0 on anything but an answer: a
     /// caller who may not review gets the gateway's 404 and so nothing. after=max asks for the count without a page. At most `limit` s.
     func reviewWaiting(_ c: ProjectConn, _ project: Int64, limit: TimeInterval) -> Int {
+        reviewWaitingTeams(c, project, limit: limit, teams: false).n
+    }
+
+    /// reviewWaiting that, with teams, also asks in the same request for the teams of the project whose own notes the caller reviews
+    /// (a gateway before this answers without "teams": none).
+    func reviewWaitingTeams(_ c: ProjectConn, _ project: Int64, limit: TimeInterval, teams: Bool) -> (n: Int, teams: [(name: String, waiting: Int)]) {
         let box = WaitingBox(), done = DispatchSemaphore(value: 0), send = self.send
-        let path = "\(Self.apiProjects)/\(project)/kb/review?after=\(Int64.max)"
+        let path = "\(Self.apiProjects)/\(project)/kb/review?after=\(Int64.max)" + (teams ? "&teams=1" : "")
         let t = Thread {  // a thread of its own: a global queue can be starved, and a late answer is simply dropped
             let r = send(c, "GET", path, [:], nil)
-            if r.status == 200, let w = JSONValue.parse(r.data)?.dict["waiting"]?.int, w > 0 { box.n = Int(clamping: w) }
+            if r.status == 200, let d = JSONValue.parse(r.data)?.dict {
+                if let w = d["waiting"]?.int, w > 0 { box.n = Int(clamping: w) }
+                if d["waiting"]?.int ?? 0 >= 0 {
+                    for t in d["teams"]?.array ?? [] {
+                        let n: Int64 = t.dict["waiting"]?.int ?? 0
+                        box.teams.append((name: t.dict["name"]?.string ?? "", waiting: Int(clamping: n)))
+                    }
+                }
+            }
             done.signal()
         }
         t.start()
-        return done.wait(timeout: .now() + limit) == .success ? box.n : 0
+        if done.wait(timeout: .now() + limit) != .success { return (n: 0, teams: []) }
+        return (n: box.n, teams: box.teams)
     }
 
     static let hookCompactText = #"When summarizing, add a section "KB candidates": at most 3 one-line decisions, pitfalls or recurring questions from this session that the project knowledge base may lack, or the single line "KB: nothing new". No code, secrets, customer data or file contents."#
@@ -285,8 +316,9 @@ extension ProjectEnv {
             hookPrune(keep: id, now: hookNow())
             say(Self.hookStartText)
             if let c = hookConn?() {  // only a reviewer's count, never a title or a text; silent on a timeout
-                let n = reviewWaiting(c, project, limit: waitLimit ?? 2)
+                let (n, teams) = reviewWaitingTeams(c, project, limit: waitLimit ?? 2, teams: true)
                 if n > 0 { say(Self.waitingLine(n, slug)) }
+                for t in teams where t.waiting > 0 && Self.isPlainTeamName(t.name) { say(Self.teamWaitingLine(t.waiting, t.name)) }
             }
             if source == "compact", var mk = m, mk.compact, !mk.asked, Self.hookChanged(mk, head, status, compact: true), !handedIn(mk) {
                 mk.asked = true

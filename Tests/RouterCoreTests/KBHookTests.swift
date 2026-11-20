@@ -399,6 +399,20 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         for l in f["lines"] as! [[String: Any]] {
             #expect(ProjectEnv.waitingLine(l["n"] as! Int, l["slug"] as! String) == l["want"] as! String)
         }
+        for l in f["teamLines"] as! [[String: Any]] {
+            #expect(ProjectEnv.teamWaitingLine(l["n"] as! Int, l["team"] as! String) == l["want"] as! String)
+        }
+        for a in f["teamAnswers"] as! [[String: Any]] {
+            let w = try HookWorld()
+            let body = Data((a["body"] as! String).utf8)
+            let box = AskedBox()
+            w.env.send = { _, _, path, _, _ in box.path = path; return ProjectReply(status: 200, data: body) }
+            let env = w.env!
+            let r = await offPool { env.reviewWaitingTeams(ProjectConn(url: "", token: ""), 7, limit: 1, teams: true) }
+            #expect(r.n == a["wantN"] as! Int, "\(a["name"] as! String)")
+            #expect(r.teams.map { "\($0.name):\($0.waiting)" } == a["want"] as! [String], "\(a["name"] as! String)")
+            #expect(box.path.hasPrefix("/minigw/v1/projects/7/kb/review?after=") && box.path.hasSuffix("&teams=1"))
+        }
         for a in f["answers"] as! [[String: Any]] {
             let w = try HookWorld()
             let status = a["status"] as! Int, body = Data((a["body"] as! String).utf8)

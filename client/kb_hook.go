@@ -55,21 +55,62 @@ var hookWaitLimit = 2 * time.Second // (a var for the tests) the longest the gat
 // reviewWaiting: how many submissions wait for this caller's review in project (a team's segment id works too), 0 on anything but
 // an answer: a caller who may not review gets the gateway's 404 and so nothing. after=max asks for the count without a page.
 func (e *projectEnv) reviewWaiting(c connection, project int64, limit time.Duration) int {
-	done := make(chan int, 1)
+	n, _ := e.reviewWaitingTeams(c, project, limit, false)
+	return n
+}
+
+// teamWaiting: the waiting count of one team's own notes, as the review answer names it.
+type teamWaiting struct {
+	Name    string
+	Waiting int
+}
+
+// reviewWaitingTeams is reviewWaiting that, with teams, also asks in the same request for the teams of the project whose own notes
+// the caller reviews (a gateway before this answers without "teams": none). Nothing on a timeout or any answer but 200.
+func (e *projectEnv) reviewWaitingTeams(c connection, project int64, limit time.Duration, teams bool) (int, []teamWaiting) {
+	type answer struct {
+		n  int
+		ts []teamWaiting
+	}
+	done := make(chan answer, 1)
 	go func() {
-		st, b, _ := e.do(c, "GET", fmt.Sprintf("%s/%d/kb/review?after=%d", apiProjects, project, int64(math.MaxInt64)), nil, nil)
-		var pg struct{ Waiting int }
-		if st != 200 || json.Unmarshal(b, &pg) != nil || pg.Waiting < 0 {
-			pg.Waiting = 0
+		path := fmt.Sprintf("%s/%d/kb/review?after=%d", apiProjects, project, int64(math.MaxInt64))
+		if teams {
+			path += "&teams=1"
 		}
-		done <- pg.Waiting
+		st, b, _ := e.do(c, "GET", path, nil, nil)
+		var pg struct {
+			Waiting int
+			Teams   []teamWaiting
+		}
+		if st != 200 || json.Unmarshal(b, &pg) != nil || pg.Waiting < 0 {
+			pg.Waiting, pg.Teams = 0, nil
+		}
+		done <- answer{pg.Waiting, pg.Teams}
 	}()
 	select {
-	case n := <-done:
-		return n
+	case a := <-done:
+		return a.n, a.ts
 	case <-time.After(limit):
-		return 0
+		return 0, nil
 	}
+}
+
+// teamNameRe: a team name that is safe to put into the hook's line and into a command as it stands (team names are free text, so
+// the hook says nothing for any other; team show quotes it).
+var teamNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+
+// teamWaitingLine: the line for a team's own notes (the same in the Swift client); team is already cleaned and, unless it is a
+// plain word, put in double quotes in the command.
+func teamWaitingLine(n int, team string) string {
+	cmd := team
+	if !teamNameRe.MatchString(team) {
+		cmd = `"` + team + `"`
+	}
+	if n == 1 {
+		return "1 submission waits for your review in team " + team + ": minigw kb review --team " + cmd
+	}
+	return fmt.Sprintf("%d submissions wait for your review in team %s: minigw kb review --team %s", n, team, cmd)
 }
 
 // hookConnection: the default profile's connection for the session start, without ever exiting (route() would).
@@ -421,8 +462,14 @@ func (e *projectEnv) kbHook(args []string) error {
 		e.hookPrune(id, e.hookNow())
 		say(hookStartText)
 		if c, ok := e.hookConnection(); ok { // only a reviewer's count, never a title or a text; silent on a timeout
-			if n := e.reviewWaiting(c, project, hookWaitLimit); n > 0 {
+			n, teams := e.reviewWaitingTeams(c, project, hookWaitLimit, true)
+			if n > 0 {
 				say(waitingLine(n, slug))
+			}
+			for _, t := range teams {
+				if t.Waiting > 0 && teamNameRe.MatchString(t.Name) {
+					say(teamWaitingLine(t.Waiting, t.Name))
+				}
 			}
 		}
 		if in.Source == "compact" && m.Compact && !m.Asked && hookChanged(m, head, status, true) && !e.handedIn(m) {
