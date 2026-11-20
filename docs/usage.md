@@ -1792,6 +1792,9 @@ an older upstream ("update the upstream gateway to 0.9.3 or newer") or a role th
   - Without proof the binding is ALWAYS recorded as a conflict with an unknown base, on both link modes, equal or not; the confirmation says so. The first push of that note
     then goes through `minigw gw upstream resolve <project> <id> --upstream <name> --ours` (a submission for the upstream's reviewers that replaces the bound note) or `--theirs`;
     it never replaces or supersedes directly, and the upstream keeps ONE note.
+  A note bound without proof stays **restricted** for good (`gw upstream status` counts them): whatever `resolve` or a later reconcile does, and on publish links too, every later change of it goes out
+  as a submission for the upstream's reviewers (manual and automatic push alike), never as a direct write over a note this gateway never wrote. Only `--note <id> --new` ends the restriction
+  (it also forgets the binding); an accepted submission of ours does not lift it, because it proves nothing about who wrote the note it replaced.
   A candidate can be rejected with `--note <id> --new` or `--skip`.
 - **unknown**: no match, duplicate matches (the listing shows each with its proof; bind one of them with `--note <id> --confirm <remote id>`, which is recorded as above), a changed author or trailer, or a missing reference key. Reconcile never generates a missing key.
   Decide explicitly with `minigw gw upstream reconcile <project> --upstream <name> --note <id> --new` (allow creation) or `--skip`
@@ -1810,7 +1813,8 @@ an older upstream ("update the upstream gateway to 0.9.3 or newer") or a role th
 Unmatched destination trailers are reported as **orphans**; nothing is imported or deleted. Neither titles nor similar content establish a match.
 The mark clears atomically only after a complete fresh read and decisions for every candidate and unknown, with local revisions and link settings rechecked.
 Status and blocked pushes show the reconcile command and counts from the last listing when available.
-The complete read has transport, time and size limits; exceeding any limit changes nothing. Every request has its own deadline; the whole read has a time budget that grows with
+The complete read has transport, time and size limits; exceeding any limit changes nothing. The read does not hold the link: pushes, pulls and unlink go on meanwhile, and the decision is applied only if the notes, the link, the last push and the stored listing are still as they were
+(otherwise "list again", nothing written). Every request has its own deadline; the whole read has a time budget that grows with
 the number of notes (at most 15 minutes), and an exhausted budget or a slow request says how many notes were read of how many and asks you to run it again; it is never reported as the upstream being down.
 When the upstream limits reads, reconcile waits and goes on within the budget (the waits are reported in the answer). A large project is read once, by the listing; a named decision
 (`--note`, `--all`) reads only the upstream's manifest, which must still equal the one the listing was made from (any added, removed or changed note refuses it with "list again"), and the one note it binds. Restore overrides keep their existing behavior.
