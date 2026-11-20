@@ -54,6 +54,8 @@ type admCase struct {
 		Manual        bool   `json:"manual,omitempty"`
 		Theirs        bool   `json:"theirs,omitempty"`
 		Ours          bool   `json:"ours,omitempty"`
+		AfterRestore  bool   `json:"afterRestore,omitempty"`
+		Yes           bool   `json:"yes,omitempty"`
 		Mode          string `json:"mode,omitempty"`
 		Upstream      string `json:"upstream,omitempty"`
 		Read          bool   `json:"read,omitempty"`
@@ -124,7 +126,7 @@ func runAdminCase(c *admCase) *admWant {
 	}}
 	o := coreOpts{days: "7", user: c.Opts.User, project: c.Opts.Project, model: c.Opts.Model, claudeProbe: c.Opts.ClaudeProbe,
 		provider: c.Opts.Provider, device: c.Opts.Device, folder: c.Opts.Folder, sort: c.Opts.Sort, json: c.Opts.JSON, csv: c.Opts.CSV, explain: c.Opts.Explain, reason: c.Opts.Reason, version: c.Opts.Version, team: c.Opts.Team, by: c.Opts.By, labelSource: c.Opts.LabelSource, phase: c.Opts.Phase, activity: c.Opts.Activity, task: c.Opts.Task,
-		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, deviceName: c.Opts.DeviceName, auto: c.Opts.Auto, manual: c.Opts.Manual, theirs: c.Opts.Theirs, ours: c.Opts.Ours, mode: c.Opts.Mode, upstream: c.Opts.Upstream, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun, read: c.Opts.Read, noRead: c.Opts.NoRead, readClass: c.Opts.ReadClass, readSources: c.Opts.ReadSources, pullEvery: c.Opts.PullEvery, acceptReach: c.Opts.AcceptReach, file: c.path, showErrors: c.Opts.ShowErrors}
+		in: strings.NewReader(c.Stdin), remoteProject: c.Opts.RemoteProject, remoteTeam: c.Opts.RemoteTeam, class: c.Opts.Class, deviceName: c.Opts.DeviceName, auto: c.Opts.Auto, manual: c.Opts.Manual, theirs: c.Opts.Theirs, ours: c.Opts.Ours, mode: c.Opts.Mode, upstream: c.Opts.Upstream, withPrivate: c.Opts.WithPrivate, dryRun: c.Opts.DryRun, afterRestore: c.Opts.AfterRestore, yes: c.Opts.Yes, read: c.Opts.Read, noRead: c.Opts.NoRead, readClass: c.Opts.ReadClass, readSources: c.Opts.ReadSources, pullEvery: c.Opts.PullEvery, acceptReach: c.Opts.AcceptReach, file: c.path, showErrors: c.Opts.ShowErrors}
 	if c.Opts.Revision != nil {
 		o.revision = *c.Opts.Revision
 		o.hasRevision = true

@@ -103,6 +103,7 @@ type coreOpts struct {
 	auto, manual              bool
 	theirs, ours              bool
 	withPrivate, dryRun       bool
+	afterRestore, yes         bool // upstream push --after-restore [--yes]
 	read, noRead, acceptReach bool
 	readClass, readSources    string
 	pullEvery                 string              // upstream link: minutes between automatic pulls

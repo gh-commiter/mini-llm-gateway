@@ -330,7 +330,7 @@ func routerCommand(args []string, in io.Reader) {
 	localTools := fs.String("allow-local-tools", "", "claude: true or false")
 	askOthers := fs.String("ask-others", "", "claude: true or false")
 	work := fs.String("work", "", "claude, codex, grok, copilot: direct, sync or worktree")
-	yes := fs.Bool("yes", false, "core restore: do not ask")
+	yes := fs.Bool("yes", false, "core restore, upstream push --after-restore: do not ask")
 	evUser := fs.String("user", "", "usage-events: only this user (name or number)")
 	evProject := fs.String("project", "", "usage-events: only this project (slug or number)")
 	evModel := fs.String("model", "", "usage, usage-events: only this model")
@@ -365,6 +365,7 @@ func routerCommand(args []string, in io.Reader) {
 	upReadClass := fs.String("read-class", "", "upstream link --read: classes to read, structure or structure,data (default structure; private is never read)")
 	upReadSources := fs.String("read-sources", "", "upstream link --read: more sources to read, as pull --dry-run names them (project:<slug>, team:<name>), comma-separated")
 	upPullEvery := fs.String("pull-every", "", "upstream link: minutes between the automatic pulls of a link with reading on (5 to 1440; default 15)")
+	upAfterRestore := fs.Bool("after-restore", false, "upstream push: send from a link marked as restored without reconciling (can create second copies on the upstream)")
 	upAcceptReach := fs.Bool("accept-reach", false, "upstream link --read: you have seen what the upstream's user may read (pull --dry-run) and accept it for this link")
 	evTask := fs.String("task", "", "usage, usage-events, project-sessions: only this task")
 	evFile := fs.String("file", "", "labels eval: the file of hand-labelled examples (one JSON object per line: text, phase, activity)")
@@ -914,7 +915,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
 	case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage-events", "project-sessions", "quota", "upstream", "labels":
-		coreCommand(a, pos, coreOpts{revision: *noteRevision, hasRevision: set["revision"], current: *noteCurrent, hasCurrent: set["current"], file: *evFile, showErrors: *evShowErrors, in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, read: *upRead, noRead: *upNoRead, readClass: *upReadClass, readSources: *upReadSources, pullEvery: *upPullEvery, acceptReach: *upAcceptReach, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, version: *version, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
+		coreCommand(a, pos, coreOpts{revision: *noteRevision, hasRevision: set["revision"], current: *noteCurrent, hasCurrent: set["current"], file: *evFile, showErrors: *evShowErrors, in: in, upstream: *upName, remoteProject: *upRemoteProject, remoteTeam: *upRemoteTeam, class: *upClass, mode: *upMode, auto: *upAuto, manual: *upManual, theirs: *upTheirs, ours: *upOurs, deviceName: *upDeviceName, withPrivate: *upWithPrivate, dryRun: *upDryRun, afterRestore: *upAfterRestore, yes: *yes, read: *upRead, noRead: *upNoRead, readClass: *upReadClass, readSources: *upReadSources, pullEvery: *upPullEvery, acceptReach: *upAcceptReach, days: *days, user: *evUser, project: *evProject, model: *evModel, claudeProbe: *claudeProbe, device: *device, history: *history, explain: *explain, reason: *reason, version: *version, team: *evTeam, provider: *evProvider, json: *asJSON, by: *evBy, phase: *evPhase, activity: *evActivity, task: *evTask, labelSource: *evLabelSource})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

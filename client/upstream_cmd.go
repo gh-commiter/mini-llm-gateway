@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"minigw/core"
 	"net/url"
@@ -22,7 +23,8 @@ const upstreamHelp = `
   minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)
   minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
   minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
-  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
+  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link; a link restored from a backup sends nothing until it is cleared)
+  minigw gw upstream push <project>|--team <team> --after-restore [--upstream <name>] [--yes]   the owner's override for a link marked "restored": push without reconciling (can create second copies on the upstream)
   minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)`
 
 type upLink struct {
@@ -34,6 +36,7 @@ type upLink struct {
 	WithPrivate bool
 	LastPush    *time.Time
 	LastError   string
+	Restored    *time.Time
 	Label       string
 	Pending     int
 	Total       int
@@ -248,6 +251,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		a.do("GET", "/upstreams"+q, nil, &r)
 		for _, l := range r.Links {
 			say(clean(upstreamLinkLine(l)))
+			if l.Restored != nil {
+				say(clean("  " + core.RestoredState + " (since " + l.Restored.Local().Format("2006-01-02 15:04") + "): nothing is sent from this link; reconcile is not available in this version: compare with the upstream, then " + upstreamAfterRestoreCmd(l)))
+			}
 			if s := upstreamSyncLine(l); s != "" {
 				say(clean("  " + s))
 			}
@@ -312,6 +318,26 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			body["project"] = projectID(a, pos[2])
 		case len(pos) != 2:
 			usage()
+		}
+		if u.afterRestore {
+			if u.dryRun || len(body) < 2 {
+				fail("push --after-restore names one project or --team, and is not a dry run")
+			}
+			say(afterRestoreWarning)
+			if !u.yes {
+				if !adminTerminal() {
+					fail("push --after-restore: confirm in a terminal, or add --yes")
+				}
+				fmt.Print("Push without reconciling? [y/N] ")
+				line, _ := bufio.NewReader(u.in).ReadString('\n')
+				if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+					fail("push --after-restore: declined, nothing was changed")
+				}
+			}
+			body["afterRestore"] = true
+			if u.upstream != "" {
+				body["upstream"] = u.upstream
+			}
 		}
 		// A helper answers a call within 30 seconds and a run sends a bounded number of notes: a push that is not through comes back with
 		// "more" and where it stopped; ask again for that link, as long as it gets further (or only waits for the upstream's write limit,
@@ -480,6 +506,18 @@ func upstreamPullPrint(p upPull) {
 	if p.Stopped != "" {
 		say(clean("  stopped: " + p.Stopped))
 	}
+}
+
+// afterRestoreWarning is printed before the override clears a link's restore mark.
+const afterRestoreWarning = "Pushing without reconciling can create second copies on the upstream: notes it already has from before the restore are sent again as new notes."
+
+// upstreamAfterRestoreCmd is the command that clears the mark of the link l.
+func upstreamAfterRestoreCmd(l upLink) string {
+	who := l.Label
+	if l.Team {
+		who = "--team " + strings.TrimPrefix(l.Label, "team ")
+	}
+	return "minigw gw upstream push " + who + " --upstream " + l.Upstream + " --after-restore"
 }
 
 type upPush struct {
