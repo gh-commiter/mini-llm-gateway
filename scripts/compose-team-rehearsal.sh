@@ -235,7 +235,7 @@ do_cleanup() { # both projects of the run, the image tag of the run, then the wo
   for cp in "$PROJ2" "$PROJ"; do
     case $(vstate "${cp}_rehearsal_marker") in
       present) remove_run "$cp" || cr=1;;
-      absent) printf 'no marker volume for %s (already removed, or never created)\n' "$cp" >&2;;
+      absent) [ "$cp" = "$PROJ2" ] || printf 'no marker volume for %s (already removed, or never created)\n' "$cp" >&2;;
       *) printf 'cannot check the marker volume of %s: the Docker daemon answered with an error; nothing was removed\n' "$cp" >&2; cr=1;;
     esac
   done
@@ -850,7 +850,7 @@ EOF
   KEY=
   [ $prc -eq 0 ] || { bad 8.provider "gw provider add: $(tailc "$po")"; return; }
   gw provider models rehearsal --enable all >/dev/null 2>&1 || { bad 8.provider "gw provider models --enable all failed"; return; }
-  if gw provider list 2>&1 | grep -q '^rehearsal '; then ok 8.provider "provider added the documented way (key read without echo, not stored in the report)"; else bad 8.provider "the provider is not listed"; return; fi
+  if gw provider list 2>&1 | grep -q '^rehearsal '; then ok 8.provider "provider added the documented way (the key was read without echo or from a mode-600 file; it is not stored in the report)"; else bad 8.provider "the provider is not listed"; return; fi
   mo=$(cl rh-developer /home/minigw/p1 models 2>&1)
   if printf '%s' "$mo" | grep -qi 'rehearsal'; then ok 8.models "the minigw client of a member lists the provider's models through the gateway"; else bad 8.models "the provider's models are not listed for a member: $(tailc "$mo")"; fi
   todo 8.request "one model request needs Claude Code (the container has none)" <<EOF
