@@ -9,7 +9,11 @@
 # a backup and a restore into a second isolated project, and writes rehearsal-report-<UTC>.md in the current
 # directory without secrets, host names, addresses or user names. Exit code 0 only if no step FAILED.
 # It never touches another Compose project: it refuses a name that is in use, and removes only what it created.
-# Needs: docker compose v2, python3 (backup.sh needs it too); with --admin also openssl and curl.
+# Needs: docker compose v2, python3 (backup.sh needs it too); with --admin also openssl and curl; beyond POSIX sh: a
+# find with -maxdepth/-mindepth (GNU, BusyBox or BSD), grep -o and -E, tail -c, date +%s and test -O. They are checked first.
+# Trust boundary: the caller's own account and the parent directory of the working directory are trusted (the script
+# refuses a parent that is group- or world-writable without the sticky bit); an attacker with the same uid is out of scope.
+# The marker and labels prove which resources this run made; they do not defend against the account that owns them.
 set -u
 
 DEPLOY=$(cd "$(dirname "$0")/../deploy/docker" 2>/dev/null && pwd) || { echo "deploy/docker not found next to scripts/" >&2; exit 2; }
@@ -28,8 +32,11 @@ usage: compose-team-rehearsal.sh [options]
   --admin                   also rehearse the remote web settings profile (needs openssl and curl)
   --admin-name NAME         external DNS name of the page (default settings.rehearsal.test; reached with curl --resolve)
   --admin-port N            HTTPS port of the page (default: a free one)
-  --admin-password-file F   password for the remote page (first line); default: generated, shown once on the terminal
+  --admin-password-file F   password for the remote page (first line); default: generated into a mode-600 file in the
+                            working directory (its path is printed, it is removed with the directory)
   --provider-url URL        an OpenAI-compatible endpoint (for example LiteLLM) to add; the key is asked without echo
+                            on a terminal, or read from --provider-key-file (never from a pipe, never with echo on)
+  --provider-key-file F     a file of yours (not a link, mode 600) holding the provider's API key on its first line
   --reuse                   continue a leftover rehearsal project made by this script (it must carry its marker volume)
   --cleanup                 remove what the rehearsal created when it ends (without it: ask on a terminal, else keep)
   --cleanup-only            only remove what an earlier run created in --project, then exit
@@ -68,9 +75,18 @@ PROJ2=$PROJ-restore
 [ -n "$WORK" ] || WORK=${TMPDIR:-/tmp}/$PROJ-work
 case $WORK in /*) ;; *) WORK=$(pwd)/$WORK;; esac
 MARK=$WORK/.rehearsal-marker
+# the required tools beyond POSIX sh, checked before anything is written
+miss=
+find / -maxdepth 0 -mindepth 0 >/dev/null 2>&1 || miss="$miss find(-maxdepth/-mindepth)"
+printf 'ab\n' | grep -o a >/dev/null 2>&1 || miss="$miss grep-o"
+printf 'ab\n' | grep -E 'a|b' >/dev/null 2>&1 || miss="$miss grep-E"
+printf 'abc' | tail -c 2 >/dev/null 2>&1 || miss="$miss tail-c"
+case $(date +%s 2>/dev/null) in ''|*[!0-9]*) miss="$miss date+%s";; esac
+( [ -O /nonexistent-rehearsal-probe ] ) >/dev/null 2>&1; [ $? -le 1 ] || miss="$miss test-O"
+[ -z "$miss" ] || { echo "FAIL 1.tools this system lacks what the script needs beyond POSIX sh:$miss (GNU coreutils/findutils, BusyBox or BSD all work)" >&2; exit 2; }
 DEB=debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2   # the Dockerfile's base, used by backup.sh too
 FAILS=0 LAST=$(date +%s) START=$LAST
-UP=0 USERS=0 FLOW=0 SENT=0 PW= S= TOKEN= KEY= PRE=0 P2=
+UP=0 USERS=0 FLOW=0 SENT=0 PW= S= TOKEN= KEY= PRE=0 P2= CLEANSTATE= REP=
 RID=
 
 # ---------- helpers ----------
@@ -103,7 +119,12 @@ v_bind() { printf '%s' "$1" | grep -Eq '^(([0-9]{1,3}\.){3}[0-9]{1,3}|localhost)
 v_rid() { printf '%s' "$1" | grep -Eq '^[0-9]{14}-[0-9a-f]{12}$'; }
 v_name() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; }
 v_dns() { printf '%s' "$1" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'; }
+parent_ok() { # the parent of the working directory must be a directory that others cannot write into (or with the sticky bit)
+  pd=$(dirname "$WORK")
+  [ -d "$pd" ] && no_find "$pd" -maxdepth 0 \( -perm -020 -o -perm -002 \) ! -perm -1000 || { echo "refusing: the parent of the working directory ($pd) must exist and must not be group- or world-writable without the sticky bit" >&2; return 1; }
+}
 check_args() {
+  parent_ok || exit 2
   [ -z "$VERSION" ] || v_version "$VERSION" || { echo "--version must look like 0.9.0" >&2; exit 2; }
   [ -z "$PORT" ] || v_port "$PORT" || { echo "--port must be a number from 1 to 65535" >&2; exit 2; }
   [ -z "$APORT" ] || v_port "$APORT" || { echo "--admin-port must be a number from 1 to 65535" >&2; exit 2; }
@@ -114,11 +135,11 @@ check_args() {
 # ---------- the working directory belongs to this script: created by it, marked, private ----------
 work_check() { # 0 only for a directory this script made for $PROJ: ours, mode 700, no symlinks, marker file mode 600
   [ -d "$WORK" ] && [ ! -L "$WORK" ] && [ -O "$WORK" ] || return 1
-  [ -z "$(find "$WORK" -maxdepth 0 -perm -077 2>/dev/null)" ] || return 1
+  no_find "$WORK" -maxdepth 0 -perm -077 || return 1
   [ -f "$MARK" ] && [ ! -L "$MARK" ] && [ -O "$MARK" ] || return 1
-  [ -z "$(find "$MARK" -maxdepth 0 -perm -077 2>/dev/null)" ] || return 1
+  no_find "$MARK" -maxdepth 0 -perm -077 || return 1
   grep -q '^marker=minigw-compose-team-rehearsal$' "$MARK" && [ "$(mk project)" = "$PROJ" ] || return 1
-  [ -z "$(find "$WORK" -type l 2>/dev/null)" ] || return 1
+  no_find "$WORK" -path "$WORK/certs" -prune -o -type l -print || return 1   # (a certs folder owned by a container uid cannot be listed: it is created by admin-certs.sh, which makes no links)
 }
 mk() { sed -n "s/^$1=//p" "$MARK" 2>/dev/null | head -n 1; }
 save_marker() { # what a later --reuse or --cleanup-only needs
@@ -862,7 +883,7 @@ minigw status
 # approve on the server as in 9.mac, binding to rh-reader this time
 $OPDC exec minigw minigw gw bind <device id> rh-reader
 minigw project link rh-p1
-# expect: the reader sees structure and data notes of rh-p1 and nothing of rh-p2 (minigw project link rh-p2 is refused)
+# expect: the reader sees the structure notes of rh-p1 only (no data and no private notes) and nothing of rh-p2 (minigw project link rh-p2 answers "not found or not visible")
 EOF
   todo 9.browser "second-machine browser login to the remote page" <<EOF
 # needs a rehearsal run with --admin --bind <the server's LAN address> --admin-name <a name that machine resolves>, kept (not cleaned up)
@@ -956,7 +977,6 @@ report() {
     printf '```\n\n## Operator-attended items\n\n'
     if [ -s "$WORK/todo.md" ]; then cat "$WORK/todo.md"; else printf 'None.\n\n'; fi
   } | san text >>"$t" || rb=1
-  printf '## Result\n\n%s step(s) FAILED. %s\n' "$FAILS" "$([ "$FAILS" = 0 ] && echo 'All automated steps passed; the TODO(operator) items remain before inviting the team.' || echo 'The rehearsal failed: do not invite the team before the FAIL rows are understood.')" >>"$t" || rb=1
   if [ $rb -ne 0 ]; then bad 10.report "the report could not be built or sanitized: no report written"; return; fi
   grep -F -q -f "$WORK/patterns" "$t"; gr=$?
   if [ $gr -eq 0 ]; then bad 10.report "a credential value is in the report text: no report written"; return; fi
@@ -967,15 +987,15 @@ report() {
 
 finish() {
   if [ "$PRE" != 1 ] && ! marker_ok "$PROJ"; then
-    remove_work && echo "nothing was created in Docker; the working directory is removed" || FAILS=$((FAILS + 1)); return; fi
+    if remove_work; then CLEANSTATE="nothing was created in Docker; the working directory was removed"; echo "$CLEANSTATE"; else CLEANSTATE="the working directory could NOT be removed"; FAILS=$((FAILS + 1)); fi; return; fi
   yes=$CLEANUP
   if [ "$yes" != 1 ] && [ -t 3 ] && [ -t 1 ]; then
     printf 'Remove the rehearsal project %s, its volumes, its image tag and the working directory now? [y/N] ' "$PROJ"; read -r ans <&3
     case $ans in y|Y|yes) yes=1;; esac
   fi
   if [ "$yes" = 1 ]; then
-    if do_cleanup; then echo "removed what run $RID created"; else FAILS=$((FAILS + 1)); echo "CLEANUP FAILED: see above"; fi
-  else echo "kept. To remove exactly what this run created: sh $SELF --cleanup-only --project $PROJ --workdir \"$WORK\""; fi
+    if do_cleanup; then CLEANSTATE="everything this run created was removed and checked"; echo "removed what run $RID created"; else CLEANSTATE="cleanup FAILED: resources remain (see the messages and the recovery command)"; FAILS=$((FAILS + 1)); echo "CLEANUP FAILED: see above"; fi
+  else CLEANSTATE="kept on purpose: remove it with --cleanup-only"; echo "kept. To remove exactly what this run created: sh $SELF --cleanup-only --project $PROJ --workdir \"$WORK\""; fi
 }
 
 stage_pre
@@ -990,6 +1010,11 @@ stage_operator
 [ "$PRE" = 1 ] && use_project "$PROJ" "${PORT:-0}" 2>/dev/null
 stage_secrets
 report
-if [ "$FAILS" = 0 ]; then echo "REHEARSAL PASSED (TODO(operator) items remain)"; else echo "REHEARSAL FAILED: $FAILS step(s)"; fi
 finish
+# the verdict is the last thing written, after the cleanup outcome is known
+if [ "$FAILS" = 0 ]; then VERDICT="PASSED (the TODO(operator) items remain before inviting the team)"; else VERDICT="FAILED: $FAILS step(s)"; fi
+if [ -n "${REP:-}" ] && [ -f "$REP" ] && [ ! -L "$REP" ]; then
+  printf '\n## Result\n\nCleanup: %s.\n\nVERDICT: REHEARSAL %s\n' "$CLEANSTATE" "$VERDICT" >>"$REP" || { echo "FAIL 10.report the verdict could not be appended to $REP"; FAILS=$((FAILS + 1)); }
+fi
+echo "REHEARSAL $VERDICT; cleanup: ${CLEANSTATE:-not run}"
 [ "$FAILS" = 0 ]

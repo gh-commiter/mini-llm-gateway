@@ -252,7 +252,9 @@ claimed by this rehearsal on a development machine.
 ## Rehearsal before inviting the team
 
 Run the whole team workflow once in an isolated Compose project on the real server, before anyone is invited. From a
-clone of the repository, as a user who may use Docker (POSIX `sh`; needs Docker Compose v2 and Python 3, and `openssl` and `curl` for `--admin`):
+clone of the repository, as a user who may use Docker (POSIX `sh`; needs Docker Compose v2 and Python 3, `openssl` and `curl` for
+`--admin`, and beyond POSIX a `find` with `-maxdepth`, `grep -o`, `tail -c`, `date +%s` and `test -O`, which GNU, BusyBox and BSD tools all have;
+the script checks this first):
 
 ```sh
 sh scripts/compose-team-rehearsal.sh --admin        # --version X.Y.Z if deploy/docker/.env does not name the release
@@ -261,33 +263,40 @@ sh scripts/compose-team-rehearsal.sh --admin        # --version X.Y.Z if deploy/
 It builds the release the way this page says (the build checks the signature, the signed version and the checksum),
 starts the project `minigw-rehearsal` on its own free ports (on `127.0.0.1`; `--bind` for another address) with its own
 volumes, and runs: health and `gw status`; a team, two projects and three users (reader, developer, admin) through the
-owner CLI; device approval and binding; an access matrix with random sentinel notes (the reader sees structure only, a
-private note is seen only by its author and the project admins, team membership alone opens no project); submit, review,
-accept, replacement, `note history` and `note restore`; with `--admin` the remote page (certificates, HTTPS login,
-forged `Origin`, wrong-password lockout, routes outside the list, the Team and Review routes, no secret in the logs);
-`backup.sh --stop`, a restore into a second isolated project and a comparison of users, bindings, roles, notes, search and the
-gateway identity. `--provider-url` adds a provider (the key is asked without echo). The devices are simulated: clients
-run from a second container of the same image on the Compose network. A step that cannot run is a FAIL with the reason;
-only the steps that need a second machine print `TODO(operator)` with the exact commands (a real Mac and Windows client,
-a browser on another machine, the upstream link, one model request, which needs Claude Code).
+owner CLI; device approval and binding; an access matrix with random sentinel notes (a reader sees structure notes only, a
+private note is seen only by its author and the project admins, team membership alone opens no project; every refusal must be
+the product's own message); submit, review, accept, replacement, `note history` and `note restore`; with `--admin` the remote
+page (certificates, HTTPS login, forged `Origin`, wrong-password lockout, routes outside the list, the Team and Review routes);
+`backup.sh --stop`, a restore into a second isolated project and a comparison of users, bindings, roles, notes with their
+history, search, provider configuration and the gateway identity; at the end a scan of the container logs for every credential the run created.
+`--provider-url` adds a provider (the key is asked without echo on a terminal, or read from `--provider-key-file`, a file of yours with mode 600).
+The devices are simulated: clients run from a second container of the same image on the Compose network. A step that cannot
+run is a FAIL with the reason. These steps are not run and print `TODO(operator)` with the exact commands: remote settings
+without `--admin`, the provider without `--provider-url`, one model request (it needs Claude Code), a real Mac and a real
+Windows client, a browser on another machine and the upstream link.
 
-It refuses a project name that already has containers, networks or volumes (never `minigw`, the default project). The
-image is built into its own tag, `minigw-rehearsal:<run id>`, never the shared `minigw:<version>` a production project may
-use. The working directory (`--workdir`, default `${TMPDIR:-/tmp}/<project>-work`) must not exist: the script makes it
-(mode 700, with a marker file naming the project and the run id), and everything it creates in Docker carries that run id
-as a label. `--reuse` only continues the leftover of an interrupted run, proven by that marker file and the marker
-volume; after an interruption (Ctrl-C) the script prints the exact recovery command. At the end it asks on a terminal
-whether to remove what it made, or does so with `--cleanup`; later `--cleanup-only --project <name> --workdir <dir>` removes
-exactly the containers, networks, volumes and image tag carrying that run id (the restore project too), checks that
-nothing is left and says what remains if a removal fails. Names alone never authorize a removal. Secrets never appear in
-a command line: the generated remote page password goes to a file in the working directory (its path is printed), the
+It refuses a project name that already has containers, networks or volumes, or whose existence Docker cannot tell (never `minigw`,
+the default project). The image is built into its own tag, `minigw-rehearsal:<run id>`, never the shared `minigw:<version>`
+a production project may use. The working directory (`--workdir`, default `${TMPDIR:-/tmp}/<project>-work`) must not exist: the script
+makes it (mode 700, with a marker file naming the project and the run id; its parent must not be writable by others), and every
+volume, network and container it creates in Docker, the restore project's included, carries that run id as a label. A name never
+authorizes a removal, and a Docker error is never read as "nothing there". The caller's own account is trusted; the marker proves
+what this run made, it does not defend against the account that owns it. `--reuse` only continues the leftover of an interrupted run,
+proven by that marker file and the marker volume, with the settings (release, addresses, ports, admin name) that run saved:
+a flag that differs is refused. After an interruption (Ctrl-C) the script prints the exact recovery command. At the end it asks
+on a terminal whether to remove what it made, or does so with `--cleanup`; later `--cleanup-only --project <name> --workdir <dir>`
+removes exactly the containers, networks, volumes and image tag carrying that run id, checks that nothing is left and
+says what remains or could not be checked (the marker and working directory stay then). Secrets never appear in
+a command line: the generated remote page password goes to a mode-600 file in the working directory (its path is printed), the
 session header goes to curl through a private config file.
-The report `rehearsal-report-<run id>.md` in the current directory lists versions, the image, one row per step (`ok`,
-`FAIL`, `TODO`) with seconds, the access matrix and the operator's commands. Only the detail text is sanitized (host and user
-names, paths, addresses, the admin name, the provider URL and every credential of the run are replaced), never the
-verdict columns, and the report is not written if a credential value would be in it. The exit code is 0 only when no step
-FAILED; every `TODO(operator)` row is still yours before you invite the team. Docker Desktop and rootless Docker show the
-browser as a Docker address, so the source filter `allowedSourceCIDRs` is proven only by the second-machine browser item.
+The report `rehearsal-report-<run id>.md` in the current directory lists versions, the image, the source filter that was
+used, one row per step (`ok`, `FAIL`, `TODO`) with seconds, the access matrix and the operator's commands; the last lines say
+how the cleanup ended and give the verdict. Only the detail text is sanitized (host and user names, paths, addresses, the admin name,
+the provider URL and every credential of the run are replaced), never the verdict columns, and the report is not written if a
+credential value would be in it. The exit code is 0 only when no step FAILED and the cleanup, if requested, succeeded; every
+`TODO(operator)` row is still yours before you invite the team. The remote page's source filter `allowedSourceCIDRs` is set to the
+Compose admin network's subnet when that works with a browser on the host, otherwise it is opened to all IPv4 for the rehearsal; the report
+says which, and in neither case is the documented LAN filter proven: only the second-machine browser item does that.
 
 ## Hardening that is on
 
