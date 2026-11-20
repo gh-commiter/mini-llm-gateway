@@ -537,6 +537,9 @@ stage_matrix() {
 # ====================================================================================================
 # 5. Knowledge flow
 # ====================================================================================================
+# absence is claimed only when grep itself answered "no match" (exit 1); any other status is an error, never an absence
+absent_in_text() { printf '%s' "$2" | grep -qF -- "$1"; aer=$?; [ $aer -eq 1 ]; }
+absent_in_file() { [ -r "$2" ] || return 1; grep -q -- "$1" "$2"; aer=$?; [ $aer -eq 1 ]; }
 sub_id() { sed -n 's/^submission \([0-9][0-9]*\) pending.*/\1/p' | head -n 1; }
 review_hash() { # submission id; reads the review output
   awk -v n="$1" '$1=="submission" && $2==n {f=1; next} f && $1=="version" {print $2; exit} $1=="submission" {f=0}'
@@ -546,7 +549,9 @@ stage_flow() {
   t1=rhf$(rnd); t2=rhg$(rnd)
   fo=$(printf 'finding body %s\n' "$t1" | cl rh-developer /home/minigw/p1 kb submit rh-p1 --kind finding --title "F-$t1" - 2>&1); fid=$(printf '%s' "$fo" | sub_id)
   [ -n "$fid" ] || { bad 5.submit "member submission failed: $(tailc "$fo")"; return; }
-  if cl rh-developer /home/minigw/p1 kb search rh-p1 "$t1" 2>&1 | grep -qF -- "$t1"; then bad 5.submit "a pending submission is already visible in search"; return; fi
+  pso=$(cl rh-developer /home/minigw/p1 kb search rh-p1 "$t1" 2>&1); psr=$?
+  if [ $psr -ne 0 ]; then bad 5.submit "the search for the pending submission failed (exit $psr), so it cannot prove the submission is invisible: $(tailc "$pso")"; return; fi
+  if ! absent_in_text "$t1" "$pso"; then bad 5.submit "a pending submission is already visible in search"; return; fi
   ok 5.submit "a member submitted a finding (submission $fid); it is not visible in search while pending"
   ro=$(gw kb review rh-p1 2>&1); fh=$(printf '%s' "$ro" | review_hash "$fid")
   { printf '%s' "$ro" | grep -qF -- "$t1" && [ ${#fh} -eq 64 ]; } || { bad 5.review "gw kb review rh-p1 did not show the submission and its version hash: $(tailc "$ro")"; return; }
@@ -571,8 +576,8 @@ stage_flow() {
   if ! printf '%s' "$ro1" | grep -q 'not found or not visible' || ! printf '%s' "$ro2" | grep -q 'not allowed: restoring a saved version needs the project admin role'; then
     bad 5.restore "the refusal is not the product's own (reader: $(tailc "$ro1") developer: $(tailc "$ro2"))"; return; fi
   rs=$(cl rh-admin /home/minigw/p1 note restore "$nid" --revision 1 --current 2 2>&1) || { bad 5.restore "note restore by the admin: $(tailc "$rs")"; return; }
-  rd=$(cl rh-admin /home/minigw/p1 note read "$nid" 2>&1)
-  if printf '%s' "$rd" | grep -qF -- "$t1" && ! printf '%s' "$rd" | grep -qF -- "$t2"; then ok 5.restore "restore is refused for the reader and the author; the admin restored revision 1 as a new revision"
+  rd=$(cl rh-admin /home/minigw/p1 note read "$nid" 2>&1); rdr=$?
+  if [ $rdr -eq 0 ] && printf '%s' "$rd" | grep -qF -- "$t1" && absent_in_text "$t2" "$rd"; then ok 5.restore "restore is refused for the reader and the author; the admin restored revision 1 as a new revision"
   else bad 5.restore "after the restore the note does not hold the earlier text: $(tailc "$rd")"; return; fi
   # two more submissions stay pending: the review pages and the backup comparison use them
   W1=rhw$(rnd); W2=rhx$(rnd)
@@ -660,7 +665,7 @@ json.dump(c,open(sys.argv[3],"w"),indent=1)' "$WORK/serve.in" "$URL" "$WORK/serv
   grep -qi '^strict-transport-security: max-age=' "$WORK/head" && ok 6.hsts "HSTS header present" || bad 6.hsts "no HSTS header"
   # a forged Origin never gets a session
   c=$(login "$PW" https://evil.example)
-  if [ "$c" = 403 ] && ! grep -q '"session"' "$WORK/body"; then ok 6.origin "login with the right password and a forged Origin: 403, no session"; else bad 6.origin "forged Origin: expected exactly 403 and no session, got '$c' (000 = no answer from the proxy)"; fi
+  if [ "$c" = 403 ] && absent_in_file '"session"' "$WORK/body"; then ok 6.origin "login with the right password and a forged Origin: 403, no session"; else bad 6.origin "forged Origin: expected exactly 403 and no session, got '$c' (000 = no answer from the proxy)"; fi
   c=$(login "$PW" "$URL")
   S=$(sed -n 's/.*"session": *"\([0-9a-f]*\)".*/\1/p' "$WORK/body")
   if [ "$c" = 200 ] && [ -n "$S" ]; then ok 6.login "login with the password over HTTPS gives a session"; else bad 6.login "login with the password answered '$c' (expected 200; 429 means an earlier run of this project locked the source out for 15 minutes: wait, or start a fresh run)"; return; fi
@@ -705,7 +710,7 @@ case ${id1:-x}:${id2:-x} in *[!0-9:]*|:*|*:) lw=1;; esac
   ro=$(gw kb review rh-p1 2>&1); rrc=$?
   if [ $rrc -ne 0 ]; then bad 6.review.cli "gw kb review failed (exit $rrc): $(tailc "$ro")"
   elif ! printf '%s' "$ro" | grep -qF -- "$W1"; then bad 6.review.cli "the owner's review does not list the submission that was only read ($W1): the listing cannot prove anything"
-  elif printf '%s' "$ro" | grep -qF -- "$W2"; then bad 6.review.cli "the rejected submission is still pending in the owner's review"
+  elif ! absent_in_text "$W2" "$ro"; then bad 6.review.cli "the rejected submission is still pending in the owner's review"
   else ok 6.review.cli "the owner's gw kb review (exit 0) still lists the read submission and no longer the rejected one"; fi
   # where the gateway saw the browser (informational: Docker hides the browser address on Docker Desktop and rootless Docker)
   seen=$(dc exec -T minigw tail -n 20 /var/lib/minigw/config/remote-settings.audit.jsonl 2>/dev/null | sed -n 's/.*"IP":"\([^"]*\)".*/\1/p' | tail -n 1)
@@ -864,8 +869,11 @@ stage_secrets() {
   dc logs --no-color >"$WORK/logs.txt" 2>"$WORK/logs.err"; lrc=$?
   if [ $lrc -ne 0 ] || [ ! -s "$WORK/logs.txt" ]; then bad 10.logs "the container logs could not be read (exit $lrc): $(tailc "$(cat "$WORK/logs.err")")"; return; fi
   if ! grep -q 'minigw' "$WORK/logs.txt"; then bad 10.logs "the container logs hold no gateway line: they cannot prove anything"; return; fi
-  if grep -F -q -f "$WORK/patterns" "$WORK/logs.txt"; then bad 10.logs "a credential created by this run (admin password, session, gateway or device token, provider key, wrong-password probes) is in the container logs"
-  else ok 10.logs "the logs of the gateway$([ "$ADMIN" = 1 ] && echo ' and the proxy') ($(wc -l <"$WORK/logs.txt" | tr -d ' ') lines) hold none of the credentials this run created: admin password, session, gateway/device token, provider key, wrong-password probes (the restore project's logs are not scanned)"; fi
+  [ -s "$WORK/patterns" ] || { bad 10.logs "no credential was collected for the scan"; return; }
+  grep -F -q -f "$WORK/patterns" "$WORK/logs.txt"; gr=$?
+  if [ $gr -eq 0 ]; then bad 10.logs "a credential created by this run is in the container logs"
+  elif [ $gr -ne 1 ]; then bad 10.logs "the secret scan itself failed (grep exit $gr): it proves nothing"
+  else ok 10.logs "the logs of the gateway$([ "$ADMIN" = 1 ] && echo ' and the proxy') ($(wc -l <"$WORK/logs.txt" | tr -d ' ') lines) hold none of these credentials of this run: the admin password, the session value, the gateway token (the one every simulated device connected with), the provider key, the wrong-password probes. NOT scanned: the devices' private keys, the restore project's logs"; fi
 }
 
 # ---------- report: only the detail text is sanitized, never the verdict columns ----------
@@ -925,7 +933,9 @@ report() {
   } | san text >>"$t" || rb=1
   printf '## Result\n\n%s step(s) FAILED. %s\n' "$FAILS" "$([ "$FAILS" = 0 ] && echo 'All automated steps passed; the TODO(operator) items remain before inviting the team.' || echo 'The rehearsal failed: do not invite the team before the FAIL rows are understood.')" >>"$t" || rb=1
   if [ $rb -ne 0 ]; then bad 10.report "the report could not be built or sanitized: no report written"; return; fi
-  if grep -F -q -f "$WORK/patterns" "$t"; then bad 10.report "a credential value is in the report text: no report written"; return; fi
+  grep -F -q -f "$WORK/patterns" "$t"; gr=$?
+  if [ $gr -eq 0 ]; then bad 10.report "a credential value is in the report text: no report written"; return; fi
+  if [ $gr -ne 1 ]; then bad 10.report "the credential scan of the report failed (grep exit $gr): no report written"; return; fi
   REP=rehearsal-report-$RID.md
   if ( set -C; cat "$t" >"$REP" ) 2>/dev/null; then printf 'report: %s\n' "$REP"; else bad 10.report "cannot create $REP in the current directory (it must not exist; symlinks are never followed)"; fi
 }
