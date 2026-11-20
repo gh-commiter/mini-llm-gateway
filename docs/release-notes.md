@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.9.11
 
 ### Fixed
 - Mac gateway: `GET /v1/models` ran `codex debug models` (a program, waited for without a time limit) on a thread of the Swift concurrency pool; on a small Mac a few such requests at once, or a slow Codex, left the router without a thread for its other requests. It now runs on a thread of its own, as the Admin API already did.
@@ -10,6 +10,12 @@
 
 ### Changed
 - Swift tests: `MG_POOL_SHRINK_TO=n` parks all but n threads of the Swift concurrency pool for the run (the pool has one thread per core and no width setting), `MG_POOL_LAG_LOG=1` prints every second a Task waits for a pool thread; both are for finding who holds the pool.
+
+### Known problems
+- Mac gateway: these still wait on a thread of the Swift concurrency pool: the listing of the caches folder and of the Scratch folder's parent at every agent run (milliseconds, unless that folder holds tens of thousands of entries), the check of who listens for Foundry Local (about a second, cached), and short waits at the end of a run and at quit. On a Mac with few cores many of them at once can delay other requests.
+- `GET /v1/models` with Codex on has no test with a real Codex catalog; the change there moves the same call to a thread of its own.
+- The pool-lag limit on the hosted test runner is 45 s (20 s elsewhere); whether the hosted run now stays below it is known only after this release's run.
+- The known problems of 0.9.10 apply.
 
 ## 0.9.10
 

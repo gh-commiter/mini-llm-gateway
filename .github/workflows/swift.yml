@@ -31,6 +31,10 @@ jobs:
       # Every 3 minutes a heartbeat line lists the tests running now (from the same log), so a run that is cancelled or lost (the 0.7.28 run was cancelled after 15 minutes,
       # cause unknown) still says where it was; the log is uploaded by the next step even then.
       - name: swift test
+        env:
+          # The pool-lag limit is 20 s on a developer's Mac (healthy runs there peak at 2-4 s). The hosted runner has 3 cores: the same
+          # run queues about four times as long for a pool thread (16.7 s and 21.8 s seen with no stall). A real stall measured 88-91 s.
+          MG_POOL_LAG_LIMIT: "45"
         run: |
           pending() { grep -E "Test .* (started|passed after|failed after|was cancelled|skipped)" "$RUNNER_TEMP/swift-test.log" | sed -E 's/^.*Test (.*) (started|passed after|failed after|was cancelled|skipped).*$/\1 \2/' | awk '$NF=="started"{s[$1]=1} $NF!="started"{delete s[$1]} END{for(k in s) print k}' | sort; }
           swift test > "$RUNNER_TEMP/swift-test.log" 2>&1 &
