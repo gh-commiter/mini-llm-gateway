@@ -37,7 +37,9 @@ private final class DAVLoopback: @unchecked Sendable {
 
     /// #150: nil when the server answers a minimal request within 3 s; otherwise why it does not. A test calls this before it touches the mount, so a dead server
     /// fails the test at once instead of blocking in the mount (a `stat` on a mount whose server is gone does not return).
-    func deadReason() -> String? {
+    func deadReason() async -> String? { await offPool { self.deadReasonBlocking() } }
+
+    private func deadReasonBlocking() -> String? {
         let why = { (what: String) in
             "the test's WebDAV server stopped answering (\(what); accept loop errno \(self.loop.endedErrno.map(TestAcceptLoop.name) ?? "none seen, the loop is still running"); \(self.summary))"
         }
@@ -69,8 +71,8 @@ private final class DAVLoopback: @unchecked Sendable {
     }
 
     /// Fails the test at once (the cleanup defers still unmount) when the server does not answer.
-    func requireAnswering() throws {
-        let why = deadReason()
+    func requireAnswering() async throws {
+        let why = await deadReason()
         try #require(why == nil, Comment(rawValue: why ?? ""))
     }
 
@@ -109,7 +111,11 @@ private final class DAVLoopback: @unchecked Sendable {
 /// Runs `cmd` in `cwd` with `/bin/sh`, stdout and stderr together. #150: the shell starts in "/" and does its own `cd` (a launch with a working directory on a wedged mount
 /// blocks the caller in the kernel), runs in a process group of its own, and on the timeout the whole GROUP is killed (a `git` the shell started must not outlive it holding the
 /// pipe); the output then says so, with the command, the time and the processes that were still alive.
-private func sh(_ cmd: String, cwd: String, timeout: Double = 90) -> (status: Int32, out: String) {
+private func sh(_ cmd: String, cwd: String, timeout: Double = 90) async -> (status: Int32, out: String) {
+    await offPool { shBlocking(cmd, cwd: cwd, timeout: timeout) }
+}
+
+private func shBlocking(_ cmd: String, cwd: String, timeout: Double = 90) -> (status: Int32, out: String) {
     var env = ProcessInfo.processInfo.environment
     env.merge(["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_AUTHOR_NAME": "n", "GIT_AUTHOR_EMAIL": "a@b",
                "GIT_COMMITTER_NAME": "n", "GIT_COMMITTER_EMAIL": "a@b"]) { $1 }
@@ -162,21 +168,21 @@ private func sh(_ cmd: String, cwd: String, timeout: Double = 90) -> (status: In
     return (status, String(decoding: data.withLock { $0 }, as: UTF8.self) + (notes.isEmpty ? "" : "\n" + notes))
 }
 
-@Test func aTimedOutShellTakesItsChildrenWithItAndNamesTheCommand() {
+@Test func aTimedOutShellTakesItsChildrenWithItAndNamesTheCommand() async throws {
     let mark = "sleep 29\(Int.random(in: 100...999))"  // a unique command line to look for afterwards
     let started = Date()
-    let r = sh("\(mark) & \(mark); echo not reached", cwd: "/", timeout: 1)
+    let r = await sh("\(mark) & \(mark); echo not reached", cwd: "/", timeout: 1)
     #expect(Date().timeIntervalSince(started) < 15, "the helper waited for the orphan: \(r)")
     #expect(r.status == SIGKILL && r.out.contains("TIMEOUT") && r.out.contains(mark), "\(r)")
-    usleep(300_000)
-    #expect(sh("pgrep -f '\(mark)' | grep -v $$ || echo none", cwd: "/", timeout: 10).out.hasSuffix("none\n"), "a child of the killed shell is still alive")
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(await sh("pgrep -f '\(mark)' | grep -v $$ || echo none", cwd: "/", timeout: 10).out.hasSuffix("none\n"), "a child of the killed shell is still alive")
 }
 
 /// For failure messages when a mount dies: the system's mount table for this mount point and the webdavfs processes (a dead agent = the OS dropped the mount).
-private func webdavState(_ mp: URL) -> String {
-    let table = sh("mount | grep -F '\(mp.path)' || echo 'not in the mount table'", cwd: "/", timeout: 10).out
-    let procs = sh("ps -axo pid,etime,command | grep -i '[w]ebdavfs' || echo 'no webdavfs process'", cwd: "/", timeout: 10).out
-    let load = sh("uptime", cwd: "/", timeout: 10).out
+private func webdavState(_ mp: URL) async -> String {
+    let table = await sh("mount | grep -F '\(mp.path)' || echo 'not in the mount table'", cwd: "/", timeout: 10).out
+    let procs = await sh("ps -axo pid,etime,command | grep -i '[w]ebdavfs' || echo 'no webdavfs process'", cwd: "/", timeout: 10).out
+    let load = await sh("uptime", cwd: "/", timeout: 10).out
     return "mount table: \(table.trimmingCharacters(in: .whitespacesAndNewlines)); webdavfs: \(procs.trimmingCharacters(in: .whitespacesAndNewlines)); \(load.trimmingCharacters(in: .whitespacesAndNewlines))"
 }
 
@@ -196,30 +202,31 @@ private func forceUnmount(_ mp: URL) {
     rmdir(mp.path)
 }
 
-@Test func anAgentInADirectModeMountCommitsAndCannotPlantWhatRunsCode() throws {
+@Test func anAgentInADirectModeMountCommitsAndCannotPlantWhatRunsCode() async throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("direct-mount-" + UUID().uuidString, isDirectory: true)
     let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
     for d in [client, mp] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
     defer { try? fm.removeItem(at: base) }
-    #expect(sh("git init -q && echo hi > a.txt && git add a.txt && git commit -qm init && git branch x", cwd: client.path).status == 0)
+    #expect(await sh("git init -q && echo hi > a.txt && git add a.txt && git commit -qm init && git branch x", cwd: client.path).status == 0)
     let server = try #require(DAVLoopback(root: client, prefix: "/dav/e2e"))
     defer { server.stop() }  // runs after the unmount below: webdavfs still wants its server while it writes back
-    let mounted = ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) == 0
+    let mounted = await offPool { ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) } == 0
     defer { forceUnmount(mp) }
     try #require(mounted, "mount_webdav to the loopback server")
 
     // the agent: edit, add, commit, branch, tag, switch, stash, merge a local branch
     for cmd in ["echo more >> a.txt && git add a.txt && git commit -qm agent", "git branch feature", "git tag v1", "git checkout -q -b topic", "echo again >> a.txt && git stash -q",
                 "git checkout -q - && git merge -q --no-edit x", "git log --oneline | wc -l | grep -q 2", "git gc -q", "git repack -a -d -q && git prune --expire=now && git count-objects -v | grep -q '^count: 0'", "git gc --aggressive -q"] {
-        try server.requireAnswering()
-        let r = sh(cmd, cwd: mp.path)
-        #expect(r.status == 0, "\(cmd): \(r) | mounted \(ShareHub.isMounted(mp)); \(server.summary)\(r.status == 0 ? "" : " | " + webdavState(mp))")
+        try await server.requireAnswering()
+        let r = await sh(cmd, cwd: mp.path)
+        let state = r.status == 0 ? "" : " | " + (await webdavState(mp))
+        #expect(r.status == 0, "\(cmd): \(r) | mounted \(ShareHub.isMounted(mp)); \(server.summary)\(state)")
     }
     // the commit is in the client's own repository, which git itself finds sound
-    let log = sh("git log --oneline", cwd: client.path)
+    let log = await sh("git log --oneline", cwd: client.path)
     #expect(log.out.contains("agent") && log.out.contains("init"), "\(log)")
-    #expect(sh("git branch --list feature topic && git tag --list v1 && git fsck --strict 2>&1 | grep -c -i -E 'error|fatal|missing'", cwd: client.path).out.hasSuffix("0\n"))
+    #expect(await sh("git branch --list feature topic && git tag --list v1 && git fsck --strict 2>&1 | grep -c -i -E 'error|fatal|missing'", cwd: client.path).out.hasSuffix("0\n"))
 
     // what runs code is refused with the client's refusal line (stderr of this process), and nothing appears in the client's folder
     // (the log of refusals is one line per path and process: start from an empty one; webdavfs writes back after close, so wait for the lines)
@@ -231,15 +238,15 @@ private func forceUnmount(_ mp: URL) {
     WebDAV.refused.withLock { $0 = WebDAV.RefusalLog() }
     let denied = ["echo '# t' >> .git/config", "echo noop > .git/hooks/pre-commit", "echo noop > .git/info/attributes", "echo /x > .git/objects/info/alternates",
                   "mkdir .git/rebase-merge && echo noop > .git/rebase-merge/git-rebase-todo", "echo x > .git/shallow", "git config user.name evil"]
-    for cmd in denied { if server.deadReason() != nil { break }; _ = sh(cmd, cwd: mp.path) }  // (a dead server is reported below, once stderr is ours again)
+    for cmd in denied { if await server.deadReason() != nil { break }; _ = await sh(cmd, cwd: mp.path) }  // (a dead server is reported below, once stderr is ours again)
     var refusals = ""
     for _ in 0..<150 {
         refusals = (try? String(contentsOf: errFile, encoding: .utf8)) ?? ""
         if [".git/hooks/pre-commit\"", ".git/config", ".git/info/attributes\"", ".git/objects/info/alternates\""].allSatisfy(refusals.contains) { break }
-        usleep(200_000)
+        try await Task.sleep(for: .milliseconds(200))
     }
     dup2(saved, 2); close(saved); close(fd)
-    try server.requireAnswering()
+    try await server.requireAnswering()
     // (the shell may report success for a write that webdavfs writes back after close and the client then refuses: the checks are the refusal line and the client's folder)
     let state = "mounted \(ShareHub.isMounted(mp)); \(server.summary)"  // no line = the writes never reached the client (a stalled mount) or the log was used up
     #expect(refusals.contains("minigw: refused agent write to \".git/hooks/pre-commit\" (protected path)"), "\(refusals) | \(state)")
@@ -247,7 +254,8 @@ private func forceUnmount(_ mp: URL) {
     for p in ["hooks/pre-commit", "info/attributes", "objects/info/alternates", "rebase-merge", "shallow", "config.lock"] {
         #expect(!fm.fileExists(atPath: client.appendingPathComponent(".git/" + p).path), "\(p)")
     }
-    #expect(!sh("cat .git/config", cwd: client.path).out.contains("evil") && !sh("cat .git/config", cwd: client.path).out.contains("# t"))
+    let config = await sh("cat .git/config", cwd: client.path).out
+    #expect(!config.contains("evil") && !config.contains("# t"))
 }
 
 /// 0.7.0: the REAL claude, launched with the gateway's own arguments (`agentArgs(directGit: true)`) and environment, in a real direct-mode mount (mount_webdav of a folder served by the
@@ -260,10 +268,10 @@ func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
     let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
     for d in [client, mp] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
     defer { try? fm.removeItem(at: base) }
-    #expect(sh("git init -q && git config user.name Owner && git config user.email o@example.com && echo hi > a.txt && printf '#!/bin/sh\\n' > exec.sh && chmod 755 exec.sh && git add a.txt exec.sh && git commit -qm init", cwd: client.path).status == 0)
+    #expect(await sh("git init -q && git config user.name Owner && git config user.email o@example.com && echo hi > a.txt && printf '#!/bin/sh\\n' > exec.sh && chmod 755 exec.sh && git add a.txt exec.sh && git commit -qm init", cwd: client.path).status == 0)
     let server = try #require(DAVLoopback(root: client, prefix: "/dav/e2e"))
     defer { server.stop() }
-    let mounted = ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) == 0
+    let mounted = await offPool { ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) } == 0
     defer { forceUnmount(mp) }
     try #require(mounted, "mount_webdav to the loopback server")
     var st = stat()
@@ -284,54 +292,56 @@ func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
     dup2(fd, 2)
     WebDAV.refused.withLock { $0 = WebDAV.RefusalLog() }
     let ask = "Run these as separate Bash calls, one simple command each (no chaining, no echo): 1) printf hi > b.txt  2) git add b.txt  3) git commit -m 'add b'  4) printf x > .git/hooks/pre-commit  5) printf x > .git/COMMIT_EDITMSG  6) mv .git/COMMIT_EDITMSG .git/config  7) printf '# edit' >> exec.sh  8) git add exec.sh  9) git commit -m 'edit exec'. Report the exact output of each."
-    let r = ClaudeSeatbelt.capture(exe, args, env: env, cwd: mp.path, input: ask, timeout: 300, log: base)
-    for _ in 0..<50 { usleep(200_000) }  // webdavfs writes back after close
+    let (runArgs, runEnv) = (args, env)
+    let r = await offPool { ClaudeSeatbelt.capture(exe, runArgs, env: runEnv, cwd: mp.path, input: ask, timeout: 300, log: base) }
+    try await Task.sleep(for: .seconds(10))  // webdavfs writes back after close
     dup2(saved, 2); close(saved); close(fd)
     let refusals = (try? String(contentsOf: errFile, encoding: .utf8)) ?? ""
     print("[mount-real] claude said: \((r.out.components(separatedBy: "\"result\":").last ?? "").prefix(1200))")
     print("[mount-real] client stderr: \(refusals)")
     print("[mount-real] requests: \(server.summary)\n[mount-real] writes: \(server.writes)")
-    let log = sh("git log --format=%s", cwd: client.path).out.components(separatedBy: "\n").dropFirst().first ?? ""  // the second newest: "add b"
-    let report = watch.finish()
+    let log = await sh("git log --format=%s", cwd: client.path).out.components(separatedBy: "\n").dropFirst().first ?? ""  // the second newest: "add b"
+    let report = await offPool { watch.finish() }
     print("[mount-real] git watch report: \(report)")
     #expect(log.hasPrefix("add b"), "no commit in the client's repository: \(log)")
     #expect(report.joined().contains("2 new commit(s)"), "\(report)")
     // 0.7.1: the mount shows every file as -rwx------: the new file is recorded as 100644, the executable file keeps 100755 after the agent's edit
-    let tree = sh("git ls-tree HEAD", cwd: client.path).out
+    let tree = await sh("git ls-tree HEAD", cwd: client.path).out
     #expect(tree.range(of: #"100644 blob \w+\tb\.txt"#, options: .regularExpression) != nil, Comment(rawValue: tree))
     #expect(tree.range(of: #"100755 blob \w+\texec\.sh"#, options: .regularExpression) != nil, Comment(rawValue: tree))
-    #expect(sh("git log --format=%s", cwd: client.path).out.hasPrefix("edit exec"))
+    #expect(await sh("git log --format=%s", cwd: client.path).out.hasPrefix("edit exec"))
     #expect(!refusals.contains("._"), "AppleDouble files are not reported: \(refusals)")
     #expect(!fm.fileExists(atPath: client.appendingPathComponent(".git/hooks/pre-commit").path))
-    #expect(!sh("cat .git/config", cwd: client.path).out.contains("COMMIT_EDITMSG") && !sh("cat .git/config", cwd: client.path).out.hasPrefix("x"))
+    let config = await sh("cat .git/config", cwd: client.path).out
+    #expect(!config.contains("COMMIT_EDITMSG") && !config.hasPrefix("x"))
 }
 
 /// 0.7.1: the mount shows every file as -rwx------. With the environment of a sandboxed run on a mount (core.fileMode false) a new file is committed as 100644 and an executable
 /// file keeps 100755; what a tracked symlink looks like on the mount is measured here.
-@Test func modesOnADirectModeMountAreNotTheMountsModes() throws {
+@Test func modesOnADirectModeMountAreNotTheMountsModes() async throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("direct-mount-mode-" + UUID().uuidString, isDirectory: true)
     let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
     for d in [client, mp] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
     defer { try? fm.removeItem(at: base) }
-    #expect(sh("git init -q && echo '#!/bin/sh' > exec.sh && chmod 755 exec.sh && echo p > plain.txt && ln -s plain.txt link && git add -A && git commit -qm init", cwd: client.path).status == 0)
+    #expect(await sh("git init -q && echo '#!/bin/sh' > exec.sh && chmod 755 exec.sh && echo p > plain.txt && ln -s plain.txt link && git add -A && git commit -qm init", cwd: client.path).status == 0)
     let server = try #require(DAVLoopback(root: client, prefix: "/dav/e2e"))
     defer { server.stop() }
-    let mounted = ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) == 0
+    let mounted = await offPool { ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) } == 0
     defer { forceUnmount(mp) }
     try #require(mounted, "mount_webdav to the loopback server")
     let env = ClaudeCLIConfig.sandboxGitEnv(mount: true).map { "export \($0.key)='\($0.value)'" }.joined(separator: "; ")
-    try server.requireAnswering()
-    print("[mode] ls -l on the mount: \(sh("ls -l exec.sh plain.txt link", cwd: mp.path).out)")
-    print("[mode] status on the mount, default config: \(sh("git status --short; git config core.symlinks; git ls-files -s", cwd: mp.path).out)")
-    print("[mode] status with the run's environment: \(sh(env + "; git status --short; git diff --raw", cwd: mp.path).out)")
-    let r = sh(env + "; echo new > new.txt && echo '# edit' >> exec.sh && git add new.txt exec.sh && git commit -qm agent", cwd: mp.path)
+    try await server.requireAnswering()
+    print("[mode] ls -l on the mount: \(await sh("ls -l exec.sh plain.txt link", cwd: mp.path).out)")
+    print("[mode] status on the mount, default config: \(await sh("git status --short; git config core.symlinks; git ls-files -s", cwd: mp.path).out)")
+    print("[mode] status with the run's environment: \(await sh(env + "; git status --short; git diff --raw", cwd: mp.path).out)")
+    let r = await sh(env + "; echo new > new.txt && echo '# edit' >> exec.sh && git add new.txt exec.sh && git commit -qm agent", cwd: mp.path)
     #expect(r.status == 0, "\(r)")
-    let tree = sh("git ls-tree HEAD", cwd: client.path).out
+    let tree = await sh("git ls-tree HEAD", cwd: client.path).out
     print("[mode] tree after the agent's commit: \(tree)")
     #expect(tree.range(of: #"100644 blob \w+\tnew\.txt"#, options: .regularExpression) != nil, Comment(rawValue: tree))
     #expect(tree.range(of: #"100755 blob \w+\texec\.sh"#, options: .regularExpression) != nil, Comment(rawValue: tree))
-    print("[mode] client diff --raw after: \(sh("git status --short; git diff --raw HEAD", cwd: client.path).out)")
+    print("[mode] client diff --raw after: \(await sh("git status --short; git diff --raw HEAD", cwd: client.path).out)")
 }
 
 /// 0.7.1: the gateway reads a missing flag as closed: the client decides (it sees the real folder) and says so at share time.
@@ -357,14 +367,14 @@ func aRealClaudeAgentCannotCommitThroughAMountOfARepositoryWithASymlink() async 
     let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
     for d in [client, mp] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
     defer { try? fm.removeItem(at: base) }
-    #expect(sh("git init -q && git config user.name Owner && git config user.email o@example.com && echo hi > a.txt && ln -s a.txt link && git add -A && git commit -qm init", cwd: client.path).status == 0)
+    #expect(await sh("git init -q && git config user.name Owner && git config user.email o@example.com && echo hi > a.txt && ln -s a.txt link && git add -A && git commit -qm init", cwd: client.path).status == 0)
     let hub = ShareHub()
     _ = await hub.register(session: "s", cwd: client.path, key: nil, device: "d")  // no flag: the client found a tracked symbolic link
     let open = await hub.commitsAllowed(session: "s")
     #expect(!open)
     let server = try #require(DAVLoopback(root: client, prefix: "/dav/e2e"))
     defer { server.stop() }
-    let mounted = ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) == 0
+    let mounted = await offPool { ShareHub.run("/sbin/mount_webdav", ["-S", "-v", "proj", "http://127.0.0.1:\(server.port)/dav/e2e/", mp.path]) } == 0
     defer { forceUnmount(mp) }
     try #require(mounted, "mount_webdav to the loopback server")
     var cfg = ClaudeCLIConfig(); cfg.allowLocalTools = true
@@ -375,9 +385,10 @@ func aRealClaudeAgentCannotCommitThroughAMountOfARepositoryWithASymlink() async 
     env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
     env.merge(ClaudeCLIConfig.sandboxGitEnv(mount: open)) { $1 }
     let ask = "Run these as separate Bash calls, one simple command each (no chaining, no echo): 1) printf x > c.txt  2) git add -A  3) git commit -m sneaky. Report the exact output of each."
-    let r = ClaudeSeatbelt.capture(exe, args, env: env, cwd: mp.path, input: ask, timeout: 300, log: base)
-    for _ in 0..<25 { usleep(200_000) }
+    let (runArgs, runEnv) = (args, env)
+    let r = await offPool { ClaudeSeatbelt.capture(exe, runArgs, env: runEnv, cwd: mp.path, input: ask, timeout: 300, log: base) }
+    try await Task.sleep(for: .seconds(5))
     print("[mount-link] claude said: \((r.out.components(separatedBy: "\"result\":").last ?? "").prefix(700))")
-    #expect(sh("git log --format=%s", cwd: client.path).out == "init\n", "a commit was made")
-    #expect(sh("git ls-tree HEAD link", cwd: client.path).out.hasPrefix("120000"), "the link is no longer a link")
+    #expect(await sh("git log --format=%s", cwd: client.path).out == "init\n", "a commit was made")
+    #expect(await sh("git ls-tree HEAD link", cwd: client.path).out.hasPrefix("120000"), "the link is no longer a link")
 }
