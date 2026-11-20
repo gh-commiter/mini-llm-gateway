@@ -788,7 +788,7 @@ type learnMark struct {
 // note is never visible twice once the pull that brought its hub copy has finished. At most maxLearn receipts per run, oldest first (the rest in
 // the next runs); the request is the pusher's (GET of the submission), what an accepted one teaches is written by upstreamRecordAccepted. It
 // never fails the pull and never deletes: an answer it cannot use leaves the receipt as it was. A pending, rejected or unreadable submission is
-// not asked about again for learnAskedFor; a PENDING one is asked about again as soon as the hub lists a note this mirror does not hold yet
+// not asked about again for learnAskedFor (a rejected one is kept durably as a marker, see rejectedKey, and not asked about again at all); a PENDING one is asked about again as soon as the hub lists a note this mirror does not hold yet
 // (newHub): a submission can only have become a hub note that was not there before, so a note accepted between two pulls is learned in the
 // pull that finds it, before it is shown.
 func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(string) upAnswer, l UpstreamLink, label string, remote int64, newHub bool) {
@@ -804,7 +804,7 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 	}
 	s.autoMu.Unlock()
 	err := s.read(wctx, func(tx *sql.Tx) error {
-		rows, e := tx.Query(`SELECT note_id,remote_sub FROM upstream_sent WHERE project_id=? AND upstream=? AND remote_sub>0 AND remote_note=0 ORDER BY sent,note_id`, l.Project, l.Upstream)
+		rows, e := tx.Query(`SELECT note_id,remote_sub FROM upstream_sent WHERE project_id=? AND upstream=? AND remote_sub>0 AND remote_note=0 AND NOT EXISTS(SELECT 1 FROM meta WHERE key='upstream_reconcile|'||project_id||'|'||upstream||'|rejected|'||note_id AND substr(value,1,length(remote_sub||'|'))=remote_sub||'|') ORDER BY sent,note_id`, l.Project, l.Upstream)
 		if e != nil {
 			return e
 		}
@@ -850,7 +850,7 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 			break
 		}
 		var sub struct {
-			State              string
+			State, Reason      string
 			Note               int64
 			Replaces, Revision int64
 		}
@@ -866,6 +866,13 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 				learned++
 			}
 			continue
+		}
+		if a.status == 200 && sub.State == "rejected" { // kept durably (status, later pushes); then it is not asked about again at all
+			if wrote, e := s.upstreamRecordRejected(wctx, l.Project, l.Upstream, r.note, r.sub, sub.Reason); e != nil {
+				break
+			} else if wrote {
+				continue
+			}
 		}
 		s.autoMu.Lock()
 		if s.learnAsked == nil {

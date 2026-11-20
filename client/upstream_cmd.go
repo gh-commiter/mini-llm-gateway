@@ -75,6 +75,12 @@ type upLink struct {
 	MirrorBytes  int64
 
 	Waiting       int
+	Rejected      int
+	RejectedNotes []struct {
+		Note       int64
+		Submission int64
+		Reason     string
+	}
 	NotPropagated []struct {
 		Note int64
 		Why  string
@@ -273,6 +279,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			}
 			if s := upstreamConflicts(l); s != "" {
 				say(clean("  " + s))
+			}
+			for _, t := range upstreamRejected(l, team != "" || len(pos) == 3) {
+				say(clean("  " + t))
 			}
 			if l.Waiting > 0 {
 				say(fmt.Sprintf("  %d notes waited for a review upstream at the last push; they are checked at the next push (not a failure)", l.Waiting))
@@ -766,6 +775,28 @@ func upstreamConflicts(l upLink) string {
 		return ""
 	}
 	return "CONFLICT: " + strings.Join(parts, ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
+}
+
+// upstreamRejected: notes whose exact text the upstream rejected (not sent again until the note changes): the count, and with the project or
+// team named one line per note.
+func upstreamRejected(l upLink, named bool) []string {
+	if l.Rejected == 0 {
+		return nil
+	}
+	out := []string{fmt.Sprintf("%d notes rejected by the upstream, unchanged since: not sent again until the note changes", l.Rejected)}
+	if l.Rejected == 1 {
+		out[0] = "1 note rejected by the upstream, unchanged since: not sent again until the note changes"
+	}
+	if named {
+		for _, r := range l.RejectedNotes {
+			t := fmt.Sprintf("note %d: submission %d rejected", r.Note, r.Submission)
+			if r.Reason != "" {
+				t += ": " + r.Reason
+			}
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // upstreamForeign: published notes that arrived from another gateway: never pushed onward (not back, not to another upstream).

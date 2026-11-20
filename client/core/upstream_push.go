@@ -546,6 +546,13 @@ func upReason(r string) string {
 	return ""
 }
 
+func rejectedWhy(r string) string {
+	if r = upText(r, 200); r != "" {
+		return ": " + r
+	}
+	return ""
+}
+
 func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, after int64, dry bool, sleep func(time.Duration) bool) (UpstreamPush, error) {
 	limit := maxPushNotes // notes to SEND per run; a dry run sends nothing and reports them all
 	if dry {
@@ -636,7 +643,11 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 				}
 			}
 			res.Skipped++
-			line("skip", n, "unchanged since the last push")
+			if r := n.Rejected; r != nil {
+				line("skip", n, "unchanged; the upstream rejected it as submission "+strconv.FormatInt(r.Submission, 10)+rejectedWhy(r.Reason)+"; change the note to send it again")
+			} else {
+				line("skip", n, "unchanged since the last push")
+			}
 			continue
 		}
 		if n.Conflicted {
@@ -996,7 +1007,11 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			line("refused", n, "the upstream's answer names no submission")
 			continue
 		}
-		if err := s.upstreamRecordSent(wctx, l.Project, l.Upstream, n, sub.ID, replaces); err != nil {
+		var rejected []string
+		if sub.State == "rejected" {
+			rejected = []string{sub.Reason}
+		}
+		if err := s.upstreamRecordSent(wctx, l.Project, l.Upstream, n, sub.ID, replaces, rejected...); err != nil {
 			return res, err
 		}
 		// A fresh submission is pending. Any other state is a replay of an EARLIER submission: the same idempotency key (note, text and link

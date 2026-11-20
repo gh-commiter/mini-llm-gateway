@@ -281,6 +281,9 @@ type UpstreamLinkInfo struct {
 	Conflicts []UpstreamConflict `json:"conflicts,omitempty"`
 	// Waiting: notes whose earlier submission is still pending upstream: nothing more is sent for them until it is reviewed (not a failure).
 	Waiting int `json:"waiting,omitempty"`
+	// Rejected: unchanged notes whose exact text the upstream rejected (not sent again until the note changes); RejectedNotes lists the first 50.
+	Rejected      int                `json:"rejected,omitempty"`
+	RejectedNotes []UpstreamRejected `json:"rejectedNotes,omitempty"`
 	// Restored: since when the link is marked "restored: reconcile before pushing" (see upstream_restore.go): it sends nothing until cleared.
 	ReconcileCounts *ReconcileCounts `json:"reconcileCounts,omitempty"`
 	Restored        *time.Time       `json:"restored,omitempty"`
@@ -763,11 +766,66 @@ type UpstreamNote struct {
 	Author           string
 	Hash             string
 	Sent             *UpstreamSent
-	Unchanged        bool // sent before with this very content: nothing to send
-	Conflicted       bool // publish mode: the upstream note changed there since our last write; waits for `upstream resolve`
-	Restricted       bool // bound without the upstream's proof of its writer (reconcile): its changes are only ever submissions, never direct writes
-	ReconcileSkipped bool // owner skipped this note (reconcile --skip): held across edits, independent of receipts, until `--new`
-	Foreign          bool // arrived from another gateway (see fromGateway): never sent onward, nothing to send
+	Unchanged        bool              // sent before with this very content: nothing to send
+	Conflicted       bool              // publish mode: the upstream note changed there since our last write; waits for `upstream resolve`
+	Restricted       bool              // bound without the upstream's proof of its writer (reconcile): its changes are only ever submissions, never direct writes
+	ReconcileSkipped bool              // owner skipped this note (reconcile --skip): held across edits, independent of receipts, until `--new`
+	Foreign          bool              // arrived from another gateway (see fromGateway): never sent onward, nothing to send
+	Rejected         *UpstreamRejected // unchanged, and the upstream rejected exactly this text (see rejectedKey)
+}
+
+// UpstreamRejected: the upstream rejected submission Submission of note Note; Reason is the hub's text (bounded, one line). It is kept in meta per
+// receipt (rejectedKey, no schema change) so that every later push and the status can say so; it shows only while the note is unchanged and the
+// receipt still names that submission.
+type UpstreamRejected struct {
+	Note       int64  `json:"note"`
+	Submission int64  `json:"submission"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// rejectedKey: under the reconcile prefix of the link, so that unlink and removing the upstream drop it with everything else of the link.
+func rejectedKey(project int64, up string, note int64) string {
+	return reconcileKey(project, up, "rejected|"+strconv.FormatInt(note, 10))
+}
+
+func rejectedValue(sub int64, reason string) string {
+	return strconv.FormatInt(sub, 10) + "|" + upText(reason, 200)
+}
+
+func parseRejected(note int64, v string) (r UpstreamRejected, ok bool) {
+	i := strings.IndexByte(v, '|')
+	if i < 0 {
+		return r, false
+	}
+	sub, err := strconv.ParseInt(v[:i], 10, 64)
+	return UpstreamRejected{note, sub, upText(v[i+1:], 200)}, err == nil && sub > 0
+}
+
+// markRejected writes the marker in tx (the transaction of the receipt it belongs to).
+func markRejected(tx *sql.Tx, project int64, up string, note, sub int64, reason string) error {
+	_, e := tx.Exec(`INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, rejectedKey(project, up, note), rejectedValue(sub, reason))
+	return e
+}
+
+func clearRejected(tx *sql.Tx, project int64, up string, note int64) error {
+	_, e := tx.Exec(`DELETE FROM meta WHERE key=?`, rejectedKey(project, up, note))
+	return e
+}
+
+// upstreamRecordRejected: the pull's learning step learned that submission sub of the note was rejected. Only while the receipt still names it.
+func (s *Store) upstreamRecordRejected(ctx context.Context, project int64, upstream string, note, sub int64, reason string) (wrote bool, err error) {
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		var one int
+		if e := tx.QueryRow(`SELECT 1 FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=? AND remote_sub=?`, project, upstream, note, sub).Scan(&one); e != nil {
+			if e == sql.ErrNoRows {
+				return nil
+			}
+			return e
+		}
+		wrote = true
+		return markRejected(tx, project, upstream, note, sub, reason)
+	})
+	return
 }
 
 type UpstreamSent struct {
@@ -829,14 +887,16 @@ const linkCols = `project_id,upstream,remote,remote_team,classes,with_private,la
 
 // upstreamScan is what upstreamNotes found.
 type upstreamScan struct {
-	Notes      []UpstreamNote // in id order, from the first note after the cursor: the ones to send (Body set) and the unchanged ones (Unchanged, no Body)
-	Pending    int            // of Notes: how many are to send
-	Waiting    int            // of those: how many wait for the review of their earlier submission upstream (only notes the link would push now)
-	Total      int            // of Notes, without the Foreign ones
-	Foreign    int            // of Notes: arrived from another gateway, never sent
-	Held       int            // of Notes: skipped by the owner during reconcile
-	Restricted int            // of Notes: bound without proof; changes go the submission way only
-	Overflow   bool           // more notes to send follow the last of Notes (limit reached)
+	Notes      []UpstreamNote     // in id order, from the first note after the cursor: the ones to send (Body set) and the unchanged ones (Unchanged, no Body)
+	Pending    int                // of Notes: how many are to send
+	Waiting    int                // of those: how many wait for the review of their earlier submission upstream (only notes the link would push now)
+	Total      int                // of Notes, without the Foreign ones
+	Foreign    int                // of Notes: arrived from another gateway, never sent
+	Held       int                // of Notes: skipped by the owner during reconcile
+	Restricted int                // of Notes: bound without proof; changes go the submission way only
+	Overflow   bool               // more notes to send follow the last of Notes (limit reached)
+	RejectedN  int                // of Notes: unchanged, and the upstream rejected exactly this text
+	Rejected   []UpstreamRejected // the first maxNotPropagated of them
 }
 
 const scanPage = 200
@@ -917,6 +977,18 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 				u.Conflicted, u.Body = true, ""
 			} else if u.Sent != nil && u.Sent.Hash == u.Hash && u.Sent.Conflict == 0 {
 				u.Unchanged, u.Body = true, ""
+				var v string
+				if e := tx.QueryRow(`SELECT value FROM meta WHERE key=?`, rejectedKey(l.Project, l.Upstream, n.ID)).Scan(&v); e == nil {
+					if r, ok := parseRejected(n.ID, v); ok && r.Submission == u.Sent.RemoteSub {
+						u.Rejected = &r
+						out.RejectedN++
+						if len(out.Rejected) < maxNotPropagated {
+							out.Rejected = append(out.Rejected, r)
+						}
+					}
+				} else if e != sql.ErrNoRows {
+					return out, e
+				}
 			} else {
 				if limit > 0 && out.Pending >= limit {
 					out.Overflow = true
@@ -989,7 +1061,7 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 			if e != nil {
 				return e
 			}
-			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign, Held: scan.Held, Restricted: scan.Restricted, Waiting: scan.Waiting}
+			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign, Held: scan.Held, Restricted: scan.Restricted, Waiting: scan.Waiting, Rejected: scan.RejectedN, RejectedNotes: scan.Rejected}
 			if at, ok, e := restoredAt(tx, l.Project, l.Upstream); e != nil {
 				return e
 			} else if ok {
@@ -1070,13 +1142,20 @@ func (s *Store) upstreamPlan(ctx context.Context, project int64, upstream string
 	return
 }
 
-func (s *Store) upstreamRecordSent(ctx context.Context, project int64, upstream string, n UpstreamNote, sub, remoteNote int64) error {
+// A new receipt clears the rejection marker of the note; rejected (the hub's reason, a replayed rejected submission) writes it again in the same transaction.
+func (s *Store) upstreamRecordSent(ctx context.Context, project int64, upstream string, n UpstreamNote, sub, remoteNote int64, rejected ...string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
+		if e := clearRejected(tx, project, upstream, n.ID); e != nil {
+			return e
+		}
 		// a submission leaves no conflict; the base (remote_rev, see upstreamRecordBase) of a replacement of a known note stays: it is the upstream
 		// revision our last ACCEPTED text corresponds to, and a pending or rejected replacement does not change it
 		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,?,?,?,?,?,?,?)
 ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=excluded.remote_sub, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=CASE WHEN excluded.remote_note>0 AND upstream_sent.remote_rev>0 THEN upstream_sent.remote_rev ELSE 0 END, sent_content='', conflict=0, conflict_rev=0`,
 			project, upstream, n.ID, n.Hash, n.Revision, sub, remoteNote, ms(s.now()))
+		if e == nil && len(rejected) > 0 {
+			e = markRejected(tx, project, upstream, n.ID, sub, rejected[0])
+		}
 		return e
 	})
 }
@@ -1085,6 +1164,9 @@ ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revis
 // baseline the next update compares with.
 func (s *Store) upstreamRecordPublished(ctx context.Context, project int64, upstream string, n UpstreamNote, remoteNote, remoteRev int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
+		if e := clearRejected(tx, project, upstream, n.ID); e != nil {
+			return e
+		}
 		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev,sent_content) VALUES(?,?,?,?,?,0,?,?,?,?)
 ON CONFLICT(project_id,upstream,note_id) DO UPDATE SET hash=excluded.hash, revision=excluded.revision, remote_sub=0, remote_note=excluded.remote_note, sent=excluded.sent, remote_rev=excluded.remote_rev, sent_content=excluded.sent_content, conflict=0, conflict_rev=0`,
 			project, upstream, n.ID, n.Hash, n.Revision, remoteNote, ms(s.now()), remoteRev, sentContentHash(n.Class, n.EntryKind, n.Title, n.Body))
@@ -1163,7 +1245,9 @@ func (s *Store) ResolveUpstream(ctx context.Context, project, team, note int64, 
 			case ours:
 				_, e = tx.Exec(`UPDATE upstream_sent SET conflict=2 WHERE project_id=? AND upstream=? AND note_id=?`, local, x.up, note)
 			case gone: // gone here too: nothing left to settle
-				_, e = tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, local, x.up, note)
+				if e = clearRejected(tx, local, x.up, note); e == nil {
+					_, e = tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, local, x.up, note)
+				}
 			default:
 				_, e = tx.Exec(`UPDATE upstream_sent SET hash=?, remote_rev=max(?,0), sent_content='', conflict=0, conflict_rev=0 WHERE project_id=? AND upstream=? AND note_id=?`, upstreamHash(n), x.rev, local, x.up, note)
 			}

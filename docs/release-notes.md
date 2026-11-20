@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Upstream mirror (#173): a hub copy of a note this gateway submitted was hidden at every revision once a receipt named it. When the receipt records the revision our accepted text had (nearly every accepted submission), the copy is now hidden only while the hub is still at that revision; a reviewer's later rewrite is shown with the `[differs from the local note ...]` line, as for published notes. A receipt without a recorded revision keeps hiding it.
+- Upstream: that the upstream rejected the exact text of a note (a replayed submission found rejected, or a rejection the pull learned) is now kept with the receipt: later pushes say `unchanged; the upstream rejected it as submission N: <reason>; change the note to send it again`, and `gw upstream status` counts them per link (one line per note when the project or team is named). A change of the note, unlink, removing the upstream and `reconcile --note <id> --new` clear it. The pull no longer asks again about a rejection it has recorded. No schema change.
+
 ## 0.9.6
 
 ### Fixed
