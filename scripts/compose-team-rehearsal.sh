@@ -92,6 +92,10 @@ todo() { # id text then the exact commands (one per line) and what to expect, fr
   { printf '### %s %s\n\n```sh\n' "$1" "$2"; cat "$WORK/todo.tmp"; printf '```\n\n'; } >>"$WORK/todo.md"
 }
 
+no_find() { # find that must succeed (an error is never "nothing found") and print nothing
+  nf=$(find "$@" 2>/dev/null); nr=$?; [ $nr -eq 0 ] && [ -z "$nf" ]
+}
+
 # ---------- validators: every value from the command line or the marker is checked before it reaches a Docker argument, YAML or a path ----------
 v_port() { case $1 in ''|*[!0-9]*) return 1;; esac; [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 v_version() { printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; }
@@ -290,7 +294,7 @@ port_free() { python3 -c 'import socket,sys; s=socket.socket(); s.bind((sys.argv
 pick_port() { python3 -c 'import socket,sys; s=socket.socket(); s.bind((sys.argv[1],0)); print(s.getsockname()[1])' "$1"; }
 
 on_interrupt() {
-  stty echo <&3 2>/dev/null
+  if [ -n "${OLDSTTY:-}" ]; then stty "$OLDSTTY" <&3 2>/dev/null; else stty echo <&3 2>/dev/null; fi
   printf '\ninterrupted. What was created is recorded in %s. To remove exactly that, and nothing else:\n  sh %s --cleanup-only --project %s --workdir "%s"\n' "$WORK" "$SELF" "$PROJ" "$WORK" >&2
   exit 130
 }
@@ -811,9 +815,14 @@ EOF
   fi
   [ "$UP" = 1 ] || { bad 8.provider "not run: the gateway did not come up"; return; }
   ins=; case $PROVIDER in http://*) ins=--insecure;; esac
-  if [ -t 3 ]; then
-    printf 'API key of the provider (not shown): ' >&2; stty -echo <&3 2>/dev/null; read -r KEY <&3; stty echo <&3 2>/dev/null; printf '\n' >&2
-  else read -r KEY <&3; fi
+  KEY=
+  if [ -n "$PROVIDER_KEYFILE" ]; then
+    if [ -f "$PROVIDER_KEYFILE" ] && [ ! -L "$PROVIDER_KEYFILE" ] && [ -O "$PROVIDER_KEYFILE" ] && no_find "$PROVIDER_KEYFILE" -maxdepth 0 -perm -077; then read -r KEY <"$PROVIDER_KEYFILE" || KEY=
+    else bad 8.provider "--provider-key-file must be a regular file of yours, not a link, with no group or other permissions (mode 600)"; return; fi
+  elif [ -t 3 ]; then
+    OLDSTTY=$(stty -g <&3 2>/dev/null) && [ -n "$OLDSTTY" ] && stty -echo <&3 2>/dev/null || { OLDSTTY=; bad 8.provider "cannot turn the terminal echo off, so the key is not asked for: use --provider-key-file"; return; }
+    printf 'API key of the provider (not shown): ' >&2; read -r KEY <&3; stty "$OLDSTTY" <&3 2>/dev/null; OLDSTTY=; printf '\n' >&2
+  else bad 8.provider "no terminal to ask for the key without echo: use --provider-key-file (a file of yours, mode 600)"; return; fi
   [ -n "${KEY:-}" ] || { bad 8.provider "no API key given"; return; }
   printf '%s\n' "$KEY" >>"$WORK/patterns"
   po=$(printf '%s\n' "$KEY" | gw provider add rehearsal "$PROVIDER" $ins 2>&1); prc=$?
