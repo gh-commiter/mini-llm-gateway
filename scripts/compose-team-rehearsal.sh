@@ -16,6 +16,7 @@ DEPLOY=$(cd "$(dirname "$0")/../deploy/docker" 2>/dev/null && pwd) || { echo "de
 SELF=$0
 PROJ=minigw-rehearsal VERSION= PORT= APORT= BIND=127.0.0.1 ADMIN=0 ANAME=settings.rehearsal.test PWFILE= PROVIDER=
 REUSE=0 CLEANUP=0 CLEANONLY=0 WORK=
+BIND_SET=0 ANAME_SET=0 ADMIN_SET=0 PROVIDER_KEYFILE=
 
 usage() {
   cat >&2 <<'EOF'
@@ -42,12 +43,13 @@ while [ $# -gt 0 ]; do
     --project) PROJ=${2:?}; shift 2;;
     --version) VERSION=${2:?}; shift 2;;
     --port) PORT=${2:?}; shift 2;;
-    --bind) BIND=${2:?}; shift 2;;
-    --admin) ADMIN=1; shift;;
-    --admin-name) ANAME=${2:?}; shift 2;;
+    --bind) BIND=${2:?}; BIND_SET=1; shift 2;;
+    --admin) ADMIN=1; ADMIN_SET=1; shift;;
+    --admin-name) ANAME=${2:?}; ANAME_SET=1; shift 2;;
     --admin-port) APORT=${2:?}; shift 2;;
     --admin-password-file) PWFILE=${2:?}; shift 2;;
     --provider-url) PROVIDER=${2:?}; shift 2;;
+    --provider-key-file) PROVIDER_KEYFILE=${2:?}; shift 2;;
     --reuse) REUSE=1; shift;;
     --cleanup) CLEANUP=1; shift;;
     --cleanup-only) CLEANONLY=1; shift;;
@@ -90,6 +92,21 @@ todo() { # id text then the exact commands (one per line) and what to expect, fr
   { printf '### %s %s\n\n```sh\n' "$1" "$2"; cat "$WORK/todo.tmp"; printf '```\n\n'; } >>"$WORK/todo.md"
 }
 
+# ---------- validators: every value from the command line or the marker is checked before it reaches a Docker argument, YAML or a path ----------
+v_port() { case $1 in ''|*[!0-9]*) return 1;; esac; [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+v_version() { printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; }
+v_bind() { printf '%s' "$1" | grep -Eq '^(([0-9]{1,3}\.){3}[0-9]{1,3}|localhost)$'; }
+v_rid() { printf '%s' "$1" | grep -Eq '^[0-9]{14}-[0-9a-f]{12}$'; }
+v_name() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; }
+v_dns() { printf '%s' "$1" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'; }
+check_args() {
+  [ -z "$VERSION" ] || v_version "$VERSION" || { echo "--version must look like 0.9.0" >&2; exit 2; }
+  [ -z "$PORT" ] || v_port "$PORT" || { echo "--port must be a number from 1 to 65535" >&2; exit 2; }
+  [ -z "$APORT" ] || v_port "$APORT" || { echo "--admin-port must be a number from 1 to 65535" >&2; exit 2; }
+  v_bind "$BIND" || { echo "--bind must be an IPv4 address or localhost" >&2; exit 2; }
+  v_dns "$ANAME" || { echo "--admin-name must be a lowercase DNS name" >&2; exit 2; }
+}
+
 # ---------- the working directory belongs to this script: created by it, marked, private ----------
 work_check() { # 0 only for a directory this script made for $PROJ: ours, mode 700, no symlinks, marker file mode 600
   [ -d "$WORK" ] && [ ! -L "$WORK" ] && [ -O "$WORK" ] || return 1
@@ -116,6 +133,18 @@ remove_work() { # only a validated directory; one file at a time, never recursiv
   fi
   [ -z "$(find "$WORK" -mindepth 1 ! -name .rehearsal-marker 2>/dev/null | head -n 1)" ] && [ ! -e "$WORK/certs" ] || { printf 'could not remove everything in %s (the marker stays); remove the rest by hand, then the directory\n' "$WORK" >&2; return 1; }
   rm -- "$MARK" && rmdir "$WORK"
+}
+
+load_marker() { # validate every value read back from the marker; refuse the marker otherwise
+  m_rid=$(mk run); m_ver=$(mk version); m_bind=$(mk bind); m_adm=$(mk admin); m_an=$(mk aname); m_port=$(mk port); m_p2=$(mk p2); m_ap=$(mk aport)
+  v_rid "$m_rid" && v_name "$(mk project)" && v_version "$m_ver" && v_bind "$m_bind" && v_dns "$m_an" && { [ "$m_adm" = 0 ] || [ "$m_adm" = 1 ]; } || { echo "refusing: the marker in $WORK holds values that this script never writes (run id, project, release, bind, admin name or flag)" >&2; return 1; }
+  for mp in "$m_port" "$m_p2" "$m_ap"; do [ -z "$mp" ] || v_port "$mp" || { echo "refusing: the marker in $WORK holds an invalid port" >&2; return 1; }; done
+  RID=$m_rid
+}
+saved_or_flag() { # key flagvalue flagset: the saved value; an explicit flag that differs is refused (no silent change of release, address or publishing)
+  sv=$(mk "$1")
+  if [ "$3" = 1 ] && [ -n "$sv" ] && [ "$2" != "$sv" ]; then printf 'refusing --reuse: %s was saved as "%s" by the run being continued, the flag says "%s"\n' "$1" "$sv" "$2" >&2; exit 2; fi
+  PICKED=${sv:-$2}
 }
 
 # ---------- Docker resources: ownership is proven by labels carrying this run's id, never by a name ----------
@@ -268,25 +297,33 @@ on_interrupt() {
 
 # ---------- start: validate everything BEFORE the first write ----------
 command -v docker >/dev/null || { echo "docker not found" >&2; exit 2; }
+check_args
 if [ "$CLEANONLY" = 1 ]; then
   if ! work_check; then
     printf 'refusing: %s is not a working directory made by this script for project %s (no valid marker). Docker resources found under that name, left untouched:\n' "$WORK" "$PROJ" >&2
     { found "$PROJ"; found "$PROJ2"; } | sed 's/^/  /' >&2
     exit 1
   fi
-  RID=$(mk run); VERSION=$(mk version); IMAGE=minigw-rehearsal:$RID
-  [ -n "$RID" ] || { echo "the marker has no run id" >&2; exit 1; }
+  load_marker || exit 1
+  VERSION=$m_ver; IMAGE=minigw-rehearsal:$RID
   do_cleanup && echo "removed what run $RID created: project $PROJ (and $PROJ2 if it was left), the image tag and the working directory" && exit 0
   exit 1
 fi
-# the placeholder-free version: the one asked for, else MINIGW_VERSION of deploy/docker/.env
-[ -n "$VERSION" ] || VERSION=$(sed -n 's/^MINIGW_VERSION=//p' "$DEPLOY/.env" 2>/dev/null | tail -n 1)
 if [ "$REUSE" = 1 ]; then
   work_check || { echo "refusing --reuse: $WORK is not a working directory made by this script for project $PROJ (valid marker file, mode 700, no symlinks)" >&2; exit 2; }
-  RID=$(mk run); [ -n "$RID" ] || { echo "the marker has no run id" >&2; exit 2; }
-  [ -n "$VERSION" ] || VERSION=$(mk version)
-  [ -n "$PORT" ] || PORT=$(mk port); [ -n "$APORT" ] || APORT=$(mk aport); P2=$(mk p2)
+  load_marker || exit 2
+  saved_or_flag version "$VERSION" "$([ -n "$VERSION" ] && echo 1 || echo 0)"; VERSION=$PICKED
+  saved_or_flag bind "$BIND" "$BIND_SET"; BIND=$PICKED
+  saved_or_flag aname "$ANAME" "$ANAME_SET"; ANAME=$PICKED
+  saved_or_flag port "$PORT" "$([ -n "$PORT" ] && echo 1 || echo 0)"; PORT=$PICKED
+  saved_or_flag aport "$APORT" "$([ -n "$APORT" ] && echo 1 || echo 0)"; APORT=$PICKED
+  P2=$m_p2
+  if [ "$ADMIN_SET" = 1 ] && [ "$m_adm" = 0 ]; then echo "refusing --reuse: the run being continued did not enable the admin profile; start a fresh run with --admin" >&2; exit 2; fi
+  ADMIN=$m_adm
 else
+  # the release asked for, else MINIGW_VERSION of deploy/docker/.env (fresh runs only)
+  [ -n "$VERSION" ] || VERSION=$(sed -n 's/^MINIGW_VERSION=//p' "$DEPLOY/.env" 2>/dev/null | tail -n 1)
+  [ -z "$VERSION" ] || v_version "$VERSION" || { echo "the release in deploy/docker/.env must look like 0.9.0" >&2; exit 2; }
   RID=$(date -u +%Y%m%d%H%M%S)-$(rnd)
 fi
 [ -n "$VERSION" ] || { echo "no release: pass --version X.Y.Z or set MINIGW_VERSION in deploy/docker/.env (docs/docker.md, first setup, step 2)" >&2; exit 2; }
