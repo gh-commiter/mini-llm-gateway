@@ -289,6 +289,8 @@ type UpstreamLinkInfo struct {
 	Total           int              `json:"total"`   // published notes the link covers
 	// Foreign: published notes that arrived from another gateway (they end with its trailer): never pushed onward, not in Total.
 	Foreign int `json:"foreign,omitempty"`
+	// Held: notes the owner skipped during reconcile: held across edits, never pushed until `reconcile --note <id> --new`.
+	Held int `json:"held,omitempty"`
 	// Step C: reading the upstream's notes into the mirror (nothing of it is shown to members yet).
 	Read         bool       `json:"read"`
 	ReadClasses  []Class    `json:"readClasses,omitempty"`
@@ -761,7 +763,7 @@ type UpstreamNote struct {
 	Sent             *UpstreamSent
 	Unchanged        bool // sent before with this very content: nothing to send
 	Conflicted       bool // publish mode: the upstream note changed there since our last write; waits for `upstream resolve`
-	ReconcileSkipped bool // owner skipped this revision independently of receipts
+	ReconcileSkipped bool // owner skipped this note (reconcile --skip): held across edits, independent of receipts, until `--new`
 	Foreign          bool // arrived from another gateway (see fromGateway): never sent onward, nothing to send
 }
 
@@ -829,6 +831,7 @@ type upstreamScan struct {
 	Waiting  int            // of those: how many wait for the review of their earlier submission upstream (only notes the link would push now)
 	Total    int            // of Notes, without the Foreign ones
 	Foreign  int            // of Notes: arrived from another gateway, never sent
+	Held     int            // of Notes: skipped by the owner during reconcile
 	Overflow bool           // more notes to send follow the last of Notes (limit reached)
 }
 
@@ -894,8 +897,9 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 			if e := tx.QueryRow(`SELECT value FROM meta WHERE key=?`, reconcileDecisionKey(l.Project, l.Upstream, n.ID)).Scan(&decision); e != nil && e != sql.ErrNoRows {
 				return out, e
 			}
-			if json.Unmarshal([]byte(decision), &d) == nil && d.Action == "skip" && d.Revision == n.Revision && d.Hash == u.Hash {
+			if json.Unmarshal([]byte(decision), &d) == nil && d.Action == "skip" { // a skip holds across local edits until the owner releases it (`reconcile --note <id> --new`)
 				u.ReconcileSkipped, u.Unchanged = true, true
+				out.Held++
 			} else if u.Sent != nil && u.Sent.Conflict == 1 { // changed on the upstream: waits for the owner (resolve), is not "to send"
 				u.Conflicted, u.Body = true, ""
 			} else if u.Sent != nil && u.Sent.Hash == u.Hash && u.Sent.Conflict == 0 {
@@ -972,7 +976,7 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 			if e != nil {
 				return e
 			}
-			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign, Waiting: scan.Waiting}
+			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign, Held: scan.Held, Waiting: scan.Waiting}
 			if at, ok, e := restoredAt(tx, l.Project, l.Upstream); e != nil {
 				return e
 			} else if ok {

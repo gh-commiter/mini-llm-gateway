@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -304,7 +305,8 @@ func TestReconcileKeepsSurvivingReceipts(t *testing.T) {
 	}
 }
 
-func TestReconcileSkipCanBeClearedOrReleasedByAnEdit(t *testing.T) {
+// A skip holds across local edits (the push must not create the note) until the owner releases it with --new.
+func TestReconcileSkipHoldsAcrossEditsUntilReleased(t *testing.T) {
 	for _, edit := range []bool{false, true} {
 		t.Run(fmt.Sprint(edit), func(t *testing.T) {
 			f, project, n, h := reconcileFixture(t, "submit", false)
@@ -315,14 +317,19 @@ func TestReconcileSkipCanBeClearedOrReleasedByAnEdit(t *testing.T) {
 			if edit {
 				_, e = f.UpdateNote(ctx, f.p("ana"), project, n.ID, n.Revision, NoteInput{Class: n.Class, Title: n.Title, Body: "changed after skip"})
 				f.ok(e)
-			} else {
-				// The last decision cleared the restore mark; --new must still
-				// let the owner release that exact skipped revision.
-				_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, New: true})
-				f.ok(e)
 			}
 			up := okUp()
 			r, e := f.PushUpstream(ctx, up, project, 0, "hub", 0, false, noSleep)
+			f.ok(e)
+			if up.count("POST") != 0 || r[0].Created != 0 || r[0].Skipped != 1 || !strings.Contains(strings.Join(r[0].Lines, "\n"), "--new") {
+				t.Fatal("the skip did not hold (or the push does not say how to release it)", r)
+			}
+			// listed without a mark, and released by name
+			_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+			f.ok(e)
+			_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, New: true})
+			f.ok(e)
+			r, e = f.PushUpstream(ctx, up, project, 0, "hub", 0, false, noSleep)
 			f.ok(e)
 			if r[0].Created != 1 {
 				t.Fatal("skip was not released", r)
@@ -529,21 +536,69 @@ func TestReconcileRefusesAPartialOrUnstatedView(t *testing.T) {
 	}
 }
 
-func TestReconcileAMatchNeedsTheUpstreamsWordForItsWriter(t *testing.T) {
-	for _, device := range []string{"", "UNKNOWN", "dev-someone-else"} {
-		f, project, n, h := reconcileFixture(t, "publish", true)
-		h.notes[0].device = device
-		r, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
-		f.ok(e)
-		if r.Candidates != 0 || r.Unknown != 1 || r.Notes[0].Matches != "41" {
-			t.Fatal(device, r)
-		}
-		if !strings.Contains(strings.Join(r.Lines, "\n"), "information only): remote 41") {
-			t.Fatal(r.Lines)
-		}
-		before := reconcileTables(t, f)
-		if _, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, Confirm: 41}); e == nil || !reflect.DeepEqual(before, reconcileTables(t, f)) {
-			t.Fatal("confirmed an unattested match", e)
+// A match without the upstream's proof of its writer is shown as such and may still be bound; the binding is ALWAYS a conflict with
+// unknown base (equal content or not, on both modes), so the first push goes through `resolve` and nothing is replaced or created directly.
+func TestReconcileUnprovenMatchCanBeBoundOnlyAsAConflictWithUnknownBase(t *testing.T) {
+	for _, mode := range []string{"submit", "publish"} {
+		for _, device := range []string{"", "UNKNOWN", "dev-someone-else"} {
+			t.Run(mode+device, func(t *testing.T) {
+				f, project, n, h := reconcileFixture(t, mode, true)
+				h.notes[0].device = device
+				r, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+				f.ok(e)
+				if r.Candidates != 1 || r.Notes[0].Proven || !strings.Contains(strings.Join(r.Lines, "\n"), "no proof: last written by x") {
+					t.Fatal(r)
+				}
+				r, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, Confirm: 41})
+				f.ok(e)
+				if !r.Cleared || !strings.Contains(strings.Join(r.Lines, "\n"), "WITHOUT proof") {
+					t.Fatal(r)
+				}
+				var hash string
+				var rev int64
+				var conflict int
+				f.ok(f.DB().QueryRow(`SELECT hash,remote_rev,conflict FROM upstream_sent WHERE note_id=?`, n.ID).Scan(&hash, &rev, &conflict))
+				if hash != "" || rev != 0 || conflict != 1 {
+					t.Fatalf("not an unknown-base conflict: %q %d %d", hash, rev, conflict)
+				}
+				_, e = f.UpdateNote(ctx, f.p("ana"), project, n.ID, n.Revision, NoteInput{Class: n.Class, Title: n.Title, Body: "edited after the binding"})
+				f.ok(e)
+				up := h.up()
+				res, e := f.PushUpstream(ctx, up, project, 0, "hub", 0, false, noSleep)
+				f.ok(e)
+				for _, c := range up.calls {
+					if c.method == "PUT" || c.method == "POST" {
+						t.Fatalf("wrote to the upstream: %s %s", c.method, c.path)
+					}
+				}
+				if res[0].Conflicts != 1 || res[0].Created != 0 || res[0].Replaced != 0 {
+					t.Fatal(res)
+				}
+				// --ours: a submission for the upstream's reviewers that REPLACES the bound note (never a second note)
+				f.ok(f.ResolveUpstream(ctx, project, 0, n.ID, true, "hub"))
+				up2 := h.up()
+				hubHandler := up2.handler
+				up2.handler = func(c upCall) (int, string, time.Duration) {
+					if c.method == "POST" {
+						return 201, `{"id":9}`, 0
+					}
+					return hubHandler(c)
+				}
+				res, e = f.PushUpstream(ctx, up2, project, 0, "hub", 0, false, noSleep)
+				f.ok(e)
+				if res[0].Created+res[0].Replaced != 1 {
+					t.Fatal(res)
+				}
+				replaced := false
+				for _, c := range up2.calls {
+					if c.method == "POST" && fmt.Sprint(c.body["replaces"]) == "41" {
+						replaced = true
+					}
+				}
+				if !replaced {
+					t.Fatal("the submission does not replace the bound note 41 (it would be a second note)", up2.calls)
+				}
+			})
 		}
 	}
 }
@@ -555,7 +610,7 @@ func TestReconcileListingShowsWhatIsConfirmedAndACandidateCanBeRejected(t *testi
 		r, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
 		f.ok(e)
 		line := strings.Join(r.Lines, "\n")
-		for _, want := range []string{"remote 41", `"Changed on hub"`, "written by x", "remote revision 3", "differs from the local note"} {
+		for _, want := range []string{"remote 41", `"Changed on hub"`, "written by this gateway's device", "remote revision 3", "differs from the local note"} {
 			if !strings.Contains(line, want) {
 				t.Fatalf("listing lacks %q: %s", want, line)
 			}
@@ -720,5 +775,139 @@ func TestReconcileSkipSurvivesTheNoteBecomingKnown(t *testing.T) {
 	f.ok(e)
 	if len(r.Notes) != 1 || r.Notes[0].Class != "new" {
 		t.Fatal(r)
+	}
+}
+
+// limitUp wraps a fake upstream: every request takes `delay` (and ends early with the context), and 429s can be injected.
+type limitUp struct {
+	*fakeUp
+	delay time.Duration
+	limit int // 429 (retry after 1s) when more than limit requests came since the last wait; 0 = no limit
+	count int
+	hits  int // the 429 answers given
+}
+
+func (u *limitUp) Do(ctx context.Context, up, method, path string, hdr map[string]string, body []byte) (int, []byte, time.Duration, error) {
+	if u.delay > 0 {
+		t := time.NewTimer(u.delay)
+		defer t.Stop()
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			return 0, nil, 0, ctx.Err()
+		}
+	}
+	u.count++
+	if u.limit > 0 && u.count > u.limit {
+		u.hits++
+		return 429, []byte(`{"error":{"message":"rate limit"}}`), time.Second, nil
+	}
+	return u.fakeUp.Do(ctx, up, method, path, hdr, body)
+}
+
+func (u *limitUp) resetWindow() { u.count = 0 }
+
+func manyHubNotes(h *hub, n int) {
+	for i := 0; i < n; i++ {
+		h.notes = append(h.notes, hubNote{id: int64(100 + i), src: 7, rev: 1, class: Structure, kind: KindFinding, title: fmt.Sprint("other ", i), body: "someone else's note"})
+	}
+}
+
+func setReconcileTimes(t *testing.T, call, base, per time.Duration) {
+	oc, ob, op := reconcileCallTimeout, reconcileBaseBudget, reconcilePerNote
+	reconcileCallTimeout, reconcileBaseBudget, reconcilePerNote = call, base, per
+	t.Cleanup(func() { reconcileCallTimeout, reconcileBaseBudget, reconcilePerNote = oc, ob, op })
+}
+
+// The budget of the whole read grows with the number of notes, and an exhausted budget or a slow request is never "the upstream is down".
+func TestReconcileTimeBudgetGrowsWithTheNotesAndIsNeverReportedAsDown(t *testing.T) {
+	f, project, _, h := reconcileFixture(t, "submit", true)
+	manyHubNotes(h, 6)
+	// 9 requests of 25 ms (project, manifest, 7 notes, manifest) = 225 ms: a fixed budget of 100 ms fails, one that grows with the 7 notes does not
+	setReconcileTimes(t, time.Second, 100*time.Millisecond, 0)
+	before := reconcileTables(t, f)
+	_, e := f.ReconcileUpstream(ctx, &limitUp{fakeUp: h.up(), delay: 25 * time.Millisecond}, ReconcileSpec{Project: project})
+	if e == nil || !strings.Contains(e.Error(), "time budget") || !strings.Contains(e.Error(), "read ") || !strings.Contains(e.Error(), "run it again") || strings.Contains(e.Error(), "no usable answer") {
+		t.Fatal("a spent budget must say so, with the progress", e)
+	}
+	if !reflect.DeepEqual(before, reconcileTables(t, f)) {
+		t.Fatal("a spent budget changed something")
+	}
+	setReconcileTimes(t, time.Second, 100*time.Millisecond, 100*time.Millisecond)
+	r, e := f.ReconcileUpstream(ctx, &limitUp{fakeUp: h.up(), delay: 25 * time.Millisecond}, ReconcileSpec{Project: project})
+	f.ok(e)
+	if r.Candidates != 1 {
+		t.Fatal(r)
+	}
+}
+
+func TestReconcileSlowRequestIsATimeoutNotAnUpstreamFailure(t *testing.T) {
+	f, project, _, h := reconcileFixture(t, "submit", true)
+	setReconcileTimes(t, 20*time.Millisecond, time.Minute, time.Minute)
+	_, e := f.ReconcileUpstream(ctx, &limitUp{fakeUp: h.up(), delay: 300 * time.Millisecond}, ReconcileSpec{Project: project})
+	if e == nil || !strings.Contains(e.Error(), "took longer than") || strings.Contains(e.Error(), "no usable answer") || strings.Contains(e.Error(), "did not answer") {
+		t.Fatal(e)
+	}
+}
+
+// A 429 with a retry-after is waited out and the read goes on; the waits are reported; when the wait does not fit the budget the answer says so.
+func TestReconcileWaitsOutTheReadLimit(t *testing.T) {
+	waits := 0
+	var u *limitUp
+	old := reconcileWait
+	reconcileWait = func(context.Context, time.Duration) bool { waits++; u.resetWindow(); return true }
+	t.Cleanup(func() { reconcileWait = old })
+	f, project, _, h := reconcileFixture(t, "submit", true)
+	manyHubNotes(h, 5)
+	u = &limitUp{fakeUp: h.up(), limit: 4}
+	r, e := f.ReconcileUpstream(ctx, u, ReconcileSpec{Project: project})
+	f.ok(e)
+	if waits == 0 || u.hits == 0 || r.Candidates != 1 || !strings.Contains(strings.Join(r.Lines, "\n"), "waited") {
+		t.Fatal("did not wait out the limit", waits, u.hits, r)
+	}
+	// a wait that does not fit the budget: nothing changed, the answer names the limit and the progress
+	setReconcileTimes(t, time.Second, 100*time.Millisecond, 0)
+	reconcileWait = old
+	f2, project2, _, h2 := reconcileFixture(t, "submit", true)
+	manyHubNotes(h2, 5)
+	before := reconcileTables(t, f2)
+	_, e = f2.ReconcileUpstream(ctx, &limitUp{fakeUp: h2.up(), limit: 3}, ReconcileSpec{Project: project2})
+	if e == nil || !strings.Contains(e.Error(), "read limit") || !strings.Contains(e.Error(), "run it again in") || !reflect.DeepEqual(before, reconcileTables(t, f2)) {
+		t.Fatal(e)
+	}
+}
+
+// A named decision reads the manifest and the one note it binds, not the whole destination again; a change of the remote notes since the listing refuses it.
+func TestReconcileDecisionReadsOnlyTheManifestAndTheTouchedNote(t *testing.T) {
+	f, project, n, h := reconcileFixture(t, "submit", true)
+	manyHubNotes(h, 8)
+	up := &limitUp{fakeUp: h.up()}
+	_, e := f.ReconcileUpstream(ctx, up, ReconcileSpec{Project: project})
+	f.ok(e)
+	// the project is large: at most 3 requests per window would never allow a second full read, a decision needs only the manifest and the note
+	up.limit = 3
+	up.resetWindow()
+	r, e := f.ReconcileUpstream(ctx, up, ReconcileSpec{Project: project, Note: n.ID, Confirm: 41})
+	f.ok(e)
+	if up.hits != 0 || !r.Cleared {
+		t.Fatal("the decision read more than the manifest and the touched note", up.hits, r)
+	}
+	// a remote change after the listing (a new note, or another note's new revision) refuses the decision with no write
+	for _, change := range []string{"new note", "revision"} {
+		f, project, n, h := reconcileFixture(t, "submit", true)
+		manyHubNotes(h, 3)
+		_, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+		f.ok(e)
+		if change == "new note" {
+			manyHubNotes(&hub{}, 0)
+			h.notes = append(h.notes, hubNote{id: 300, src: 7, rev: 1, class: Structure, kind: KindFinding, title: "late", body: "late note"})
+		} else {
+			h.notes[2].rev++
+		}
+		before := reconcileTables(t, f)
+		_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, Confirm: 41})
+		if e == nil || !strings.Contains(e.Error(), "list again") || !reflect.DeepEqual(before, reconcileTables(t, f)) {
+			t.Fatal(change, "was accepted after a remote change", e)
+		}
 	}
 }

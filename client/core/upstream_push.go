@@ -625,7 +625,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		}
 		if n.ReconcileSkipped {
 			res.Skipped++
-			line("skip", n, "owner skipped this revision during reconcile")
+			line("skip", n, "skipped by the owner during reconcile (held across edits; release it with: gw upstream reconcile <project> --upstream "+l.Upstream+" --note "+strconv.FormatInt(n.ID, 10)+" --new)")
 			continue
 		}
 		if n.Unchanged {
