@@ -652,6 +652,21 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(try sh("echo x > '\(scratch.path)/tmp/other'") != 0)  // drugje v Scratch ne
 }
 
+/// The browsable mounted volumes from the kernel's mount table. NOT FileManager's list of mounted volume URLs (BlockingTestGuard.forbidden): that asks every volume through a system service while it holds
+/// the process's file-node lock, and a loopback WebDAV mount of this very process (DirectGitMountTests: its server threads need that lock for every file they touch)
+/// cannot answer then: the cycle ends only with the 90 s timeouts, and every thread that touches a file waits meanwhile (the stalls of #150 and the gate of 0.9.8).
+private func mountedVolumePaths() -> [String] {
+    let n = getfsstat(nil, 0, MNT_NOWAIT)
+    guard n > 0 else { return [] }
+    var list = Array(repeating: statfs(), count: Int(n))
+    let got = getfsstat(&list, Int32(MemoryLayout<statfs>.stride) * n, MNT_NOWAIT)
+    var paths: [String] = []
+    for m in list.prefix(Int(max(got, 0))) where m.f_flags & UInt32(MNT_DONTBROWSE) == 0 {
+        paths.append(withUnsafeBytes(of: m.f_mntonname) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) })
+    }
+    return paths
+}
+
 /// #24: mapa na drugem disku dobi le nove NSIRD_* v <disk>/.TemporaryItems/folders.<uid>/TemporaryItems (in manjkajoče
 /// mape do tja), mapa na zagonskem disku nič na drugem disku. Drug disk: prvi priklopljeni (sicer le del za zagonski disk).
 @Test func runProfileVolumeSaveCopies() throws {
@@ -661,8 +676,8 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     let boot = try #require(Sync.real(FileManager.default.temporaryDirectory)).path
     #expect(Native.volumeTempItems(boot, temp: t) == nil)
     #expect(Native.darwinTempRules(dirs: [boot])?.contains(".TemporaryItems") == false)
-    let vols = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]) ?? []
-    guard let vol = vols.compactMap({ Sync.real($0)?.path }).first(where: { $0.hasPrefix("/Volumes/") && Native.volumeTempItems($0, temp: t) != nil }) else { return }
+    let vols = mountedVolumePaths()
+    guard let vol = vols.compactMap({ Sync.real(URL(fileURLWithPath: $0))?.path }).first(where: { $0.hasPrefix("/Volumes/") && Native.volumeTempItems($0, temp: t) != nil }) else { return }
     let ti = vol + "/.TemporaryItems/folders.\(getuid())/TemporaryItems"
     #expect(Native.volumeTempItems(vol, temp: t) == ti)
     let rules = try #require(Native.darwinTempRules(dirs: [vol, vol]))

@@ -109,6 +109,18 @@ final class TestAcceptLoop: @unchecked Sendable {
         for e in [EIO, ENOTSOCK, EOPNOTSUPP, EFAULT] { #expect(TestAcceptLoop.verdict(e) == .unexpected, "\(TestAcceptLoop.name(e))") }
     }
 
+    /// For a failure message: the process (pid, command) that listens on the port now, from lsof ("" when none or lsof fails).
+    static func listenerOf(_ port: UInt16) -> String {
+        let p = Process(), out = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        p.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-Fpc"]
+        p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return "" }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").joined(separator: " ")
+    }
+
     @Test(.blocking) func aLoopServesConnectionsAndEndsQuietlyWhenTheTestStopsIt() {
         let l = socket(AF_INET, SOCK_STREAM, 0)
         var a = sockaddr_in(), n = socklen_t(MemoryLayout<sockaddr_in>.size)
@@ -141,7 +153,8 @@ final class TestAcceptLoop: @unchecked Sendable {
         let source = UInt16(bigEndian: mine.sin_port), target = UInt16(bigEndian: a.sin_port)  // source == target: TCP connected the socket to ITSELF (no listener there)
         // #150 (failed 2 of 14 full runs on 2026-11-20): when the connect did not fail, say WHO answered: our loop (it is still running: the stop was too slow or lost) or
         // another test's listener that was given this port after ours closed (our loop ended, and the connection was counted by nobody here)
+        let owner = r == 0 ? Self.listenerOf(target) : ""  // asked at once: the other listener may be gone a moment later
         let answeredByUs = r == 0 ? { usleep(300_000); return served.withLock { $0 } > 2 }() : false
-        #expect(r == -1 && e == ECONNREFUSED, "the loop did not close the listener: connect gave \(r) / \(TestAcceptLoop.name(e)); stops \(firstStop)/\(secondStop) in \(took) s; \(firstNote); our loop counted the new connection: \(answeredByUs); source port \(source), target port \(target)\(source == target ? " (a TCP self-connect: nothing listens there)" : ""); \(PoolLagGuard.text)")
+        #expect(r == -1 && e == ECONNREFUSED, "the loop did not close the listener: connect gave \(r) / \(TestAcceptLoop.name(e)); stops \(firstStop)/\(secondStop) in \(took) s; \(firstNote); our loop counted the new connection: \(answeredByUs); source port \(source), target port \(target)\(source == target ? " (a TCP self-connect: nothing listens there)" : ""); listening on the target port at once after: \(owner.isEmpty ? "nobody found" : owner); \(PoolLagGuard.text)")
     }
 }

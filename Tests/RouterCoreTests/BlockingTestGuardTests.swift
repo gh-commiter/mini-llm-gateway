@@ -125,6 +125,22 @@ import Testing
         }
     }
 
+    /// Calls that deadlock a test process that serves a WebDAV mount itself (DirectGitMountTests): FileManager.mountedVolumeURLs asks every volume through a
+    /// system service while it holds the process's file-node lock; the mount's own server threads need that lock for every file, so neither side moves until the 90 s
+    /// timeouts (measured 2026-11-20: 12 of 12 pool threads in FileIDTreeGetAndLockVolumeEntryForDeviceID, the 90 s stalls of the 0.9.8 gate). The kernel's mount
+    /// table (getfsstat with MNT_NOWAIT, as WorktreeTests.mountedVolumePaths) asks nobody.
+    static let forbidden: [(text: String, why: String)] = [
+        ("mountedVolumeURLs", "asks every volume under the process's file-node lock: deadlocks with a loopback WebDAV mount of this process; read the mount table with getfsstat(MNT_NOWAIT)"),
+    ]
+
+    @Test func noTestCallsWhatDeadlocksWithItsOwnWebDAVMount() throws {
+        let names = try FileManager.default.contentsOfDirectory(atPath: Self.testsDir.path).filter { $0.hasSuffix(".swift") && !Self.selfNames.contains($0) }.sorted()
+        for name in names {
+            let text = try String(contentsOf: Self.testsDir.appendingPathComponent(name), encoding: .utf8)
+            for f in Self.forbidden { #expect(!text.contains(f.text), "\(name) uses \(f.text): \(f.why)") }
+        }
+    }
+
     @Test func plantedExamplesAreCaughtAndSafeOnesAreNot() {
         let planted = { (attr: String, body: String) in Self.violations(in: "\(attr) func t() {\n\(body)\n}\n").map(\.test) }
         #expect(planted("@Test", "    usleep(1000)") == ["t"])

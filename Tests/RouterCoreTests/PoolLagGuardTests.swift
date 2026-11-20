@@ -27,24 +27,29 @@ enum PoolLagGuard {
             while true {
                 let t0 = ContinuousClock.now, done = DispatchSemaphore(value: 0)
                 Task { done.signal() }
-                done.wait()
-                let d = ContinuousClock.now - t0
-                let sec = Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
-                let over = lock.withLock { () -> Bool in
-                    samples += 1; worst = max(worst, sec)
-                    let first = sec > limit && !reported
-                    if first { reported = true }
-                    return first
-                }
-                if sec > 1, let dir = ProcessInfo.processInfo.environment["MG_POOL_LAG_SAMPLE_DIR"] {
-                    // diagnosis: which test code holds the pool threads right now (the stacks of all threads of this process, a second long)
+                var sampled = false
+                while done.wait(timeout: .now() + 1) == .timedOut {
+                    let waited = Double((ContinuousClock.now - t0).components.seconds)
+                    // reported while it waits: a stall that never ends still fails the run
+                    let over = lock.withLock { () -> Bool in
+                        worst = max(worst, waited)
+                        let first = waited > limit && !reported
+                        if first { reported = true }
+                        return first
+                    }
+                    if over { Issue.record("PoolLagGuard: a Task has waited \(Int(waited)) s for a Swift concurrency pool thread (limit \(limit) s): a test blocks pool threads (give it the .blocking trait, or use offPool)") }
+                    // diagnosis (MG_POOL_LAG_SAMPLE_DIR): after 5 s take the stacks of all threads of this process while the Task waits, to see which test code holds the pool threads
+                    guard waited >= 5, !sampled, let dir = ProcessInfo.processInfo.environment["MG_POOL_LAG_SAMPLE_DIR"] else { continue }
+                    sampled = true
                     let p = Process()
                     p.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
-                    p.arguments = [String(getpid()), "1", "-file", dir + "/sample-\(samples)-\(String(format: "%.1f", sec))s.txt"]
+                    p.arguments = [String(getpid()), "2", "-file", dir + "/sample-\(Int(Date().timeIntervalSince1970)).txt"]
                     p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
                     try? p.run(); p.waitUntilExit()
                 }
-                if over { Issue.record("PoolLagGuard: a Task waited \(String(format: "%.1f", sec)) s for a Swift concurrency pool thread (limit \(limit) s): a test blocks a pool thread (offPool, or a Thread of its own)") }
+                let d = ContinuousClock.now - t0
+                let sec = Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
+                lock.withLock { samples += 1; worst = max(worst, sec) }
                 Thread.sleep(forTimeInterval: 0.1)
             }
         }.start()

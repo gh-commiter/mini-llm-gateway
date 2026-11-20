@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Changed
+- Swift tests: a test that blocks (waits on a process, a semaphore, a sleep or a socket) now runs on a thread of its own (`@Test(.blocking)`) instead of a thread of the Swift concurrency pool, where it could starve the router's handler `Task` and stall the whole suite (the "no answer from the gateway" failures of #150, #147, #140); a static guard (`BlockingTestGuard`) fails a new blocking test without the trait, and `PoolLagGuard` measures the worst wait of a `Task` for a pool thread over the whole run. Test code only.
+
 ## 0.9.8
 
 ### Changed
