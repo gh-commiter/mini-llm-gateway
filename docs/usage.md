@@ -1699,8 +1699,8 @@ timer asks the core's upstream lane every few seconds (`POST /upstream-auto`, at
 **Publish mode.** By default a push sends proposals: the upstream's reviewers accept them (`--mode submit`). A link made with `--mode publish`
 writes the notes on the upstream directly (the device's user there needs the developer role in the project): the first push creates the note
 there, later pushes update that same note. Before updating, the gateway reads the note there: if its revision is not the one it left (somebody
-changed it on the upstream, or deleted it) the change is **not** written. The note is a conflict: it is listed in `upstream status` (and in the
-push report) as `CONFLICT: note N (changed there)` and is skipped until you decide with `minigw gw upstream resolve <project> <note> --theirs`
+changed it on the upstream, or deleted it) the change is **not** written. The note is a conflict: `upstream status` lists it as `CONFLICT: note N (changed there)` (and the
+push report, in both modes, as `conflict <id> <title>: changed on the upstream since our last version ..., not overwritten`) and is skipped until you decide with `minigw gw upstream resolve <project> <note> --theirs`
 (keep the upstream's version: our text stays unsent and the upstream's text is not fetched here) or `--ours` (our version is sent as a submission for the upstream's reviewers,
 never as an overwrite). Add `--upstream <name>` to resolve only that link; it is required when the note conflicts on several upstreams.
 Without it, a single conflict is still resolved as before; an ambiguous request lists the upstreams and changes nothing. The mode cannot
@@ -1783,8 +1783,9 @@ an older upstream ("update the upstream gateway to 0.9.3 or newer") or a role th
 - **candidate**: exactly one destination note ends with the exact trailer the push would write, and no receipt survives for the local note.
   The trailer text alone proves nothing (anyone can copy it), so the listing SHOWS what you confirm: the remote id, title, the writer and time the upstream reports,
   the remote revision, whether the content is equal to or differs from the local note, and the proof: "written by this gateway's device" (the upstream's provenance of the
-  note's current revision names this gateway's device) or "no proof: last written by <name>" (a reviewer's edit, an accepted submission, or any note after a restore onto a new
-  computer, where reconnecting made a new device key).
+  note's current revision names this gateway's device) or "no proof: last written by <name>" (a reviewer's or another user's edit, a submission of another device, or any note
+  after a restore onto a new computer, where reconnecting made a new device key). A submission of THIS gateway that the reviewers accepted unchanged is written by this gateway's
+  device, so it shows the proof; it loses it when someone edits the note there.
   Confirm with `minigw gw upstream reconcile <project> --upstream <name> --note <id> --confirm <remote id>`; the decision is refused ("list again") when the remote revision,
   content or proof changed since the listing.
   - With proof and equal content a receipt is recorded (on a publish link its base stays unknown, so the first later local change is a conflict, never a direct overwrite).
@@ -1804,6 +1805,8 @@ an older upstream ("update the upstream gateway to 0.9.3 or newer") or a role th
   `minigw gw upstream reconcile <project> --upstream <name> --all --new`, or replace `--new` with `--skip`.
   The CLI reads the saved ids from that listing and carries them in the decision request; `--listed <id,id,...>` can pin the displayed ids explicitly.
   The request carries those ids: unlisted ids and changed local revisions are refused. Lost pending submissions remain unknown.
+  A note the upstream's reviewers already REJECTED and whose text has not changed is not created by `--new` either: the upstream answers the same submission again, and the push reports the note as
+  `skip ... the upstream already holds this exact text as submission N, which it rejected (<reason>)`; change the note to send it anew. The same text already ACCEPTED is recorded as the upstream's note (no second copy).
 
 - **unchecked**: a private note of a `--with-private` link. The upstream never shows private notes, so nothing can be compared and no match is ever claimed.
   Such a note blocks the mark like an unknown and needs its own named decision: `--note <id> --new` (may create a second copy on the upstream if it already has one) or `--note <id> --skip`.
