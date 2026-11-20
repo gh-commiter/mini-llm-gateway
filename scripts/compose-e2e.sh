@@ -164,8 +164,8 @@ c.commit()" || fail 'note fixture'
       modes ${COMPOSE_PROJECT_NAME}_config > $work/restored-config-$name || fail 'modes of restored config'
       modes ${COMPOSE_PROJECT_NAME}_scratch > $work/restored-scratch-$name || fail 'modes of restored scratch'
       # the restore adds exactly one file: the "restore pending" marker the gateway consumes at its next start (it marks the upstream links); nothing else may differ
-      grep -qx '600 10001:10001 ./core/core.restored' $work/restored-config-$name || fail 'restore pending marker missing or wrong mode/owner'
-      grep -vx '600 10001:10001 ./core/core.restored' $work/restored-config-$name > $work/restored-config-nomarker-$name
+      [[ $(grep -Fcx '600 10001:10001 ./core/core.restored' $work/restored-config-$name) == 1 ]] || fail 'restore pending marker missing, repeated, or with the wrong mode/owner'
+      grep -Fvx '600 10001:10001 ./core/core.restored' $work/restored-config-$name > $work/restored-config-nomarker-$name
       cmp -s $work/modes-config-$name $work/restored-config-nomarker-$name || { diff $work/modes-config-$name $work/restored-config-nomarker-$name >&2; fail 'config modes changed by the restore'; }
       cmp -s $work/modes-scratch-$name $work/restored-scratch-$name || { diff $work/modes-scratch-$name $work/restored-scratch-$name >&2; fail 'scratch modes changed by the restore'; }
       grep -q '^600 ' $work/restored-config-$name && grep -q '^700 ' $work/restored-config-$name || fail 'no 600/700 entries in the restored config volume'
