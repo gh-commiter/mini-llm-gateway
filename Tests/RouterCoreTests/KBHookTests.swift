@@ -394,21 +394,31 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         try JSONSerialization.jsonObject(with: Data(contentsOf: repoRoot.appendingPathComponent("client/testdata/kb-waiting.json"))) as! [String: Any]
     }
 
-    @Test func sharedFixture() throws {
+    @Test func sharedFixture() async throws {
         let f = try fixture()
         for l in f["lines"] as! [[String: Any]] {
             #expect(ProjectEnv.waitingLine(l["n"] as! Int, l["slug"] as! String) == l["want"] as! String)
         }
         for a in f["answers"] as! [[String: Any]] {
             let w = try HookWorld()
-            var asked = ""
-            w.env.send = { _, _, path, _, _ in asked = path; return ProjectReply(status: a["status"] as! Int, data: Data((a["body"] as! String).utf8)) }
-            #expect(w.env.reviewWaiting(ProjectConn(url: "", token: ""), 7, limit: 1) == a["want"] as! Int, "\(a["name"] as! String)")
-            #expect(asked.hasPrefix("/minigw/v1/projects/7/kb/review?after="))
+            let status = a["status"] as! Int, body = Data((a["body"] as! String).utf8)
+            let box = AskedBox()
+            w.env.send = { _, _, path, _, _ in box.path = path; return ProjectReply(status: status, data: body) }
+            let env = w.env!
+            let n = await offPool { env.reviewWaiting(ProjectConn(url: "", token: ""), 7, limit: 1) }
+            #expect(n == a["want"] as! Int, "\(a["name"] as! String)")
+            #expect(box.path.hasPrefix("/minigw/v1/projects/7/kb/review?after="))
         }
     }
 
-    private func world(waiting: Int?, optIn: Bool, slow: Bool = false) throws -> HookWorld {
+    private final class AskedBox: @unchecked Sendable { var path = "" }
+
+    /// The blocking calls (a gateway request with its wait) go on a thread of their own, never on one of the concurrency pool (offPool).
+    private func start(_ w: HookWorld) async { let e = w.env!; await offPool { e.kbHook(["start"]) } }
+    private func show(_ w: HookWorld) async throws { let e = w.env!; try await offPool { try e.project(["show"]) } }
+
+    /// slow: the gateway's answer is held until `gate` is signalled (no sleep, no timing assertion: that the hook returns at all shows the deadline works).
+    private func world(waiting: Int?, optIn: Bool, gate: DispatchSemaphore? = nil) throws -> HookWorld {
         let w = try HookWorld(stdin: Data(#"{"session_id":"s1","cwd":"\#(try Projects.realFolder(NSTemporaryDirectory()))"}"#.utf8))
         try w.link("gw1", 7, "acme-shop")
         let input = Data(#"{"session_id":"s1","cwd":"\#(w.work)"}"#.utf8)
@@ -418,47 +428,47 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         w.env.hookConn = { ProjectConn(url: "", token: "") }
         w.env.waitLimit = 0.1
         w.env.send = { _, _, _, _, _ in
-            if slow { Thread.sleep(forTimeInterval: 1) }
+            gate?.wait()
             guard let n = waiting else { return ProjectReply(status: 404, data: Data(#"{"error":{"message":"not found"}}"#.utf8)) }
             return ProjectReply(status: 200, data: Data(#"{"submissions":[],"next":0,"waiting":\#(n)}"#.utf8))
         }
         return w
     }
 
-    @Test func hookLineOnlyWhenOptedInAndOnlyCountAndProject() throws {
+    @Test func hookLineOnlyWhenOptedInAndOnlyCountAndProject() async throws {
         let line = "2 submissions wait for your review in acme-shop: minigw kb review acme-shop\n"
         var w = try world(waiting: 2, optIn: true)
-        w.env.kbHook(["start"])
+        await start(w)
         #expect(w.out.hasPrefix("Mini Gateway: this folder is linked to project acme-shop"))
         #expect(w.out.hasSuffix(line))
         w = try world(waiting: 2, optIn: false)
-        w.env.kbHook(["start"])
+        await start(w)
         #expect(w.out.isEmpty)
         w = try world(waiting: nil, optIn: true)  // not a reviewer: the gateway's 404
-        w.env.kbHook(["start"])
+        await start(w)
         #expect(!w.out.contains("wait") && w.out.hasPrefix("Mini Gateway:"))
         w = try world(waiting: 0, optIn: true)
-        w.env.kbHook(["start"])
+        await start(w)
         #expect(!w.out.contains("wait"))
     }
 
-    @Test func hookTimeoutPrintsNothing() throws {
-        let w = try world(waiting: 5, optIn: true, slow: true)
-        let t0 = Date()
-        w.env.kbHook(["start"])
-        #expect(Date().timeIntervalSince(t0) < 0.9)
+    @Test func hookTimeoutPrintsNothing() async throws {
+        let gate = DispatchSemaphore(value: 0)
+        let w = try world(waiting: 5, optIn: true, gate: gate)
+        await start(w)  // returns after waitLimit (0.1 s) although the gateway has not answered
+        gate.signal()
         #expect(!w.out.contains("wait") && w.out.hasPrefix("Mini Gateway:"))
     }
 
-    @Test func showLineAppearsAndDisappears() throws {
+    @Test func showLineAppearsAndDisappears() async throws {
         for (waiting, want) in [(1, "1 submission waits for your review in acme-shop: minigw kb review acme-shop\ngateway: gw1\n"), (0, "gateway: gw1\n")] {
             let w = try world(waiting: waiting, optIn: false)
-            try w.env.project(["show"])
+            try await show(w)
             #expect(w.out.hasSuffix(want), "\(waiting)")
             #expect(w.out.contains("project:  acme-shop (id 7)"))
         }
         let w = try world(waiting: nil, optIn: false)  // a developer: nothing
-        try w.env.project(["show"])
+        try await show(w)
         #expect(!w.out.contains("wait"))
     }
 }
