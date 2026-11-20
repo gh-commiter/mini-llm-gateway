@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- Proof: `scripts/compose-upstream-e2e.sh` runs two gateways (hub and edge) in containers on an internal Docker network and proves in them: `backup.sh --restore` -> `core.restored` consumed -> the upstream link marked and paused (log, status, a manual push creates nothing) -> `gw upstream reconcile` (classes known, candidate with and without proof, unknown, orphan; confirm, new, skip) -> replacements with no second copies. Not proven: Mac and Windows hosts, publish-mode links, the Mac app's window; a note rejected on the hub and then restored away and sent again with `--new` does not reach the hub (the script ends red on that step).
+### Fixed
+- Upstream push: when the hub answers a submission with an EARLIER one (the same note, text and link again, after the receipt was lost by a restore or by unlink and link), the push no longer reports "create". A rejected earlier submission is reported as skipped with the hub's reason and not sent around the rejection; an accepted one records the hub's note (no second copy). Before, `reconcile --new` of a note the hub had rejected said "created 1" while nothing reached the hub.
+
+### Proof
+- Proof: `scripts/compose-upstream-e2e.sh` runs two gateways (hub and edge) in containers on an internal Docker network and proves in them: `backup.sh --restore` -> `core.restored` consumed -> the upstream link marked and paused (log, status, a manual push creates nothing) -> `gw upstream reconcile` (classes known, candidate with and without proof, unknown, orphan; confirm, new, skip) -> replacements with no second copies. Not proven: Mac and Windows hosts, publish-mode links, the Mac app's window.
 
 ## 0.9.4
 

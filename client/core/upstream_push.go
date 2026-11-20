@@ -986,7 +986,10 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			}
 			continue
 		}
-		var sub struct{ ID int64 }
+		var sub struct {
+			ID, Note, Replaces, Revision int64
+			State, Reason                string
+		}
 		if json.Unmarshal(a.data, &sub) != nil || sub.ID <= 0 {
 			res.Refused++
 			line("refused", n, "the upstream's answer names no submission")
@@ -994,6 +997,33 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 		}
 		if err := s.upstreamRecordSent(wctx, l.Project, l.Upstream, n, sub.ID, replaces); err != nil {
 			return res, err
+		}
+		// A fresh submission is pending. Any other state is a replay of an EARLIER submission: the same idempotency key (note, text and link
+		// unchanged) after the receipt was lost (restore, unlink and link). Nothing new reached the reviewers, so it is neither created nor
+		// replaced: the receipt now names the earlier submission, as if it had never been lost, and the report says what became of it.
+		switch sub.State {
+		case "rejected":
+			res.Skipped++
+			line("skip", n, "the upstream already holds this exact text as submission "+strconv.FormatInt(sub.ID, 10)+", which it rejected"+upReason(sub.Reason)+": not sent again (change the note to send it anew)")
+			continue
+		case "accepted":
+			if sub.Note > 0 {
+				if e := s.upstreamRecordRemoteNote(wctx, l.Project, l.Upstream, n.ID, sub.Note); e != nil {
+					return res, e
+				}
+				base := int64(1) // as for an earlier submission read back: a new note starts at 1, a replacement made the revision after the one it declared
+				if sub.Replaces > 0 {
+					base = sub.Revision + 1
+				}
+				if sub.Replaces == 0 || sub.Revision > 0 {
+					if e := s.upstreamRecordBase(wctx, l.Project, l.Upstream, n.ID, base); e != nil {
+						return res, e
+					}
+				}
+			}
+			res.Skipped++
+			line("skip", n, "the upstream already accepted this exact text as submission "+strconv.FormatInt(sub.ID, 10)+" (note "+strconv.FormatInt(sub.Note, 10)+"): not sent again")
+			continue
 		}
 		if action == "replace" {
 			res.Replaced++

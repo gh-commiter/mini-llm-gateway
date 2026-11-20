@@ -3,11 +3,12 @@
 # deploy/docker/backup.sh; client/core/upstream_restore.go, upstream_reconcile.go). scripts/compose-e2e.sh proves only that core.restored is
 # consumed (its deployment has no upstream); client/upstream_reconcile_e2e_test.go runs both gateways as processes, not in containers.
 #   hub  = the upstream gateway, edge = the local gateway; two Compose projects of their own ($P-hub, $P-edge, same compose.yaml of
-#   deploy/docker, the locally built image minigw:local, no build and no download), one internal Docker network ($P-net), NOTHING published.
+#   deploy/docker, the image minigw:local with the binary of this tree put on top (no apt, no pull, no download)), one internal Docker network ($P-net), NOTHING published.
 #   Commands go through `docker compose exec`; the clients that make and read notes are containers of the same image on that network.
 # Story:  A pushed and accepted -> notes B, C, D, E made but not pushed -> BACKUP of the edge -> B, C, D, E pushed (the backup does not know
 #         the pushes); B and C accepted on the hub, D and E rejected, C then edited ON THE HUB by another user; Z made, pushed, accepted
 #         (gone locally after the restore); A edited (also lost by the restore) -> stop, restore, start.
+# (The D steps found a defect in the first version of this script: a replayed rejected submission was reported as "create"; fixed in the pusher.)
 # Expectation (worked out from the code and the docs BEFORE the first run):
 #   - core.restored exists after backup.sh --restore and is gone after the start; the log says "restore pending file found: 1 upstream
 #     links marked restored" and "... automatic pushes to them are paused"; `upstream status` says "restored: reconcile before pushing".
@@ -17,9 +18,9 @@
 #     user), content differs; D and E unknown (rejected on the hub: no hub note, no receipt); Z "orphan remote <id>" (nothing is imported or
 #     deleted); "restored mark cleared: false": a dry run changes nothing.
 #   - decisions: B and C `--note <id> --confirm <remote id>` (without proof a conflict with an unknown base is recorded, on both link modes),
-#     D `--note <id> --new`, E `--note <id> --skip`; the mark is cleared by the last decision ("restored mark cleared: true").
-#   - then a push: A and B replaced, C a conflict (the line says "conflict <id>"; the docs' `CONFLICT: note N (changed there)` is the publish-mode wording), D created (new), E skipped; `resolve --ours` for C sends it as a replacing submission.
-#   - the hub ends with ONE note each for A, B, C, D, Z and none for E.
+#     D `--note <id> --new` (same text: the hub replays its earlier rejected submission, so the push reports D as skipped, rejected with the reason), E `--note <id> --skip`; the mark is cleared by the last decision ("restored mark cleared: true").
+#   - then a push: A and B replaced, C a conflict (the line says "conflict <id>"; the docs' `CONFLICT: note N (changed there)` is the publish-mode wording), D skipped (rejected on the hub), E skipped; `resolve --ours` for C sends it as a replacing submission.
+#   - the hub ends with ONE note each for A, B, C, Z and none for D and E.
 # Rules: nothing is published on the host; no --privileged, no chown/chmod -R, no prune; it touches only its own projects, network and
 # volumes (by name and label); no rm (work files stay in $D). Never prints a token: tokens travel through pipes only.
 emulate -L zsh; set -u; setopt pipefail
@@ -27,7 +28,8 @@ ROOT=${0:A:h:h}
 source "$ROOT/scripts/compose-e2e-common.zsh"
 D=${SCRATCH_DIR:-"/Volumes/SAMSUNG990PRO/Mini Gateway Scratch/dev-builds/composeup-095"}
 P=${UP_PREFIX:-mgup095}
-IMG=${UP_IMAGE:-minigw:local}
+BASE=${UP_BASE:-minigw:local}  # an image already present: only its binary is replaced below (no apt, no pull, no download)
+TAG=${UP_TAG:-mgup095}; IMG=minigw:$TAG
 RID=$P-$$-$RANDOM
 T=$(date +%s)
 NET=$P-net
@@ -42,17 +44,23 @@ cleanup() {
   done
   for v in ${(f)"$(docker volume ls -q --filter label=io.minigw.upe=$RID 2>/dev/null)"}; do docker volume rm $v >/dev/null 2>&1; done
   (( ${CREATED[(Ie)net]} )) && docker network rm $NET >/dev/null 2>&1
+  docker image rm $IMG >/dev/null 2>&1 # the tag this run built (the base image stays)
 }
 trap cleanup EXIT
 mkdir -p $D || fail "work folder $D"
 umask 077
 unset COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES COMPOSE_PROJECT_NAME
-docker image inspect $IMG >/dev/null 2>&1 || fail "image $IMG is missing: build it the way scripts/compose-e2e.sh does (no pull here)"
+docker image inspect $BASE >/dev/null 2>&1 || fail "image $BASE is missing: build it the way scripts/compose-e2e.sh does (no pull here)"
+# this tree's binary for the architecture of the base image, on top of the base image (the same user, folders and entrypoint)
+arch=$(docker image inspect --format '{{.Architecture}}' $BASE)
+mkdir -p $D/img && (cd $ROOT/client && GOCACHE=${GOCACHE:-$D/go-cache} GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -o $D/img/minigw .) || fail "go build"
+print -rl -- "FROM $BASE" 'COPY --chmod=0755 minigw /usr/local/bin/minigw' > $D/img/Dockerfile
+docker build -q --pull=false -t $IMG $D/img >/dev/null || fail "docker build of $IMG"
 
 print -rl -- 'services:' '  minigw:' '    ports: !reset []' '    networks:' '      up:' '        aliases: ["${UP_ALIAS}"]' \
   'networks:' '  up:' '    external: true' "    name: $NET" > $D/compose.up.yaml
 # one Compose project per gateway, run from $D with the environment of that project (backup.sh reads the same environment)
-penv() { local n=$1; shift; ( cd $D && COMPOSE_PROJECT_NAME=$P-$n MINIGW_VERSION=local UP_ALIAS=$n COMPOSE_FILE=$ROOT/deploy/docker/compose.yaml:$D/compose.up.yaml "$@" ) }
+penv() { local n=$1; shift; ( cd $D && COMPOSE_PROJECT_NAME=$P-$n MINIGW_VERSION=$TAG UP_ALIAS=$n COMPOSE_FILE=$ROOT/deploy/docker/compose.yaml:$D/compose.up.yaml "$@" ) }
 dc() { local n=$1; shift; penv $n docker compose "$@" }
 gw() { local n=$1; shift; dc $n exec -T minigw minigw gw "$@" }
 token() { gw $1 token | grep -o 'mgw-[A-Za-z0-9_-]*#[A-Za-z0-9_-]*' } # to a pipe, never to a variable or the terminal
@@ -207,7 +215,8 @@ ok "B, C confirmed, D new, E skipped; the restored mark is cleared by the last d
 for t in A B C; do n=${(P)${:-n$t}}; out=$(print -r -- "$t edited after the restore $T" | cl edge edge-author /home/minigw/p note edit $n --revision 1 - 2>&1) || evidence "note edit $t" "$out" "edit failed"; done
 run "push" gw edge upstream push shop
 print -r -- "$out" | sed 's/^/     /'
-has "replace $nA " "push: A"; has "replace $nB " "push: B"; has "create $nD " "push: D (new)"; has "conflict $nC " "push: C"; has "skip $nE " "push: E skipped"; has "created 1, replaced 2, skipped 1, refused 0, conflicts 1" "push counts"
+has "replace $nA " "push: A"; has "replace $nB " "push: B"; has "skip $nD " "push: D"; has "which it rejected (rehearsal)" "push: D as rejected, with the reason"; hasnt "create $nD " "push: D is not reported as created"
+has "conflict $nC " "push: C"; has "skip $nE " "push: E skipped"; has "created 0, replaced 2, skipped 2, refused 0, conflicts 1" "push counts"
 run "resolve C" gw edge upstream resolve shop $nC --upstream hub --ours
 run "push C" gw edge upstream push shop; has "replace $nC " "push after resolve --ours"
 accept_pending
@@ -216,8 +225,8 @@ for t in A B C Z; do [[ $(nnotes "$t-$T") == 1 ]] || evidence "hub note list" "$
 out=$(cl hub hub-viewer /home/minigw/p note read $RC 2>&1); has "C edited after the restore $T" "hub note C after resolve --ours"
 run "push again" gw edge upstream push shop; has "created 0, replaced 0" "second push"
 ok "after the reconcile: A, B, C replaced (not copied), Z untouched, E skipped: the hub holds exactly ONE note each for A, B, C, Z and none of E"
-# D was rejected on the hub before the restore; `--note D --new` ("allow creation") and the push said "create", but the hub answers the
-# same idempotency key (note, content and link are unchanged) with the old rejected submission: nothing pending, no note. Expected by the docs: ONE note D.
-[[ $(nnotes "D-$T") == 1 && $(hubnotes | wc -l | tr -d " ") == 5 ]] || evidence "gw upstream push said 'create $nD'; hub note list and pending review" "$(hubnotes)
-$(gw hub kb review shop 2>&1 | grep '^submission')" "FINDING: D (reconcile --new after a hub-side rejection) is not on the hub: the push reported it as created, the status calls it unchanged"
-ok "D created once after reconcile --new: the hub holds exactly ONE note each for A, B, C, D, Z"
+# D was rejected on the hub before the restore. `--note D --new` allows the creation, but the text is the same, so the hub answers the same
+# idempotency key with the earlier, rejected submission. The push reports it as skipped with the reason (never "create"), and the hub keeps no D.
+[[ $(nnotes "D-$T") == 0 && $(hubnotes | wc -l | tr -d " ") == 4 ]] || evidence "hub note list" "$(hubnotes)" "the hub holds no D and four notes (A, B, C, Z)"
+out=$(gw hub kb review shop 2>&1); [[ $out == "no submissions"* ]] || evidence "gw kb review" "$out" "nothing pending on the hub (D was not sent around its rejection)"
+ok "D (rejected on the hub, then --new after the restore): reported as rejected with the reason, not created; the hub holds exactly ONE note each for A, B, C, Z and none for D and E"

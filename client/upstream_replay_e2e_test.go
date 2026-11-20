@@ -21,7 +21,7 @@ func TestUpstreamReplayedSubmissionIsNotCreate(t *testing.T) {
 				f := newUpFx(t, core.Developer)
 				f.add("hub")
 				f.allow()
-				_, _, notes := f.seed()
+				p, project, notes := f.seed()
 				n := notes["Invoice numbering"]
 				_, err := f.cmd(coreOpts{class: "structure"}, "link", "shop", "hub")
 				f.must(err)
@@ -91,9 +91,43 @@ func TestUpstreamReplayedSubmissionIsNotCreate(t *testing.T) {
 				var sub, note int64
 				f.must(f.local.core.DB().QueryRow(`SELECT remote_sub,remote_note FROM upstream_sent WHERE note_id=?`, n.ID).Scan(&sub, &note))
 				t.Logf("receipt: remote_sub %d remote_note %d", sub, note)
-				// the report: never "create", never counted as created
-				if strings.Contains(out, "create ") || strings.Contains(out, "created 1") {
-					t.Errorf("a replayed %s submission is reported as created:\n%s", outcome, out)
+				// the report: never "create", never counted as created; what became of the earlier submission is said
+				want := "which it rejected (not wanted)"
+				if outcome == "accepted" {
+					want = "already accepted this exact text"
+				}
+				if strings.Contains(out, "create ") || strings.Contains(out, "created 1") || !strings.Contains(out, "skip 1 ") || !strings.Contains(out, want) || !strings.Contains(out, "skipped 1") {
+					t.Fatalf("a replayed %s submission is not reported as skipped with its state:\n%s", outcome, out)
+				}
+				var hubNote int64
+				f.must(rc.DB().QueryRow(`SELECT note_id FROM kb_submissions WHERE id=1`).Scan(&hubNote))
+				if sub != 1 || (outcome == "accepted") != (note == hubNote && note > 0) {
+					t.Fatalf("receipt: remote_sub %d remote_note %d, hub note %d", sub, note, hubNote)
+				}
+				var count int
+				f.must(rc.DB().QueryRow(`SELECT count(*) FROM notes WHERE project_id=? AND title='Invoice numbering'`, f.rproj).Scan(&count))
+				if want := map[string]int{"accepted": 1, "rejected": 0}[outcome]; count != want {
+					t.Fatalf("hub holds %d notes, want %d", count, want)
+				}
+				if again, err := f.cmd(coreOpts{}, "push", "shop"); err != nil || strings.Contains(again, "create ") || strings.Contains(again, "replace ") {
+					t.Fatalf("a second push sends something: %v\n%s", err, again)
+				}
+				if now, _ := f.remoteSubmissions(); now != subs {
+					t.Fatal("a second push sent a submission")
+				}
+				// a local change goes out again: after a rejection as a new submission, after an accept as a replacement of the accepted note
+				cur, err := f.local.core.GetNote(t0, p, project, n.ID)
+				f.must(err)
+				_, err = f.local.core.UpdateNote(t0, p, project, n.ID, cur.Revision, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "changed after the replay"})
+				f.must(err)
+				out, err = f.cmd(coreOpts{}, "push", "shop")
+				f.must(err)
+				verb := "create 1 "
+				if outcome == "accepted" {
+					verb = "replace 1 "
+				}
+				if !strings.Contains(out, verb) {
+					t.Fatalf("after a change the note is not sent again (%s):\n%s", verb, out)
 				}
 			})
 		}
