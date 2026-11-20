@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `scripts/compose-team-rehearsal.sh` rehearses a team gateway in Docker Compose on the real server before the team is invited: an isolated project (own name, ports and volumes, refuses an existing one), the owner workflow, an access matrix, knowledge review and note history, optionally the remote settings page, a backup and restore into a second project, and a sanitized report. See `docs/docker.md`, "Rehearsal before inviting the team".
+
 ## 0.9.0
 
 Mini Gateway 0.9.0 is a stable release. It collects the eleven beta versions 0.8.1 to 0.8.11, which stable users never saw, and follows the stable release 0.8.0. The sections below describe what 0.9.0 is, not how each beta got there. Read **Upgrading from 0.8.0** and **Known problems** before you update a gateway that other people use.

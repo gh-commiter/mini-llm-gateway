@@ -249,6 +249,38 @@ It checks the refused-start database bytes and captures the old gateway's status
 A loud SKIP returns nonzero unless `ALLOW_SKIP=1`; release gates should leave that unset. No Linux server run is
 claimed by this rehearsal on a development machine.
 
+## Rehearsal before inviting the team
+
+Run the whole team workflow once in an isolated Compose project on the real server, before anyone is invited. From a
+clone of the repository, as a user who may use Docker (POSIX `sh`; needs Docker Compose v2 and Python 3, and `openssl` and `curl` for `--admin`):
+
+```sh
+sh scripts/compose-team-rehearsal.sh --admin        # --version X.Y.Z if deploy/docker/.env does not name the release
+```
+
+It builds the release the way this page says (the build checks the signature, the signed version and the checksum),
+starts the project `minigw-rehearsal` on its own free ports (on `127.0.0.1`; `--bind` for another address) with its own
+volumes, and runs: health and `gw status`; a team, two projects and three users (reader, developer, admin) through the
+owner CLI; device approval and binding; an access matrix with random sentinel notes (the reader sees structure only, a
+private note is seen only by its author and the project admins, team membership alone opens no project); submit, review,
+accept, replacement, `note history` and `note restore`; with `--admin` the remote page (certificates, HTTPS login,
+forged `Origin`, wrong-password lockout, routes outside the list, the Team and Review routes, no secret in the logs);
+`backup.sh --stop`, a restore into a second isolated project and a comparison of users, bindings, roles, notes, search and the
+gateway identity. `--provider-url` adds a provider (the key is asked without echo). The devices are simulated: clients
+run from a second container of the same image on the Compose network. A step that cannot run is a FAIL with the reason;
+only the steps that need a second machine print `TODO(operator)` with the exact commands (a real Mac and Windows client,
+a browser on another machine, the upstream link, one model request, which needs Claude Code).
+
+It refuses a project name that already has containers, networks or volumes (never `minigw`, the default project), and
+`--reuse` only continues a leftover project that carries this script's marker volume. At the end it asks on a
+terminal whether to remove what it made, or does so with `--cleanup`; later `--cleanup-only --project <name>` removes exactly that
+project, its restore project, its labelled volumes and the working directory, nothing else.
+The report `rehearsal-report-<UTC time>.md` in the current directory lists versions, one row per step (`ok`, `FAIL`,
+`TODO`) with seconds, the access matrix and the operator's commands. It holds no password, token, host name, address
+or user name. The exit code is 0 only when no step FAILED; every `TODO(operator)` row is still yours before you invite
+the team. Docker Desktop and rootless Docker show the browser as a Docker address, so the source filter
+`allowedSourceCIDRs` is proven only by the second-machine browser item.
+
 ## Hardening that is on
 
 Non-root user (uid 10001), read-only root file system with a `/tmp` tmpfs, all capabilities dropped,
