@@ -121,59 +121,76 @@ remove_work() { # only a validated directory; one file at a time, never recursiv
 # ---------- Docker resources: ownership is proven by labels carrying this run's id, never by a name ----------
 # Compose labels everything it creates with the project; the override file in the working directory adds the run id to
 # the containers, volumes and networks of Compose and gives the rehearsal image its own tag, so the shared minigw:<version> is never touched.
+# A failing Docker query is never read as "nothing found": dq keeps the output and records every failure in DQFAIL.
+dq() { DQ=$("$@" 2>"$WORK/dq.err"); DQRC=$?; [ $DQRC -eq 0 ] || { DQFAIL="$DQFAIL [$1 $2 $3: $(tailc "$(cat "$WORK/dq.err" 2>/dev/null)")]"; return 1; }; }
+vstate() { # volume -> present, absent or error (a daemon or API failure is neither)
+  vo=$(docker volume inspect "$1" 2>&1); vr=$?
+  if [ $vr -eq 0 ]; then echo present; else case $vo in *[Nn]o\ such\ volume*) echo absent;; *) echo error;; esac; fi
+}
+istate() { # image -> present, absent or error
+  io_=$(docker image inspect "$1" 2>&1); ir=$?
+  if [ $ir -eq 0 ]; then echo present; else case $io_ in *[Nn]o\ such\ image*) echo absent;; *) echo error;; esac; fi
+}
 vlabel() { docker volume inspect --format "{{ index .Labels \"$2\" }}" "$1" 2>/dev/null; }
-marker_ok() { # project: the marker volume carries this run's id and the project
-  [ -n "$RID" ] && [ "$(vlabel "${1}_rehearsal_marker" io.minigw.rehearsal.run)" = "$RID" ] && [ "$(vlabel "${1}_rehearsal_marker" io.minigw.rehearsal.project)" = "$1" ]
+marker_ok() { # project: the marker volume exists and carries this run's id and the project
+  [ -n "$RID" ] && [ "$(vstate "${1}_rehearsal_marker")" = present ] && [ "$(vlabel "${1}_rehearsal_marker" io.minigw.rehearsal.run)" = "$RID" ] && [ "$(vlabel "${1}_rehearsal_marker" io.minigw.rehearsal.project)" = "$1" ]
 }
 found() { # everything with this project's name prefix, for a refusal message
   docker ps -a --filter "label=com.docker.compose.project=$1" --format 'container {{.Names}}'
   docker volume ls -q | grep "^${1}_" | sed 's/^/volume /'
   docker network ls --format '{{.Name}}' | grep "^${1}_" | sed 's/^/network /'
 }
-in_use() { # project name: any container, network or volume of it
-  [ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$1")" ] || return 0
-  docker volume ls -q | grep -q "^${1}_" && return 0
-  docker network ls --format '{{.Name}}' | grep -q "^${1}_" && return 0
+in_use() { # project name: 0 = in use OR it could not be checked (DQFAIL says so), 1 = unused
+  DQFAIL=
+  dq docker ps -aq --filter "label=com.docker.compose.project=$1" || return 0; [ -z "$DQ" ] || return 0
+  dq docker volume ls -q || return 0; printf '%s\n' "$DQ" | grep -q "^${1}_" && return 0
+  dq docker network ls --format '{{.Name}}' || return 0; printf '%s\n' "$DQ" | grep -q "^${1}_" && return 0
   return 1
 }
-leftovers() { # project: what of this run still exists (containers, networks, volumes)
-  { docker ps -aq --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=com.docker.compose.project=$1"
-    docker ps -aq --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=io.minigw.rehearsal.project=$1"
-    docker network ls -q --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=com.docker.compose.project=$1"
-    docker volume ls -q --filter "label=io.minigw.rehearsal.run=$RID" | grep "^${1}_" | grep -v '_rehearsal_marker$'
-    [ "$1" != "$PROJ2" ] || { docker volume ls -q | grep -x -e "${PROJ2}_config" -e "${PROJ2}_scratch"; }
-  } 2>/dev/null
+leftovers() { # project: LEFT = what of this run still exists there; fails when something is left or could not be checked
+  rp=$1; LEFT=; DQFAIL=
+  dq docker ps -aq --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=com.docker.compose.project=$rp" && LEFT="$LEFT $DQ"
+  dq docker ps -aq --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=io.minigw.rehearsal.project=$rp" && LEFT="$LEFT $DQ"
+  dq docker network ls -q --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=com.docker.compose.project=$rp" && LEFT="$LEFT $DQ"
+  dq docker volume ls -q --filter "label=io.minigw.rehearsal.run=$RID" && LEFT="$LEFT $(printf '%s\n' "$DQ" | grep "^${rp}_" | grep -v '_rehearsal_marker$')"
+  [ -z "$DQFAIL" ] && [ -z "$(printf '%s' "$LEFT" | tr -d ' \n')" ]
 }
-remove_run() { # project: remove exactly the containers, networks and volumes of THIS run in that project, verify, then the marker
-  rp=$1; rc=0
-  marker_ok "$rp" || { printf 'not removing project %s: no marker volume carries this run (%s); found:\n' "$rp" "${RID:-none}" >&2; found "$rp" | sed 's/^/  /' >&2; return 1; }
-  for c in $(docker ps -aq --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=com.docker.compose.project=$rp") \
-           $(docker ps -aq --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=io.minigw.rehearsal.project=$rp"); do
-    docker rm -f "$c" >/dev/null 2>&1 || { printf 'could not remove container %s\n' "$c" >&2; rc=1; }
-  done
-  for n in $(docker network ls -q --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=com.docker.compose.project=$rp"); do
-    docker network rm "$n" >/dev/null 2>&1 || { printf 'could not remove network %s\n' "$n" >&2; rc=1; }
-  done
-  for v in $(docker volume ls -q --filter "label=io.minigw.rehearsal.run=$RID" | grep "^${rp}_" | grep -v '_rehearsal_marker$'); do
-    docker volume rm "$v" >/dev/null 2>&1 || { printf 'could not remove volume %s\n' "$v" >&2; rc=1; }
-  done
-  if [ "$rp" = "$PROJ2" ]; then   # the volumes backup.sh --restore created carry no label: exact names, in a project whose marker is ours
-    for v in "${PROJ2}_config" "${PROJ2}_scratch"; do
-      docker volume inspect "$v" >/dev/null 2>&1 || continue
+remove_run() { # project: remove exactly the containers, networks and volumes of THIS run in that project (every one carries the run label), verify, then the marker
+  rp=$1; rc=0; DQFAIL=
+  marker_ok "$rp" || { printf 'not removing project %s: no marker volume carries this run (%s) or the marker could not be read; found:\n' "$rp" "${RID:-none}" >&2; found "$rp" | sed 's/^/  /' >&2; return 1; }
+  if dq docker ps -aq --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=com.docker.compose.project=$rp"; then cs=$DQ; else cs=; rc=1; fi
+  if dq docker ps -aq --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=io.minigw.rehearsal.project=$rp"; then cs="$cs $DQ"; else rc=1; fi
+  for c in $cs; do docker rm -f "$c" >/dev/null 2>&1 || { printf 'could not remove container %s\n' "$c" >&2; rc=1; }; done
+  if dq docker network ls -q --filter "label=io.minigw.rehearsal.run=$RID" --filter "label=com.docker.compose.project=$rp"; then
+    for n in $DQ; do docker network rm "$n" >/dev/null 2>&1 || { printf 'could not remove network %s\n' "$n" >&2; rc=1; }; done
+  else rc=1; fi
+  if dq docker volume ls -q --filter "label=io.minigw.rehearsal.run=$RID"; then
+    for v in $(printf '%s\n' "$DQ" | grep "^${rp}_" | grep -v '_rehearsal_marker$'); do
+      [ "$(vlabel "$v" io.minigw.rehearsal.run)" = "$RID" ] || { printf 'not removing volume %s: it does not carry this run id\n' "$v" >&2; rc=1; continue; }
       docker volume rm "$v" >/dev/null 2>&1 || { printf 'could not remove volume %s\n' "$v" >&2; rc=1; }
     done
-  fi
-  left=$(leftovers "$rp")
-  if [ $rc -ne 0 ] || [ -n "$left" ]; then printf 'project %s: not everything was removed (the marker stays so that --cleanup-only can be run again); left:\n%s\n' "$rp" "$left" >&2; return 1; fi
+  else rc=1; fi
+  fl=$DQFAIL
+  if leftovers "$rp" && [ $rc -eq 0 ] && [ -z "$fl" ]; then :; else
+    printf 'project %s: NOT everything was removed or checked (the marker stays so that --cleanup-only can be run again).\n  left: %s\n  could not be checked:%s%s\n' "$rp" "$LEFT" "$fl" "$DQFAIL" >&2; return 1; fi
   docker volume rm "${rp}_rehearsal_marker" >/dev/null 2>&1 || { printf 'could not remove the marker volume of %s\n' "$rp" >&2; return 1; }
   return 0
 }
-do_cleanup() { # both projects of the run, the image tag of the run, then the working directory; reports every failure
+do_cleanup() { # both projects of the run, the image tag of the run, then the working directory; every failure is reported and keeps the marker
   cr=0
-  if docker volume inspect "${PROJ2}_rehearsal_marker" >/dev/null 2>&1; then remove_run "$PROJ2" || cr=1; fi
-  if docker volume inspect "${PROJ}_rehearsal_marker" >/dev/null 2>&1; then remove_run "$PROJ" || cr=1; else printf 'no marker volume for %s (already removed, or never created)\n' "$PROJ" >&2; fi
-  if [ $cr -eq 0 ] && docker image inspect "minigw-rehearsal:$RID" >/dev/null 2>&1; then
-    docker rmi "minigw-rehearsal:$RID" >/dev/null 2>&1 || { printf 'could not remove the image tag minigw-rehearsal:%s\n' "$RID" >&2; cr=1; }
+  for cp in "$PROJ2" "$PROJ"; do
+    case $(vstate "${cp}_rehearsal_marker") in
+      present) remove_run "$cp" || cr=1;;
+      absent) printf 'no marker volume for %s (already removed, or never created)\n' "$cp" >&2;;
+      *) printf 'cannot check the marker volume of %s: the Docker daemon answered with an error; nothing was removed\n' "$cp" >&2; cr=1;;
+    esac
+  done
+  if [ $cr -eq 0 ]; then
+    case $(istate "minigw-rehearsal:$RID") in
+      present) docker rmi "minigw-rehearsal:$RID" >/dev/null 2>&1 || { printf 'could not remove the image tag minigw-rehearsal:%s\n' "$RID" >&2; cr=1; };;
+      absent) ;;
+      *) printf 'cannot check the image tag minigw-rehearsal:%s\n' "$RID" >&2; cr=1;;
+    esac
   fi
   [ $cr -eq 0 ] || { printf 'cleanup incomplete: fix the messages above, then run: sh %s --cleanup-only --project %s --workdir "%s"\n' "$SELF" "$PROJ" "$WORK" >&2; return 1; }
   remove_work
@@ -302,7 +319,7 @@ stage_pre() {
     if in_use "$p"; then
       if [ "$p" = "$PROJ" ] && [ "$REUSE" = 1 ] && marker_ok "$p"; then ok 1.name "reusing the leftover rehearsal project $p (its marker volume carries this run's id)"
       elif [ "$p" = "$PROJ2" ] && [ "$REUSE" = 1 ] && marker_ok "$p" && remove_run "$p"; then ok 1.name "removed the leftover restore project $p of this run (marker verified)"
-      else bad 1.name "Compose project $p already has containers, networks or volumes and was not made by this run: pick another --project (--reuse only continues this script's own leftover, proven by the marker volume and the working directory)"; PRE=0; fi
+      else bad 1.name "Compose project $p already has containers, networks or volumes (or Docker could not be queried:${DQFAIL:- no query failed}) and was not made by this run: pick another --project (--reuse only continues this script's own leftover, proven by the marker volume and the working directory)"; PRE=0; fi
     else ok 1.name "project name $p is unused (no containers, networks or volumes)"; fi
   done
   [ "$PRE" = 1 ] || return
@@ -707,6 +724,7 @@ stage_backup() {
   # the restore: a SECOND isolated project, made by this script and marked
   docker volume create --label "io.minigw.rehearsal.run=$RID" --label "io.minigw.rehearsal.project=$PROJ2" "${PROJ2}_rehearsal_marker" >/dev/null 2>&1 && marker_ok "$PROJ2" || { bad 7.restore "cannot create the marker volume of the restore project"; return; }
   use_project "$PROJ2" "$P2"
+  uo=$(dc up --no-start minigw 2>&1) || { bad 7.restore "creating the labelled restore project: $(tailc "$uo")"; use_project "$PROJ" "$PORT"; return; }
   ro=$( cd "$DEPLOY" && sh backup.sh --restore --into-project "$PROJ2" "$bdir" 2>&1 ) || { bad 7.restore "backup.sh --restore into $PROJ2: $(tailc "$ro")"; use_project "$PROJ" "$PORT"; return; }
   uo=$(dc up -d minigw 2>&1) || { bad 7.restore "starting the restored project: $(tailc "$uo")"; use_project "$PROJ" "$PORT"; return; }
   if ! wait_healthy; then bad 7.restore "the restored gateway is not healthy"; remove_run "$PROJ2"; use_project "$PROJ" "$PORT"; return; fi
