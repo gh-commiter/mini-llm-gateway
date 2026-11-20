@@ -21,6 +21,8 @@ SELF=$0
 PROJ=minigw-rehearsal VERSION= PORT= APORT= BIND=127.0.0.1 ADMIN=0 ANAME=settings.rehearsal.test PWFILE= PROVIDER=
 REUSE=0 CLEANUP=0 CLEANONLY=0 WORK=
 BIND_SET=0 ANAME_SET=0 ADMIN_SET=0 PROVIDER_KEYFILE=
+VERSION_FLAG= IDENT=0 CLIENT= LOCALIMG= ALLOWSKIP=0 SKIPS=0
+[ "${ALLOW_SKIP:-}" != 1 ] || ALLOWSKIP=1
 
 usage() {
   cat >&2 <<'EOF'
@@ -41,6 +43,14 @@ usage: compose-team-rehearsal.sh [options]
   --cleanup                 remove what the rehearsal created when it ends (without it: ask on a terminal, else keep)
   --cleanup-only            only remove what an earlier run created in --project, then exit
   --workdir DIR             private working directory (default: ${TMPDIR:-/tmp}/<project>-work)
+  --identities              five-identities mode INSTEAD of the simulated-device stages: five REAL clients (--client) with their
+                            own config folders and device keys, bound to a reader, a developer, an admin, a member of another team
+                            and one allowed but unbound device, connecting through 127.0.0.1 only (needs --bind 127.0.0.1)
+  --client BIN              absolute path of the minigw client of this tree (the one the five identities run); without it the
+                            identities stage is a SKIP
+  --local-image TAG         use this existing local image (tagged privately, no download, NOT a verified release build)
+                            instead of building the release; for a rehearsal where nothing may be downloaded
+  --allow-skip              a SKIP does not make the exit code non-zero (default: any SKIP does)
 EOF
   exit 2
 }
@@ -48,7 +58,7 @@ EOF
 while [ $# -gt 0 ]; do
   case $1 in
     --project) PROJ=${2:?}; shift 2;;
-    --version) VERSION=${2:?}; shift 2;;
+    --version) VERSION=${2:?}; VERSION_FLAG=$VERSION; shift 2;;
     --port) PORT=${2:?}; shift 2;;
     --bind) BIND=${2:?}; BIND_SET=1; shift 2;;
     --admin) ADMIN=1; ADMIN_SET=1; shift;;
@@ -61,6 +71,10 @@ while [ $# -gt 0 ]; do
     --cleanup) CLEANUP=1; shift;;
     --cleanup-only) CLEANONLY=1; shift;;
     --workdir) WORK=${2:?}; shift 2;;
+    --identities) IDENT=1; shift;;
+    --client) CLIENT=${2:?}; shift 2;;
+    --local-image) LOCALIMG=${2:?}; shift 2;;
+    --allow-skip) ALLOWSKIP=1; shift;;
     *) usage;;
   esac
 done
@@ -102,6 +116,7 @@ record() { # status id text
 }
 ok() { record ok "$1" "$2"; printf 'ok   %s %s\n' "$1" "$2"; }
 bad() { FAILS=$((FAILS + 1)); record FAIL "$1" "$2"; printf 'FAIL %s %s\n' "$1" "$2"; }
+skip() { SKIPS=$((SKIPS + 1)); record SKIP "$1" "$2"; printf 'SKIP %s %s\n' "$1" "$2"; }   # not run and not proven: counts against the exit code unless --allow-skip
 todo() { # id text then the exact commands (one per line) and what to expect, from stdin
   record TODO "$1" "$2"; printf 'TODO(operator) %s %s\n' "$1" "$2"
   cat >"$WORK/todo.tmp"; sed 's/^/    /' "$WORK/todo.tmp"
@@ -130,6 +145,11 @@ check_args() {
   [ -z "$APORT" ] || v_port "$APORT" || { echo "--admin-port must be a number from 1 to 65535" >&2; exit 2; }
   v_bind "$BIND" || { echo "--bind must be an IPv4 address or localhost" >&2; exit 2; }
   v_dns "$ANAME" || { echo "--admin-name must be a lowercase DNS name" >&2; exit 2; }
+  [ -z "$LOCALIMG" ] || printf '%s' "$LOCALIMG" | grep -Eq '^[a-z0-9][a-z0-9_./:-]*$' || { echo "--local-image must look like minigw:local" >&2; exit 2; }
+  [ -z "$LOCALIMG" ] || [ "$REUSE" != 1 ] || { echo "--local-image cannot be combined with --reuse" >&2; exit 2; }
+  [ -z "$CLIENT" ] || case $CLIENT in /*) ;; *) echo "--client must be an absolute path" >&2; exit 2;; esac
+  [ "$IDENT" != 1 ] || [ "$BIND" = 127.0.0.1 ] || { echo "--identities connects through 127.0.0.1 only: use --bind 127.0.0.1 (the default)" >&2; exit 2; }
+  [ "$IDENT" != 1 ] || [ "$ADMIN" = 0 ] || { echo "--identities does not rehearse the remote settings page: leave out --admin" >&2; exit 2; }
 }
 
 # ---------- the working directory belongs to this script: created by it, marked, private ----------
@@ -349,6 +369,12 @@ if [ "$REUSE" = 1 ]; then
 else
   # the release asked for, else MINIGW_VERSION of deploy/docker/.env (fresh runs only)
   [ -n "$VERSION" ] || VERSION=$(sed -n 's/^MINIGW_VERSION=//p' "$DEPLOY/.env" 2>/dev/null | tail -n 1)
+  if [ -n "$LOCALIMG" ]; then   # the version the local image reports, not a release asked for
+    lv=$(docker run --rm --network none --entrypoint minigw "$LOCALIMG" --version 2>/dev/null | sed -n 's/^minigw \([0-9][0-9.]*\).*/\1/p' | head -n 1)
+    v_version "$lv" || { echo "--local-image $LOCALIMG is missing or reports no version (minigw --version)" >&2; exit 2; }
+    [ -z "$VERSION_FLAG" ] || [ "$VERSION_FLAG" = "$lv" ] || { echo "--version $VERSION_FLAG differs from the version of $LOCALIMG ($lv)" >&2; exit 2; }
+    VERSION=$lv
+  fi
   [ -z "$VERSION" ] || v_version "$VERSION" || { echo "the release in deploy/docker/.env must look like 0.9.0" >&2; exit 2; }
   RID=$(date -u +%Y%m%d%H%M%S)-$(rnd)
 fi
@@ -407,6 +433,13 @@ stage_pre() {
   fi
   # the release image, built the documented way into a PRIVATE tag (minigw-rehearsal:<run id>, from compose.rehearsal.yaml), never the shared minigw:<version>
   use_project "$PROJ" "$PORT"
+  if [ -n "$LOCALIMG" ]; then   # no download: the existing local image gets the private tag; its signature is NOT checked
+    if docker tag "$LOCALIMG" "$IMAGE" 2>/dev/null; then
+      IMGID=$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null | cut -c1-19)
+      ok 1.release "local image $LOCALIMG (minigw $VERSION, image $IMGID) tagged as the private $IMAGE; NOT a verified release build (nothing was downloaded, no signature or checksum was checked)"
+    else bad 1.release "cannot tag the local image $LOCALIMG as $IMAGE"; PRE=0; fi
+    return
+  fi
   bo=$(dc build --progress=plain 2>&1); brc=$?
   if [ $brc -eq 0 ] && printf '%s' "$bo" | grep -q "verified: minigw v$VERSION "; then
     IMGID=$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null | cut -c1-19)
@@ -911,6 +944,215 @@ EOF
 }
 
 # ====================================================================================================
+# 11. Five identities (--identities): five REAL clients, five device keys, five roles
+# ====================================================================================================
+# The expected answers were worked out from docs/usage.md (note classes, "Team notes", roles, review), docs/team-onboarding.md,
+# docs/gateway.md (devices) and docs/how-it-works.md (no_project_access) BEFORE the first run, and are not to be adjusted to what
+# the product does: a difference is a finding. y = the sentinel was returned, n = a successful answer without it, d = the
+# product's refusal ("not found or not visible"). Columns: note list, kb search, note read <id>.
+#
+#   item   what                                        written by    reader   developer  admin    other-team  (unbound: nothing)
+#   P1S    rh5-p1 structure note                       developer     y y y    y y y      y y y    n n d
+#   P1D    rh5-p1 data note                            developer     n n d    y y y      y y y    n n d
+#   P1VD   rh5-p1 private note of the developer        developer     n n d    y y y      y y y    n n d
+#   P1VA   rh5-p1 private note of the admin            admin         n n d    n n d      y y y    n n d
+#   P1SA   rh5-p1 structure note of the admin          admin         y y y    y y y      y y y    n n d
+#   TS     team rh5-team structure note (--team)       admin         y y y    y y y      y y y    d d d   (roster only)
+#   TD     team rh5-team data note (--team)            admin         y y y    y y y      y y y    d d d   (docs/usage.md "Team notes": every roster member reads team notes; at team level the roster, not the class, decides)
+#   Q1S    rh5-q1 structure note (other team)          other         n n d    n n d      n n d    y y y
+#
+# roles: reader = direct reader of rh5-p1; developer = developer of rh5-p1 through the TEAM assignment (not direct);
+# admin = direct admin of rh5-p1; other = developer of rh5-q1 only, on the roster of rh5-other; reader, developer and admin are on
+# the roster of rh5-team. Writes: a reader cannot push, submit or write team notes; a developer pushes and submits but edits no note of
+# another author, reviews nothing and writes no team note; the admin reviews (kb review lists the developer's submission) and writes
+# team notes; the other team's member cannot link rh5-p1. Access ends at once: a denied device, a removed team role, a removed roster
+# entry. A wrong token connects nothing and leaves no waiting device; an allowed device with no bound user is refused with a message
+# that names the missing binding ("bound").
+expect5() { # user item -> "list search read"
+  case $1:$2 in
+    rh5-other:Q1S) echo "y y y";;
+    rh5-other:T*) echo "d d d";;
+    rh5-other:*) echo "n n d";;
+    *:Q1S) echo "n n d";;
+    rh5-reader:P1D|rh5-reader:P1VD|rh5-reader:P1VA) echo "n n d";;
+    rh5-dev:P1VA) echo "n n d";;
+    *) echo "y y y";;
+  esac
+}
+IDU="rh5-reader rh5-dev rh5-admin rh5-other"   # the four bound identities; rh5-unbound is the fifth (allowed, bound to nobody)
+IDD=$WORK/ids
+# a client of one identity: its own HOME (config folder, device key, token), run from its own folder; the token never appears in an argument
+hc() { # user dir args...
+  hu=$1; hd=$2; shift 2
+  ( cd "$hd" && HOME="$IDD/$hu/home" XDG_CONFIG_HOME="$IDD/$hu/home/.config" MINIGW_SECRETS=file "$CLIENT" "$@" )
+}
+iprobe() { # user dir sentinel op id [--team T] -> y, n, d or E
+  iu=$1; idr=$2; isn=$3; iop=$4; iid=$5; shift 5
+  case $iop in
+    list) io=$(hc "$iu" "$idr" note list "$@" 2>&1); ir=$?;;
+    search) io=$(hc "$iu" "$idr" kb search "$@" "$isn" 2>&1); ir=$?;;
+    read) io=$(hc "$iu" "$idr" note read "$@" "$iid" 2>&1); ir=$?;;
+  esac
+  if [ $ir -eq 0 ]; then if printf '%s' "$io" | grep -qF -- "$isn"; then echo y; else echo n; fi
+  elif printf '%s' "$io" | grep -q 'not found or not visible'; then echo d
+  else echo E; fi
+}
+onboard5() { # user bind(1|0): connect with the token, compare, allow, (bind), connect again
+  ou=$1
+  mkdir -p "$IDD/$ou/home" "$IDD/$ou/f" || return 1
+  printf '%s\n' "$TOKEN" | hc "$ou" "$IDD/$ou/f" connect "127.0.0.1:$PORT" --token - >/dev/null 2>&1
+  od=$(hc "$ou" "$IDD/$ou/f" status 2>/dev/null | sed -n 's/^Device: *\([^ ]*\).*/\1/p')
+  [ -n "$od" ] || return 1
+  gw devices allow "$od" --name "$ou" >/dev/null || return 1
+  [ "$2" = 0 ] || gw bind "$od" "$ou" >/dev/null || return 1
+  oc=$(printf '%s\n' "$TOKEN" | hc "$ou" "$IDD/$ou/f" connect "127.0.0.1:$PORT" --token - 2>&1); orc=$?
+  { [ "$2" = 0 ] || { [ $orc -eq 0 ] && printf '%s' "$oc" | grep -q '^Connected'; }; } || return 1
+  put "DEV5_$(printf %s "$ou" | tr - _)" "$od"
+}
+mknote() { # key user dir class [client args...]: a note with a random sentinel; sets SEN_<key> and NID_<key>
+  mk_=$1; mu=$2; md=$3; mc=$4; shift 4
+  ms=rh5$(rnd)
+  printf 'rehearsal %s note %s\n' "$mc" "$ms" | hc "$mu" "$md" note push "$@" --class "$mc" --title "$ms" - >"$WORK/push.out" 2>&1
+  mi=$(sed -n 's/^note \([0-9][0-9]*\) created.*/\1/p' "$WORK/push.out")
+  [ -n "$mi" ] || return 1
+  put "SEN_$mk_" "$ms"; put "NID_$mk_" "$mi"
+}
+refused() { # exit status and output of a command: refused only if it failed AND said something (a crash without a message is not a refusal)
+  [ "$1" -ne 0 ] && [ -n "$(printf '%s' "$2" | tr -d ' \n')" ]
+}
+stage_ident() {
+  [ "$UP" = 1 ] || { bad 11.identities "not run: the gateway did not come up"; return; }
+  if [ "$(uname -s)" = Linux ]; then ok 11.host "the host is Linux ($(uname -sm)): the server side of this run is the target platform"
+  else skip 11.host "the host is $(uname -sm), not Linux: a Compose gateway on a Linux server is NOT proven by this run (Docker Desktop runs the gateway in a Linux VM; port publishing and file ownership differ)"; fi
+  if [ -z "$CLIENT" ] || [ ! -f "$CLIENT" ] || [ ! -x "$CLIENT" ]; then skip 11.identities "no usable --client BIN (an absolute path to the minigw client built from this tree): the five identities were not run"; return; fi
+  mkdir -p "$IDD" || { bad 11.identities "cannot create $IDD"; return; }
+  TOKEN=$(gw token 2>/dev/null | grep -o 'mgw-[A-Za-z0-9_-]*#[A-Za-z0-9_-]*' | head -n 1)
+  [ -n "$TOKEN" ] || { bad 11.token "gw token printed no connect line"; return; }
+  printf '%s\n' "$TOKEN" >>"$WORK/patterns"
+  cv_=$(HOME="$WORK" MINIGW_SECRETS=file "$CLIENT" --version 2>&1 | head -n 1)
+  if [ "$cv_" = "minigw $VERSION" ]; then ok 11.client "the client under test reports $cv_, the version of the gateway image; five config folders, five device keys, connecting to 127.0.0.1 only"
+  else bad 11.client "the client reports '$cv_', the gateway is $VERSION: not the same tree"; return; fi
+  # ---- the owner builds the teams ----
+  bo=
+  for u in rh5-reader rh5-dev rh5-admin rh5-other; do ensure user "$u" >/dev/null 2>&1 || bo="$bo user:$u"; done
+  for t in rh5-team rh5-other-team; do ensure team "$t" >/dev/null 2>&1 || bo="$bo team:$t"; done
+  ensure project rh5-p1 "Five P1" >/dev/null 2>&1 || bo="$bo project:p1"
+  ensure project rh5-q1 "Five Q1" >/dev/null 2>&1 || bo="$bo project:q1"
+  for u in rh5-reader rh5-dev rh5-admin; do gw team member add rh5-team "$u" >/dev/null 2>&1 || bo="$bo roster:$u"; done
+  gw team member add rh5-other-team rh5-other >/dev/null 2>&1 || bo="$bo roster:other"
+  gw team project add rh5-team rh5-p1 >/dev/null 2>&1 || bo="$bo assign:p1"
+  gw team project add rh5-other-team rh5-q1 >/dev/null 2>&1 || bo="$bo assign:q1"
+  gw member rh5-p1 set rh5-reader reader >/dev/null 2>&1 || bo="$bo role:reader"
+  gw member rh5-p1 set rh5-admin admin >/dev/null 2>&1 || bo="$bo role:admin"
+  gw team access set rh5-team rh5-p1 rh5-dev developer >/dev/null 2>&1 || bo="$bo role:dev(team)"
+  gw member rh5-q1 set rh5-other developer >/dev/null 2>&1 || bo="$bo role:other"
+  [ -z "$bo" ] || { bad 11.owner "owner CLI commands failed:$bo"; return; }
+  ok 11.owner "owner CLI: users reader/dev/admin/other, teams rh5-team and rh5-other-team, projects rh5-p1 and rh5-q1, roles (the developer through the team assignment, the others direct), rosters"
+  # ---- five devices ----
+  bo=
+  for u in $IDU; do onboard5 "$u" 1 || bo="$bo $u"; done
+  onboard5 rh5-unbound 0 || bo="$bo rh5-unbound"
+  [ -z "$bo" ] || { bad 11.devices "device could not be connected, compared, allowed and bound for:$bo"; return; }
+  dl=$(gw devices 2>&1)
+  ok 11.devices "5 real clients, 5 config folders, 5 device keys: connected with the token (stdin), device ID read from 'minigw status', allowed with gw devices allow, 4 bound with gw bind, the fifth (rh5-unbound) allowed and bound to nobody"
+  bo=
+  for u in rh5-reader rh5-dev rh5-admin; do l=$(hc "$u" "$IDD/$u/f" project link rh5-p1 2>&1) || bo="$bo $u@p1($(tailc "$l"))"; done
+  l=$(hc rh5-other "$IDD/rh5-other/f" project link rh5-q1 2>&1) || bo="$bo other@q1($(tailc "$l"))"
+  mkdir -p "$IDD/rh5-other/f2" || bo="$bo mkdir"   # a second folder: the first one is linked to rh5-q1 already
+  lo=$(hc rh5-other "$IDD/rh5-other/f2" project link rh5-p1 2>&1); lrc=$?
+  if [ $lrc -eq 0 ]; then bo="$bo other-could-link-p1"; elif ! printf '%s' "$lo" | grep -q 'not found or not visible'; then bo="$bo other@p1-refused-differently($(tailc "$lo"))"; fi
+  [ -z "$bo" ] || { bad 11.links "project link: unexpected result for:$bo"; return; }
+  ok 11.links "reader, developer (team role only) and admin link rh5-p1, the other team's member links rh5-q1 and gets 'not found or not visible' for rh5-p1"
+  # ---- sentinels ----
+  bo=
+  F=$IDD
+  mknote P1S rh5-dev "$F/rh5-dev/f" structure || bo="$bo P1S"
+  mknote P1D rh5-dev "$F/rh5-dev/f" data || bo="$bo P1D"
+  mknote P1VD rh5-dev "$F/rh5-dev/f" private || bo="$bo P1VD"
+  mknote P1VA rh5-admin "$F/rh5-admin/f" private || bo="$bo P1VA"
+  mknote P1SA rh5-admin "$F/rh5-admin/f" structure || bo="$bo P1SA"
+  mknote TS rh5-admin "$F/rh5-admin/f" structure --team rh5-team || bo="$bo TS"
+  mknote TD rh5-admin "$F/rh5-admin/f" data --team rh5-team || bo="$bo TD"
+  mknote Q1S rh5-other "$F/rh5-other/f" structure || bo="$bo Q1S"
+  [ -z "$bo" ] || { bad 11.sentinels "could not push the sentinel notes ($(tailc "$(cat "$WORK/push.out")")):$bo"; return; }
+  ok 11.sentinels "8 sentinel notes with random strings: structure/data/private by the developer, private/structure by the admin, a team structure and a team data note by the admin, a structure note in the other team's project"
+  # ---- the matrix ----
+  printf '%-12s %-5s %-5s %-6s %-5s %-8s %s\n' identity item list search read expected result >"$WORK/matrix.txt"
+  mbad=0
+  for u in $IDU; do
+    for it in P1S P1D P1VD P1VA P1SA TS TD Q1S; do
+      sn=$(get "SEN_$it"); id=$(get "NID_$it"); ex=; case $it in TS|TD) ex="--team rh5-team";; esac
+      L=$(iprobe "$u" "$F/$u/f" "$sn" list "$id" $ex); S=$(iprobe "$u" "$F/$u/f" "$sn" search "$id" $ex); R=$(iprobe "$u" "$F/$u/f" "$sn" read "$id" $ex)
+      want=$(expect5 "$u" "$it")
+      if [ "$L $S $R" = "$want" ]; then res=ok; else res=FAIL; mbad=1; fi
+      printf '%-12s %-5s %-5s %-6s %-5s %-8s %s\n' "$u" "$it" "$L" "$S" "$R" "$(printf '%s' "$want" | tr -d ' ')" "$res" >>"$WORK/matrix.txt"
+    done
+  done
+  cat "$WORK/matrix.txt"
+  if [ "$mbad" = 0 ]; then ok 11.matrix "read matrix as the docs promise: 4 identities x 8 notes x list/search/read (a private note stays with its author and the admin, a team note is seen by the roster only, the other team sees nothing of rh5-p1 or the team notes)"
+  else bad 11.matrix "read matrix differs from what the docs promise (see the matrix: a finding, not a wrong expectation)"; fi
+  # ---- writes ----
+  wb=
+  o=$(printf 'reader writes\n' | hc rh5-reader "$F/rh5-reader/f" note push --class structure --title rh5-reader-note - 2>&1); r=$?
+  refused $r "$o" && WR1=$(tailc "$o") || wb="$wb reader-push($r:$(tailc "$o"))"
+  o=$(printf 'reader submits\n' | hc rh5-reader "$F/rh5-reader/f" kb submit rh5-p1 --kind finding --title rh5-reader-sub - 2>&1); r=$?
+  refused $r "$o" || wb="$wb reader-submit($r:$(tailc "$o"))"
+  o=$(printf 'dev writes team\n' | hc rh5-dev "$F/rh5-dev/f" note push --team rh5-team --class structure --title rh5-dev-team - 2>&1); r=$?
+  refused $r "$o" || wb="$wb dev-team-push($r:$(tailc "$o"))"
+  o=$(printf 'reader writes team\n' | hc rh5-reader "$F/rh5-reader/f" note push --team rh5-team --class structure --title rh5-reader-team - 2>&1); r=$?
+  refused $r "$o" || wb="$wb reader-team-push($r:$(tailc "$o"))"
+  printf 'edited by the developer\n' >"$IDD/rh5-dev/edit.md"
+  o=$(hc rh5-dev "$F/rh5-dev/f" note edit "$(get NID_P1SA)" --title rh5-dev-edit "$IDD/rh5-dev/edit.md" 2>&1); r=$?
+  refused $r "$o" || wb="$wb dev-edits-admins-note($r:$(tailc "$o"))"
+  o=$(hc rh5-dev "$F/rh5-dev/f" note edit "$(get NID_P1S)" --title "$(get SEN_P1S)" "$IDD/rh5-dev/edit.md" 2>&1) || wb="$wb dev-edits-own-note($(tailc "$o"))"
+  o=$(printf 'developer proposal\n' | hc rh5-dev "$F/rh5-dev/f" kb submit rh5-p1 --kind finding --title rh5-dev-sub - 2>&1) || wb="$wb dev-submit($(tailc "$o"))"
+  o=$(hc rh5-dev "$F/rh5-dev/f" kb review rh5-p1 2>&1); r=$?
+  refused $r "$o" || wb="$wb dev-reviews($r:$(tailc "$o"))"
+  o=$(hc rh5-admin "$F/rh5-admin/f" kb review rh5-p1 2>&1); r=$?
+  { [ $r -eq 0 ] && printf '%s' "$o" | grep -qF rh5-dev-sub; } || wb="$wb admin-review-does-not-list-the-submission($r:$(tailc "$o"))"
+  o=$(hc rh5-admin "$F/rh5-admin/f" note edit "$(get NID_P1S)" --title "$(get SEN_P1S)" "$IDD/rh5-dev/edit.md" 2>&1) || wb="$wb admin-edits-developers-note($(tailc "$o"))"
+  o=$(hc rh5-admin "$F/rh5-admin/f" note list 2>&1); printf '%s' "$o" | grep -qF -e rh5-reader-note -e rh5-reader-sub -e rh5-dev-team -e rh5-reader-team && wb="$wb a-refused-write-left-a-note"
+  if [ -z "$wb" ]; then ok 11.writes "reader: push, submit and team push refused with a message; developer: push, edit of an own note and submit work, edit of the admin's note, review and team push refused; admin: review lists the developer's submission, edits the developer's note; no refused write left a note"
+  else bad 11.writes "writes differ from the roles in the docs:$wb"; fi
+  # ---- the fifth identity and a wrong token ----
+  ub=$(hc rh5-unbound "$IDD/rh5-unbound/f" project link rh5-p1 2>&1); ur=$?
+  us=$(hc rh5-unbound "$IDD/rh5-unbound/f" note list 2>&1); usr=$?
+  if refused $ur "$ub" && refused $usr "$us" && printf '%s' "$ub" | grep -qi 'bound'; then ok 11.unbound "an allowed device with no bound user is refused ($(tailc "$ub"))"
+  else bad 11.unbound "an unbound device: link exit $ur '$(tailc "$ub")', list exit $usr '$(tailc "$us")' (expected a refusal that names the missing binding)"; fi
+  mkdir -p "$IDD/rh5-wrong/home" "$IDD/rh5-wrong/f"
+  wo=$(printf '%s\n' "mgw-wrongwrongwrong#wrongwrongwrong" | hc rh5-wrong "$IDD/rh5-wrong/f" connect "127.0.0.1:$PORT" --token - 2>&1); wr=$?
+  wd=$(hc rh5-wrong "$IDD/rh5-wrong/f" status 2>/dev/null | sed -n 's/^Device: *\([^ ]*\).*/\1/p')
+  dl=$(gw devices 2>&1)
+  if refused $wr "$wo" && ! printf '%s' "$wo" | grep -q '^Connected' && { [ -z "$wd" ] || absent_in_text "$wd" "$dl"; }; then ok 11.wrongtoken "a wrong token is refused ($(tailc "$wo")) and the device does not appear in the device list"
+  else bad 11.wrongtoken "a wrong token: exit $wr '$(tailc "$wo")', device listed: $([ -n "$wd" ] && printf '%s' "$dl" | grep -qF -- "$wd" && echo yes || echo no)"; fi
+  # ---- access ends at once ----
+  rd=$(get DEV5_rh5_reader)
+  gw devices deny "$rd" >/dev/null 2>&1 || { bad 11.revoke "gw devices deny failed"; return; }
+  o=$(hc rh5-reader "$F/rh5-reader/f" note read "$(get NID_P1S)" 2>&1); r=$?
+  if refused $r "$o" && ! printf '%s' "$o" | grep -qF -- "$(get SEN_P1S)"; then ok 11.revoke "the reader's device was removed with gw devices deny; its very next read is refused ($(tailc "$o"))"
+  else bad 11.revoke "after gw devices deny the reader's device still reads or got no message: exit $r '$(tailc "$o")'"; fi
+  gw team access remove rh5-team rh5-p1 rh5-dev >/dev/null 2>&1 || { bad 11.removed "gw team access remove failed"; return; }
+  o=$(hc rh5-dev "$F/rh5-dev/f" note read "$(get NID_P1S)" 2>&1); r=$?
+  p=$(iprobe rh5-dev "$F/rh5-dev/f" "$(get SEN_TS)" read "$(get NID_TS)" --team rh5-team)
+  if refused $r "$o" && printf '%s' "$o" | grep -q 'not found or not visible' && [ "$p" = y ]; then ok 11.removed "the developer's team role was removed: the project's note is refused at once ('not found or not visible') while the roster still gives the team note"
+  else bad 11.removed "after the team role was removed: project read exit $r '$(tailc "$o")', team note read '$p' (expected a refusal and y)"; fi
+  gw team member remove rh5-team rh5-dev >/dev/null 2>&1 || { bad 11.removed2 "gw team member remove failed"; return; }
+  p=$(iprobe rh5-dev "$F/rh5-dev/f" "$(get SEN_TS)" read "$(get NID_TS)" --team rh5-team)
+  if [ "$p" = d ]; then ok 11.removed2 "the developer was removed from the team roster: the team note is refused at once ('not found or not visible')"
+  else bad 11.removed2 "after the roster removal the team note read answered '$p' (expected d)"; fi
+  # a member of a project of the team who is NOT on the roster reads nothing of the team's notes (structure or data); the project stays readable
+  gw member rh5-p1 set rh5-dev developer >/dev/null 2>&1 || { bad 11.norost "gw member set failed"; return; }
+  nb=
+  for it in TS TD; do
+    sn=$(get "SEN_$it"); id=$(get "NID_$it")
+    for op in list search read; do p=$(iprobe rh5-dev "$F/rh5-dev/f" "$sn" "$op" "$id" --team rh5-team); [ "$p" = d ] || nb="$nb $it/$op=$p"; done
+  done
+  p=$(iprobe rh5-dev "$F/rh5-dev/f" "$(get SEN_P1S)" read "$(get NID_P1S)")
+  if [ -z "$nb" ] && [ "$p" = y ]; then ok 11.norost "a direct developer of rh5-p1 who is not on the roster of rh5-team reads the project's notes but nothing of the team's notes (structure or data: list, search and read all refused)"
+  else bad 11.norost "project member off the roster: team note answers differ:${nb:- none}; project note read '$p' (expected y)"; fi
+}
+
+# ====================================================================================================
 # 10. Report and cleanup
 # ====================================================================================================
 # ---------- the secret scan, over everything the run created, after every stage that creates one ----------
@@ -919,7 +1161,7 @@ stage_secrets() {
   dc logs --no-color >"$WORK/logs.txt" 2>"$WORK/logs.err"; lrc=$?
   if [ $lrc -ne 0 ] || [ ! -s "$WORK/logs.txt" ]; then bad 10.logs "the container logs could not be read (exit $lrc): $(tailc "$(cat "$WORK/logs.err")")"; return; fi
   if ! grep -q 'minigw' "$WORK/logs.txt"; then bad 10.logs "the container logs hold no gateway line: they cannot prove anything"; return; fi
-  [ -s "$WORK/patterns" ] || { bad 10.logs "no credential was collected for the scan"; return; }
+  [ -s "$WORK/patterns" ] || { if [ "$IDENT" = 1 ]; then skip 10.logs "no credential was created because the identities stage did not run: nothing to scan for"; else bad 10.logs "no credential was collected for the scan"; fi; return; }
   grep -F -q -f "$WORK/patterns" "$WORK/logs.txt"; gr=$?
   if [ $gr -eq 0 ]; then bad 10.logs "a credential created by this run is in the container logs"
   elif [ $gr -ne 1 ]; then bad 10.logs "the secret scan itself failed (grep exit $gr): it proves nothing"
@@ -964,18 +1206,23 @@ report() {
   total=$(( $(now) - START )); t=$WORK/report.tmp; rb=0
   write_sanitizer || rb=1
   gv=$(docker version --format '{{.Server.Version}}' 2>/dev/null); cv=$(docker compose version --short 2>/dev/null)
-  mv_=$([ "$PRE" = 1 ] && cl rh-developer /home/minigw/p1 --version 2>/dev/null | head -n 1)
+  if [ "$IDENT" = 1 ]; then mv_=$([ -n "$CLIENT" ] && [ -x "$CLIENT" ] && HOME="$WORK" MINIGW_SECRETS=file "$CLIENT" --version 2>/dev/null | head -n 1)
+  else mv_=$([ "$PRE" = 1 ] && cl rh-developer /home/minigw/p1 --version 2>/dev/null | head -n 1); fi
   : >"$t"
   {
     printf '# Team gateway rehearsal report\n\n'
     printf -- '- Run: %s\n- Release rehearsed: v%s, image %s built into the private tag minigw-rehearsal:%s (the shared tag minigw:%s was not touched); signature, signed version and checksum verified by the image build\n' "$RID" "$VERSION" "${IMGID:-not built}" "$RID" "$VERSION"
     printf -- '- Source filter (allowedSourceCIDRs): %s\n' "${SRCFILTER:-not rehearsed: the admin profile was off}"
-    printf -- '- Docker server: %s; Compose: %s; platform: %s\n- Client in the simulated devices: %s\n' "${gv:-unknown}" "${cv:-unknown}" "$(uname -sm)" "${mv_:-unknown}"
+    printf -- '- Docker server: %s; Compose: %s; platform: %s\n- Client in the devices: %s\n' "${gv:-unknown}" "${cv:-unknown}" "$(uname -sm)" "${mv_:-unknown}"
+    if [ "$(uname -s)" = Linux ]; then printf -- '- Host: Linux (uname -s: Linux)\n'; else printf -- '- Host: NOT Linux (uname -s: %s): a Compose gateway on a Linux server is not proven by this run\n' "$(uname -s)"; fi
+    printf -- '- Image: %s\n' "$([ -n "$LOCALIMG" ] && echo "local image $LOCALIMG, no download, signature NOT checked" || echo "built from the GitHub release, signature checked by the build")"
     printf -- '- Project %s, ports on %s: gateway %s, remote page %s (admin profile: %s)\n- Total time: %s s\n\n' "$PROJ" "$BIND" "${PORT:-n/a}" "${APORT:-n/a}" "$([ "$ADMIN" = 1 ] && echo rehearsed || echo not rehearsed)" "$total"
-    printf '## What is simulated\n\nThe devices are not real computers: each is a minigw client run from a second container of the same image on the Compose network, with its own home volume and device key. They prove the server side (approval, binding, roles, notes, review). Real Mac and Windows clients, a second-machine browser and the upstream link are the operator-attended items below.\n\n'
+    if [ "$IDENT" = 1 ]; then printf '## What is real and what is not\n\nFive REAL clients of the tree under test run on the host, each with its own config folder and device key, bound to five roles, and connect through 127.0.0.1 to a gateway in a Docker Compose project. Not proven: a Linux server host (see the Host line), a network between machines, a real browser, a second computer.\n\n'
+    else printf '## What is simulated\n\nThe devices are not real computers: each is a minigw client run from a second container of the same image on the Compose network, with its own home volume and device key. They prove the server side (approval, binding, roles, notes, review). Real Mac and Windows clients, a second-machine browser and the upstream link are the operator-attended items below.\n\n'; fi
   } | san text >>"$t" || rb=1
   printf '## Steps (in the order they ran)\n\n| Step | Result | Seconds | What |\n|---|---|---|---|\n' >>"$t"
   san rows <"$STEPS" >>"$t" || rb=1
+  printf '\nChecks: %s ok, %s FAIL, %s SKIP (a SKIP was not run and proves nothing; it makes the exit code non-zero%s)\n' "$(grep -c '^ok' "$STEPS")" "$(grep -c '^FAIL' "$STEPS")" "$(grep -c '^SKIP' "$STEPS")" "$([ "$ALLOWSKIP" = 1 ] && echo ' unless --allow-skip, which was given' || echo ' unless --allow-skip is given')" >>"$t"
   {
     printf '\n## Access matrix\n\nlist = `note list`, search = `kb search`, read = `note read <id>`; y = the sentinel was returned, n = a successful answer without it, d = the product'"'"'s own refusal ("not found or not visible"), - = not asked (the folder cannot be linked).\n\n```\n'
     cat "$WORK/matrix.txt"
@@ -1005,22 +1252,31 @@ finish() {
 
 stage_pre
 stage_up
-stage_boot
-stage_matrix
-stage_flow
-stage_admin
-stage_provider
-stage_backup
-stage_operator
+if [ "$IDENT" = 1 ]; then
+  stage_ident
+else
+  stage_boot
+  stage_matrix
+  stage_flow
+  stage_admin
+  stage_provider
+  stage_backup
+  stage_operator
+fi
 [ "$PRE" = 1 ] && use_project "$PROJ" "${PORT:-0}" 2>/dev/null
 stage_secrets
 report
 finish
 # the verdict is computed last, after every step that can still fail, and is the last thing written
-verdict() { if [ "$FAILS" = 0 ]; then VERDICT="PASSED (the TODO(operator) items remain before inviting the team)"; else VERDICT="FAILED: $FAILS step(s)"; fi; }
+verdict() {
+  if [ "$FAILS" != 0 ]; then VERDICT="FAILED: $FAILS step(s)"
+  elif [ "$SKIPS" != 0 ] && [ "$ALLOWSKIP" != 1 ]; then VERDICT="INCOMPLETE: $SKIPS step(s) SKIPPED, nothing failed (--allow-skip accepts this)"
+  elif [ "$SKIPS" != 0 ]; then VERDICT="PASSED with $SKIPS SKIP (allowed by --allow-skip; the skipped checks are NOT proven)"
+  else VERDICT="PASSED (the TODO(operator) items remain before inviting the team)"; fi
+}
 verdict
 if [ -n "${REP:-}" ] && [ -f "$REP" ] && [ ! -L "$REP" ]; then
   printf '\n## Result\n\nCleanup: %s.\n\nVERDICT: REHEARSAL %s\n' "$CLEANSTATE" "$VERDICT" >>"$REP" || { echo "FAIL 10.report the verdict could not be appended to $REP"; FAILS=$((FAILS + 1)); verdict; }
 fi
 echo "REHEARSAL $VERDICT; cleanup: ${CLEANSTATE:-not run}"
-[ "$FAILS" = 0 ]
+[ "$FAILS" = 0 ] && { [ "$SKIPS" = 0 ] || [ "$ALLOWSKIP" = 1 ]; }

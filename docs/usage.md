@@ -826,7 +826,7 @@ minigw gw bind <device id> ana
 minigw gw project add fakture "FAKTURE importer"
 minigw gw member fakture set ana developer
 
-# 5. on Ana's computer: link the folder to the project (you must be a direct member)
+# 5. on Ana's computer: link the folder to the project (you need a role in the project, directly or through a team assignment)
 cd ~/src/fakture && minigw project link fakture
 # 6. push a note, read it back
 minigw note push --class structure notes.md
@@ -957,7 +957,7 @@ project and per minute apply.
 | `data` | developers and admins, and members of projects with a `data` grant | developers (own notes), admins |
 | `private` | the author and the project admins | the author (developers), admins |
 
-`private` = visible to you and the project admins; no grant ever includes it. Only the gateway owner, using owner authentication, manages members and
+The table is about project notes. A team's own notes are read by the whole team roster whatever their class (see Team notes below). `private` = visible to you and the project admins; no grant ever includes it. Only the gateway owner, using owner authentication, manages members and
 grants with `minigw gw member` and `minigw gw grant` (see [gateway.md](gateway.md)). A project admin role or a user’s owner flag does not authorize these owner API commands. They are not
 available inside an agent run, except `kb search`, `note list` and `note read`: when you start `minigw` in a linked folder, the agent run can read that project's notes (never `private` ones) and nothing of your other projects. If the gateway changes who may see what, the next read of a running agent fails; see [how-it-works.md](how-it-works.md#projects-notes-and-agents-minigw-serve-and-the-mac-app-060).
 
