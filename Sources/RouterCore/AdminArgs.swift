@@ -29,6 +29,15 @@ public enum AdminArgs {
         return (pos, flags)
     }
 
+    /// The options of the `upstream` commands, from the parsed flags: the one place the Mac executable maps them (so a test can parse a real argv).
+    public static func applyUpstream(_ flags: [String: String], to opts: inout AdminOpts) {
+        opts.remoteProject = flags["remote-project"] ?? ""; opts.remoteTeam = flags["remote-team"] ?? ""; opts.classes = flags["class"] ?? ""; opts.deviceName = flags["device-name"] ?? ""; opts.mode = flags["mode"] ?? ""; opts.auto = flags["auto"] == "true"; opts.manual = flags["manual"] == "true"; opts.theirs = flags["theirs"] == "true"; opts.ours = flags["ours"] == "true"
+        opts.upstream = flags["upstream"] ?? ""
+        opts.withPrivate = flags["with-private"] == "true"; opts.dryRun = flags["dry-run"] == "true"
+        opts.afterRestore = flags["after-restore"] == "true"; opts.yes = flags["yes"] != nil
+        opts.read = flags["read"] == "true"; opts.noRead = flags["no-read"] == "true"; opts.acceptReach = flags["accept-reach"] == "true"; opts.readClass = flags["read-class"] ?? ""; opts.readSources = flags["read-sources"] ?? ""; opts.pullEvery = flags["pull-every"] ?? ""
+    }
+
     /// The first option `gw usage` does not know, as the refusal text; nil when all are known.
     public static func usageError(_ pos: [String], _ flags: [String: String]) -> String? {
         guard pos.first == "usage", let bad = flags.keys.sorted().first(where: { !usageFlags.contains($0) }) else { return nil }

@@ -487,12 +487,10 @@ func routerCommand(_ argv: [String]) {
                                        model: flags["model"] ?? "", claudeProbe: flags["claude-probe"] ?? "",
                                        provider: flags["provider"] ?? "", device: flags["device"] ?? "", folder: flags["folder"] ?? "", sort: flags["sort"] ?? "",
                                        json: flags["json"] == "true", csv: flags["csv"] == "true", history: flags["history"] == "true", explain: flags["explain"] == "true", reason: flags["reason"] ?? "", team: flags["team"] ?? "", by: flags["by"] ?? "", phase: flags["phase"] ?? "", activity: flags["activity"] ?? "", task: flags["task"] ?? "", labelSource: flags["label-source"] ?? "")
-            opts.remoteProject = flags["remote-project"] ?? ""; opts.remoteTeam = flags["remote-team"] ?? ""; opts.classes = flags["class"] ?? ""; opts.deviceName = flags["device-name"] ?? ""; opts.mode = flags["mode"] ?? ""; opts.auto = flags["auto"] == "true"; opts.manual = flags["manual"] == "true"; opts.theirs = flags["theirs"] == "true"; opts.ours = flags["ours"] == "true"
-            opts.upstream = flags["upstream"] ?? ""
+            AdminArgs.applyUpstream(flags, to: &opts)
             opts.file = flags["file"] ?? ""; opts.showErrors = flags["show-errors"] == "true"
             opts.revision = Int64(flags["revision"] ?? "") ?? 0; opts.hasRevision = flags["revision"] != nil; opts.current = Int64(flags["current"] ?? "") ?? 0; opts.hasCurrent = flags["current"] != nil
-            opts.withPrivate = flags["with-private"] == "true"; opts.dryRun = flags["dry-run"] == "true"; opts.version = flags["version"] ?? ""
-            opts.read = flags["read"] == "true"; opts.noRead = flags["no-read"] == "true"; opts.acceptReach = flags["accept-reach"] == "true"; opts.readClass = flags["read-class"] ?? ""; opts.readSources = flags["read-sources"] ?? ""; opts.pullEvery = flags["pull-every"] ?? ""
+            opts.version = flags["version"] ?? ""
             opts.tokenInput = { readKey("Copy Token of the upstream") }  // stdin or the terminal, not echoed, never an argument
             try cmd.run(pos, opts)
         } catch let e as AdminCLIError { fail(e.message, code: e.code) } catch { fail("\(error)") }
