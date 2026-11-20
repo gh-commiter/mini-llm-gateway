@@ -285,3 +285,17 @@ func TestAfterRestoreOverrideClearsOneLinkAndIsAudited(t *testing.T) {
 		t.Fatal("another project's mark was cleared")
 	}
 }
+
+// A sentinel path that cannot be checked (here: the "folder" is a file, so Lstat answers ENOTDIR) is not "no sentinel": it is an error.
+func TestRestorePendingThatCannotBeCheckedFailsClosed(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "not-a-folder")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Store{dir: file}).consumeRestorePending(ctx); err == nil {
+		t.Fatal("an unreadable sentinel path was taken as none")
+	}
+	if err := (&Store{dir: t.TempDir()}).consumeRestorePending(ctx); err != nil {
+		t.Fatalf("no sentinel is not an error: %v", err)
+	}
+}

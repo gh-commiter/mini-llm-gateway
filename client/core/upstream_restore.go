@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -73,8 +74,10 @@ func restoredAt(q interface {
 // (a crash in between marks again at the next start: harmless).
 func (s *Store) consumeRestorePending(ctx context.Context) error {
 	p := filepath.Join(s.dir, restorePendingFile)
-	if _, err := os.Lstat(p); err != nil {
-		return nil // none (or unreadable: nothing to act on)
+	if _, err := os.Lstat(p); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil { // cannot tell whether a restore is pending: the start fails closed rather than pushing from a possibly restored database
+		return fmt.Errorf("the restore pending file cannot be checked: %w", err)
 	}
 	if err := s.write(ctx, func(tx *sql.Tx) error { return markRestored(tx, s.now()) }); err != nil {
 		return err
