@@ -14,6 +14,8 @@ enum PoolLagGuard {
     nonisolated(unsafe) private static var worst = 0.0, samples = 0, reported = false, started = false
 
     static var snapshot: (worst: Double, samples: Int) { lock.withLock { (worst, samples) } }
+    /// For a failure message: a failure at a moment of a large lag points at starvation, a small one rules it out.
+    static var text: String { let s = snapshot; return "pool lag so far: worst \(String(format: "%.1f", s.worst)) s over \(s.samples) samples" }
 
     static func start() {
         guard lock.withLock({ let s = started; started = true; return !s }) else { return }
@@ -33,6 +35,14 @@ enum PoolLagGuard {
                     let first = sec > limit && !reported
                     if first { reported = true }
                     return first
+                }
+                if sec > 1, let dir = ProcessInfo.processInfo.environment["MG_POOL_LAG_SAMPLE_DIR"] {
+                    // diagnosis: which test code holds the pool threads right now (the stacks of all threads of this process, a second long)
+                    let p = Process()
+                    p.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
+                    p.arguments = [String(getpid()), "1", "-file", dir + "/sample-\(samples)-\(String(format: "%.1f", sec))s.txt"]
+                    p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+                    try? p.run(); p.waitUntilExit()
                 }
                 if over { Issue.record("PoolLagGuard: a Task waited \(String(format: "%.1f", sec)) s for a Swift concurrency pool thread (limit \(limit) s): a test blocks a pool thread (offPool, or a Thread of its own)") }
                 Thread.sleep(forTimeInterval: 0.1)
