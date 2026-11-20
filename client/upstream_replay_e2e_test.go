@@ -133,3 +133,89 @@ func TestUpstreamReplayedSubmissionIsNotCreate(t *testing.T) {
 		}
 	}
 }
+
+// A rejection of the exact text is kept with the receipt: a replayed rejected submission, then status and every later push say so with the
+// hub's reason; a change of the note sends it anew and clears it; unlink clears it. A rejection the pull learns shows in status without a push.
+func TestUpstreamRejectionIsKeptAndShown(t *testing.T) {
+	marks := func(f *upFx) (n int) {
+		f.must(f.local.core.DB().QueryRow(`SELECT count(*) FROM meta WHERE key LIKE 'upstream_reconcile|%|rejected|%'`).Scan(&n))
+		return
+	}
+	t.Run("replay", func(t *testing.T) {
+		f := newUpFx(t, core.Developer)
+		f.add("hub")
+		f.allow()
+		p, project, notes := f.seed()
+		n := notes["Invoice numbering"]
+		_, err := f.cmd(coreOpts{class: "structure"}, "link", "shop", "hub")
+		f.must(err)
+		out, err := f.cmd(coreOpts{}, "push", "shop")
+		f.must(err)
+		if !strings.Contains(out, "created 1") {
+			t.Fatal(out)
+		}
+		rc := f.remote.core
+		_, err = rc.ReviewSubmission(t0, 1, false, "not wanted", seenHash(rc, 1))
+		f.must(err)
+		_, err = f.cmd(coreOpts{}, "unlink", "shop", "hub")
+		f.must(err)
+		_, err = f.cmd(coreOpts{class: "structure"}, "link", "shop", "hub")
+		f.must(err)
+		if out, err = f.cmd(coreOpts{}, "push", "shop"); err != nil || !strings.Contains(out, "which it rejected (not wanted)") || marks(f) != 1 {
+			t.Fatalf("replay: %v\n%s", err, out)
+		}
+		if out, err = f.cmd(coreOpts{}, "push", "shop"); err != nil || !strings.Contains(out, "unchanged; the upstream rejected it as submission 1: not wanted; change the note to send it again") {
+			t.Fatalf("second push: %v\n%s", err, out)
+		}
+		if out, err = f.cmd(coreOpts{}, "status", "shop"); err != nil || !strings.Contains(out, "1 note rejected by the upstream") || !strings.Contains(out, fmt.Sprintf("note %d: submission 1 rejected: not wanted", n.ID)) {
+			t.Fatalf("status: %v\n%s", err, out)
+		}
+		if out, err = f.cmd(coreOpts{}, "status"); err != nil || !strings.Contains(out, "1 note rejected by the upstream") || strings.Contains(out, "submission 1 rejected") {
+			t.Fatalf("status without a project is a count only: %v\n%s", err, out)
+		}
+		subs, _ := f.remoteSubmissions()
+		cur, err := f.local.core.GetNote(t0, p, project, n.ID)
+		f.must(err)
+		_, err = f.local.core.UpdateNote(t0, p, project, n.ID, cur.Revision, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "changed after the rejection"})
+		f.must(err)
+		if out, err = f.cmd(coreOpts{}, "push", "shop"); err != nil || !strings.Contains(out, "create 1 ") || marks(f) != 0 {
+			t.Fatalf("changed note: %v\n%s", err, out)
+		}
+		if now, _ := f.remoteSubmissions(); now != subs+1 {
+			t.Fatalf("a new submission was not created: %d, was %d", now, subs)
+		}
+		if out, err = f.cmd(coreOpts{}, "status", "shop"); err != nil || strings.Contains(out, "rejected by the upstream") {
+			t.Fatalf("status after the change: %v\n%s", err, out)
+		}
+	})
+	t.Run("pull learns it", func(t *testing.T) {
+		f := newUpFx(t, core.Developer)
+		f.add("hub")
+		f.allow()
+		f.seed()
+		_, err := f.cmd(coreOpts{class: "structure"}, "link", "shop", "hub")
+		f.must(err)
+		out, err := f.cmd(coreOpts{}, "push", "shop")
+		f.must(err)
+		if !strings.Contains(out, "created 1") {
+			t.Fatal(out)
+		}
+		rc := f.remote.core
+		_, err = rc.ReviewSubmission(t0, 1, false, "off topic", seenHash(rc, 1))
+		f.must(err)
+		_, err = f.cmd(coreOpts{read: true, acceptReach: true}, "link", "shop", "hub")
+		f.must(err)
+		if out, err = f.cmd(coreOpts{}, "pull", "shop"); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if marks(f) != 1 {
+			t.Fatalf("the pull did not keep the rejection: %d", marks(f))
+		}
+		if out, err = f.cmd(coreOpts{}, "status", "shop"); err != nil || !strings.Contains(out, "submission 1 rejected: off topic") {
+			t.Fatalf("status: %v\n%s", err, out)
+		}
+		if _, err = f.cmd(coreOpts{}, "unlink", "shop", "hub"); err != nil || marks(f) != 0 {
+			t.Fatalf("unlink: %v, markers %d", err, marks(f))
+		}
+	})
+}

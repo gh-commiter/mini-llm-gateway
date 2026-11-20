@@ -138,6 +138,7 @@ extension AdminCommands {
                 if let e = d["lastError"]?.string, !e.isEmpty { say(clean("  last refusal: " + e)) }
                 if let s = Self.upstreamNotPropagated(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
+                for t in Self.upstreamRejected(d, named: !team.isEmpty || pos.count == 3) { say(clean("  " + t)) }
                 if let w = d["waiting"]?.int, w > 0 { say("  \(w) notes waited for a review upstream at the last push; they are checked at the next push (not a failure)") }
                 if let s = Self.upstreamForeign(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamHeld(d) { say(clean("  " + s)) }
@@ -350,6 +351,21 @@ extension AdminCommands {
             return "note \(c.dict["note"]?.int ?? 0) (" + what + ")"
         }
         return parts.isEmpty ? nil : "CONFLICT: " + parts.joined(separator: ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
+    }
+
+    /// Notes whose exact text the upstream rejected (as Go's upstreamRejected): the count, and with the project or team named one line per note.
+    static func upstreamRejected(_ d: JDict, named: Bool) -> [String] {
+        let n = d["rejected"]?.int ?? 0
+        if n == 0 { return [] }
+        var out = [(n == 1 ? "1 note" : "\(n) notes") + " rejected by the upstream, unchanged since: not sent again until the note changes"]
+        if named {
+            for r in d["rejectedNotes"]?.array ?? [] {
+                var t = "note \(r.dict["note"]?.int ?? 0): submission \(r.dict["submission"]?.int ?? 0) rejected"
+                if let why = r.dict["reason"]?.string, !why.isEmpty { t += ": " + why }
+                out.append(t)
+            }
+        }
+        return out
     }
 
     /// The command that clears the restore mark of the link d (as Go's upstreamAfterRestoreCmd).

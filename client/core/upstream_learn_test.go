@@ -175,8 +175,8 @@ func TestPullRejectedSubmissionsDoNotStarveLaterReceiptsAndAreAskedOncePerHour(t
 	}
 	f.clock = f.clock.Add(learnAskedFor)
 	pull(f, fk, h.up())
-	if len(h.asked) != 50 {
-		t.Fatalf("after the hour asked %d", len(h.asked))
+	if len(h.asked) != 0 || rejectedMarkers(f) != 51 { // a rejection is kept durably (a marker per receipt): there is nothing to ask again after the hour
+		t.Fatalf("after the hour asked %d, markers %d", len(h.asked), rejectedMarkers(f))
 	}
 }
 

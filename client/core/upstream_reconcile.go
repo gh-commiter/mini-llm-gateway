@@ -888,6 +888,9 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 					if _, e = tx.Exec(`DELETE FROM meta WHERE key=?`, reconcileRestrictedKey(l.Project, l.Upstream, n.ID)); e != nil {
 						return e
 					}
+					if e = clearRejected(tx, l.Project, l.Upstream, n.ID); e != nil {
+						return e
+					}
 					if _, e = tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN dirty_since=0 THEN ?1 ELSE dirty_since END,last_change=max(?1,last_change+1) WHERE project_id=?2 AND upstream=?3 AND auto=1`, ms(s.now()), l.Project, l.Upstream); e != nil {
 						return e
 					}

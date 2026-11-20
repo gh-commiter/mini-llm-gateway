@@ -2565,6 +2565,71 @@
    }
   },
   {
+   "name": "status with rejected notes, project named",
+   "args": [
+    "upstream",
+    "status",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}]}"
+    },
+    {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"label\": \"shop\", \"pending\": 0, \"total\": 3, \"auto\": true, \"rejected\": 2, \"rejectedNotes\": [{\"note\": 12, \"submission\": 7, \"reason\": \"too vague\"}, {\"note\": 14, \"submission\": 9}]}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure,data, auto\n  read: off\n  2 notes rejected by the upstream, unchanged since: not sent again until the note changes\n  note 12: submission 7 rejected: too vague\n  note 14: submission 9 rejected\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstreams?project=3",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "status with rejected notes, count only",
+   "args": [
+    "upstream",
+    "status"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /upstreams",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"label\": \"shop\", \"pending\": 0, \"total\": 3, \"auto\": true, \"rejected\": 2, \"rejectedNotes\": [{\"note\": 12, \"submission\": 7, \"reason\": \"too vague\"}, {\"note\": 14, \"submission\": 9}]}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 0 of 3 notes would go, never pushed, classes structure,data, auto\n  read: off\n  2 notes rejected by the upstream, unchanged since: not sent again until the note changes\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/upstreams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
    "name": "resolve ours a note gone from view",
    "args": [
     "upstream",

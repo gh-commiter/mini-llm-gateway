@@ -1,10 +1,18 @@
 # Release notes
 
-## Unreleased
+## 0.9.7
 
 ### Fixed
-- Tests: `TestMirrorPurgeOfManyRowsIsFastAndLeavesNoText` no longer fails when a runner's disk stalls (0.9.5 Windows run: both purge paths took 32.8 s). It times the two delete paths on the statements alone (rolled back, best of three) and skips the speed comparison, with a logged reason, when the old way is not slow enough to compare; the check that no deleted text stays in the database files is unchanged.
+- Tests: `TestMirrorPurgeOfManyRowsIsFastAndLeavesNoText` failed on the Windows runner for 0.9.5 with both purge paths taking the same 32.8 s; why is not known (a cost common to both, such as the commit, is a guess). It now times the two delete paths on the statements alone (rolled back, best of three) and skips the speed comparison, with a logged reason, when the old way is not slow enough to compare; the check that no deleted text stays in the database files is unchanged.
 - Tests: `fakeResponderGetsNothingReusable` failure messages now carry the time of each stage and how long a Swift concurrency pool thread took to start a Task (the router answers from one), so the next "no reply head" under the parallel suite shows whether the pool was starved.
+- Upstream mirror (#173): a hub copy of a note this gateway submitted was hidden at every revision once a receipt named it. When the receipt records the revision our accepted text had (nearly every accepted submission), the copy is now hidden only while the hub is still at that revision; a reviewer's later rewrite is shown with the `[differs from the local note ...]` line, as for published notes. A receipt without a recorded revision keeps hiding it.
+- Upstream: that the upstream rejected the exact text of a note (a replayed submission found rejected, or a rejection the pull learned) is now kept with the receipt: later pushes say `unchanged; the upstream rejected it as submission N: <reason>; change the note to send it again`, and `gw upstream status` counts them per link (one line per note when the project or team is named). A change of the note, unlink, removing the upstream and `reconcile --note <id> --new` clear it. The pull no longer asks again about a rejection it has recorded. No schema change.
+
+### Known problems
+- The Upstream gateways panel does not show the rejected notes yet; `gw upstream status` does.
+- #173: the revision rule assumes that an accepted new note starts at revision 1 on the upstream; an upstream that starts higher would show a "differs" line for an unchanged copy. Not tried against a real upstream on another machine.
+- The two test changes were not run on Windows before this release; the cause of the Swift "no reply head" failure is still not known (the test now reports what is needed to find it).
+- The known problems of 0.9.6, 0.9.5, 0.9.4 and 0.9.3 apply.
 
 ## 0.9.6
 
