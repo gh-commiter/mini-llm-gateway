@@ -7,8 +7,9 @@ import Testing
 /// above `PoolLagGuard.limit` is recorded as an issue of the run, naming this guard. The sampler starts when the run is planned (the trait of
 /// the test below is prepared for every selected run, before any test body), so it covers the tests that run before the guard test does.
 enum PoolLagGuard {
-    /// Far above a healthy run (see the numbers in docs/release-notes.md / the commit message); MG_POOL_LAG_LIMIT (seconds) overrides it.
-    static let limit: Double = Double(ProcessInfo.processInfo.environment["MG_POOL_LAG_LIMIT"] ?? "") ?? .infinity
+    /// 20 s: a healthy full run on the Mac mini (12 cores) peaks at 2.0 to 3.8 s (20 runs, 2026-11-20; the peak is the first seconds, when hundreds of tests start
+    /// at once), a stalled one at 88 to 91 s. MG_POOL_LAG_LIMIT (seconds) overrides it.
+    static let limit: Double = Double(ProcessInfo.processInfo.environment["MG_POOL_LAG_LIMIT"] ?? "") ?? 20
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var worst = 0.0, samples = 0, reported = false, started = false

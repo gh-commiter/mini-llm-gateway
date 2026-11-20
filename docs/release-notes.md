@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Changed
-- Swift tests: a test that blocks (waits on a process, a semaphore, a sleep or a socket) now runs on a thread of its own (`@Test(.blocking)`) instead of a thread of the Swift concurrency pool, where it could starve the router's handler `Task` and stall the whole suite (the "no answer from the gateway" failures of #150, #147, #140); a static guard (`BlockingTestGuard`) fails a new blocking test without the trait, and `PoolLagGuard` measures the worst wait of a `Task` for a pool thread over the whole run. Test code only.
+- Swift tests: the 90 s stalls of the full run (a gateway request "got no answer", unrelated tests failing together) were a deadlock between a test that listed the mounted volumes through FileManager (it asks every volume while holding the process's file-node lock) and the loopback WebDAV mount of another test in the same process (its server threads need that lock for every file); the test now reads the kernel's mount table. Tests that block (waiting on a process, a semaphore, a sleep or a socket) also run on a thread of their own (`@Test(.blocking)`) instead of a pool thread; `BlockingTestGuard` fails a new blocking test without the trait or a call that deadlocks that way, and `PoolLagGuard` fails a run in which a `Task` waits 20 s for a pool thread. Test code only.
 
 ## 0.9.8
 
