@@ -372,9 +372,9 @@ echo "codex answer" > "$out"
         f.write("gate", "x")
         let w = await run.value
         #expect(w.status == 200)  // the run itself goes on
-        #expect(f.read("res-1.code") == "200")
+        #expect(f.read("res-1.code") == "200", "\(change) step 1: \(f.read("res-1.code") ?? "-") \(f.read("res-1.body") ?? ""); \(PoolLagGuard.text)")  // (a 503 once: the core did not answer in time; the lag says whether the pool was starved)
         for i in [4, 5] {  // the next reads of the old run fail, one fixed body
-            #expect(f.read("res-\(i).code") == "403" && f.read("res-\(i).body")?.contains(#""type":"no_project_access""#) == true, "\(change) step \(i): \(f.read("res-\(i).code") ?? "-")")
+            #expect(f.read("res-\(i).code") == "403" && f.read("res-\(i).body")?.contains(#""type":"no_project_access""#) == true, "\(change) step \(i): \(f.read("res-\(i).code") ?? "-") \(f.read("res-\(i).body") ?? ""); \(PoolLagGuard.text)")
         }
     }
 
@@ -667,7 +667,7 @@ echo "codex answer" > "$out"
 
     /// R3: the prune picks a folder, another run then holds a home in it, and the deletion must not take it: the hold waits for the deletion
     /// and gets a fresh folder; a hold that came before the pick makes the prune skip the folder.
-    @Test func aHoldBetweenThePickAndTheDeletionWaitsAndIsNeverDeleted() throws {
+    @Test(.blocking) func aHoldBetweenThePickAndTheDeletionWaitsAndIsNeverDeleted() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("prune-" + UUID().uuidString)
         defer { try? fm.removeItem(at: root); ProjectHomes.beforeDelete = nil }

@@ -19,7 +19,7 @@ private func sh(_ cmd: String, _ cwd: String) -> (status: Int32, out: String) {
     return (p.terminationStatus, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
 }
 
-@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"), arguments: [true, false])
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"), .blocking, arguments: [true, false])
 func aClaudeAgentCommitsInADirectModeFolderAndCannotPlantAHook(identity: Bool) async throws {
     guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
     let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-direct-git-real-" + UUID().uuidString.lowercased())
@@ -98,7 +98,7 @@ func aClaudeAgentCommitsInADirectModeFolderAndCannotPlantAHook(identity: Bool) a
 }
 
 /// B1: a linked worktree (its `.git` is a file) is a local folder, never opened; the real claude cannot point it at a directory of its own. Gated like the test above.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"))
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"), .blocking)
 func aClaudeAgentCannotRewriteTheGitFileOfALinkedWorktree() async throws {
     guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
     let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-direct-git-wt-" + UUID().uuidString.lowercased())

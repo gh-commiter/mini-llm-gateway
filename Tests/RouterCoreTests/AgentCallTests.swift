@@ -184,7 +184,7 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
 }
 
 /// Napaka CLI za odjemalca: le besedilo (brez »Internal error:«, ovoja JSON in »API error (status 402 …):«), kot v Go.
-@Test func agentMessageExtraction() {
+@Test(.blocking) func agentMessageExtraction() {
     let line = Data(#"{"type":"error","message":"Internal error: {\n  \"message\": \"API error (status 402 Payment Required): personal-team-blocked:spending-limit: You have run out of credits or need a Grok subscription. Add credits at https://grok.com/?_s=usage or upgrade at https://grok.com/supergrok.\",\n  \"http_status\": 402\n}","cwd":"/Users/x/w"}"#.utf8)
     let raw = ((try? JSONSerialization.jsonObject(with: line)) as? [String: Any])?["message"] as? String ?? ""
     let (status, _, msg) = AgentError.classify(raw)

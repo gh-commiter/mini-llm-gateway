@@ -79,7 +79,7 @@ import Testing
     }
 
     /// A FIFO, a link to a FIFO, a huge file or a directory in place of HEAD (also behind a gitdir: file) is "no branch", at once.
-    @Test func oddFilesNeverBlockTheBranchRead() throws {
+    @Test(.blocking) func oddFilesNeverBlockTheBranchRead() throws {
         let fm = FileManager.default
         let dir = NSTemporaryDirectory() + "labels-odd-" + UUID().uuidString
         func repo(_ name: String) throws -> String {

@@ -624,7 +624,7 @@ func portInUse(_ port: UInt16) -> Bool {
     return withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } } == 0
 }
 
-@Test func encryptedProxyToRouter() async throws {
+@Test(.blocking) func encryptedProxyToRouter() async throws {
     var c = RouterConfig()
     c.host = "127.0.0.1"
     let key = Noise.newKey()
@@ -667,7 +667,7 @@ func portInUse(_ port: UInt16) -> Bool {
 
 /// Drug lokalni program ne more poslušati na vratih routerja (in prevzeti povezav Claude Code), tudi z SO_REUSEADDR in
 /// SO_REUSEPORT, na 127.0.0.1 ali 0.0.0.0: allowLocalEndpointReuse (hiter ponovni zagon) ne odpre deljenja vrat.
-@Test func routerPortCannotBeSharedByAnotherListener() async throws {
+@Test(.blocking) func routerPortCannotBeSharedByAnotherListener() async throws {
     var c = RouterConfig()
     c.host = "127.0.0.1"
     let (server, port) = try await startOnFreePort { c.port = $0; return Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])) }

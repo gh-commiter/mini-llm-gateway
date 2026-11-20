@@ -120,7 +120,7 @@ private let copilotPointer = #"{"lastLoggedInUser":{"host":"https:\/\/github.com
 /// #81: peskovnik Copilota sme brati ~/Library/Keychains (prijava v Keychainu), ne pisati vanj; drugo ostane skrito.
 /// Bere ga le drevo procesov copilota (H1: Copilot nima ukazov).
 /// Začasna domača mapa, nikoli pravi Keychain.
-@Test func copilotSandboxReadsOnlyTheKeychainFolder() throws {
+@Test(.blocking) func copilotSandboxReadsOnlyTheKeychainFolder() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("copilot-kc-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let home = root.appendingPathComponent("home"), proj = root.appendingPathComponent("proj")

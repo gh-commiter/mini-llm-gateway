@@ -22,7 +22,7 @@ private func sh(_ cmd: String, cwd: String, profile: String? = nil) -> (status: 
     return (p.terminationStatus, String(decoding: data, as: UTF8.self))
 }
 
-@Test func submoduleConfigAndHooksAreDeniedInTheSeatbeltProfile() throws {
+@Test(.blocking) func submoduleConfigAndHooksAreDeniedInTheSeatbeltProfile() throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("subm-" + UUID().uuidString)
     defer { try? fm.removeItem(at: base) }
@@ -47,7 +47,7 @@ private func sh(_ cmd: String, cwd: String, profile: String? = nil) -> (status: 
 }
 
 // V2: the same on a case-insensitive volume under another letter case (`.GIT`, nested): does the Seatbelt profile still stop the write?
-@Test func gitPathsAreDeniedInTheSeatbeltProfileUnderAnotherCase() throws {
+@Test(.blocking) func gitPathsAreDeniedInTheSeatbeltProfileUnderAnotherCase() throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("case-" + UUID().uuidString)
     defer { try? fm.removeItem(at: base) }
@@ -65,7 +65,7 @@ private func sh(_ cmd: String, cwd: String, profile: String? = nil) -> (status: 
 }
 
 // #113: the profile checked the two paths of a rename only: moving the folder above a denied path away, writing there and moving it back got past it.
-@Test func renamingTheFoldersAboveASubmodulesConfigIsDeniedInTheSeatbeltProfile() throws {
+@Test(.blocking) func renamingTheFoldersAboveASubmodulesConfigIsDeniedInTheSeatbeltProfile() throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("ren-" + UUID().uuidString)
     defer { try? fm.removeItem(at: base) }

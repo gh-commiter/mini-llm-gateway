@@ -75,7 +75,7 @@ struct ClaudeCodeCases: Decodable {
 
 /// »env -u CLAUDECODE minigw … --continue« pod procesom claude (povezava claude → /bin/sh) minigw zavrne, preden zažene
 /// claude; MINIGW_ALLOW_UNSAFE_FLAGS=1 ga zažene. MiniGW je iz »swift build« (kot ga poženeta vrata izdaje in CI).
-@Test func claudeAncestorRefusesBeforeClaude() throws {
+@Test(.blocking) func claudeAncestorRefusesBeforeClaude() throws {
     let minigw = ClaudeCodeCases.root.appendingPathComponent(".build/debug/MiniGW")
     try #require(FileManager.default.isExecutableFile(atPath: minigw.path), "run swift build first")
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), bin = dir.appendingPathComponent("bin")

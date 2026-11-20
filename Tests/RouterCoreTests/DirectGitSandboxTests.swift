@@ -44,7 +44,7 @@ private struct Repo {
     func head() -> String { run("/bin/sh", ["-c", gitEnv + "cd '\(repo.path)' && git log --oneline | wc -l"]).out.trimmingCharacters(in: .whitespacesAndNewlines) }
 }
 
-@Test func codexDirectProfileLetsTheAgentCommitAndNothingElseInGit() throws {
+@Test(.blocking) func codexDirectProfileLetsTheAgentCommitAndNothingElseInGit() throws {
     let exe = try requireCodex()
     let r = try Repo(); defer { r.cleanup() }
     let out = r.base.appendingPathComponent("o.txt")

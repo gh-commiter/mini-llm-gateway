@@ -117,7 +117,7 @@ import Testing
 
 /// Security review (LOW): the delete of a removed copy runs off the shares actor, so another share operation completes while it is still running
 /// (controlled with a hook, no sleeps); the removed copy is not listed meanwhile (the renamed folder is neither listed nor counted) and the removal ends when released.
-@Test func syncCopyRemovalDeletesOffTheActor() async throws {
+@Test(.blocking) func syncCopyRemovalDeletesOffTheActor() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let hub = ShareHub(), id = "0123456789abcdef", other = "fedcba9876543210"

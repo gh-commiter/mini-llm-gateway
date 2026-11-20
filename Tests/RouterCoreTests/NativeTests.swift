@@ -292,7 +292,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(Native.withoutNestedSandbox(["swift", "build"], derivedData: "/s/dd") == ["swift", "build", "--disable-sandbox"])
 }
 
-@Test func nativeRunIsSandboxedAndEndsWithItsGroup() async throws {
+@Test(.blocking) func nativeRunIsSandboxedAndEndsWithItsGroup() async throws {
     let f = try nativeFixture()
     defer { try? FileManager.default.removeItem(at: f.root) }
     // lastna naprava: Router.natives je skupen, testi tečejo vzporedno (največ 2 run na napravo)
@@ -432,7 +432,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 }
 
 /// P1, P2, P4: prepovedi veljajo za razrešene poti (povezave kot v pravi ~/.swiftpm), skrite mape in skrivnosti.
-@Test func nativeRunProfileDeniesResolvedPaths() throws {
+@Test(.blocking) func nativeRunProfileDeniesResolvedPaths() throws {
     let fm = FileManager.default
     let home = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("home-" + UUID().uuidString)
     defer { try? fm.removeItem(at: home) }
@@ -481,7 +481,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 }
 
 /// Q1: build ne doseže sistemskih storitev (nastavitve aplikacije, launchd). Ob nepričakovanem uspehu počisti.
-@Test func nativeRunProfileBlocksSystemServices() throws {
+@Test(.blocking) func nativeRunProfileBlocksSystemServices() throws {
     let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("q1-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -507,7 +507,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 }
 
 /// F1, F2: z omrežjem run ne doseže vtičnic unix (npr. docker.sock) ne vrat routerja; kontrola brez peskovnika jih doseže.
-@Test func nativeRunProfileBlocksUnixSocketsAndRouterPort() throws {
+@Test(.blocking) func nativeRunProfileBlocksUnixSocketsAndRouterPort() throws {
     let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("f1-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -545,7 +545,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 }
 
 /// Mapa seje v skriti mapi (sinhronizirana kopija, klon v Scratch): le ta je vidna; mapa, ki skrito vsebuje, je ne razkrije.
-@Test func sandboxProfileFolderInsideHiddenScratch() throws {
+@Test(.blocking) func sandboxProfileFolderInsideHiddenScratch() throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("hid-" + UUID().uuidString)
     defer { try? fm.removeItem(at: base) }
@@ -676,7 +676,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 
 /// #72: z DIRHELPER_USER_DIR_SUFFIX in povezavama (linkRunDirs) sta T in C otroka v mapi zagona. Pade, če libSystem
 /// pripone ne upošteva več. Nikoli brez povezav (libSystem bi ustvaril neizbrisljivo <T>/<suffix>).
-@Test func nativeRunDirSuffixRedirectsTempAndCache() throws {
+@Test(.blocking) func nativeRunDirSuffixRedirectsTempAndCache() throws {
     let fm = FileManager.default
     let rt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("runsuffix-" + UUID().uuidString)
     defer { try? fm.removeItem(at: rt) }
@@ -798,7 +798,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 /// 0.5.24 round 1 B: xcrun v run brez predpomnilnika (xcrun_nocache) je ~1,5 s na klic, Swift Build pa ga kliče ~23-krat
 /// na gradnjo (vtool -show-build XCTest/Testing vseh platform, --show-sdk-platform-path …): ponovna gradnja ~36 s.
 /// Predpomnilnik zagona v runTmp: nekaj sekund.
-@Test func runSwiftBuildIsNotSlowedByColdXcrun() async throws {
+@Test(.blocking) func runSwiftBuildIsNotSlowedByColdXcrun() async throws {
     try #require(FileManager.default.isExecutableFile(atPath: "/usr/bin/xcrun"))
     let f = try nativeFixture()
     defer { try? FileManager.default.removeItem(at: f.root) }

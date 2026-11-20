@@ -144,7 +144,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         #expect(got == want)
     }
 
-    @Test func pruneKeepsFreshAndTheNewest200() throws {
+    @Test(.blocking) func pruneKeepsFreshAndTheNewest200() throws {
         let w = try HookWorld(stdin: Data())
         try w.link("gw1", 7, "acme-shop")
         try w.write("kb-hooks.json", ["version": 1, "enabled": [["gateway": "gw1", "project": 7]]])
@@ -435,7 +435,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         return w
     }
 
-    @Test func hookLineOnlyWhenOptedInAndOnlyCountAndProject() async throws {
+    @Test(.blocking) func hookLineOnlyWhenOptedInAndOnlyCountAndProject() async throws {
         let line = "2 submissions wait for your review in acme-shop: minigw kb review acme-shop\n"
         var w = try world(waiting: 2, optIn: true)
         await start(w)
@@ -452,7 +452,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         #expect(!w.out.contains("wait"))
     }
 
-    @Test func hookTimeoutPrintsNothing() async throws {
+    @Test(.blocking) func hookTimeoutPrintsNothing() async throws {
         let gate = DispatchSemaphore(value: 0)
         let w = try world(waiting: 5, optIn: true, gate: gate)
         await start(w)  // returns after waitLimit (0.1 s) although the gateway has not answered
@@ -460,7 +460,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         #expect(!w.out.contains("wait") && w.out.hasPrefix("Mini Gateway:"))
     }
 
-    @Test func showLineAppearsAndDisappears() async throws {
+    @Test(.blocking) func showLineAppearsAndDisappears() async throws {
         for (waiting, want) in [(1, "1 submission waits for your review in acme-shop: minigw kb review acme-shop\ngateway: gw1\n"), (0, "gateway: gw1\n")] {
             let w = try world(waiting: waiting, optIn: false)
             try await show(w)

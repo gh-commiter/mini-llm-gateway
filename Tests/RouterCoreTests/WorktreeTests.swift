@@ -121,7 +121,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     return id
 }
 
-@Test func worktreeRoundTripParallelBranchesAndUserFilesUntouched() async throws {
+@Test(.blocking) func worktreeRoundTripParallelBranchesAndUserFilesUntouched() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let status = g(client, "status", "--porcelain"), head = g(client, "rev-parse", "HEAD")
@@ -164,7 +164,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(g(client, "show", "\(brA):second.txt") == "2")
 }
 
-@Test func worktreeMaliciousAgentCannotRunAnythingOnTheClientOrRouter() async throws {
+@Test(.blocking) func worktreeMaliciousAgentCannotRunAnythingOnTheClientOrRouter() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let marks = root.appendingPathComponent("marks")
@@ -222,7 +222,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(try Data(contentsOf: client.appendingPathComponent(".git/config")) == config)
 }
 
-@Test func worktreeAgentSandboxAndModes() throws {
+@Test(.blocking) func worktreeAgentSandboxAndModes() throws {
     let root = URL(fileURLWithPath: "/Users/u/Library/Caches/dev.trojar.minigateway/Scratch/worktrees/dev/x/claude-1")
     let maven = root.deletingLastPathComponent().appendingPathComponent(".maven")
     let a = ClaudeCLIConfig().worktreeArgs(root: root, maven: maven, cwd: root.appendingPathComponent("sub"), allTools: ["Bash", "WebFetch"], network: false)
@@ -262,7 +262,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 
 /// Agent si v klonu nastavi fsmonitor, filter (.gitattributes) in hook: git, ki ga poganja sam agent (claude -p, codex,
 /// grok zunaj peskovnika orodij), z okoljem harnessEnv ne zažene ničesar; brez njega (kontrola) bi.
-@Test func worktreeHarnessGitIgnoresTheClonesConfig() throws {
+@Test(.blocking) func worktreeHarnessGitIgnoresTheClonesConfig() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("harness-" + UUID().uuidString)
     defer { cleanup(root) }
     let repo = root.appendingPathComponent("wt"), marks = root.appendingPathComponent("marks")
@@ -295,7 +295,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 }
 
 /// M4: bundle se preveri (glava) pri odjemalcu in na routerju; L5: veja, na katero je uporabnik commital, ostane njegova.
-@Test func worktreeBundleHeaderAndNoForcedUpdate() async throws {
+@Test(.blocking) func worktreeBundleHeaderAndNoForcedUpdate() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let notBundle = root.appendingPathComponent("x.bundle")
@@ -341,7 +341,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 }
 
 /// A3 (kot Go TestCloneExcludesBuild): .build klona (TMPDIR agenta) ni v git status agenta (info/exclude klona).
-@Test func worktreeCloneExcludesBuild() async throws {
+@Test(.blocking) func worktreeCloneExcludesBuild() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), session = UUID().uuidString
@@ -356,7 +356,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 
 /// N1: agent zamenja .git/objects klona s povezavo ven: finalize ne briše in ne piše tam (in ne vrne veje).
 /// Izhod gradnje (.build, target) nikoli v vejo (info/exclude zrcala).
-@Test func worktreeFinalizeRefusesSymlinkedObjectsAndSkipsBuildOutput() async throws {
+@Test(.blocking) func worktreeFinalizeRefusesSymlinkedObjectsAndSkipsBuildOutput() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), session = UUID().uuidString
@@ -385,7 +385,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 }
 
 /// L1 (0.5.16): objects/info klona kot povezava ven: finalize odstrani le povezavo in naredi svojo mapo (deskriptor, brez sledenja).
-@Test func worktreeFinalizeRemovesSymlinkedInfoOnly() async throws {
+@Test(.blocking) func worktreeFinalizeRemovesSymlinkedInfoOnly() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), session = UUID().uuidString
@@ -411,7 +411,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 }
 
 /// N2: git v finalize ne bere vsebine zunaj klona, zrcala in svoje začasne mape (domača mapa, zrcala drugih naprav).
-@Test func worktreeFinalizeProfileDeniesOtherReads() throws {
+@Test(.blocking) func worktreeFinalizeProfileDeniesOtherReads() throws {
     let scratch = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches/minigw-test-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: scratch) }
     let repo = scratch.appendingPathComponent("repos/dev/x.git"), other = scratch.appendingPathComponent("repos/other/y.git")
@@ -436,7 +436,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 }
 
 /// N3: veja, izvlečena v povezani delovni mapi uporabnika, se ne premakne (git fetch brez sile jo zavrne).
-@Test func worktreeBranchCheckedOutInLinkedWorktreeIsNotMoved() async throws {
+@Test(.blocking) func worktreeBranchCheckedOutInLinkedWorktreeIsNotMoved() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), session = UUID().uuidString
@@ -455,7 +455,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 
 /// H1 (0.5.16): agenti in minigw run ne pišejo v DARWIN_USER_TEMP_DIR/DARWIN_USER_CACHE_DIR ali njuno nadrejeno mapo
 /// (predpomnilnik xcrun, ModuleCache); svoj TMPDIR in ModuleCache imajo v .build klona.
-@Test func worktreeNoDarwinTempOrCacheIsWritable() throws {
+@Test(.blocking) func worktreeNoDarwinTempOrCacheIsWritable() throws {
     func confstrPath(_ name: Int32) -> String? {
         var b = [CChar](repeating: 0, count: 1024)
         guard confstr(name, &b, b.count) > 0 else { return nil }
@@ -490,7 +490,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 
 /// H1: git routerja ne gre skozi shim xcrun: podtaknjen predpomnilnik (env xcrun_db) nima učinka. Kontrola: shim
 /// /usr/bin/git z istim predpomnilnikom izvede podtaknjen program.
-@Test func routerGitIgnoresPoisonedXcrunCache() throws {
+@Test(.blocking) func routerGitIgnoresPoisonedXcrunCache() throws {
     #expect(!Worktree.git.hasPrefix("/usr/bin/"))
     let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("xcrun-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -531,7 +531,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 /// M1 (0.5.16): minigw run v DARWIN_USER_TEMP_DIR le ustvari nove mape TemporaryDirectory.* (in NSIRD_*) in piše v njih;
 /// vnosov (TemporaryItems, obstoječe mape) ne more preimenovati, izbrisati ali zamenjati s povezavo, datotek v T ne.
 /// Če bi peskovnik kaj dovolil, test to takoj popravi (vrne TemporaryItems, odstrani svoje).
-@Test func runProfileProtectsDarwinTempEntries() throws {
+@Test(.blocking) func runProfileProtectsDarwinTempEntries() throws {
     var b = [CChar](repeating: 0, count: 1024)
     #expect(confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0)
     let t = try #require(Sync.real(URL(fileURLWithPath: String(cString: b)))).path
@@ -566,7 +566,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 }
 
 /// #24: okolje minigw run usmeri vse začasne mape v zasebno mapo zagona (v Scratch); skrivnosti agentov in SSH agent ne.
-@Test func runEnvKeepsTempUnderRunFolder() {
+@Test(.blocking) func runEnvKeepsTempUnderRunFolder() {
     let run = URL(fileURLWithPath: "/Volumes/Fast SSD/Scratch/tmp/run-1")
     let env = Native.runEnv(["TMPDIR": "/var/folders/x/T/", "TMP": "/tmp", "JAVA_TOOL_OPTIONS": "-Xmx1g", "ANTHROPIC_API_KEY": "k",
                              "SSH_AUTH_SOCK": "/s", "xcrun_db": "/d", "PATH": "/usr/bin"], runTmp: run)
@@ -623,7 +623,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 
 /// #24: peskovnik minigw run ne dovoli /private/tmp in ne datotek v DARWIN_USER_TEMP_DIR; z okoljem runEnv gre začasno
 /// pisanje (sh, java.io.tmpdir) v zasebno mapo zagona v skritem Scratch. Ob nepričakovanem uspehu počisti.
-@Test func runProfileKeepsTempInScratch() throws {
+@Test(.blocking) func runProfileKeepsTempInScratch() throws {
     let fm = FileManager.default
     var b = [CChar](repeating: 0, count: 1024)
     #expect(confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0)
@@ -674,7 +674,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 
 /// #72: DerivedData mape v Scratch (stalno ime iz poti), ne ~/Library/Developer; povezavo, ki jo pusti gradnja, zamenja z
 /// mapo (cilj ostane); peskovnik dovoli pisanje le v DerivedData te mape, ne v sosednje.
-@Test func runDerivedDataUnderScratch() throws {
+@Test(.blocking) func runDerivedDataUnderScratch() throws {
     let fm = FileManager.default
     #expect(!Native.buildCaches().contains { $0.hasSuffix("/Library/Developer") })
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("dd72-" + UUID().uuidString)
@@ -703,7 +703,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 }
 
 /// L3 (0.5.16): objects/info, globlja od omejitve brisanja: finalize ne izbriše do konca in ne vrne veje.
-@Test func worktreeFinalizeGivesUpOnTooDeepInfo() async throws {
+@Test(.blocking) func worktreeFinalizeGivesUpOnTooDeepInfo() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), session = UUID().uuidString
@@ -734,7 +734,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 
 /// Agentov commit, ki ga fsck zavrne (drevo z ».git«): brez rezultata, ref zrcala ne kaže na manjkajoče objekte, zato
 /// naslednji klon in izvajanje na istem zrcalu delujeta (kot TestWorktreeFinalizeRejectedKeepsMirror v Go).
-@Test func worktreeFinalizeRejectedKeepsMirrorUsable() async throws {
+@Test(.blocking) func worktreeFinalizeRejectedKeepsMirrorUsable() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), session = UUID().uuidString
@@ -764,7 +764,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 
 /// Native z git (privzeto): agenti v klonih na svojih vejah iz posnetka mape na tem Macu (brez minigw, brez bundla); veje
 /// pridejo naravnost v repozitorij uporabnika, njegove datoteke, indeks, HEAD in nastavitve ostanejo nespremenjeni.
-@Test func nativeGitParallelBranchesInTheRealRepository() async throws {
+@Test(.blocking) func nativeGitParallelBranchesInTheRealRepository() async throws {
     let (root, client, mirror) = try fixture()
     defer { cleanup(root) }
     try file(client, "sub/s.txt", "s\n"); g(client, "add", "sub/s.txt"); g(client, "commit", "-qm", "sub")
@@ -827,7 +827,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 }
 
 /// M2: posnetek native upošteva globalne izključitve uporabnika (core.excludesFile).
-@Test func nativeSnapshotHonoursGlobalExcludes() throws {
+@Test(.blocking) func nativeSnapshotHonoursGlobalExcludes() throws {
     let (root, client, mirror) = try fixture()
     defer { cleanup(root) }
     let ignore = root.appendingPathComponent("global-ignore"), cfg = root.appendingPathComponent("gitconfig")
@@ -899,7 +899,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 }
 
 /// Posnetek native ne zažene ničesar iz repozitorija uporabnika (filter, fsmonitor, hooki): git dela z nastavitvami zrcala.
-@Test func nativeSnapshotRunsNothingFromTheUsersRepository() throws {
+@Test(.blocking) func nativeSnapshotRunsNothingFromTheUsersRepository() throws {
     let (root, client, mirror) = try fixture()
     defer { cleanup(root) }
     let marks = root.appendingPathComponent("marks")
@@ -965,14 +965,14 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 }
 
 /// L2: git, ki visi (tudi njegov pomožni proces), konča po časovni omejitvi.
-@Test func gatewayGitTimeoutKillsTheProcessGroup() throws {
+@Test(.blocking) func gatewayGitTimeoutKillsTheProcessGroup() throws {
     let start = ContinuousClock.now
     let r = Worktree.run(["-c", "alias.hang=!sleep 600", "hang"], timeout: 1)
     #expect(r.status != 0 && ContinuousClock.now - start < .seconds(300))  // ends by its 1 s limit, not at the 600 s sleep
 }
 
 /// #16: posnetek vzame nove datoteke, ne pa prezrtih (.gitignore, .git/info/exclude); #10: brez commita ga ni.
-@Test func worktreeSnapshotSkipsIgnoredFilesAndNeedsACommit() throws {
+@Test(.blocking) func worktreeSnapshotSkipsIgnoredFilesAndNeedsACommit() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("wt-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -1028,7 +1028,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 
 /// Auto (privzeti ali izrecni) le v korenu repozitorija (kot Go repoRoot/workTop); vrstica o veji le z delom agenta
 /// od posnetka (neshranjene in nesledene datoteke uporabnika niso v obsegu), kot Go TestBranchLineShowsAgentOnlyRange.
-@Test func autoRepoRootAndAgentOnlyBranchRange() throws {
+@Test(.blocking) func autoRepoRootAndAgentOnlyBranchRange() throws {
     let (root, client, _) = try fixture()
     defer { cleanup(root) }
     let sub = client.appendingPathComponent("sub")
@@ -1065,7 +1065,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 }
 
 /// R4: agent, ki v klonu le bere (izvajanje za branje), vpraša Claude CLI: ta v načinu worktree zavrne (400), ne piše v klon.
-@Test func readOnlyRunAskingClaudeInWorktreeIsRefused() async throws {
+@Test(.blocking) func readOnlyRunAskingClaudeInWorktreeIsRefused() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     var c = RouterConfig()
@@ -1096,7 +1096,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 }
 
 /// Odjemalec Go na Windows pošlje x-worktree-top z »/« (git), cwd z »\« (0.5.19: Mac prehod je worktree zavrnil).
-@Test func worktreeClientPathsFromWindows() {
+@Test(.blocking) func worktreeClientPathsFromWindows() {
     #expect(Worktree.clientTree(top: "C:/Users/u/repo", cwd: #"C:\Users\u\repo"#)! == ("C:/Users/u/repo", ""))
     #expect(Worktree.clientTree(top: "C:/Users/u/repo", cwd: #"C:\Users\u\repo\a\b"#)! == ("C:/Users/u/repo", "a/b"))
     #expect(Worktree.clientTree(top: "/Users/u/repo/", cwd: "/Users/u/repo/src")! == ("/Users/u/repo", "src"))
@@ -1135,7 +1135,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 }
 
 /// H2 (kot Go): zamenjan .git (kopija z novim config) ali podtaknjen info/attributes ali commondir: mesto se ne nadaljuje.
-@Test func slotGitIntact() throws {
+@Test(.blocking) func slotGitIntact() throws {
     let fm = FileManager.default
     let wt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("wtslot-" + UUID().uuidString)
     defer { try? fm.removeItem(at: wt) }
@@ -1155,7 +1155,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 }
 
 /// N9: claude -p v klonu (worktree) brez »@pot« in ukazov s poševnico; lažni claude brez obeh konča brez odgovora.
-@Test func worktreeClaudeRunHasNoMentionsNoSlashCommands() async throws {
+@Test(.blocking) func worktreeClaudeRunHasNoMentionsNoSlashCommands() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let fake = root.appendingPathComponent("claude")
@@ -1187,7 +1187,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 
 /// N9: agent v klonu naredi ugnezden repozitorij (mapa .git ali datoteka gitdir:) s svojim filtrom, gitlink v indeksu in
 /// .gitmodules z ignore=none; git status samega claude (okolje claudeEnv) filtra ne sme izvesti, nestedGit ga najde.
-@Test func nestedRepoFilterDoesNotRunUnderClaudeEnv() throws {
+@Test(.blocking) func nestedRepoFilterDoesNotRunUnderClaudeEnv() throws {
     for gitfile in [false, true] {
         let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("n9-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1231,7 +1231,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 
 /// N9 (odločitev 0.5.20, kot Go TestWorktreeNestedRepoIgnoredDelivered): ugnezden repozitorij v prezrti poti (build/_deps od
 /// CMake FetchContent) ne ustavi veje; v poti, ki je git ne prezre, veja ne gre nazaj (in klon se ne uporabi znova).
-@Test func worktreeNestedRepoIgnoredDeliveredOtherwiseNot() async throws {
+@Test(.blocking) func worktreeNestedRepoIgnoredDeliveredOtherwiseNot() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     try file(client, ".gitignore", "build/\n"); g(client, "add", ".gitignore"); g(client, "commit", "-qm", "ignore build")
@@ -1261,7 +1261,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 
 /// N9: ovoj pusti le git, katerega GIT_DIR je točno eden od registriranih .git (vrhnji in ugnezdeni kloni); prazen seznam,
 /// prazen ali relativen GIT_DIR, predpona in repozitorij agenta ne (kot Go TestGitExecWrapNeedsGitDir).
-@Test func gitExecWrapNeedsGitDir() throws {
+@Test(.blocking) func gitExecWrapNeedsGitDir() throws {
     let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("gx-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: dir) }
     #expect(Worktree.gitExecWrap(dir))
@@ -1286,7 +1286,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 /// 0.5.20 (kot Go TestServeWorktreeNestedRoundTrip): podmodul, nesleden ugnezden repozitorij s commitom in brez, globina 2
 /// in prezrt ugnezden repozitorij. Vsak neprezrt dobi svojo vejo nazaj, vrhnja veja zapiše novi gitlink podmodula; agentov
 /// repozitorij v ugnezdenem klonu ustavi vrnitev; nameščen ugnezdeni klon je v nestedProblem sprejet.
-@Test func worktreeNestedRepositoriesRoundTrip() async throws {
+@Test(.blocking) func worktreeNestedRepositoriesRoundTrip() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let src = root.appendingPathComponent("subsrc")
@@ -1344,7 +1344,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 }
 
 /// H1 (kot Go cloneTarget): klon ugnezdenega repozitorija ne gre skozi povezavo ali v neprazno mapo.
-@Test func worktreeNestedCloneTarget() throws {
+@Test(.blocking) func worktreeNestedCloneTarget() throws {
     let wt = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("ct-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: wt) }
     try file(wt, "full/f", "x"); try file(wt, "f.txt", "x")
@@ -1357,7 +1357,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 
 /// N1 (kot Go TestWorktreeNestedSwapDuringFinalize): zamenjava poti ugnezdenega klona s povezavo ven po preverbi zavrže
 /// rezultat; ref zrcala ostane prejšnji, bundla ni.
-@Test func worktreeNestedSwapDuringFinalize() throws {
+@Test(.blocking) func worktreeNestedSwapDuringFinalize() throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let wt = root.appendingPathComponent("wt"), outside = root.appendingPathComponent("outside"), lib = client.appendingPathComponent("lib")
@@ -1385,7 +1385,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 
 /// N2/N5/N6 (kot Go TestNestedReposRefuseSymlinks): povezava na poti gitlinka ali ugnezdenega repozitorija ni ugnezden
 /// repozitorij mape; imena s HFS+ prezrtimi znaki in pot v .build ne.
-@Test func nestedReposRefuseSymlinks() throws {
+@Test(.blocking) func nestedReposRefuseSymlinks() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("n2-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let top = root.appendingPathComponent("top"), outside = root.appendingPathComponent("outside")
@@ -1402,7 +1402,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 }
 
 /// Agent je vse commital sam: veja se shrani in objekti ostanejo v zrcalu (kot Go TestWorktreeFinalizeAllCommitted).
-@Test func worktreeFinalizeAllCommitted() throws {
+@Test(.blocking) func worktreeFinalizeAllCommitted() throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let head = g(client, "rev-parse", "HEAD"), b = root.appendingPathComponent("push.bundle"), wt = root.appendingPathComponent("wt")
@@ -1421,7 +1421,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 /// A (0.5.20): native z git obravnava ugnezdene kot worktree: podmodul (gitfile v .git/modules), nesleden s commitom in brez
 /// commita dobijo vsak svojo vejo naravnost v svoj repozitorij; nesledeni niso gitlink v vrhnji veji; prezrt ostane zunaj;
 /// repozitoriji uporabnika (HEAD, indeks) ostanejo.
-@Test func nativeGitNestedRepositories() async throws {
+@Test(.blocking) func nativeGitNestedRepositories() async throws {
     let (root, client, mirror) = try fixture()
     defer { cleanup(root) }
     let src = root.appendingPathComponent("subsrc")
@@ -1466,7 +1466,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 /// N1 (recenzija 2): zamenjava poti ugnezdenega klona s povezavo na tuj repozitorij takoj po preverbi exact in vrnitev
 /// pred končno preverbo: finalize nič ne razreši znova (O_NOFOLLOW_ANY, profil iz pričakovane poti), zato tuja skrivnost
 /// ne pride v vejo in tuj objects/info ostane.
-@Test func worktreeNestedSwapAndRestore() throws {
+@Test(.blocking) func worktreeNestedSwapAndRestore() throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let wt = root.appendingPathComponent("wt"), outside = root.appendingPathComponent("outside"), lib = client.appendingPathComponent("lib")
@@ -1497,7 +1497,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 }
 
 /// N3 (kot Go TestNestedSnapshotRunsNoCleanFilter): posnetek ugnezdenega ne požene filtra clean iz .gitattributes.
-@Test func nestedSnapshotRunsNoCleanFilter() throws {
+@Test(.blocking) func nestedSnapshotRunsNoCleanFilter() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("n3-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let dir = root.appendingPathComponent("r"), marker = root.appendingPathComponent("ran").path
@@ -1525,7 +1525,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// L6 (kot Go TestWorktreeNestedSkippedTopDelivered): zavrnjen ugnezdeni (premaknjen, večji od 64 MB) ne ustavi vrhnjega:
 /// vrhnja veja pride (brez vsebine zavrnjenega), ena vrstica pove, kateri in zakaj, klon z delom po koncu seje ostane.
-@Test(arguments: ["moved", "big"]) func worktreeNestedSkippedTopDelivered(_ kind: String) async throws {
+@Test(.blocking, arguments: ["moved", "big"]) func worktreeNestedSkippedTopDelivered(_ kind: String) async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     for p in ["lib", "other"] {
@@ -1587,7 +1587,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// L6 (M1, native): zamenjan .git/objects uporabnika ustavi dostavo; sporočilo pove, da klon z delom ostane, ob koncu
 /// seje gre v kept.
-@Test func nativeObjectsReplacedKeepsClone() async throws {
+@Test(.blocking) func nativeObjectsReplacedKeepsClone() async throws {
     let (root, client, mirror) = try fixture()
     defer { cleanup(root) }
     let (top, sub) = try #require(Router.nativeBranches(client, inPlace: false, roots: [root.path], scratch: mirror.repo))
@@ -1635,7 +1635,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #57, #58: tanek bundle (evil..c2, c2 ponovno uporabi drevo z ».git«, ki ga je fetch brez fsck pustil v objektih) fetch
 /// sprejme tudi na novem gitu; fsck ga zavrne pri odjemalcu (lastno sporočilo), ob uvozu v zrcalo prehoda in pri native.
-@Test func thinBundleFailsTheObjectCheck() throws {
+@Test(.blocking) func thinBundleFailsTheObjectCheck() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("thin-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let src = root.appendingPathComponent("src"), client = root.appendingPathComponent("client"), mirror = root.appendingPathComponent("m.git")
@@ -1681,7 +1681,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// Scratch na drugem disku kot $TMPDIR (zunanji disk): fsck uvoza ne sme pasti na »Cross-device link« (pack-objects
 /// preimenuje paket iz objects/pack v začasno mapo), sicer vsak worktree vrne 502.
-@Test func importBaseWithMirrorOnAnotherVolume() throws {
+@Test(.blocking) func importBaseWithMirrorOnAnotherVolume() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("xdev-" + UUID().uuidString)
     let mnt = root.appendingPathComponent("mnt")
     try FileManager.default.createDirectory(at: mnt, withIntermediateDirectories: true)
@@ -1709,14 +1709,14 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 }
 
 /// #57: ugnezdeni repozitoriji na prehodu z gitom pred 2.40 zavrnjeni pred zagonom (način ostane).
-@Test func nestedNeedsAttrSourceOnTheGateway() {
+@Test(.blocking) func nestedNeedsAttrSourceOnTheGateway() {
     #expect(Worktree.nestedGitProblem(1, attr: false)?.hasSuffix("update git or use sync") == true)
     #expect(Worktree.nestedGitProblem(1, attr: true) == nil && Worktree.nestedGitProblem(0, attr: false) == nil)
 }
 
 /// #57: git prehoda pred 2.40 z ugnezdenim repozitorijem: trajna zavrnitev (400 z razlogom, kot Go refused), ne mount nil
 /// → 502, ki ga Claude Code ponavlja; prek odjemalca in pri native.
-@Test func nestedOnOldGatewayGitIsRefusedWith400() async throws {
+@Test(.blocking) func nestedOnOldGatewayGitIsRefusedWith400() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let lib = client.appendingPathComponent("vendor/lib")
@@ -1744,7 +1744,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// M2, #4, #1 (kot Go TestKeepCloneDisarmsGit): keepClone preimenuje vsak .git in HEAD golega repozitorija v klonu, nikoli
 /// prek povezave ven; klon, ki je povezava, ostane, kot je.
-@Test func keepCloneDisarmsGit() async throws {
+@Test(.blocking) func keepCloneDisarmsGit() async throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("kc-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let wt = root.appendingPathComponent("c-0"), outside = root.appendingPathComponent("outside"), kept = root.appendingPathComponent("c-0-kept-1")
@@ -1778,7 +1778,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #40 (kot Go TestPathWrapScript): besedilo enako kot v Go (client/testdata/pathwrap.golden); git dela v registriranem
 /// klonu, ki vsebuje mapo ali -C <pot> (najdaljši), drugače ostane okolje; neregistriran .git in predpona /x/ab ne veljata.
-@Test func pathWrapScriptMapsRegisteredClones() throws {
+@Test(.blocking) func pathWrapScriptMapsRegisteredClones() throws {
     let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     #expect(try String(contentsOf: repo.appendingPathComponent("client/testdata/pathwrap.golden"), encoding: .utf8) == Worktree.pathWrapScript(real: "/REAL/git"))
     let fm = FileManager.default
@@ -1807,7 +1807,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #40 (kot Go TestWorktreeHarnessEnvGitConfig): brez lastnikovih nastavitev git, avtor je agent, isti vrstni red parov;
 /// PATH najprej ovoj gitexec/bin.
-@Test func harnessEnvOwnGitConfig() throws {
+@Test(.blocking) func harnessEnvOwnGitConfig() throws {
     let env = Worktree.harnessEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), agent: "codex")
     let want = ["core.fsmonitor=false", "core.hooksPath=/dev/null", "core.attributesFile=/dev/null", "diff.ignoreSubmodules=all",
                 "submodule.recurse=false", "core.excludesFile=/dev/null", "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit",
@@ -1825,7 +1825,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #40: Claude CLI v klonu commita v ugnezdenem klonu z git -C (ovoj na PATH); commit pride na vejo ugnezdenega
 /// repozitorija z avtorjem agenta, vrhnja veja ga nima.
-@Test func worktreeClaudeCommitsInNestedClone() async throws {
+@Test(.blocking) func worktreeClaudeCommitsInNestedClone() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let lib = client.appendingPathComponent("lib")
@@ -1865,7 +1865,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #40 (kot Go TestCodexTreeProfile): Codex v klonu dobi profil dovoljenj: commit v vrhnjem in ugnezdenem klonu gre,
 /// config, hooks, info in commondir .git ne; s pravim codex (če je nameščen) še zares.
-@Test func codexTreeProfileCommitsButProtectsGitConfig() throws {
+@Test(.blocking) func codexTreeProfileCommitsButProtectsGitConfig() throws {
     let fm = FileManager.default
     let wt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("cx-" + UUID().uuidString)
     defer { try? fm.removeItem(at: wt) }
@@ -1894,7 +1894,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #40: klon se znova uporabi le, če je vsak ugnezdeni klon še na svoji poti (pot, zamenjana s povezavo na isti .git,
 /// prestane gitIntact): sicer nov klon.
-@Test func worktreeReuseNeedsNestedIntact() async throws {
+@Test(.blocking) func worktreeReuseNeedsNestedIntact() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let lib = client.appendingPathComponent("lib")
@@ -1919,7 +1919,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #40 N1: proces agenta, ki je zapustil klon (cd /), s okoljem Claude CLI ali Codex (brez GIT_WORK_TREE) killProcesses
 /// ustavi pred finalize (znak MINIGW_CLONE).
-@Test func killProcessesFindsAgentsWithoutGitWorkTree() throws {
+@Test(.blocking) func killProcessesFindsAgentsWithoutGitWorkTree() throws {
     let fm = FileManager.default
     let wt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("kp-" + UUID().uuidString)
     defer { try? fm.removeItem(at: wt) }
@@ -1945,7 +1945,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #61 (kot Go TestForeignGit): .git, ki ga je agent naredil v začetni mapi harnessa ali mapi nad njo (datoteka gitdir:),
 /// zavrne zagon; .git v prezrtem build/_deps zunaj te poti in registriran ugnezdeni klon kot začetna mapa ne; povezavi ne sledi.
-@Test func foreignGitRefusesPlantedGitOnCwdPath() throws {
+@Test(.blocking) func foreignGitRefusesPlantedGitOnCwdPath() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("fg-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let wt = root.appendingPathComponent("wt"), out = root.appendingPathComponent("out")
@@ -1969,7 +1969,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #61 M1: git harnessa (po absolutni poti, okolje claudeEnv brez GIT_DIR) v mapi z golim repozitorijem agenta ga ne uporabi
 /// (safe.bareRepository=explicit); brez tega para ga (test ponovi napad).
-@Test func harnessGitRefusesPlantedBareRepo() throws {
+@Test(.blocking) func harnessGitRefusesPlantedBareRepo() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("bare-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let wt = root.appendingPathComponent("wt")
@@ -1993,7 +1993,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #61 (kot Go TestServeWorktreePlantedGitOnCwdPath): seja v prezrti podmapi app; agent v 1. krogu naredi app/.git,
 /// 2. krog v istem klonu je zavrnjen z natančnim sporočilom.
-@Test func worktreePlantedGitOnCwdPathRefusedNextTurn() async throws {
+@Test(.blocking) func worktreePlantedGitOnCwdPathRefusedNextTurn() async throws {
     let (root, client, base) = try fixture()
     defer { cleanup(root) }
     try file(client, ".gitignore", "app/\n"); g(client, "add", ".gitignore"); g(client, "commit", "-qm", "ignore app")
@@ -2015,7 +2015,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #66: --continue v načinu worktree: drugi zagon (nova seja, isti pogovor) začne na veji prvega, tudi ko se je mapa
 /// spremenila (z vrstico); iz mape le brez veje in pri ugnezdenih. Ključ po mapah, izbirnik, fork, stara oblika zapisa.
-@Test func worktreeContinueConversation() async throws {
+@Test(.blocking) func worktreeContinueConversation() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), head = g(client, "rev-parse", "HEAD"), notes = OSAllocatedUnfairLock<[String]>(initialState: [])

@@ -25,7 +25,7 @@ private func interrupted(_ started: @escaping (Int32, UnsafePointer<sockaddr>, s
         #expect(r == -1 && calls == 1 && errno == EPIPE)
     }
 
-    @Test func interruptedConnectThatCompletesIsASuccess() throws {
+    @Test(.blocking) func interruptedConnectThatCompletesIsASuccess() throws {
         let l = socket(AF_INET, SOCK_STREAM, 0), c = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(l); close(c) }
         var a = loopback(0), n = socklen_t(MemoryLayout<sockaddr_in>.size)
@@ -40,7 +40,7 @@ private func interrupted(_ started: @escaping (Int32, UnsafePointer<sockaddr>, s
         #expect(r == 0)
     }
 
-    @Test func interruptedConnectThatIsRefusedReportsTheError() {
+    @Test(.blocking) func interruptedConnectThatIsRefusedReportsTheError() {
         let c = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(c) }
         var a = loopback(freeTCPPort())

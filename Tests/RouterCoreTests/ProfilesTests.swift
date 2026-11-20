@@ -146,7 +146,7 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
 
 /// Prehod na portu, ki je bil malo prej odjemalec usmerjevalnika (par v TIME_WAIT pri usmerjevalniku): Network.framework je
 /// za posredovanje vzel star lokalni port, .waiting(EADDRINUSE) → 502 (občasno v profileMuxRoutesBySuffix ob ponovitvah).
-@Test func profileMuxReachesAPortThatWasItsClient() async throws {
+@Test(.blocking) func profileMuxReachesAPortThatWasItsClient() async throws {
     let first = ProfileMux(targets: [.init(name: "mini", url: "http://127.0.0.1:1", token: "x")])
     try first.start()
     defer { first.stop() }
@@ -345,7 +345,7 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
 
 /// #80 (kot client/stream_test.go TestGateCloseBlockedWrite, TestRunClaudeStalledOutput): stdout, ki ga nihče ne bere,
 /// ne zadrži close dlje od roka; po close se konča le kos (64 KB) v teku, nič novega; stderr gre po stdout.
-@Test func outputGateUnreadStdout() throws {
+@Test(.blocking) func outputGateUnreadStdout() throws {
     signal(SIGPIPE, SIG_IGN)
     let o = Pipe(), e = Pipe()
     let gate = Profiles.OutputGate(out: o.fileHandleForWriting, err: e.fileHandleForWriting)
@@ -385,7 +385,7 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
 }
 
 /// Low 1: en sam zapis čez mejo, ko nič ne čaka, ni dropped (bralec prazni).
-@Test func outputGateBigWriteDrained() throws {
+@Test(.blocking) func outputGateBigWriteDrained() throws {
     let o = Pipe(), e = Pipe()
     let gate = Profiles.OutputGate(out: o.fileHandleForWriting, err: e.fileHandleForWriting)
     let size = 17 << 20
@@ -403,7 +403,7 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
 }
 
 /// | head in zaprt stderr: napaka pisanja ne sproži izjeme, ročaj ne piše več, drugi piše naprej po vrsti.
-@Test func outputGateClosedPipe() throws {
+@Test(.blocking) func outputGateClosedPipe() throws {
     signal(SIGPIPE, SIG_IGN)
     let o = Pipe(), e = Pipe()
     try o.fileHandleForReading.close()

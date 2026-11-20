@@ -64,7 +64,7 @@ func requireCodex() throws -> String {
 }
 
 /// A3 (S3): the backup folder is <core>/backups, inside every deny of the core folder (Seatbelt, Codex profile, Claude rules).
-@Test func backupFolderIsInsideTheCoreDeny() throws {
+@Test(.blocking) func backupFolderIsInsideTheCoreDeny() throws {
     let backups = CoreHelper.defaultStore.appendingPathComponent("backups/core-1.db").path
     for list in [RouterConfig.coreDenied(), RouterConfig.agentDenied(kind: "codex", scratch: nil), RouterConfig.hiddenScratch(nil)] {
         #expect(list.contains { backups == $0 || backups.hasPrefix($0 + "/") }, "\(backups) not covered by \(list)")
@@ -142,7 +142,7 @@ private func profileConfig(_ a: [String]) -> [String] {
     return o
 }
 
-@Test func codexProfileDeniesCoreForRealProcesses() throws {
+@Test(.blocking) func codexProfileDeniesCoreForRealProcesses() throws {
     let exe = try requireCodex()
     let f = try Fixture(); defer { f.cleanup() }
     let out = f.base.appendingPathComponent("o.txt")
@@ -180,7 +180,7 @@ private func profileConfig(_ a: [String]) -> [String] {
 
 // MARK: Seatbelt (minigw run, Copilot) and Claude CLI
 
-@Test func seatbeltProfileDeniesCoreForRealProcesses() throws {
+@Test(.blocking) func seatbeltProfileDeniesCoreForRealProcesses() throws {
     let f = try Fixture(); defer { f.cleanup() }
     // hidden = what the callers pass (RouterConfig.hiddenScratch): the core folders by real path
     let profile = try #require(Native.sandboxProfile(dir: f.work.path, home: f.base.path, network: true, hidden: f.denied, writable: []))
@@ -266,7 +266,7 @@ private func profileConfig(_ a: [String]) -> [String] {
     #expect(env.contains(f.tmp.path) && env.contains(f.work.path) && !env.contains(home + "/.grok") && env.contains(home + "/.copilot"))
 }
 
-@Test func credentialHomesAreDeniedForRealProcesses() throws {
+@Test(.blocking) func credentialHomesAreDeniedForRealProcesses() throws {
     let f = try Fixture(); defer { f.cleanup() }
     let fm = FileManager.default, home = f.base.path
     for d in [".grok", ".codex", ".copilot"] {

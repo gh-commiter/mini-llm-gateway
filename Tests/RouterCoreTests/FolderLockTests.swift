@@ -11,7 +11,7 @@ private func tempDir(_ name: String) throws -> URL {
 
 /// GET in PROPFIND, ki dirkata z zamenjavo nadrejene mape pod izključnim zaklepom druge seje (svoj FolderLock, svoja
 /// datoteka), nikoli ne bereta zunaj korena.
-@Test func folderLockReadNeverRacesParentSwap() throws {
+@Test(.blocking) func folderLockReadNeverRacesParentSwap() throws {
     let fm = FileManager.default
     let root = try tempDir("root"), out = try tempDir("out"), locks = try tempDir("locks")
     defer { for d in [root, out, locks] { try? fm.removeItem(at: d) } }
@@ -71,7 +71,7 @@ private func tempDir(_ name: String) throws -> URL {
 
 /// Drug proces (lockf(1), flock kot minigw Go) drži izključni zaklep: posel po wait vrne nil; ko je proces ubit, ga
 /// jedro sprosti.
-@Test func folderLockAcrossProcesses() throws {
+@Test(.blocking) func folderLockAcrossProcesses() throws {
     let locks = try tempDir("locks")
     defer { try? FileManager.default.removeItem(at: locks) }
     let id: [UInt64] = [3, 4]
@@ -118,7 +118,7 @@ private func tempDir(_ name: String) throws -> URL {
 }
 
 /// N1: čakajoče pisanje ima prednost: novo branje mu ne skoči pred, po roku nil; pisanje dobi zaklep, ko bralec konča.
-@Test func folderLockWriterPreference() throws {
+@Test(.blocking) func folderLockWriterPreference() throws {
     let locks = try tempDir("locks")
     defer { try? FileManager.default.removeItem(at: locks) }
     let l = FolderLock(id: [9, 10], dir: locks.path)

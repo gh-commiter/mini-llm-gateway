@@ -175,7 +175,14 @@ private func shBlocking(_ cmd: String, cwd: String, timeout: Double = 90) -> (st
     #expect(Date().timeIntervalSince(started) < 15, "the helper waited for the orphan: \(r)")
     #expect(r.status == SIGKILL && r.out.contains("TIMEOUT") && r.out.contains(mark), "\(r)")
     try await Task.sleep(for: .milliseconds(300))
-    #expect(await sh("pgrep -f '\(mark)' | grep -v $$ || echo none", cwd: "/", timeout: 10).out.hasSuffix("none\n"), "a child of the killed shell is still alive")
+    // the group got SIGKILL; a process needs a moment to be gone (longer when the machine is busy): ask until it is, for at most 5 s
+    var left = ""
+    for _ in 0..<50 {
+        left = await sh("pgrep -f '\(mark)' | grep -v $$ || echo none", cwd: "/", timeout: 10).out
+        if left.hasSuffix("none\n") { break }
+        try await Task.sleep(for: .milliseconds(100))
+    }
+    #expect(left.hasSuffix("none\n"), "a child of the killed shell is still alive: \(left)")
 }
 
 /// For failure messages when a mount dies: the system's mount table for this mount point and the webdavfs processes (a dead agent = the OS dropped the mount).
@@ -202,7 +209,7 @@ private func forceUnmount(_ mp: URL) {
     rmdir(mp.path)
 }
 
-@Test func anAgentInADirectModeMountCommitsAndCannotPlantWhatRunsCode() async throws {
+@Test(.blocking) func anAgentInADirectModeMountCommitsAndCannotPlantWhatRunsCode() async throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("direct-mount-" + UUID().uuidString, isDirectory: true)
     let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
@@ -260,7 +267,7 @@ private func forceUnmount(_ mp: URL) {
 
 /// 0.7.0: the REAL claude, launched with the gateway's own arguments (`agentArgs(directGit: true)`) and environment, in a real direct-mode mount (mount_webdav of a folder served by the
 /// client's WebDAV code, `WebDAV.handle`, with its guard). Gated (the owner's subscription): MG_REAL_CLAUDE_GIT=1.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"))
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"), .blocking)
 func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
     guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
     let fm = FileManager.default
@@ -318,7 +325,7 @@ func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
 
 /// 0.7.1: the mount shows every file as -rwx------. With the environment of a sandboxed run on a mount (core.fileMode false) a new file is committed as 100644 and an executable
 /// file keeps 100755; what a tracked symlink looks like on the mount is measured here.
-@Test func modesOnADirectModeMountAreNotTheMountsModes() async throws {
+@Test(.blocking) func modesOnADirectModeMountAreNotTheMountsModes() async throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("direct-mount-mode-" + UUID().uuidString, isDirectory: true)
     let client = base.appendingPathComponent("proj"), mp = base.appendingPathComponent("mnt")
@@ -359,7 +366,7 @@ func aRealClaudeAgentCommitsInARealDirectModeMount() async throws {
 }
 
 /// 0.7.1: a repository that tracks a symbolic link gets no commit opening (the client sends no flag): the real claude on the real mount stages everything and cannot commit; the link stays a link.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"))
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MG_REAL_CLAUDE_GIT"] == "1"), .blocking)
 func aRealClaudeAgentCannotCommitThroughAMountOfARepositoryWithASymlink() async throws {
     guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
     let fm = FileManager.default

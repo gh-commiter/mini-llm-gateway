@@ -33,7 +33,7 @@ private func isOpen(in fd: Int32, _ run: (_ exe: String, _ args: [String]) throw
         })
     }
 
-    @Test func foundationProcessDoesNotInheritIt() throws {
+    @Test(.blocking) func foundationProcessDoesNotInheritIt() throws {
         let m = marker(); defer { m.close() }
         for fd in m.fds {
             let open = try isOpen(in: fd) { exe, args in
@@ -51,7 +51,7 @@ private func isOpen(in fd: Int32, _ run: (_ exe: String, _ args: [String]) throw
     /// a child that another thread starts in that moment (an agent CLI, git, a probe) must not get them either. Every spawn site of the app
     /// is Foundation Process (CLOEXEC_DEFAULT, tested below) or posix_spawn with POSIX_SPAWN_CLOEXEC_DEFAULT (Native.spawnGroup,
     /// Worktree, CoreProcess); the only ones that are not are in the `minigw` command line tool, a different process.
-    @Test func aSocketpairWithoutCloexecIsNotInheritedEither() throws {
+    @Test(.blocking) func aSocketpairWithoutCloexecIsNotInheritedEither() throws {
         var sv: [Int32] = [0, 0]
         precondition(socketpair(AF_UNIX, SOCK_STREAM, 0, &sv) == 0)
         defer { close(sv[0]); close(sv[1]) }
@@ -74,7 +74,7 @@ private func isOpen(in fd: Int32, _ run: (_ exe: String, _ args: [String]) throw
     /// helper's connections for a moment after `socketpair`), the child is `/bin/ls /dev/fd`, which lists the descriptors it has. The control
     /// starts the same program with plain `posix_spawn` (no CLOEXEC_DEFAULT), which does list them, so the probe can see an inheritance.
     /// Proves, on the macOS this runs on: a Process child has only 0, 1, 2 and ls's own directory handle; it does not get descriptors above 2.
-    @Test func aProcessChildListsOnlyItsOwnDescriptors() throws {
+    @Test(.blocking) func aProcessChildListsOnlyItsOwnDescriptors() throws {
         var sv: [Int32] = [0, 0]
         precondition(socketpair(AF_UNIX, SOCK_STREAM, 0, &sv) == 0)
         let high = sv.map { fcntl($0, F_DUPFD, 100) }  // above any descriptor the child could get by chance; F_DUPFD leaves close-on-exec off
@@ -112,7 +112,7 @@ private func isOpen(in fd: Int32, _ run: (_ exe: String, _ args: [String]) throw
         #expect(!listed(String(decoding: data, as: UTF8.self)).isDisjoint(with: Set(high)), "the control child did not see the inheritable descriptors: the probe proves nothing")
     }
 
-    @Test func spawnGroupDoesNotInheritIt() throws {
+    @Test(.blocking) func spawnGroupDoesNotInheritIt() throws {
         let m = marker(); defer { m.close() }
         for fd in m.fds {
             let r = Native.spawnGroup("/bin/test", ["-e", "/dev/fd/\(fd)"], dir: URL(fileURLWithPath: "/tmp"), env: [:], input: true)
@@ -124,7 +124,7 @@ private func isOpen(in fd: Int32, _ run: (_ exe: String, _ args: [String]) throw
 
     /// The quota probe (ClaudeUsageProbe.run) starts claude with spawnGroup, stdin /dev/null (input: false), its own environment and an empty folder:
     /// the same reasoning holds (POSIX_SPAWN_CLOEXEC_DEFAULT); the probe's whole run is also tested in QuotaHardeningTests.
-    @Test func theQuotaProbeSpawnDoesNotInheritIt() throws {
+    @Test(.blocking) func theQuotaProbeSpawnDoesNotInheritIt() throws {
         let m = marker(); defer { m.close() }
         for fd in m.fds {
             let r = Native.spawnGroup("/bin/test", ["-e", "/dev/fd/\(fd)"], dir: URL(fileURLWithPath: "/tmp"), env: ClaudeUsageProbe.env([:], tmp: "/tmp"), input: false)

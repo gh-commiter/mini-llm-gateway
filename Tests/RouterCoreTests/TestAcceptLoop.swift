@@ -49,11 +49,19 @@ final class TestAcceptLoop: @unchecked Sendable {
     /// Ends the loop and returns when the listening socket is closed (at most 2 s); calling it again is harmless. The LOOP closes the listener, never the test: a
     /// closed descriptor number is handed to the next socket of any parallel test at once, and a loop that still called accept(2) on it, or a second close, would
     /// take that other test's connections or socket.
-    func stop() {
+    @discardableResult
+    func stop() -> Bool {
         state.withLock { $0.stopped = true }
-        if wake[1] >= 0 { var b: UInt8 = 1; _ = write(wake[1], &b, 1) }
-        _ = finished.wait(timeout: .now() + 2)
+        var wrote = "no wake-up pipe"
+        if wake[1] >= 0 { var b: UInt8 = 1; wrote = write(wake[1], &b, 1) == 1 ? "wake-up byte written" : "wake-up write failed with \(Self.name(errno))" }
+        let closed = finished.wait(timeout: .now() + 2) == .success
+        stopNote.withLock { $0 = "stop: \(wrote), loop \(closed ? "ended" : "STILL RUNNING after 2 s")" + (state.withLock { $0.ended }.map { " (ended on \(Self.name($0)))" } ?? "") }
+        return closed
     }
+
+    /// What the last stop() saw (for a failure message): whether the wake-up byte went out and whether the loop ended within 2 s.
+    var stopDiagnostics: String { stopNote.withLock { $0 } }
+    private let stopNote = Mutex("stop() was not called")
 
     /// Runs the loop on a thread of its own; it takes over `listener` (closes it when `stop()` is called). `handle` gets each accepted socket (and must not block:
     /// start a thread for it).
@@ -101,7 +109,7 @@ final class TestAcceptLoop: @unchecked Sendable {
         for e in [EIO, ENOTSOCK, EOPNOTSUPP, EFAULT] { #expect(TestAcceptLoop.verdict(e) == .unexpected, "\(TestAcceptLoop.name(e))") }
     }
 
-    @Test func aLoopServesConnectionsAndEndsQuietlyWhenTheTestStopsIt() {
+    @Test(.blocking) func aLoopServesConnectionsAndEndsQuietlyWhenTheTestStopsIt() {
         let l = socket(AF_INET, SOCK_STREAM, 0)
         var a = sockaddr_in(), n = socklen_t(MemoryLayout<sockaddr_in>.size)
         a.sin_family = sa_family_t(AF_INET); a.sin_len = UInt8(n); a.sin_addr.s_addr = inet_addr("127.0.0.1")
@@ -118,12 +126,22 @@ final class TestAcceptLoop: @unchecked Sendable {
         let end = Date().addingTimeInterval(5)
         while served.withLock({ $0 }) < 2 && Date() < end { usleep(5_000) }
         #expect(served.withLock { $0 } == 2)
-        loop.stop(); loop.stop()  // twice is harmless
+        let t0 = ContinuousClock.now
+        let firstStop = loop.stop(), firstNote = loop.stopDiagnostics
+        let secondStop = loop.stop()  // twice is harmless
+        let took = Stages.s(ContinuousClock.now - t0)
         #expect(loop.endedErrno == nil)
         // (not close(l) == EBADF: a parallel test may have been given that descriptor number already) nothing listens on the port any more
         let s = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(s) }
         let r = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-        #expect(r == -1 && errno == ECONNREFUSED, "the loop closed the listener")
+        let e = errno  // read at once: nothing in between may overwrite it
+        var mine = sockaddr_in(), mineLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &mine) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(s, $0, &mineLen) } }
+        let source = UInt16(bigEndian: mine.sin_port), target = UInt16(bigEndian: a.sin_port)  // source == target: TCP connected the socket to ITSELF (no listener there)
+        // #150 (failed 2 of 14 full runs on 2026-11-20): when the connect did not fail, say WHO answered: our loop (it is still running: the stop was too slow or lost) or
+        // another test's listener that was given this port after ours closed (our loop ended, and the connection was counted by nobody here)
+        let answeredByUs = r == 0 ? { usleep(300_000); return served.withLock { $0 } > 2 }() : false
+        #expect(r == -1 && e == ECONNREFUSED, "the loop did not close the listener: connect gave \(r) / \(TestAcceptLoop.name(e)); stops \(firstStop)/\(secondStop) in \(took) s; \(firstNote); our loop counted the new connection: \(answeredByUs); source port \(source), target port \(target)\(source == target ? " (a TCP self-connect: nothing listens there)" : ""); \(PoolLagGuard.text)")
     }
 }

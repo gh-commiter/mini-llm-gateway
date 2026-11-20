@@ -252,7 +252,7 @@ private func primed(_ w: LabelWorker) async { await w.fetchSettings() }
         #expect(samples.value == 0 && w.isIdle)
     }
 
-    @Test func aStaleResultIsDiscardedWhenTheSettingsChanged() async throws {
+    @Test(.blocking) func aStaleResultIsDiscardedWhenTheSettingsChanged() async throws {
         let core = FakeCore()
         let gate = Gate()
         let w = worker(core, backend: { _, _, ids in try await gate.wait(); return ids.contains("plan") ? "do" : "bugfix" })
@@ -266,7 +266,7 @@ private func primed(_ w: LabelWorker) async { await w.fetchSettings() }
         #expect(core.count("event-labels") == 0 && core.count("label-agreement") == 0)
     }
 
-    @Test func theQueueIsBoundedAndAdmissionNeverWaits() async throws {
+    @Test(.blocking) func theQueueIsBoundedAndAdmissionNeverWaits() async throws {
         let core = FakeCore()
         let gate = Gate()
         let w = worker(core, backend: { _, _, ids in try await gate.wait(); return "do" })
@@ -372,7 +372,7 @@ private func primed(_ w: LabelWorker) async { await w.fetchSettings() }
         #expect(core.last("label-decision")?["failed"] as? Bool == true && core.count("event-labels") == 0)
     }
 
-    @Test func nothingHappensAfterStop() async throws {
+    @Test(.blocking) func nothingHappensAfterStop() async throws {
         let core = FakeCore()
         let gate = Gate()
         let samples = Tally()
@@ -715,7 +715,7 @@ private func message(_ o: [String: Any]) -> String { ((o["error"] as? [String: A
         var longest: Int { lock.withLock { n } }
     }
 
-    @Test func oneEvaluationAtATime() async throws {
+    @Test(.blocking) func oneEvaluationAtATime() async throws {
         let core = evalCore()
         let started = Tally()
         let gate = Gate()

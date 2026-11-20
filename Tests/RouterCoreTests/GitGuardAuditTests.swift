@@ -41,7 +41,7 @@ import Testing
     }
 
     /// url.<x>.insteadOf turns the path of the gateway's bundle into an ext:: command that the same config allows.
-    @Test func fetchOfTheGatewaysBundleIgnoresARepositoryRedirect() throws {
+    @Test(.blocking) func fetchOfTheGatewaysBundleIgnoresARepositoryRedirect() throws {
         let h = try Hostile()
         let src = h.root + "/src"
         try FileManager.default.createDirectory(atPath: src, withIntermediateDirectories: true)
@@ -58,7 +58,7 @@ import Testing
     }
 
     /// core.alternateRefsCommand with objects/info/alternates: the local branch move (fetch from ".") starts upload-pack.
-    @Test func localFetchIgnoresAnAlternateRefsCommand() throws {
+    @Test(.blocking) func localFetchIgnoresAnAlternateRefsCommand() throws {
         let h = try Hostile()
         let alt = h.root + "/alt"
         try FileManager.default.createDirectory(atPath: alt, withIntermediateDirectories: true)
@@ -75,7 +75,7 @@ import Testing
 
     /// The nested-repository snapshot (no attributes) never runs a clean filter; a snapshot of the user's own top repository does,
     /// on purpose (Git LFS): that is a design decision, recorded here.
-    @Test func snapshotFilters() throws {
+    @Test(.blocking) func snapshotFilters() throws {
         let h = try Hostile()
         try "*.txt filter=x\n".write(toFile: h.top + "/.gitattributes", atomically: true, encoding: .utf8)
         _ = Self.plain(h.top, ["config", "filter.x.clean", "sh -c '\(h.trap); cat'"])
@@ -89,7 +89,7 @@ import Testing
     }
 
     /// The queries the client makes of a user's repository run nothing, whatever its config says.
-    @Test func queriesOfAHostileRepositoryRunNothing() throws {
+    @Test(.blocking) func queriesOfAHostileRepositoryRunNothing() throws {
         let h = try Hostile()
         try "*.txt filter=x diff=x\n".write(toFile: h.top + "/.git/info/attributes", atomically: true, encoding: .utf8)
         for (k, v) in ["core.fsmonitor": h.trap + "; echo", "diff.external": h.trap, "diff.x.textconv": h.trap + "; cat", "filter.x.clean": h.trap + "; cat",

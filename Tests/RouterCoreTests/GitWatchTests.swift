@@ -32,7 +32,7 @@ private func git(_ dir: String, _ args: String, fails: Bool = false, sourceLocat
 }
 
 // A real repository: what an agent does through the share is reported, the staged protected path leaves the index, the work tree, the commit and MERGE_HEAD stay.
-@Test func gitWatchRealRepository() throws {
+@Test(.blocking) func gitWatchRealRepository() throws {
     let fm = FileManager.default
     let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("gw-" + UUID().uuidString)
     defer { try? fm.removeItem(at: root); try? fm.removeItem(atPath: root.path + "-state") }
@@ -58,7 +58,7 @@ private func git(_ dir: String, _ args: String, fails: Bool = false, sourceLocat
 }
 
 // X2: a client that was killed (the end of the share never ran) leaves its stored start state; the next start in the folder reports it, prefixed, and removes it.
-@Test func gitWatchSurvivesAKilledClient() throws {
+@Test(.blocking) func gitWatchSurvivesAKilledClient() throws {
     let fm = FileManager.default
     let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("gk-" + UUID().uuidString)
     let dir = root.path + "-state"
@@ -112,7 +112,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     return (root, root.path + "-state")
 }
 
-@Test func gitWatchReportsReplacementRefsAndReadsWithoutThem() throws {
+@Test(.blocking) func gitWatchReportsReplacementRefsAndReadsWithoutThem() throws {
     for packed in [false, true] {
         let (root, state) = try watched("repl"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
         let w = try #require(GitWatch.begin(root.path, stateDir: state))
@@ -129,7 +129,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     for want in ["1 new commit(s)", "committed a protected path: .envrc", "replacement ref ("] { #expect(out.contains(want), "missing \(want) in \(out)") }
 }
 
-@Test func gitWatchSeesACommitOnADetachedHead() throws {
+@Test(.blocking) func gitWatchSeesACommitOnADetachedHead() throws {
     for atStart in [false, true] {
         let (root, state) = try watched("det"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
         if atStart { _ = git(root.path, "git checkout -q --detach") }
@@ -140,7 +140,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     }
 }
 
-@Test func gitWatchSeesWhatAMergeBringsIn() throws {
+@Test(.blocking) func gitWatchSeesWhatAMergeBringsIn() throws {
     let (root, state) = try watched("merge"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     _ = git(root.path, "git checkout -q -b side && echo 'echo hi' > .envrc && git add .envrc && git commit -qm side && git checkout -q main && echo b > b.txt && git add b.txt && git commit -qm b")
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
@@ -176,7 +176,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
 }
 
 // End to end: HEAD points at a branch that does not exist (diff --cached then lists the whole index, .envrc included) and the tip commit is corrupt (rev-list fails).
-@Test func gitWatchKeepsACommittedPathInTheIndexWhenTheHistoryCannotBeRead() throws {
+@Test(.blocking) func gitWatchKeepsACommittedPathInTheIndexWhenTheHistoryCannotBeRead() throws {
     let (root, state) = try watched("inc1"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
     _ = git(root.path, "echo 'echo hi' > .envrc && git add .envrc && git commit -qm envrc && git symbolic-ref HEAD refs/heads/ghost && h=$(git rev-parse main) && f=.git/objects/$(echo $h | cut -c1-2)/$(echo $h | cut -c3-) && chmod u+w $f && echo junk > $f")
@@ -186,7 +186,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
 }
 
 // A limit reached while every git read succeeded (an agent can make 201 commits on purpose) does not switch the protection off: the staged path is still removed, the report says INCOMPLETE.
-@Test func gitWatchStillUnstagesWhenOnlyALimitWasReached() throws {
+@Test(.blocking) func gitWatchStillUnstagesWhenOnlyALimitWasReached() throws {
     let (root, state) = try watched("lim4"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     var w = try #require(GitWatch.begin(root.path, stateDir: state))
     w.maxCommits = 3
@@ -197,7 +197,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
 }
 
 // The index listing is cut (small output limit): the protected paths are read on their own, so a big index does not switch the protection off.
-@Test func gitWatchStillUnstagesWhenTheListingIsCut() throws {
+@Test(.blocking) func gitWatchStillUnstagesWhenTheListingIsCut() throws {
     let (root, state) = try watched("cut1"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     var w = try #require(GitWatch.begin(root.path, stateDir: state))
     _ = git(root.path, "echo 'echo hi' > .envrc; mkdir .githooks; echo x > .githooks/pre-commit; for i in $(seq 1 30); do echo x > file-with-a-long-name-$i.txt; done; git add .")
@@ -208,7 +208,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
 }
 
 // Every read fails (output limit of 5 bytes): no way to tell what is staged, nothing is removed.
-@Test func gitWatchLeavesTheIndexAloneWhenNoReadWorks() throws {
+@Test(.blocking) func gitWatchLeavesTheIndexAloneWhenNoReadWorks() throws {
     let (root, state) = try watched("cut2"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     var w = try #require(GitWatch.begin(root.path, stateDir: state))
     _ = git(root.path, "echo 'echo hi' > .envrc; git add .envrc")
@@ -219,7 +219,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
 }
 
 // G1: a refs read or a history read that hits the output limit keeps INCOMPLETE but cannot switch the protection off: the agent decides how many refs and how big a commit is.
-@Test func gitWatchStillUnstagesWhenRefsOrHistoryHitTheLimit() throws {
+@Test(.blocking) func gitWatchStillUnstagesWhenRefsOrHistoryHitTheLimit() throws {
     let (root, state) = try watched("lim5"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     var w = try #require(GitWatch.begin(root.path, stateDir: state))
     // many refs: for-each-ref is over the limit; one commit with a long diff-tree listing; then a staged .envrc
@@ -237,7 +237,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     #expect(git(root2.path, "git ls-files -s .envrc").isEmpty, "still in the index: \(out2)")
 }
 
-@Test func gitWatchSaysWhenALimitWasReached() throws {
+@Test(.blocking) func gitWatchSaysWhenALimitWasReached() throws {
     var (root, state) = try watched("lim1"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     var w = try #require(GitWatch.begin(root.path, stateDir: state))
     w.maxCommits = 3
@@ -265,7 +265,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
 }
 
 // The end report waits for the requests that hold the folder lock: what a running request stages is in the report and restored.
-@Test func gitWatchEndReportWaitsForTheFolderLock() throws {
+@Test(.blocking) func gitWatchEndReportWaitsForTheFolderLock() throws {
     let (root, state) = try watched("drain"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     let lockDir = root.path + "-locks"; defer { try? FileManager.default.removeItem(atPath: lockDir) }
     let lock = FolderLock(id: [UInt64.random(in: 1...UInt64.max), 1], dir: lockDir)
@@ -288,7 +288,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
 
 // MARK: round 2 (H3-H6 and the closing gate), the same scenarios as client/gitwatch_test.go
 
-@Test func gitWatchDrainTimeoutRestoresNothing() throws {
+@Test(.blocking) func gitWatchDrainTimeoutRestoresNothing() throws {
     let (root, state) = try watched("dt"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     let lockDir = root.path + "-locks"; defer { try? FileManager.default.removeItem(atPath: lockDir) }
     let lock = FolderLock(id: [UInt64.random(in: 1...UInt64.max), 2], dir: lockDir)
@@ -304,7 +304,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     #expect(FileManager.default.fileExists(atPath: file), "the baseline is gone")
 }
 
-@Test func gitWatchUnreadableAtTheEndWarnsAndKeepsTheBaseline() throws {
+@Test(.blocking) func gitWatchUnreadableAtTheEndWarnsAndKeepsTheBaseline() throws {
     let (root, state) = try watched("ue"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
     let file = try #require(w.file)
@@ -314,7 +314,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     #expect(FileManager.default.fileExists(atPath: file))
 }
 
-@Test func gitWatchRecoveryKeepsAnIncompleteBaseline() throws {
+@Test(.blocking) func gitWatchRecoveryKeepsAnIncompleteBaseline() throws {
     let (root, state) = try watched("rk"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
     let file = try #require(w.file)
@@ -327,7 +327,7 @@ private func watched(_ name: String, _ setup: String = "git init -q -b main && e
     #expect(!FileManager.default.fileExists(atPath: file), "the baseline stays after a complete comparison")
 }
 
-@Test func gitWatchReportsAMovedTag() throws {
+@Test(.blocking) func gitWatchReportsAMovedTag() throws {
     let (root, state) = try watched("mt"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     _ = git(root.path, "git commit -q --allow-empty -m second && git tag v1 HEAD~1")
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
@@ -374,7 +374,7 @@ private func fixtureRoot() -> URL { URL(fileURLWithPath: #filePath).deletingLast
 }
 
 // Astra 5b90d47 finding 1: a name that begins with the commit-header marker is a name, not a commit.
-@Test func gitWatchSeesAProtectedNameThatStartsWithTheMarker() throws {
+@Test(.blocking) func gitWatchSeesAProtectedNameThatStartsWithTheMarker() throws {
     let (root, state) = try watched("marker"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
     _ = git(root.path, "mkdir -p '@@payload/.claude' && echo x > 00.txt && echo '{}' > '@@payload/.claude/settings.json' && git add . && git commit -qm marker")
@@ -382,7 +382,7 @@ private func fixtureRoot() -> URL { URL(fileURLWithPath: #filePath).deletingLast
     #expect(out.contains("1 new commit(s)") && out.contains("committed a protected path: @@payload/.claude/settings.json"), "\(out)")
 }
 
-@Test func gitWatchSeesAProtectedPathWithAQuoteInItsName() throws {
+@Test(.blocking) func gitWatchSeesAProtectedPathWithAQuoteInItsName() throws {
     let (root, state) = try watched("quote"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
     _ = git(root.path, "mkdir -p 'a\"b/.claude' && echo '{}' > 'a\"b/.claude/settings.json' && git add . && git commit -qm quoted")
@@ -390,7 +390,7 @@ private func fixtureRoot() -> URL { URL(fileURLWithPath: #filePath).deletingLast
     #expect(out.contains("a\"b/.claude/settings.json"), "\\(out)")
 }
 
-@Test func gitWatchRecoveryDoesNotTrustAReusedProcessID() throws {
+@Test(.blocking) func gitWatchRecoveryDoesNotTrustAReusedProcessID() throws {
     let (root, state) = try watched("reuse"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     let w = try #require(GitWatch.begin(root.path, stateDir: state))
     let file = try #require(w.file)
@@ -404,7 +404,7 @@ private func fixtureRoot() -> URL { URL(fileURLWithPath: #filePath).deletingLast
     #expect(out.contains("new branches: feature"), "\\(out)")
 }
 
-@Test func gitWatchSaysWhenTheStartStateIsNotStored() throws {
+@Test(.blocking) func gitWatchSaysWhenTheStartStateIsNotStored() throws {
     let (root, state) = try watched("nostore"); defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(atPath: state) }
     try Data().write(to: URL(fileURLWithPath: state))  // the state folder is a file: nothing can be stored
     let w = try #require(GitWatch.begin(root.path, stateDir: state))

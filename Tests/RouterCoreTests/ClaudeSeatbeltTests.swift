@@ -84,7 +84,7 @@ private struct Rig {
     #expect(p.contains("\(rig.home)/.claude/projects/" + Native.claudeProjectFolder(rig.project)))
 }
 
-@Test func readOnlyRunHasNoWriteGrantOnItsFolders() throws {
+@Test(.blocking) func readOnlyRunHasNoWriteGrantOnItsFolders() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let rw = try rig.profile(session: rig.project, folders: [rig.allowed], writable: true)
@@ -95,7 +95,7 @@ private struct Rig {
     #expect(try rig.canRead(ro, rig.project + "/p.txt") && rig.canRead(ro, rig.allowed + "/o.txt"))
 }
 
-@Test func localSessionRows() throws {
+@Test(.blocking) func localSessionRows() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let p = try rig.profile(session: rig.project, folders: [rig.allowed])
@@ -123,7 +123,7 @@ private struct Rig {
 }
 
 /// F1: ~/.claude is an allow list; every other name is closed to reading (one real sandbox-exec row per name).
-@Test func claudeHomeIsAnAllowList() throws {
+@Test(.blocking) func claudeHomeIsAnAllowList() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let p = try rig.profile(session: rig.project)
@@ -139,7 +139,7 @@ private struct Rig {
 }
 
 /// F5: with the setting source `user`, Claude Code reads ~/.claude/settings.json (hooks, permissions): readable then, never writable; otherwise closed.
-@Test func userSettingsAreReadableOnlyWithTheUserSource() throws {
+@Test(.blocking) func userSettingsAreReadableOnlyWithTheUserSource() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let off = try rig.profile(session: rig.project), on = try rig.profile(session: rig.project, userSettings: true)
@@ -149,7 +149,7 @@ private struct Rig {
 }
 
 /// F2: the file tools never touch `.git` (the rule layer's gitDataEditDenies) nor, with project/local sources, `.claude`: the kernel refuses it too, in every writable granted folder.
-@Test func gitAndClaudeFoldersAreClosedForWriting() throws {
+@Test(.blocking) func gitAndClaudeFoldersAreClosedForWriting() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let p = try rig.profile(session: rig.project, folders: [rig.allowed], writable: true, folderSettings: true)
@@ -181,7 +181,7 @@ private struct Rig {
 }
 
 /// F7/F10: the transcript folder's name is not unique per session (`/x/a-b` and `/x/a/b`), so the rule is the run's own conversation id: its files only, no listing of the folder.
-@Test func transcriptRuleIsTheRunsOwnConversation() throws {
+@Test(.blocking) func transcriptRuleIsTheRunsOwnConversation() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     #expect(Native.claudeProjectFolder("/x/a-b") == Native.claudeProjectFolder("/x/a/b"))  // not injective: the folder alone proves nothing
@@ -213,7 +213,7 @@ private struct Rig {
 
 /// F11: what is reachable from inside the profile. Only TCP 443 and DNS go out: a listener on loopback and on this Mac's own LAN address (the gateway's port is one) is closed, also when a
 /// port is named explicitly; nothing can listen (bind/inbound denied). The same listener answers without the profile (the rows prove something).
-@Test func networkRowsLoopbackLanAndBind() async throws {
+@Test(.blocking) func networkRowsLoopbackLanAndBind() async throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     // a listener on every address, held by the signed utility (never accepting: every finished control probe stays queued, one per probed address, backlog 128)
@@ -252,7 +252,7 @@ private struct Rig {
 }
 
 /// L4: the root is never a grant, a trailing slash does not weaken the denies (the prefix `//` matched nothing); L5: the Copilot cache is in the hidden list of a run.
-@Test func rootAndTrailingSlashGrants() throws {
+@Test(.blocking) func rootAndTrailingSlashGrants() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     #expect(Native.claudeRestrictedProfile(session: "/", folders: [], writable: true, tmp: rig.tmp, exe: "/c", home: rig.home) == nil)
@@ -268,7 +268,7 @@ private struct Rig {
     #expect(try !rig.canRead(p, cache + "/pkg.js") && !rig.canWrite(p, cache + "/new.js"))
 }
 
-@Test func devicesAreTheFewOnesClaudeUses() throws {
+@Test(.blocking) func devicesAreTheFewOnesClaudeUses() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let p = try rig.profile(session: rig.project)
@@ -277,7 +277,7 @@ private struct Rig {
     #expect(try !rig.ok(p, "/bin/dd", ["if=/dev/urandom", "of=/dev/zero", "bs=1", "count=1"]))  // /dev/zero is not writable
 }
 
-@Test func sessionInsideTheAppFolderSeesOnlyItself() throws {  // #114: a remote client's mount lives inside the app folder
+@Test(.blocking) func sessionInsideTheAppFolderSeesOnlyItself() throws {  // #114: a remote client's mount lives inside the app folder
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let p = try rig.profile(session: rig.mountA)
@@ -288,7 +288,7 @@ private struct Rig {
     #expect(try !rig.canRead(p, rig.scratch + "/state/s"))
 }
 
-@Test func sessionInsideScratchSeesOnlyItself() throws {
+@Test(.blocking) func sessionInsideScratchSeesOnlyItself() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let p = try rig.profile(session: rig.sync, writable: false)
@@ -299,7 +299,7 @@ private struct Rig {
     #expect(try !rig.canRead(p, rig.app + "/state.json"))
 }
 
-@Test func hiddenAndSecretFoldersInsideAGrantedFolderStayDenied() throws {
+@Test(.blocking) func hiddenAndSecretFoldersInsideAGrantedFolderStayDenied() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     // an allowed folder that contains Scratch and the home's secrets (the gateway refuses such folders; the kernel layer does not depend on that)
@@ -309,7 +309,7 @@ private struct Rig {
     #expect(try !rig.canRead(p, rig.home + "/.claude/history.jsonl"))
 }
 
-@Test func projectFolderIsClaudeCodesFolderName() throws {
+@Test(.blocking) func projectFolderIsClaudeCodesFolderName() throws {
     #expect(Native.claudeProjectFolder("/Users/uros/Development/Claude/ClaudeMini") == "-Users-uros-Development-Claude-ClaudeMini")
     #expect(Native.claudeProjectFolder("/Volumes/Fast SSD/a.b_c") == "-Volumes-Fast-SSD-a-b-c")
     #expect(Native.claudeProjectFolder("/p/Šola") == "-p--ola")
@@ -341,7 +341,7 @@ private struct Rig {
 }
 
 /// F9: the confined run's environment is an allow list: a secret of the gateway's own environment is not in the child; claude's temp folder is the run's private one.
-@Test func confinedEnvironmentIsAnAllowList() throws {
+@Test(.blocking) func confinedEnvironmentIsAnAllowList() throws {
     let parent = ["HOME": "/Users/u", "USER": "u", "LOGNAME": "u", "PATH": "/usr/bin", "SHELL": "/bin/zsh", "LANG": "en_US.UTF-8", "LC_ALL": "C", "HTTPS_PROXY": "http://p:1",
                   "CLAUDE_CODE_DISABLE_FILE_MENTIONS": "1", "TMPDIR": "/var/folders/x/T/", "CLAUDE_CODE_TMPDIR": "/tmp/claude-501",
                   "OPENROUTER_API_KEY": "sk-secret", "GITHUB_TOKEN": "t", "AWS_SECRET_ACCESS_KEY": "a", "MINIGW_AGENT_AUTH_FILE": "/x", "SSH_AUTH_SOCK": "/s", "ANTHROPIC_API_KEY": "k"]
@@ -454,7 +454,7 @@ private final class Clock: @unchecked Sendable {
 }
 
 /// The self-check's runner kills a hung tree on timeout (it once killed nothing: Process is not a group leader, so a hung claude would have blocked every check).
-@Test func captureKillsAHungTreeOnTimeout() async throws {
+@Test(.blocking) func captureKillsAHungTreeOnTimeout() async throws {
     let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("capture-" + UUID().uuidString.lowercased(), isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -555,7 +555,7 @@ private final class Clock: @unchecked Sendable {
 
 /// Real `claude -p`: the weak 0.5.27 argv (bare tool names, acceptEdits: Claude Code's rules let any path through) under the profile must get EPERM from the kernel for
 /// a file outside the session folder. The one allowed skip: claude is not installed or not logged in.
-@Test func realClaudeWithWeakRulesIsStoppedByTheKernel() async throws {
+@Test(.blocking) func realClaudeWithWeakRulesIsStoppedByTheKernel() async throws {
     guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
     let home = NSHomeDirectory()
     let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-test-" + UUID().uuidString.lowercased())  // unique (parallel runs of the suite); its transcript folders are removed below
@@ -593,7 +593,7 @@ private final class Clock: @unchecked Sendable {
 
 /// A token refresh stores the new token in the login keychain through `security`: under the profile that must work (a refresh that cannot be saved loses the rotated refresh
 /// token), and the profile must still not let the process write another file of the Keychains folder. One throw-away item (unique service name), removed afterwards.
-@Test func keychainItemCanBeWrittenUnderTheProfile() throws {
+@Test(.blocking) func keychainItemCanBeWrittenUnderTheProfile() throws {
     let home = NSHomeDirectory()
     guard FileManager.default.fileExists(atPath: home + "/Library/Keychains/login.keychain-db") else { try Test.cancel("no login keychain on this Mac") }
     let rig = try Rig()
@@ -672,7 +672,7 @@ private final class Clock: @unchecked Sendable {
     }
 
     /// A claude that does not run under the profile: the run still answers (rules alone), the log/status carry the reason, and nothing is wrapped.
-    @Test func failedSelfCheckFallsBackToTheRulesAndSaysSo() async throws {
+    @Test(.blocking) func failedSelfCheckFallsBackToTheRulesAndSaysSo() async throws {
         await Router.claudeSeatbelt.setRequireTranscript(false)
         let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("seatbelt-fb-" + UUID().uuidString.lowercased(), isDirectory: true)
         let project = base.appendingPathComponent("proj"), bin = base.appendingPathComponent("bin")
@@ -785,7 +785,7 @@ private final class Clock: @unchecked Sendable {
 }
 
 /// Security review (INFO): `(deny signal (target others))`: a process under the profile still signals its own children (Claude Code stops its tools that way), but not a process outside it.
-@Test func restrictedProfileSignalsOnlyItsOwnProcesses() throws {
+@Test(.blocking) func restrictedProfileSignalsOnlyItsOwnProcesses() throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let p = try rig.profile(session: rig.project)

@@ -74,7 +74,7 @@ private func waitGone(_ pid: pid_t, seconds: Double = 3) async -> Bool {
 
     // MARK: Q9 no inherited descriptor, stdin is /dev/null
 
-    @Test func theProbeSpawnInheritsNoDescriptorAndHasNoStdin() async throws {
+    @Test(.blocking) func theProbeSpawnInheritsNoDescriptorAndHasNoStdin() async throws {
         var p: [Int32] = [0, 0]
         precondition(pipe(&p) == 0)  // no FD_CLOEXEC, as Darwin creates it
         defer { close(p[0]); close(p[1]) }
@@ -254,7 +254,7 @@ private final class Served: @unchecked Sendable {
         #expect(Date().timeIntervalSince(t0) < 120, "the hang guard: took \(Date().timeIntervalSince(t0)) s")
     }
 
-    @Test func aSlowBodyHitsTheDeadlineForTheWholeTransfer() async throws {
+    @Test(.blocking) func aSlowBodyHitsTheDeadlineForTheWholeTransfer() async throws {
         let server = SocketServer { c in
             _ = SocketServer.raw(c, Data("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".utf8))
             for _ in 0..<600 { if !SocketServer.raw(c, Data("x".utf8)) { return }; usleep(200_000) }  // a byte every 0.2 s for two minutes: no request timeout would ever fire

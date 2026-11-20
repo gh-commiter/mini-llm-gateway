@@ -901,7 +901,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
     /// C4 security question: a push and a pull of one link never run at the same time on the lane. A pull (the timer's step) is inside its
     /// manifest callout when a push of the same link is asked for: the upstream never sees two requests at once, and nothing is sent while
     /// the pull is in flight.
-    @Test func aPushAndAPullOfOneLinkNeverRunAtTheSameTimeOnTheLane() async throws {
+    @Test(.blocking) func aPushAndAPullOfOneLinkNeverRunAtTheSameTimeOnTheLane() async throws {
         let secrets = MemorySecrets(), t = fakeUpstream()
         let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
         nonisolated(unsafe) var inflight = 0, maxInflight = 0, postsWhilePulling = 0, pulling = false
@@ -966,7 +966,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
 
     /// F4: a slow upstream must not hold up the rest of the core. The upstream routes have their own connection to the helper (the lane), so a
     /// member read, a KB read and a device revocation are served at their normal speed while a push waits for the network.
-    @Test func aSlowUpstreamNeverHoldsUpMemberReadsOrARevocation() async throws {
+    @Test(.blocking) func aSlowUpstreamNeverHoldsUpMemberReadsOrARevocation() async throws {
         let secrets = MemorySecrets(), t = fakeUpstream()
         let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
         let ok = t.handler
@@ -1002,7 +1002,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
 
     /// D1: a failure of the upstream lane takes down only the lane. Requests on the first connection go on, the helper is not restarted, and
     /// the upstream routes answer a clean 503 with the reason until the next helper start.
-    @Test func aLaneFailureNeverRestartsTheHelperOrHoldsUpTheFirstConnection() async throws {
+    @Test(.blocking) func aLaneFailureNeverRestartsTheHelperOrHoldsUpTheFirstConnection() async throws {
         let secrets = MemorySecrets(), t = fakeUpstream()
         let entered = DispatchSemaphore(value: 0)
         let ok = t.handler

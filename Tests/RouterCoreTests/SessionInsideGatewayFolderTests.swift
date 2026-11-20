@@ -31,7 +31,7 @@ private struct Layout {
     var neighbours: [String] { ["app/mounts/s2/x", "app/mounts/s1x", "app/state.json", "app/core/core.db"].map { base.appendingPathComponent($0).path } }
 }
 
-@Test func codexKeepsTheSessionInsideTheAppFolderAndNotItsNeighbours() throws {
+@Test(.blocking) func codexKeepsTheSessionInsideTheAppFolderAndNotItsNeighbours() throws {
     let exe = try requireCodex()
     let l = try Layout(); defer { l.cleanup() }
     let a = Codex.args(cwd: l.s1, extraDirs: [], agent: true, output: l.base.appendingPathComponent("o"), write: true, deny: [l.app.path], tmp: l.tmp.path)
@@ -42,7 +42,7 @@ private struct Layout {
     for n in l.neighbours { let r = under(n); #expect(r.status != 0 && !r.out.contains("OTHER") && !r.out.contains("SIBLING") && !r.out.contains("STATE") && !r.out.contains("CORE"), "\(n): \(r)") }
 }
 
-@Test func seatbeltProfileKeepsTheSessionInsideTheAppFolderAndNotItsNeighbours() throws {
+@Test(.blocking) func seatbeltProfileKeepsTheSessionInsideTheAppFolderAndNotItsNeighbours() throws {
     let l = try Layout(); defer { l.cleanup() }
     let profile = try #require(Native.sandboxProfile(dir: l.s1.path, home: l.base.path, network: false, hidden: [l.app.path], writable: [l.s1.path], visible: l.s1.path))
     func under(_ p: String) -> (status: Int32, out: String) { run("/usr/bin/sandbox-exec", ["-p", profile, "/bin/cat", p]) }

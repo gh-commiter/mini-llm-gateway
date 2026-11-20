@@ -171,7 +171,7 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(t.status == 200 && t.text.contains("--token 'newtok#KEY'"))
     }
 
-    @Test func gatewaysWithDiscoveryAndKeys() async throws {
+    @Test(.blocking) func gatewaysWithDiscoveryAndKeys() async throws {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [StubUpstream.self]
         let session = URLSession(configuration: cfg)
@@ -195,7 +195,7 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
     }
 
     /// A router that finishes the handshake and then closes without a reply: the message says the peer closed, not an old errno.
-    @Test func peerClosingAfterTheHandshakeIsNamedAsSuch() {
+    @Test func peerClosingAfterTheHandshakeIsNamedAsSuch() async {
         let (fd, port) = listener()
         defer { close(fd) }
         let key = Noise.newKey()
@@ -215,11 +215,12 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
             var rest = [UInt8](repeating: 0, count: 65536)
             _ = Sock.retry { Darwin.read(c, &rest, rest.count) }  // take the request first: closing with it unread would be a reset, not a clean close
         }.start()
-        let result = AdminClient(port: port, routerKey: key.publicKey.rawRepresentation).attempt("GET", "/health/live", nil, timeout: 5)
+        let client = AdminClient(port: port, routerKey: key.publicKey.rawRepresentation)
+        let result = await offPool { client.attempt("GET", "/health/live", nil, timeout: 5) }
         #expect(result.0 == 0 && result.2 == "no reply head: 0 bytes (peer closed without data)", "\(result.2)")
     }
 
-    @Test func rejectedHandshakeNamesGateway() {
+    @Test func rejectedHandshakeNamesGateway() async {
         let (fd, port) = listener()
         defer { close(fd) }
         Thread {
@@ -236,8 +237,8 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
             let reply = Data(repeating: 0, count: Noise.handshakeLength)
             _ = reply.withUnsafeBytes { b in Sock.retry { write(c, b.baseAddress, b.count) } }
         }.start()
-        let result = AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation)
-            .attempt("GET", "/health/live", nil, timeout: 5)
+        let client = AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation)
+        let result = await offPool { client.attempt("GET", "/health/live", nil, timeout: 5) }
         #expect(result.0 == 0 && result.1 == nil && result.2 == "not this gateway")
     }
 
@@ -370,7 +371,7 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
 /// Zaporedno: otrok iz refusesAChildProcess (Process podeduje odprte datoteke) bi sicer podedoval vtičnico drugega testa.
 @Suite(.serialized) struct AdminPeerProcess {
     /// Odjemalec je ta proces: »aplikacija« sama (oz. njen otrok) je zavrnjena, tuja aplikacija ne; neznan proces zavrnjen.
-    @Test func identifiesTheClientProcess() throws {
+    @Test(.blocking) func identifiesTheClientProcess() async throws {
         let (l, routerPort) = listener()
         defer { close(l) }
         let c = socket(AF_INET, SOCK_STREAM, 0)
@@ -379,7 +380,7 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
         var a = sockaddr_in()
         a.sin_family = sa_family_t(AF_INET); a.sin_addr.s_addr = inet_addr("127.0.0.1"); a.sin_port = routerPort.bigEndian
         _ = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(c, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-        let (s, peerPort) = acceptPeerPort(l)
+        let (s, peerPort) = await offPool { acceptPeerPort(l) }
         defer { close(s) }
         func holders() -> String {  // diagnostika: procesi z vtičnico (otrok vzporednega testa, ki jo je podedoval?)
             PeerProcess.pids(localPort: peerPort, remotePort: routerPort).map { p -> String in
@@ -388,21 +389,21 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
         }
         // Med posix_spawn vzporednega testa ima otrok za trenutek kopijo vseh datotek (tudi FD_CLOEXEC, do exec): drug proces
         // z isto vtičnico je lahko bežen. Zato vsako preverjanje do 2 s, dokler ne velja.
-        func eventually(_ ok: () -> Bool) -> Bool {
-            for _ in 0..<40 { if ok() { return true }; usleep(50_000) }
+        func eventually(_ ok: () -> Bool) async -> Bool {
+            for _ in 0..<40 { if ok() { return true }; try? await Task.sleep(for: .milliseconds(50)) }
             return false
         }
-        #expect(eventually { PeerProcess.pid(localPort: peerPort, remotePort: routerPort) == getpid() }, "\(holders())")
-        #expect(eventually { PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid())
+        #expect(await eventually { PeerProcess.pid(localPort: peerPort, remotePort: routerPort) == getpid() }, "\(holders())")
+        #expect(await eventually { PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid())
                     == "admin requests from agent processes are not allowed" }, "\(holders())")
-        #expect(eventually { PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999) == nil },  // veriga do PID 1
+        #expect(await eventually { PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999) == nil },  // veriga do PID 1
                 "\(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999) ?? ""): \(holders())")
         #expect(PeerProcess.parent(1) == 0 && PeerProcess.parent(999_999) == nil)
         #expect(PeerProcess.refusal(peerPort: 1, routerPort: routerPort, appPID: 999_999)?.contains("cannot identify") == true)
     }
 
     /// Otrok »aplikacije« (kot agent ali minigw, ki ga zažene agent) je zavrnjen.
-    @Test func refusesAChildProcess() throws {
+    @Test func refusesAChildProcess() async throws {
         let (l, routerPort) = listener()
         defer { close(l) }
         let nc = Process()
@@ -411,14 +412,14 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
         nc.standardInput = Pipe()  // ostane odprt, dokler ga test ne konča
         try nc.run()
         defer { nc.terminate() }
-        let (s, peerPort) = acceptPeerPort(l)
+        let (s, peerPort) = await offPool { acceptPeerPort(l) }  // nc connects when it has started: no deadline of its own, so not on a pool thread
         defer { close(s) }
         #expect(PeerProcess.pid(localPort: peerPort, remotePort: routerPort) == nc.processIdentifier)
         #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid()) == "admin requests from agent processes are not allowed")
     }
 
     /// Proces v sandboxu je zavrnjen, tudi če ni potomec aplikacije (dvojni fork se ne izogne sandboxu).
-    @Test func refusesASandboxedProcess() throws {
+    @Test func refusesASandboxedProcess() async throws {
         let (l, routerPort) = listener()
         defer { close(l) }
         let p = Process()
@@ -427,7 +428,7 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
         p.standardInput = Pipe()
         try p.run()
         defer { p.terminate() }
-        let (s, peerPort) = acceptPeerPort(l)
+        let (s, peerPort) = await offPool { acceptPeerPort(l) }
         defer { close(s) }
         #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999)?.contains("sandboxed") == true)
     }

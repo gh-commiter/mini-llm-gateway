@@ -593,17 +593,17 @@ private final class Captured: @unchecked Sendable {
         return (got.text.components(separatedBy: "\r\n\r\n").first ?? "") + "\r\n\r\n"  // the head; the body may come in the same frame
     }
 
-    @Test func projectIsSetAndAForgedHeaderDropped() async throws {
+    @Test(.blocking) func projectIsSetAndAForgedHeaderDropped() async throws {
         let seen = try await headSeen(project: "42", forged: ["X-Minigw-Project: 9", "x-MINIGW-project: 8"])
         #expect(seen == "POST /v1/messages HTTP/1.1\r\nX-Minigw-Project: 42\r\nHost: x\r\nContent-Length: 2\r\n\r\n", "\(seen.debugDescription)")
     }
 
-    @Test func aHeadThatCannotBeRewrittenSafelyReachesNobody() async throws {  // F1: the late chunk carries a forged header with a space before the colon
+    @Test(.blocking) func aHeadThatCannotBeRewrittenSafelyReachesNobody() async throws {  // F1: the late chunk carries a forged header with a space before the colon
         let seen = try await headSeen(project: "42", forged: ["x-MINIGW-project : 8"])
         #expect(seen == "\r\n\r\n", "\(seen.debugDescription)")
     }
 
-    @Test func noProjectMeansNoHeaderEvenIfTheProgramSendsOne() async throws {
+    @Test(.blocking) func noProjectMeansNoHeaderEvenIfTheProgramSendsOne() async throws {
         let seen = try await headSeen(project: "", forged: ["X-Minigw-Project: 9"])
         #expect(seen == "POST /v1/messages HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n", "\(seen.debugDescription)")
     }
@@ -637,7 +637,7 @@ private final class Captured: @unchecked Sendable {
         return p.terminationStatus == 0
     }
 
-    @Test func theOriginIsTheRawConfigValue() throws {
+    @Test(.blocking) func theOriginIsTheRawConfigValue() throws {
         let dir = try tempRoot()
         guard try git(dir, ["init", "-q"]) else { return }  // no git: nothing to prove here
         #expect(ProjectEnv.gitOrigin(dir) == "")
@@ -651,7 +651,7 @@ private final class Captured: @unchecked Sendable {
         #expect(ProjectEnv.gitOrigin(try tempRoot()) == "")
     }
 
-    @Test func gitIsNeverTakenFromTheFolder() throws {
+    @Test(.blocking) func gitIsNeverTakenFromTheFolder() throws {
         let dir = try tempRoot()
         guard try git(dir, ["init", "-q"]), try git(dir, ["remote", "add", "origin", "https://host.example/a/b"]) else { return }
         let marker = dir + "/ran-fake-git"
