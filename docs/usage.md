@@ -1761,9 +1761,19 @@ listed in `status` (last refusal and how many), the failure count and back-off d
 changes here (a manual push tries it again); a run in which every try was refused is a failure with back-off. Nothing is
 sent for a note that cannot be traced, so a note is never knowingly sent as a new one when it may already exist there. A link that has sent notes cannot
 be pointed at another project on the upstream (unlink it and link it again); `gw upstream link` without `--remote-project` on an existing link keeps
-its destination (only a first link uses the local name). After restoring an older database (see Going back in `docs/install.md`) check
-`gw upstream status` and do not push before comparing with the upstream: what was sent after that backup is not known to the restored database, and a push would create it
-again there. Notes deleted here, and changes of class to private, are not
+its destination (only a first link uses the local name). After restoring an older database (see Going back in `docs/install.md`) every upstream link is
+**marked "restored: reconcile before pushing"**: what was sent after that backup is not known to the restored database, so a push would create it
+again there. A marked link sends and creates nothing: not a manual push, not the automatic push (its timer skips the link without back-off, and the
+pending work waits), not `--dry-run` (it still lists what would go and says the link is blocked), whether the link submits or publishes. Pulling is not
+blocked. `gw upstream status` shows the state and since when, and a blocked push prints one line and "created 0, replaced 0" (exit code 0: nothing was sent, and
+a script sees no failure; read the line). The mark is cleared when the link is removed (`unlink`, or removing the upstream) and by the owner's override
+`minigw gw upstream push <project> --upstream <name> --after-restore` (`--team <team>` for a team link): it first says that pushing without reconciling can
+create second copies on the upstream, asks for a "y" in a terminal (or takes `--yes` without one), writes an audit row (the owner, the link and the time, no note text), clears the mark
+of that one link and pushes. Ordinary link edits (`link` again, `--auto`, `--manual`) do not clear it. Reconcile is not available in this version: compare with the
+upstream by hand (`gw upstream push --dry-run`, `gw kb` on both sides), then use the override. Two things mark the links, both exact: `gw core restore` (also the Mac app's restore) and a file named `core.restored` in the core folder (the one that holds `core.db`), which `backup.sh --restore` of a Docker deployment writes and the gateway consumes at its next start (it marks the links in one database transaction, then removes the file).
+Nothing else is guessed: a database that is simply copied back, with or without `core.state`, is **not detected** (an epoch gap between the two files proves nothing, and an older database with the same epoch shows none). After such a copy, create the file by hand BEFORE you start the gateway: in a plain folder `touch <core folder>/core.restored` as the account that runs the gateway and `chmod 600` it (Windows: create an empty file of that name); for a Compose volume
+`docker run --rm --network none --user 0:0 --mount type=volume,src=<project>_config,dst=/v <the gateway's image> sh -c ': > /v/core/core.restored && chown 10001:10001 /v/core/core.restored && chmod 600 /v/core/core.restored'`.
+Without it, check `gw upstream status` yourself and do not push before comparing with the upstream. Notes deleted here, and changes of class to private, are not
 propagated; the copy there stays until it is removed there. If the upstream limits writes the push waits and goes on. Every note
 of a run is reported as `create`, `skip`, `replace`, `wait`, `conflict` or `refused` with the upstream's own text; a refusal that would apply to all
 notes (not allowed, no such project, too many pending submissions) ends the run for that link and is shown by `status`.

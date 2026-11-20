@@ -2,9 +2,18 @@
 
 ## Unreleased
 
+## 0.9.2
+
 ### Fixed
 - Note history: when a project is over its 500 MiB history budget, the saved versions of the note being written go first (a quick series first, then the oldest; its newest saved version stays), then the writer's versions in other notes (oldest first, each note's newest stays), and only then the project's oldest. One member's edit loop no longer evicts other people's saved versions; the per-note limits (100 versions, 8 MiB) and the rule that an overwrite is never refused are unchanged. When the writer's own versions cannot free enough, the project's oldest still go, as before.
 - Docs: a grant gives permission only; to find and read the granted project's notes from the receiving project's folder the owner also records `gw project depends add`. A project admin writes a team's notes only when they are also on the team's roster.
+- Upstream push after a restore: restoring an OLDER local database no longer lets the gateway push edited notes as second copies. Every upstream link of a restored database (`gw core restore`, or `backup.sh --restore` of a Docker deployment, which leaves a `core.restored` file that the gateway consumes at its next start) is marked "restored: reconcile before pushing" and sends and creates nothing (manual, automatic, `--dry-run` reports it, submit and publish alike) until the link is removed or the owner runs `gw upstream push <project> --upstream <name> --after-restore` (it asks first, is audited and clears that link only). `gw upstream status` and the upstreams panel show the state. Reconcile (matching the notes the upstream already has) is not in this version. A database copied back by hand is not detected (an epoch gap proves nothing): create `core.restored` in the core folder before starting; see `docs/usage.md`.
+
+### Known problems
+- After a restore there is no reconcile yet: the owner either removes the link and links again, or pushes with `--after-restore`, which sends edited notes as new submissions when the upstream already has them (duplicates to sort out in the upstream's inbox). Reconcile comes in a later beta.
+- A database folder copied back by hand (not `gw core restore`, not `backup.sh --restore`) is not detected; create `core.restored` before the start (`docs/usage.md`).
+- The Docker path of the restore mark (the gateway in a container consumes `core.restored` at its first start) is covered by Go tests and by the file check in the Compose test, not yet by a container run that pushes.
+- The known problems of 0.9.1 and 0.9.0 still apply.
 
 ## 0.9.1
 

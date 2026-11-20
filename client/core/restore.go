@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const restoreTmp = ".core-restore.tmp"
@@ -459,6 +460,11 @@ func stamp(ctx context.Context, path string, st state, src string) error {
 			tx.Rollback()
 			return err
 		}
+	}
+	// The restored database no longer knows what it sent upstream: every link waits for the owner (see upstream_restore.go).
+	if err = markRestored(tx, time.Now()); err != nil {
+		tx.Rollback()
+		return err
 	}
 	if err = Audit(tx, "core", "restore", filepath.Base(src), map[string]any{"epoch": st.Epoch}); err != nil {
 		tx.Rollback()

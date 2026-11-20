@@ -21,6 +21,8 @@ public struct AdminOpts {
     /// right: raw text from stdin or the terminal, checked by AdminCommands.secretLine)
     public var remoteProject = "", remoteTeam = "", classes = "", deviceName = "", mode = "", upstream = ""
     public var withPrivate = false, dryRun = false, auto = false, manual = false, theirs = false, ours = false
+    /// upstream push --after-restore [--yes]: the override of a link marked as restored
+    public var afterRestore = false, yes = false
     /// upstream link, reading (step C): --read, --no-read, --read-class, --read-sources, --accept-reach
     public var read = false, noRead = false, acceptReach = false, readClass = "", readSources = "", pullEvery = ""
     /// labels eval: the examples file and --show-errors (the misses with their text, to this terminal only)

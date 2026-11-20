@@ -236,9 +236,16 @@ func (a *API) adminUpstreamPush(ctx context.Context, st *core.Store, method stri
 		Upstream string `json:"upstream"`
 		After    int64  `json:"after"`
 		DryRun   bool   `json:"dryRun"`
+		// AfterRestore: the owner's override of a link marked "restored: reconcile before pushing": clears that one link's mark (audited), then pushes
+		AfterRestore bool `json:"afterRestore"`
 	}
-	if decodeStrict(body, &b) != nil || b.Project < 0 || b.Team < 0 || b.Project > 0 && b.Team > 0 || b.Upstream != "" && !core.ValidUpstreamName(b.Upstream) {
-		return fail(400, "bad JSON body (project or team, upstream, after, dryRun)")
+	if decodeStrict(body, &b) != nil || b.Project < 0 || b.Team < 0 || b.Project > 0 && b.Team > 0 || b.Upstream != "" && !core.ValidUpstreamName(b.Upstream) || b.AfterRestore && (b.DryRun || b.After != 0) {
+		return fail(400, "bad JSON body (project or team, upstream, after, dryRun, afterRestore)")
+	}
+	if b.AfterRestore {
+		if err := st.ClearRestoreMark(ctx, b.Project, b.Team, b.Upstream); err != nil {
+			return failErr(err)
+		}
 	}
 	sleep := a.o.UpstreamSleep
 	if sleep == nil {
@@ -376,6 +383,8 @@ type adminLinkJSON struct {
 	ProjectID   int64  `json:"projectId"`
 	TeamID      int64  `json:"teamId"`
 	ClassesText string `json:"classesText"`
+	// RestoredBlocked: the link is marked "restored: reconcile before pushing" (read only; the time is in Restored).
+	RestoredBlocked bool `json:"restoredBlocked"`
 	// ConflictCount: how many publish-mode notes are in conflict (the list itself is in GET /upstream-links/{id}).
 	ConflictCount int `json:"conflictCount"`
 	// Reading, as text a panel shows and a confirmation fills in: the classes and the extra sources the link reads, and the interval in minutes.
@@ -423,6 +432,7 @@ func toAdminLink(l core.UpstreamLinkInfo) adminLinkJSON {
 	}
 	j.ClassesText = strings.Join(cs, ", ")
 	j.ConflictCount = len(l.Conflicts)
+	j.RestoredBlocked = l.Restored != nil
 	var rc []string
 	for _, c := range l.ReadClasses {
 		rc = append(rc, string(c))

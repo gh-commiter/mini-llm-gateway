@@ -3057,6 +3057,23 @@
        "sections": [
         {
          "kind": "record",
+         "id": "restore",
+         "title": "builtin.upstreams.section.links.detail.section.restore.title",
+         "source": {
+          "path": "/upstream-links/{parent.id}"
+         },
+         "columns": [
+          {
+           "field": "restoredBlocked",
+           "kind": "bool",
+           "label": "builtin.upstreams.section.links.column.restoredblocked",
+           "yes": "builtin.upstreams.section.links.column.restoredblocked.yes",
+           "no": "builtin.upstreams.section.links.column.restoredblocked.no"
+          }
+         ]
+        },
+        {
+         "kind": "record",
          "id": "sync",
          "title": "builtin.upstreams.section.links.detail.section.sync.title",
          "source": {

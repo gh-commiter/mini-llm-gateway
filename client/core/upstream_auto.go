@@ -100,7 +100,7 @@ func (s *Store) AutoPush(ctx context.Context, tr UpstreamTransport, sleep func(t
 	var cursor int64
 	var found bool
 	err := s.read(ctx, func(tx *sql.Tx) error {
-		switch e := tx.QueryRow(`SELECT project_id,upstream,push_cursor FROM upstream_links WHERE auto=1 AND dirty_since>0 AND next_attempt<=?1 AND (last_change<=?2 OR dirty_since<=?3) ORDER BY dirty_since LIMIT 1`,
+		switch e := tx.QueryRow(`SELECT project_id,upstream,push_cursor FROM upstream_links WHERE auto=1 AND dirty_since>0 AND NOT `+restoredSQL+` AND next_attempt<=?1 AND (last_change<=?2 OR dirty_since<=?3) ORDER BY dirty_since LIMIT 1`,
 			now, now-t.Debounce.Milliseconds(), now-t.MaxWait.Milliseconds()).Scan(&project, &upstream, &cursor); e {
 		case nil:
 			found = true
@@ -148,7 +148,7 @@ func (s *Store) AutoPush(ctx context.Context, tr UpstreamTransport, sleep func(t
 func (s *Store) autoNext(ctx context.Context, t AutoTiming, now int64) time.Duration {
 	var soonest sql.NullInt64
 	s.read(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRow(`SELECT min(max(next_attempt, min(last_change+?1, dirty_since+?2))) FROM upstream_links WHERE auto=1 AND dirty_since>0`, t.Debounce.Milliseconds(), t.MaxWait.Milliseconds()).Scan(&soonest)
+		return tx.QueryRow(`SELECT min(max(next_attempt, min(last_change+?1, dirty_since+?2))) FROM upstream_links WHERE auto=1 AND dirty_since>0 AND NOT `+restoredSQL, t.Debounce.Milliseconds(), t.MaxWait.Milliseconds()).Scan(&soonest)
 	})
 	if !soonest.Valid {
 		return 0

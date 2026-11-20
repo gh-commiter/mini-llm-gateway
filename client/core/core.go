@@ -205,6 +205,9 @@ func (s *Store) open() error {
 	m.Epoch, m.ProjectHigh = max(m.Epoch, side.Epoch), max(m.ProjectHigh, side.ProjectHigh)
 	s.st, s.gw = m, m.GatewayID
 	s.epoch.Store(m.Epoch)
+	if err := s.consumeRestorePending(ctx); err != nil {
+		return err
+	}
 	defer s.reloadBound(ctx)
 	if err := s.write(ctx, markInterrupted); err != nil { // events a crash cut off (a spool replay is the caller's business)
 		return err

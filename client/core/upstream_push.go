@@ -55,6 +55,8 @@ type UpstreamPush struct {
 	Next    int64 `json:"next,omitempty"`
 	Project int64 `json:"project"` // the local side of the link: a project id, or a team's segment id
 	Team    bool  `json:"team"`
+	// Blocked: the link is marked "restored: reconcile before pushing": nothing was sent or created (a dry run still lists what would go).
+	Blocked bool `json:"blocked"`
 }
 
 // PushUpstream sends the published notes of the linked projects (project or team > 0: that one; both 0: every link) to their upstreams as
@@ -490,6 +492,14 @@ func (s *Store) upstreamLock(upstream string) *sync.RWMutex {
 }
 
 func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLink, label string, after int64, dry bool, sleep func(time.Duration) bool, auto bool) (UpstreamPush, error) {
+	var dryBlock string // a dry run of a marked link still reports what would go, and that the link is blocked
+	if dry {
+		if r, blocked, err := s.restoreGate(ctx, l, label); err != nil {
+			return UpstreamPush{}, err
+		} else if blocked {
+			dryBlock = r.Lines[0]
+		}
+	}
 	if !dry { // one real push of a link at a time: two would both write with the same revision and one would record a false conflict
 		upMu := s.upstreamLock(l.Upstream)
 		if !upMu.TryRLock() {
@@ -501,11 +511,18 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 			return UpstreamPush{}, errPushRunning{}
 		}
 		defer mu.Unlock()
+		// The restore gate: under the link lock, before any traversal or request; the mark is set only offline or at start and cleared under this lock.
+		if r, blocked, err := s.restoreGate(ctx, l, label); blocked || err != nil {
+			return r, err
+		}
 		if err := s.beginTraversal(ctx, l, after); err != nil {
 			return UpstreamPush{}, err
 		}
 	}
 	res, err := s.pushLinkRun(ctx, tr, l, label, after, dry, sleep)
+	if dryBlock != "" {
+		res.Blocked, res.Lines = true, append([]string{dryBlock}, res.Lines...)
+	}
 	if err == nil && !dry && !res.archived { // the outbox: cleared by a success, a back-off after a failure
 		err = s.afterRun(context.WithoutCancel(ctx), l, res)
 	}

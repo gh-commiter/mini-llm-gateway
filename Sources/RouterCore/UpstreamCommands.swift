@@ -18,7 +18,8 @@ extension AdminCommands {
           minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)
           minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
           minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
-          minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link)
+          minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link; a link restored from a backup sends nothing until it is cleared)
+          minigw gw upstream push <project>|--team <team> --after-restore [--upstream <name>] [--yes]   the owner's override for a link marked "restored": push without reconciling (can create second copies on the upstream)
           minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)
         """
 
@@ -127,6 +128,9 @@ extension AdminCommands {
             for l in links {
                 let d = l.dict
                 say(clean(Self.upstreamLinkLine(d, zone)))
+                if let t = d["restored"]?.string.flatMap(ProjectText.parseTime) {
+                    say(clean("  restored: reconcile before pushing (since " + ProjectText.stamp(t, zone) + "): nothing is sent from this link; reconcile is not available in this version: compare with the upstream, then " + Self.upstreamAfterRestoreCmd(d)))
+                }
                 if let s = Self.upstreamSyncLine(d, zone) { say(clean("  " + s)) }
                 say(clean("  " + Self.upstreamReadLine(d, zone)))
                 if d["read"]?.bool == true, let e = d["pullError"]?.string, !e.isEmpty { say(clean("  last pull error: " + e)) }
@@ -152,6 +156,18 @@ extension AdminCommands {
             if !team.isEmpty && pos.count == 2 { body["team"] = try teamID(team) }
             else if team.isEmpty && pos.count == 3 { body["project"] = try projectID(pos[2]) }
             else if pos.count != 2 { throw usage }
+            if o.afterRestore {
+                if o.dryRun || body.count < 2 { throw fail("push --after-restore names one project or --team, and is not a dry run") }
+                say("Pushing without reconciling can create second copies on the upstream: notes it already has from before the restore are sent again as new notes.")
+                if !o.yes {
+                    if !isTerminal() { throw fail("push --after-restore: confirm in a terminal, or add --yes") }
+                    out("Push without reconciling? [y/N] ")
+                    let a = (readAnswer() ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    if a != "y" && a != "yes" { throw fail("push --after-restore: declined, nothing was changed") }
+                }
+                body["afterRestore"] = true
+                if !o.upstream.isEmpty { body["upstream"] = o.upstream }
+            }
             // A helper answers a call within 30 seconds and a run sends a bounded number of notes: a push that is not through comes back with
             // "more" and where it stopped; ask again for that link, as long as it gets further (or only waits for the upstream's write
             // limit, a bounded number of times).
@@ -308,6 +324,13 @@ extension AdminCommands {
             return "note \(c.dict["note"]?.int ?? 0) (" + what + ")"
         }
         return parts.isEmpty ? nil : "CONFLICT: " + parts.joined(separator: ", ") + ": not overwritten until minigw gw upstream resolve <project> <note> --theirs|--ours"
+    }
+
+    /// The command that clears the restore mark of the link d (as Go's upstreamAfterRestoreCmd).
+    static func upstreamAfterRestoreCmd(_ d: JDict) -> String {
+        let label = d["label"]?.string ?? ""
+        let who = d["team"]?.bool == true ? "--team " + (label.hasPrefix("team ") ? String(label.dropFirst(5)) : label) : label
+        return "minigw gw upstream push " + who + " --upstream " + (d["upstream"]?.string ?? "") + " --after-restore"
     }
 
     /// Published notes that arrived from another gateway: never pushed onward (as Go's upstreamForeign).

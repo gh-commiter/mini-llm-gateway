@@ -71,3 +71,17 @@ import Testing
         #expect(AdminCommands.gatewayReadyText(ready: false, state: "", reason: "") == ", models not loaded (see the gateway log)")
     }
 }
+
+/// The Mac executable's mapping of an upstream argv to options (the fixtures inject options directly and would not see a flag that is never wired).
+@Suite struct UpstreamArgvWiring {
+    @Test func theOverrideAndItsConfirmationReachTheOptions() {
+        let (pos, flags) = AdminArgs.parse(["upstream", "push", "shop", "--after-restore", "--yes", "--upstream", "hub", "--dry-run"])
+        #expect(pos == ["upstream", "push", "shop"])
+        var o = AdminOpts()
+        AdminArgs.applyUpstream(flags, to: &o)
+        #expect(o.afterRestore && o.yes && o.dryRun && o.upstream == "hub")
+        var plain = AdminOpts()
+        AdminArgs.applyUpstream(AdminArgs.parse(["upstream", "push", "shop"]).flags, to: &plain)
+        #expect(!plain.afterRestore && !plain.yes && !plain.dryRun && plain.upstream.isEmpty)
+    }
+}

@@ -146,6 +146,9 @@ A failed backup is
 incomplete and must not be used. Both volumes belong together. The config volume holds provider keys in protected
 files: a backup is a secret. Keep it private and copy it to protected storage.
 `docker compose down` keeps volumes; `down -v` deletes all their data.
+A restore leaves a "restore pending" file (`core/core.restored`) in the config volume. The gateway reads it at its next start, marks every upstream link "restored: reconcile before pushing" in one database
+transaction (a link marked this way sends nothing until the owner compares with the upstream and runs `minigw gw upstream push <project> --upstream <name> --after-restore`) and only then removes the file. A volume
+copied back by some other means leaves no such file and is not detected: create it by hand before starting (command in the upstream chapter of `usage.md`).
 If a restore fails during extraction, its targets may be partially populated. Keep the backup,
 inspect the failure and remove only those failed restore volumes before retrying into empty targets.
 
