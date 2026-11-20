@@ -106,7 +106,7 @@ final class FoundryStub: URLProtocol, @unchecked Sendable {
     }
 
     /// F1, F2, F5, F7.
-    @Test func reviewFixes() throws {
+    @Test(.blocking) func reviewFixes() throws {
         // F2: lastni poslušalec je naš; port brez poslušalca ne.
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(fd) }

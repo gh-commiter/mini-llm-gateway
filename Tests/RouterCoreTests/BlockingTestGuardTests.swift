@@ -20,6 +20,11 @@ import Testing
         (#"Native\.(run|spawnGroup)\w*\("#, "Native process call"), (#"ClaudeSeatbelt\.capture"#, "ClaudeSeatbelt.capture"),
         (#"\.sync\s*[{(]"#, "DispatchQueue.sync"), (#"SO_RCVTIMEO"#, "blocking read with a timeout"), (#"AdminClient\("#, "AdminClient request"),
         (#"(?<![\w.])flock\("#, "flock"),
+        // production functions that block their caller (a test that calls them directly holds a pool thread; the router calls them through offPool)
+        (#"ClaudeSeatbelt\.checkNow"#, "ClaudeSeatbelt.checkNow (runs claude and waits)"), (#"(ClaudeCLI|Codex|Copilot)\.detected|Detected\.pathNow"#, "detected (waits for the login-shell search)"),
+        (#"ClaudeCLI\.validate\("#, "ClaudeCLI.validate (runs claude --version and waits)"), (#"Codex\.catalog\("#, "Codex.catalog (runs codex and waits)"),
+        (#"NoiseHTTPTransport\("#, "NoiseHTTPTransport (a request that waits for its answer)"), (#"NativeHub\.cleanupRunTemps"#, "NativeHub.cleanupRunTemps (lists the temp folders)"),
+        (#"PeerProcess\.listenerIsOurs"#, "PeerProcess.listenerIsOurs (reads the file table of every process)"),
     ]
     /// Blocks that are not looked into: the work is on a thread of its own there.
     static let offThread = try! NSRegularExpression(pattern: #"offPool\s*\(?\s*\{|Thread\s*\{|Thread\.detachNewThread\s*\{|Thread\(block:\s*\{"#)
@@ -52,16 +57,23 @@ import Testing
         return Set(primitives.filter { text.range(of: $0.pattern, options: .regularExpression) != nil }.map(\.name))
     }
 
-    /// The function starting at line `from`: its text up to the closing brace, and the line it ends on.
+    /// The function starting at line `from`: its text up to the closing brace, and the line it ends on. The end is found by indent (the first line that starts with `}` at the indent
+    /// of the `func` line), not by counting braces: a brace in a string literal ("{" in a JSON text, a regex) fooled the count, a test seemed to end hundreds of lines late and the
+    /// tests inside that range were never scanned (100 of 902 tests, among them ones that hold pool threads, 2026-11-20). A body on one line (`{ ... }`) ends on its own line.
     static func body(_ lines: [Substring], from: Int) -> (text: String, end: Int) {
-        var depth = 0, k = from, started = false, parts = [Substring]()
+        let indent = lines[from].prefix { $0 == " " }.count
+        func code(_ l: Substring) -> String { l.range(of: #"\s*//[^"]*$"#, options: .regularExpression).map { String(l[..<$0.lowerBound]) } ?? String(l) }
+        var k = from, end = lines.count - 1
         while k < lines.count {
-            for ch in lines[k] { if ch == "{" { depth += 1; started = true } else if ch == "}" { depth -= 1 } }
-            parts.append(lines[k])
-            if started && depth <= 0 { break }
+            let c = code(lines[k]).trimmingCharacters(in: .whitespaces)
+            if c.hasSuffix("}") { end = k; break }
+            if c.hasSuffix("{") {
+                end = (k + 1..<max(k + 1, lines.count)).first { m in lines[m].prefix { $0 == " " }.count == indent && lines[m].drop { $0 == " " }.hasPrefix("}") } ?? lines.count - 1
+                break
+            }
             k += 1
         }
-        return (parts.joined(separator: "\n"), k)
+        return (lines[from...end].joined(separator: "\n"), end)
     }
 
     /// Tests of one source text that block but do not carry `.blocking`: (test name, what blocks).
@@ -187,6 +199,10 @@ import Testing
         #expect(planted("@Test", "    await offPool { usleep(1000) }").isEmpty)  // on a thread of its own
         #expect(planted("@Test", "    Thread { usleep(1000) }.start()").isEmpty)
         #expect(planted("@Test", "    let polled = s.wait(timeout: .now()) == .success").isEmpty)  // a poll does not block
+        // braces inside string literals must not move the end of a test: the next test is scanned too (it was swallowed by a brace count, 100 tests were never looked at)
+        let afterBraceInString = "@Test func a() {\n    let s = \"{\"\n    #expect(s == \"{\")\n}\n@Test func b() {\n    usleep(10)\n}\n"
+        #expect(Self.violations(in: afterBraceInString).map(\.test) == ["b"])
+        #expect(planted("@Test", "    ClaudeSeatbelt.checkNow(exe: e, tmpBase: b, home: h)") == ["t"])
         let viaHelper = "private func slow() { usleep(10) }\nprivate func slower() { slow() }\n@Test func t() {\n    slower()\n}\n"
         #expect(Self.violations(in: viaHelper).map(\.test) == ["t"])  // a helper of the same file, one level removed
         #expect(Self.violations(in: "// usleep(10) in a comment\n@Test func t() { #expect(1 == 1) }\n").isEmpty)

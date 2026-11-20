@@ -245,7 +245,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         return (w, dir)
     }
 
-    @Test func gitStateOfARepositoryAndOfAPlainFolder() throws {
+    @Test(.blocking) func gitStateOfARepositoryAndOfAPlainFolder() throws {
         let (w, dir) = try repo()
         let (head, status) = ProjectEnv.hookGitState(dir, timeout: 60)
         #expect(head == ProjectText.trim(try git(dir, "rev-parse", "HEAD")) && status.count == 64)
@@ -260,7 +260,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         #expect(plain.head == "" && plain.status == "")
     }
 
-    @Test func gitStateDoesNotRunTheCheckoutsCode() throws {
+    @Test(.blocking) func gitStateDoesNotRunTheCheckoutsCode() throws {
         let (w, dir) = try repo()
         let proof = w.root + "/ran", script = w.root + "/fsmonitor.sh"
         try Data("#!/bin/sh\necho ran >> '\(proof)'\nprintf '\\0'\n".utf8).write(to: URL(fileURLWithPath: script))
@@ -317,7 +317,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         #expect(Date().timeIntervalSince(started) < 5)
     }
 
-    @Test func contentFiltersOfTheCheckoutDoNotRun() throws {
+    @Test(.blocking) func contentFiltersOfTheCheckoutDoNotRun() throws {
         let (w, dir) = try repo()
         let proof = w.root + "/ran"
         try Data("* filter=x\n".utf8).write(to: URL(fileURLWithPath: dir + "/.git/info/attributes"))

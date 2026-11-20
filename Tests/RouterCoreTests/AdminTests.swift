@@ -195,7 +195,7 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
     }
 
     /// A router that finishes the handshake and then closes without a reply: the message says the peer closed, not an old errno.
-    @Test func peerClosingAfterTheHandshakeIsNamedAsSuch() async {
+    @Test(.blocking) func peerClosingAfterTheHandshakeIsNamedAsSuch() async {
         let (fd, port) = listener()
         defer { close(fd) }
         let key = Noise.newKey()
@@ -220,7 +220,7 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(result.0 == 0 && result.2 == "no reply head: 0 bytes (peer closed without data)", "\(result.2)")
     }
 
-    @Test func rejectedHandshakeNamesGateway() async {
+    @Test(.blocking) func rejectedHandshakeNamesGateway() async {
         let (fd, port) = listener()
         defer { close(fd) }
         Thread {
@@ -244,7 +244,7 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
 
     /// S1: lažen strežnik z lastnim ključem (podtaknjen ključ routerja) konča rokovanje, a dobi le dokaz, vezan na to
     /// rokovanje: ne skrivnosti in nič, kar bi pravi router sprejel.
-    @Test func fakeResponderGetsNothingReusable() async throws {
+    @Test(.blocking) func fakeResponderGetsNothingReusable() async throws {
         // Pravi router (strežnik Noise) in lažen odgovornik z lastnim ključem.
         let app = FakeApp()
         app.config.host = "127.0.0.1"

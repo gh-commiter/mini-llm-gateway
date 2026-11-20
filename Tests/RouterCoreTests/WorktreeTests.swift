@@ -604,7 +604,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 }
 
 /// #24 L2: ob zagonu ostanejo le mape run-req_<32 hex>; druga imena, datoteke in povezave (ter njihov cilj) ostanejo.
-@Test func cleanupRunTempsRemovesOnlyRunFolders() throws {
+@Test(.blocking) func cleanupRunTempsRemovesOnlyRunFolders() throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("rt24-" + UUID().uuidString)
     defer { try? fm.removeItem(at: base) }
@@ -2118,7 +2118,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #66: odločitev enkrat na zagon: drugi WORKTREE-PUSH istega zagona začne iz istega vrha, tudi ko je vmes prišla nova
 /// veja; naslednji zagon nadaljuje iz zadnje prevzete veje.
-@Test func worktreeContinueDecidedOncePerRun() async throws {
+@Test(.blocking) func worktreeContinueDecidedOncePerRun() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub()
@@ -2155,7 +2155,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #67 (kot Go TestPathWrapDeps): git init/clone agenta le v $MINIGW_DEPS in le z oznako peskovnika (SANDBOX_RUNTIME ali
 /// MINIGW_SANDBOXED); drugje zavrnitev z namigom, klon nespremenjen; brez oznake (harness) v $MINIGW_DEPS git klona.
-@Test func pathWrapDepsRealGit() throws {
+@Test(.blocking) func pathWrapDepsRealGit() throws {
     let fm = FileManager.default
     let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("pd-" + UUID().uuidString)
     defer { try? fm.removeItem(at: root) }
@@ -2203,7 +2203,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #67: $MINIGW_DEPS nastane s klonom in ostane med zagoni pogovora (veja ga ne vsebuje), gre s klonom ob koncu seje;
 /// ohranjen klon (kept) ga nima.
-@Test func worktreeDepsLifetime() async throws {
+@Test(.blocking) func worktreeDepsLifetime() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), session = UUID().uuidString
@@ -2238,7 +2238,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #67: kratka povezava za CLAUDE_CODE_TMPDIR (≤ 44 bajtov s /claude-<uid>) kaže v $MINIGW_DEPS/tmp, zapis gre pod Scratch;
 /// tuja ali odprta mapa mgw-<uid> (ne 0700) je ne dobi; removeClone jo odstrani.
-@Test func tmpLinkShortIntoScratch() throws {
+@Test(.blocking) func tmpLinkShortIntoScratch() throws {
     let fm = FileManager.default, base = "/tmp/t" + UUID().uuidString.prefix(4)
     defer { try? fm.removeItem(atPath: base) }
     let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("tl-" + UUID().uuidString + "/worktrees/d/i/claude-12345678-0")
@@ -2263,7 +2263,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #67 H1 (kot Go TestGrantDirsReplacesPlantedLinks): povezava ali datoteka namesto mape za pisanje se odstrani in naredi
 /// znova (0700), cilj ostane nedotaknjen; v profilu Copilot le dobesedne poti in prepoved zamenjave.
-@Test func grantDirsReplacesPlantedLinks() throws {
+@Test(.blocking) func grantDirsReplacesPlantedLinks() throws {
     let fm = FileManager.default
     let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("gd-" + UUID().uuidString)
     defer { try? fm.removeItem(at: root) }
@@ -2282,7 +2282,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 }
 
 /// #67: navodilo z oznako peskovnika in brez; imena nastavitev omrežja po agentu (Mac).
-@Test func depsNoteAndNetworkOff() {
+@Test(.blocking) func depsNoteAndNetworkOff() {
     #expect(Router.depsNote("/d").contains("$MINIGW_DEPS (/d), kept for this conversation; git init and git clone work only there."))
     #expect(Router.depsNote("/d", sandboxed: false).contains("git init and git clone are not available on this gateway (no sandbox)."))
     var c = RouterConfig()
@@ -2298,7 +2298,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #67 (Air): claude -p v klonu ima ovoj git (gitexec) berljiv v peskovniku tudi brez »May ask other models« (sicer git z
 /// drugega PATH in neberljiv exec-path: remote-https, CMake GIT_EXECUTABLE); navodilo da recepte z dobesedno potjo.
-@Test func worktreeClaudeReadsGitWrapperWithoutAskOthers() async throws {
+@Test(.blocking) func worktreeClaudeReadsGitWrapperWithoutAskOthers() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let fake = root.appendingPathComponent("claude"), dump = root.appendingPathComponent("args")
@@ -2344,7 +2344,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #73: drevo opuščenega teka še živi: nov tek seje dobi 503; ko je ustavljeno, naslednji tek dela v istem klonu z delom
 /// prejšnjih tekov, brez neshranjenega in zavez opuščenega.
-@Test func worktreeAbandonedRunBlocksUntilStoppedThenResets() async throws {
+@Test(.blocking) func worktreeAbandonedRunBlocksUntilStoppedThenResets() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let lib = client.appendingPathComponent("vendor/lib")  // ugnezdeni repozitorij: tudi njegov klon se počisti
@@ -2390,7 +2390,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// #82 cilj 1: WORKTREE-PULL, ki ga minigw zavrne s 503, vrne napako »busy« (zahteva ni uspeh); veja ne izgine: minigw
 /// dobi sporočilo, naslednja zahteva seje jo dostavi z vsem delom agenta.
-@Test func worktreePullRefusedBusyKeepsBranch() async throws {
+@Test(.blocking) func worktreePullRefusedBusyKeepsBranch() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), session = UUID().uuidString

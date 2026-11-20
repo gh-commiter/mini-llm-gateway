@@ -387,7 +387,7 @@ private func fakeClaude(_ dir: URL, body: String) throws -> String {
     return f.path
 }
 
-@Test func selfCheckPassesFailsAndSaysWhyWithAFakeClaude() async throws {
+@Test(.blocking) func selfCheckPassesFailsAndSaysWhyWithAFakeClaude() async throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let base = URL(fileURLWithPath: rig.scratch + "/tmp")
@@ -489,7 +489,7 @@ private final class Clock: @unchecked Sendable {
 }
 
 /// L1: a run too slow under the profile while the control run answers is a slow machine, not a broken profile; an `off` verdict expires (30 minutes) and is checked again.
-@Test func timeoutIsInconclusiveAndOffExpires() async throws {
+@Test(.blocking) func timeoutIsInconclusiveAndOffExpires() async throws {
     let rig = try Rig()
     defer { try? FileManager.default.removeItem(at: rig.root) }
     let base = URL(fileURLWithPath: rig.scratch + "/tmp")
@@ -711,7 +711,7 @@ private final class Clock: @unchecked Sendable {
 
     /// Real claude through the router, no fake: the restricted argv of production under the profile reads, writes, and resumes the conversation. The one allowed skip:
     /// claude is not installed or not logged in (an unsandboxed one-word probe does not answer).
-    @Test func realRestrictedRunReadsWritesAndResumes() async throws {
+    @Test(.blocking) func realRestrictedRunReadsWritesAndResumes() async throws {
         await Router.claudeSeatbelt.setRequireTranscript(true)  // real claude: the transcript must be saved under the profile
         guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
         let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-real-run-" + UUID().uuidString.lowercased())  // unique (parallel runs of the suite); its transcript folders are removed below
@@ -749,7 +749,7 @@ private final class Clock: @unchecked Sendable {
 
     /// What the rule layer relies on, measured with the real Claude Code (2.1.322): its path globs match any letter case (plain and bracket classes alike), for Edit and Read, allow and deny,
     /// existing and new folders: `.GIT`, `.Git` and `.CLAUDE` are closed by the lowercase rules. A neutral folder name is used (Claude Code also guards `.git` itself, which would hide the rule).
-    @Test func realClaudeRuleGlobsMatchAnyCase() async throws {
+    @Test(.blocking) func realClaudeRuleGlobsMatchAnyCase() async throws {
         guard let exe = await ClaudeCLI.executable("") else { try Test.cancel("claude is not installed") }
         let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-seatbelt-glob-" + UUID().uuidString.lowercased())
         let session = base.appendingPathComponent("s"), logDir = base.appendingPathComponent("log")

@@ -674,7 +674,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
                                                  token: "TOKEN-1", method: method, path: path, idempotencyKey: idem, body: body, timeout: timeout)
     }
 
-    @Test func requestAndAnswerOverTheEncryptedConnectionAsTheGatewaysDevice() throws {
+    @Test(.blocking) func requestAndAnswerOverTheEncryptedConnectionAsTheGatewaysDevice() throws {
         let srv = ScriptedNoiseServer { _ in Data("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 8\r\nConnection: close\r\n\r\n{\"id\":5}".utf8) }
         defer { srv.stop() }
         let dev = Curve25519.Signing.PrivateKey()
@@ -686,7 +686,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         #expect(!head.lowercased().contains("evil"))
     }
 
-    @Test func aRedirectIsTheAnswerAndNothingFollowsIt() {
+    @Test(.blocking) func aRedirectIsTheAnswerAndNothingFollowsIt() {
         let other = ScriptedNoiseServer { _ in Data("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".utf8) }
         defer { other.stop() }
         let srv = ScriptedNoiseServer { _ in Data("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:\(other.port)/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8) }
@@ -695,7 +695,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         #expect(srv.accepted == 1 && other.accepted == 0, "the redirect was followed")
     }
 
-    @Test func aWrongGatewayKeyAnOversizedAnswerAndAServerThatDiesAreNoAnswer() {
+    @Test(.blocking) func aWrongGatewayKeyAnOversizedAnswerAndAServerThatDiesAreNoAnswer() {
         let srv = ScriptedNoiseServer { _ in Data("HTTP/1.1 200 OK\r\nContent-Length: 2000000\r\n\r\n".utf8) }
         defer { srv.stop() }
         #expect(send(srv, key: Noise.newKey().publicKey.rawRepresentation, timeout: 3).status == 0)  // pinned key does not match: no session
@@ -706,7 +706,7 @@ final class ScriptedNoiseServer: @unchecked Sendable {
                                                     token: "t", method: "GET", path: "/minigw/v1/projects", idempotencyKey: nil, body: nil, timeout: 3).status == 0)
     }
 
-    @Test func aServerThatTricklesIsStoppedAtTheTotalDeadline() {
+    @Test(.blocking) func aServerThatTricklesIsStoppedAtTheTotalDeadline() {
         // one byte every 0.2 s, an answer that would take minutes: an idle timeout would never fire, the total deadline does
         let srv = ScriptedNoiseServer(trickle: 0.2) { _ in Data(("HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n" + String(repeating: "x", count: 100000)).utf8) }
         defer { srv.stop() }

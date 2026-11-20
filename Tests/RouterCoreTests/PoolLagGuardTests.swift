@@ -24,6 +24,12 @@ enum PoolLagGuard {
             let s = PoolLagGuard.snapshot
             FileHandle.standardError.write(Data("pool lag: worst \(String(format: "%.3f", s.worst)) s over \(s.samples) samples (limit \(PoolLagGuard.limit) s)\n".utf8))
         }
+        // diagnosis (MG_POOL_SHRINK_TO=n): the Darwin cooperative pool has one thread per core and no width setting (LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 is the
+        // only switch, and it means 1 thread); park ncpu - n of them for the whole run, so a 12-core Mac behaves like the n-core CI runner.
+        if let n = Int(ProcessInfo.processInfo.environment["MG_POOL_SHRINK_TO"] ?? ""), n >= 1, ProcessInfo.processInfo.activeProcessorCount > n {
+            let never = NSLock(); never.lock()  // never unlocked: each parked Task blocks in lock()
+            for _ in 0..<(ProcessInfo.processInfo.activeProcessorCount - n) { Task.detached { never.lock() } }
+        }
         Thread {
             while true {
                 let t0 = ContinuousClock.now, done = DispatchSemaphore(value: 0)
@@ -31,6 +37,7 @@ enum PoolLagGuard {
                 var sampled = false
                 while done.wait(timeout: .now() + 1) == .timedOut {
                     let waited = Double((ContinuousClock.now - t0).components.seconds)
+                    if ProcessInfo.processInfo.environment["MG_POOL_LAG_LOG"] != nil { FileHandle.standardError.write(Data("[pool-lag] a Task has waited \(Int(waited)) s for a pool thread\n".utf8)) }  // diagnosis: with --no-parallel the running test is the holder
                     // reported while it waits: a stall that never ends still fails the run
                     let over = lock.withLock { () -> Bool in
                         worst = max(worst, waited)

@@ -433,7 +433,7 @@ func discoveryReady(_ r: Router) async {
     #expect(await ClaudeCLI.executable("/bin/ls") == "/bin/ls")
 }
 
-@Test func claudeExecutableValidation() {
+@Test(.blocking) func claudeExecutableValidation() {
     if case .failure(let e) = ClaudeCLI.validate("/nonexistent") { #expect(e.message == "File does not exist") } else { Issue.record("expected failure") }
     if case .failure(let e) = ClaudeCLI.validate("/etc/hosts") { #expect(e.message == "File is not executable") } else { Issue.record("expected failure") }
     if case .failure(let e) = ClaudeCLI.validate("/bin/ls") { #expect(e.message == "Not a Claude Code executable") } else { Issue.record("expected failure") }
@@ -681,7 +681,7 @@ func portInUse(_ port: UInt16) -> Bool {
     }
 }
 
-@Test func availableToolsFromInstalledClaude() async throws {
+@Test(.blocking) func availableToolsFromInstalledClaude() async throws {
     if ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true", ClaudeCLI.detected == nil { try Test.cancel("claude is not installed on GitHub's runner") }
     try #require(ClaudeCLI.detected != nil)  // brez nameščenega Claude Code ni česa preveriti
     let tools = await ClaudeCLI.availableTools("")

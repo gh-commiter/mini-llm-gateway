@@ -345,7 +345,7 @@ func bodyG(_ stream: Bool) -> [String: Any] { ["model": "claude-codex", "message
 }
 
 /// L1 (kot TestAgentModeRefusesCommands): minigw v agentu zavrne ukaze, ki spreminjajo povezavo ali namestitev.
-@Test func agentModeRefusesCommands() throws {
+@Test(.blocking) func agentModeRefusesCommands() throws {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let exe = root.appendingPathComponent(".build/debug/MiniGW").path
     try #require(FileManager.default.isExecutableFile(atPath: exe), "swift build first")

@@ -310,8 +310,11 @@ private func covers(_ deny: String, _ scope: String) -> Bool { scope == deny || 
     for f in [app, app + "/mounts", app + "/mounts/s1", support, (support as NSString).deletingLastPathComponent, NSHomeDirectory()] {
         #expect(RouterConfig.overlapsGatewayFolder(f, scratch: nil), "\(f)")
     }
-    let scratch = fm.temporaryDirectory.appendingPathComponent("gw-" + UUID().uuidString)
-    defer { try? fm.removeItem(at: scratch) }
+    // a private parent: the scratch's parent is listed (with an open per folder) by every overlapsGatewayFolder call, and the shared temp folder holds the thousands of folders of the whole run
+    // (28 s on a pool thread with 97k entries, 2026-11-20: the suite's slowest holder of a pool thread)
+    let parent = fm.temporaryDirectory.appendingPathComponent("gw-parent-" + UUID().uuidString)
+    let scratch = parent.appendingPathComponent("gw-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: parent) }
     try fm.createDirectory(at: scratch.appendingPathComponent("sync/dev"), withIntermediateDirectories: true)
     for f in [scratch.path, scratch.path + "/sync", scratch.path + "/sync/dev", scratch.deletingLastPathComponent().path] { #expect(RouterConfig.overlapsGatewayFolder(f, scratch: scratch), "\(f)") }
     #expect(!RouterConfig.overlapsGatewayFolder("/Users/someone/Development/proj", scratch: scratch))
