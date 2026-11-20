@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- Docker: `backup.sh` no longer lets `core/core.restored` travel in a backup, and a restore never keeps the archive's copy (it writes its own). `backup.sh --restore` writes the file only when the image to run is a build of this tree or version 0.9.2 or newer, and prints one line when it does not (a gateway older than 0.9.2 would ignore it, and it would mark every link at the first start of a newer one). The Compose test checks that a backup made while the file exists does not contain it. The matching known problem of 0.9.3 is gone with this fix.
+
 ## 0.9.3
 
 ### New

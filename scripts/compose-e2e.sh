@@ -73,7 +73,7 @@ backup_contract() {
     mkdir "$work/helper-failure" "$work/find-failure" "$work/stream-failure"
     print -rl -- '#!/bin/sh' 'case " $* " in *" run "*" -i "*) echo "docker: Error response from daemon: mounts denied" >&2; exit 125;; esac' 'exec "$BACKUP_REAL_DOCKER" "$@"' > "$work/stream-failure/docker"
     export BACKUP_REAL_DOCKER=$(command -v docker)
-    print -rl -- '#!/bin/sh' 'case "$*" in *"tar -C /v -cf - ."*) exit 71;; esac' 'exec "$BACKUP_REAL_DOCKER" "$@"' > "$work/helper-failure/docker"
+    print -rl -- '#!/bin/sh' 'case "$*" in *"-cf - ."*) exit 71;; esac' 'exec "$BACKUP_REAL_DOCKER" "$@"' > "$work/helper-failure/docker"
     print -rl -- '#!/bin/sh' 'case "$*" in *"find /v -mindepth"*) exit 71;; esac' 'exec "$BACKUP_REAL_DOCKER" "$@"' > "$work/find-failure/docker"
     chmod 700 "$work/helper-failure/docker" "$work/find-failure/docker" "$work/stream-failure/docker"
     refuse() { # message, then the backup.sh arguments: must fail with the message and create no volume
@@ -171,6 +171,10 @@ c.commit()" || fail 'note fixture'
       grep -q '^600 ' $work/restored-config-$name && grep -q '^700 ' $work/restored-config-$name || fail 'no 600/700 entries in the restored config volume'
       [[ -z $(grep -hv ' 10001:10001 ' $work/restored-config-$name $work/restored-scratch-$name) ]] || fail 'restored entries not owned by 10001:10001'
       [[ $(docker run --rm --network none --mount type=volume,src=${COMPOSE_PROJECT_NAME}_scratch,dst=/s,readonly $PY sh -c 'cat /s/work/deep/marker.txt; echo; readlink /s/work/rel-link; cat /s/work/hard-link') == "scratch-$name-bytes"$'\n'deep/marker.txt$'\n'"scratch-$name-bytes" ]] || fail 'restored scratch content'
+      # a backup made while core.restored exists must not carry it: the next restore writes its own
+      sh ./backup.sh --offline ./marked-$name | grep -q '^Backup: ' || fail 'backup while core.restored exists'
+      marked=($work/marked-$name/minigw-backup-*(N)); marked=$marked[1]
+      python3 -c 'import sys,tarfile; n=tarfile.open(sys.argv[1]).getnames(); assert "./core/core.db" in n and "./core/core.restored" not in n' $marked/config.tar || fail 'a backup carries core.restored'
       docker compose up -d --no-build || fail 'restored up'
       healthy $COMPOSE_PROJECT_NAME || fail 'restored health'
       [[ $(identity_hash) == $identity ]] || fail 'restored identity'

@@ -94,7 +94,7 @@ if [ "$mode" = backup ]; then
     mkdir -m 700 "$target" || fail 'backup directory already exists'
     for kind in config scratch; do
         v=$cv; [ "$kind" = config ] || v=$sv
-        helper --mount "type=volume,src=$v,dst=/v,readonly" "$image" -c 'tar -C /v -cf - .' > "$target/$kind.tar" || hfail $? 'archive failed (incomplete backup)'
+        helper --mount "type=volume,src=$v,dst=/v,readonly" "$image" -c 'tar -C /v --exclude=./core/core.restored -cf - .' > "$target/$kind.tar" || hfail $? 'archive failed (incomplete backup)'
     done
     # the archives are streamed to the helper: no host folder is bind-mounted
     names=$(helper -i "$image" -c 'tar -tf -' < "$target/config.tar") || hfail $? 'config archive cannot be listed'
@@ -141,9 +141,16 @@ else
     for kind in config scratch; do
         v=$cv; [ "$kind" = config ] || v=$sv
         exists "$v" || docker volume create --label "com.docker.compose.project=$project" --label "com.docker.compose.volume=$kind" "$v" >/dev/null
-        helper -i --mount "type=volume,src=$v,dst=/v" "$image" -c 'tar -C /v --no-same-owner -xf - && chown -R 10001:10001 /v' < "$source/$kind.tar" || hfail $? 'restore failed; target is now non-empty'
+        helper -i --mount "type=volume,src=$v,dst=/v" "$image" -c 'tar -C /v --no-same-owner --exclude=./core/core.restored -xf - && chown -R 10001:10001 /v' < "$source/$kind.tar" || hfail $? 'restore failed; target is now non-empty'
     done
     # The restored database no longer knows what it pushed upstream: the gateway marks its upstream links at the next start (it consumes this file).
-    helper --mount "type=volume,src=$cv,dst=/v" "$image" -c 'mkdir -p /v/core && : > /v/core/core.restored && chown 10001:10001 /v/core/core.restored && chmod 600 /v/core/core.restored' || hfail $? 'restore pending marker could not be written; target is now non-empty'
+    # Only a gateway 0.9.2 or newer consumes it; on an older image it would stay and travel in every later backup. A tag that is not a
+    # version (local) is a build of this tree: write it.
+    tag=$(printf '%s' "$config" | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["minigw"]["image"].rpartition(":")[2])')
+    if printf '%s' "$tag" | python3 -c 'import re,sys; t=sys.stdin.read(); m=re.match(r"(\d+)\.(\d+)\.(\d+)",t); sys.exit(1 if m and tuple(map(int,m.groups()))<(0,9,2) else 0)'; then
+        helper --mount "type=volume,src=$cv,dst=/v" "$image" -c 'mkdir -p /v/core && : > /v/core/core.restored && chown 10001:10001 /v/core/core.restored && chmod 600 /v/core/core.restored' || hfail $? 'restore pending marker could not be written; target is now non-empty'
+    else
+        printf 'restore pending marker not written: the image to run is %s, older than 0.9.2, which would not consume it\n' "$tag"
+    fi
     printf 'Restored. Next: docker compose up -d\n'
 fi
