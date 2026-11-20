@@ -126,7 +126,7 @@ private func shBlocking(_ cmd: String, cwd: String, timeout: Double = 90) -> (st
     let data = Mutex(Data())
     let reader = Thread { let d = c.out.readDataToEndOfFile(); data.withLock { $0 = d } }
     reader.start()
-    var raw: Int32 = 0, timedOut = false, notes = ""
+    var raw: Int32 = 0, timedOut = false, notes = "", tKill = Date(), tReaped = Date()
     func exited(_ wait: Double) -> Bool {
         let end = Date().addingTimeInterval(wait)
         while true {
@@ -143,9 +143,11 @@ private func shBlocking(_ cmd: String, cwd: String, timeout: Double = 90) -> (st
             _ = proc_pidinfo(w, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size))
             return "pid \(w) ppid \(bsd.pbi_ppid) \(String(cString: path))"
         }
+        tKill = Date()
         kill(-pid, SIGKILL)
         _ = exited(5)  // a process stuck in the kernel on a wedged mount may outlive SIGKILL for a while: do not wait for it
         notes = "[#150] TIMEOUT: `\(cmd)` in \(cwd) was killed (the whole process group) after \(String(format: "%.1f", Date().timeIntervalSince(started))) s of \(timeout) s; alive then: \(alive.isEmpty ? "nobody we can see" : alive.joined(separator: "; "))"
+        tReaped = Date()
         print(notes)
     }
     // The reader ends at EOF, and EOF comes only when EVERY holder of the pipe has closed it. After a timeout the group is dead; a normal exit can still leave a process
@@ -164,15 +166,25 @@ private func shBlocking(_ cmd: String, cwd: String, timeout: Double = 90) -> (st
     }
     let last = Date().addingTimeInterval(5)
     while reader.isExecuting && Date() < last { usleep(5_000) }
+    if timedOut {  // #150: where the time went, to decide the next failure from the message alone (s: start to kill, kill to reap, reap to the reader's EOF)
+        notes += String(format: "; phases: start->kill %.2f s, kill->reaped %.2f s, reaped->EOF %.2f s, reader still running: %@", tKill.timeIntervalSince(started),
+                        tReaped.timeIntervalSince(tKill), Date().timeIntervalSince(tReaped), reader.isExecuting ? "yes" : "no")
+    }
     let status: Int32 = timedOut ? SIGKILL : (raw & 0x7f == 0 ? (raw >> 8) & 0xff : raw & 0x7f)  // like Process.terminationStatus: the exit code, or the signal
     return (status, String(decoding: data.withLock { $0 }, as: UTF8.self) + (notes.isEmpty ? "" : "\n" + notes))
 }
 
 @Test func aTimedOutShellTakesItsChildrenWithItAndNamesTheCommand() async throws {
     let mark = "sleep 29\(Int.random(in: 100...999))"  // a unique command line to look for afterwards
-    let started = Date()
-    let r = await sh("\(mark) & \(mark); echo not reached", cwd: "/", timeout: 1)
-    #expect(Date().timeIntervalSince(started) < 15, "the helper waited for the orphan: \(r)")
+    // The bound is on the helper's OWN time (on its thread). The `await` around it also waits for a pool thread to resume the test, and on a loaded runner that took 16 s
+    // (CI of 0.9.9: "pool lag: worst 16.710 s"; the helper itself was done 1.3 s after its start); that wait is reported, not bounded here.
+    let t0 = Date()
+    let (r, begun, inside) = await offPool { () -> ((status: Int32, out: String), Date, Double) in
+        let begun = Date(), r = shBlocking("\(mark) & \(mark); echo not reached", cwd: "/", timeout: 1)
+        return (r, begun, Date().timeIntervalSince(begun))
+    }
+    let timing = String(format: "thread start %.2f s, helper %.2f s, resume of the test %.2f s", begun.timeIntervalSince(t0), inside, Date().timeIntervalSince(begun) - inside)
+    #expect(inside < 15, "the helper waited for the orphan (\(timing)): \(r)")
     #expect(r.status == SIGKILL && r.out.contains("TIMEOUT") && r.out.contains(mark), "\(r)")
     try await Task.sleep(for: .milliseconds(300))
     // the group got SIGKILL; a process needs a moment to be gone (longer when the machine is busy): ask until it is, for at most 5 s

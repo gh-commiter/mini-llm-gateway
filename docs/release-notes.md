@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+
+- A test of the timed-out shell helper no longer counts the wait for a free task-pool thread as the helper's own time (it failed on a loaded CI runner after 18 s although the helper was done in 1.3 s); its failure message now carries the time of each phase.
+
 ## 0.9.9
 
 ### Changed
