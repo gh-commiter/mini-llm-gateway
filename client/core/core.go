@@ -202,9 +202,13 @@ func (s *Store) open() error {
 	} else if side.GatewayID != "" && side.GatewayID != m.GatewayID {
 		return fmt.Errorf("%w: core.state has another gateway id", ErrForeign)
 	}
+	behind := side.Epoch > m.Epoch // a restored (older) database: judged before the merge makes the two equal
 	m.Epoch, m.ProjectHigh = max(m.Epoch, side.Epoch), max(m.ProjectHigh, side.ProjectHigh)
 	s.st, s.gw = m, m.GatewayID
 	s.epoch.Store(m.Epoch)
+	if err := s.markAtStart(ctx, behind); err != nil {
+		return err
+	}
 	defer s.reloadBound(ctx)
 	if err := s.write(ctx, markInterrupted); err != nil { // events a crash cut off (a spool replay is the caller's business)
 		return err

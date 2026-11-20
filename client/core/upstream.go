@@ -171,7 +171,7 @@ func (s *Store) RemoveUpstream(ctx context.Context, name string) error {
 		if e := purgeUpstreamMirror(tx, name); e != nil {
 			return "", e
 		}
-		for _, q := range []string{`DELETE FROM upstream_sent WHERE upstream=?`, `DELETE FROM upstream_links WHERE upstream=?`} {
+		for _, q := range []string{`DELETE FROM meta WHERE key IN (SELECT '` + restoredPrefix + `'||project_id||'|'||upstream FROM upstream_links WHERE upstream=?)`, `DELETE FROM upstream_sent WHERE upstream=?`, `DELETE FROM upstream_links WHERE upstream=?`} {
 			if _, e := tx.Exec(q, name); e != nil {
 				return "", e
 			}
@@ -276,10 +276,12 @@ type UpstreamLinkInfo struct {
 	// Conflicts: publish mode notes that changed (or were deleted) on the upstream since our last write; they are not overwritten.
 	Conflicts []UpstreamConflict `json:"conflicts,omitempty"`
 	// Waiting: notes whose earlier submission is still pending upstream: nothing more is sent for them until it is reviewed (not a failure).
-	Waiting int    `json:"waiting,omitempty"`
-	Label   string `json:"label"`   // the project's short name, or "team <name>"
-	Pending int    `json:"pending"` // notes that a push would send now (new or changed)
-	Total   int    `json:"total"`   // published notes the link covers
+	Waiting int `json:"waiting,omitempty"`
+	// Restored: since when the link is marked "restored: reconcile before pushing" (see upstream_restore.go): it sends nothing until cleared.
+	Restored *time.Time `json:"restored,omitempty"`
+	Label    string     `json:"label"`   // the project's short name, or "team <name>"
+	Pending  int        `json:"pending"` // notes that a push would send now (new or changed)
+	Total    int        `json:"total"`   // published notes the link covers
 	// Foreign: published notes that arrived from another gateway (they end with its trailer): never pushed onward, not in Total.
 	Foreign int `json:"foreign,omitempty"`
 	// Step C: reading the upstream's notes into the mirror (nothing of it is shown to members yet).
@@ -727,6 +729,9 @@ func (s *Store) UnlinkUpstream(ctx context.Context, project, team int64, upstrea
 		if _, e := tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=?`, local, upstream); e != nil {
 			return "", e
 		}
+		if _, e := tx.Exec(`DELETE FROM meta WHERE key=?`, restoredKey(local, upstream)); e != nil {
+			return "", e
+		}
 		if _, e := purgeMirror(tx, local, upstream); e != nil {
 			return "", e
 		}
@@ -951,6 +956,11 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 				return e
 			}
 			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign, Waiting: scan.Waiting}
+			if at, ok, e := restoredAt(tx, l.Project, l.Upstream); e != nil {
+				return e
+			} else if ok {
+				info.Restored = &at
+			}
 			if e := readInfo(tx, ms(s.now()), &info); e != nil {
 				return e
 			}
