@@ -78,7 +78,8 @@ cask "minigw" do
     entries and the mini-gateway marketplace, ~/.claude/plugins/data/minigw-mini-gateway, the scratch folder
     ~/Library/Caches/minigw, the minigw profiles and device key in the Keychain, ~/Library/Application Support/minigw
     and an old minigw serve LaunchAgent, if there.
-    Connect to the gateway Mac (token: Mini Gateway → Settings… → General → Copy Token):
+    First time only (skip on an upgrade of a connected device): connect to the gateway Mac
+    (token: Mini Gateway → Settings… → General → Copy Token):
       minigw connect <gateway-mac>[:port] --token <token>
   EOS
 end
