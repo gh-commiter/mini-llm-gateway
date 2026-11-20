@@ -191,11 +191,17 @@ func TestThePeriodicPullDoesNotPush(t *testing.T) {
 		t.Fatalf("%+v %v", res, e)
 	}
 	hf.accept(1, 55, 1)
-	posts := len(hf.posts)
+	posts, seen := len(hf.posts), len(both.calls)
 	f.clock = f.clock.Add(16 * time.Minute) // the pull interval
 	r := f.autoPull(both)
 	if !r.Ran || r.Pull == nil || r.Push != nil || len(hf.posts) != posts {
 		t.Fatalf("%+v", r)
+	}
+	// the pull only reads: no request but GET, and every GET goes to the manifest, a note or a submission
+	for _, c := range both.calls[seen:] {
+		if c.method != "GET" || !(strings.HasSuffix(c.path, "/kb/manifest") || strings.Contains(c.path, "/notes/") || strings.Contains(c.path, "/kb/submissions/") || c.path == "/minigw/v1/projects/shop") {
+			t.Fatal("the pull made a request that is not a read of the manifest, a note or a submission:", c.method, c.path)
+		}
 	}
 	if f.link(fk).Waiting != 0 {
 		t.Fatalf("%+v", f.link(fk))
