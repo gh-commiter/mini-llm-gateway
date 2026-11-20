@@ -175,7 +175,7 @@ do_cleanup() { # both projects of the run, the image tag of the run, then the wo
   if [ $cr -eq 0 ] && docker image inspect "minigw-rehearsal:$RID" >/dev/null 2>&1; then
     docker rmi "minigw-rehearsal:$RID" >/dev/null 2>&1 || { printf 'could not remove the image tag minigw-rehearsal:%s\n' "$RID" >&2; cr=1; }
   fi
-  [ $cr -eq 0 ] || { printf 'cleanup incomplete: fix the messages above, then run: sh %s --cleanup-only --project %s --workdir %s\n' "$SELF" "$PROJ" "$WORK" >&2; return 1; }
+  [ $cr -eq 0 ] || { printf 'cleanup incomplete: fix the messages above, then run: sh %s --cleanup-only --project %s --workdir "%s"\n' "$SELF" "$PROJ" "$WORK" >&2; return 1; }
   remove_work
 }
 
@@ -245,7 +245,7 @@ pick_port() { python3 -c 'import socket,sys; s=socket.socket(); s.bind((sys.argv
 
 on_interrupt() {
   stty echo <&3 2>/dev/null
-  printf '\ninterrupted. What was created is recorded in %s. To remove exactly that, and nothing else:\n  sh %s --cleanup-only --project %s --workdir %s\n' "$WORK" "$SELF" "$PROJ" "$WORK" >&2
+  printf '\ninterrupted. What was created is recorded in %s. To remove exactly that, and nothing else:\n  sh %s --cleanup-only --project %s --workdir "%s"\n' "$WORK" "$SELF" "$PROJ" "$WORK" >&2
   exit 130
 }
 
@@ -363,7 +363,8 @@ onboard() { # user: allow and bind the simulated device
   od=$(cl "$ou" /home/minigw status 2>/dev/null | sed -n 's/^Device: *\([^ ]*\).*/\1/p')
   [ -n "$od" ] || return 1
   gw devices allow "$od" --name "$ou" >/dev/null && gw bind "$od" "$ou" >/dev/null || return 1
-  printf '%s\n' "$TOKEN" | cl "$ou" /home/minigw connect minigw:8765 --token - 2>&1 | grep -q '^Connected' || return 1
+  oc=$(printf '%s\n' "$TOKEN" | cl "$ou" /home/minigw connect minigw:8765 --token - 2>&1); orc=$?
+  { [ $orc -eq 0 ] && printf '%s' "$oc" | grep -q '^Connected'; } || return 1
   docker run --rm --label com.docker.compose.project= --label "io.minigw.rehearsal.run=$RID" --label "io.minigw.rehearsal.project=$PROJ" --network none --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges -v "${PROJ}_home_$ou:/home/minigw" --entrypoint mkdir "$IMAGE" -p /home/minigw/p1 /home/minigw/p2 || return 1
   put "DEV_$(printf %s "$ou" | tr - _)" "$od"
 }
@@ -399,20 +400,32 @@ stage_boot() {
   for u in rh-reader rh-developer rh-admin; do cl "$u" /home/minigw/p1 project link rh-p1 >/dev/null 2>&1 || bo="$bo $u@p1"; done
   cl rh-developer /home/minigw/p2 project link rh-p2 >/dev/null 2>&1 || bo="$bo rh-developer@p2"
   cl rh-admin /home/minigw/p2 project link rh-p2 >/dev/null 2>&1 || bo="$bo rh-admin@p2"
-  if cl rh-reader /home/minigw/p2 project link rh-p2 >/dev/null 2>&1; then bo="$bo reader-could-link-p2"; fi
+  lo=$(cl rh-reader /home/minigw/p2 project link rh-p2 2>&1); lrc=$?
+  if [ $lrc -eq 0 ]; then bo="$bo reader-could-link-p2"; elif ! printf '%s' "$lo" | grep -q 'not found or not visible'; then bo="$bo reader@p2-failed-for-another-reason($(tailc "$lo"))"; fi
   [ -z "$bo" ] || { bad 3.links "project link: unexpected result for:$bo"; return; }
-  ok 3.links "project link works for each member and is refused for the reader on rh-p2 (team membership alone gives no project access)"
+  ok 3.links "project link works for each member; for the reader on rh-p2 the product itself answers 'not found or not visible' (team membership alone gives no project access)"
   USERS=1
 }
 
 # ====================================================================================================
 # 4. Access matrix
 # ====================================================================================================
-expect_vis() { # user project class
+expect_ops() { # user project class -> expected list, search, read (y: sentinel returned, n: successful answer without it, d: the product's refusal, -: not asked)
   case $1:$2:$3 in
-    rh-reader:p1:data|rh-reader:p1:private|rh-reader:p2:*|rh-developer:p2:private) echo n;;   # a reader reads structure only
-    *) echo y;;
+    rh-reader:p2:*) echo "- d d";;
+    rh-reader:p1:data|rh-reader:p1:private|rh-developer:p2:private) echo "n n d";;
+    *) echo "y y y";;
   esac
+}
+probe() { # user dir sentinel op slug id -> y, n, d or E (the command failed for another reason: never counted as a denial)
+  case $4 in
+    list) po=$(cl "$1" "$2" note list 2>&1); pr=$?;;
+    search) po=$(cl "$1" "$2" kb search "$5" "$3" 2>&1); pr=$?;;
+    read) po=$(cl "$1" "$2" note read "$6" 2>&1); pr=$?;;
+  esac
+  if [ $pr -eq 0 ]; then if printf '%s' "$po" | grep -qF -- "$3"; then echo y; else echo n; fi
+  elif printf '%s' "$po" | grep -q 'not found or not visible'; then echo d
+  else echo E; fi
 }
 stage_matrix() {
   [ "$USERS" = 1 ] || { bad 4.sentinels "not run: users and devices were not set up"; return; }
@@ -435,28 +448,29 @@ stage_matrix() {
     for p in p1 p2; do
       for c in structure data private; do
         s=$(get "SENT_${p}_$c"); id=$(get "NID_${p}_$c"); slug=rh-$p
-        L=n; S=n; R=n
-        cl "$u" /home/minigw/$p note list 2>&1 | grep -qF -- "$s" && L=y
-        cl "$u" /home/minigw/$p kb search "$slug" "$s" 2>&1 | grep -qF -- "$s" && S=y
-        cl "$u" /home/minigw/$p note read "$id" 2>&1 | grep -qF -- "$s" && R=y
-        want=$(expect_vis "$u" "$p" "$c")
-        if [ "$L$S$R" = "$want$want$want" ]; then res=ok; else res=FAIL; mbad=1; fi
-        printf '%-14s %-4s %-9s %-5s %-6s %-5s %-8s %s\n' "$u" "$p" "$c" "$L" "$S" "$R" "$want" "$res" >>"$WORK/matrix.txt"
+        want=$(expect_ops "$u" "$p" "$c")
+        if [ "$u:$p" = rh-reader:p2 ]; then   # the folder cannot be linked: ask explicitly from the linked p1 folder
+          L=-; S=$(probe "$u" /home/minigw/p1 "$s" search "$slug" "$id"); R=$(probe "$u" /home/minigw/p1 "$s" read "$slug" "$id")
+        else
+          L=$(probe "$u" /home/minigw/$p "$s" list "$slug" "$id"); S=$(probe "$u" /home/minigw/$p "$s" search "$slug" "$id"); R=$(probe "$u" /home/minigw/$p "$s" read "$slug" "$id")
+        fi
+        if [ "$L $S $R" = "$want" ]; then res=ok; else res=FAIL; mbad=1; fi
+        printf '%-14s %-4s %-9s %-5s %-6s %-5s %-8s %s\n' "$u" "$p" "$c" "$L" "$S" "$R" "$(printf '%s' "$want" | tr -d ' ')" "$res" >>"$WORK/matrix.txt"
       done
     done
   done
   # who sees which project in their own list
   for u in rh-reader rh-developer rh-admin; do
-    pl=$(cl "$u" /home/minigw/p1 project list 2>&1)
+    pl=$(cl "$u" /home/minigw/p1 project list 2>&1); plrc=$?
     for p in rh-p1 rh-p2; do
       case $u:$p in rh-reader:rh-p2) want=n;; *) want=y;; esac
       have=n; printf '%s' "$pl" | grep -qw -- "$p" && have=y
-      if [ "$have" = "$want" ]; then res=ok; else res=FAIL; mbad=1; fi
+      if [ $plrc -eq 0 ] && [ "$have" = "$want" ]; then res=ok; else res=FAIL; mbad=1; fi
       printf '%-14s %-4s %-9s %-5s %-6s %-5s %-8s %s\n' "$u" "${p#rh-}" project-list "$have" - - "$want" "$res" >>"$WORK/matrix.txt"
     done
   done
   cat "$WORK/matrix.txt"
-  if [ "$mbad" = 0 ]; then ok 4.matrix "access matrix as expected: the reader sees structure only and nothing of rh-p2, the developer does not see the admin's private note, the admin sees all; list, search and read agree"; SENT=1
+  if [ "$mbad" = 0 ]; then ok 4.matrix "access matrix as expected: the reader sees structure only and gets the product's refusal for rh-p2, the developer does not see the admin's private note, the admin sees all (every refusal is the product's own message, every other failure would show as E)"; SENT=1
   else bad 4.matrix "access matrix differs from the expectation (see the matrix)"; fi
 }
 
@@ -479,6 +493,7 @@ stage_flow() {
   ao=$(gw kb accept "$fid" --version "$fh" 2>&1) || { bad 5.accept "gw kb accept --version: $(tailc "$ao")"; return; }
   fsrch=$(cl rh-developer /home/minigw/p1 kb search rh-p1 "$t1" 2>&1); nid=$(printf '%s' "$fsrch" | awk -v t="$t1" 'index($0,t){print $1; exit}')
   [ -n "$nid" ] || { bad 5.accept "after the accept, search does not find the finding: $(tailc "$fsrch")"; return; }
+  FLOWNID=$nid
   ok 5.accept "owner review (gw kb review), accept with --version, the finding is found by search as note $nid"
   ro2=$(printf 'replacement body %s\n' "$t2" | cl rh-developer /home/minigw/p1 kb submit rh-p1 --kind finding --title "G-$t2" --replaces "$nid" --revision 1 - 2>&1); rid=$(printf '%s' "$ro2" | sub_id)
   [ -n "$rid" ] || { bad 5.replace "replacement submission failed: $(tailc "$ro2")"; return; }
@@ -490,8 +505,11 @@ stage_flow() {
   hi=$(cl rh-admin /home/minigw/p1 note history "$nid" 2>&1)
   if printf '%s' "$hi" | grep -q 'revision 1 ' && printf '%s' "$hi" | grep -q 'revision 2 (current)'; then ok 5.history "note history shows revision 1 (the earlier version) and revision 2 (current)"
   else bad 5.history "note history of $nid: $(tailc "$hi")"; return; fi
-  if cl rh-reader /home/minigw/p1 note restore "$nid" --revision 1 --current 2 >/dev/null 2>&1 || cl rh-developer /home/minigw/p1 note restore "$nid" --revision 1 --current 2 >/dev/null 2>&1; then
-    bad 5.restore "a reader or the author could restore a note: restore is for project admins"; return; fi
+  ro1=$(cl rh-reader /home/minigw/p1 note restore "$nid" --revision 1 --current 2 2>&1); rr1=$?
+  ro2=$(cl rh-developer /home/minigw/p1 note restore "$nid" --revision 1 --current 2 2>&1); rr2=$?
+  if [ $rr1 -eq 0 ] || [ $rr2 -eq 0 ]; then bad 5.restore "a reader or the author could restore a note: restore is for project admins"; return; fi
+  if ! printf '%s' "$ro1" | grep -q 'not found or not visible' || ! printf '%s' "$ro2" | grep -q 'not allowed: restoring a saved version needs the project admin role'; then
+    bad 5.restore "the refusal is not the product's own (reader: $(tailc "$ro1") developer: $(tailc "$ro2"))"; return; fi
   rs=$(cl rh-admin /home/minigw/p1 note restore "$nid" --revision 1 --current 2 2>&1) || { bad 5.restore "note restore by the admin: $(tailc "$rs")"; return; }
   rd=$(cl rh-admin /home/minigw/p1 note read "$nid" 2>&1)
   if printf '%s' "$rd" | grep -qF -- "$t1" && ! printf '%s' "$rd" | grep -qF -- "$t2"; then ok 5.restore "restore is refused for the reader and the author; the admin restored revision 1 as a new revision"
@@ -574,7 +592,7 @@ c=json.load(open(sys.argv[1]))
 c["remoteSettings"]={"enabled":True,"listen":"0.0.0.0:8766","origin":sys.argv[2],"allowedSourceCIDRs":["0.0.0.0/0"],"proxyIdentity":"settings-proxy.internal","proxyCA":"/admin-tls/link-ca.pem","certificate":"/admin-tls/gateway.pem","privateKey":"/admin-tls/gateway.key"}
 json.dump(c,open(sys.argv[3],"w"),indent=1)' "$WORK/serve.in" "$URL" "$WORK/serve.out" &&
   [ -s "$WORK/serve.out" ] && dc exec -T minigw sh -c 'cat > /var/lib/minigw/config/serve.json' <"$WORK/serve.out" || { bad 6.config "could not write the remoteSettings block into serve.json"; return; }
-  OVERLAY=compose.yaml:compose.admin.yaml; use_project "$PROJ" "$PORT"
+  OVERLAY=$ADMINFILES; use_project "$PROJ" "$PORT"
   uo=$(dc up -d 2>&1) || { bad 6.proxy "docker compose up with compose.admin.yaml: $(tailc "$uo")"; return; }
   wait_healthy || { bad 6.proxy "gateway not healthy after enabling the admin profile"; return; }
   i=0; c=000; while [ $i -lt 30 ]; do c=$(reqn "$URL/minigw/settings"); [ "$c" = 200 ] && break; sleep 2; i=$((i + 1)); done
@@ -645,23 +663,35 @@ case ${id1:-x}:${id2:-x} in *[!0-9:]*|:*|*:) lw=1;; esac
 # ====================================================================================================
 # 7. Backup and restore into a second project
 # ====================================================================================================
-snapshot() { # output file; runs in the current project context
-  {
-    for c in "user list" "team list" "project list" "bind list" "devices" "team access list rh-team" "member rh-p1 list" "member rh-p2 list" "kb review rh-p1"; do
-      echo "## gw $c"; gw $c 2>&1
+snap_cmd() { # label, then the command: its own exit status is checked and recorded
+  sl=$1; shift
+  so=$("$@" 2>&1); sr=$?
+  printf '## %s (exit %s)\n%s\n' "$sl" "$sr" "$so" >>"$SNAPFILE"
+  [ $sr -eq 0 ] || SNAPBAD="$SNAPBAD [$sl: exit $sr]"
+}
+identity_hash() { dc exec -T minigw cat /var/lib/minigw/config/serve.json | python3 -c 'import json,sys,hashlib; c=json.load(sys.stdin); print(hashlib.sha256(json.dumps([c["key"],c["instance"]]).encode()).hexdigest())'; }
+snapshot() { # output file; the current project context; every command is checked on its own (SNAPBAD lists the failed ones)
+  SNAPFILE=$1; SNAPBAD=; : >"$SNAPFILE"
+  for c in "user list" "team list" "project list" "bind list" "devices" "team access list rh-team" "member rh-p1 list" "member rh-p2 list" "kb review rh-p1" "provider list"; do
+    snap_cmd "gw $c" gw $c
+  done
+  snap_cmd identity identity_hash
+  for p in p1 p2; do
+    snap_cmd "admin note list $p" cl rh-admin /home/minigw/$p note list
+    for c in structure data private; do
+      snap_cmd "admin search $p $c" cl rh-admin /home/minigw/$p kb search rh-$p "$(get "SENT_${p}_$c")"
+      snap_cmd "admin note read $p $c" cl rh-admin /home/minigw/$p note read "$(get "NID_${p}_$c")"
     done
-    echo "## identity"
-    dc exec -T minigw cat /var/lib/minigw/config/serve.json 2>/dev/null | python3 -c 'import json,sys,hashlib; c=json.load(sys.stdin); print(hashlib.sha256(json.dumps([c["key"],c["instance"]]).encode()).hexdigest())'
-    for p in p1 p2; do
-      echo "## admin note list $p"; cl rh-admin /home/minigw/$p note list 2>&1
-      for c in structure data private; do echo "## admin search $p $c"; cl rh-admin /home/minigw/$p kb search rh-$p "$(get "SENT_${p}_$c")" 2>&1; done
-    done
-    echo "## reader search p1"; cl rh-reader /home/minigw/p1 kb search rh-p1 "$(get SENT_p1_structure)" 2>&1
-  } >"$1"
+  done
+  snap_cmd "admin note read of the replaced finding" cl rh-admin /home/minigw/p1 note read "$FLOWNID"
+  snap_cmd "admin note history of the replaced finding" cl rh-admin /home/minigw/p1 note history "$FLOWNID"
+  snap_cmd "admin note history of the replaced finding, revision 1" cl rh-admin /home/minigw/p1 note history "$FLOWNID" --revision 1
+  snap_cmd "reader search p1" cl rh-reader /home/minigw/p1 kb search rh-p1 "$(get SENT_p1_structure)"
+  [ -z "$SNAPBAD" ]
 }
 stage_backup() {
   [ "$FLOW" = 1 ] || { bad 7.backup "not run: the knowledge flow did not complete"; return; }
-  if ! snapshot "$WORK/snap-source.txt"; then bad 7.backup "could not read the source state"; return; fi
+  if ! snapshot "$WORK/snap-source.txt"; then bad 7.backup "the source state could not be read completely:$SNAPBAD"; return; fi
   BK=$WORK/backups
   bo=$( cd "$DEPLOY" && sh backup.sh --stop "$BK" 2>&1 ) || { bad 7.backup "backup.sh --stop: $(tailc "$bo")"; return; }
   bdir=$(printf '%s\n' "$bo" | sed -n 's/^Backup: //p' | tail -n 1)
@@ -675,9 +705,10 @@ stage_backup() {
   uo=$(dc up -d minigw 2>&1) || { bad 7.restore "starting the restored project: $(tailc "$uo")"; use_project "$PROJ" "$PORT"; return; }
   if ! wait_healthy; then bad 7.restore "the restored gateway is not healthy"; remove_run "$PROJ2"; use_project "$PROJ" "$PORT"; return; fi
   ok 7.restore "restored into the separate project $PROJ2 (own volumes, own port) and healthy"
-  snapshot "$WORK/snap-restored.txt"
-  if cmp -s "$WORK/snap-source.txt" "$WORK/snap-restored.txt"; then
-    ok 7.compare "users, device bindings, roles, devices, pending review, notes, search results and the gateway identity are identical in both projects (the simulated devices connected to the restored gateway with their own keys)"
+  snapshot "$WORK/snap-restored.txt" || SNAPRESTORED=$SNAPBAD
+  if [ -n "${SNAPRESTORED:-}" ]; then bad 7.compare "the restored state could not be read completely:$SNAPRESTORED"
+  elif cmp -s "$WORK/snap-source.txt" "$WORK/snap-restored.txt"; then
+    ok 7.compare "identical in both projects, each command checked on its own: users, teams, projects, bindings, roles, devices, pending review, provider configuration (names, addresses, models), the gateway identity, every sentinel note (list, search, read) and the replaced finding with its history; the simulated devices connected to the restored gateway with their own keys. Not compared: the scratch volume, the provider key value, the audit trail"
   else bad 7.compare "the restored project differs from the source: $(diff "$WORK/snap-source.txt" "$WORK/snap-restored.txt" | head -n 6 | tr '\n' '|' | cut -c1-300)"; fi
   remove_run "$PROJ2" && ok 7.remove "second project $PROJ2 removed (containers, network, its volumes)" || bad 7.remove "could not remove $PROJ2"
   use_project "$PROJ" "$PORT"
@@ -848,7 +879,7 @@ finish() {
   fi
   if [ "$yes" = 1 ]; then
     if do_cleanup; then echo "removed what run $RID created"; else FAILS=$((FAILS + 1)); echo "CLEANUP FAILED: see above"; fi
-  else echo "kept. To remove exactly what this run created: sh $SELF --cleanup-only --project $PROJ --workdir $WORK"; fi
+  else echo "kept. To remove exactly what this run created: sh $SELF --cleanup-only --project $PROJ --workdir \"$WORK\""; fi
 }
 
 stage_pre
@@ -857,8 +888,8 @@ stage_boot
 stage_matrix
 stage_flow
 stage_admin
-stage_backup
 stage_provider
+stage_backup
 stage_operator
 [ "$PRE" = 1 ] && use_project "$PROJ" "${PORT:-0}" 2>/dev/null
 stage_secrets
