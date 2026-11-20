@@ -187,7 +187,20 @@ fi
 nosums=""
 if [ -z "$sums" ] && ! { [ -f "$BIN/SHA256SUMS" ] && [ -f "$BIN/SHA256SUMS.sig" ] && verified "$BIN/SHA256SUMS" "$BIN/SHA256SUMS.sig"; } &&
    ! { [ -f "$BIN/SHA256SUMS.prev" ] && [ -f "$BIN/SHA256SUMS.prev.sig" ] && verified "$BIN/SHA256SUMS.prev" "$BIN/SHA256SUMS.prev.sig"; }; then nosums=1; fi
-novedict() { echo "minigw plugin: the installed minigw cannot be verified yet (no network and nothing verified before); trying again at the next session start"; }
+novedict() { echo "minigw plugin: the installed minigw cannot be verified yet (no signed checksums could be fetched or verified); trying again at the next session start"; }
+# recordok: bin/.verified še velja PO PRAVILU kljuke (kb-hook.sh, ista zanka): prva pot je $BIN/minigw ali $BIN/minigw.exe in SHA-256 vsake zapisane
+# poti je enak zapisu. Zgodnji izhodi brez sodbe izvozijo PATH le, če velja (sicer bi Claudov Bash zagnal datoteko, ki je kljuka ne bi).
+recordok() {
+  [ -f "$BIN/.verified" ] || return 1
+  ro=0 rx=""
+  while h= p=; read -r h p || [ -n "$h$p" ]; do
+    p=${p%"$(printf '\r')"}
+    if [ -z "$rx" ]; then case $p in "$BIN/minigw"|"$BIN/minigw.exe") rx=$p ;; *) break ;; esac; fi
+    [ -n "$h" ] && [ "$(sha "$p")" = "$h" ] || { ro=0; break; }
+    ro=1
+  done < "$BIN/.verified"
+  [ $ro = 1 ] && [ -x "$rx" ]
+}
 # exportpath: Claudov Bash najde »minigw« tudi brez poti (tudi ob zgodnjem izhodu).
 exportpath() {
   qb=$(printf '%s' "$BIN" | sed "s/'/'\\\\''/g"); epl="export PATH='$qb':\"\$PATH\""
@@ -246,15 +259,14 @@ if [ "$os" = linux ] && [ -e "$inst" ] && ! { mine "$inst" && mine "${inst%/*}" 
 fi
 # Veljavna zagonska datoteka (natanko besedilo Go odjemalca), a nobenih vsot: brez sodbe. Ostane z minigw.cmd, brez zapisa .verified (kljuka ne zažene
 # nič), ena vrstica; odstrani se le ob pravi sodbi (vsote so, hash cilja ni v njih; cilja ni; prestar, ko je boljša lastna kopija).
-if [ -n "$nosums" ] && [ -n "$usedlauncher" ] && [ -x "$inst" ]; then novedict; exportpath; tidy; exit 0; fi  # cilj, ki ga ni, je prava sodba
+if [ -n "$nosums" ] && [ -n "$usedlauncher" ] && [ -x "$inst" ]; then novedict; recordok && exportpath; tidy; exit 0; fi  # cilj, ki ga ni, je prava sodba
 isums=""; instx=""; [ -n "$inst" ] && [ -x "$inst" ] && instx=1
 instok=""; [ -n "$instx" ] && trusted "$inst" && { instok=1; isums=$tsums; iv=$(exever "$inst"); }  # neoverjen: odsoten, ne zažene se
 # Stavek »is not the current release … update it« potrebuje sodbo iz vsot, PRENESENIH IN PREVERJENIH V TEM ZAGONU (sums): brez svežega pogleda ne vemo,
 # katera izdaja je zadnja (shranjene vsote starejše izdaje ne vsebujejo hasha novejšega nameščenega odjemalca). Brez njih o tem ne rečemo nič
 # (velja lastna overjena kopija) ali, če ni uporabnega odjemalca, ena vrstica brez sodbe (pending → spodaj ob neuspehu).
 pending=""
-if [ -n "$instx" ] && [ -z "$instok" ] && [ -n "$nosums" ]; then novedict
-elif [ -n "$instx" ] && [ -z "$instok" ] && [ -z "$sums" ]; then pending=1
+if [ -n "$instx" ] && [ -z "$instok" ] && [ -z "$sums" ]; then pending=1  # brez sodbe (ni nobenih preverjenih vsot ali vsote niso sveže): ena vrstica ob izhodu
 elif [ -n "$instx" ] && [ -z "$instok" ]; then  # ne zaženemo ga, a posodobitev ponudimo (prej je to povedala vrstica »X is installed«)
   u=$(how)
   [ "$os" = linux ] && [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/minigw-serve.service" ] && u="/minigw:gw update"
@@ -331,7 +343,7 @@ else
     shm "$EXE"
     if [ -z "$SH" ]; then
       echo "minigw plugin: the client in bin is in use and could not be checked this time; trying again at the next session start"
-      exportpath; tidy; exit 0
+      recordok && exportpath; tidy; exit 0
     fi
   fi
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
@@ -374,8 +386,8 @@ else
           if [ -n "$unsigned" ]; then why="$unsigned; gateway skills are unavailable until the release can be verified"
           elif [ -n "$sums" ]; then why="the download failed or did not match the signed checksum; gateway skills are unavailable until it works"
           else why="github.com/$REPO could not be reached; gateway skills are unavailable until the network is back"; fi
-          [ -n "$pending" ] && novedict
-          echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why."
+          if [ -n "$pending" ]; then echo "minigw plugin: cannot verify the installed minigw yet (no signed checksums could be fetched or verified) and cannot download a verified one: $why; trying again at the next session start."
+          else echo "minigw plugin: cannot verify the installed minigw and cannot download a verified one: $why."; fi
         else
           echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."
         fi; dropshims; unrecord; exit 0; }
@@ -414,8 +426,9 @@ if ! goodver "$cur"; then
 elif older "$cur" "$MIN" && [ -n "$usedinst" ]; then
   echo "minigw plugin: using the installed minigw $cur, older than $MIN which this plugin's commands need; some commands will not work until it is updated ($(how))"
 elif older "$cur" "$MIN"; then
+  lr="the latest release"; [ -n "$sums" ] || lr="the latest release this plugin has seen"  # brez prenosa v tem zagonu: to vemo le iz shranjenih vsot
   sc=""; [ -n "$stale" ] && older "$iv" "$cur" && sc=" (the installed minigw $iv is older still: $(how))"
-  echo "minigw plugin: using the plugin's own copy of minigw $cur (the latest release), older than $MIN which this plugin's commands need; some commands will not work until a newer minigw is released or you install a beta from https://github.com/$REPO/releases${sc}"
+  echo "minigw plugin: using the plugin's own copy of minigw $cur ($lr), older than $MIN which this plugin's commands need; some commands will not work until a newer minigw is released or you install a beta from https://github.com/$REPO/releases${sc}"
 elif [ -n "$stale" ]; then
   echo "minigw plugin: the installed minigw${iv:+ $iv} is older than $MIN: the plugin uses its own copy $cur (update the installed one: $(how))"
 fi

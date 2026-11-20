@@ -166,7 +166,7 @@ cp $T/win/exe.keep "$exe"
 clear10; winrun wdl > /dev/null; cp $GB/.verified $T/win/verified.keep; cp $GB/minigw.exe $T/win/exe.keep9; rm -f $T/win/ops; : > $T/win/env9
 out=$(FAILREAD=1 WENV=$T/win/env9 winrun wnew 2> $T/win/err9); print -r -- $out
 [[ $out == *"the client in bin is in use and could not be checked this time; trying again at the next session start"* && $out != *"cannot verify"* && $out != *"unavailable"* && ! -s $T/win/err9 ]] || fail "10 S9: the unreadable exe was not treated as no verdict: $out $(cat $T/win/err9)"
-[[ ! -e $T/win/ops ]] && cmp -s $T/win/exe.keep9 $GB/minigw.exe && cmp -s $T/win/verified.keep $GB/.verified && grep -q '^export PATH=' $T/win/env9 || fail "10 S9: the exe or the record was touched, or no PATH"
+[[ ! -e $T/win/ops ]] && cmp -s $T/win/exe.keep9 $GB/minigw.exe && cmp -s $T/win/verified.keep $GB/.verified && ! grep -q '^export PATH=' $T/win/env9 || fail "10 S9: the exe or the record was touched, or PATH exported for a record that cannot be matched"
 winrun wnew > /dev/null; cmp -s $T/rel/wnew/minigw-windows-amd64.exe $GB/minigw.exe || fail "10 S9: the next normal run did not update"
 # S10: stavek o starejšem nameščenem: klavzula le, ko je nameščeni STROGO starejši od lastne kopije
 clear10; cp $T/rel/wold/minigw-windows-amd64.exe "$exe"; out=$(winrun wold); print -r -- $out   # nameščeni = lastna kopija (0.5.20): enako
@@ -179,21 +179,31 @@ cp $T/win/exe.keep "$exe" 2>/dev/null || true
 # .verified, ena vrstica, izhod 0, nič na golem imenu; šele prava sodba (vsote so, hash cilja ni v njih) jo odstrani
 clear10; golauncher "$exe"; cp $GB/minigw $T/win/l11.keep; cp $GB/minigw.cmd $T/win/l11.cmd.keep; rm -f $T/win/ops
 out=$(winrun); print -r -- $out
-[[ $out == *"the installed minigw cannot be verified yet (no network and nothing verified before); trying again at the next session start"* ]] || fail "10 S11: no no-verdict line: $out"
+[[ $out == *"the installed minigw cannot be verified yet (no signed checksums could be fetched or verified); trying again at the next session start"* ]] || fail "10 S11: no no-verdict line: $out"
 cmp -s $T/win/l11.keep $GB/minigw && cmp -s $T/win/l11.cmd.keep $GB/minigw.cmd && [[ ! -e $GB/.verified && ! -e $T/win/ops ]] || fail "10 S11: the launcher was removed or a record written offline"
 nobare "10 S11"
+[[ $out != *"nothing verified before"* ]] || fail "10 S11: the no-verdict text still claims nothing was verified before"
+# S11b (#168): PATH only when the existing .verified record still matches the files; a record that does not match: no PATH, the same one line
+clear10; golauncher "$exe"; : > $T/win/env11b
+cp "$exe" $GB/minigw.exe 2>/dev/null || true; printf '%s  %s\n' "$(shasum -a 256 $GB/minigw.exe | cut -d' ' -f1)" "$GB/minigw.exe" > $GB/.verified
+out=$(WENV=$T/win/env11b winrun); print -r -- $out
+[[ $out == *"cannot be verified yet"* ]] && grep -q '^export PATH=' $T/win/env11b || fail "10 S11b: a matching record did not export PATH: $out"
+clear10; golauncher "$exe"; cp "$exe" $GB/minigw.exe 2>/dev/null || true; printf '%s  %s\n' "$(shasum -a 256 $GB/minigw.exe | cut -d' ' -f1)" "$GB/minigw.exe" > $GB/.verified; print x >> $GB/minigw.exe; : > $T/win/env11c
+out=$(WENV=$T/win/env11c winrun); print -r -- $out
+[[ $out == *"cannot be verified yet"* ]] && ! grep -q '^export PATH=' $T/win/env11c || fail "10 S11c: a record that does not match still exported PATH: $out"
+clear10; golauncher "$exe"
 winrun wdl > /dev/null   # prava sodba: vsote so, hash cilja (MSI exe) ni v njih: zagonska datoteka gre, lastna kopija velja
 [[ ! -e $GB/minigw && ! -e $GB/minigw.cmd ]] && cmp -s $RELEXE $GB/minigw.exe || fail "10 S11: a real verdict did not remove the launcher"
 # S12: ista sveža mapa, brez omrežja, nameščen MSI minigw BREZ zagonske datoteke: ne trdi »is not the current release«, pove brez sodbe in ohrani sporočilo o omrežju
 clear10; out=$(winrun); print -r -- $out
-[[ $out == *"cannot be verified yet (no network and nothing verified before)"* && $out != *"is not the current release"* && $out == *"gateway skills are unavailable until the network is back"* ]] || fail "10 S12: wrong sentence for an unverifiable installed client without any sums: $out"
+[[ $out == *"cannot verify the installed minigw yet (no signed checksums could be fetched or verified) and cannot download a verified one"* && $(print -r -- $out | grep -c "^minigw plugin:") = 1 && $out != *"is not the current release"* && $out == *"gateway skills are unavailable until the network is back"* ]] || fail "10 S12: wrong sentence for an unverifiable installed client without any sums: $out"
 # S14: brez omrežja, SHRANJENE vsote starejše izdaje (lastna kopija 0.5.20), nameščeni MSI minigw, ki ga vsote ne vsebujejo: brez svežega pogleda ne vemo, kaj je
 # zadnja izdaja: stavek »is not the current release … update it« se NE izpiše; velja lastna overjena kopija (»connected«)
 clear10; winrun wold > /dev/null; out=$(winrun); print -r -- $out
-[[ $out != *"is not the current release"* && $out == *"connected to Mini Gateway"* ]] || fail "10 S14: advice about the current release without a fresh signed view: $out"
+[[ $out != *"is not the current release"* && $out == *"connected to Mini Gateway"* && $out == *"(the latest release this plugin has seen), older than"* ]] || fail "10 S14: advice about the current release without a fresh signed view: $out"
 # in ko ni uporabnega odjemalca: vrstica brez sodbe, ne tega stavka
 rm -f $GB/minigw.exe; out=$(winrun); print -r -- $out
-[[ $out != *"is not the current release"* && $out == *"cannot be verified yet (no network and nothing verified before)"* ]] || fail "10 S14b: no-verdict line expected when no client is usable: $out"
+[[ $out != *"is not the current release"* && $out == *"cannot verify the installed minigw yet (no signed checksums could be fetched or verified) and cannot download a verified one"* ]] || fail "10 S14b: no-verdict line expected when no client is usable: $out"
 # S13: exe zaseden pri kopiranju nameščenega (mv ne uspe): ENA vrstica, brez surove napake orodja, lastna kopija ostane (overja jo .prev)
 clear10; winrun wdl > /dev/null; cp $GB/SHA256SUMS $GB/SHA256SUMS.prev; cp $GB/SHA256SUMS.sig $GB/SHA256SUMS.prev.sig
 cp "$exe" $T/win/exe.keep13; print "#!/bin/sh\n[ \"\$1\" = --version ] && echo minigw $MINV; [ \"\$1\" = status ] && echo \"Status:    connected\"; exit 0 # newer installed" > "$exe"; wtrust "$exe" $MINV

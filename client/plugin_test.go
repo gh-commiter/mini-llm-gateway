@@ -932,7 +932,7 @@ func TestInstallScriptUnverifiedCandidatesAreNeverRun(t *testing.T) {
 		}
 		// Offline with only STORED sums nothing says what the current release is, so there is no "update it" advice: the guarantee under
 		// test (the substituted client is never run or linked) is checked above; here the start says nothing about the release.
-		r.mustSay(t, "cannot verify the installed minigw and cannot download a verified one", "cannot be verified yet (no network and nothing verified before)")
+		r.mustSay(t, "cannot verify the installed minigw yet (no signed checksums could be fetched or verified) and cannot download a verified one")
 		if strings.Contains(r.out, "is not the current release") {
 			t.Errorf("%s: advice about the current release without a fresh signed view:\n%s", goos, r.out)
 		}
@@ -962,7 +962,10 @@ func TestInstallScriptNoSumsAtAllIsNoVerdict(t *testing.T) {
 		if r.ran() {
 			t.Errorf("%s: an unverified installed client was executed:\n%s", goos, r.out)
 		}
-		r.mustSay(t, "the installed minigw cannot be verified yet (no network and nothing verified before); trying again at the next session start")
+		r.mustSay(t, "cannot verify the installed minigw yet (no signed checksums could be fetched or verified) and cannot download a verified one")
+		if n := strings.Count(r.out, "minigw plugin:"); n != 1 {
+			t.Errorf("%s: %d lines, want one:\n%s", goos, n, r.out)
+		}
 		if strings.Contains(r.out, "is not the current release") {
 			t.Errorf("%s: a verdict without any sums:\n%s", goos, r.out)
 		}
