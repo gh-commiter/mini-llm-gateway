@@ -1774,17 +1774,24 @@ of that one link and pushes. Ordinary link edits (`link` again, `--auto`, `--man
 Use `minigw gw upstream reconcile <project> --upstream <name>` to list the notes using a complete fresh read of the linked destination only.
 For a team use `minigw gw upstream reconcile --team <team> --upstream <name>`. Reading need not be enabled on the link.
 A cached mirror, dependencies, incomplete or forbidden reads never supply evidence or clear the mark.
+The read counts as complete only when the upstream itself says (since 0.9.3, in its manifest) that this device reads every pushed class of the destination in full:
+an older upstream ("update the upstream gateway to 0.9.3 or newer") or a role that reads only part of it (the message names the missing classes) is refused and nothing is changed.
 `--dry-run` lists without changing any receipts, decisions, marks or audit rows; run a normal listing before making decisions.
 
 - **known**: a surviving receipt still names a remote note with the exact reference and normalized author trailer. Its receipt is kept unchanged.
   Surviving submission receipts keep their existing waiting and review behavior.
-- **candidate**: exactly one destination note ends with the exact trailer the push would write, with no surviving receipt.
-  Confirm its remote id with `minigw gw upstream reconcile <project> --upstream <name> --note <id> --confirm <remote id>`.
-  Equal content records a receipt. Different content records a conflict with an unknown base; use
+- **candidate**: exactly one destination note ends with the exact trailer the push would write, with no surviving receipt, AND the upstream itself reports
+  (the provenance of the note's current revision) that this gateway's device wrote it. The trailer text alone proves nothing: anyone can copy it.
+  The listing shows what you confirm: the remote id, title, the writer and time the upstream reports, the remote revision, and whether the content is equal to or differs from the local note.
+  Confirm with `minigw gw upstream reconcile <project> --upstream <name> --note <id> --confirm <remote id>`; the decision is refused ("list again") when the remote revision or content changed since the listing.
+  Equal content records a receipt; on a publish link its base stays unknown, so the first later local change is a conflict for `resolve`, never a direct overwrite of the upstream note.
+  Different content records a conflict with an unknown base; use
   `minigw gw upstream resolve <project> <id> --upstream <name> --ours` or `--theirs` before pushing.
-- **unknown**: no match, duplicate matches, a changed author or trailer, or a missing reference key. Reconcile never generates a missing key.
+  A candidate can be rejected with `--note <id> --new` or `--skip`.
+- **unknown**: no match, duplicate matches, a match the upstream does not attribute to this gateway's device (listed for information only, with the remote ids), a changed author or trailer, or a missing reference key. Reconcile never generates a missing key.
   Decide explicitly with `minigw gw upstream reconcile <project> --upstream <name> --note <id> --new` (allow creation) or `--skip`
-  (do not push this local revision, including after a restart; a later local change is considered again). `--new` clears an earlier skip.
+  (do not push this local revision, including after a restart; a later local change is considered again). `--new` clears an earlier skip, also after the restore mark is gone:
+  while a link has skipped notes, `minigw gw upstream reconcile <project> --upstream <name>` lists them without a restore mark, and `--note <id> --new` releases one at a time.
   For the unknown ids from the last normal listing use
   `minigw gw upstream reconcile <project> --upstream <name> --all --new`, or replace `--new` with `--skip`.
   The CLI reads the saved ids from that listing and carries them in the decision request; `--listed <id,id,...>` can pin the displayed ids explicitly.
