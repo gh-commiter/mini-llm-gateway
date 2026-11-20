@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- Proof: `scripts/compose-upstream-e2e.sh` runs two gateways (hub and edge) in containers on an internal Docker network and proves in them: `backup.sh --restore` -> `core.restored` consumed -> the upstream link marked and paused (log, status, a manual push creates nothing) -> `gw upstream reconcile` (classes known, candidate with and without proof, unknown, orphan; confirm, new, skip) -> replacements with no second copies. Not proven: Mac and Windows hosts, publish-mode links, the Mac app's window; a note rejected on the hub and then restored away and sent again with `--new` does not reach the hub (the script ends red on that step).
+
 ## 0.9.4
 
 ### Fixed
