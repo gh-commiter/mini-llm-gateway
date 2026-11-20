@@ -911,3 +911,147 @@ func TestReconcileDecisionReadsOnlyTheManifestAndTheTouchedNote(t *testing.T) {
 		}
 	}
 }
+
+// A note bound WITHOUT the upstream's proof is restricted for good: after --theirs or --ours, every later change goes out as a submission (manual and
+// automatic push alike), never as a direct write over a note this gateway never wrote. A device-proven binding is not restricted.
+func TestReconcileUnprovenBindingNeverGetsADirectWriteOnAPublishLink(t *testing.T) {
+	for _, ours := range []bool{false, true} {
+		for _, auto := range []bool{false, true} {
+			t.Run(fmt.Sprint("ours=", ours, " auto=", auto), func(t *testing.T) {
+				f, project, n, h := reconcileFixture(t, "publish", true)
+				h.notes[0].device = "dev-someone-else"
+				yes := true
+				f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: project, Upstream: "hub", Remote: "shop", Classes: "structure", Mode: "publish", Auto: &yes}))
+				_, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+				f.ok(e)
+				_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, Confirm: 41})
+				f.ok(e)
+				if l := f.link(project); l.Restricted != 1 {
+					t.Fatal("the binding is not restricted", l.Restricted)
+				}
+				f.ok(f.ResolveUpstream(ctx, project, 0, n.ID, ours, "hub"))
+				_, e = f.UpdateNote(ctx, f.p("ana"), project, n.ID, n.Revision, NoteInput{Class: n.Class, Title: n.Title, Body: "edited after the resolution"})
+				f.ok(e)
+				up := h.up()
+				hubHandler := up.handler
+				up.handler = func(c upCall) (int, string, time.Duration) {
+					if c.method == "POST" {
+						return 201, `{"id":9}`, 0
+					}
+					return hubHandler(c)
+				}
+				if auto {
+					f.clock = f.clock.Add(61 * time.Second)
+					_, e = f.AutoPush(ctx, up, noSleep)
+				} else {
+					_, e = f.PushUpstream(ctx, up, project, 0, "hub", 0, false, noSleep)
+				}
+				f.ok(e)
+				posts := 0
+				for _, c := range up.calls {
+					if c.method == "PUT" {
+						t.Fatal("a direct write over a note this gateway never wrote:", c.path)
+					}
+					if c.method == "POST" {
+						posts++
+						if fmt.Sprint(c.body["replaces"]) != "41" {
+							t.Fatal("the submission does not replace the bound note", c.body)
+						}
+					}
+				}
+				if posts != 1 {
+					t.Fatal("expected one submission", up.calls)
+				}
+				if f.link(project).Restricted != 1 {
+					t.Fatal("the restriction went away")
+				}
+			})
+		}
+	}
+	// proven: no restriction
+	f, project, n, h := reconcileFixture(t, "publish", true)
+	_, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+	f.ok(e)
+	_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, Confirm: 41})
+	f.ok(e)
+	if f.link(project).Restricted != 0 {
+		t.Fatal("a proven binding was restricted")
+	}
+}
+
+// blockUp holds the first request until released, so that the test can act on the store while a reconcile read is in flight.
+type blockUp struct {
+	*fakeUp
+	started chan struct{}
+	release chan struct{}
+	once    bool
+}
+
+func (u *blockUp) Do(ctx context.Context, up, method, path string, hdr map[string]string, body []byte) (int, []byte, time.Duration, error) {
+	if !u.once {
+		u.once = true
+		close(u.started)
+		<-u.release
+	}
+	return u.fakeUp.Do(ctx, up, method, path, hdr, body)
+}
+
+func (u *blockUp) OwnDevice(string) string { return ownDeviceID }
+
+// The link lock is not held while the upstream is read; what the decision depends on is revalidated when it is applied.
+func TestReconcileDoesNotHoldTheLinkLockDuringTheRead(t *testing.T) {
+	f, project, n, h := reconcileFixture(t, "submit", true)
+	u := &blockUp{fakeUp: h.up(), started: make(chan struct{}), release: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		_, e := f.ReconcileUpstream(ctx, u, ReconcileSpec{Project: project})
+		done <- e
+	}()
+	<-u.started
+	mu := f.linkLock(project, "hub")
+	if !mu.TryLock() {
+		t.Fatal("the link lock is held during the upstream read: a push, pull or unlink would be refused")
+	}
+	mu.Unlock()
+	_, e := f.UpdateNote(ctx, f.p("ana"), project, n.ID, n.Revision, NoteInput{Class: n.Class, Title: n.Title, Body: "edited during the read"})
+	f.ok(e)
+	close(u.release)
+	if e := <-done; e == nil || !strings.Contains(e.Error(), "list again") {
+		t.Fatal("a change during the read must refuse with list again", e)
+	}
+	var listings int
+	f.ok(f.DB().QueryRow(`SELECT count(*) FROM meta WHERE key LIKE 'upstream_reconcile|%|listing'`).Scan(&listings))
+	if listings != 0 || f.marked() != 1 {
+		t.Fatal("a refused reconcile wrote something")
+	}
+}
+
+func TestReconcileCancelEndsARateLimitWaitAtOnce(t *testing.T) {
+	f, project, _, h := reconcileFixture(t, "submit", true)
+	cctx, cancel := context.WithCancel(ctx)
+	time.AfterFunc(50*time.Millisecond, cancel)
+	start := time.Now()
+	_, e := f.ReconcileUpstream(cctx, &limitUp{fakeUp: h.up(), limit: 1}, ReconcileSpec{Project: project})
+	if e == nil || !strings.Contains(e.Error(), "canceled") || time.Since(start) > 700*time.Millisecond {
+		t.Fatal("a cancel must end the wait promptly", time.Since(start), e)
+	}
+}
+
+func TestReconcileRestrictionGoesWithTheLink(t *testing.T) {
+	f, project, n, h := reconcileFixture(t, "publish", true)
+	h.notes[0].device = "dev-someone-else"
+	_, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+	f.ok(e)
+	_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, Confirm: 41})
+	f.ok(e)
+	var keys int
+	f.ok(f.DB().QueryRow(`SELECT count(*) FROM meta WHERE key LIKE 'upstream_reconcile|%|restricted|%'`).Scan(&keys))
+	if keys != 1 {
+		t.Fatal("no restriction recorded", keys)
+	}
+	f.ok(f.UnlinkUpstream(ctx, project, 0, "hub"))
+	f.ok(f.DB().QueryRow(`SELECT count(*) FROM meta WHERE key LIKE 'upstream_reconcile|%'`).Scan(&keys))
+	if keys != 0 {
+		t.Fatal("reconcile keys survived the unlink", keys)
+	}
+}

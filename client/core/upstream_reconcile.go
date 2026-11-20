@@ -130,6 +130,15 @@ func (s *Store) reconcileCountsText(ctx context.Context, l UpstreamLink) string 
 func reconcileKey(project int64, up, suffix string) string {
 	return "upstream_reconcile|" + strconv.FormatInt(project, 10) + "|" + up + "|" + suffix
 }
+
+// reconcileRestrictedKey: a note bound without the upstream's proof of its writer is "restricted" on its link: every later change of it goes the
+// submission way (for the upstream's reviewers), never a direct write, whatever `resolve` or a later reconcile did. It lives in meta (backed up with
+// the database, removed with the link) and is never lifted by anything but the owner's `--new`/a new confirmation: an accepted submission of
+// ours proves nothing about who wrote the note it replaced.
+func reconcileRestrictedKey(project int64, up string, note int64) string {
+	return reconcileKey(project, up, "restricted|"+strconv.FormatInt(note, 10))
+}
+
 func reconcileDecisionKey(project int64, up string, note int64) string {
 	return reconcileKey(project, up, "decision|"+strconv.FormatInt(note, 10))
 }
@@ -235,6 +244,8 @@ type reconcileSession struct {
 	begin  time.Time
 	end    time.Time
 	waited time.Duration
+	cctx   context.Context // the deadline of the request in flight
+	stop   context.CancelFunc
 	read   int
 	total  int
 	remote int64
@@ -254,10 +265,10 @@ func (c *reconcileSession) budgetErr() error {
 // guard turns what happened to a request into the owner's words: the read limit (wait failed), the caller's own cancel, a request or budget deadline.
 func (c *reconcileSession) guard(cctx context.Context, status int) error {
 	switch {
-	case c.p.more:
-		return ErrRefusal{fmt.Sprintf("reconcile: the upstream's read limit is used (%s); nothing was changed: run it again in %d seconds", c.progress(), int(c.p.wait/time.Second)+1)}
 	case c.rctx.Err() != nil && c.rctx.Err() != context.DeadlineExceeded:
 		return ErrRefusal{"reconcile: canceled; nothing was changed"}
+	case c.p.more:
+		return ErrRefusal{fmt.Sprintf("reconcile: the upstream's read limit is used (%s); nothing was changed: run it again in %d seconds", c.progress(), int(c.p.wait/time.Second)+1)}
 	case status == 0 && cctx.Err() != nil:
 		if !time.Now().Before(c.end) || c.rctx.Err() != nil {
 			return c.budgetErr()
@@ -267,30 +278,37 @@ func (c *reconcileSession) guard(cctx context.Context, status int) error {
 	return nil
 }
 
-func (c *reconcileSession) get(path string) (upAnswer, error) {
-	now := time.Now()
-	if !now.Before(c.end) {
-		return upAnswer{}, c.budgetErr()
+// newCall gives the request about to be sent its own deadline (the per-request value, never beyond the budget). A wait for the read limit
+// is not part of it: after each wait the request starts again with a fresh one.
+func (c *reconcileSession) newCall() {
+	if c.stop != nil {
+		c.stop()
 	}
-	dl := now.Add(reconcileCallTimeout)
+	dl := time.Now().Add(reconcileCallTimeout)
 	if dl.After(c.end) {
 		dl = c.end
 	}
-	cctx, stop := context.WithDeadline(c.rctx, dl)
-	defer stop()
-	c.p.ctx, c.p.more = cctx, false
-	defer func() { c.p.ctx = c.rctx }()
+	c.cctx, c.stop = context.WithDeadline(c.rctx, dl)
+	c.p.ctx = c.cctx
+}
+
+func (c *reconcileSession) get(path string) (upAnswer, error) {
+	if !time.Now().Before(c.end) {
+		return upAnswer{}, c.budgetErr()
+	}
+	c.p.more = false
+	c.newCall()
+	defer func() { c.stop(); c.p.ctx = c.rctx }()
 	a := c.p.call("GET", path, nil, nil)
-	return a, c.guard(cctx, a.status)
+	return a, c.guard(c.cctx, a.status)
 }
 
 func (c *reconcileSession) resolve() (int64, error) {
-	cctx, stop := context.WithTimeout(c.rctx, 2*reconcileCallTimeout)
-	defer stop()
-	c.p.ctx, c.p.more = cctx, false
-	defer func() { c.p.ctx = c.rctx }()
+	c.p.more = false
+	c.newCall()
+	defer func() { c.stop(); c.p.ctx = c.rctx }()
 	remote, why := c.p.resolve(c.l)
-	if e := c.guard(cctx, c.p.status); e != nil {
+	if e := c.guard(c.cctx, c.p.status); e != nil {
 		return 0, e
 	}
 	if why != "" {
@@ -559,11 +577,8 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 		return out, ErrRefusal{"reconcile: name exactly one restored link (or one with skipped notes) with --upstream <name>"}
 	}
 	l := chosen[0].UpstreamLink
-	mu := s.linkLock(l.Project, l.Upstream)
-	if !mu.TryLock() {
-		return out, errPushRunning{}
-	}
-	defer mu.Unlock()
+	// No link lock during the network read: pushes, pulls and unlink go on meanwhile. The lock is taken for the transaction that applies the
+	// decision, which revalidates everything the decision depends on (link, notes, mark, listing, last push) and refuses with "list again".
 	l, _, address, archived, scan, e := s.upstreamPlan(ctx, l.Project, l.Upstream, 0, 0)
 	if e != nil {
 		return out, e
@@ -574,6 +589,7 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 	var key []byte
 	var mark string
 	var previous reconcileSnapshot
+	var previousRaw string
 	e = s.read(ctx, func(tx *sql.Tx) error {
 		if e := tx.QueryRow(`SELECT value FROM meta WHERE key=?`, restoredKey(l.Project, l.Upstream)).Scan(&mark); e != nil && e != sql.ErrNoRows {
 			return e
@@ -586,6 +602,7 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 		if e == nil {
 			// A damaged listing is no authority for a decision; a new listing
 			// must still be able to replace it.
+			previousRaw = v
 			if json.Unmarshal([]byte(v), &previous) != nil {
 				previous = reconcileSnapshot{}
 			}
@@ -608,10 +625,11 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 	sess := &reconcileSession{l: l, rctx: rctx, begin: time.Now()}
 	sess.end = sess.begin.Add(reconcileBaseBudget)
 	sess.p = &pusher{s: s, tr: tr, up: l.Upstream, ctx: rctx, sleep: func(d time.Duration) bool {
-		if time.Now().Add(d).After(sess.end) || !reconcileWait(rctx, d) {
+		if time.Now().Add(d).After(sess.end) || !reconcileWait(rctx, d) { // the budget and the caller's cancel end a wait at once
 			return false
 		}
 		sess.waited += d
+		sess.newCall()
 		return true
 	}}
 	own := ""
@@ -717,8 +735,12 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 		if e != nil {
 			return e
 		}
-		if addr != address || stamp != mark || !reconcileSameLink(l, cur) || reconcileNotesKey(scan.Notes) != reconcileNotesKey(now.Notes) {
-			return ErrRefusal{"reconcile: local notes or link changed; list again"}
+		var rawNow string
+		if e = tx.QueryRow(`SELECT value FROM meta WHERE key=?`, reconcileKey(l.Project, l.Upstream, "listing")).Scan(&rawNow); e != nil && e != sql.ErrNoRows {
+			return e
+		}
+		if addr != address || stamp != mark || !reconcileSameLink(l, cur) || !reflect.DeepEqual(l.LastPush, cur.LastPush) || rawNow != previousRaw || reconcileNotesKey(scan.Notes) != reconcileNotesKey(now.Notes) {
+			return ErrRefusal{"reconcile: local notes, the link, a push or the stored listing changed while the upstream was read; list again"}
 		}
 		var isArchived bool
 		if team, ok := SegmentTeam(l.Project); ok {
@@ -844,7 +866,13 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 				if e != nil {
 					return e
 				}
-				if !proven {
+				if _, e = tx.Exec(`DELETE FROM meta WHERE key=?`, reconcileRestrictedKey(l.Project, l.Upstream, n.ID)); e != nil {
+					return e
+				}
+				if !proven { // durable: every later change of this note goes the submission way, whatever is resolved or reconciled later
+					if e = reconcileMeta(tx, reconcileRestrictedKey(l.Project, l.Upstream, n.ID), map[string]int64{"remote": r.Confirm}); e != nil {
+						return e
+					}
 					out.Lines = append(out.Lines, fmt.Sprintf("note %d is bound to remote %d WITHOUT proof that this gateway's device wrote it: it is recorded as a conflict with an unknown base; nothing is replaced directly. Settle it with: gw upstream resolve --ours (a submission for the upstream's reviewers) or --theirs", n.ID, r.Confirm))
 				}
 				row.Class = "known"
@@ -855,6 +883,9 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 				row.Class = action
 				if r.New {
 					if _, e = tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID); e != nil {
+						return e
+					}
+					if _, e = tx.Exec(`DELETE FROM meta WHERE key=?`, reconcileRestrictedKey(l.Project, l.Upstream, n.ID)); e != nil {
 						return e
 					}
 					if _, e = tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN dirty_since=0 THEN ?1 ELSE dirty_since END,last_change=max(?1,last_change+1) WHERE project_id=?2 AND upstream=?3 AND auto=1`, ms(s.now()), l.Project, l.Upstream); e != nil {
@@ -904,7 +935,12 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 	if r.DryRun {
 		e = s.read(ctx, apply)
 	} else {
+		mu := s.linkLock(l.Project, l.Upstream)
+		if !mu.TryLock() {
+			return out, errPushRunning{}
+		}
 		e = s.write(ctx, apply)
+		mu.Unlock()
 	}
 	if e != nil {
 		return UpstreamReconcile{}, e

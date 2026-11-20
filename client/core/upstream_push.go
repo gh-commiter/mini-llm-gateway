@@ -656,7 +656,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			return nil
 		}
 		conflict := func(rev int64) error { return conflictWith(rev, conflictWhy(rev)) }
-		if l.Mode == "publish" && n.EntryKind != "faq" && !(n.Sent != nil && (n.Sent.Conflict == 2 || n.Sent.RemoteSub > 0)) { // a note sent as a submission ("ours") stays on the submission path
+		if l.Mode == "publish" && n.EntryKind != "faq" && !(n.Sent != nil && (n.Sent.Conflict == 2 || n.Sent.RemoteSub > 0)) && !n.Restricted { // a note sent as a submission ("ours") stays on the submission path; so does one bound without proof (reconcile)
 			// publish mode: the note is written on the upstream directly (a note, not a submission)
 			notesBase := fmt.Sprintf("/minigw/v1/projects/%d/notes", remote)
 			waitMsg := func() (UpstreamPush, error) {

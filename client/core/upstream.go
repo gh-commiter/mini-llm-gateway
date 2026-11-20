@@ -291,6 +291,8 @@ type UpstreamLinkInfo struct {
 	Foreign int `json:"foreign,omitempty"`
 	// Held: notes the owner skipped during reconcile: held across edits, never pushed until `reconcile --note <id> --new`.
 	Held int `json:"held,omitempty"`
+	// Restricted: notes bound without the upstream's proof of their writer: only ever sent as submissions, never written directly.
+	Restricted int `json:"restricted,omitempty"`
 	// Step C: reading the upstream's notes into the mirror (nothing of it is shown to members yet).
 	Read         bool       `json:"read"`
 	ReadClasses  []Class    `json:"readClasses,omitempty"`
@@ -763,6 +765,7 @@ type UpstreamNote struct {
 	Sent             *UpstreamSent
 	Unchanged        bool // sent before with this very content: nothing to send
 	Conflicted       bool // publish mode: the upstream note changed there since our last write; waits for `upstream resolve`
+	Restricted       bool // bound without the upstream's proof of its writer (reconcile): its changes are only ever submissions, never direct writes
 	ReconcileSkipped bool // owner skipped this note (reconcile --skip): held across edits, independent of receipts, until `--new`
 	Foreign          bool // arrived from another gateway (see fromGateway): never sent onward, nothing to send
 }
@@ -826,13 +829,14 @@ const linkCols = `project_id,upstream,remote,remote_team,classes,with_private,la
 
 // upstreamScan is what upstreamNotes found.
 type upstreamScan struct {
-	Notes    []UpstreamNote // in id order, from the first note after the cursor: the ones to send (Body set) and the unchanged ones (Unchanged, no Body)
-	Pending  int            // of Notes: how many are to send
-	Waiting  int            // of those: how many wait for the review of their earlier submission upstream (only notes the link would push now)
-	Total    int            // of Notes, without the Foreign ones
-	Foreign  int            // of Notes: arrived from another gateway, never sent
-	Held     int            // of Notes: skipped by the owner during reconcile
-	Overflow bool           // more notes to send follow the last of Notes (limit reached)
+	Notes      []UpstreamNote // in id order, from the first note after the cursor: the ones to send (Body set) and the unchanged ones (Unchanged, no Body)
+	Pending    int            // of Notes: how many are to send
+	Waiting    int            // of those: how many wait for the review of their earlier submission upstream (only notes the link would push now)
+	Total      int            // of Notes, without the Foreign ones
+	Foreign    int            // of Notes: arrived from another gateway, never sent
+	Held       int            // of Notes: skipped by the owner during reconcile
+	Restricted int            // of Notes: bound without proof; changes go the submission way only
+	Overflow   bool           // more notes to send follow the last of Notes (limit reached)
 }
 
 const scanPage = 200
@@ -891,6 +895,15 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 			case sql.ErrNoRows:
 			default:
 				return out, e
+			}
+			if u.Sent != nil {
+				var one int
+				if e := tx.QueryRow(`SELECT 1 FROM meta WHERE key=?`, reconcileRestrictedKey(l.Project, l.Upstream, n.ID)).Scan(&one); e == nil {
+					u.Restricted = true
+					out.Restricted++
+				} else if e != sql.ErrNoRows {
+					return out, e
+				}
 			}
 			var decision string
 			var d reconcileDecision
@@ -976,7 +989,7 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 			if e != nil {
 				return e
 			}
-			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign, Held: scan.Held, Waiting: scan.Waiting}
+			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign, Held: scan.Held, Restricted: scan.Restricted, Waiting: scan.Waiting}
 			if at, ok, e := restoredAt(tx, l.Project, l.Upstream); e != nil {
 				return e
 			} else if ok {
