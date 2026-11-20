@@ -1,9 +1,15 @@
 # Release notes
 
-## Unreleased
+## 0.9.9
 
 ### Changed
 - Swift tests: the 90 s stalls of the full run (a gateway request "got no answer", unrelated tests failing together) were a deadlock between a test that listed the mounted volumes through FileManager (it asks every volume while holding the process's file-node lock) and the loopback WebDAV mount of another test in the same process (its server threads need that lock for every file); the test now reads the kernel's mount table. Tests that block (waiting on a process, a semaphore, a sleep or a socket) also run on a thread of their own (`@Test(.blocking)`) instead of a pool thread; `BlockingTestGuard` fails a new blocking test without the trait or a call that deadlocks that way, and `PoolLagGuard` fails a run in which a `Task` waits 20 s for a pool thread. Test code only.
+
+### Known problems
+- This beta changes tests only; the programs are those of 0.9.8.
+- Not explained: one time-out of `TestUpstreamAutoPushBetweenTwoGateways` in the Linux sandbox step of the release checks (0.9.8), and the Swift failure on the hosted Windows/macOS runners of 0.9.5; the new checks were measured on one Mac only.
+- A program of ours that serves a WebDAV share mounted on the same Mac can still wait (about 90 s) when some other program lists all volumes at that moment; our own code does not do that. Not reproduced outside the tests.
+- The known problems of 0.9.8 apply.
 
 ## 0.9.8
 
