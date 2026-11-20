@@ -43,6 +43,7 @@ type upLink struct {
 	Pending         int
 	Total           int
 	Foreign         int
+	Held            int
 	Auto            bool
 	Mode            string
 	DirtySince      *time.Time
@@ -276,6 +277,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 				say(fmt.Sprintf("  %d notes waited for a review upstream at the last push; they are checked at the next push (not a failure)", l.Waiting))
 			}
 			if s := upstreamForeign(l); s != "" {
+				say(clean("  " + s))
+			}
+			if s := upstreamHeld(l); s != "" {
 				say(clean("  " + s))
 			}
 			if s := upstreamSkipped(l); s != "" {
@@ -769,6 +773,17 @@ func upstreamForeign(l upLink) string {
 		return "1 note not sent: arrived from another gateway, never pushed onward"
 	}
 	return fmt.Sprintf("%d notes not sent: arrived from another gateway, never pushed onward", l.Foreign)
+}
+
+// upstreamHeld: notes the owner skipped during reconcile: held across edits, never pushed until released.
+func upstreamHeld(l upLink) string {
+	switch l.Held {
+	case 0:
+		return ""
+	case 1:
+		return "1 note skipped by you during reconcile: never pushed until released with: minigw gw upstream reconcile <project> --upstream <name> --note <id> --new"
+	}
+	return fmt.Sprintf("%d notes skipped by you during reconcile: never pushed until released with: minigw gw upstream reconcile <project> --upstream <name> --note <id> --new", l.Held)
 }
 
 // upstreamBackwards: published notes whose copy on the upstream has a lower revision than our push recorded (replaced by an older one there).

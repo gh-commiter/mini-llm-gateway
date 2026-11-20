@@ -140,6 +140,7 @@ extension AdminCommands {
                 if let s = Self.upstreamConflicts(d) { say(clean("  " + s)) }
                 if let w = d["waiting"]?.int, w > 0 { say("  \(w) notes waited for a review upstream at the last push; they are checked at the next push (not a failure)") }
                 if let s = Self.upstreamForeign(d) { say(clean("  " + s)) }
+                if let s = Self.upstreamHeld(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamSkipped(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamBackwards(d) { say(clean("  " + s)) }
             }
@@ -362,6 +363,13 @@ extension AdminCommands {
         let n = d["foreign"]?.int ?? 0
         if n == 0 { return nil }
         return (n == 1 ? "1 note" : "\(n) notes") + " not sent: arrived from another gateway, never pushed onward"
+    }
+
+    /// Notes the owner skipped during reconcile: held across edits, never pushed until released (as Go's upstreamHeld).
+    static func upstreamHeld(_ d: JDict) -> String? {
+        let n = d["held"]?.int ?? 0
+        if n == 0 { return nil }
+        return (n == 1 ? "1 note" : "\(n) notes") + " skipped by you during reconcile: never pushed until released with: minigw gw upstream reconcile <project> --upstream <name> --note <id> --new"
     }
 
     /// Notes the upstream answered about definitively in the last traversal (as Go's upstreamSkipped).

@@ -1876,6 +1876,44 @@
    }
   },
   {
+   "name": "status with notes skipped during reconcile",
+   "args": [
+    "upstream",
+    "status",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"label\": \"shop\", \"pending\": 1, \"total\": 1, \"held\": 2, \"auto\": true, \"mode\": \"publish\"}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 1 of 1 notes would go, never pushed, classes structure,data, auto, publish\n  read: off\n  2 notes skipped by you during reconcile: never pushed until released with: minigw gw upstream reconcile <project> --upstream <name> --note <id> --new\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstreams?project=3",
+      ""
+     ]
+    ]
+   }
+  },
+  {
    "name": "push publish with a conflict",
    "args": [
     "upstream",
