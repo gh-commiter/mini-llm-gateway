@@ -32,6 +32,10 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
             return ProjectHTTP.send(c, method, path, headers, body, clientInfo: clientInfo)
         })
     env.gateway = { loadProfiles().first.map { Projects.gatewayID(url: $0.conn.url, key: $0.conn.key) } ?? "" }  // kb hooks: no profile is not an error
+    env.hookConn = {  // the session start: the default profile's connection, never an exit
+        guard agent == nil, let p = loadProfiles().first, case .success(let c) = routeResult(p) else { return nil }
+        return ProjectConn(url: c.url, token: c.token)
+    }
     do {
         switch kind {
         case "kb":

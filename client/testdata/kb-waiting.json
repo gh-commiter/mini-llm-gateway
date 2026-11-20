@@ -1,0 +1,17 @@
+{
+  "lines": [
+    {"n": 1, "slug": "shop", "want": "1 submission waits for your review in shop: minigw kb review shop"},
+    {"n": 2, "slug": "acme-shop", "want": "2 submissions wait for your review in acme-shop: minigw kb review acme-shop"},
+    {"n": 12, "slug": "shop", "want": "12 submissions wait for your review in shop: minigw kb review shop"}
+  ],
+  "answers": [
+    {"name": "reviewer", "status": 200, "body": "{\"submissions\":[],\"next\":0,\"waiting\":4}", "want": 4},
+    {"name": "none waiting", "status": 200, "body": "{\"submissions\":[],\"next\":0,\"waiting\":0}", "want": 0},
+    {"name": "not a reviewer (the gateway's 404)", "status": 404, "body": "{\"error\":{\"message\":\"not found\"}}", "want": 0},
+    {"name": "refused", "status": 403, "body": "{}", "want": 0},
+    {"name": "older gateway without the field", "status": 200, "body": "{\"submissions\":[],\"next\":0}", "want": 0},
+    {"name": "garbage", "status": 200, "body": "x", "want": 0},
+    {"name": "negative", "status": 200, "body": "{\"waiting\":-5}", "want": 0},
+    {"name": "no answer", "status": 0, "body": "connection refused", "want": 0}
+  ]
+}

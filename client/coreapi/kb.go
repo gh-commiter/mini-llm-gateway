@@ -34,7 +34,7 @@ func (a *API) submissionRoute(ctx context.Context, st *core.Store, p core.Princi
 		if e != nil {
 			return a.errResponse(e)
 		}
-		return submissionPage(vs)
+		return submissionPage(vs, -1)
 	case "POST":
 		var b struct {
 			Class    core.Class `json:"class"`
@@ -72,7 +72,11 @@ func (a *API) reviewRoute(ctx context.Context, st *core.Store, p core.Principal,
 		if e != nil {
 			return a.errResponse(e)
 		}
-		return submissionPage(vs)
+		waiting, e := st.ReviewWaiting(ctx, p, project)
+		if e != nil {
+			return a.errResponse(e)
+		}
+		return submissionPage(vs, waiting)
 	case len(rest) == 1 && r.Method == "GET":
 		id, ok := posID(rest[0])
 		if !ok {
@@ -120,12 +124,18 @@ func submissionAfter(q url.Values) (int64, error) {
 	}
 	return n, nil
 }
-func submissionPage(v []core.Submission) Response {
+
+// submissionPage: waiting >= 0 adds the review list's "waiting" (all pending submissions p may review, not only this page).
+func submissionPage(v []core.Submission, waiting int) Response {
 	var next int64
 	if len(v) == 100 {
 		next = v[len(v)-1].ID
 	}
-	return resp(200, map[string]any{"submissions": v, "next": next})
+	m := map[string]any{"submissions": v, "next": next}
+	if waiting >= 0 {
+		m["waiting"] = waiting
+	}
+	return resp(200, m)
 }
 func (a *API) adminKB(ctx context.Context, st *core.Store, method string, seg []string, q url.Values, body []byte) Response {
 	if len(seg) == 3 && seg[1] == "search" && seg[2] == "rebuild" && method == "POST" {

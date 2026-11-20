@@ -1827,7 +1827,7 @@
    }
   },
   {
-   "name": "project show linked no hint",
+   "name": "project show linked no hint (not a reviewer)",
    "args": [
     "project",
     "show"
@@ -1837,19 +1837,32 @@
     "project": 7,
     "rel": "proj"
    },
-   "responses": [],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/kb/review?after=9223372036854775807",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"not found\"}}"
+    }
+   ],
    "want": {
     "out": "folder:   {root}/proj\nproject:  fakture (id 7)\nlinked:   {root}/proj (the nearest linked folder above or at this one)\nhint:     no .minigw-project in the linked folder\ngateway: gw1\n",
     "err": "",
     "error": "",
-    "requests": [],
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/kb/review?after=9223372036854775807",
+      "",
+      ""
+     ]
+    ],
     "links": [
      "fakture:7@proj"
     ]
    }
   },
   {
-   "name": "project show from subfolder",
+   "name": "project show from subfolder (not a reviewer)",
    "args": [
     "project",
     "show"
@@ -1860,19 +1873,32 @@
     "rel": "proj"
    },
    "cwd": "proj/src",
-   "responses": [],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/kb/review?after=9223372036854775807",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"not found\"}}"
+    }
+   ],
    "want": {
     "out": "folder:   {root}/proj/src\nproject:  fakture (id 7)\nlinked:   {root}/proj (the nearest linked folder above or at this one)\nhint:     no .minigw-project in the linked folder\ngateway: gw1\n",
     "err": "",
     "error": "",
-    "requests": [],
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/kb/review?after=9223372036854775807",
+      "",
+      ""
+     ]
+    ],
     "links": [
      "fakture:7@proj"
     ]
    }
   },
   {
-   "name": "project show hint agrees",
+   "name": "project show hint agrees (not a reviewer)",
    "args": [
     "project",
     "show"
@@ -1883,12 +1909,25 @@
     "rel": "proj"
    },
    "hint": "fakture",
-   "responses": [],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/kb/review?after=9223372036854775807",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"not found\"}}"
+    }
+   ],
    "want": {
     "out": "folder:   {root}/proj\nproject:  fakture (id 7)\nlinked:   {root}/proj (the nearest linked folder above or at this one)\nhint:     .minigw-project agrees\ngateway: gw1\n",
     "err": "",
     "error": "",
-    "requests": [],
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/kb/review?after=9223372036854775807",
+      "",
+      ""
+     ]
+    ],
     "links": [
      "fakture:7@proj"
     ]
@@ -5419,6 +5458,111 @@
      [
       "GET",
       "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project show reviewer sees the count",
+   "args": [
+    "project",
+    "show"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/kb/review?after=9223372036854775807",
+     "status": 200,
+     "body": "{\"submissions\":[],\"next\":0,\"waiting\":2}"
+    }
+   ],
+   "want": {
+    "out": "folder:   {root}/proj\nproject:  fakture (id 7)\nlinked:   {root}/proj (the nearest linked folder above or at this one)\nhint:     no .minigw-project in the linked folder\n2 submissions wait for your review in fakture: minigw kb review fakture\ngateway: gw1\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/kb/review?after=9223372036854775807",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project show reviewer sees one",
+   "args": [
+    "project",
+    "show"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/kb/review?after=9223372036854775807",
+     "status": 200,
+     "body": "{\"submissions\":[],\"next\":0,\"waiting\":1}"
+    }
+   ],
+   "want": {
+    "out": "folder:   {root}/proj\nproject:  fakture (id 7)\nlinked:   {root}/proj (the nearest linked folder above or at this one)\nhint:     no .minigw-project in the linked folder\n1 submission waits for your review in fakture: minigw kb review fakture\ngateway: gw1\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/kb/review?after=9223372036854775807",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project show none waiting",
+   "args": [
+    "project",
+    "show"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/kb/review?after=9223372036854775807",
+     "status": 200,
+     "body": "{\"submissions\":[],\"next\":0,\"waiting\":0}"
+    }
+   ],
+   "want": {
+    "out": "folder:   {root}/proj\nproject:  fakture (id 7)\nlinked:   {root}/proj (the nearest linked folder above or at this one)\nhint:     no .minigw-project in the linked folder\ngateway: gw1\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/kb/review?after=9223372036854775807",
       "",
       ""
      ]

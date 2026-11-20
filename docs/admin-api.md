@@ -682,7 +682,7 @@ refused at once (403 `no_project_access`). Accept and reject are audited (`kb.ac
 user (`user:<id>`) as the actor, and the published revision's provenance names that user as `reviewer`; the note's author
 stays the writer. `private` submissions follow the private rule: the author and the project admins. The member project
 list (`GET /minigw/v1/projects`) carries `pendingReview`, the number of submissions the caller may review, for projects
-where the caller is admin (absent when 0).
+where the caller is admin (absent when 0). The review list (`GET …/kb/review`) also carries `waiting`: the number of pending submissions the caller may review in that project or team segment (not only on the page; the same check as the list, so a caller who may not review gets the list's 404).
 
 **An accept names what was read.** Every review read (the owner's `GET /kb/submissions` rows and `GET /kb/submissions/{id}`,
 the member's `GET …/kb/review/{id}`) carries `reviewHash`, a hash of everything an accept publishes (class, title, kind,

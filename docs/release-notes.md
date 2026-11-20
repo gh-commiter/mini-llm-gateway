@@ -1,12 +1,21 @@
 # Release notes
 
-## Unreleased
+## 0.9.8
 
 ### Changed
 - Upstream gateways panel: the detail page of a link shows the notes the upstream rejected as they are (the count, and per note its title, the submission and the upstream's reason as plain text), as `gw upstream status` does. `GET /upstream-links/{id}` carries `rejectedCount` and `rejectedRows`.
 - `scripts/compose-team-rehearsal.sh`: new mode `--identities --client <minigw>` with five real clients and five device keys (reader, developer, admin, a member of another team, an allowed but unbound device) through 127.0.0.1, checked against a table of what the docs promise; `--local-image <tag>` for a run that may download nothing; every check is `ok`, `FAIL` or `SKIP`, the report says whether the host is Linux, and a SKIP makes the exit code non-zero unless `--allow-skip` (or `ALLOW_SKIP=1`).
 - Docs: `usage.md` says the note class table is about project notes (a team's own notes are read by the whole roster) and that linking a folder needs a role in the project, directly or through a team assignment; `docker.md` first setup no longer names a fixed old release (`MINIGW_VERSION` is the newest stable of the latest release page); `team-onboarding.md` says what a client sees before approval and binding, and to use sync mode for a repository you do not trust.
 
+### Added
+- A reviewer sees that submissions wait: `minigw project show` and (with the plugin's hooks on) the start of a Claude Code session print `N submissions wait for your review in <project>: minigw kb review <project>` when the caller may review the project and some are pending (never their own, never an archived project). The review list `GET /minigw/v1/projects/<id>/kb/review` carries `waiting` (all pending submissions of that project or team, decided by the same check as the list: a caller who may not review gets the list's 404, no count). Only the count and the project name are printed, never a title or text. The hook asks the gateway for at most 2 s and prints nothing on a timeout; this is the hook's first network call (docs/usage.md). The plugin's `notes` skill text mentions the line (the plugin version is not bumped here).
+
+
+### Known problems
+- The opt-in session-start hook now asks the gateway of the folder's profile once (the review count; at most 2 seconds, nothing printed on a timeout). Before this version the hook never used the network. The plugin's skill text changed with it; the plugin version moves with the next stable release.
+- No command prints the count of waiting submissions of a TEAM's notes yet (the gateway counts them).
+- The five identities mode of the rehearsal ran on Docker Desktop for Mac only, with a locally built image; a Linux server and the release build path are not proven. The panel's rejected notes were not looked at in the real Mac window or in a browser before this release.
+- The known problems of 0.9.7 apply, except the panel one (rejected notes are shown now).
 
 ## 0.9.7
 
