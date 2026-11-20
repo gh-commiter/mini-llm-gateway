@@ -73,6 +73,11 @@ type fakeUp struct {
 	handler func(c upCall) (int, string, time.Duration)
 }
 
+// OwnDevice: this gateway's device id on the fake upstream (what a remote note's provenance must name to be attested).
+func (u *fakeUp) OwnDevice(string) string { return ownDeviceID }
+
+const ownDeviceID = "dev-own"
+
 func (u *fakeUp) Do(_ context.Context, _, method, path string, h map[string]string, body []byte) (int, []byte, time.Duration, error) {
 	c := upCall{method: method, path: path, key: h["Idempotency-Key"]}
 	if len(body) > 0 {

@@ -2,12 +2,15 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -46,11 +49,20 @@ func (r ReconcileSpec) Valid() bool {
 	return n == 1 && !r.DryRun && (r.Note > 0 && !r.All && len(r.Listed) == 0 || r.All && r.Note == 0 && r.Confirm == 0 && len(r.Listed) > 0)
 }
 
+// ReconcileRow is what the owner decides on. A candidate carries what the upstream said of the remote note (the decision is refused when
+// the remote revision or content changed since the listing); an unknown with Matches lists trailer matches that are NOT attested.
 type ReconcileRow struct {
-	Note     int64  `json:"note"`
-	Revision int64  `json:"revision"`
-	Class    string `json:"class"`
-	Remote   int64  `json:"remote,omitempty"`
+	Note      int64  `json:"note"`
+	Revision  int64  `json:"revision"`
+	Class     string `json:"class"`
+	Remote    int64  `json:"remote,omitempty"`
+	RemoteRev int64  `json:"remoteRev,omitempty"`
+	Fp        string `json:"fp,omitempty"`
+	Title     string `json:"title,omitempty"`
+	Writer    string `json:"writer,omitempty"`
+	At        string `json:"at,omitempty"`
+	Equal     bool   `json:"equal,omitempty"`
+	Matches   string `json:"matches,omitempty"`
 }
 type UpstreamReconcile struct {
 	Lines      []string       `json:"lines"`
@@ -168,9 +180,25 @@ func (s *Store) ReconcileListedUnknowns(ctx context.Context, r ReconcileSpec) ([
 	return ids, e
 }
 
+// reconcileRemote is one destination note as the fresh read saw it, with what the upstream itself says about its writer:
+// Device is the device that wrote the current revision (provenance), the only attestation reconcile accepts.
+type reconcileRemote struct {
+	upNote
+	Device, Writer, At string
+}
+
+// ownDevice is optionally implemented by the host transport: this gateway's own device id on the upstream (a public key).
+type ownDevice interface{ OwnDevice(upstream string) string }
+
+func reconcileFingerprint(u reconcileRemote) string {
+	h := sha256.Sum256([]byte(string(u.Class) + "\x00" + u.EntryKind + "\x00" + u.Title + "\x00" + u.Body))
+	return hex.EncodeToString(h[:8])
+}
+
 // freshReconcile reads raw destination notes, not the mirror or dependency notes.
-// A second manifest rejects a read spanning different upstream revisions.
-func (p *pusher) freshReconcile(l UpstreamLink) (map[int64]upNote, []int64, error) {
+// A second manifest rejects a read spanning different upstream revisions. The read counts as complete only when the upstream
+// itself says (manifest source "full") that this device reads every pushed class of the destination in full.
+func (p *pusher) freshReconcile(l UpstreamLink) (map[int64]reconcileRemote, []int64, error) {
 	remote, why := p.resolve(l)
 	if why != "" {
 		return nil, nil, ErrRefusal{why}
@@ -189,9 +217,29 @@ func (p *pusher) freshReconcile(l UpstreamLink) (map[int64]upNote, []int64, erro
 			return nil, ErrRefusal{"reconcile: incomplete upstream manifest"}
 		}
 		for _, src := range m.Sources {
-			if src.ID == remote {
-				return m, nil
+			if src.ID != remote {
+				continue
 			}
+			if src.Full == nil {
+				return nil, ErrRefusal{"reconcile: this upstream does not say which notes the device reads in full: update the upstream gateway to 0.9.3 or newer"}
+			}
+			var missing []string
+			for _, c := range l.Classes {
+				if c == Private {
+					continue // private notes are never listed
+				}
+				seen := false
+				for _, f := range src.Full {
+					seen = seen || f == c
+				}
+				if !seen {
+					missing = append(missing, string(c))
+				}
+			}
+			if len(missing) > 0 {
+				return nil, ErrRefusal{"reconcile: the upstream lets this device read only part of the destination (not in full: " + strings.Join(missing, ", ") + "): a role there that reads all " + strings.Join(missing, " and ") + " notes is needed"}
+			}
+			return m, nil
 		}
 		return nil, ErrRefusal{"reconcile: destination is not readable"}
 	}
@@ -199,7 +247,7 @@ func (p *pusher) freshReconcile(l UpstreamLink) (map[int64]upNote, []int64, erro
 	if e != nil {
 		return nil, nil, e
 	}
-	fresh := map[int64]upNote{}
+	fresh := map[int64]reconcileRemote{}
 	var ids []int64
 	totalBytes := 0
 	for _, want := range m.Notes {
@@ -215,8 +263,12 @@ func (p *pusher) freshReconcile(l UpstreamLink) (map[int64]upNote, []int64, erro
 			return nil, nil, ErrRefusal{"reconcile: " + why}
 		}
 		var raw struct {
-			Body  *string
-			Title string
+			Body       *string
+			Title      string
+			Author     string
+			Editor     string
+			Updated    string
+			Provenance *struct{ Device string }
 		}
 		if json.Unmarshal(a.data, &raw) != nil || raw.Body == nil || *raw.Body != checked.body || raw.Title != checked.title {
 			return nil, nil, ErrRefusal{"reconcile: upstream text requires sanitization or is incomplete"}
@@ -225,7 +277,14 @@ func (p *pusher) freshReconcile(l UpstreamLink) (map[int64]upNote, []int64, erro
 		if totalBytes > MaxMirrorBytes/mirrorCost {
 			return nil, nil, ErrRefusal{"reconcile: destination exceeds the complete-read size limit"}
 		}
-		fresh[want.ID] = upNote{Revision: want.Rev, Class: want.Class, Title: raw.Title, Body: *raw.Body, EntryKind: want.Kind}
+		r := reconcileRemote{upNote: upNote{Revision: want.Rev, Class: want.Class, Title: raw.Title, Body: *raw.Body, EntryKind: want.Kind}, Writer: upText(raw.Author, 40), At: upText(raw.Updated, 40)}
+		if raw.Editor != "" {
+			r.Writer = upText(raw.Editor, 40)
+		}
+		if raw.Provenance != nil && raw.Provenance.Device != "UNKNOWN" {
+			r.Device = raw.Provenance.Device
+		}
+		fresh[want.ID] = r
 		ids = append(ids, want.ID)
 	}
 	again, e := manifest()
@@ -238,6 +297,28 @@ func (p *pusher) freshReconcile(l UpstreamLink) (map[int64]upNote, []int64, erro
 	return fresh, ids, nil
 }
 
+// reconcileHasSkip: the link has a persistent skip decision (it can be listed and released without a restore mark).
+func (s *Store) reconcileHasSkip(ctx context.Context, l UpstreamLink) (has bool) {
+	prefix := reconcileKey(l.Project, l.Upstream, "decision|")
+	_ = s.read(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRow(`SELECT count(*)>0 FROM meta WHERE substr(key,1,?)=? AND value LIKE '%"Action":"skip"%'`, len(prefix), prefix).Scan(&has)
+	})
+	return
+}
+
+// reconcileNotesKey: what a decision depends on in the local notes (not the push bookkeeping that an automatic push may change).
+func reconcileNotesKey(notes []UpstreamNote) string {
+	var b strings.Builder
+	for _, n := range notes {
+		var rn, rs int64
+		if n.Sent != nil {
+			rn, rs = n.Sent.RemoteNote, n.Sent.RemoteSub
+		}
+		fmt.Fprintf(&b, "%d|%d|%s|%t|%t|%d|%d;", n.ID, n.Revision, n.Hash, n.Foreign, n.Sent != nil, rn, rs)
+	}
+	return b.String()
+}
+
 func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r ReconcileSpec) (out UpstreamReconcile, err error) {
 	if !r.Valid() {
 		return out, ErrRefusal{"reconcile: invalid request"}
@@ -248,12 +329,12 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 	}
 	var chosen []UpstreamLinkInfo
 	for _, l := range ls {
-		if (l.Restored != nil || r.New && r.Note > 0) && (r.Upstream == "" || l.Upstream == r.Upstream) {
+		if (r.Upstream == "" || l.Upstream == r.Upstream) && (l.Restored != nil || s.reconcileHasSkip(ctx, l.UpstreamLink)) {
 			chosen = append(chosen, l)
 		}
 	}
 	if len(chosen) != 1 {
-		return out, ErrRefusal{"reconcile: name exactly one restored link with --upstream <name>"}
+		return out, ErrRefusal{"reconcile: name exactly one restored link (or one with skipped notes) with --upstream <name>"}
 	}
 	l := chosen[0].UpstreamLink
 	mu := s.linkLock(l.Project, l.Upstream)
@@ -303,16 +384,21 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 	if e != nil {
 		return out, e
 	}
+	own := ""
+	if d, ok := tr.(ownDevice); ok {
+		own = d.OwnDevice(l.Upstream)
+	}
 	used := map[int64]bool{}
 	for _, n := range scan.Notes {
 		if n.Foreign {
 			continue
 		}
 		row := ReconcileRow{Note: n.ID, Revision: n.Revision, Class: "unknown"}
+		ref := upstreamRef(key, l.Upstream, l.Project, n.ID)
 		var matches []int64
 		if len(key) > 0 {
 			for _, id := range ids {
-				if _, ok := ownTrailerSplit(fresh[id].Body, upstreamRef(key, l.Upstream, l.Project, n.ID), trailerAuthor(n.Author), math.MaxInt64); ok {
+				if _, ok := ownTrailerSplit(fresh[id].Body, ref, trailerAuthor(n.Author), math.MaxInt64); ok {
 					matches = append(matches, id)
 					used[id] = true
 				}
@@ -328,8 +414,20 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 				}
 			}
 		}
-		if row.Class != "known" && n.Sent == nil && len(matches) == 1 {
-			row.Class, row.Remote = "candidate", matches[0]
+		if row.Class != "known" && n.Sent == nil && len(matches) == 1 && own != "" && fresh[matches[0]].Device == own {
+			u := fresh[matches[0]]
+			body, _ := ownTrailerSplit(u.Body, ref, trailerAuthor(n.Author), math.MaxInt64)
+			row.Class, row.Remote, row.RemoteRev, row.Fp = "candidate", matches[0], u.Revision, reconcileFingerprint(u)
+			row.Title, row.Writer, row.At = u.Title, u.Writer, u.At
+			row.Equal = upstreamHash(Note{Class: u.Class, EntryKind: u.EntryKind, Title: u.Title, Body: body}) == n.Hash
+		} else if row.Class != "known" && len(matches) > 0 {
+			// a trailer alone proves nothing about who wrote the note: listed for information, never a candidate
+			for i, id := range matches {
+				if i > 0 {
+					row.Matches += ","
+				}
+				row.Matches += strconv.FormatInt(id, 10)
+			}
 		}
 		out.Notes = append(out.Notes, row)
 	}
@@ -349,7 +447,7 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 		if e != nil {
 			return e
 		}
-		if addr != address || stamp != mark || !reflect.DeepEqual(l, cur) || !reflect.DeepEqual(scan, now) {
+		if addr != address || stamp != mark || !reconcileSameLink(l, cur) || reconcileNotesKey(scan.Notes) != reconcileNotesKey(now.Notes) {
 			return ErrRefusal{"reconcile: local notes or link changed; list again"}
 		}
 		var isArchived bool
@@ -364,6 +462,30 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 		if isArchived {
 			return ErrRefusal{"reconcile: local project or team was archived; list again"}
 		}
+		// Stored decisions: a skip is persistent (it outlives the restore mark); a "new" only belongs to the mark it was made under.
+		kept := out.Notes[:0]
+		for i := range out.Notes {
+			row := out.Notes[i]
+			if row.Class == "unknown" || row.Class == "candidate" {
+				var v string
+				var d reconcileDecision
+				var n UpstreamNote
+				for _, x := range scan.Notes {
+					if x.ID == row.Note {
+						n = x
+					}
+				}
+				if tx.QueryRow(`SELECT value FROM meta WHERE key=?`, reconcileDecisionKey(l.Project, l.Upstream, row.Note)).Scan(&v) == nil && json.Unmarshal([]byte(v), &d) == nil && d.Revision == n.Revision && d.Hash == n.Hash &&
+					(d.Action == "skip" || d.Action == "new" && mark != "" && d.Mark == mark) {
+					row.Class = d.Action
+				}
+			}
+			if mark == "" && row.Class != "skip" {
+				continue // no restore mark: only the skipped notes are of interest
+			}
+			kept = append(kept, row)
+		}
+		out.Notes = kept
 		targets := map[int64]bool{}
 		if r.Note > 0 || r.All {
 			if previous.Address != address || mark != "" && previous.Mark != mark || !reconcileSameLink(previous.Link, l) {
@@ -391,24 +513,31 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 						current = &out.Notes[i]
 					}
 				}
-				if mark == "" && (old == nil || old.Class != "skip") {
-					return ErrRefusal{"reconcile: this note was not skipped in the last listing"}
-				}
-				if old != nil && current != nil && r.New && old.Class == "skip" && current.Class == "unknown" && old.Note == current.Note && old.Revision == current.Revision && old.Remote == current.Remote {
-					copy := *old
-					copy.Class = "unknown"
-					old = &copy
-				}
-				if old == nil || current == nil || *old != *current || r.All && old.Class != "unknown" {
+				// the whole row must be the one that was listed: the local revision, the class, the remote id AND the remote revision and content
+				if old == nil || current == nil || *old != *current {
 					return ErrRefusal{"reconcile: note was not listed or changed; list again"}
 				}
-				if r.Confirm > 0 && (old.Class != "candidate" || old.Remote != r.Confirm) || r.Confirm == 0 && old.Class != "unknown" {
+				ok := false
+				switch {
+				case r.All:
+					ok = old.Class == "unknown"
+				case r.Confirm > 0:
+					ok = old.Class == "candidate" && old.Remote == r.Confirm
+				case r.New:
+					ok = old.Class == "unknown" || old.Class == "candidate" || old.Class == "skip"
+				case r.Skip:
+					ok = old.Class == "unknown" || old.Class == "candidate"
+				}
+				if !ok {
 					return ErrRefusal{"reconcile: decision does not match the listed class or remote id"}
 				}
 			}
 		}
 		for i := range out.Notes {
 			row := &out.Notes[i]
+			if !targets[row.Note] {
+				continue
+			}
 			var n UpstreamNote
 			for _, v := range scan.Notes {
 				if v.ID == row.Note {
@@ -416,50 +545,47 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 					break
 				}
 			}
-			if targets[row.Note] {
-				action := "new"
-				if r.Skip {
-					action = "skip"
-				}
-				if r.Confirm > 0 {
-					action = "confirm"
-				}
-				if r.Confirm > 0 {
-					u := fresh[r.Confirm]
-					body, _ := ownTrailerSplit(u.Body, upstreamRef(key, l.Upstream, l.Project, n.ID), trailerAuthor(n.Author), math.MaxInt64)
-					equal := upstreamHash(Note{Class: u.Class, EntryKind: u.EntryKind, Title: u.Title, Body: body}) == n.Hash
-					hash, content, rev, conflict, conflictRev := "", "", int64(0), 1, u.Revision
-					if equal {
-						hash, content, rev, conflict, conflictRev = n.Hash, sentContentHash(u.Class, u.EntryKind, u.Title, body), u.Revision, 0, 0
-					}
-					_, e = tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev,sent_content,conflict,conflict_rev) VALUES(?,?,?,?,?,0,?,?,?,?,?,?)`, l.Project, l.Upstream, n.ID, hash, n.Revision, r.Confirm, ms(s.now()), rev, content, conflict, conflictRev)
-					if e != nil {
-						return e
-					}
-					row.Class = "known"
-				} else {
-					if e = reconcileMeta(tx, reconcileDecisionKey(l.Project, l.Upstream, n.ID), reconcileDecision{mark, n.Hash, action, n.Revision}); e != nil {
-						return e
-					}
-					row.Class = action
-					if r.New {
-						if _, e = tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID); e != nil {
-							return e
-						}
-						if _, e = tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN dirty_since=0 THEN ?1 ELSE dirty_since END,last_change=max(?1,last_change+1) WHERE project_id=?2 AND upstream=?3 AND auto=1`, ms(s.now()), l.Project, l.Upstream); e != nil {
-							return e
-						}
+			action := "new"
+			if r.Skip {
+				action = "skip"
+			}
+			if r.Confirm > 0 {
+				action = "confirm"
+			}
+			if r.Confirm > 0 {
+				u := fresh[r.Confirm]
+				body, _ := ownTrailerSplit(u.Body, upstreamRef(key, l.Upstream, l.Project, n.ID), trailerAuthor(n.Author), math.MaxInt64)
+				equal := upstreamHash(Note{Class: u.Class, EntryKind: u.EntryKind, Title: u.Title, Body: body}) == n.Hash
+				hash, content, rev, conflict, conflictRev := "", "", int64(0), 1, u.Revision
+				if equal {
+					// A receipt made by confirmation has no surviving receipt behind it: its base stays unknown on a publish link (0), so the first
+					// later local change is a conflict for `resolve`, never a direct overwrite of the upstream note.
+					hash, content, rev, conflict, conflictRev = n.Hash, sentContentHash(u.Class, u.EntryKind, u.Title, body), u.Revision, 0, 0
+					if l.Mode == "publish" {
+						rev = 0
 					}
 				}
-				if e = Audit(tx, adminActor, "upstream.reconcile."+action, l.Upstream, map[string]any{"project": l.Project, "note": n.ID, "remote": r.Confirm}); e != nil {
+				_, e = tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev,sent_content,conflict,conflict_rev) VALUES(?,?,?,?,?,0,?,?,?,?,?,?)`, l.Project, l.Upstream, n.ID, hash, n.Revision, r.Confirm, ms(s.now()), rev, content, conflict, conflictRev)
+				if e != nil {
 					return e
 				}
-			} else if row.Class == "unknown" {
-				var v string
-				var d reconcileDecision
-				if tx.QueryRow(`SELECT value FROM meta WHERE key=?`, reconcileDecisionKey(l.Project, l.Upstream, n.ID)).Scan(&v) == nil && json.Unmarshal([]byte(v), &d) == nil && d.Mark == mark && d.Revision == n.Revision && d.Hash == n.Hash {
-					row.Class = d.Action
+				row.Class = "known"
+			} else {
+				if e = reconcileMeta(tx, reconcileDecisionKey(l.Project, l.Upstream, n.ID), reconcileDecision{mark, n.Hash, action, n.Revision}); e != nil {
+					return e
 				}
+				row.Class = action
+				if r.New {
+					if _, e = tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=? AND note_id=?`, l.Project, l.Upstream, n.ID); e != nil {
+						return e
+					}
+					if _, e = tx.Exec(`UPDATE upstream_links SET dirty_since=CASE WHEN dirty_since=0 THEN ?1 ELSE dirty_since END,last_change=max(?1,last_change+1) WHERE project_id=?2 AND upstream=?3 AND auto=1`, ms(s.now()), l.Project, l.Upstream); e != nil {
+						return e
+					}
+				}
+			}
+			if e = Audit(tx, adminActor, "upstream.reconcile."+action, l.Upstream, map[string]any{"project": l.Project, "note": n.ID, "remote": r.Confirm}); e != nil {
+				return e
 			}
 		}
 		for _, row := range out.Notes {
@@ -477,7 +603,7 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 		if e = reconcileMeta(tx, reconcileKey(l.Project, l.Upstream, "listing"), reconcileSnapshot{address, mark, l, out.Notes}); e != nil {
 			return e
 		}
-		if out.Candidates == 0 && out.Unknown == 0 {
+		if mark != "" && out.Candidates == 0 && out.Unknown == 0 {
 			if _, e = tx.Exec(`DELETE FROM meta WHERE key=?`, restoredKey(l.Project, l.Upstream)); e != nil {
 				return e
 			}
@@ -503,12 +629,26 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 		return UpstreamReconcile{}, e
 	}
 	for _, row := range out.Notes {
-		out.Lines = append(out.Lines, fmt.Sprintf("%s note %d (revision %d), remote %d", row.Class, row.Note, row.Revision, row.Remote))
+		switch {
+		case row.Class == "candidate":
+			eq := "differs from the local note"
+			if row.Equal {
+				eq = "equal to the local note"
+			}
+			out.Lines = append(out.Lines, fmt.Sprintf("candidate note %d (revision %d), remote %d %q, written by %s at %s, remote revision %d, %s", row.Note, row.Revision, row.Remote, row.Title, row.Writer, row.At, row.RemoteRev, eq))
+		case row.Class == "unknown" && row.Matches != "":
+			out.Lines = append(out.Lines, fmt.Sprintf("unknown note %d (revision %d), upstream notes with its trailer but no proof they came from this gateway (information only): remote %s", row.Note, row.Revision, row.Matches))
+		default:
+			out.Lines = append(out.Lines, fmt.Sprintf("%s note %d (revision %d), remote %d", row.Class, row.Note, row.Revision, row.Remote))
+		}
 	}
 	for _, id := range ids {
 		if !used[id] && looksFromGateway.MatchString(fresh[id].Body) {
 			out.Lines = append(out.Lines, fmt.Sprintf("orphan remote %d", id))
 		}
+	}
+	if len(out.Notes) == 0 && !out.Cleared {
+		out.Lines = append(out.Lines, "no restore mark: only skipped notes are listed")
 	}
 	out.Lines = append(out.Lines, fmt.Sprintf("candidates %d, unknown %d, restored mark cleared: %t", out.Candidates, out.Unknown, out.Cleared))
 	return out, nil

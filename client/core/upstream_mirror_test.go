@@ -22,6 +22,7 @@ type hubNote struct {
 	class        Class
 	kind         string
 	title, body  string
+	device       string // the writer's device as the upstream's provenance reports it ("" = not reported)
 }
 
 const hubSeg = int64(1<<40 + 1)
@@ -33,6 +34,8 @@ type hub struct {
 	manifest  func() (int, string)                                    // overrides the manifest answer
 	note      func(id int64, def string) (int, string, time.Duration) // overrides a note answer
 	asked     []int64                                                 // ids of the note GETs, in order
+	full      *[]string                                               // the classes the caller reads in full (nil: structure and data; empty pointer target: none)
+	noFull    bool                                                    // an older upstream: the manifest says nothing about what is read in full
 }
 
 func (h *hub) manifestJSON() string {
@@ -49,6 +52,15 @@ func (h *hub) manifestJSON() string {
 		Notes     []mn             `json:"notes"`
 		Truncated bool             `json:"truncated"`
 	}{V: 1, Sources: []map[string]any{{"id": 7, "label": "project:shop"}, {"id": hubSeg, "label": "team:acme"}}, Notes: []mn{}, Truncated: h.truncated}
+	if !h.noFull {
+		full := []string{"structure", "data"}
+		if h.full != nil {
+			full = *h.full
+		}
+		for _, s := range m.Sources {
+			s["full"] = full
+		}
+	}
 	for _, n := range h.notes {
 		m.Notes = append(m.Notes, mn{n.id, n.src, n.rev, string(n.class), n.kind})
 	}
@@ -57,7 +69,11 @@ func (h *hub) manifestJSON() string {
 }
 
 func (n hubNote) json() string {
-	b, _ := json.Marshal(map[string]any{"id": n.id, "project": n.src, "class": n.class, "title": n.title, "body": n.body, "updated": "2026-11-17T09:00:00Z", "revision": n.rev, "entryKind": n.kind, "author": "x", "created": "2026-11-17T09:00:00Z"})
+	v := map[string]any{"id": n.id, "project": n.src, "class": n.class, "title": n.title, "body": n.body, "updated": "2026-11-17T09:00:00Z", "revision": n.rev, "entryKind": n.kind, "author": "x", "created": "2026-11-17T09:00:00Z"}
+	if n.device != "" {
+		v["provenance"] = map[string]any{"device": n.device, "actorKind": "member"}
+	}
+	b, _ := json.Marshal(v)
 	return string(b)
 }
 

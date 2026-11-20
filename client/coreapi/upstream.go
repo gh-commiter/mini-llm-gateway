@@ -590,6 +590,11 @@ func ctxSleep(ctx context.Context) func(time.Duration) bool {
 	}
 }
 
+// hostWithDevice tells the core which device id this gateway has on an upstream: the only identity a remote note's provenance is compared with.
+type hostWithDevice struct{ UpstreamHost }
+
+func (h hostWithDevice) OwnDevice(upstream string) string { return h.Info(upstream).Device }
+
 // adminUpstreamReconcile is an owner-only route; validate before any store write.
 func (a *API) adminUpstreamReconcile(ctx context.Context, st *core.Store, method string, q url.Values, body []byte, failErr func(error) (int, any, bool)) (int, any, bool) {
 	if method == "GET" {
@@ -617,7 +622,7 @@ func (a *API) adminUpstreamReconcile(ctx context.Context, st *core.Store, method
 	if h == nil || !h.Available() {
 		return 501, errorBody(501, "this gateway cannot send to an upstream here"), true
 	}
-	out, err := st.ReconcileUpstream(ctx, h, r)
+	out, err := st.ReconcileUpstream(ctx, hostWithDevice{h}, r)
 	if err != nil {
 		return failErr(err)
 	}

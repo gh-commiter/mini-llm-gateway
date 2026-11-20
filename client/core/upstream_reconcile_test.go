@@ -21,7 +21,7 @@ func reconcileFixture(t *testing.T, mode string, key bool) (*fx, int64, Upstream
 		secret, e := f.upstreamKey(ctx)
 		f.ok(e)
 		p := pusher{secret: secret, up: "hub"}
-		h.notes = []hubNote{{id: 41, src: 7, rev: 3, class: n.Class, kind: n.EntryKind, title: n.Title, body: n.Body + p.trailer(project, local, 0)}}
+		h.notes = []hubNote{{id: 41, src: 7, rev: 3, class: n.Class, kind: n.EntryKind, title: n.Title, body: n.Body + p.trailer(project, local, 0), device: ownDeviceID}}
 	}
 	f.markAll()
 	return f, project, local, h
@@ -120,7 +120,7 @@ func TestReconcileCandidateEqualAndUnknownBaseConflict(t *testing.T) {
 						t.Fatalf("invented base: %q %q %d %d", hash, content, rev, conflict)
 					}
 					f.ok(f.ResolveUpstream(ctx, project, 0, n.ID, true, "hub"))
-				} else if hash != n.Hash || content == "" || rev != 3 || conflict != 0 {
+				} else if want := map[string]int64{"submit": 3, "publish": 0}[mode]; hash != n.Hash || content == "" || rev != want || conflict != 0 {
 					t.Fatalf("bad receipt: %q %q %d %d", hash, content, rev, conflict)
 				}
 			})
@@ -399,7 +399,7 @@ func TestReconcileTeamLink(t *testing.T) {
 	key, e := f.upstreamKey(ctx)
 	f.ok(e)
 	local := UpstreamNote{ID: n.ID, Author: n.Author}
-	h := &hub{notes: []hubNote{{id: 41, src: hubSeg, rev: 1, class: n.Class, kind: n.EntryKind, title: n.Title, body: n.Body + (&pusher{secret: key, up: "hub"}).trailer(f.seg, local, 0)}}}
+	h := &hub{notes: []hubNote{{id: 41, src: hubSeg, rev: 1, class: n.Class, kind: n.EntryKind, title: n.Title, body: n.Body + (&pusher{secret: key, up: "hub"}).trailer(f.seg, local, 0), device: ownDeviceID}}}
 	base := h.up()
 	up := &fakeUp{handler: func(c upCall) (int, string, time.Duration) {
 		if c.path == "/minigw/v1/teams" {
@@ -448,7 +448,7 @@ func TestReconcileConfirmNamesTheRemoteIdKeepsTheMarkUntilAllDecidedAndAuditsNoT
 	for i, title := range []string{"Structure one", "Data two"} {
 		n := notes[title]
 		local := UpstreamNote{ID: n.ID, Author: n.Author}
-		h.notes = append(h.notes, hubNote{id: int64(41 + i), src: 7, rev: 1, class: n.Class, kind: n.EntryKind, title: n.Title, body: n.Body + p.trailer(project, local, 0)})
+		h.notes = append(h.notes, hubNote{id: int64(41 + i), src: 7, rev: 1, class: n.Class, kind: n.EntryKind, title: n.Title, body: n.Body + p.trailer(project, local, 0), device: ownDeviceID})
 		ids = append(ids, n.ID)
 	}
 	f.markAll()
@@ -462,8 +462,7 @@ func TestReconcileConfirmNamesTheRemoteIdKeepsTheMarkUntilAllDecidedAndAuditsNoT
 	for _, bad := range []ReconcileSpec{
 		{Project: project, Note: ids[0], Confirm: 99},
 		{Project: project, Note: ids[0], Confirm: 42},
-		{Project: project, Note: ids[0], New: true},
-		{Project: project, Note: ids[0], Skip: true},
+		{Project: project, Note: ids[0], All: true, New: true, Listed: ids},
 	} {
 		if _, e := f.ReconcileUpstream(ctx, h.up(), bad); e == nil {
 			t.Fatalf("accepted %+v", bad)
@@ -498,5 +497,162 @@ func TestReconcileConfirmNamesTheRemoteIdKeepsTheMarkUntilAllDecidedAndAuditsNoT
 	}
 	if n == 0 {
 		t.Fatal("no reconcile audit rows")
+	}
+}
+
+func TestReconcileRefusesAPartialOrUnstatedView(t *testing.T) {
+	none, onlyStructure := []string{}, []string{"structure"}
+	for name, set := range map[string]func(h *hub){
+		"older upstream, nothing stated": func(h *hub) { h.noFull = true },
+		"nothing read in full":           func(h *hub) { h.full = &none },
+		"data missing":                   func(h *hub) { h.full = &onlyStructure },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, project, _, h := reconcileFixture(t, "submit", true)
+			f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: project, Upstream: "hub", Remote: "shop", Classes: "structure,data", Mode: "submit"}))
+			set(h)
+			before := reconcileTables(t, f)
+			_, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+			if e == nil {
+				t.Fatal("accepted a view that may be partial")
+			}
+			if name == "older upstream, nothing stated" && !strings.Contains(e.Error(), "0.9.3") {
+				t.Fatal(e)
+			}
+			if name == "data missing" && !strings.Contains(e.Error(), "data") {
+				t.Fatal(e)
+			}
+			if !reflect.DeepEqual(before, reconcileTables(t, f)) || f.marked() != 1 {
+				t.Fatal("a refused read changed something")
+			}
+		})
+	}
+}
+
+func TestReconcileAMatchNeedsTheUpstreamsWordForItsWriter(t *testing.T) {
+	for _, device := range []string{"", "UNKNOWN", "dev-someone-else"} {
+		f, project, n, h := reconcileFixture(t, "publish", true)
+		h.notes[0].device = device
+		r, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+		f.ok(e)
+		if r.Candidates != 0 || r.Unknown != 1 || r.Notes[0].Matches != "41" {
+			t.Fatal(device, r)
+		}
+		if !strings.Contains(strings.Join(r.Lines, "\n"), "information only): remote 41") {
+			t.Fatal(r.Lines)
+		}
+		before := reconcileTables(t, f)
+		if _, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, Confirm: 41}); e == nil || !reflect.DeepEqual(before, reconcileTables(t, f)) {
+			t.Fatal("confirmed an unattested match", e)
+		}
+	}
+}
+
+func TestReconcileListingShowsWhatIsConfirmedAndACandidateCanBeRejected(t *testing.T) {
+	for _, reject := range []string{"new", "skip"} {
+		f, project, n, h := reconcileFixture(t, "submit", true)
+		h.notes[0].title = "Changed on hub"
+		r, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+		f.ok(e)
+		line := strings.Join(r.Lines, "\n")
+		for _, want := range []string{"remote 41", `"Changed on hub"`, "written by x", "remote revision 3", "differs from the local note"} {
+			if !strings.Contains(line, want) {
+				t.Fatalf("listing lacks %q: %s", want, line)
+			}
+		}
+		r, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, New: reject == "new", Skip: reject == "skip"})
+		f.ok(e)
+		if !r.Cleared || r.Notes[0].Class != reject {
+			t.Fatal(reject, r)
+		}
+	}
+}
+
+func TestReconcileConfirmIsBoundToTheListedRemoteVersion(t *testing.T) {
+	for _, change := range []string{"revision", "content"} {
+		t.Run(change, func(t *testing.T) {
+			f, project, n, h := reconcileFixture(t, "submit", true)
+			h.notes[0].title = "Different"
+			_, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+			f.ok(e)
+			if change == "revision" {
+				h.notes[0].rev++
+			} else {
+				h.notes[0].title = n.Title // now equal to the local note, with the same revision
+			}
+			before := reconcileTables(t, f)
+			_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, Confirm: 41})
+			if e == nil || !strings.Contains(e.Error(), "list again") || !reflect.DeepEqual(before, reconcileTables(t, f)) {
+				t.Fatal("confirmed an unseen remote version", e)
+			}
+		})
+	}
+}
+
+// The review's sequence: two unknowns, --all --skip clears the mark, then each skip is released by --note --new with no restore mark.
+func TestReconcileSkipsAreReleasedOneByOneAfterTheMarkIsGone(t *testing.T) {
+	f, notes := upFx(t)
+	project := f.pid["fakture"]
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: project, Upstream: "hub", Remote: "shop", Classes: "structure,data", Mode: "submit"}))
+	a, b := notes["Structure one"], notes["Data two"]
+	f.markAll()
+	h := &hub{}
+	r, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+	f.ok(e)
+	if r.Unknown != 2 {
+		t.Fatal(r)
+	}
+	r, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, All: true, Skip: true, Listed: r.Unknowns})
+	f.ok(e)
+	if !r.Cleared || f.marked() != 0 {
+		t.Fatal(r)
+	}
+	r, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, DryRun: true})
+	f.ok(e)
+	if len(r.Notes) != 2 || r.Notes[0].Class != "skip" || r.Notes[1].Class != "skip" {
+		t.Fatal("skips are not listed without a mark", r)
+	}
+	for i, id := range []int64{a.ID, b.ID} {
+		_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project}) // list again, as the CLI tells
+		f.ok(e)
+		r, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: id, New: true})
+		f.ok(e)
+		released := 0
+		for _, row := range r.Notes {
+			if row.Note == id && row.Class == "new" {
+				released++
+			}
+		}
+		if released != 1 {
+			t.Fatal(i, r)
+		}
+	}
+	up := okUp()
+	p, e := f.PushUpstream(ctx, up, project, 0, "hub", 0, false, noSleep)
+	f.ok(e)
+	if p[0].Created != 2 {
+		t.Fatal("both released notes should be created", p)
+	}
+}
+
+// A receipt made by confirmation never lets a publish link overwrite the upstream note directly: the first later change is a conflict.
+func TestReconcileConfirmedReceiptDoesNotEnableADirectOverwriteOnPublish(t *testing.T) {
+	f, project, n, h := reconcileFixture(t, "publish", true)
+	_, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+	f.ok(e)
+	_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, Confirm: 41})
+	f.ok(e)
+	_, e = f.UpdateNote(ctx, f.p("ana"), project, n.ID, n.Revision, NoteInput{Class: n.Class, Title: n.Title, Body: "edited after the confirmation"})
+	f.ok(e)
+	up := h.up()
+	res, e := f.PushUpstream(ctx, up, project, 0, "hub", 0, false, noSleep)
+	f.ok(e)
+	for _, c := range up.calls {
+		if c.method == "PUT" || c.method == "POST" {
+			t.Fatalf("wrote to the upstream: %s %s", c.method, c.path)
+		}
+	}
+	if res[0].Conflicts != 1 || res[0].Replaced != 0 {
+		t.Fatal(res)
 	}
 }
