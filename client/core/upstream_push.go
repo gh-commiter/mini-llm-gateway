@@ -1007,19 +1007,8 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			line("skip", n, "the upstream already holds this exact text as submission "+strconv.FormatInt(sub.ID, 10)+", which it rejected"+upReason(sub.Reason)+": not sent again (change the note to send it anew)")
 			continue
 		case "accepted":
-			if sub.Note > 0 {
-				if e := s.upstreamRecordRemoteNote(wctx, l.Project, l.Upstream, n.ID, sub.Note); e != nil {
-					return res, e
-				}
-				base := int64(1) // as for an earlier submission read back: a new note starts at 1, a replacement made the revision after the one it declared
-				if sub.Replaces > 0 {
-					base = sub.Revision + 1
-				}
-				if sub.Replaces == 0 || sub.Revision > 0 {
-					if e := s.upstreamRecordBase(wctx, l.Project, l.Upstream, n.ID, base); e != nil {
-						return res, e
-					}
-				}
+			if e := s.upstreamRecordAccepted(wctx, l.Project, l.Upstream, n.ID, sub.Note, sub.Replaces, sub.Revision); e != nil {
+				return res, e
 			}
 			res.Skipped++
 			line("skip", n, "the upstream already accepted this exact text as submission "+strconv.FormatInt(sub.ID, 10)+" (note "+strconv.FormatInt(sub.Note, 10)+"): not sent again")
@@ -1064,3 +1053,23 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 
 // UpText: text that came from an upstream, as one printable line of at most n bytes.
 func UpText(s string, n int) string { return upText(s, n) }
+
+// upstreamRecordAccepted: what a receipt learns from an ACCEPTED submission that names a note (nothing when it names none): the note's id and
+// the base. As for an earlier submission read back: a new note starts at 1, a replacement made the revision after the one it declared. The push
+// of a replayed submission and the pull's learning step (learnReceipts) both come here.
+func (s *Store) upstreamRecordAccepted(ctx context.Context, project int64, upstream string, note, remoteNote, replaces, revision int64) error {
+	if remoteNote <= 0 {
+		return nil
+	}
+	if e := s.upstreamRecordRemoteNote(ctx, project, upstream, note, remoteNote); e != nil {
+		return e
+	}
+	base := int64(1)
+	if replaces > 0 {
+		base = revision + 1
+	}
+	if replaces == 0 || revision > 0 {
+		return s.upstreamRecordBase(ctx, project, upstream, note, base)
+	}
+	return nil
+}

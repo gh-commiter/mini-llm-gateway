@@ -163,7 +163,8 @@ func TestALocalChangeChecksTheWaitingNotes(t *testing.T) {
 	}
 }
 
-// The periodic pull of a link never pushes: a waiting note is looked at only when a push happens anyway.
+// The periodic pull of a link never pushes. Since the pull learns what became of a submission (learnReceipts) it does ask about the waiting
+// note's submission (a GET, never a POST) and, the hub having accepted it, ends the wait.
 func TestThePeriodicPullDoesNotPush(t *testing.T) {
 	f, fk, ph := autoPullFx(t)
 	yes := true
@@ -190,13 +191,13 @@ func TestThePeriodicPullDoesNotPush(t *testing.T) {
 		t.Fatalf("%+v %v", res, e)
 	}
 	hf.accept(1, 55, 1)
-	posts, gets := len(hf.posts), hf.fake.count("GET")
+	posts := len(hf.posts)
 	f.clock = f.clock.Add(16 * time.Minute) // the pull interval
 	r := f.autoPull(both)
-	if !r.Ran || r.Pull == nil || r.Push != nil || len(hf.posts) != posts || hf.fake.count("GET") != gets {
+	if !r.Ran || r.Pull == nil || r.Push != nil || len(hf.posts) != posts {
 		t.Fatalf("%+v", r)
 	}
-	if f.link(fk).Waiting != 1 {
+	if f.link(fk).Waiting != 0 {
 		t.Fatalf("%+v", f.link(fk))
 	}
 }

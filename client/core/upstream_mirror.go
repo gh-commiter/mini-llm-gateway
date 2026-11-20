@@ -24,7 +24,11 @@ const (
 	// mirrorCost: a mirrored note is kept three times: its row, the search table's own copy of the text and the search index (measured
 	// roughly 2.5 to 3 times the text; the factor leaves the bound honest without a page count). So 64 MiB of disk is about 21 MiB of text.
 	mirrorCost   = 3
-	maxPullFails = 3 // transient failures (no answer, 5xx) of note GETs that end a run
+	maxPullFails = 3  // transient failures (no answer, 5xx) of note GETs that end a run
+	maxLearn     = 50 // receipts a run asks the upstream about (learnReceipts)
+	// learnAskedFor: how long a receipt whose submission was found pending, rejected or unreadable is not asked about again (memory only, so a
+	// restart asks once more): without it more than maxLearn such receipts, oldest first, would starve the ones behind them for good.
+	learnAskedFor = time.Hour
 )
 
 // Variables so that a test can use small ones.
@@ -309,6 +313,14 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 	if err != nil {
 		return res, err
 	}
+	newHub := false // the hub lists a note this mirror does not hold: a submission found pending earlier may have become it
+	for id := range want {
+		if _, held := have[id]; !held {
+			newHub = true
+			break
+		}
+	}
+	s.learnReceipts(wctx, rctx, p, get, l, label, remote, newHub)
 	var skipNote []string
 	// The room the mirror has for NEW notes, known before anything is fetched: a full mirror ends the traversal ("mirror full") instead of
 	// fetching and discarding notes run after run.
@@ -763,4 +775,94 @@ func (s *Store) afterPull(ctx context.Context, l UpstreamLink, label string, res
 		}
 		return Audit(tx, "gateway", "upstream.auto-pull", l.Upstream, map[string]any{"project": label, "added": res.Added, "updated": res.Updated, "removed": res.Removed, "skipped": res.Skipped, "more": res.More, "outcome": kind})
 	})
+}
+
+type learnMark struct {
+	at      time.Time
+	pending bool
+}
+
+// learnReceipts: a receipt of a submission (remote_sub>0) that does not name the note it became (remote_note=0) learns it here, WITHOUT a new
+// push: the mirror hides the hub's copy of a note of ours only by a receipt that names its remote id, and the pusher learns that id only when the
+// note is pushed again after a change. It runs in the pull, after the manifest was read and BEFORE this run writes its mirror rows, so an accepted
+// note is never visible twice once the pull that brought its hub copy has finished. At most maxLearn receipts per run, oldest first (the rest in
+// the next runs); the request is the pusher's (GET of the submission), what an accepted one teaches is written by upstreamRecordAccepted. It
+// never fails the pull and never deletes: an answer it cannot use leaves the receipt as it was. A pending, rejected or unreadable submission is
+// not asked about again for learnAskedFor; a PENDING one is asked about again as soon as the hub lists a note this mirror does not hold yet
+// (newHub): a submission can only have become a hub note that was not there before, so a note accepted between two pulls is learned in the
+// pull that finds it, before it is shown.
+func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(string) upAnswer, l UpstreamLink, label string, remote int64, newHub bool) {
+	type rec struct{ note, sub int64 }
+	now := s.now()
+	key := func(r rec) string { return fmt.Sprintf("%d|%s|%d|%d", l.Project, l.Upstream, r.note, r.sub) }
+	var todo []rec
+	s.autoMu.Lock()
+	for k, m := range s.learnAsked {
+		if now.Sub(m.at) >= learnAskedFor || len(s.learnAsked) > 20000 {
+			delete(s.learnAsked, k)
+		}
+	}
+	s.autoMu.Unlock()
+	err := s.read(wctx, func(tx *sql.Tx) error {
+		rows, e := tx.Query(`SELECT note_id,remote_sub FROM upstream_sent WHERE project_id=? AND upstream=? AND remote_sub>0 AND remote_note=0 ORDER BY sent,note_id`, l.Project, l.Upstream)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+		s.autoMu.Lock()
+		defer s.autoMu.Unlock()
+		for rows.Next() && len(todo) < maxLearn {
+			var r rec
+			if e = rows.Scan(&r.note, &r.sub); e != nil {
+				return e
+			}
+			if m, asked := s.learnAsked[key(r)]; !asked || m.pending && newHub {
+				todo = append(todo, r)
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil || len(todo) == 0 {
+		return
+	}
+	learned := 0
+	for _, r := range todo {
+		if rctx.Err() != nil {
+			break
+		}
+		a := get(fmt.Sprintf("/minigw/v1/projects/%d/kb/submissions/%d", remote, r.sub))
+		if p.more { // the read limit could not be waited out: the pull goes on as if nothing was asked (its own requests meet the limit themselves)
+			p.more, p.wait = false, 0
+			break
+		}
+		if a.status == 0 || a.status >= 500 || a.status == 429 || a.status == 401 || a.status == 403 { // no answer, a limit, or no right to read submissions (all of them would say the same): try again at the next pull
+			break
+		}
+		var sub struct {
+			State              string
+			Note               int64
+			Replaces, Revision int64
+		}
+		if a.status == 200 && json.Unmarshal(a.data, &sub) != nil { // an answer that cannot be read: not decided, tried again at the next pull
+			break
+		}
+		if a.status == 200 && sub.State == "accepted" && sub.Note > 0 {
+			if s.upstreamRecordAccepted(wctx, l.Project, l.Upstream, r.note, sub.Note, sub.Replaces, sub.Revision) != nil {
+				break
+			}
+			learned++
+			continue
+		}
+		s.autoMu.Lock()
+		if s.learnAsked == nil {
+			s.learnAsked = map[string]learnMark{}
+		}
+		s.learnAsked[key(r)] = learnMark{now, a.status == 200 && sub.State == "pending"}
+		s.autoMu.Unlock()
+	}
+	if learned > 0 {
+		_ = s.write(wctx, func(tx *sql.Tx) error {
+			return Audit(tx, "gateway", "upstream.mirror-learn", l.Upstream, map[string]any{"project": label, "learned": learned, "candidates": len(todo)})
+		})
+	}
 }

@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Upstream mirror (#170): a hub note is hidden as "ours" only when a receipt of the link names its remote id. A note that ends with our exact trailer but has no such receipt (a hub member can copy the trailer) is shown like any other hub note, which agrees with reconcile (a trailer match is a candidate, never a proof).
+- Upstream pull: a pull of a reading link now learns what became of the submissions whose receipt does not name a note yet (`remote_sub` set, `remote_note` 0): it asks the upstream for the submission, with the link's own credentials (the request a push makes), and for an accepted one records the note id and the base exactly as a push does. This happens after the manifest was read and before the run writes its mirror rows, so a submission the hub accepted never shows twice (the local note and the hub's copy) once the pull that brought the hub copy has finished, with no new push and no change of the note. At most 50 receipts per run, oldest first; a failed request, a 403 or an exhausted read limit leaves the receipt and the mirror as they were and is tried again at the next pull; nothing is deleted; `pull --dry-run` writes nothing. One audit row `upstream.mirror-learn` (counts only) per run that learned something. A submission found rejected or unreadable is not asked about again for an hour; a pending one is asked about again whenever the hub lists a note the mirror does not hold yet.
+- Still visible twice (the remaining window): more than 50 unlearned receipts on one link (the rest follow in the next pulls); an upstream that does not let this device read its own submission (403, 404, errors: the receipt is learned by the next push after a change, or by `gw upstream reconcile`); an upstream whose accepted submission names no note id. A note accepted between two pulls is not such a case.
+
 ## 0.9.5
 
 ### Fixed

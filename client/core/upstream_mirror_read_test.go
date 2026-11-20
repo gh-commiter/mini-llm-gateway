@@ -399,8 +399,8 @@ func TestMirrorSlotsNeverDisplaceLocalHits(t *testing.T) {
 	}
 }
 
-// A hub copy of a note this gateway pushed shows once (the local note): by the remote id of a publish or an accepted push, and by the
-// trailer of a submission the hub accepted (no remote id known here). A trailer of another gateway (or a forged one) hides nothing.
+// A hub copy of a note this gateway pushed shows once (the local note): by the remote id a receipt names (a publish, or a submission the
+// hub accepted and the pusher learned). Our trailer alone hides nothing (a hub member can copy it), nor does a trailer of another gateway.
 func TestMirrorHidesTheHubCopiesOfOurOwnPushes(t *testing.T) {
 	f := newFx(t)
 	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
@@ -414,7 +414,7 @@ func TestMirrorHidesTheHubCopiesOfOurOwnPushes(t *testing.T) {
 	accepted := rawMirror(f, fk, "hub", 41, Structure, KindFinding, "project:shop", "orbit accepted", "x"+trailer)
 	foreign := rawMirror(f, fk, "hub", 42, Structure, KindFinding, "project:shop", "orbit foreign", "x\n\n"+upstreamRefMark+"0123456789ab, author x -->\n")
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,'hub',?,'h',1,5,0,1),(?,'hub',?,'h',1,0,40,1)`, fk, local.ID, fk, local.ID+1000)
+		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,'hub',?,'h',1,5,41,1),(?,'hub',?,'h',1,0,40,1)`, fk, local.ID, fk, local.ID+1000)
 		return e
 	}))
 	ids := f.search("ana", fk, "orbit")
@@ -655,8 +655,8 @@ func TestMirrorSearchWithLargeBodies(t *testing.T) {
 	t.Log("300 x 60 KiB hub notes:", time.Since(start), pg.Note)
 }
 
-// sec-upc3 L2: the receipt first, the trailer only at the END of the body and exact. A local note that quotes a marker in its text is still
-// recognised by the trailer our push appended; a hub note that quotes our reference in the middle hides nothing.
+// sec-upc3 L2: the receipt decides, never the trailer. The hub copy a receipt names is hidden whatever its text quotes; a hub note that only
+// quotes our reference, in the middle or at the end, is shown.
 func TestMirrorOwnPushIsMatchedByReceiptThenTrailerAtTheEnd(t *testing.T) {
 	f := newFx(t)
 	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
@@ -667,7 +667,7 @@ func TestMirrorOwnPushIsMatchedByReceiptThenTrailerAtTheEnd(t *testing.T) {
 	f.ok(err)
 	ref := upstreamRef(secret, "hub", fk, local.ID)
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,'hub',?,'h',1,5,0,1)`, fk, local.ID)
+		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,'hub',?,'h',1,5,1,1)`, fk, local.ID)
 		return e
 	}))
 	quoting := "The push writes " + upstreamRefMark + "0123456789ab, author x --> at the end.\n\n" + upstreamRefMark + ref + ", author ana -->\n"
@@ -742,9 +742,9 @@ func TestMirrorHidesTheHubCopyOfAReceiptWithABase(t *testing.T) {
 	}
 }
 
-// A hub copy is hidden as "ours" only with the exact trailer we wrote for that note (its reference and author; a supersedes id below the
-// receipt's submission id): text added on the trailer's line, a supersedes id the receipt cannot have, or another author shows the copy.
-func TestMirrorOwnershipNeedsTheExactTrailer(t *testing.T) {
+// #170: a hub note that ends with our exact trailer, copied by a hub member, is shown like any other hub note; the copy a receipt of this
+// link names stays hidden, whatever its text.
+func TestMirrorACopiedTrailerWithoutAReceiptIsShown(t *testing.T) {
 	f := newFx(t)
 	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
 	fk := f.pid["fakture"]
@@ -752,30 +752,24 @@ func TestMirrorOwnershipNeedsTheExactTrailer(t *testing.T) {
 	local := f.mk("ana", "fakture", Structure)
 	secret, err := f.upstreamKey(ctx)
 	f.ok(err)
-	ref := upstreamRef(secret, "hub", fk, local.ID)
-	tr := func(author, sup string) string {
-		return "\n\n" + upstreamRefMark + ref + ", author " + author + sup + " -->\n"
-	}
-	exact := rawMirror(f, fk, "hub", 40, Structure, KindFinding, "project:shop", "orbit exact", "x"+tr("ana", ""))
-	withSup := rawMirror(f, fk, "hub", 41, Structure, KindFinding, "project:shop", "orbit sup", "x"+tr("ana", "; supersedes submission 3"))
-	badSup := rawMirror(f, fk, "hub", 42, Structure, KindFinding, "project:shop", "orbit badsup", "x"+tr("ana", "; supersedes submission 9"))
-	zeroSup := rawMirror(f, fk, "hub", 43, Structure, KindFinding, "project:shop", "orbit zerosup", "x"+tr("ana", "; supersedes submission 03"))
-	appended := rawMirror(f, fk, "hub", 44, Structure, KindFinding, "project:shop", "orbit appended", "x"+strings.TrimSuffix(tr("ana", ""), "\n")+" HUB EDIT <!-- extra -->\n")
-	otherAuthor := rawMirror(f, fk, "hub", 45, Structure, KindFinding, "project:shop", "orbit author", "x"+tr("someone else", ""))
+	trailer := "\n\n" + upstreamRefMark + upstreamRef(secret, "hub", fk, local.ID) + ", author ana -->\n"
+	copied := rawMirror(f, fk, "hub", 40, Structure, KindFinding, "project:shop", "orbit copied", "x"+trailer)
+	own := rawMirror(f, fk, "hub", 41, Structure, KindFinding, "project:shop", "orbit own", "x"+trailer)
+	other := rawMirror(f, fk, "hub", 42, Structure, KindFinding, "project:shop", "orbit other", "x")
+	// a submission still waiting (no remote id) and then accepted without the pusher having learned it: nothing names the hub copy
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
 		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,'hub',?,'h',1,5,0,1)`, fk, local.ID)
 		return e
 	}))
 	ids := f.search("ana", fk, "orbit")
-	for _, id := range []int64{exact, withSup} {
-		if hasID(ids, id) {
-			t.Fatal("an exact trailer of ours did not hide the copy", id, ids)
-		}
+	if !hasID(ids, copied) || !hasID(ids, own) || !hasID(ids, other) {
+		t.Fatal("a copied trailer without a receipt naming the copy hid a hub note", ids)
 	}
-	for _, id := range []int64{badSup, zeroSup, appended, otherAuthor} {
-		if !hasID(ids, id) {
-			t.Fatal("a copy without our exact trailer was hidden", id, ids)
-		}
+	// the pusher learns that its submission is the hub note 41: that note is ours from now on, the copy stays shown
+	f.ok(f.upstreamRecordRemoteNote(ctx, fk, "hub", local.ID, 41))
+	ids = f.search("ana", fk, "orbit")
+	if hasID(ids, own) || !hasID(ids, copied) || !hasID(ids, other) {
+		t.Fatal("after the receipt names note 41", ids)
 	}
 }
 

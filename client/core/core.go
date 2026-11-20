@@ -73,6 +73,7 @@ type Store struct {
 	autoPushed bool                     // the last step of the timer was a push (guarded by autoMu): the next one tries the pull first, so neither starves the other
 	linkMu     map[string]*sync.Mutex   // one real push of a link at a time (guarded by autoMu)
 	upMu       map[string]*sync.RWMutex // removal excludes pushes of every link of an upstream
+	learnAsked map[string]learnMark     // receipts whose submission the pull asked about and found not (yet) accepted (guarded by autoMu; memory only)
 }
 
 // state is what must outlive a restore: it is kept in core.state as well as in the database (max of both wins).

@@ -84,8 +84,8 @@ func TestMirrorShowsAHubCopyThatMovedAwayFromOurPush(t *testing.T) {
 	}
 }
 
-// A copy that moved on the hub is shown even when it still ends with our trailer; a submit-mode link (no remote id, no baseline) keeps the
-// trailer rule whatever the revision of the hub's copy.
+// A copy that moved on the hub is shown even when it still ends with our trailer; a submit-mode receipt that names the accepted note (no
+// baseline) keeps hiding it whatever the revision of the hub's copy.
 func TestMirrorMovedCopyIgnoresTheTrailerSubmitModeKeepsIt(t *testing.T) {
 	f := newFx(t)
 	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
@@ -101,7 +101,7 @@ func TestMirrorMovedCopyIgnoresTheTrailerSubmitModeKeepsIt(t *testing.T) {
 	moved := rawMirror(f, fk, "hub", 40, Structure, KindFinding, "project:shop", "orbit moved", "edited there"+trailer(pub.ID))
 	submitted := rawMirror(f, fk, "hub", 41, Structure, KindFinding, "project:shop", "orbit submitted", "accepted"+trailer(sub.ID))
 	f.ok(f.write(ctx, func(tx *sql.Tx) error {
-		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev) VALUES(?,'hub',?,'h',1,0,40,1,2),(?,'hub',?,'h',1,5,0,1,0)`, fk, pub.ID, fk, sub.ID)
+		_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev) VALUES(?,'hub',?,'h',1,0,40,1,2),(?,'hub',?,'h',1,5,41,1,0)`, fk, pub.ID, fk, sub.ID)
 		return e
 	}))
 	ids := f.search("ana", fk, "orbit")

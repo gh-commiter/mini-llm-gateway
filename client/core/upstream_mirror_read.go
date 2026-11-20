@@ -29,8 +29,6 @@ const (
 	mirrorLocalSlots = 15 // of the 20 hits of a page; the hub's 5 are its own, and slots one side leaves unused go to the other
 	maxHubFAQ        = 20 // mirrored faq entries on the first page of kb faq
 	maxHubFAQBytes   = 16 << 10
-	// mirrorTail: how much of the END of a body is looked at for the trailer of our own push (it is the last thing our push writes).
-	mirrorTail = 400
 	// MirrorLeftOut is the note of a search whose hub hits were left out.
 	MirrorLeftOut = "hub results left out: took too long"
 )
@@ -168,59 +166,6 @@ type mirrorEntry struct {
 	differs      int64 // the hub's copy of a note we sent, changed there since: the local note it differs from
 }
 
-// ownRef: what the exact check of a trailer needs besides its reference: the author's name as trailer() writes it, and the receipt's submission id.
-type ownRef struct {
-	author string
-	sub    int64
-}
-
-// trailerRef: the 12 hex digits after the LAST trailer opening of a text, "" when there is none (no pattern is applied: ownTrailerSplit decides).
-func trailerRef(s string) string {
-	i := strings.LastIndex(s, "\n\n"+upstreamRefMark)
-	if i < 0 || len(s) < i+2+len(upstreamRefMark)+12 {
-		return ""
-	}
-	r := s[i+2+len(upstreamRefMark) : i+2+len(upstreamRefMark)+12]
-	for _, c := range r {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-			return ""
-		}
-	}
-	return r
-}
-
-// ourRefs: the trailer references of every note this gateway sent on the links of the local projects and teams in scope. Nothing when
-// this gateway never sent anything.
-func ourRefs(ctx context.Context, tx *sql.Tx, scope []readable) (map[string]ownRef, error) {
-	var secret []byte
-	switch e := tx.QueryRow(`SELECT k FROM upstream_key WHERE id=1`).Scan(&secret); e {
-	case nil:
-	case sql.ErrNoRows:
-		return nil, nil
-	default:
-		return nil, e
-	}
-	ids := make([]any, 0, len(scope))
-	for _, r := range scope {
-		ids = append(ids, r.project)
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT s.project_id,s.upstream,s.note_id,s.remote_sub,coalesce(u.name,'') FROM upstream_sent s LEFT JOIN notes n ON n.id=s.note_id AND n.project_id=s.project_id LEFT JOIN users u ON u.id=n.author_id WHERE s.project_id IN (`+marks(len(ids))+`)`, ids...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]ownRef{}
-	for rows.Next() {
-		var project, note, sub int64
-		var up, author string
-		if err = rows.Scan(&project, &up, &note, &sub, &author); err != nil {
-			return nil, err
-		}
-		out[upstreamRef(secret, up, project, note)] = ownRef{author: trailerAuthor(author), sub: sub}
-	}
-	return out, rows.Err()
-}
-
 // mirrorSQL: the statement of mirrorRows (its last argument, the LIMIT, is added by the caller). The inner selection reads no text: the
 // visibility (scope, reading on, fresh, the link's accepted classes and sources), the receipts of our own pushes (a hub copy whose remote
 // id we recorded is left out while it is the content we sent (a receipt with a content hash: decided by the caller, from the hash; an older
@@ -248,7 +193,7 @@ func mirrorSQL(now time.Time, scope []readable, match, cond string, cargs []any,
  AND (lower(m.source_label)=lower(CASE WHEN l.remote_team=1 THEN 'team:' ELSE 'project:' END||l.remote) OR instr(','||l.read_sources||',', ','||m.source_label||',')>0)
  AND NOT EXISTS (SELECT 1 FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content='' AND (s.remote_sub>0 OR s.remote_rev<=0 OR m.remote_rev<=s.remote_rev))
  AND ` + cond + ` ORDER BY m.updated DESC,m.id LIMIT ?)
- SELECT m.id,m.project_id,m.upstream,m.source_label,m.class,m.kind,m.title,` + text + `,substr(m.body,-` + strconv.Itoa(mirrorTail) + `),m.remote_rev,m.updated,h.ok,
+ SELECT m.id,m.project_id,m.upstream,m.source_label,m.class,m.kind,m.title,` + text + `,m.remote_rev,m.updated,h.ok,
  coalesce((SELECT s.note_id FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content='' AND s.remote_rev>0 AND m.remote_rev>s.remote_rev ORDER BY s.note_id LIMIT 1),0),
  coalesce((SELECT s.note_id FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content<>'' ORDER BY s.note_id LIMIT 1),0),
  coalesce((SELECT s.sent_content FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content<>'' ORDER BY s.note_id LIMIT 1),''),
@@ -258,9 +203,9 @@ func mirrorSQL(now time.Time, scope []readable, match, cond string, cargs []any,
 }
 
 // mirrorRows: the visible mirror rows in scope that also meet cond (cargs), newest first, at most limit. text is the column expression of
-// the text (the body, or the start of it for a snippet); match, when not "", is the FTS query on upstream_mirror_search. A hub's copy of a
-// submission of ours that it accepted (no remote id is known here) is recognised by the trailer at the end of its body and left out; the
-// candidates are bounded (4 x limit), so a page may show fewer hub hits when many of the newest are our own. Every string is sanitised again
+// the text (the body, or the start of it for a snippet); match, when not "", is the FTS query on upstream_mirror_search. A hub note is ours only
+// when a receipt of the link names its remote id; our trailer on a note without one proves nothing (a hub member can copy it, and
+// reconcile treats it the same way: a candidate, not a proof), so that note is shown. The candidates are bounded (4 x limit), so a page may show fewer hub hits when many of the newest are our own. Every string is sanitised again
 // here: a row may come from an older build or a restored backup.
 func mirrorRows(ctx context.Context, tx *sql.Tx, now time.Time, scope []readable, acc *mirrorAccess, match, cond string, cargs []any, text string, limit int) ([]mirrorEntry, error) {
 	if len(scope) == 0 {
@@ -273,7 +218,6 @@ func mirrorRows(ctx context.Context, tx *sql.Tx, now time.Time, scope []readable
 	}
 	type cand struct {
 		x               mirrorEntry
-		tail            string
 		rnote           int64
 		rcontent, rbody string
 	}
@@ -281,7 +225,7 @@ func mirrorRows(ctx context.Context, tx *sql.Tx, now time.Time, scope []readable
 	for rows.Next() {
 		var c cand
 		var upd, ok int64
-		if err = rows.Scan(&c.x.id, &c.x.project, &c.x.upstream, &c.x.label, &c.x.class, &c.x.kind, &c.x.title, &c.x.text, &c.tail, &c.x.rev, &upd, &ok, &c.x.differs, &c.rnote, &c.rcontent, &c.rbody); err != nil {
+		if err = rows.Scan(&c.x.id, &c.x.project, &c.x.upstream, &c.x.label, &c.x.class, &c.x.kind, &c.x.title, &c.x.text, &c.x.rev, &upd, &ok, &c.x.differs, &c.rnote, &c.rcontent, &c.rbody); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -293,8 +237,6 @@ func mirrorRows(ctx context.Context, tx *sql.Tx, now time.Time, scope []readable
 	if err != nil {
 		return nil, err
 	}
-	var refs map[string]ownRef
-	asked := false
 	var secret []byte
 	secretRead := false
 	teams := map[int64]string{}
@@ -328,19 +270,6 @@ func mirrorRows(ctx context.Context, tx *sql.Tx, now time.Time, scope []readable
 				continue
 			}
 			c.x.differs = c.rnote
-		}
-		if ref := trailerRef(c.tail); ref != "" && c.x.differs == 0 { // a copy that differs from our note is shown even when it still ends with our trailer
-			if !asked { // the references are computed once, and only when a candidate ends with a trailer
-				if refs, err = ourRefs(ctx, tx, scope); err != nil {
-					return nil, err
-				}
-				asked = true
-			}
-			if own, ok := refs[ref]; ok {
-				if _, exact := ownTrailerSplit(c.tail, ref, own.author, own.sub); exact {
-					continue
-				}
-			}
 		}
 		x := c.x
 		if isSegment(x.project) {
