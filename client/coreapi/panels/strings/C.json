@@ -454,6 +454,7 @@
  "builtin.upstreams.section.links.column.restoredblocked": "Restored",
  "builtin.upstreams.section.links.column.restoredblocked.yes": "Blocked: restored from a backup, reconcile before pushing",
  "builtin.upstreams.section.links.column.restoredblocked.no": "No",
+ "builtin.upstreams.section.links.column.reconcile": "Reconcile",
  "builtin.upstreams.section.links.column.lastfail": "Last automatic push that failed",
  "builtin.upstreams.section.links.column.lastok": "Last automatic push that worked",
  "builtin.upstreams.section.links.column.lastpush": "Last push",

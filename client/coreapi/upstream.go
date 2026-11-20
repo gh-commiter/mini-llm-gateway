@@ -435,7 +435,6 @@ func toAdminLink(l core.UpstreamLinkInfo) adminLinkJSON {
 	j.ClassesText = strings.Join(cs, ", ")
 	j.ConflictCount = len(l.Conflicts)
 	j.RestoredBlocked = l.Restored != nil
-	j.ReconcileState = "not marked"
 	if j.RestoredBlocked {
 		who := l.Label
 		if l.Team {

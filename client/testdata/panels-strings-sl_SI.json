@@ -505,6 +505,7 @@
   "builtin.upstreams.section.links.column.place.value.project": "Projekt",
   "builtin.upstreams.section.links.column.place.value.team": "Ekipa",
   "builtin.upstreams.section.links.column.remote": "Tam",
+  "builtin.upstreams.section.links.column.reconcile": "Uskladitev",
   "builtin.upstreams.section.links.column.restoredblocked": "Obnovljeno",
   "builtin.upstreams.section.links.column.restoredblocked.no": "Ne",
   "builtin.upstreams.section.links.column.restoredblocked.yes": "Blokirano: obnovljeno iz varnostne kopije, pred pošiljanjem uskladi z upstreamom",

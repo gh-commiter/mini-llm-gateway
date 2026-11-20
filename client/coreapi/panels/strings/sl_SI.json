@@ -454,6 +454,7 @@
  "builtin.upstreams.section.links.column.restoredblocked": "Obnovljeno",
  "builtin.upstreams.section.links.column.restoredblocked.yes": "Blokirano: obnovljeno iz varnostne kopije, pred pošiljanjem uskladi z upstreamom",
  "builtin.upstreams.section.links.column.restoredblocked.no": "Ne",
+ "builtin.upstreams.section.links.column.reconcile": "Uskladitev",
  "builtin.upstreams.section.links.column.lastfail": "Zadnje neuspešno samodejno pošiljanje",
  "builtin.upstreams.section.links.column.lastok": "Zadnje uspešno samodejno pošiljanje",
  "builtin.upstreams.section.links.column.lastpush": "Zadnje pošiljanje",
