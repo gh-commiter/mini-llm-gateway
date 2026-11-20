@@ -4,7 +4,7 @@
 
 ### Changed
 - `scripts/compose-team-rehearsal.sh`: new mode `--identities --client <minigw>` with five real clients and five device keys (reader, developer, admin, a member of another team, an allowed but unbound device) through 127.0.0.1, checked against a table of what the docs promise; `--local-image <tag>` for a run that may download nothing; every check is `ok`, `FAIL` or `SKIP`, the report says whether the host is Linux, and a SKIP makes the exit code non-zero unless `--allow-skip` (or `ALLOW_SKIP=1`).
-- Docs: `docker.md` first setup no longer names a fixed old release (`MINIGW_VERSION` is the newest stable of the latest release page); `team-onboarding.md` says what a client sees before approval and binding, and to use sync mode for a repository you do not trust.
+- Docs: `usage.md` says the note class table is about project notes (a team's own notes are read by the whole roster) and that linking a folder needs a role in the project, directly or through a team assignment; `docker.md` first setup no longer names a fixed old release (`MINIGW_VERSION` is the newest stable of the latest release page); `team-onboarding.md` says what a client sees before approval and binding, and to use sync mode for a repository you do not trust.
 
 ## 0.9.7
 

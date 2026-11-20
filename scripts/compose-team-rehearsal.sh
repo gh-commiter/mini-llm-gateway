@@ -958,7 +958,7 @@ EOF
 #   P1VA   rh5-p1 private note of the admin            admin         n n d    n n d      y y y    n n d
 #   P1SA   rh5-p1 structure note of the admin          admin         y y y    y y y      y y y    n n d
 #   TS     team rh5-team structure note (--team)       admin         y y y    y y y      y y y    d d d   (roster only)
-#   TD     team rh5-team data note (--team)            admin         n n d    y y y      y y y    d d d
+#   TD     team rh5-team data note (--team)            admin         y y y    y y y      y y y    d d d   (docs/usage.md "Team notes": every roster member reads team notes; at team level the roster, not the class, decides)
 #   Q1S    rh5-q1 structure note (other team)          other         n n d    n n d      n n d    y y y
 #
 # roles: reader = direct reader of rh5-p1; developer = developer of rh5-p1 through the TEAM assignment (not direct);
@@ -974,7 +974,7 @@ expect5() { # user item -> "list search read"
     rh5-other:T*) echo "d d d";;
     rh5-other:*) echo "n n d";;
     *:Q1S) echo "n n d";;
-    rh5-reader:P1D|rh5-reader:P1VD|rh5-reader:P1VA|rh5-reader:TD) echo "n n d";;
+    rh5-reader:P1D|rh5-reader:P1VD|rh5-reader:P1VA) echo "n n d";;
     rh5-dev:P1VA) echo "n n d";;
     *) echo "y y y";;
   esac
@@ -1140,6 +1140,16 @@ stage_ident() {
   p=$(iprobe rh5-dev "$F/rh5-dev/f" "$(get SEN_TS)" read "$(get NID_TS)" --team rh5-team)
   if [ "$p" = d ]; then ok 11.removed2 "the developer was removed from the team roster: the team note is refused at once ('not found or not visible')"
   else bad 11.removed2 "after the roster removal the team note read answered '$p' (expected d)"; fi
+  # a member of a project of the team who is NOT on the roster reads nothing of the team's notes (structure or data); the project stays readable
+  gw member rh5-p1 set rh5-dev developer >/dev/null 2>&1 || { bad 11.norost "gw member set failed"; return; }
+  nb=
+  for it in TS TD; do
+    sn=$(get "SEN_$it"); id=$(get "NID_$it")
+    for op in list search read; do p=$(iprobe rh5-dev "$F/rh5-dev/f" "$sn" "$op" "$id" --team rh5-team); [ "$p" = d ] || nb="$nb $it/$op=$p"; done
+  done
+  p=$(iprobe rh5-dev "$F/rh5-dev/f" "$(get SEN_P1S)" read "$(get NID_P1S)")
+  if [ -z "$nb" ] && [ "$p" = y ]; then ok 11.norost "a direct developer of rh5-p1 who is not on the roster of rh5-team reads the project's notes but nothing of the team's notes (structure or data: list, search and read all refused)"
+  else bad 11.norost "project member off the roster: team note answers differ:${nb:- none}; project note read '$p' (expected y)"; fi
 }
 
 # ====================================================================================================
