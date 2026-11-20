@@ -1241,7 +1241,8 @@ extension ShareHub {
         var n = 0
         while slots["\(s.session)|\(agent)|\(n)"]?.busy == true { n += 1 }
         let k = "\(s.session)|\(agent)|\(n)"
-        if let slot = slots[k], slot.gitIntact, slot.nested.allSatisfy({ $0.intact(slot.wt) }), Worktree.nestedProblem(slot.wt, repo: tree.repo, nested: slot.nested) == nil {  // sicer nov klon (H2, N9; #40: ugnezdeni na svoji poti)
+        if let slot = slots[k], slot.gitIntact, slot.nested.allSatisfy({ $0.intact(slot.wt) }),
+           await offPool({ [wt = slot.wt, repo = tree.repo, nested = slot.nested] in Worktree.nestedProblem(wt, repo: repo, nested: nested) }) == nil {  // walks the whole clone and may run git: off the pool, as in worktreeBack  // sicer nov klon (H2, N9; #40: ugnezdeni na svoji poti)
             if let why = Worktree.foreignGit(slot.wt, cwd: Self.dir(slot.wt, tree.sub), nested: slot.nested) {  // #61: .git na poti harnessa: zavrnitev, ne nov klon
                 refusals[id] = (400, why); unlock(tree.repo)
                 return nil

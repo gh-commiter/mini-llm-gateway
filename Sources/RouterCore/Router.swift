@@ -723,7 +723,7 @@ public final class Router: Sendable {
         if config.codex.enabled, let exe = await Codex.executable(config.codex.executable) {
             data.append(["type": "model", "id": "claude-codex", "display_name": "Codex · Codex CLI",
                          "description": "codex exec · default model · tools in your folder", "created_at": created])
-            data += Codex.catalog(exe).filter { config.codex.isModelEnabled($0.slug) }.map { m in
+            data += await offPool { Codex.catalog(exe) }.filter { config.codex.isModelEnabled($0.slug) }.map { m in  // runs `codex debug models` and waits: not on a pool thread (as Admin.swift)
                 ["type": "model", "id": Codex.prefix + m.slug, "display_name": "\(m.name) · Codex CLI",
                  "description": "codex exec · \(m.slug)\(m.window.map { " · \($0 / 1000)K" } ?? "") · tools in your folder",
                  "created_at": created]
