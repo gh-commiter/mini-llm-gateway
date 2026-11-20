@@ -69,7 +69,7 @@ done
 unset COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES COMPOSE_PATH_SEPARATOR COMPOSE_PROJECT_NAME MINIGW_ADMIN_BIND MINIGW_ADMIN_PORT MINIGW_ADMIN_NAME MINIGW_ADMIN_CERTS
 umask 077
 exec 3<&0 </dev/null   # fd 3 keeps the terminal for the provider key and the cleanup question; everything else reads nothing
-case $PROJ in *[!a-z0-9_-]*|'') echo "project name: lowercase letters, digits, - and _ only" >&2; exit 2;; esac
+printf '%s' "$PROJ" | grep -Eq '^[a-z0-9][a-z0-9_-]*$' || { echo "project name: lowercase letters, digits, - and _ only, starting with a letter or digit" >&2; exit 2; }
 [ "$PROJ" != minigw ] || { echo "refusing the project name minigw: that is the default production project" >&2; exit 2; }
 PROJ2=$PROJ-restore
 [ -n "$WORK" ] || WORK=${TMPDIR:-/tmp}/$PROJ-work
@@ -235,7 +235,8 @@ do_cleanup() { # both projects of the run, the image tag of the run, then the wo
   for cp in "$PROJ2" "$PROJ"; do
     case $(vstate "${cp}_rehearsal_marker") in
       present) remove_run "$cp" || cr=1;;
-      absent) [ "$cp" = "$PROJ2" ] || printf 'no marker volume for %s (already removed, or never created)\n' "$cp" >&2;;
+      absent)   # no marker: nothing is removed, but labelled leftovers of this run are still looked for and make the cleanup fail
+        if ! leftovers "$cp"; then printf 'the marker volume of %s is missing, but resources of run %s remain or could not be checked (NOT removed: no marker proves them):%s%s\n' "$cp" "$RID" "$LEFT" "$DQFAIL" >&2; cr=1; fi;;
       *) printf 'cannot check the marker volume of %s: the Docker daemon answered with an error; nothing was removed\n' "$cp" >&2; cr=1;;
     esac
   done
@@ -674,7 +675,7 @@ EOF
     CA=$CERTS/ca/browser-ca.pem; ok 6.certs "reusing the certificates of this run's working directory (still valid)"
   else
     ( cd "$DEPLOY" && sh admin-certs.sh link "$CERTS" --origin "$URL" >"$WORK/link.out" 2>&1 && sh admin-certs.sh browser "$CERTS" "$ANAME" >"$WORK/browser.out" 2>&1 ) || { bad 6.certs "admin-certs.sh failed: $(tailc "$(cat "$WORK/link.out" "$WORK/browser.out" 2>/dev/null)")"; return; }
-    if grep -qi 'PRIVATE KEY' "$WORK/link.out" "$WORK/browser.out"; then bad 6.certs "admin-certs.sh printed a key"; return; fi
+    if ! absent_in_file '[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]' "$WORK/link.out" || ! absent_in_file '[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]' "$WORK/browser.out"; then bad 6.certs "admin-certs.sh printed a key (or its output could not be scanned)"; return; fi
     if [ "$(uname -s)" = Linux ] && [ "$(id -u)" != 0 ]; then
       if ! { sudo -n chown 10001:10001 "$CERTS/gateway" "$CERTS"/gateway/* && sudo -n chown 65532:65532 "$CERTS/proxy" "$CERTS"/proxy/*; } >/dev/null 2>&1; then
         bad 6.certs "the certificate folders must belong to uid 10001 (gateway/) and 65532 (proxy/): run the rehearsal as root or allow sudo (docs/docker.md, step 1 of the remote settings)"; return; fi
@@ -699,7 +700,11 @@ EOF
   if ! case $SRCFILTER in restricted*) true;; *) false;; esac; then
     write_remote '["0.0.0.0/0"]' && dc restart minigw >/dev/null 2>&1 && wait_healthy || { bad 6.config "could not apply the source filter"; return; }
   fi
-  ok 6.srcfilter "source filter: $SRCFILTER"
+  if [ -n "$subs" ]; then why="subnet $subs was refused"; else why="docker network inspect gave no usable subnet:$DQFAIL"; fi
+  case $SRCFILTER in
+    restricted*) ok 6.srcfilter "source filter: $SRCFILTER";;
+    *) bad 6.srcfilter "the subnet filter did not admit the rehearsal client or could not be read ($why); the following checks ran with the filter opened to all IPv4, so this rehearsal has not proven any source filter";;
+  esac
   i=0; c=000; while [ $i -lt 30 ]; do c=$(reqn "$URL/minigw/settings"); [ "$c" = 200 ] && break; sleep 2; i=$((i + 1)); done
   if [ "$c" = 200 ] && grep -qi password "$WORK/body"; then ok 6.page "the login page loads over HTTPS with the browser CA"; else bad 6.page "the login page answered $c: $(tailc "$(cat "$WORK/err")")"; return; fi
   grep -qi '^strict-transport-security: max-age=' "$WORK/head" && ok 6.hsts "HSTS header present" || bad 6.hsts "no HSTS header"
@@ -1011,10 +1016,11 @@ stage_operator
 stage_secrets
 report
 finish
-# the verdict is the last thing written, after the cleanup outcome is known
-if [ "$FAILS" = 0 ]; then VERDICT="PASSED (the TODO(operator) items remain before inviting the team)"; else VERDICT="FAILED: $FAILS step(s)"; fi
+# the verdict is computed last, after every step that can still fail, and is the last thing written
+verdict() { if [ "$FAILS" = 0 ]; then VERDICT="PASSED (the TODO(operator) items remain before inviting the team)"; else VERDICT="FAILED: $FAILS step(s)"; fi; }
+verdict
 if [ -n "${REP:-}" ] && [ -f "$REP" ] && [ ! -L "$REP" ]; then
-  printf '\n## Result\n\nCleanup: %s.\n\nVERDICT: REHEARSAL %s\n' "$CLEANSTATE" "$VERDICT" >>"$REP" || { echo "FAIL 10.report the verdict could not be appended to $REP"; FAILS=$((FAILS + 1)); }
+  printf '\n## Result\n\nCleanup: %s.\n\nVERDICT: REHEARSAL %s\n' "$CLEANSTATE" "$VERDICT" >>"$REP" || { echo "FAIL 10.report the verdict could not be appended to $REP"; FAILS=$((FAILS + 1)); verdict; }
 fi
 echo "REHEARSAL $VERDICT; cleanup: ${CLEANSTATE:-not run}"
 [ "$FAILS" = 0 ]
