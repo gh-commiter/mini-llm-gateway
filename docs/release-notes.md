@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.9.5
 
 ### Fixed
 - Upstream push: when the hub answers a submission with an EARLIER one (the same note, text and link again, after the receipt was lost by a restore or by unlink and link), the push no longer reports "create". A rejected earlier submission is reported as skipped with the hub's reason and not sent around the rejection; an accepted one records the hub's note (no second copy). Before, `reconcile --new` of a note the hub had rejected said "created 1" while nothing reached the hub.
@@ -9,6 +9,11 @@
 
 ### Proof
 - Proof: `scripts/compose-upstream-e2e.sh` runs two gateways (hub and edge) in containers on an internal Docker network and proves in them: `backup.sh --restore` -> `core.restored` consumed -> the upstream link marked and paused (log, status, a manual push creates nothing) -> `gw upstream reconcile` (classes known, candidate with and without proof, unknown, orphan; confirm, new, skip) -> replacements with no second copies. Not proven: Mac and Windows hosts, publish-mode links, the Mac app's window.
+
+### Known problems
+- After such a skipped push, later pushes and `gw upstream status` say only "unchanged" for a note whose text the upstream rejected; the rejection and its reason are shown once, by the push that found it.
+- A replay is recognised by the state the upstream reports for the submission; an upstream older than 0.7.21 that reports no state is treated as before.
+- Reconcile between real machines and in the Mac app's window is still not proven; publish-mode links, team links, `--all` and `--after-restore` were not part of the container proof. The known problems of 0.9.4 and 0.9.3 apply.
 
 ## 0.9.4
 
