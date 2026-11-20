@@ -143,5 +143,7 @@ else
         exists "$v" || docker volume create --label "com.docker.compose.project=$project" --label "com.docker.compose.volume=$kind" "$v" >/dev/null
         helper -i --mount "type=volume,src=$v,dst=/v" "$image" -c 'tar -C /v --no-same-owner -xf - && chown -R 10001:10001 /v' < "$source/$kind.tar" || hfail $? 'restore failed; target is now non-empty'
     done
+    # The restored database no longer knows what it pushed upstream: the gateway marks its upstream links at the next start (it consumes this file).
+    helper --mount "type=volume,src=$cv,dst=/v" "$image" -c 'mkdir -p /v/core && : > /v/core/core.restored && chown 10001:10001 /v/core/core.restored && chmod 600 /v/core/core.restored' || hfail $? 'restore pending marker could not be written; target is now non-empty'
     printf 'Restored. Next: docker compose up -d\n'
 fi
