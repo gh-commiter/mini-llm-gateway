@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Tests: `TestMirrorPurgeOfManyRowsIsFastAndLeavesNoText` no longer fails when a runner's disk stalls (0.9.5 Windows run: both purge paths took 32.8 s). It times the two delete paths on the statements alone (rolled back, best of three) and skips the speed comparison, with a logged reason, when the old way is not slow enough to compare; the check that no deleted text stays in the database files is unchanged.
+- Tests: `fakeResponderGetsNothingReusable` failure messages now carry the time of each stage and how long a Swift concurrency pool thread took to start a Task (the router answers from one), so the next "no reply head" under the parallel suite shows whether the pool was starved.
+
 ## 0.9.6
 
 ### Fixed

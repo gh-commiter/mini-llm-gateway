@@ -279,23 +279,66 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         // The client is a blocking socket call (minigw gw is its own process). In a test it runs on its own thread, never on a thread of the
         // Swift concurrency pool: with the whole suite in parallel the pool is full of such blocked calls and the router's handler Task (which
         // needs a pool thread to answer) starves until the 30 s receive timeout ("no reply head: 0 bytes (errno 35)").
+        let lag = PoolLag()  // #150/#147/#140: when a stage fails, the message says whether the Swift concurrency pool (where the router's handler Task runs) was starved
+        defer { lag.stop() }
+        let stages = Stages()
         let fakeClient = AdminClient(port: fakePort, routerKey: fakeKey.publicKey.rawRepresentation)
         _ = await offPool { fakeClient.request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30) }
+        stages.mark("fake")
         for _ in 0..<300 where got.data.isEmpty { try await Task.sleep(for: .milliseconds(50)) }  // namesto fiksnih 100 ms
         let text = String(decoding: got.data, as: UTF8.self)
         let captured = try #require(text.split(separator: "\r\n").first { $0.lowercased().hasPrefix("authorization: ") }).dropFirst("authorization: ".count)
         #expect(captured.hasPrefix(AdminHooks.scheme) && !text.contains(adminSecret))
         // Ponovitev pri pravem routerju: druga povezava, drug h → 401; pravi dokaz → 200.
+        stages.mark("capture")
         let real = AdminClient(port: port, routerKey: realKey.publicKey.rawRepresentation)
         let replay = String(captured)
         // #109: a 0 says where it failed (stage, errno); the earlier failures only showed "→ 0"
         let replayed = await offPool { real.attempt("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 30) }
-        #expect(replayed.0 == 401, "replay: \(replayed.0) \(replayed.2)")
+        stages.mark("replay")
+        #expect(replayed.0 == 401, "replay: \(replayed.0) \(replayed.2); \(stages.text) \(lag.text)")
         let proven = await offPool { real.attempt("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30) }
-        #expect(proven.0 == 200, "proof: \(proven.0) \(proven.2)")
+        stages.mark("proof")
+        #expect(proven.0 == 200, "proof: \(proven.0) \(proven.2); \(stages.text) \(lag.text)")
         // Brez ključa routerja (program na vratih ne konča rokovanja): 0, nič poslano.
         let wrong = AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation)
         #expect(await offPool { wrong.request("GET", "/health/live", nil, timeout: 30) }.0 == 0)
+    }
+}
+
+/// Seconds each stage of a test took (the time since the one before), for failure messages.
+final class Stages: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last = ContinuousClock.now, parts: [String] = []
+    func mark(_ name: String) { lock.withLock { let n = ContinuousClock.now; parts.append("\(name) \(Self.s(n - last))s"); last = n } }
+    var text: String { lock.withLock { "stages: " + parts.joined(separator: ", ") } }
+    static func s(_ d: Duration) -> String { String(format: "%.1f", Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18) }
+}
+
+/// How long a Task takes to get a thread of the Swift concurrency pool, sampled every 100 ms from a thread of its own while the test runs.
+/// The router answers from such a Task: a lag of seconds when a request got no answer shows the pool was full of blocked calls (starvation),
+/// a lag near zero shows it was not and the cause is elsewhere (the listener's queue, the connection).
+final class PoolLag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var worst = Duration.zero, pending: ContinuousClock.Instant?, stopped = false
+    init() {
+        Thread { [self] in
+            while !lock.withLock({ stopped }) {
+                let t0 = ContinuousClock.now, done = DispatchSemaphore(value: 0)
+                lock.withLock { pending = t0 }
+                Task { done.signal() }
+                done.wait()
+                lock.withLock { worst = max(worst, ContinuousClock.now - t0); pending = nil }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }.start()
+    }
+    func stop() { lock.withLock { stopped = true } }
+    var text: String {
+        lock.withLock {
+            let waiting = pending.map { ContinuousClock.now - $0 } ?? .zero
+            return "pool lag: worst \(Stages.s(worst))s, a sample waiting now \(Stages.s(waiting))s"
+        }
     }
 }
 
