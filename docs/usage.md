@@ -1362,7 +1362,7 @@ are hidden until it is unarchived. Give `--team <team>` in place of a project: `
 `minigw kb export --team acme <dir>` and `kb import --team acme <dir>`. `--team` is not accepted together with a project,
 nor inside an agent run (the run's project is its own). A search of a project also covers the notes of its team, as far as you
 may read them. A line from a team's own notes names the team (`team <name>` where a project would show `project <id>`), and a hit
-from there in a project search also ends with `from team:<name>`; `minigw team show <team>` tells you how many team notes exist; `minigw note read <id>` opens it. Inside an agent
+from there in a project search also ends with `from team:<name>`; `minigw team show <team>` tells you how many team notes exist and, if you review them, how many submissions wait; `minigw note read <id>` opens it. Inside an agent
 run the same holds when the person who started the run is on the team's roster.
 
 **Dependencies.** The owner can record that a project depends on another one, for example a topic project linked to a
@@ -1418,6 +1418,11 @@ there and something waits (never your own submission, never an archived project)
 answer (`GET /minigw/v1/projects/<id>/kb/review` carries `waiting`, the number of pending submissions of that project or team,
 not only of the first page), so it is decided by the same check as the list: someone who may not review gets the "not found" of the list and prints
 nothing, the same as for a project without submissions. For a team's own notes ask the list for the team (`minigw kb review --team <team>`).
+A team's own notes have the same line: `minigw team show <team>` and the session-start line (the project's answer to `GET .../kb/review?after=...&teams=1`
+also lists, in `teams`, each team of the project whose own notes you may review, with its `waiting` count: one request) print
+`N submissions wait for your review in team <team>: minigw kb review --team <team>` when you write that team's notes and something waits there (never your own
+submission). The check is the review list's own for the team: anyone else gets nothing, and a caller who cannot read the project gets its "not found". The session-start line
+names only teams whose name is a plain word (letters, digits, `.`, `_`, `-`); `team show` puts any other name in double quotes in the command.
 
 **Four eyes.** Nobody reviews their own submission: another admin of the project or the gateway owner does. A project
 with a single admin therefore leaves that admin's submissions for the owner (or a second admin). Accepting also needs

@@ -28,7 +28,8 @@ type cliTeam struct {
 		Name     string `json:"name"`
 		Archived bool   `json:"archived"`
 	} `json:"projects"`
-	Notes *int `json:"notes"` // the team's own notes (a roster member's view only)
+	Notes   *int  `json:"notes"` // the team's own notes (a roster member's view only)
+	Segment int64 `json:"segment"`
 }
 
 func teamLine(t cliTeam) string {
@@ -208,6 +209,11 @@ func (e *projectEnv) team(args []string) error {
 		}
 		if t.Notes != nil {
 			e.say(clean(fmt.Sprintf("team notes: %d  (read them: minigw note list --team %s)", *t.Notes, t.Name)))
+		}
+		if t.Segment != 0 && !t.Archived { // a reviewer's count of the team's own notes; nothing for anyone else or when the gateway does not answer
+			if n := e.reviewWaiting(c, t.Segment, hookWaitLimit); n > 0 {
+				e.say(teamWaitingLine(n, clean(t.Name)))
+			}
 		}
 	}
 	return nil

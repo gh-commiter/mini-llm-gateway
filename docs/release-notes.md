@@ -2,11 +2,13 @@
 
 ## Unreleased
 
+### Changed
+- Swift tests: `BlockingTestGuard` now also fails when a production source lists the mounted volumes (`mountedVolumeURLs`, `NSWorkspace` volume listing, `getmntinfo`, `getfsstat` without `MNT_NOWAIT`). Test code only.
+- Team notes in daily use: `minigw team show <team>` and the session-start line of the opt-in hook now also say `N submissions wait for your review in team <team>: minigw kb review --team <team>` for a writer of the team's notes (the review answer of a project takes `teams=1` and lists the teams of the project the caller reviews, so the hook still asks the gateway once; a caller who may not review the team's notes learns nothing). The hook names only teams with a plain-word name. Checked again at this revision: the hidden id of a team's notes is not printed by any output (`kb search`, `note list`, `kb submissions`, `kb mcp`, mirror hits all show the team name) and `kb submissions` already lists the caller's own submissions to their teams' notes (`--team` narrows); a test now covers both.
+
 ### Fixed
 - Mac gateway: checking the allowed folders no longer lists the caches folder under the lock of the allowed-folders list; the listing (the gateway's own hidden Scratch siblings, the input of the overlap refusal) runs once per check, fresh and outside the lock, so concurrent agent runs no longer queue behind it. What is refused is unchanged.
 
-### Changed
-- Swift tests: `BlockingTestGuard` now also fails when a production source lists the mounted volumes (`mountedVolumeURLs`, `NSWorkspace` volume listing, `getmntinfo`, `getfsstat` without `MNT_NOWAIT`). Test code only.
 
 ## 0.9.9
 

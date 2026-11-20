@@ -4,6 +4,16 @@
     {"n": 2, "slug": "acme-shop", "want": "2 submissions wait for your review in acme-shop: minigw kb review acme-shop"},
     {"n": 12, "slug": "shop", "want": "12 submissions wait for your review in shop: minigw kb review shop"}
   ],
+  "teamLines": [
+    {"n": 1, "team": "acme", "want": "1 submission waits for your review in team acme: minigw kb review --team acme"},
+    {"n": 3, "team": "acme.eu-2", "want": "3 submissions wait for your review in team acme.eu-2: minigw kb review --team acme.eu-2"},
+    {"n": 2, "team": "Ops Team", "want": "2 submissions wait for your review in team Ops Team: minigw kb review --team \"Ops Team\""}
+  ],
+  "teamAnswers": [
+    {"name": "reviewer of the project and of one team", "body": "{\"waiting\":4,\"teams\":[{\"name\":\"acme\",\"waiting\":2},{\"name\":\"zero\",\"waiting\":0}]}", "wantN": 4, "want": ["acme:2", "zero:0"]},
+    {"name": "reviewer of the team only", "body": "{\"submissions\":[],\"waiting\":0,\"teams\":[{\"name\":\"acme\",\"waiting\":1}]}", "wantN": 0, "want": ["acme:1"]},
+    {"name": "older gateway without teams", "body": "{\"waiting\":4}", "wantN": 4, "want": []}
+  ],
   "answers": [
     {"name": "reviewer", "status": 200, "body": "{\"submissions\":[],\"next\":0,\"waiting\":4}", "want": 4},
     {"name": "none waiting", "status": 200, "body": "{\"submissions\":[],\"next\":0,\"waiting\":0}", "want": 0},

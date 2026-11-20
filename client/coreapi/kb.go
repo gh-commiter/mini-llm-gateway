@@ -3,6 +3,7 @@ package coreapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"minigw/core"
 	"net/url"
 	"strconv"
@@ -34,7 +35,7 @@ func (a *API) submissionRoute(ctx context.Context, st *core.Store, p core.Princi
 		if e != nil {
 			return a.errResponse(e)
 		}
-		return submissionPage(vs, -1)
+		return submissionPage(vs, -1, nil)
 	case "POST":
 		var b struct {
 			Class    core.Class `json:"class"`
@@ -68,15 +69,36 @@ func (a *API) reviewRoute(ctx context.Context, st *core.Store, p core.Principal,
 		if e != nil {
 			return a.errResponse(e)
 		}
+		// ?teams=1 (the session-start line and project show): also the waiting counts of the teams of the project whose own notes
+		// the caller reviews, in "teams", one request for both. Without it the answer is as it always was.
+		_, segment := core.SegmentTeam(project)
+		withTeams := q.Get("teams") == "1" && project > 0 && !segment
 		vs, e := st.ListReview(ctx, p, project, after)
-		if e != nil {
+		waiting := 0
+		if e == nil {
+			waiting, e = st.ReviewWaiting(ctx, p, project)
+		}
+		if !withTeams {
+			if e != nil {
+				return a.errResponse(e)
+			}
+			return submissionPage(vs, waiting, nil)
+		}
+		own := e
+		if own != nil && !errors.Is(own, core.ErrNotFound) {
+			return a.errResponse(own)
+		}
+		tw, e := st.ReviewWaitingTeams(ctx, p, project)
+		if e != nil || own != nil && len(tw) == 0 {
+			if own != nil {
+				return a.errResponse(own)
+			}
 			return a.errResponse(e)
 		}
-		waiting, e := st.ReviewWaiting(ctx, p, project)
-		if e != nil {
-			return a.errResponse(e)
+		if own != nil { // not a reviewer of the project itself, but of its team's notes: nothing of the project's own
+			vs, waiting = []core.Submission{}, 0
 		}
-		return submissionPage(vs, waiting)
+		return submissionPage(vs, waiting, tw)
 	case len(rest) == 1 && r.Method == "GET":
 		id, ok := posID(rest[0])
 		if !ok {
@@ -126,7 +148,7 @@ func submissionAfter(q url.Values) (int64, error) {
 }
 
 // submissionPage: waiting >= 0 adds the review list's "waiting" (all pending submissions p may review, not only this page).
-func submissionPage(v []core.Submission, waiting int) Response {
+func submissionPage(v []core.Submission, waiting int, teams []core.TeamWaiting) Response {
 	var next int64
 	if len(v) == 100 {
 		next = v[len(v)-1].ID
@@ -134,6 +156,9 @@ func submissionPage(v []core.Submission, waiting int) Response {
 	m := map[string]any{"submissions": v, "next": next}
 	if waiting >= 0 {
 		m["waiting"] = waiting
+	}
+	if teams != nil {
+		m["teams"] = teams
 	}
 	return resp(200, m)
 }

@@ -858,6 +858,66 @@ func (s *Store) ReviewWaiting(ctx context.Context, p Principal, project int64) (
 	return
 }
 
+// TeamWaiting is the count of pending submissions in one team's own notes that a caller reviews.
+type TeamWaiting struct {
+	Name    string `json:"name"`
+	Waiting int    `json:"waiting"`
+}
+
+// ReviewWaitingTeams: for each team that project belongs to and whose own notes p reviews (reviewAccess of the team's
+// segment, the rule of ListReview), the pending submissions of others there. A caller who cannot read project gets the 404 of
+// a project they cannot see, so nothing about its teams; a team p may not review is left out without a word.
+func (s *Store) ReviewWaitingTeams(ctx context.Context, p Principal, project int64) (out []TeamWaiting, err error) {
+	out = []TeamWaiting{}
+	lim := s.rate(p.UserID, false)
+	err = s.read(ctx, func(tx *sql.Tx) error {
+		if _, e := memberAccess(tx, p, project); e != nil {
+			return e
+		}
+		if lim != nil {
+			return lim
+		}
+		rows, e := tx.Query(`SELECT t.id,t.name FROM team_projects tp JOIN teams t ON t.id=tp.team_id WHERE tp.project_id=? ORDER BY t.name`, project)
+		if e != nil {
+			return e
+		}
+		type team struct {
+			id   int64
+			name string
+		}
+		var ts []team
+		for rows.Next() {
+			var t team
+			if e = rows.Scan(&t.id, &t.name); e != nil {
+				rows.Close()
+				return e
+			}
+			ts = append(ts, t)
+		}
+		e = rows.Err()
+		rows.Close()
+		if e != nil {
+			return e
+		}
+		for _, t := range ts {
+			seg := segmentBase + t.id
+			if e = reviewAccess(tx, p, seg); e != nil {
+				if errors.Is(e, ErrNotFound) || errors.Is(e, ErrArchived) {
+					continue
+				}
+				return e
+			}
+			var n int
+			if e = tx.QueryRow(`SELECT COUNT(*) FROM kb_submissions WHERE state='pending' AND user_id<>? AND project_id=?`, p.UserID, seg).Scan(&n); e != nil {
+				return e
+			}
+			out = append(out, TeamWaiting{t.name, n})
+		}
+		return nil
+	})
+	return
+}
+
 // reviewedProjects: the projects and team segments p reviews now. The candidates come from p's own admin roles (bounded
 // by p's memberships, never a scan of the gateway's submissions); reviewAccess, the one rule, confirms each.
 func reviewedProjects(tx *sql.Tx, p Principal) (out []int64, err error) {
