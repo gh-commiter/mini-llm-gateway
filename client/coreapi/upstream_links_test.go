@@ -270,3 +270,34 @@ func TestRelinkWithoutADestinationKeepsIt(t *testing.T) {
 	}
 	call("PUT", link, `{"remote":"shared","auto":true}`, 200) // the same one named: fine
 }
+
+// The owner's override is validated as a whole before anything is cleared or audited: a bad cursor, a dry run or a link that is not marked
+// changes nothing.
+func TestAfterRestoreOverrideValidatesBeforeClearing(t *testing.T) {
+	f := newFixture(t)
+	h := &methodHost{secretHost: secretHost{secrets: map[string]string{}}}
+	h.answer = func(string, string) (int, string) { return 404, `{}` }
+	api := New(Options{Store: func() *core.Store { return f.st }, Upstream: h})
+	fk := f.pid["fakture"]
+	call := func(method, path, body string) Response {
+		return api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: method, Path: path, Body: []byte(body)})
+	}
+	if r := call("PUT", "/upstreams/hub", `{"address":"127.0.0.1:8766","token":"tok#key"}`); r.Status != 200 {
+		t.Fatal(r.Status, string(r.Body))
+	}
+	if r := call("PUT", fmt.Sprintf("/upstreams/hub/links/%d", fk), `{"remote":"shop"}`); r.Status != 200 {
+		t.Fatal(r.Status, string(r.Body))
+	}
+	for _, body := range []string{`"after":-1`, `"after":5`, `"dryRun":true`} {
+		if r := call("POST", "/upstream-push", fmt.Sprintf(`{"project":%d,"afterRestore":true,%s}`, fk, body)); r.Status != 400 {
+			t.Fatalf("%s: %d %s", body, r.Status, r.Body)
+		}
+	}
+	if r := call("POST", "/upstream-push", fmt.Sprintf(`{"project":%d,"afterRestore":true}`, fk)); r.Status < 400 || r.Status >= 500 || !strings.Contains(string(r.Body), "not marked") {
+		t.Fatalf("an unmarked link: %d %s", r.Status, r.Body)
+	}
+	var n int
+	if err := f.st.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action='upstream.after-restore'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("%d audit rows, %v", n, err)
+	}
+}

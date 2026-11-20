@@ -239,7 +239,7 @@ func (a *API) adminUpstreamPush(ctx context.Context, st *core.Store, method stri
 		// AfterRestore: the owner's override of a link marked "restored: reconcile before pushing": clears that one link's mark (audited), then pushes
 		AfterRestore bool `json:"afterRestore"`
 	}
-	if decodeStrict(body, &b) != nil || b.Project < 0 || b.Team < 0 || b.Project > 0 && b.Team > 0 || b.Upstream != "" && !core.ValidUpstreamName(b.Upstream) || b.AfterRestore && (b.DryRun || b.After > 0) {
+	if decodeStrict(body, &b) != nil || b.Project < 0 || b.Team < 0 || b.Project > 0 && b.Team > 0 || b.Upstream != "" && !core.ValidUpstreamName(b.Upstream) || b.AfterRestore && (b.DryRun || b.After != 0) {
 		return fail(400, "bad JSON body (project or team, upstream, after, dryRun, afterRestore)")
 	}
 	if b.AfterRestore {
