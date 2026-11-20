@@ -106,6 +106,13 @@ func main() {
 	if openErr != nil {
 		log.Printf("WARNING: the core store cannot be used, every request answers 503 core_unavailable: %v", openErr)
 		st = nil
+	} else {
+		if n := st.SentinelMarked(); n > 0 {
+			log.Printf("restore pending file found: %d upstream links marked restored", n)
+		}
+		if n, e := st.MarkedLinks(context.Background()); e == nil && n > 0 {
+			log.Printf("%d upstream links are marked restored; automatic pushes to them are paused; see gw upstream status", n)
+		}
 	}
 	host := &coreapi.CalloutHost{} // the app does the upstream work (network, credential store) for the helper: callouts
 	api := coreapi.New(coreapi.Options{

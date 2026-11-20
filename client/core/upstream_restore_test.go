@@ -299,3 +299,45 @@ func TestRestorePendingThatCannotBeCheckedFailsClosed(t *testing.T) {
 		t.Fatalf("no sentinel is not an error: %v", err)
 	}
 }
+
+// Unlink and link again is NOT a clean way out of the mark: the link's record of what was sent is deleted, so the next push sends every published
+// note of the project again as new (--after-restore duplicates only what was first sent after the backup).
+func TestUnlinkAndLinkAgainSendsEveryNoteAgain(t *testing.T) {
+	f, _ := upFx(t)
+	fk := f.pid["fakture"]
+	up := okUp()
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop"}))
+	first, err := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
+	f.ok(err)
+	if first[0].Created != 2 {
+		t.Fatalf("first push: %+v", first[0])
+	}
+	f.ok(f.UnlinkUpstream(ctx, fk, 0, "hub"))
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop"}))
+	again, err := f.PushUpstream(ctx, up, fk, 0, "", 0, false, noSleep)
+	f.ok(err)
+	if again[0].Created != 2 || again[0].Replaced != 0 {
+		t.Fatalf("after unlink and link: %+v", again[0])
+	}
+}
+
+func TestRestoreCommandSaysHowManyLinksArePaused(t *testing.T) {
+	f, _, _ := restoreLinks(t)
+	bak := filepath.Join(t.TempDir(), "b.db")
+	f.ok(f.Backup(ctx, bak))
+	dir := f.Store.dir
+	f.ok(f.Close())
+	var out, errw strings.Builder
+	if code := RestoreCLI(dir, bak, true, strings.NewReader(""), &out, &errw, "stop it"); code != 0 {
+		t.Fatal(code, errw.String())
+	}
+	if !strings.Contains(out.String(), "3 links of this gateway are marked restored") || !strings.Contains(out.String(), "--after-restore") {
+		t.Fatalf("%s", out.String())
+	}
+	s, e := Open(dir, Options{})
+	f.ok(e)
+	f.Store = s
+	if n, err := s.MarkedLinks(ctx); err != nil || n != 3 {
+		t.Fatalf("%d %v", n, err)
+	}
+}

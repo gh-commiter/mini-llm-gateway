@@ -42,6 +42,12 @@ func (s *server) openCore() {
 		if m := st.Migrated(); m != nil && m.Snapshot != "" { // the owner can find the old file: it is not in backups/
 			s.log.Printf("core database migrated from schema %d to %d; the old file was kept as %s (the newest %d such snapshots are kept, and the oldest one for 30 days)", m.From, m.To, m.Snapshot, core.KeepSnapshots)
 		}
+		if n := st.SentinelMarked(); n > 0 {
+			s.log.Printf("restore pending file found: %d upstream links marked restored", n)
+		}
+		if n, e := st.MarkedLinks(context.Background()); e == nil && n > 0 {
+			s.log.Printf("%d upstream links are marked restored; automatic pushes to them are paused; see gw upstream status", n)
+		}
 		err = s.ensureOwner(st)
 		if err == nil {
 			err = s.reconcileRevocations(st) // before the project routes are enabled

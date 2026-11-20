@@ -82,6 +82,7 @@ func (s *Store) consumeRestorePending(ctx context.Context) error {
 	if err := s.write(ctx, func(tx *sql.Tx) error { return markRestored(tx, s.now()) }); err != nil {
 		return err
 	}
+	s.sentinelMarked, _ = markedLinks(ctx, s.db)
 	if err := removeFn(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -166,4 +167,26 @@ func (s *Store) ClearRestoreMark(ctx context.Context, project, team int64, upstr
 	return s.adminWrite(ctx, "upstream.after-restore", names[0], map[string]any{"project": local}, func(tx *sql.Tx) (string, error) {
 		return "", countOne(tx.Exec(`DELETE FROM meta WHERE key=?`, restoredKey(local, names[0])))
 	})
+}
+
+// MarkedLinks is how many upstream links carry the restore mark now (a start-up log line and the restore command's report).
+func (s *Store) MarkedLinks(ctx context.Context) (int, error) { return markedLinks(ctx, s.rdb) }
+
+// SentinelMarked is how many links the "restore pending" file marked at this start (0: there was none).
+func (s *Store) SentinelMarked() int { return s.sentinelMarked }
+
+// MarkedLinksIn counts the marked links of the database file in dir (no gateway running: the restore command reports it).
+func MarkedLinksIn(dir string) int {
+	db, err := openDB(filepath.Join(dir, dbFile))
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	n, _ := markedLinks(context.Background(), db)
+	return n
+}
+
+func markedLinks(ctx context.Context, db *sql.DB) (n int, err error) {
+	err = db.QueryRowContext(ctx, `SELECT count(*) FROM meta WHERE substr(key,1,?)=?`, len(restoredPrefix), restoredPrefix).Scan(&n)
+	return
 }
