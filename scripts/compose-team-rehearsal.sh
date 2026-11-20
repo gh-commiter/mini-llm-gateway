@@ -339,6 +339,8 @@ stage_pre() {
 # ====================================================================================================
 stage_up() {
   [ "${PRE:-0}" = 1 ] || { bad 2.up "not run: preconditions failed"; return; }
+  # a leftover whose gateway already has the remote settings block needs the certificate mount again
+  if [ "$REUSE" = 1 ] && [ -f "$WORK/certs/gateway/gateway.pem" ]; then OVERLAY=$ADMINFILES; use_project "$PROJ" "$PORT"; fi
   uo=$(dc up -d 2>&1) || { bad 2.up "docker compose up failed: $(tailc "$uo")"; return; }
   wait_healthy && ok 2.health "container healthy (Docker HEALTHCHECK: minigw serve healthcheck)" || { bad 2.health "container not healthy within 3 minutes: $(tailc "$(dc logs --tail 5 minigw 2>&1)")"; return; }
   ho=$(dc exec -T minigw minigw serve healthcheck 2>&1) && ok 2.liveness "docker compose exec minigw minigw serve healthcheck" || { bad 2.liveness "serve healthcheck: $(tailc "$ho")"; return; }
@@ -367,6 +369,10 @@ onboard() { # user: allow and bind the simulated device
   { [ $orc -eq 0 ] && printf '%s' "$oc" | grep -q '^Connected'; } || return 1
   docker run --rm --label com.docker.compose.project= --label "io.minigw.rehearsal.run=$RID" --label "io.minigw.rehearsal.project=$PROJ" --network none --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges -v "${PROJ}_home_$ou:/home/minigw" --entrypoint mkdir "$IMAGE" -p /home/minigw/p1 /home/minigw/p2 || return 1
   put "DEV_$(printf %s "$ou" | tr - _)" "$od"
+}
+link_ok() { # user dir slug: linked now, or (a --reuse run) already linked to exactly that project
+  lk=$(cl "$1" "$2" project link "$3" 2>&1) && return 0
+  printf '%s' "$lk" | grep -q "already linked to $3:"
 }
 stage_boot() {
   [ "$UP" = 1 ] || { bad 3.bootstrap "not run: the gateway did not come up"; return; }
@@ -397,9 +403,9 @@ stage_boot() {
   [ -z "$bo" ] || { bad 3.devices "simulated device could not be connected, approved and bound for:$bo"; return; }
   ok 3.devices "3 SIMULATED devices: a client run from a second container of the same image on the Compose network, each with its own home volume; device allowed and bound with gw devices allow / gw bind"
   bo=
-  for u in rh-reader rh-developer rh-admin; do cl "$u" /home/minigw/p1 project link rh-p1 >/dev/null 2>&1 || bo="$bo $u@p1"; done
-  cl rh-developer /home/minigw/p2 project link rh-p2 >/dev/null 2>&1 || bo="$bo rh-developer@p2"
-  cl rh-admin /home/minigw/p2 project link rh-p2 >/dev/null 2>&1 || bo="$bo rh-admin@p2"
+  for u in rh-reader rh-developer rh-admin; do link_ok "$u" /home/minigw/p1 rh-p1 || bo="$bo $u@p1"; done
+  link_ok rh-developer /home/minigw/p2 rh-p2 || bo="$bo rh-developer@p2"
+  link_ok rh-admin /home/minigw/p2 rh-p2 || bo="$bo rh-admin@p2"
   lo=$(cl rh-reader /home/minigw/p2 project link rh-p2 2>&1); lrc=$?
   if [ $lrc -eq 0 ]; then bo="$bo reader-could-link-p2"; elif ! printf '%s' "$lo" | grep -q 'not found or not visible'; then bo="$bo reader@p2-failed-for-another-reason($(tailc "$lo"))"; fi
   [ -z "$bo" ] || { bad 3.links "project link: unexpected result for:$bo"; return; }
@@ -603,7 +609,7 @@ json.dump(c,open(sys.argv[3],"w"),indent=1)' "$WORK/serve.in" "$URL" "$WORK/serv
   if [ "$c" = 403 ] && ! grep -q '"session"' "$WORK/body"; then ok 6.origin "login with the right password and a forged Origin: 403, no session"; else bad 6.origin "forged Origin: expected exactly 403 and no session, got '$c' (000 = no answer from the proxy)"; fi
   c=$(login "$PW" "$URL")
   S=$(sed -n 's/.*"session": *"\([0-9a-f]*\)".*/\1/p' "$WORK/body")
-  if [ "$c" = 200 ] && [ -n "$S" ]; then ok 6.login "login with the password over HTTPS gives a session"; else bad 6.login "login answered $c"; return; fi
+  if [ "$c" = 200 ] && [ -n "$S" ]; then ok 6.login "login with the password over HTTPS gives a session"; else bad 6.login "login with the password answered '$c' (expected 200; 429 means an earlier run of this project locked the source out for 15 minutes: wait, or start a fresh run)"; return; fi
   printf 'header = "X-Minigw-Remote-Session: %s"\n' "$S" >"$WORK/curl.cfg"; printf '%s\n' "$S" >>"$WORK/patterns"   # the session goes through a private curl config, never an argument
   c=$(reqn "$URL/minigw/admin/v1/providers"); [ "$c" = 401 ] && ok 6.nosession "an allowed route without a session: 401" || bad 6.nosession "an allowed route without a session: expected 401, got '$c'"
   # routes outside the allow-list must be refused at the proxy
