@@ -1039,7 +1039,12 @@ a member, use the linked FAKTURE folder above. A called agent started in the lin
 `minigw note list` and `minigw note read STRUCTURE_ID` to read both modules notes and the explicitly granted
 FAKTURE structure notes. Its scope never includes private notes or unrelated memberships.
 
-A grant alone does not allow linking a folder. Grants are one hop, never transitive. A `data` grant would let
+A grant alone does not allow linking a folder, and it does not reach the granted notes from the receiving project's own
+folder either: a grant is the PERMISSION (the members of modules may read FAKTURE's `structure` notes), and the commands of a modules
+folder address only modules. To find FAKTURE's notes in `minigw kb search` and open them with `minigw note read <id>` /
+`note history <id>` from the modules folder, the owner also records the dependency: `minigw gw project depends add modules fakture`
+(the dependency is only the address, never a permission: it shows each person only what the grant or their role lets them read;
+a grant reader who is in no other relation to FAKTURE has no other command that names FAKTURE's notes; an agent run reads through the grant without it). Grants are one hop, never transitive. A `data` grant would let
 **every** modules member, including Eva, read FAKTURE data through that scope; this recipe grants only structure.
 The `data` label never permits storing customer records, secrets or personal data.
 
@@ -1348,8 +1353,8 @@ it follows the same visibility as `note list` (private entries only for their au
 available inside an agent run. Exported Markdown and team bundles carry `entry_kind`.
 
 **Team notes.** A team has notes of its own, next to those of its projects. Every member of the team (the roster
-the owner keeps with `gw team member add`) reads them; whoever is admin of at least one of the team's projects (one that is not archived) can
-also write them. A team member who is only in a project of the team, and not on the team's roster, reads nothing from
+the owner keeps with `gw team member add`) reads them; a team member who is also admin of at least one of the team's projects (one that is not archived) can
+also write them. A project admin who is not on the roster gets the plain "not found" for `--team` until the owner adds them with `gw team member add`. A team member who is only in a project of the team, and not on the team's roster, reads nothing from
 them. They are `structure` or `data` notes; there is no `private` class at team level, and an archived team's notes
 are hidden until it is unarchived. Give `--team <team>` in place of a project: `minigw note list|read|push|edit|rm --team acme`,
 `minigw kb submit --team acme <file>` (the owner reviews it with `minigw gw kb review --team acme`, another writer of the team's notes with `minigw kb review --team acme`),

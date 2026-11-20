@@ -2,7 +2,7 @@
 
 One page for a small team that starts using a Mini Gateway knowledge base. Names below are examples: team `acme`, project `shop`, colleague `ana`. Part 1 is for the gateway owner, part 2 for each colleague. The commands are the same on a Mac gateway (the app) and on `minigw serve` (Windows, Linux, Docker); in Docker prefix them with `docker compose exec minigw`.
 
-**How the knowledge is laid out.** A team's own notes are the general segment: what everyone on `acme` should know. Each project is a topic part: what is specific to `shop`. A project can depend on another project or on a team, and then its members' searches cover that too (`project depends`). Team membership alone grants no access to any project.
+**How the knowledge is laid out.** A team's own notes are the general segment: what everyone on `acme` should know. Each project is a topic part: what is specific to `shop`. A project can depend on another project or on a team, and then its members' searches cover that too (`project depends`). A dependency is only the address, never a permission: a project reads another project's notes through it only where `gw grant` (or a role) already allows that, and a grant alone is not found by search or `note read <id>` from the receiving project's folder, so give both (`gw grant <source> add <project> structure`, then `gw project depends add <project> <source>`). Team membership alone grants no access to any project.
 
 ## 1. Gateway owner
 

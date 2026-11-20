@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+- Note history: when a project is over its 500 MiB history budget, the saved versions of the note being written go first (a quick series first, then the oldest; its newest saved version stays), then the writer's versions in other notes (oldest first, each note's newest stays), and only then the project's oldest. One member's edit loop no longer evicts other people's saved versions; the per-note limits (100 versions, 8 MiB) and the rule that an overwrite is never refused are unchanged. When the writer's own versions cannot free enough, the project's oldest still go, as before.
+- Docs: a grant gives permission only; to find and read the granted project's notes from the receiving project's folder the owner also records `gw project depends add`. A project admin writes a team's notes only when they are also on the team's roster.
+
 ## 0.9.1
 
 ### New
