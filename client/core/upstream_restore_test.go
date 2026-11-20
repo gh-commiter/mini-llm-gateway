@@ -140,7 +140,10 @@ func TestMarkedLinkSendsNothingInAnyMode(t *testing.T) {
 	if up.count("POST") != 0 || sent() != 0 {
 		t.Fatalf("something was written: %d POST, %d receipts", up.count("POST"), sent())
 	}
-	if !strings.Contains(restoreBlockedLine(UpstreamLink{Upstream: "hub", Team: true}, "team Eng"), "--team Eng --upstream hub --after-restore") {
+	if r, _ := f.PushUpstream(ctx, up, fk, 0, "hub", 0, false, noSleep); !strings.Contains(r[0].Lines[0], "(3 links of this gateway are marked;") {
+		t.Fatalf("the blocked line does not say how many links are marked: %v", r[0].Lines)
+	}
+	if !strings.Contains(restoreBlockedLine(UpstreamLink{Upstream: "hub", Team: true}, "team Eng", 3), "--team Eng --upstream hub --after-restore") {
 		t.Fatal("the team command is wrong")
 	}
 	// automatic: nothing is selected, the next wake-up does not count the link, nothing churns however long we wait
@@ -195,23 +198,20 @@ func TestLinkEditsDoNotClearTheMarkButUnlinkAndRemovalDo(t *testing.T) {
 	}
 }
 
-func TestEpochBehindTheSidecarMarksAtStart(t *testing.T) {
+// An epoch gap between the database and core.state is no evidence of a restore (a crash on a healthy gateway can leave one): nothing is marked.
+func TestEpochGapAloneMarksNothing(t *testing.T) {
 	f, _, _ := restoreLinks(t)
-	f.reopen()
-	if f.marked() != 0 {
-		t.Fatal("a plain restart marked a link")
-	}
 	dir := f.Store.dir
 	st, err := readState(dir)
 	f.ok(err)
 	f.ok(f.Close())
-	st.Epoch += 5 // the database is behind core.state (a database file restored without the sidecar)
+	st.Epoch += 5
 	f.ok(writeState(dir, st))
 	s, e := Open(dir, Options{})
 	f.ok(e)
 	f.Store = s
-	if f.marked() != 3 {
-		t.Fatalf("%d marked", f.marked())
+	if f.marked() != 0 {
+		t.Fatalf("%d links marked by an epoch gap", f.marked())
 	}
 }
 

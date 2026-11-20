@@ -15,6 +15,11 @@ import (
 // upstream already has, so an edited note would be sent as a NEW note (a second copy). Every upstream link of a restored database is
 // therefore marked, and a marked link sends and creates nothing until the owner clears the mark.
 //
+// Two things mark a restored database, both exact: `gw core restore` (inside stamp()) and the "restore pending" file that backup.sh --restore writes
+// (restorePendingFile). Nothing else is guessed: an epoch gap between the database and core.state says nothing reliable (it also appears on a healthy
+// gateway after a crash, and is absent when an older database with the same epoch is copied back), so a raw copy of the files is not detected unless the
+// operator creates that file by hand (docs/usage.md, upstream chapter).
+//
 // The mark is one record in the meta table (no schema change) per link: key restoredPrefix + project id (a team's segment id for a team
 // link) + "|" + upstream, value "restored|<unix ms of the restore>". It is removed with the link (unlink, removal of the upstream) and by
 // ClearRestoreMark; editing the link does not touch it.
@@ -81,25 +86,35 @@ func (s *Store) consumeRestorePending(ctx context.Context) error {
 }
 
 // restoreBlockedLine is the one line a blocked push reports (and the first line of a dry run's lines).
-func restoreBlockedLine(l UpstreamLink, label string) string {
+func restoreBlockedLine(l UpstreamLink, label string, marked int) string {
 	who := label
 	if l.Team {
 		who = "--team " + strings.TrimPrefix(label, "team ")
 	}
-	return "blocked: " + RestoredState + "; nothing is sent (reconcile is not available in this version: compare with the upstream, then minigw gw upstream push " + who + " --upstream " + l.Upstream + " --after-restore)"
+	return "blocked: " + RestoredState + "; nothing is sent (" + markedText(marked) + "; reconcile is not available in this version: compare with the upstream, then minigw gw upstream push " + who + " --upstream " + l.Upstream + " --after-restore)"
+}
+
+func markedText(n int) string {
+	if n == 1 {
+		return "1 link of this gateway is marked"
+	}
+	return strconv.Itoa(n) + " links of this gateway are marked"
 }
 
 // restoreGate says whether the link is marked and, if so, the report of a push that sends nothing.
 func (s *Store) restoreGate(ctx context.Context, l UpstreamLink, label string) (UpstreamPush, bool, error) {
 	var ok bool
+	var marked int
 	err := s.read(ctx, func(tx *sql.Tx) (e error) {
-		_, ok, e = restoredAt(tx, l.Project, l.Upstream)
-		return
+		if _, ok, e = restoredAt(tx, l.Project, l.Upstream); e != nil || !ok {
+			return
+		}
+		return tx.QueryRow(`SELECT count(*) FROM meta WHERE substr(key,1,?)=?`, len(restoredPrefix), restoredPrefix).Scan(&marked)
 	})
 	if err != nil || !ok {
 		return UpstreamPush{}, false, err
 	}
-	return UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, Project: l.Project, Team: l.Team, Blocked: true, Lines: []string{restoreBlockedLine(l, label)}}, true, nil
+	return UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, Project: l.Project, Team: l.Team, Blocked: true, Lines: []string{restoreBlockedLine(l, label, marked)}}, true, nil
 }
 
 // ClearRestoreMark is the owner's override (push --after-restore): it clears the mark of ONE link (the upstream is named, or the project
@@ -148,17 +163,4 @@ func (s *Store) ClearRestoreMark(ctx context.Context, project, team int64, upstr
 	return s.adminWrite(ctx, "upstream.after-restore", names[0], map[string]any{"project": local}, func(tx *sql.Tx) (string, error) {
 		return "", countOne(tx.Exec(`DELETE FROM meta WHERE key=?`, restoredKey(local, names[0])))
 	})
-}
-
-// markAtStart marks the links of a database that open() found restored without `gw core restore`: behind says its epoch was behind the
-// sidecar core.state (compared before the identity and epoch merge; conservative: a state write that a crash interrupted can look the same
-// and is flagged too), and a "restore pending" sentinel left by backup.sh --restore does the same. Arbitrary hand copies of both files
-// (database and core.state rolled back together) are not detectable from the files.
-func (s *Store) markAtStart(ctx context.Context, behind bool) error {
-	if behind {
-		if err := s.write(ctx, func(tx *sql.Tx) error { return markRestored(tx, s.now()) }); err != nil {
-			return err
-		}
-	}
-	return s.consumeRestorePending(ctx)
 }
