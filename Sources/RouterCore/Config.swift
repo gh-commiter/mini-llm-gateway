@@ -181,21 +181,31 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     /// #114: an allowed folder may not contain, equal or lie inside one of the gateway's own folders: the app folder (settings, history, the mounts of remote clients, the core),
     /// Scratch with its old and neighbouring folders, the Copilot cache. A remote client's folder lives inside them, so their deny rules give way there and only the allow side
     /// keeps the rest out; an allowed folder around them would let the agents in. Real and literal path (overlapsScratch); one that cannot be resolved counts as overlapping.
-    public static func overlapsGatewayFolder(_ root: String, scratch: URL?) -> Bool {
-        let app = GatewayHistory.defaultFile.deletingLastPathComponent()
-        let roots = [app, copilotCache] + hiddenScratch(scratch).map { URL(fileURLWithPath: $0, isDirectory: true) }
-        return roots.contains { overlapsScratch(root, scratch: $0) }
+    public static func overlapsGatewayFolder(_ root: String, scratch: URL?, base: URL = defaultBase) -> Bool {
+        overlapsGatewayFolder(root, roots: gatewayFolders(scratch: scratch, base: base))
+    }
+
+    /// #174: the folders of `overlapsGatewayFolder`, listed fresh (the Caches listing inside is the cost). Callers that check
+    /// several folders, or hold a lock, list once and outside the lock: a cached list could miss a sibling made since.
+    public static func gatewayFolders(scratch: URL?, base: URL = defaultBase) -> [URL] {
+        [GatewayHistory.defaultFile.deletingLastPathComponent(), copilotCache] + hiddenScratch(scratch, base: base).map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+
+    public static func overlapsGatewayFolder(_ root: String, roots: [URL]) -> Bool {
+        roots.contains { overlapsScratch(root, scratch: $0) }
     }
 
     /// M1 (0.5.24): mape, ki jih peskovniki agentov skrijejo (dobesedno in kanonično), ob vsakem zagonu (mape ob strani
     /// nastanejo s prevzemom): Scratch, nadomestna mapa scratch(_:) (defaultBase/<ime>), defaultScratch, ter v osnovi
     /// Scratch in v defaultBase prave mape z datoteko lastnika, mape ob strani (<id>.old-<datum>[-<čas>], ScratchOwner.takeOver) in »Mini Gateway Scratch«. Osnove same nikoli
     /// (lahko je uporabnikova mapa z drugo vsebino).
-    public static func hiddenScratch(_ scratch: URL?) -> [String] {
+    public static func hiddenScratch(_ scratch: URL?) -> [String] { hiddenScratch(scratch, base: defaultBase) }
+
+    public static func hiddenScratch(_ scratch: URL?, base caches: URL) -> [String] {
         let fm = FileManager.default
         var dirs = [defaultScratch] + (coreDenied() + credentialHomes()).map { URL(fileURLWithPath: $0, isDirectory: true) }  // 0.6.0 (#106): the core data folder is denied wherever Scratch is
-        if let scratch { dirs = [scratch, defaultBase.appendingPathComponent(scratch.lastPathComponent, isDirectory: true)] + dirs }
-        for base in Set([scratch?.deletingLastPathComponent(), defaultBase].compactMap { $0?.standardizedFileURL }) {
+        if let scratch { dirs = [scratch, caches.appendingPathComponent(scratch.lastPathComponent, isDirectory: true)] + dirs }
+        for base in Set([scratch?.deletingLastPathComponent(), caches].compactMap { $0?.standardizedFileURL }) {
             for n in ((try? fm.contentsOfDirectory(atPath: base.path)) ?? []).sorted() {
                 let p = base.appendingPathComponent(n, isDirectory: true)
                 var st = stat()

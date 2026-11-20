@@ -141,6 +141,42 @@ import Testing
         }
     }
 
+    /// #175: the same ban for production code. The gateway serves WebDAV mounts from its own process, so a call that asks every volume deadlocks it for ~90 s there
+    /// too. Empty allow-list: read the mount table with getfsstat(MNT_NOWAIT), or stat the one path that is needed.
+    static let forbiddenInSources: [(pattern: String, name: String)] = [
+        (#"mountedVolumeURLs"#, "FileManager.mountedVolumeURLs"), (#"mountedLocalVolumePaths"#, "NSWorkspace.mountedLocalVolumePaths"),
+        (#"mountedRemovableMedia"#, "NSWorkspace.mountedRemovableMedia"), (#"getmntinfo"#, "getmntinfo"),
+        (#"getfsstat\((?![^)]*MNT_NOWAIT)"#, "getfsstat without MNT_NOWAIT"),
+    ]
+
+    static func sourceHits(_ text: String) -> [String] {
+        let code = text.replacingOccurrences(of: #"//.*"#, with: "", options: .regularExpression)
+        return forbiddenInSources.filter { code.range(of: $0.pattern, options: .regularExpression) != nil }.map(\.name)
+    }
+
+    @Test func noProductionSourceListsTheMountedVolumes() throws {
+        let sources = Self.testsDir.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
+        let walker = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+        var scanned = 0
+        for case let url as URL in walker where url.pathExtension == "swift" {
+            scanned += 1
+            for name in Self.sourceHits(try String(contentsOf: url, encoding: .utf8)) {
+                #expect(Bool(false), "\(url.lastPathComponent) uses \(name): it asks every volume under the process's file-node lock and deadlocks with a WebDAV mount served by this process (~90 s); read the mount table with getfsstat(MNT_NOWAIT) or stat the one path needed")
+            }
+        }
+        #expect(scanned > 50, "the scan found only \(scanned) source files: wrong Sources path?")
+    }
+
+    @Test func plantedVolumeListingsAreCaughtAndSafeOnesAreNot() {
+        for bad in ["FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil)", "NSWorkspace.shared.mountedLocalVolumePaths",
+                    "NSWorkspace.shared.mountedRemovableMedia()", "getmntinfo(&p, 0)", "let n = getfsstat(nil, 0, MNT_WAIT)", "getfsstat(&l, size, 0)"] {
+            #expect(!Self.sourceHits(bad).isEmpty, "not caught: \(bad)")
+        }
+        for ok in ["getfsstat(&list, size, MNT_NOWAIT)", "// mountedVolumeURLs is banned", "let n = getfsstat(nil, 0, MNT_NOWAIT)", "statfs(path, &st)"] {
+            #expect(Self.sourceHits(ok).isEmpty, "caught safe code: \(ok)")
+        }
+    }
+
     @Test func plantedExamplesAreCaughtAndSafeOnesAreNot() {
         let planted = { (attr: String, body: String) in Self.violations(in: "\(attr) func t() {\n\(body)\n}\n").map(\.test) }
         #expect(planted("@Test", "    usleep(1000)") == ["t"])

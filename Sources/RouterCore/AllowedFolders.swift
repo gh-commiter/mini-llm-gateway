@@ -176,8 +176,10 @@ public final class AllowedFolders: @unchecked Sendable {
 
     func checked(_ roots: String, excluding cwd: String = "", scratch: URL? = nil,
                  inspect: (String) -> (directory: Bool, error: Int32) = AllowedFolders.inspect,
+                 base: URL = RouterConfig.defaultBase,
                  log: (String) -> Void = { Router.log.warning("\($0, privacy: .public)") }) -> Checked {
-        lock.withLock {
+        let gatewayRoots = RouterConfig.gatewayFolders(scratch: scratch, base: base)  // #174: listed fresh per call, outside the lock
+        return lock.withLock {
             let folders: [Checked.Folder] = Self.paths(roots).compactMap { p in
                 guard p != cwd, var e = entries[p] else { return nil }
                 defer { entries[p] = e }
@@ -200,7 +202,7 @@ public final class AllowedFolders: @unchecked Sendable {
                     refuse("cannot resolve the real path of \(p): " + String(cString: strerror(errno)))
                     return nil
                 }
-                if RouterConfig.overlapsGatewayFolder(p, scratch: scratch) {  // #114: the app folder, Scratch, the Copilot cache: contains, equals or inside
+                if RouterConfig.overlapsGatewayFolder(p, roots: gatewayRoots) {  // #114: the app folder, Scratch, the Copilot cache: contains, equals or inside
                     let why = "it contains, equals or is inside one of the gateway's own folders (app folder, Scratch, Copilot cache)"
                     if e.logged.count < Self.maxLoggedReasons, e.logged.insert(why).inserted {
                         log("WARNING: allowed folder \(Self.quoted(p)) is not used: \(Self.quoted(why))")

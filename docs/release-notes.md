@@ -1,5 +1,13 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Mac gateway: checking the allowed folders no longer lists the caches folder under the lock of the allowed-folders list; the listing (the gateway's own hidden Scratch siblings, the input of the overlap refusal) runs once per check, fresh and outside the lock, so concurrent agent runs no longer queue behind it. What is refused is unchanged.
+
+### Changed
+- Swift tests: `BlockingTestGuard` now also fails when a production source lists the mounted volumes (`mountedVolumeURLs`, `NSWorkspace` volume listing, `getmntinfo`, `getfsstat` without `MNT_NOWAIT`). Test code only.
+
 ## 0.9.9
 
 ### Changed

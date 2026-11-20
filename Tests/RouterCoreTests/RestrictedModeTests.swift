@@ -323,6 +323,28 @@ private func covers(_ deny: String, _ scope: String) -> Bool { scope == deny || 
     #expect(logged.count <= 1 && logged.allSatisfy { $0.contains("gateway's own folders") }, "\(logged)")  // once at most (on 0.6.0 the core-folder check may refuse it silently first)
 }
 
+/// #174: the listing of the caches folder runs once per `checked` call, outside the lock, and fresh: a sibling made between two calls is seen by the second.
+@Test func gatewayFolderListingIsFreshAtEveryCheckedCall() throws {
+    let fm = FileManager.default
+    let base = fm.temporaryDirectory.appendingPathComponent("gw-base-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: base) }
+    let scratch = base.appendingPathComponent(RouterConfig.dedicatedName)
+    let sibling = base.appendingPathComponent("inst.old-2026-01-01")
+    let proj = base.appendingPathComponent("proj")
+    try fm.createDirectory(at: scratch, withIntermediateDirectories: true)
+    try fm.createDirectory(at: proj, withIntermediateDirectories: true)
+    let check = AllowedFolders()
+    check.record(sibling.path)
+    #expect(check.checked(sibling.path, scratch: scratch, base: base, log: { _ in }).paths.isEmpty)  // missing yet
+    try fm.createDirectory(at: sibling.appendingPathComponent("x"), withIntermediateDirectories: true)
+    #expect(RouterConfig.overlapsGatewayFolder(sibling.path, scratch: scratch, base: base))
+    #expect(RouterConfig.overlapsGatewayFolder(sibling.appendingPathComponent("x").path, scratch: scratch, base: base))
+    #expect(!RouterConfig.overlapsGatewayFolder(proj.path, scratch: scratch, base: base))
+    var logged: [String] = []
+    #expect(check.checked(sibling.path, scratch: scratch, base: base, log: { logged.append($0) }).paths.isEmpty)
+    #expect(logged.contains { $0.contains("gateway's own folders") }, "\(logged)")
+}
+
 @Test func withADirectMountSessionTheAllowSideIsOnlyTheSessionAndTheCheckedFolders() {  // F1: no allow outside ./** and the checked allowed folders
     let app = GatewayHistory.defaultFile.deletingLastPathComponent().standardizedFileURL.path
     var c = ClaudeCLIConfig(); c.tools = "Read,Grep,Glob,Edit,Write,WebFetch"
