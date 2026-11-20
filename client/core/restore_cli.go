@@ -52,7 +52,7 @@ func RestoreCLI(store, file string, yes bool, in io.Reader, out, errw io.Writer,
 	}
 	fmt.Fprintln(out, "restored; the previous database is kept next to it as core-<schema>-<time>.db")
 	if n := MarkedLinksIn(store); n > 0 {
-		fmt.Fprintf(out, "%s: pushes to them, manual and automatic, are paused until the owner clears each one: look with `minigw gw upstream status`, then `minigw gw upstream push <project> --upstream <name> --after-restore` (it can create second copies on the upstream).\n", markedText(n)+" restored")
+		fmt.Fprintf(out, "%s: pushes to them, manual and automatic, are paused until the owner clears each one: look with `minigw gw upstream status`, then `minigw gw upstream reconcile <project> --upstream <name>` (override: `minigw gw upstream push <project> --upstream <name> --after-restore`) (it can create second copies on the upstream).\n", markedText(n)+" restored")
 	}
 	if _, err := os.Stat(store); err != nil {
 		return fail(err.Error())

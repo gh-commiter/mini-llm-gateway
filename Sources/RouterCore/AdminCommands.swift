@@ -22,6 +22,8 @@ public struct AdminOpts {
     public var remoteProject = "", remoteTeam = "", classes = "", deviceName = "", mode = "", upstream = ""
     public var withPrivate = false, dryRun = false, auto = false, manual = false, theirs = false, ours = false
     /// upstream push --after-restore [--yes]: the override of a link marked as restored
+    public var reconcileNote = "", reconcileConfirm = "", reconcileListed = ""
+    public var reconcileNew = false, reconcileSkip = false, reconcileAll = false
     public var afterRestore = false, yes = false
     /// upstream link, reading (step C): --read, --no-read, --read-class, --read-sources, --accept-reach
     public var read = false, noRead = false, acceptReach = false, readClass = "", readSources = "", pullEvery = ""

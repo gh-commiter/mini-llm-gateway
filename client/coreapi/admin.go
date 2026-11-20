@@ -45,7 +45,7 @@ func IsAdminPath(method, escapedPath string) bool {
 		return false
 	}
 	switch seg[0] {
-	case "users", "bindings", "projects", "teams", "kb", "grants", "audit", "core", "export", "import", "upstreams", "upstream-push", "upstream-pull", "upstream-auto", "upstream-resolve", "upstream-links":
+	case "users", "bindings", "projects", "teams", "kb", "grants", "audit", "core", "export", "import", "upstreams", "upstream-push", "upstream-pull", "upstream-auto", "upstream-resolve", "upstream-reconcile", "upstream-links":
 		return true
 	case "panels":
 		return len(seg) == 1 || (len(seg) == 2 && seg[1] == "strings")
@@ -160,6 +160,9 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 	}
 	if seg[0] == "upstream-pull" && len(seg) == 1 {
 		return a.adminUpstreamPull(ctx, st, method, body, failErr)
+	}
+	if seg[0] == "upstream-reconcile" && len(seg) == 1 {
+		return a.adminUpstreamReconcile(ctx, st, method, q, body, failErr)
 	}
 	if seg[0] == "upstream-resolve" && len(seg) == 1 {
 		return a.adminUpstreamResolve(ctx, st, method, body, failErr)

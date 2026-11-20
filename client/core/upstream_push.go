@@ -623,6 +623,11 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			line("skip", n, "arrived from another gateway, never pushed onward")
 			continue
 		}
+		if n.ReconcileSkipped {
+			res.Skipped++
+			line("skip", n, "owner skipped this revision during reconcile")
+			continue
+		}
 		if n.Unchanged {
 			if n.Sent != nil && n.Sent.Waiting && !dry { // the text is as the pending submission has it again: nothing to wait for
 				if e := s.upstreamRecordWaiting(wctx, l.Project, l.Upstream, n.ID, false); e != nil {

@@ -22,32 +22,34 @@ const upstreamHelp = `
   minigw gw upstream unlink <project> <name> | --team <team> <name>
   minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)
   minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
+  minigw gw upstream reconcile <project>|--team <team> [--upstream <name>] [--dry-run] [--note <id> --confirm <remote id>|--new|--skip] [--all --new|--skip [--listed <ids>]]   reconcile a restored link using fresh upstream notes
   minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
   minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link; a link restored from a backup sends nothing until it is cleared)
   minigw gw upstream push <project>|--team <team> --after-restore [--upstream <name>] [--yes]   the owner's override for a link marked "restored": push without reconciling (can create second copies on the upstream)
   minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)`
 
 type upLink struct {
-	Project     int64
-	Team        bool
-	Upstream    string
-	Remote      string
-	Classes     []string
-	WithPrivate bool
-	LastPush    *time.Time
-	LastError   string
-	Restored    *time.Time
-	Label       string
-	Pending     int
-	Total       int
-	Foreign     int
-	Auto        bool
-	Mode        string
-	DirtySince  *time.Time
-	LastOK      *time.Time
-	LastFail    *time.Time
-	FailCount   int
-	NextAttempt *time.Time
+	Project         int64
+	Team            bool
+	Upstream        string
+	Remote          string
+	Classes         []string
+	WithPrivate     bool
+	LastPush        *time.Time
+	LastError       string
+	ReconcileCounts *core.ReconcileCounts
+	Restored        *time.Time
+	Label           string
+	Pending         int
+	Total           int
+	Foreign         int
+	Auto            bool
+	Mode            string
+	DirtySince      *time.Time
+	LastOK          *time.Time
+	LastFail        *time.Time
+	FailCount       int
+	NextAttempt     *time.Time
 
 	PullEvery     int
 	PullNext      *time.Time
@@ -252,7 +254,7 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		for _, l := range r.Links {
 			say(clean(upstreamLinkLine(l)))
 			if l.Restored != nil {
-				say(clean("  " + core.RestoredState + " (since " + l.Restored.Local().Format("2006-01-02 15:04") + "): nothing is sent from this link; reconcile is not available in this version: compare with the upstream, then " + upstreamAfterRestoreCmd(l)))
+				say(clean("  " + core.RestoredState + " (since " + l.Restored.Local().Format("2006-01-02 15:04") + "): nothing is sent from this link; run " + upstreamReconcileCmd(l) + upstreamReconcileCounts(l.ReconcileCounts)))
 			}
 			if s := upstreamSyncLine(l); s != "" {
 				say(clean("  " + s))
@@ -285,6 +287,65 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		}
 		if len(r.Links) == 0 {
 			say("no upstream links (minigw gw upstream link <project> <name>)")
+		}
+	case pos[1] == "reconcile" && (len(pos) == 3 && team == "" || len(pos) == 2 && team != ""):
+		body := map[string]any{"dryRun": u.dryRun}
+		if team != "" {
+			body["team"] = teamID(a, team)
+		} else {
+			body["project"] = projectID(a, pos[2])
+		}
+		if u.upstream != "" {
+			body["upstream"] = u.upstream
+		}
+		for _, option := range []struct{ name, value string }{{"note", u.reconcileNote}, {"confirm", u.reconcileConfirm}} {
+			name, value := option.name, option.value
+			if value != "" {
+				n, e := strconv.ParseInt(value, 10, 64)
+				if e != nil || n <= 0 {
+					fail("reconcile: --" + name + " is a positive number")
+				}
+				body[name] = n
+			}
+		}
+		if u.reconcileNew {
+			body["new"] = true
+		}
+		if u.reconcileSkip {
+			body["skip"] = true
+		}
+		if u.reconcileAll {
+			body["all"] = true
+		}
+		if u.reconcileListed != "" {
+			ids := []int64{}
+			for _, v := range strings.Split(u.reconcileListed, ",") {
+				n, e := strconv.ParseInt(v, 10, 64)
+				if e != nil || n <= 0 {
+					fail("reconcile: --listed is comma-separated positive ids")
+				}
+				ids = append(ids, n)
+			}
+			body["listed"] = ids
+		}
+		if u.reconcileAll && u.reconcileListed == "" {
+			q := url.Values{}
+			if id, ok := body["team"]; ok {
+				q.Set("team", fmt.Sprint(id))
+			} else {
+				q.Set("project", fmt.Sprint(body["project"]))
+			}
+			if u.upstream != "" {
+				q.Set("upstream", u.upstream)
+			}
+			var listed struct{ Unknowns []int64 }
+			a.do("GET", "/upstream-reconcile?"+q.Encode(), nil, &listed)
+			body["listed"] = listed.Unknowns
+		}
+		var r core.UpstreamReconcile
+		a.do("POST", "/upstream-reconcile", body, &r)
+		for _, line := range r.Lines {
+			say(clean(line))
 		}
 	case pos[1] == "resolve" && (len(pos) == 4 && team == "" || len(pos) == 3 && team != ""):
 		if u.theirs == u.ours {
@@ -733,4 +794,19 @@ func upstreamSkipped(l upLink) string {
 		list += fmt.Sprintf(", ... (%d in all)", l.SkippedNotes)
 	}
 	return fmt.Sprintf("%d notes could not be read (upstream note:reason): %s; retried at the next pull", l.SkippedNotes, list)
+}
+
+func upstreamReconcileCounts(c *core.ReconcileCounts) string {
+	if c == nil {
+		return ""
+	}
+	return fmt.Sprintf("; last listing: candidates %d, unknown %d", c.Candidates, c.Unknown)
+}
+
+func upstreamReconcileCmd(l upLink) string {
+	who := l.Label
+	if l.Team {
+		who = "--team " + strings.TrimPrefix(l.Label, "team ")
+	}
+	return "minigw gw upstream reconcile " + who + " --upstream " + l.Upstream
 }

@@ -60,6 +60,8 @@ private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
             opts.deviceName = o["deviceName"] as? String ?? ""; opts.mode = o["mode"] as? String ?? ""; opts.auto = o["auto"] as? Bool ?? false; opts.manual = o["manual"] as? Bool ?? false; opts.theirs = o["theirs"] as? Bool ?? false; opts.ours = o["ours"] as? Bool ?? false; opts.remoteProject = o["remoteProject"] as? String ?? ""; opts.remoteTeam = o["remoteTeam"] as? String ?? ""; opts.classes = o["class"] as? String ?? ""
             opts.withPrivate = o["withPrivate"] as? Bool ?? false; opts.dryRun = o["dryRun"] as? Bool ?? false
             opts.upstream = o["upstream"] as? String ?? ""
+            opts.reconcileNote = o["reconcileNote"] as? String ?? ""; opts.reconcileConfirm = o["reconcileConfirm"] as? String ?? ""; opts.reconcileListed = o["reconcileListed"] as? String ?? ""
+            opts.reconcileNew = o["reconcileNew"] as? Bool ?? false; opts.reconcileSkip = o["reconcileSkip"] as? Bool ?? false; opts.reconcileAll = o["reconcileAll"] as? Bool ?? false
             opts.afterRestore = o["afterRestore"] as? Bool ?? false; opts.yes = o["yes"] as? Bool ?? false
             cmd.isTerminal = { o["tty"] as? Bool == true }
             nonisolated(unsafe) var answers = (c["stdin"] as? String ?? "").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)

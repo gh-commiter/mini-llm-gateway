@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -384,7 +385,8 @@ type adminLinkJSON struct {
 	TeamID      int64  `json:"teamId"`
 	ClassesText string `json:"classesText"`
 	// RestoredBlocked: the link is marked "restored: reconcile before pushing" (read only; the time is in Restored).
-	RestoredBlocked bool `json:"restoredBlocked"`
+	RestoredBlocked bool   `json:"restoredBlocked"`
+	ReconcileState  string `json:"reconcileState"`
 	// ConflictCount: how many publish-mode notes are in conflict (the list itself is in GET /upstream-links/{id}).
 	ConflictCount int `json:"conflictCount"`
 	// Reading, as text a panel shows and a confirmation fills in: the classes and the extra sources the link reads, and the interval in minutes.
@@ -433,6 +435,17 @@ func toAdminLink(l core.UpstreamLinkInfo) adminLinkJSON {
 	j.ClassesText = strings.Join(cs, ", ")
 	j.ConflictCount = len(l.Conflicts)
 	j.RestoredBlocked = l.Restored != nil
+	j.ReconcileState = "not marked"
+	if j.RestoredBlocked {
+		who := l.Label
+		if l.Team {
+			who = "--team " + strings.TrimPrefix(l.Label, "team ")
+		}
+		j.ReconcileState = "minigw gw upstream reconcile " + who + " --upstream " + l.Upstream
+		if c := l.ReconcileCounts; c != nil {
+			j.ReconcileState += fmt.Sprintf("; last listing: candidates %d, unknown %d", c.Candidates, c.Unknown)
+		}
+	}
 	var rc []string
 	for _, c := range l.ReadClasses {
 		rc = append(rc, string(c))
@@ -576,4 +589,38 @@ func ctxSleep(ctx context.Context) func(time.Duration) bool {
 			return false
 		}
 	}
+}
+
+// adminUpstreamReconcile is an owner-only route; validate before any store write.
+func (a *API) adminUpstreamReconcile(ctx context.Context, st *core.Store, method string, q url.Values, body []byte, failErr func(error) (int, any, bool)) (int, any, bool) {
+	if method == "GET" {
+		r := core.ReconcileSpec{Upstream: q.Get("upstream")}
+		r.Project, _ = strconv.ParseInt(q.Get("project"), 10, 64)
+		r.Team, _ = strconv.ParseInt(q.Get("team"), 10, 64)
+		if !r.Valid() {
+			return 400, errorBody(400, "bad query (project or team, upstream)"), true
+		}
+		ids, err := st.ReconcileListedUnknowns(ctx, r)
+		if err != nil {
+			return failErr(err)
+		}
+		return 200, map[string]any{"unknowns": ids}, true
+	}
+
+	if method != "POST" {
+		return 404, errorBody(404, "not found"), true
+	}
+	var r core.ReconcileSpec
+	if decodeStrict(body, &r) != nil || !r.Valid() {
+		return 400, errorBody(400, "bad JSON body (project or team, upstream, dryRun, note, confirm, new, skip, all, listed)"), true
+	}
+	h := a.upstreamHost(ctx)
+	if h == nil || !h.Available() {
+		return 501, errorBody(501, "this gateway cannot send to an upstream here"), true
+	}
+	out, err := st.ReconcileUpstream(ctx, h, r)
+	if err != nil {
+		return failErr(err)
+	}
+	return 200, out, true
 }

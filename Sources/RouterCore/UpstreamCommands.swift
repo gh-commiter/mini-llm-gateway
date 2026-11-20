@@ -17,6 +17,7 @@ extension AdminCommands {
           minigw gw upstream unlink <project> <name> | --team <team> <name>
           minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)
           minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]
+          minigw gw upstream reconcile <project>|--team <team> [--upstream <name>] [--dry-run] [--note <id> --confirm <remote id>|--new|--skip] [--all --new|--skip [--listed <ids>]]   reconcile a restored link using fresh upstream notes
           minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal
           minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link; a link restored from a backup sends nothing until it is cleared)
           minigw gw upstream push <project>|--team <team> --after-restore [--upstream <name>] [--yes]   the owner's override for a link marked "restored": push without reconciling (can create second copies on the upstream)
@@ -129,7 +130,7 @@ extension AdminCommands {
                 let d = l.dict
                 say(clean(Self.upstreamLinkLine(d, zone)))
                 if let t = d["restored"]?.string.flatMap(ProjectText.parseTime) {
-                    say(clean("  restored: reconcile before pushing (since " + ProjectText.stamp(t, zone) + "): nothing is sent from this link; reconcile is not available in this version: compare with the upstream, then " + Self.upstreamAfterRestoreCmd(d)))
+                    say(clean("  restored: reconcile before pushing (since " + ProjectText.stamp(t, zone) + "): nothing is sent from this link; run " + Self.upstreamReconcileCmd(d) + Self.upstreamReconcileCounts(d)))
                 }
                 if let s = Self.upstreamSyncLine(d, zone) { say(clean("  " + s)) }
                 say(clean("  " + Self.upstreamReadLine(d, zone)))
@@ -143,6 +144,29 @@ extension AdminCommands {
                 if let s = Self.upstreamBackwards(d) { say(clean("  " + s)) }
             }
             if links.isEmpty { say("no upstream links (minigw gw upstream link <project> <name>)") }
+
+        case ("reconcile", 3) where team.isEmpty, ("reconcile", 2) where !team.isEmpty:
+            var body: [String: Any] = ["dryRun": o.dryRun, team.isEmpty ? "project" : "team": team.isEmpty ? try projectID(pos[2]) : try teamID(team)]
+            if !o.upstream.isEmpty { body["upstream"] = o.upstream }
+            for (name, value) in [("note", o.reconcileNote), ("confirm", o.reconcileConfirm)] where !value.isEmpty {
+                guard let n = Int64(value), n > 0 else { throw fail("reconcile: --" + name + " is a positive number") }
+                body[name] = n
+            }
+            if o.reconcileNew { body["new"] = true }; if o.reconcileSkip { body["skip"] = true }; if o.reconcileAll { body["all"] = true }
+            if !o.reconcileListed.isEmpty {
+                let parts = o.reconcileListed.split(separator: ",", omittingEmptySubsequences: false)
+                let ids = parts.compactMap { Int64($0) }
+                guard ids.count == parts.count, ids.allSatisfy({ $0 > 0 }) else { throw fail("reconcile: --listed is comma-separated positive ids") }
+                body["listed"] = ids
+            }
+            if o.reconcileAll && o.reconcileListed.isEmpty {
+                var q = team.isEmpty ? "project=\(body["project"]!)" : "team=\(body["team"]!)"
+                if !o.upstream.isEmpty { q += "&upstream=" + esc(o.upstream) }
+                let listed = try request("GET", "/upstream-reconcile?" + q)
+                body["listed"] = (listed["unknowns"]?.array ?? []).map { $0.int ?? 0 }
+            }
+            let r = try request("POST", "/upstream-reconcile", body)
+            for line in r["lines"]?.array ?? [] { say(clean(line.string ?? "")) }
         case ("resolve", 4) where team.isEmpty, ("resolve", 3) where !team.isEmpty:
             if o.theirs == o.ours { throw fail("resolve: choose --theirs or --ours") }
             guard let note = Int64(pos[pos.count - 1]), note > 0 else { throw fail("resolve: the note is its number") }
@@ -362,5 +386,17 @@ extension AdminCommands {
         for n in d["notPropagated"]?.array ?? [] { by[n.dict["why"]?.string ?? "", default: []].append(String(n.dict["note"]?.int ?? 0)) }
         let parts = ["deleted here", "now private here"].compactMap { why in by[why].map { why + ": note " + $0.joined(separator: ", ") } }
         return parts.isEmpty ? nil : "not propagated: " + parts.joined(separator: "; ") + " (the copy stays on the upstream until you remove it there)"
+    }
+}
+
+extension AdminCommands {
+    static func upstreamReconcileCmd(_ d: JDict) -> String {
+        let label = d["label"]?.string ?? ""
+        let who = d["team"]?.bool == true ? "--team " + (label.hasPrefix("team ") ? String(label.dropFirst(5)) : label) : label
+        return "minigw gw upstream reconcile " + who + " --upstream " + (d["upstream"]?.string ?? "")
+    }
+    static func upstreamReconcileCounts(_ d: JDict) -> String {
+        guard let counts = d["reconcileCounts"] else { return "" }
+        return "; last listing: candidates \(counts.dict["candidates"]?.int ?? 0), unknown \(counts.dict["unknown"]?.int ?? 0)"
     }
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"regexp"
@@ -168,6 +169,9 @@ func (s *Store) RemoveUpstream(ctx context.Context, name string) error {
 	}
 	defer mu.Unlock()
 	return s.adminWrite(ctx, "upstream.remove", name, nil, func(tx *sql.Tx) (string, error) {
+		if _, e := tx.Exec(`DELETE FROM meta WHERE key IN (SELECT m.key FROM meta m JOIN upstream_links l ON substr(m.key,1,length('upstream_reconcile|'||l.project_id||'|'||l.upstream||'|'))='upstream_reconcile|'||l.project_id||'|'||l.upstream||'|' WHERE l.upstream=?)`, name); e != nil {
+			return "", e
+		}
 		if e := purgeUpstreamMirror(tx, name); e != nil {
 			return "", e
 		}
@@ -278,10 +282,11 @@ type UpstreamLinkInfo struct {
 	// Waiting: notes whose earlier submission is still pending upstream: nothing more is sent for them until it is reviewed (not a failure).
 	Waiting int `json:"waiting,omitempty"`
 	// Restored: since when the link is marked "restored: reconcile before pushing" (see upstream_restore.go): it sends nothing until cleared.
-	Restored *time.Time `json:"restored,omitempty"`
-	Label    string     `json:"label"`   // the project's short name, or "team <name>"
-	Pending  int        `json:"pending"` // notes that a push would send now (new or changed)
-	Total    int        `json:"total"`   // published notes the link covers
+	ReconcileCounts *ReconcileCounts `json:"reconcileCounts,omitempty"`
+	Restored        *time.Time       `json:"restored,omitempty"`
+	Label           string           `json:"label"`   // the project's short name, or "team <name>"
+	Pending         int              `json:"pending"` // notes that a push would send now (new or changed)
+	Total           int              `json:"total"`   // published notes the link covers
 	// Foreign: published notes that arrived from another gateway (they end with its trailer): never pushed onward, not in Total.
 	Foreign int `json:"foreign,omitempty"`
 	// Step C: reading the upstream's notes into the mirror (nothing of it is shown to members yet).
@@ -729,6 +734,10 @@ func (s *Store) UnlinkUpstream(ctx context.Context, project, team int64, upstrea
 		if _, e := tx.Exec(`DELETE FROM upstream_sent WHERE project_id=? AND upstream=?`, local, upstream); e != nil {
 			return "", e
 		}
+		prefix := reconcileKey(local, upstream, "")
+		if _, e := tx.Exec(`DELETE FROM meta WHERE substr(key,1,?)=?`, len(prefix), prefix); e != nil {
+			return "", e
+		}
 		if _, e := tx.Exec(`DELETE FROM meta WHERE key=?`, restoredKey(local, upstream)); e != nil {
 			return "", e
 		}
@@ -741,18 +750,19 @@ func (s *Store) UnlinkUpstream(ctx context.Context, project, team int64, upstrea
 
 // UpstreamNote is one local published note as a push sees it, with what was sent of it before.
 type UpstreamNote struct {
-	ID         int64
-	Class      Class
-	Title      string
-	Body       string
-	EntryKind  string
-	Revision   int64
-	Author     string
-	Hash       string
-	Sent       *UpstreamSent
-	Unchanged  bool // sent before with this very content: nothing to send
-	Conflicted bool // publish mode: the upstream note changed there since our last write; waits for `upstream resolve`
-	Foreign    bool // arrived from another gateway (see fromGateway): never sent onward, nothing to send
+	ID               int64
+	Class            Class
+	Title            string
+	Body             string
+	EntryKind        string
+	Revision         int64
+	Author           string
+	Hash             string
+	Sent             *UpstreamSent
+	Unchanged        bool // sent before with this very content: nothing to send
+	Conflicted       bool // publish mode: the upstream note changed there since our last write; waits for `upstream resolve`
+	ReconcileSkipped bool // owner skipped this revision independently of receipts
+	Foreign          bool // arrived from another gateway (see fromGateway): never sent onward, nothing to send
 }
 
 type UpstreamSent struct {
@@ -879,7 +889,14 @@ func upstreamNotes(tx *sql.Tx, l UpstreamLink, after int64, limit int) (out upst
 			default:
 				return out, e
 			}
-			if u.Sent != nil && u.Sent.Conflict == 1 { // changed on the upstream: waits for the owner (resolve), is not "to send"
+			var decision string
+			var d reconcileDecision
+			if e := tx.QueryRow(`SELECT value FROM meta WHERE key=?`, reconcileDecisionKey(l.Project, l.Upstream, n.ID)).Scan(&decision); e != nil && e != sql.ErrNoRows {
+				return out, e
+			}
+			if json.Unmarshal([]byte(decision), &d) == nil && d.Action == "skip" && d.Revision == n.Revision && d.Hash == u.Hash {
+				u.ReconcileSkipped, u.Unchanged = true, true
+			} else if u.Sent != nil && u.Sent.Conflict == 1 { // changed on the upstream: waits for the owner (resolve), is not "to send"
 				u.Conflicted, u.Body = true, ""
 			} else if u.Sent != nil && u.Sent.Hash == u.Hash && u.Sent.Conflict == 0 {
 				u.Unchanged, u.Body = true, ""
@@ -960,6 +977,7 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 				return e
 			} else if ok {
 				info.Restored = &at
+				info.ReconcileCounts = reconcileCounts(tx, l)
 			}
 			if e := readInfo(tx, ms(s.now()), &info); e != nil {
 				return e

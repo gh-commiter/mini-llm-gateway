@@ -74,6 +74,15 @@ import Testing
 
 /// The Mac executable's mapping of an upstream argv to options (the fixtures inject options directly and would not see a flag that is never wired).
 @Suite struct UpstreamArgvWiring {
+    @Test func reconcileFlagsReachTheOptions() {
+        let (pos, flags) = AdminArgs.parse(["upstream", "reconcile", "shop", "--note", "7", "--confirm=41", "--upstream", "hub", "--listed", "7,8", "--all", "--new", "--skip", "--dry-run"])
+        #expect(pos == ["upstream", "reconcile", "shop"])
+        var o = AdminOpts()
+        AdminArgs.applyUpstream(flags, to: &o)
+        #expect(o.reconcileNote == "7" && o.reconcileConfirm == "41" && o.reconcileListed == "7,8")
+        #expect(o.reconcileAll && o.reconcileNew && o.reconcileSkip && o.dryRun && o.upstream == "hub")
+    }
+
     @Test func theOverrideAndItsConfirmationReachTheOptions() {
         let (pos, flags) = AdminArgs.parse(["upstream", "push", "shop", "--after-restore", "--yes", "--upstream", "hub", "--dry-run"])
         #expect(pos == ["upstream", "push", "shop"])

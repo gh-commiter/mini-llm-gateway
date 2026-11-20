@@ -97,19 +97,21 @@ type coreOpts struct {
 	file                                                                                                                                   string // labels eval: the examples file
 	showErrors                                                                                                                             bool   // labels eval: list the misses with their text (this terminal only)
 	// upstream (upstream_cmd.go): the token comes from in; the rest are the link and push options
-	in                        io.Reader
-	remoteProject, remoteTeam string
-	class, deviceName, mode   string
-	auto, manual              bool
-	theirs, ours              bool
-	withPrivate, dryRun       bool
-	afterRestore, yes         bool // upstream push --after-restore [--yes]
-	read, noRead, acceptReach bool
-	readClass, readSources    string
-	pullEvery                 string              // upstream link: minutes between automatic pulls
-	pullWall                  time.Duration       // the time of one pull command (0: pullWallDefault)
-	pause                     func(time.Duration) // between the calls of a long upstream push (nil: time.Sleep)
-	now                       func() time.Time    // the clock of one pull command (nil: time.Now); a test gives a fake, as Windows' clock ticks about every 15 ms
+	in                                               io.Reader
+	remoteProject, remoteTeam                        string
+	class, deviceName, mode                          string
+	auto, manual                                     bool
+	theirs, ours                                     bool
+	withPrivate, dryRun                              bool
+	reconcileNote, reconcileConfirm, reconcileListed string
+	reconcileNew, reconcileSkip, reconcileAll        bool
+	afterRestore, yes                                bool // upstream push --after-restore [--yes]
+	read, noRead, acceptReach                        bool
+	readClass, readSources                           string
+	pullEvery                                        string              // upstream link: minutes between automatic pulls
+	pullWall                                         time.Duration       // the time of one pull command (0: pullWallDefault)
+	pause                                            func(time.Duration) // between the calls of a long upstream push (nil: time.Sleep)
+	now                                              func() time.Time    // the clock of one pull command (nil: time.Now); a test gives a fake, as Windows' clock ticks about every 15 ms
 }
 
 func coreCommand(a *adminClient, pos []string, o coreOpts) {

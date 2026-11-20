@@ -151,7 +151,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>|none] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run; no --read-sources keeps the ones it reads now, none clears them)\n  minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)\n  minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link; a link restored from a backup sends nothing until it is cleared)\n  minigw gw upstream push <project>|--team <team> --after-restore [--upstream <name>] [--yes]   the owner's override for a link marked \"restored\": push without reconciling (can create second copies on the upstream)\n  minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>|none] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run; no --read-sources keeps the ones it reads now, none clears them)\n  minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)\n  minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream reconcile <project>|--team <team> [--upstream <name>] [--dry-run] [--note <id> --confirm <remote id>|--new|--skip] [--all --new|--skip [--listed <ids>]]   reconcile a restored link using fresh upstream notes\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link; a link restored from a backup sends nothing until it is cleared)\n  minigw gw upstream push <project>|--team <team> --after-restore [--upstream <name>] [--yes]   the owner's override for a link marked \"restored\": push without reconciling (can create second copies on the upstream)\n  minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)\n",
     "exit": 1,
     "requests": []
    }
@@ -1636,7 +1636,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>|none] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run; no --read-sources keeps the ones it reads now, none clears them)\n  minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)\n  minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link; a link restored from a backup sends nothing until it is cleared)\n  minigw gw upstream push <project>|--team <team> --after-restore [--upstream <name>] [--yes]   the owner's override for a link marked \"restored\": push without reconciling (can create second copies on the upstream)\n  minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>|none] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run; no --read-sources keeps the ones it reads now, none clears them)\n  minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)\n  minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream reconcile <project>|--team <team> [--upstream <name>] [--dry-run] [--note <id> --confirm <remote id>|--new|--skip] [--all --new|--skip [--listed <ids>]]   reconcile a restored link using fresh upstream notes\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link; a link restored from a backup sends nothing until it is cleared)\n  minigw gw upstream push <project>|--team <team> --after-restore [--upstream <name>] [--yes]   the owner's override for a link marked \"restored\": push without reconciling (can create second copies on the upstream)\n  minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)\n",
     "exit": 1,
     "requests": []
    }
@@ -1651,7 +1651,7 @@
    "responses": [],
    "want": {
     "out": "",
-    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>|none] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run; no --read-sources keeps the ones it reads now, none clears them)\n  minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)\n  minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link; a link restored from a backup sends nothing until it is cleared)\n  minigw gw upstream push <project>|--team <team> --after-restore [--upstream <name>] [--yes]   the owner's override for a link marked \"restored\": push without reconciling (can create second copies on the upstream)\n  minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)\n",
+    "err": "minigw: minigw gw upstream add <name> <address> [--device-name <text>]   another gateway to send knowledge to (host[:port]); its Copy Token on stdin\n  minigw gw upstream list | remove <name>\n  minigw gw upstream link <project> <name> [--remote-project <slug>] [--class structure,data] [--with-private] [--auto|--manual] [--mode submit|publish]\n  minigw gw upstream link --with-private   also the private notes of ALL members of the project (needs private in --class)\n  minigw gw upstream link --team <team> <name> [--remote-team <name>] [--auto|--manual] [--mode ..]   a team's own notes\n  minigw gw upstream link <project> <name> --read [--read-class structure[,data]] [--read-sources <label,...>|none] --accept-reach   read the upstream's notes into a local mirror (look first: pull --dry-run; no --read-sources keeps the ones it reads now, none clears them)\n  minigw gw upstream link <project> <name> --pull-every <minutes>   how often a link with reading on is pulled by itself (5 to 1440, default 15; --team <team> works the same)\n  minigw gw upstream link <project> <name> --no-read   stop reading and delete the mirror (--team <team> works the same)\n  minigw gw upstream unlink <project> <name> | --team <team> <name>\n  minigw gw upstream resolve <project> <note> --theirs|--ours [--upstream <name>]   a note the push did not send: changed on the upstream (publish link), deleted or no longer visible there, or its earlier submission cannot be read (--theirs: our text stays unsent, the upstream's text is not fetched; --ours: send ours as a submission, a NEW note when the old one is gone from view)\n  minigw gw upstream resolve --team <team> <note> --theirs|--ours [--upstream <name>]\n  minigw gw upstream reconcile <project>|--team <team> [--upstream <name>] [--dry-run] [--note <id> --confirm <remote id>|--new|--skip] [--all --new|--skip [--listed <ids>]]   reconcile a restored link using fresh upstream notes\n  minigw gw upstream status [<project>|--team <team>]  per link: what would go, when it last went, the last refusal\n  minigw gw upstream push [<project>|--team <team>] [--dry-run]   send the published notes as submissions (nothing without a link; a link restored from a backup sends nothing until it is cleared)\n  minigw gw upstream push <project>|--team <team> --after-restore [--upstream <name>] [--yes]   the owner's override for a link marked \"restored\": push without reconciling (can create second copies on the upstream)\n  minigw gw upstream pull [<project>|--team <team>] [--dry-run]   read the linked project's notes into the mirror (links with --read), or with --dry-run only ask what could be read (nothing is stored)\n",
     "exit": 1,
     "requests": []
    }
@@ -3072,7 +3072,7 @@
     }
    ],
    "want": {
-    "out": "shop -> hub (shop): 2 of 3 notes would go, never pushed, classes structure,data, manual\n  restored: reconcile before pushing (since 2026-11-20 09:15): nothing is sent from this link; reconcile is not available in this version: compare with the upstream, then minigw gw upstream push shop --upstream hub --after-restore\n  read: off\nteam Engineering -> hub (eng): 2 of 3 notes would go, never pushed, classes structure,data, manual\n  restored: reconcile before pushing (since 2026-11-20 09:15): nothing is sent from this link; reconcile is not available in this version: compare with the upstream, then minigw gw upstream push --team Engineering --upstream hub --after-restore\n  read: off\n",
+    "out": "shop -> hub (shop): 2 of 3 notes would go, never pushed, classes structure,data, manual\n  restored: reconcile before pushing (since 2026-11-20 09:15): nothing is sent from this link; run minigw gw upstream reconcile shop --upstream hub\n  read: off\nteam Engineering -> hub (eng): 2 of 3 notes would go, never pushed, classes structure,data, manual\n  restored: reconcile before pushing (since 2026-11-20 09:15): nothing is sent from this link; run minigw gw upstream reconcile --team Engineering --upstream hub\n  read: off\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -3101,11 +3101,11 @@
     {
      "match": "POST /upstream-push",
      "status": 200,
-     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"blocked: restored: reconcile before pushing; nothing is sent (2 links of this gateway are marked; reconcile is not available in this version: compare with the upstream, then minigw gw upstream push shop --upstream hub --after-restore)\"], \"created\": 0, \"skipped\": 0, \"replaced\": 0, \"refused\": 0, \"dryRun\": false, \"project\": 3, \"team\": false, \"blocked\": true}]}"
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"blocked: restored: reconcile before pushing; nothing is sent (2 links of this gateway are marked; run minigw gw upstream reconcile shop --upstream hub)\"], \"created\": 0, \"skipped\": 0, \"replaced\": 0, \"refused\": 0, \"dryRun\": false, \"project\": 3, \"team\": false, \"blocked\": true}]}"
     }
    ],
    "want": {
-    "out": "shop -> hub (shop)\n  blocked: restored: reconcile before pushing; nothing is sent (2 links of this gateway are marked; reconcile is not available in this version: compare with the upstream, then minigw gw upstream push shop --upstream hub --after-restore)\n  created 0, replaced 0, skipped 0, refused 0\n",
+    "out": "shop -> hub (shop)\n  blocked: restored: reconcile before pushing; nothing is sent (2 links of this gateway are marked; run minigw gw upstream reconcile shop --upstream hub)\n  created 0, replaced 0, skipped 0, refused 0\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -3284,6 +3284,349 @@
     "err": "minigw: push --after-restore names one project or --team, and is not a dry run\n",
     "exit": 1,
     "requests": []
+   }
+  },
+  {
+   "name": "reconcile list",
+   "args": [
+    "upstream",
+    "reconcile",
+    "shop"
+   ],
+   "opts": {
+    "upstream": "hub"
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":3,\"slug\":\"shop\"}]}"
+    },
+    {
+     "match": "POST /upstream-reconcile",
+     "status": 200,
+     "body": "{\"lines\":[\"candidate note 7 (revision 2), remote 41\",\"candidates 1, unknown 0, restored mark cleared: false\"]}"
+    }
+   ],
+   "want": {
+    "out": "candidate note 7 (revision 2), remote 41\ncandidates 1, unknown 0, restored mark cleared: false\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-reconcile",
+      "{\"dryRun\":false,\"project\":3,\"upstream\":\"hub\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "reconcile dry",
+   "args": [
+    "upstream",
+    "reconcile",
+    "shop"
+   ],
+   "opts": {
+    "dryRun": true,
+    "upstream": "hub"
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":3,\"slug\":\"shop\"}]}"
+    },
+    {
+     "match": "POST /upstream-reconcile",
+     "status": 200,
+     "body": "{\"lines\":[\"candidate note 7 (revision 2), remote 41\",\"candidates 1, unknown 0, restored mark cleared: false\"]}"
+    }
+   ],
+   "want": {
+    "out": "candidate note 7 (revision 2), remote 41\ncandidates 1, unknown 0, restored mark cleared: false\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-reconcile",
+      "{\"dryRun\":true,\"project\":3,\"upstream\":\"hub\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "reconcile confirm",
+   "args": [
+    "upstream",
+    "reconcile",
+    "shop"
+   ],
+   "opts": {
+    "reconcileNote": "7",
+    "reconcileConfirm": "41",
+    "upstream": "hub"
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":3,\"slug\":\"shop\"}]}"
+    },
+    {
+     "match": "POST /upstream-reconcile",
+     "status": 200,
+     "body": "{\"lines\":[\"candidate note 7 (revision 2), remote 41\",\"candidates 1, unknown 0, restored mark cleared: false\"]}"
+    }
+   ],
+   "want": {
+    "out": "candidate note 7 (revision 2), remote 41\ncandidates 1, unknown 0, restored mark cleared: false\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-reconcile",
+      "{\"confirm\":41,\"dryRun\":false,\"note\":7,\"project\":3,\"upstream\":\"hub\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "reconcile new",
+   "args": [
+    "upstream",
+    "reconcile",
+    "shop"
+   ],
+   "opts": {
+    "reconcileNote": "7",
+    "reconcileNew": true,
+    "upstream": "hub"
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":3,\"slug\":\"shop\"}]}"
+    },
+    {
+     "match": "POST /upstream-reconcile",
+     "status": 200,
+     "body": "{\"lines\":[\"candidate note 7 (revision 2), remote 41\",\"candidates 1, unknown 0, restored mark cleared: false\"]}"
+    }
+   ],
+   "want": {
+    "out": "candidate note 7 (revision 2), remote 41\ncandidates 1, unknown 0, restored mark cleared: false\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-reconcile",
+      "{\"dryRun\":false,\"new\":true,\"note\":7,\"project\":3,\"upstream\":\"hub\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "reconcile skip",
+   "args": [
+    "upstream",
+    "reconcile",
+    "shop"
+   ],
+   "opts": {
+    "reconcileNote": "7",
+    "reconcileSkip": true,
+    "upstream": "hub"
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":3,\"slug\":\"shop\"}]}"
+    },
+    {
+     "match": "POST /upstream-reconcile",
+     "status": 200,
+     "body": "{\"lines\":[\"candidate note 7 (revision 2), remote 41\",\"candidates 1, unknown 0, restored mark cleared: false\"]}"
+    }
+   ],
+   "want": {
+    "out": "candidate note 7 (revision 2), remote 41\ncandidates 1, unknown 0, restored mark cleared: false\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-reconcile",
+      "{\"dryRun\":false,\"note\":7,\"project\":3,\"skip\":true,\"upstream\":\"hub\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "reconcile all",
+   "args": [
+    "upstream",
+    "reconcile",
+    "shop"
+   ],
+   "opts": {
+    "reconcileAll": true,
+    "reconcileSkip": true,
+    "reconcileListed": "7,8",
+    "upstream": "hub"
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":3,\"slug\":\"shop\"}]}"
+    },
+    {
+     "match": "POST /upstream-reconcile",
+     "status": 200,
+     "body": "{\"lines\":[\"candidate note 7 (revision 2), remote 41\",\"candidates 1, unknown 0, restored mark cleared: false\"]}"
+    }
+   ],
+   "want": {
+    "out": "candidate note 7 (revision 2), remote 41\ncandidates 1, unknown 0, restored mark cleared: false\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-reconcile",
+      "{\"all\":true,\"dryRun\":false,\"listed\":[7,8],\"project\":3,\"skip\":true,\"upstream\":\"hub\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "reconcile all carries the saved listed ids",
+   "args": [
+    "upstream",
+    "reconcile",
+    "shop"
+   ],
+   "opts": {
+    "reconcileAll": true,
+    "reconcileSkip": true,
+    "upstream": "hub"
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":3,\"slug\":\"shop\"}]}"
+    },
+    {
+     "match": "GET /upstream-reconcile?project=3&upstream=hub",
+     "status": 200,
+     "body": "{\"unknowns\":[7,8]}"
+    },
+    {
+     "match": "POST /upstream-reconcile",
+     "status": 200,
+     "body": "{\"lines\":[\"candidate note 7 (revision 2), remote 41\",\"candidates 1, unknown 0, restored mark cleared: false\"]}"
+    }
+   ],
+   "want": {
+    "out": "candidate note 7 (revision 2), remote 41\ncandidates 1, unknown 0, restored mark cleared: false\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstream-reconcile?project=3&upstream=hub",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-reconcile",
+      "{\"all\":true,\"dryRun\":false,\"listed\":[7,8],\"project\":3,\"skip\":true,\"upstream\":\"hub\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "reconcile team",
+   "args": [
+    "upstream",
+    "reconcile"
+   ],
+   "opts": {
+    "team": "Engineering",
+    "upstream": "hub",
+    "dryRun": true
+   },
+   "responses": [
+    {
+     "match": "GET /teams",
+     "status": 200,
+     "body": "{\"teams\":[{\"id\":2,\"name\":\"Engineering\"}]}"
+    },
+    {
+     "match": "POST /upstream-reconcile",
+     "status": 200,
+     "body": "{\"lines\":[\"unknown note 7 (revision 1), remote 0\"]}"
+    }
+   ],
+   "want": {
+    "out": "unknown note 7 (revision 1), remote 0\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/teams",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-reconcile",
+      "{\"dryRun\":true,\"team\":2,\"upstream\":\"hub\"}"
+     ]
+    ]
    }
   }
  ]

@@ -23,7 +23,7 @@ import (
 //
 // The mark is one record in the meta table (no schema change) per link: key restoredPrefix + project id (a team's segment id for a team
 // link) + "|" + upstream, value "restored|<unix ms of the restore>". It is removed with the link (unlink, removal of the upstream) and by
-// ClearRestoreMark; editing the link does not touch it.
+// ClearRestoreMark or a completed reconcile; editing the link does not touch it.
 const (
 	restoredPrefix = "upstream_restored|"
 	// RestoredState is how a status names the state of a marked link.
@@ -95,7 +95,7 @@ func restoreBlockedLine(l UpstreamLink, label string, marked int) string {
 	if l.Team {
 		who = "--team " + strings.TrimPrefix(label, "team ")
 	}
-	return "blocked: " + RestoredState + "; nothing is sent (" + markedText(marked) + "; reconcile is not available in this version: compare with the upstream, then minigw gw upstream push " + who + " --upstream " + l.Upstream + " --after-restore)"
+	return "blocked: " + RestoredState + "; nothing is sent (" + markedText(marked) + "; run minigw gw upstream reconcile " + who + " --upstream " + l.Upstream + "; override: minigw gw upstream push " + who + " --upstream " + l.Upstream + " --after-restore)"
 }
 
 func markedText(n int) string {
@@ -118,7 +118,7 @@ func (s *Store) restoreGate(ctx context.Context, l UpstreamLink, label string) (
 	if err != nil || !ok {
 		return UpstreamPush{}, false, err
 	}
-	return UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, Project: l.Project, Team: l.Team, Blocked: true, Lines: []string{restoreBlockedLine(l, label, marked)}}, true, nil
+	return UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, Project: l.Project, Team: l.Team, Blocked: true, Lines: []string{restoreBlockedLine(l, label, marked) + s.reconcileCountsText(ctx, l)}}, true, nil
 }
 
 // ClearRestoreMark is the owner's override (push --after-restore): it clears the mark of ONE link (the upstream is named, or the project

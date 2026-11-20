@@ -6,7 +6,7 @@ public enum AdminArgs {
     /// Options that take a value (`--x v`); any other `--x` is a switch.
     public static let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder",
                                              "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe", "provider",
-                                             "sort", "reason", "team", "by", "phase", "activity", "task", "label-source", "remote-project", "remote-team", "class", "device-name", "mode", "upstream", "version", "read-class", "read-sources", "pull-every", "file", "revision", "current"]
+                                             "sort", "reason", "team", "by", "phase", "activity", "task", "label-source", "remote-project", "remote-team", "class", "device-name", "mode", "upstream", "version", "read-class", "read-sources", "pull-every", "file", "revision", "current", "note", "confirm", "listed"]
 
     /// The options `gw usage` accepts (the report and --legacy); every option its help text names must be here.
     public static let usageFlags: Set<String> = ["days", "provider", "model", "sort", "json", "csv", "legacy", "device", "folder", "user", "project",
@@ -34,6 +34,8 @@ public enum AdminArgs {
         opts.remoteProject = flags["remote-project"] ?? ""; opts.remoteTeam = flags["remote-team"] ?? ""; opts.classes = flags["class"] ?? ""; opts.deviceName = flags["device-name"] ?? ""; opts.mode = flags["mode"] ?? ""; opts.auto = flags["auto"] == "true"; opts.manual = flags["manual"] == "true"; opts.theirs = flags["theirs"] == "true"; opts.ours = flags["ours"] == "true"
         opts.upstream = flags["upstream"] ?? ""
         opts.withPrivate = flags["with-private"] == "true"; opts.dryRun = flags["dry-run"] == "true"
+        opts.reconcileNote = flags["note"] ?? ""; opts.reconcileConfirm = flags["confirm"] ?? ""; opts.reconcileListed = flags["listed"] ?? ""
+        opts.reconcileNew = flags["new"] == "true"; opts.reconcileSkip = flags["skip"] == "true"; opts.reconcileAll = flags["all"] == "true"
         opts.afterRestore = flags["after-restore"] == "true"; opts.yes = flags["yes"] != nil
         opts.read = flags["read"] == "true"; opts.noRead = flags["no-read"] == "true"; opts.acceptReach = flags["accept-reach"] == "true"; opts.readClass = flags["read-class"] ?? ""; opts.readSources = flags["read-sources"] ?? ""; opts.pullEvery = flags["pull-every"] ?? ""
     }

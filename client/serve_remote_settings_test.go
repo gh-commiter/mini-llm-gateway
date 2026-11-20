@@ -1028,7 +1028,7 @@ func remoteCaddyMatchers(t *testing.T) map[string]struct {
 // A route added to only one of the two allow-lists (gateway or proxy) fails here.
 func TestRemoteAllowListMatchesCaddyfile(t *testing.T) {
 	matchers := remoteCaddyMatchers(t)
-	names := []string{"users", "bindings", "teams", "projects", "providers", "devices", "general", "status", "agents", "settings", "quota", "usage", "kb", "grants", "audit", "core", "export", "import", "upstreams", "upstream-push", "upstream-pull", "upstream-auto", "upstream-resolve", "upstream-links", "panels", "sync", "gateways", "sessions", "unknown"}
+	names := []string{"users", "bindings", "teams", "projects", "providers", "devices", "general", "status", "agents", "settings", "quota", "usage", "kb", "grants", "audit", "core", "export", "import", "upstreams", "upstream-push", "upstream-pull", "upstream-auto", "upstream-resolve", "upstream-reconcile", "upstream-links", "panels", "sync", "gateways", "sessions", "unknown"}
 	names = append(names, "activity", "foundry")
 	// Every first segment the gateway's own router or the core's IsAdminPath knows is a candidate too.
 	for _, src := range []string{"serve_admin.go", "coreapi/admin.go"} {

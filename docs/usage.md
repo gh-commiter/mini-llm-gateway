@@ -1769,11 +1769,36 @@ blocked. `gw upstream status` shows the state and since when, and a blocked push
 a script sees no failure; read the line). The mark is cleared when the link is removed (`unlink`, or removing the upstream) and by the owner's override
 `minigw gw upstream push <project> --upstream <name> --after-restore` (`--team <team>` for a team link): it first says that pushing without reconciling can
 create second copies on the upstream, asks for a "y" in a terminal (or takes `--yes` without one), writes an audit row (the owner, the link and the time, no note text), clears the mark
-of that one link and pushes. Ordinary link edits (`link` again, `--auto`, `--manual`) do not clear it. Reconcile is not available in this version: compare with the
-upstream by hand (`gw upstream push --dry-run`, `gw kb` on both sides), then use the override. Two things mark the links, both exact: `gw core restore` (also the Mac app's restore) and a file named `core.restored` in the core folder (the one that holds `core.db`), which `backup.sh --restore` of a Docker deployment writes and the gateway consumes at its next start (it marks the links in one database transaction, then removes the file).
+of that one link and pushes. Ordinary link edits (`link` again, `--auto`, `--manual`) do not clear it.
+
+Use `minigw gw upstream reconcile <project> --upstream <name>` to list the notes using a complete fresh read of the linked destination only.
+For a team use `minigw gw upstream reconcile --team <team> --upstream <name>`. Reading need not be enabled on the link.
+A cached mirror, dependencies, incomplete or forbidden reads never supply evidence or clear the mark.
+`--dry-run` lists without changing any receipts, decisions, marks or audit rows; run a normal listing before making decisions.
+
+- **known**: a surviving receipt still names a remote note with the exact reference and normalized author trailer. Its receipt is kept unchanged.
+  Surviving submission receipts keep their existing waiting and review behavior.
+- **candidate**: exactly one destination note ends with the exact trailer the push would write, with no surviving receipt.
+  Confirm its remote id with `minigw gw upstream reconcile <project> --upstream <name> --note <id> --confirm <remote id>`.
+  Equal content records a receipt. Different content records a conflict with an unknown base; use
+  `minigw gw upstream resolve <project> <id> --upstream <name> --ours` or `--theirs` before pushing.
+- **unknown**: no match, duplicate matches, a changed author or trailer, or a missing reference key. Reconcile never generates a missing key.
+  Decide explicitly with `minigw gw upstream reconcile <project> --upstream <name> --note <id> --new` (allow creation) or `--skip`
+  (do not push this local revision, including after a restart; a later local change is considered again). `--new` clears an earlier skip.
+  For the unknown ids from the last normal listing use
+  `minigw gw upstream reconcile <project> --upstream <name> --all --new`, or replace `--new` with `--skip`.
+  The CLI reads the saved ids from that listing and carries them in the decision request; `--listed <id,id,...>` can pin the displayed ids explicitly.
+  The request carries those ids: unlisted ids and changed local revisions are refused. Lost pending submissions remain unknown.
+
+Unmatched destination trailers are reported as **orphans**; nothing is imported or deleted. Neither titles nor similar content establish a match.
+The mark clears atomically only after a complete fresh read and decisions for every candidate and unknown, with local revisions and link settings rechecked.
+Status and blocked pushes show the reconcile command and counts from the last listing when available.
+The complete read has transport, time and size limits; exceeding any limit changes nothing. Restore overrides keep their existing behavior.
+
+Two things mark the links, both exact: `gw core restore` (also the Mac app's restore) and a file named `core.restored` in the core folder (the one that holds `core.db`), which `backup.sh --restore` of a Docker deployment writes and the gateway consumes at its next start (it marks the links in one database transaction, then removes the file).
 Nothing else is guessed: a database that is simply copied back, with or without `core.state`, is **not detected** (an epoch gap between the two files proves nothing, and an older database with the same epoch shows none). After such a copy, create the file by hand BEFORE you start the gateway: in a plain folder `touch <core folder>/core.restored` as the account that runs the gateway and `chmod 600` it (Windows: create an empty file of that name); for a Compose volume
 `docker run --rm --network none --user 0:0 --mount type=volume,src=<project>_config,dst=/v <the gateway's image> sh -c ': > /v/core/core.restored && chown 10001:10001 /v/core/core.restored && chmod 600 /v/core/core.restored'`.
-Without it, check `gw upstream status` yourself and do not push before comparing with the upstream. Unlinking and linking again is not a clean way out: `unlink` deletes the link's record of what was sent, so the next push sends EVERY published note of the project again as new, while `--after-restore` duplicates only the notes first sent after the backup was taken; the override is the smaller harm. After a restore, `gw core restore` prints how many links are paused, and the gateway log says so at every start.Notes deleted here, and changes of class to private, are not
+Without it, check `gw upstream status` yourself and do not push before comparing with the upstream. Unlinking and linking again is not a clean way out: `unlink` deletes the link's record of what was sent, so the next push sends EVERY published note of the project again as new, while `--after-restore` duplicates only the notes first sent after the backup was taken; reconcile preserves confirmed targets and avoids resending known notes. After a restore, `gw core restore` prints how many links are paused, and the gateway log says so at every start. Notes deleted here, and changes of class to private, are not
 propagated; the copy there stays until it is removed there. If the upstream limits writes the push waits and goes on. Every note
 of a run is reported as `create`, `skip`, `replace`, `wait`, `conflict` or `refused` with the upstream's own text; a refusal that would apply to all
 notes (not allowed, no such project, too many pending submissions) ends the run for that link and is shown by `status`.

@@ -954,11 +954,9 @@
       },
       "columns": [
        {
-        "field": "restoredBlocked",
-        "kind": "bool",
-        "label": "builtin.upstreams.section.links.column.restoredblocked",
-        "yes": "builtin.upstreams.section.links.column.restoredblocked.yes",
-        "no": "builtin.upstreams.section.links.column.restoredblocked.no"
+        "field": "reconcileState",
+        "kind": "text",
+        "label": "builtin.upstreams.section.links.column.restoredblocked"
        }
       ]
      },
