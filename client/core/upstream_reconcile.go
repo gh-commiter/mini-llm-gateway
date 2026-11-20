@@ -63,6 +63,7 @@ type ReconcileRow struct {
 	At        string `json:"at,omitempty"`
 	Equal     bool   `json:"equal,omitempty"`
 	Matches   string `json:"matches,omitempty"`
+	Private   bool   `json:"private,omitempty"` // a private note: never visible on the upstream, so it cannot be compared
 }
 type UpstreamReconcile struct {
 	Lines      []string       `json:"lines"`
@@ -70,6 +71,7 @@ type UpstreamReconcile struct {
 	Unknowns   []int64        `json:"unknowns"`
 	Candidates int            `json:"candidates"`
 	Unknown    int            `json:"unknown"`
+	Unchecked  int            `json:"unchecked"`
 	Cleared    bool           `json:"cleared"`
 }
 type reconcileSnapshot struct {
@@ -100,7 +102,7 @@ func reconcileCounts(tx *sql.Tx, l UpstreamLink) *ReconcileCounts {
 		if row.Class == "candidate" {
 			counts.Candidates++
 		}
-		if row.Class == "unknown" {
+		if row.Class == "unknown" || row.Class == "unchecked" { // an unchecked private note blocks the mark like an unknown
 			counts.Unknown++
 		}
 	}
@@ -226,7 +228,7 @@ func (p *pusher) freshReconcile(l UpstreamLink) (map[int64]reconcileRemote, []in
 			var missing []string
 			for _, c := range l.Classes {
 				if c == Private {
-					continue // private notes are never listed
+					continue // the manifest never lists private notes: they are not "covered" by it, and the rows of such notes are "unchecked" (below), never matched
 				}
 				seen := false
 				for _, f := range src.Full {
@@ -394,6 +396,17 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 			continue
 		}
 		row := ReconcileRow{Note: n.ID, Revision: n.Revision, Class: "unknown"}
+		if n.Class == Private {
+			// A private note is never in the manifest: the upstream cannot show whether it has a copy. A surviving receipt stays as far as it
+			// goes (known, not compared); without one the note is unchecked: the owner decides by name.
+			row.Private = true
+			row.Class = "unchecked"
+			if n.Sent != nil {
+				row.Class = "known"
+			}
+			out.Notes = append(out.Notes, row)
+			continue
+		}
 		ref := upstreamRef(key, l.Upstream, l.Project, n.ID)
 		var matches []int64
 		if len(key) > 0 {
@@ -466,7 +479,7 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 		kept := out.Notes[:0]
 		for i := range out.Notes {
 			row := out.Notes[i]
-			if row.Class == "unknown" || row.Class == "candidate" {
+			{
 				var v string
 				var d reconcileDecision
 				var n UpstreamNote
@@ -476,8 +489,8 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 					}
 				}
 				if tx.QueryRow(`SELECT value FROM meta WHERE key=?`, reconcileDecisionKey(l.Project, l.Upstream, row.Note)).Scan(&v) == nil && json.Unmarshal([]byte(v), &d) == nil && d.Revision == n.Revision && d.Hash == n.Hash &&
-					(d.Action == "skip" || d.Action == "new" && mark != "" && d.Mark == mark) {
-					row.Class = d.Action
+					(d.Action == "skip" || d.Action == "new" && mark != "" && d.Mark == mark && row.Class != "known") {
+					row.Class = d.Action // a persistent skip is honoured by the push whatever the note looks like now, so it is listed (and releasable) as skipped
 				}
 			}
 			if mark == "" && row.Class != "skip" {
@@ -520,13 +533,16 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 				ok := false
 				switch {
 				case r.All:
+					if old.Class == "unchecked" {
+						return ErrRefusal{"reconcile: a private note is unchecked (not visible on the upstream): decide it by name with --note <id> --new or --skip, not with --all"}
+					}
 					ok = old.Class == "unknown"
 				case r.Confirm > 0:
 					ok = old.Class == "candidate" && old.Remote == r.Confirm
 				case r.New:
-					ok = old.Class == "unknown" || old.Class == "candidate" || old.Class == "skip"
+					ok = old.Class == "unknown" || old.Class == "candidate" || old.Class == "skip" || old.Class == "unchecked"
 				case r.Skip:
-					ok = old.Class == "unknown" || old.Class == "candidate"
+					ok = old.Class == "unknown" || old.Class == "candidate" || old.Class == "unchecked"
 				}
 				if !ok {
 					return ErrRefusal{"reconcile: decision does not match the listed class or remote id"}
@@ -596,6 +612,9 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 				out.Unknown++
 				out.Unknowns = append(out.Unknowns, row.Note)
 			}
+			if row.Class == "unchecked" {
+				out.Unchecked++
+			}
 		}
 		if r.DryRun {
 			return nil
@@ -603,7 +622,7 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 		if e = reconcileMeta(tx, reconcileKey(l.Project, l.Upstream, "listing"), reconcileSnapshot{address, mark, l, out.Notes}); e != nil {
 			return e
 		}
-		if mark != "" && out.Candidates == 0 && out.Unknown == 0 {
+		if mark != "" && out.Candidates == 0 && out.Unknown == 0 && out.Unchecked == 0 {
 			if _, e = tx.Exec(`DELETE FROM meta WHERE key=?`, restoredKey(l.Project, l.Upstream)); e != nil {
 				return e
 			}
@@ -618,7 +637,7 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 				counts["orphan"]++
 			}
 		}
-		return Audit(tx, adminActor, "upstream.reconcile", l.Upstream, map[string]any{"project": l.Project, "counts": counts, "candidates": out.Candidates, "unknown": out.Unknown, "cleared": out.Cleared})
+		return Audit(tx, adminActor, "upstream.reconcile", l.Upstream, map[string]any{"project": l.Project, "counts": counts, "candidates": out.Candidates, "unknown": out.Unknown, "unchecked": out.Unchecked, "cleared": out.Cleared})
 	}
 	if r.DryRun {
 		e = s.read(ctx, apply)
@@ -638,6 +657,8 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 			out.Lines = append(out.Lines, fmt.Sprintf("candidate note %d (revision %d), remote %d %q, written by %s at %s, remote revision %d, %s", row.Note, row.Revision, row.Remote, row.Title, row.Writer, row.At, row.RemoteRev, eq))
 		case row.Class == "unknown" && row.Matches != "":
 			out.Lines = append(out.Lines, fmt.Sprintf("unknown note %d (revision %d), upstream notes with its trailer but no proof they came from this gateway (information only): remote %s", row.Note, row.Revision, row.Matches))
+		case row.Private && row.Class == "known":
+			out.Lines = append(out.Lines, fmt.Sprintf("known note %d (revision %d), remote %d; private note: the receipt could not be compared with the upstream", row.Note, row.Revision, row.Remote))
 		default:
 			out.Lines = append(out.Lines, fmt.Sprintf("%s note %d (revision %d), remote %d", row.Class, row.Note, row.Revision, row.Remote))
 		}
@@ -649,6 +670,9 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 	}
 	if len(out.Notes) == 0 && !out.Cleared {
 		out.Lines = append(out.Lines, "no restore mark: only skipped notes are listed")
+	}
+	if out.Unchecked > 0 {
+		out.Lines = append(out.Lines, fmt.Sprintf("unchecked %d: private notes are not visible on the upstream, so nothing can be compared; each needs its own decision (--note <id> --new may create a second copy on the upstream, or --note <id> --skip); --all does not cover them", out.Unchecked))
 	}
 	out.Lines = append(out.Lines, fmt.Sprintf("candidates %d, unknown %d, restored mark cleared: %t", out.Candidates, out.Unknown, out.Cleared))
 	return out, nil

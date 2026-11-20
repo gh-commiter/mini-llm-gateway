@@ -656,3 +656,69 @@ func TestReconcileConfirmedReceiptDoesNotEnableADirectOverwriteOnPublish(t *test
 		t.Fatal(res)
 	}
 }
+
+// A --with-private link: private notes are never in the manifest, so they are "unchecked": --all never covers them, named decisions do.
+func TestReconcilePrivateNotesAreUncheckedAndNeedNamedDecisions(t *testing.T) {
+	f, notes := upFx(t)
+	project := f.pid["fakture"]
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: project, Upstream: "hub", Remote: "shop", Classes: "structure,data,private", WithPrivate: true, Mode: "submit"}))
+	priv := notes["Private three"]
+	f.markAll()
+	h := &hub{}
+	r, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+	f.ok(e)
+	if r.Unknown != 2 || r.Unchecked != 1 || !strings.Contains(strings.Join(r.Lines, "\n"), "unchecked 1: private notes are not visible") {
+		t.Fatal(r)
+	}
+	for _, row := range r.Notes {
+		if row.Note == priv.ID && (row.Class != "unchecked" || !row.Private) {
+			t.Fatal(row)
+		}
+	}
+	// --all with the unknowns decides them but cannot clear the mark; --all naming the private id is refused
+	before := reconcileTables(t, f)
+	if _, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, All: true, New: true, Listed: append(append([]int64{}, r.Unknowns...), priv.ID)}); e == nil || !reflect.DeepEqual(before, reconcileTables(t, f)) {
+		t.Fatal("--all covered an unchecked row", e)
+	}
+	r2, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, All: true, New: true, Listed: r.Unknowns})
+	f.ok(e)
+	if r2.Cleared || f.marked() != 1 || r2.Unchecked != 1 {
+		t.Fatal("--all cleared the mark of a link with unchecked private notes", r2)
+	}
+	r2, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: priv.ID, Skip: true})
+	f.ok(e)
+	if !r2.Cleared || f.marked() != 0 {
+		t.Fatal(r2)
+	}
+}
+
+// A skipped note whose receipt becomes "known" again stays listed as skipped and can be released.
+func TestReconcileSkipSurvivesTheNoteBecomingKnown(t *testing.T) {
+	f, project, n, h := reconcileFixture(t, "submit", true)
+	f.ok(f.upstreamRecordPublished(ctx, project, "hub", n, 41, 3))
+	good := h.notes[0].body
+	h.notes[0].body += " altered" // the trailer is no longer the exact one: the receipted note is unknown
+	r, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+	f.ok(e)
+	if r.Unknown != 1 {
+		t.Fatal(r)
+	}
+	r, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, Skip: true})
+	f.ok(e)
+	if !r.Cleared {
+		t.Fatal(r)
+	}
+	h.notes[0].body = good // the trailer is back: by the receipt the note is known again
+	r, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, DryRun: true})
+	f.ok(e)
+	if len(r.Notes) != 1 || r.Notes[0].Class != "skip" {
+		t.Fatal("the skip vanished from the listing", r)
+	}
+	_, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+	f.ok(e)
+	r, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: n.ID, New: true})
+	f.ok(e)
+	if len(r.Notes) != 1 || r.Notes[0].Class != "new" {
+		t.Fatal(r)
+	}
+}
