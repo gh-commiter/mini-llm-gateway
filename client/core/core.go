@@ -64,7 +64,8 @@ type Store struct {
 	st    state
 	gw    string
 	// migrated: set by Open when it migrated an older database (see Migrated)
-	migrated *Migration
+	migrated       *Migration
+	sentinelMarked int // links marked by the restore pending file at this start (see SentinelMarked)
 	// the automatic upstream push (upstream_auto.go): its timing and the jitter of its back-off (a test gives a fixed one)
 	autoMu     sync.Mutex
 	auto       AutoTiming
