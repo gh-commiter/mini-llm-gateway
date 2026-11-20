@@ -3228,6 +3228,49 @@
            }
           }
          ]
+        },
+        {
+         "kind": "record",
+         "id": "rejectedcount",
+         "title": "builtin.upstreams.section.links.detail.section.rejected.title",
+         "source": {
+          "path": "/upstream-links/{parent.id}"
+         },
+         "columns": [
+          {
+           "field": "rejectedCount",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.detail.section.rejected.column.count"
+          }
+         ]
+        },
+        {
+         "kind": "list",
+         "id": "rejected",
+         "title": "builtin.upstreams.section.links.detail.section.rejected.list.title",
+         "source": {
+          "path": "/upstream-links/{parent.id}",
+          "items": "rejectedRows"
+         },
+         "key": "note",
+         "columns": [
+          {
+           "field": "title",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.detail.section.rejected.column.title"
+          },
+          {
+           "field": "submission",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.detail.section.rejected.column.submission"
+          },
+          {
+           "field": "reason",
+           "kind": "text",
+           "label": "builtin.upstreams.section.links.detail.section.rejected.column.reason"
+          }
+         ],
+         "empty": "builtin.upstreams.section.links.detail.section.rejected.empty"
         }
        ]
       }

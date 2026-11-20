@@ -1106,6 +1106,21 @@ private let upstreamAnswers: [(String, Int, String)] = [
         #expect(cell("something new") == "something new")
     }
 
+    /// A link's detail lists the notes the upstream rejected (count, then title, submission and the hub's reason); the hub's reason is
+    /// shown exactly as it came, as text (the view draws it verbatim).
+    @Test(.enabled(if: haveFixtures)) func theRejectedNotesAreInTheLinkDetail() throws {
+        let d = try upstreamsPanel()
+        let links = try #require(d.sections.first { $0.id == "links" })
+        let detail = try #require(links.detail)
+        #expect(detail.sections.contains { $0.id == "rejectedcount" })
+        let rejected = try #require(detail.sections.first { $0.id == "rejected" })
+        #expect(rejected.columns?.map(\.field) == ["title", "submission", "reason"])
+        let reason = try #require(rejected.columns?.first { $0.field == "reason" })
+        let m = PanelModel(panel: d, strings: try strings("C"), routes: PanelRoutes.builtin, send: { _ in CoreResponse(status: 200, body: Data()) })
+        let row = PanelRow(id: "5", values: ["reason": .string("<b>too</b> **vague** [x](http://example.com)")])
+        #expect(m.cell(reason, row) == "<b>too</b> **vague** [x](http://example.com)")
+    }
+
     @Test(.enabled(if: haveFixtures)) func everyKeyHasATextAndTheRegistryMarksTheSecretRoute() throws {
         let d = try upstreamsPanel()
         for loc in ["C", "sl_SI"] {

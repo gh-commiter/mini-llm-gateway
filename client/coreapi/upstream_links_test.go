@@ -301,3 +301,46 @@ func TestAfterRestoreOverrideValidatesBeforeClearing(t *testing.T) {
 		t.Fatalf("%d audit rows, %v", n, err)
 	}
 }
+
+// A note whose exact text the hub rejected is listed in the link's detail with its title, the submission and the hub's reason as it is
+// (the panels draw it as plain text); the count is there too, and a link without any has an empty list, not null.
+func TestUpstreamLinkDetailListsRejectedNotes(t *testing.T) {
+	f := newFixture(t)
+	h := &methodHost{secretHost: secretHost{secrets: map[string]string{}}}
+	h.answer = func(method, path string) (int, string) {
+		switch {
+		case path == "/minigw/v1/projects/shop":
+			return 200, `{"id":7,"slug":"shop"}`
+		case method == "POST":
+			return 201, `{"id":5,"state":"rejected","reason":"<b>too</b> vague"}`
+		}
+		return 404, "{}"
+	}
+	api := New(Options{Store: func() *core.Store { return f.st }, Upstream: h, UpstreamSleep: func(time.Duration) bool { return true }})
+	call := func(method, path, body string) []byte {
+		t.Helper()
+		r := api.Handle(bg, Context{Kind: KindAdmin}, Request{Method: method, Path: path, Body: []byte(body)})
+		if r.Status != 200 {
+			t.Fatalf("%s %s: %d %s", method, path, r.Status, r.Body)
+		}
+		return r.Body
+	}
+	call("PUT", "/upstreams/hub", `{"address":"hub.example","token":"tok#key"}`)
+	fk := f.pid["fakture"]
+	id := fmt.Sprintf("project-%d-hub", fk)
+	call("PUT", fmt.Sprintf("/upstreams/hub/links/%d", fk), `{"remote":"shop","mode":"submit"}`)
+	var d adminLinkDetailJSON
+	json.Unmarshal(call("GET", "/upstream-links/"+id, ""), &d)
+	if d.RejectedCount != 0 || d.RejectedRows == nil || len(d.RejectedRows) != 0 {
+		t.Fatalf("before: %+v", d)
+	}
+	call("POST", "/upstream-push", fmt.Sprintf(`{"project":%d}`, fk))
+	json.Unmarshal(call("GET", "/upstream-links/"+id, ""), &d)
+	if d.RejectedCount == 0 || len(d.RejectedRows) != d.RejectedCount {
+		t.Fatalf("after: %+v", d)
+	}
+	r := d.RejectedRows[0]
+	if r.Submission != 5 || r.Reason != "<b>too</b> vague" || r.Title == "" || r.Note == 0 {
+		t.Fatalf("%+v", r)
+	}
+}

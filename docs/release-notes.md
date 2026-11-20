@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Changed
+- Upstream gateways panel: the detail page of a link shows the notes the upstream rejected as they are (the count, and per note its title, the submission and the upstream's reason as plain text), as `gw upstream status` does. `GET /upstream-links/{id}` carries `rejectedCount` and `rejectedRows`.
+
 ## 0.9.7
 
 ### Fixed

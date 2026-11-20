@@ -475,6 +475,16 @@ func toAdminLink(l core.UpstreamLinkInfo) adminLinkJSON {
 type adminLinkDetailJSON struct {
 	adminLinkJSON
 	ConflictRows []adminConflictJSON `json:"conflictRows"`
+	// RejectedCount and RejectedRows: notes whose exact text the upstream rejected (the hub's reason is its text: a panel shows it as plain text).
+	RejectedCount int                 `json:"rejectedCount"`
+	RejectedRows  []adminRejectedJSON `json:"rejectedRows"`
+}
+
+type adminRejectedJSON struct {
+	Note       int64  `json:"note"`
+	Title      string `json:"title"`
+	Submission int64  `json:"submission"`
+	Reason     string `json:"reason"`
 }
 
 type adminConflictJSON struct {
@@ -514,7 +524,14 @@ func (a *API) adminUpstreamLink(ctx context.Context, st *core.Store, method stri
 		if j.ID != seg[1] {
 			continue
 		}
-		out := adminLinkDetailJSON{adminLinkJSON: j, ConflictRows: []adminConflictJSON{}}
+		out := adminLinkDetailJSON{adminLinkJSON: j, ConflictRows: []adminConflictJSON{}, RejectedCount: l.Rejected, RejectedRows: []adminRejectedJSON{}}
+		for _, r := range l.RejectedNotes {
+			row := adminRejectedJSON{Note: r.Note, Submission: r.Submission, Reason: r.Reason}
+			if note, e := st.OwnerGetNote(ctx, r.Note); e == nil {
+				row.Title = note.Title
+			}
+			out.RejectedRows = append(out.RejectedRows, row)
+		}
 		for _, c := range l.Conflicts {
 			r := adminConflictJSON{Note: c.Note, What: "changed", ProjectID: j.ProjectID, TeamID: j.TeamID, Upstream: l.Upstream}
 			if c.Gone {
