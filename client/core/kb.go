@@ -709,7 +709,7 @@ func reviewHash(tx *sql.Tx, id int64) (string, error) {
 }
 
 // ErrOldClientReplacement: the answer to an accept of a replacement from a client that sent no currentRevision (older than 0.8.8).
-const ErrOldClientReplacement = "this minigw is too old to accept a replacement (it cannot show the note's current text): use minigw 0.8.8 or newer (a beta: https://github.com/gh-commiter/mini-llm-gateway/releases), review it in the Mini Gateway app or in the remote settings, or reject it"
+const ErrOldClientReplacement = "this minigw is too old to accept a replacement (it cannot show the note's current text): update minigw (0.9.0 or newer), review it in the Mini Gateway app or in the remote settings, or reject it"
 
 // DefaultStaleReason is stored when a replacement whose note changed or is gone is rejected without a reason.
 const DefaultStaleReason = "the note this would replace changed or no longer exists: read the project's notes and propose the change again"

@@ -36,7 +36,7 @@ To accept: first read with `kb review` (or `gw kb review`), show the user the te
 yes, then pass the whole `version` line (64 hex characters) review printed for that submission; never
 accept without it, and when the answer is "the submission changed since you read it", review again and show
 the new text. Nothing but you makes sure the user saw the text: the version only stops a changed text.
-Before proposing a replacement read the note's current revision (`minigw note read <id>`) and give that as `--revision`: the reviewer is shown the note's current text next to yours, and a proposal written against an older revision is stale and is rejected (read the note again and propose again). Accepting a replacement needs minigw 0.8.8 or newer; it prints where the old text is saved (`minigw note history <id>`). Nobody accepts their own submission. Pending content is only
+Before proposing a replacement read the note's current revision (`minigw note read <id>`) and give that as `--revision`: the reviewer is shown the note's current text next to yours, and a proposal written against an older revision is stale and is rejected (read the note again and propose again). Accepting a replacement needs minigw 0.9.0 or newer; it prints where the old text is saved (`minigw note history <id>`). Nobody accepts their own submission. Pending content is only
 visible to its author, the project's admins and the owner; called agents cannot submit. These commands need
 Beta 4 support; never fall back to publishing if submission is unavailable.
 `note read --json` includes authenticated provenance. Never put customer names,
