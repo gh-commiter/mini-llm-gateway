@@ -271,15 +271,23 @@ run from a second container of the same image on the Compose network. A step tha
 only the steps that need a second machine print `TODO(operator)` with the exact commands (a real Mac and Windows client,
 a browser on another machine, the upstream link, one model request, which needs Claude Code).
 
-It refuses a project name that already has containers, networks or volumes (never `minigw`, the default project), and
-`--reuse` only continues a leftover project that carries this script's marker volume. At the end it asks on a
-terminal whether to remove what it made, or does so with `--cleanup`; later `--cleanup-only --project <name>` removes exactly that
-project, its restore project, its labelled volumes and the working directory, nothing else.
-The report `rehearsal-report-<UTC time>.md` in the current directory lists versions, one row per step (`ok`, `FAIL`,
-`TODO`) with seconds, the access matrix and the operator's commands. It holds no password, token, host name, address
-or user name. The exit code is 0 only when no step FAILED; every `TODO(operator)` row is still yours before you invite
-the team. Docker Desktop and rootless Docker show the browser as a Docker address, so the source filter
-`allowedSourceCIDRs` is proven only by the second-machine browser item.
+It refuses a project name that already has containers, networks or volumes (never `minigw`, the default project). The
+image is built into its own tag, `minigw-rehearsal:<run id>`, never the shared `minigw:<version>` a production project may
+use. The working directory (`--workdir`, default `${TMPDIR:-/tmp}/<project>-work`) must not exist: the script makes it
+(mode 700, with a marker file naming the project and the run id), and everything it creates in Docker carries that run id
+as a label. `--reuse` only continues the leftover of an interrupted run, proven by that marker file and the marker
+volume; after an interruption (Ctrl-C) the script prints the exact recovery command. At the end it asks on a terminal
+whether to remove what it made, or does so with `--cleanup`; later `--cleanup-only --project <name> --workdir <dir>` removes
+exactly the containers, networks, volumes and image tag carrying that run id (the restore project too), checks that
+nothing is left and says what remains if a removal fails. Names alone never authorize a removal. Secrets never appear in
+a command line: the generated remote page password goes to a file in the working directory (its path is printed), the
+session header goes to curl through a private config file.
+The report `rehearsal-report-<run id>.md` in the current directory lists versions, the image, one row per step (`ok`,
+`FAIL`, `TODO`) with seconds, the access matrix and the operator's commands. Only the detail text is sanitized (host and user
+names, paths, addresses, the admin name, the provider URL and every credential of the run are replaced), never the
+verdict columns, and the report is not written if a credential value would be in it. The exit code is 0 only when no step
+FAILED; every `TODO(operator)` row is still yours before you invite the team. Docker Desktop and rootless Docker show the
+browser as a Docker address, so the source filter `allowedSourceCIDRs` is proven only by the second-machine browser item.
 
 ## Hardening that is on
 
