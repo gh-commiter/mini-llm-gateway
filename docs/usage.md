@@ -1780,17 +1780,22 @@ an older upstream ("update the upstream gateway to 0.9.3 or newer") or a role th
 
 - **known**: a surviving receipt still names a remote note with the exact reference and normalized author trailer. Its receipt is kept unchanged.
   Surviving submission receipts keep their existing waiting and review behavior.
-- **candidate**: exactly one destination note ends with the exact trailer the push would write, with no surviving receipt, AND the upstream itself reports
-  (the provenance of the note's current revision) that this gateway's device wrote it. The trailer text alone proves nothing: anyone can copy it.
-  The listing shows what you confirm: the remote id, title, the writer and time the upstream reports, the remote revision, and whether the content is equal to or differs from the local note.
-  Confirm with `minigw gw upstream reconcile <project> --upstream <name> --note <id> --confirm <remote id>`; the decision is refused ("list again") when the remote revision or content changed since the listing.
-  Equal content records a receipt; on a publish link its base stays unknown, so the first later local change is a conflict for `resolve`, never a direct overwrite of the upstream note.
-  Different content records a conflict with an unknown base; use
-  `minigw gw upstream resolve <project> <id> --upstream <name> --ours` or `--theirs` before pushing.
+- **candidate**: exactly one destination note ends with the exact trailer the push would write, and no receipt survives for the local note.
+  The trailer text alone proves nothing (anyone can copy it), so the listing SHOWS what you confirm: the remote id, title, the writer and time the upstream reports,
+  the remote revision, whether the content is equal to or differs from the local note, and the proof: "written by this gateway's device" (the upstream's provenance of the
+  note's current revision names this gateway's device) or "no proof: last written by <name>" (a reviewer's edit, an accepted submission, or any note after a restore onto a new
+  computer, where reconnecting made a new device key).
+  Confirm with `minigw gw upstream reconcile <project> --upstream <name> --note <id> --confirm <remote id>`; the decision is refused ("list again") when the remote revision,
+  content or proof changed since the listing.
+  - With proof and equal content a receipt is recorded (on a publish link its base stays unknown, so the first later local change is a conflict, never a direct overwrite).
+    With proof and different content, a conflict with an unknown base is recorded.
+  - Without proof the binding is ALWAYS recorded as a conflict with an unknown base, on both link modes, equal or not; the confirmation says so. The first push of that note
+    then goes through `minigw gw upstream resolve <project> <id> --upstream <name> --ours` (a submission for the upstream's reviewers that replaces the bound note) or `--theirs`;
+    it never replaces or supersedes directly, and the upstream keeps ONE note.
   A candidate can be rejected with `--note <id> --new` or `--skip`.
-- **unknown**: no match, duplicate matches, a match the upstream does not attribute to this gateway's device (listed for information only, with the remote ids), a changed author or trailer, or a missing reference key. Reconcile never generates a missing key.
+- **unknown**: no match, duplicate matches (the listing shows each with its proof; bind one of them with `--note <id> --confirm <remote id>`, which is recorded as above), a changed author or trailer, or a missing reference key. Reconcile never generates a missing key.
   Decide explicitly with `minigw gw upstream reconcile <project> --upstream <name> --note <id> --new` (allow creation) or `--skip`
-  (do not push this local revision, including after a restart; a later local change is considered again). `--new` clears an earlier skip, also after the restore mark is gone:
+  (never push this note: the skip holds across later local edits until you release it; `gw upstream status` and every push count the skipped notes). `--new` clears an earlier skip, also after the restore mark is gone:
   while a link has skipped notes, `minigw gw upstream reconcile <project> --upstream <name>` lists them without a restore mark, and `--note <id> --new` releases one at a time.
   For the unknown ids from the last normal listing use
   `minigw gw upstream reconcile <project> --upstream <name> --all --new`, or replace `--new` with `--skip`.
@@ -1805,7 +1810,10 @@ an older upstream ("update the upstream gateway to 0.9.3 or newer") or a role th
 Unmatched destination trailers are reported as **orphans**; nothing is imported or deleted. Neither titles nor similar content establish a match.
 The mark clears atomically only after a complete fresh read and decisions for every candidate and unknown, with local revisions and link settings rechecked.
 Status and blocked pushes show the reconcile command and counts from the last listing when available.
-The complete read has transport, time and size limits; exceeding any limit changes nothing. Restore overrides keep their existing behavior.
+The complete read has transport, time and size limits; exceeding any limit changes nothing. Every request has its own deadline; the whole read has a time budget that grows with
+the number of notes (at most 15 minutes), and an exhausted budget or a slow request says how many notes were read of how many and asks you to run it again; it is never reported as the upstream being down.
+When the upstream limits reads, reconcile waits and goes on within the budget (the waits are reported in the answer). A large project is read once, by the listing; a named decision
+(`--note`, `--all`) reads only the upstream's manifest, which must still equal the one the listing was made from (any added, removed or changed note refuses it with "list again"), and the one note it binds. Restore overrides keep their existing behavior.
 
 Two things mark the links, both exact: `gw core restore` (also the Mac app's restore) and a file named `core.restored` in the core folder (the one that holds `core.db`), which `backup.sh --restore` of a Docker deployment writes and the gateway consumes at its next start (it marks the links in one database transaction, then removes the file).
 Nothing else is guessed: a database that is simply copied back, with or without `core.state`, is **not detected** (an epoch gap between the two files proves nothing, and an older database with the same epoch shows none). After such a copy, create the file by hand BEFORE you start the gateway: in a plain folder `touch <core folder>/core.restored` as the account that runs the gateway and `chmod 600` it (Windows: create an empty file of that name); for a Compose volume
