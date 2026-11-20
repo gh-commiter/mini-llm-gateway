@@ -1914,6 +1914,44 @@
    }
   },
   {
+   "name": "status with notes bound without proof",
+   "args": [
+    "upstream",
+    "status",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}, {\"ID\": 4, \"Slug\": \"web\", \"Name\": \"Web\", \"Archived\": false}]}"
+    },
+    {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"label\": \"shop\", \"pending\": 1, \"total\": 1, \"restricted\": 1, \"auto\": true, \"mode\": \"publish\"}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 1 of 1 notes would go, never pushed, classes structure,data, auto, publish\n  read: off\n  1 note is bound to an upstream note without proof that this gateway wrote it: its changes go out as submissions for the upstream's reviewers, never as direct writes\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstreams?project=3",
+      ""
+     ]
+    ]
+   }
+  },
+  {
    "name": "push publish with a conflict",
    "args": [
     "upstream",

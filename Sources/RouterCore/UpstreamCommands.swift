@@ -141,6 +141,7 @@ extension AdminCommands {
                 if let w = d["waiting"]?.int, w > 0 { say("  \(w) notes waited for a review upstream at the last push; they are checked at the next push (not a failure)") }
                 if let s = Self.upstreamForeign(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamHeld(d) { say(clean("  " + s)) }
+                if let s = Self.upstreamRestricted(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamSkipped(d) { say(clean("  " + s)) }
                 if let s = Self.upstreamBackwards(d) { say(clean("  " + s)) }
             }
@@ -370,6 +371,14 @@ extension AdminCommands {
         let n = d["held"]?.int ?? 0
         if n == 0 { return nil }
         return (n == 1 ? "1 note" : "\(n) notes") + " skipped by you during reconcile: never pushed until released with: minigw gw upstream reconcile <project> --upstream <name> --note <id> --new"
+    }
+
+    /// Notes bound to an upstream note without proof that this gateway wrote it: submissions only (as Go's upstreamRestricted).
+    static func upstreamRestricted(_ d: JDict) -> String? {
+        let n = d["restricted"]?.int ?? 0
+        if n == 0 { return nil }
+        if n == 1 { return "1 note is bound to an upstream note without proof that this gateway wrote it: its changes go out as submissions for the upstream's reviewers, never as direct writes" }
+        return "\(n) notes are bound to upstream notes without proof that this gateway wrote them: their changes go out as submissions for the upstream's reviewers, never as direct writes"
     }
 
     /// Notes the upstream answered about definitively in the last traversal (as Go's upstreamSkipped).

@@ -44,6 +44,7 @@ type upLink struct {
 	Total           int
 	Foreign         int
 	Held            int
+	Restricted      int
 	Auto            bool
 	Mode            string
 	DirtySince      *time.Time
@@ -280,6 +281,9 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 				say(clean("  " + s))
 			}
 			if s := upstreamHeld(l); s != "" {
+				say(clean("  " + s))
+			}
+			if s := upstreamRestricted(l); s != "" {
 				say(clean("  " + s))
 			}
 			if s := upstreamSkipped(l); s != "" {
@@ -784,6 +788,17 @@ func upstreamHeld(l upLink) string {
 		return "1 note skipped by you during reconcile: never pushed until released with: minigw gw upstream reconcile <project> --upstream <name> --note <id> --new"
 	}
 	return fmt.Sprintf("%d notes skipped by you during reconcile: never pushed until released with: minigw gw upstream reconcile <project> --upstream <name> --note <id> --new", l.Held)
+}
+
+// upstreamRestricted: notes bound to an upstream note without proof that this gateway wrote it (reconcile): their changes are only ever submissions.
+func upstreamRestricted(l upLink) string {
+	switch l.Restricted {
+	case 0:
+		return ""
+	case 1:
+		return "1 note is bound to an upstream note without proof that this gateway wrote it: its changes go out as submissions for the upstream's reviewers, never as direct writes"
+	}
+	return fmt.Sprintf("%d notes are bound to upstream notes without proof that this gateway wrote them: their changes go out as submissions for the upstream's reviewers, never as direct writes", l.Restricted)
 }
 
 // upstreamBackwards: published notes whose copy on the upstream has a lower revision than our push recorded (replaced by an older one there).
