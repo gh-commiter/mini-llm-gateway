@@ -611,6 +611,15 @@ login() { # password origin -> HTTP code, body in $WORK/body
   printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps({"password": sys.stdin.read()}))' |
     reqn -X POST -H "Origin: $2" -H 'Content-Type: application/json' -H 'X-Minigw-Remote-Request: 1' --data-binary @- "$URL/minigw/settings/login"
 }
+write_remote() { # JSON list of CIDRs: rewrite the remoteSettings block of serve.json in the gateway container
+  dc exec -T minigw cat /var/lib/minigw/config/serve.json >"$WORK/serve.in" 2>/dev/null &&
+  python3 -c '
+import json,sys
+c=json.load(open(sys.argv[1]))
+c["remoteSettings"]={"enabled":True,"listen":"0.0.0.0:8766","origin":sys.argv[2],"allowedSourceCIDRs":json.loads(sys.argv[4]),"proxyIdentity":"settings-proxy.internal","proxyCA":"/admin-tls/link-ca.pem","certificate":"/admin-tls/gateway.pem","privateKey":"/admin-tls/gateway.key"}
+json.dump(c,open(sys.argv[3],"w"),indent=1)' "$WORK/serve.in" "$URL" "$WORK/serve.out" "$1" &&
+  [ -s "$WORK/serve.out" ] && dc exec -T minigw sh -c 'cat > /var/lib/minigw/config/serve.json' <"$WORK/serve.out"
+}
 stage_admin() {
   if [ "$ADMIN" != 1 ]; then
     todo 6.remote "remote web settings were not rehearsed (run again with --admin)" <<EOF
@@ -649,17 +658,23 @@ EOF
     ok 6.certs "admin-certs.sh link and browser created the certificates (private CA, name-constrained browser CA for $ANAME), no key printed"
   fi
   printf '%s\n' "$PW" | gw settings password >/dev/null 2>&1 || { bad 6.password "gw settings password failed"; return; }
-  # the remoteSettings block of docs/docker.md, step 3 (allowedSourceCIDRs open: on this host the page's source address is the Docker gateway)
-  dc exec -T minigw cat /var/lib/minigw/config/serve.json >"$WORK/serve.in" 2>/dev/null &&
-  python3 -c '
-import json,sys
-c=json.load(open(sys.argv[1]))
-c["remoteSettings"]={"enabled":True,"listen":"0.0.0.0:8766","origin":sys.argv[2],"allowedSourceCIDRs":["0.0.0.0/0"],"proxyIdentity":"settings-proxy.internal","proxyCA":"/admin-tls/link-ca.pem","certificate":"/admin-tls/gateway.pem","privateKey":"/admin-tls/gateway.key"}
-json.dump(c,open(sys.argv[3],"w"),indent=1)' "$WORK/serve.in" "$URL" "$WORK/serve.out" &&
-  [ -s "$WORK/serve.out" ] && dc exec -T minigw sh -c 'cat > /var/lib/minigw/config/serve.json' <"$WORK/serve.out" || { bad 6.config "could not write the remoteSettings block into serve.json"; return; }
+  # the remoteSettings block of docs/docker.md, step 3; the source filter starts at the narrowest value and is widened only if the narrow one does not work here
+  write_remote '["127.0.0.1/32"]' || { bad 6.config "could not write the remoteSettings block into serve.json"; return; }
   OVERLAY=$ADMINFILES; use_project "$PROJ" "$PORT"
   uo=$(dc up -d 2>&1) || { bad 6.proxy "docker compose up with compose.admin.yaml: $(tailc "$uo")"; return; }
   wait_healthy || { bad 6.proxy "gateway not healthy after enabling the admin profile"; return; }
+  # the browser here is curl on the host: the proxy publishes on the host, so the proxy (and the gateway) see the admin network's gateway address
+  dq docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "${PROJ}_admin"; subs=$(printf '%s' "$DQ" | tr ' ' '\n' | grep '^[0-9][0-9]*\.[0-9.]*/[0-9][0-9]*$' | head -n 1)
+  SRCFILTER="opened to all IPv4 (0.0.0.0/0) for this rehearsal: the documented allowedSourceCIDRs filter was NOT tested: see TODO 9.browser"
+  if [ -n "$subs" ]; then
+    write_remote "[\"$subs\"]" && dc restart minigw >/dev/null 2>&1 && wait_healthy || { bad 6.config "could not apply the narrow source filter"; return; }
+    i=0; c=000; while [ $i -lt 15 ]; do c=$(reqn "$URL/minigw/settings"); [ "$c" = 200 ] && break; sleep 2; i=$((i + 1)); done
+    if [ "$c" = 200 ]; then SRCFILTER="restricted to the Compose admin network $subs (the narrowest setting that works with a browser on the host); this shows the filter admits the proxy path, it does NOT prove the documented LAN filter: see TODO 9.browser"; fi
+  fi
+  if ! case $SRCFILTER in restricted*) true;; *) false;; esac; then
+    write_remote '["0.0.0.0/0"]' && dc restart minigw >/dev/null 2>&1 && wait_healthy || { bad 6.config "could not apply the source filter"; return; }
+  fi
+  ok 6.srcfilter "source filter: $SRCFILTER"
   i=0; c=000; while [ $i -lt 30 ]; do c=$(reqn "$URL/minigw/settings"); [ "$c" = 200 ] && break; sleep 2; i=$((i + 1)); done
   if [ "$c" = 200 ] && grep -qi password "$WORK/body"; then ok 6.page "the login page loads over HTTPS with the browser CA"; else bad 6.page "the login page answered $c: $(tailc "$(cat "$WORK/err")")"; return; fi
   grep -qi '^strict-transport-security: max-age=' "$WORK/head" && ok 6.hsts "HSTS header present" || bad 6.hsts "no HSTS header"
@@ -919,6 +934,7 @@ report() {
   {
     printf '# Team gateway rehearsal report\n\n'
     printf -- '- Run: %s\n- Release rehearsed: v%s, image %s built into the private tag minigw-rehearsal:%s (the shared tag minigw:%s was not touched); signature, signed version and checksum verified by the image build\n' "$RID" "$VERSION" "${IMGID:-not built}" "$RID" "$VERSION"
+    printf -- '- Source filter (allowedSourceCIDRs): %s\n' "${SRCFILTER:-not rehearsed: the admin profile was off}"
     printf -- '- Docker server: %s; Compose: %s; platform: %s\n- Client in the simulated devices: %s\n' "${gv:-unknown}" "${cv:-unknown}" "$(uname -sm)" "${mv_:-unknown}"
     printf -- '- Project %s, ports on %s: gateway %s, remote page %s (admin profile: %s)\n- Total time: %s s\n\n' "$PROJ" "$BIND" "${PORT:-n/a}" "${APORT:-n/a}" "$([ "$ADMIN" = 1 ] && echo rehearsed || echo not rehearsed)" "$total"
     printf '## What is simulated\n\nThe devices are not real computers: each is a minigw client run from a second container of the same image on the Compose network, with its own home volume and device key. They prove the server side (approval, binding, roles, notes, review). Real Mac and Windows clients, a second-machine browser and the upstream link are the operator-attended items below.\n\n'
