@@ -2,11 +2,21 @@
 
 ## Unreleased
 
+## 0.9.1
+
+### New
+- `scripts/compose-team-rehearsal.sh` rehearses a team gateway in Docker Compose on the real server before the team is invited: an isolated project (own name, ports and volumes, refuses an existing one), the owner workflow, an access matrix, knowledge review and note history, optionally the remote settings page, a backup and restore into a second project, and a sanitized report. See `docs/docker.md`, "Rehearsal before inviting the team".
+
 ### Fixed
 - Remote settings: accepting or rejecting a replacement of a private note no longer writes a `kb.owner.read` audit row; the gateway's own refusal check reads without it (a read that returns the private text still does).
 - The refusal for a client too old to accept a replacement now says "update minigw (0.9.0 or newer)" (no beta clause).
 - Plugin (Windows, Linux): an early exit without a verdict (no signed checksums, or the client in `bin` unreadable) puts the plugin's `bin` on PATH only when the stored `.verified` record still matches the files, by the same rule the knowledge-base hook uses. Offline, a fresh folder prints one line that says both that the installed minigw cannot be verified and that no verified one can be downloaded; the no-verdict text no longer claims "nothing verified before"; the plugin's own copy is called "the latest release this plugin has seen" when nothing was fetched in that run.
 - Docs: update every pushing gateway with or before the upstream one (`docs/usage.md`, upstream chapter).
+
+### Known problems
+- The rehearsal script was run only on Docker Desktop for Mac. On a real Linux server these parts are unproven: the ownership of the certificate folders (container user ids), a LAN `--bind`, the documented source filter (the rehearsal tests only the Compose network's own subnet), BusyBox variants of the tools it needs, and a real model request (left to the operator).
+- Windows plugin: when the client in the plugin's `bin` cannot be read at a session start (opened exclusively by another process), that session gets no PATH entry for the plugin; the next start restores it.
+- The known problems of 0.9.0 still apply.
 
 ## 0.9.0
 
