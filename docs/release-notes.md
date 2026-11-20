@@ -2,8 +2,22 @@
 
 ## Unreleased
 
+## 0.9.3
+
 ### New
-- Upstream reconcile after a restore: `minigw gw upstream reconcile <project> --upstream <name>` (`--team <team>` for a team link, `--dry-run` to only look) reads the linked project on the upstream afresh and sorts every local note into known, candidate (exactly one upstream note with the trailer this gateway would have written) or unknown. The owner confirms a candidate with `--note <id> --confirm <remote id>` (equal content records the receipt; different content becomes a conflict for `gw upstream resolve --ours/--theirs`), and decides an unknown with `--note <id> --new` or `--skip` (or `--all --new|--skip` for the ids of the last listing). A trailer match is shown with the upstream's proof of its writer; a binding without proof is always a conflict with an unknown base, settled by `gw upstream resolve --ours|--theirs`. A skip holds across local edits until `--note <id> --new`. A named decision reads only the upstream's manifest and the one note it binds, and the read waits out the upstream's read limit. Reconcile runs only when the upstream says its answer covers every pushed class (an upstream older than 0.9.3 or a read-only-part role is refused). Private notes of a `--with-private` link cannot be checked on the upstream: each needs a named `--note <id> --new|--skip` (`--all` does not cover them). The restore mark of the link is cleared only when nothing is left undecided. Nothing is matched by title or similarity, no reference key is generated, and nothing on the upstream is imported or deleted. `gw upstream status`, a blocked push and the upstreams panel name the command and the counts. See `docs/usage.md`.
+- Upstream reconcile after a restore: `minigw gw upstream reconcile <project> --upstream <name>` (`--team <team>` for a team link, `--dry-run` to only look) is the way out for a link marked "restored" (0.9.2). It reads the linked project on the upstream afresh and sorts every local note the link pushes into known (a receipt survived), candidate (exactly one upstream note ends with the trailer this gateway would have written) or unknown. The listing shows each match with what the upstream reports: title, writer, time, revision, equal or differs, and whether this gateway's device wrote it.
+  - The owner confirms a match with `--note <id> --confirm <remote id>`. With the upstream's proof and equal content the receipt is restored. Without proof (somebody edited the note there, or the gateway was restored onto another computer) the binding is a conflict with an unknown base, settled with `gw upstream resolve --ours|--theirs`, and that note is from then on never written directly: every later change goes to the upstream's reviewers as a submission, also on a publish link. Only `--note <id> --new` ends that.
+  - An unknown is decided with `--note <id> --new` (the push may create it) or `--skip` (never pushed; holds across edits until `--new`), or `--all --new|--skip` for the ids of the last listing.
+  - Private notes of a `--with-private` link cannot be seen on the upstream: each needs its own named decision, `--all` does not cover them.
+  - Reconcile runs only when the upstream says its answer covers every pushed class: an upstream older than 0.9.3, or a role there that reads only part of the project, is refused and nothing changes. The mark is cleared only when nothing is left undecided. Nothing is matched by title or similarity, and nothing on the upstream is imported or deleted.
+  - `gw upstream status`, a blocked push and the upstreams panel name the command and the counts (also skipped and restricted notes). See `docs/usage.md`.
+
+### Known problems
+- Update the upstream gateway to 0.9.3 before reconciling against it; until then `--after-restore` (0.9.2) is the only way out for a marked link.
+- Reconcile was proven in tests with two gateways on one computer, not yet between real machines, in the Mac app's window or in Docker. Large projects (several hundred notes) and the upstream's read limit are covered by tests with a slowed and a limited test transport, not by a real run.
+- An unproven binding stays restricted for good; an accepted submission does not lift it.
+- The listing's texts and counts are English only.
+- Docker: the `core.restored` problem of 0.9.2 still applies, as do the known problems of 0.9.2, 0.9.1 and 0.9.0.
 
 ## 0.9.2
 
