@@ -433,3 +433,70 @@ func TestReconcileNeverUsesACachedMirrorAsEvidence(t *testing.T) {
 		t.Fatal("used or changed the cached mirror", e)
 	}
 }
+
+// The brief's hard rules in one run: a candidate is confirmed only with the remote id named, the mark stays while any note is
+// undecided and goes with the last decision, and no audit row carries note text.
+func TestReconcileConfirmNamesTheRemoteIdKeepsTheMarkUntilAllDecidedAndAuditsNoText(t *testing.T) {
+	f, notes := upFx(t)
+	project := f.pid["fakture"]
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: project, Upstream: "hub", Remote: "shop", Classes: "structure,data", Mode: "submit"}))
+	secret, e := f.upstreamKey(ctx)
+	f.ok(e)
+	p := pusher{secret: secret, up: "hub"}
+	h := &hub{}
+	var ids []int64
+	for i, title := range []string{"Structure one", "Data two"} {
+		n := notes[title]
+		local := UpstreamNote{ID: n.ID, Author: n.Author}
+		h.notes = append(h.notes, hubNote{id: int64(41 + i), src: 7, rev: 1, class: n.Class, kind: n.EntryKind, title: n.Title, body: n.Body + p.trailer(project, local, 0)})
+		ids = append(ids, n.ID)
+	}
+	f.markAll()
+	r, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project})
+	f.ok(e)
+	if r.Candidates != 2 || r.Cleared {
+		t.Fatal(r)
+	}
+	before := reconcileTables(t, f)
+	// the wrong remote id, the other note's id, and a decision that does not fit the class are all refused without a write
+	for _, bad := range []ReconcileSpec{
+		{Project: project, Note: ids[0], Confirm: 99},
+		{Project: project, Note: ids[0], Confirm: 42},
+		{Project: project, Note: ids[0], New: true},
+		{Project: project, Note: ids[0], Skip: true},
+	} {
+		if _, e := f.ReconcileUpstream(ctx, h.up(), bad); e == nil {
+			t.Fatalf("accepted %+v", bad)
+		}
+		if !reflect.DeepEqual(before, reconcileTables(t, f)) {
+			t.Fatalf("%+v changed tables", bad)
+		}
+	}
+	r, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: ids[0], Confirm: 41})
+	f.ok(e)
+	if r.Cleared || f.marked() != 1 || r.Candidates != 1 {
+		t.Fatal("mark cleared with a candidate left", r)
+	}
+	r, e = f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: project, Note: ids[1], Confirm: 42})
+	f.ok(e)
+	if !r.Cleared || f.marked() != 0 {
+		t.Fatal(r)
+	}
+	rows, e := f.DB().Query(`SELECT action,detail FROM audit_events WHERE action LIKE 'upstream.reconcile%'`)
+	f.ok(e)
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var action, detail string
+		f.ok(rows.Scan(&action, &detail))
+		n++
+		for _, title := range []string{"Structure one", "Data two", "body of"} {
+			if strings.Contains(detail, title) {
+				t.Fatalf("%s audit row carries note text: %s", action, detail)
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no reconcile audit rows")
+	}
+}
