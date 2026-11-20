@@ -157,6 +157,9 @@ final class TestAcceptLoop: @unchecked Sendable {
         let answeredByUs = r == 0 ? { usleep(300_000); return served.withLock { $0 } > 2 }() : false
         // A refused connect is the proof that nothing listens. macOS reports it as ECONNREFUSED or, now and then on loopback, as ECONNRESET
         // (gate of 0.9.9: "-1 / errno 54", stops true/true, nobody listening on the port, our loop did not count a connection): both mean no listener.
-        #expect(r == -1 && (e == ECONNREFUSED || e == ECONNRESET), "the loop did not close the listener: connect gave \(r) / \(TestAcceptLoop.name(e)); stops \(firstStop)/\(secondStop) in \(took) s; \(firstNote); our loop counted the new connection: \(answeredByUs); source port \(source), target port \(target)\(source == target ? " (a TCP self-connect: nothing listens there)" : ""); listening on the target port at once after: \(owner.isEmpty ? "nobody found" : owner); \(PoolLagGuard.text)")
+        // A connect that SUCCEEDS proves nothing about our loop in a parallel run: the port number, free again, may already belong to another
+        // test's listener (seen three times on 2026-11-20: "connect gave 0", our loop counted nothing, nobody listening a moment later). What this
+        // test claims is that OUR loop ended and serves no more: then such a connection is not counted by our handler.
+        #expect((r == -1 && (e == ECONNREFUSED || e == ECONNRESET)) || (r == 0 && !answeredByUs), "the loop did not close the listener: connect gave \(r) / \(TestAcceptLoop.name(e)); stops \(firstStop)/\(secondStop) in \(took) s; \(firstNote); our loop counted the new connection: \(answeredByUs); source port \(source), target port \(target)\(source == target ? " (a TCP self-connect: nothing listens there)" : ""); listening on the target port at once after: \(owner.isEmpty ? "nobody found" : owner); \(PoolLagGuard.text)")
     }
 }
