@@ -9,6 +9,7 @@
   {"method": "POST", "path": "/upstream-push", "handler": "adminUpstreamPush", "kinds": ["do", "info"]},
   {"method": "POST", "path": "/upstream-pull", "handler": "adminUpstreamPull", "kinds": ["do", "info"]},
   {"method": "POST", "path": "/upstream-auto", "handler": "adminUpstreamAuto", "kinds": ["do", "info"]},
+  {"method": "POST", "path": "/upstream-reconcile", "handler": "adminUpstreamReconcile", "kinds": ["do", "info"]},
   {"method": "POST", "path": "/upstream-resolve", "handler": "adminUpstreamResolve", "kinds": []},
   {"method": "GET", "path": "/upstream-links/project-1-hub", "handler": "adminUpstreamLink", "kinds": []}
  ]
