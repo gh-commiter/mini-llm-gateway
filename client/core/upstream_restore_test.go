@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -288,12 +289,16 @@ func TestAfterRestoreOverrideClearsOneLinkAndIsAudited(t *testing.T) {
 
 // A sentinel path that cannot be checked (here: the "folder" is a file, so Lstat answers ENOTDIR) is not "no sentinel": it is an error.
 func TestRestorePendingThatCannotBeCheckedFailsClosed(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "not-a-folder")
-	if err := os.WriteFile(file, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&Store{dir: file}).consumeRestorePending(ctx); err == nil {
-		t.Fatal("an unreadable sentinel path was taken as none")
+	// On Windows, Lstat of <file>\core.restored answers ERROR_PATH_NOT_FOUND, which Go reports as os.ErrNotExist (so "none" is right there);
+	// no other Lstat error is reliably producible in a test, so the failing half runs on the other systems only.
+	if runtime.GOOS != "windows" {
+		file := filepath.Join(t.TempDir(), "not-a-folder")
+		if err := os.WriteFile(file, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := (&Store{dir: file}).consumeRestorePending(ctx); err == nil {
+			t.Fatal("an unreadable sentinel path was taken as none")
+		}
 	}
 	if err := (&Store{dir: t.TempDir()}).consumeRestorePending(ctx); err != nil {
 		t.Fatalf("no sentinel is not an error: %v", err)
