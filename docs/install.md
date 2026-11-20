@@ -271,7 +271,7 @@ the MSI, or `rm ~/.local/bin/minigw`.
 
 The project database now uses schema 26. Going back to 0.8.5 or older requires the snapshot or full database backup from before the update. An older program refuses the newer database. Restore the pre-update copy while the gateway is stopped; changes made after that copy, including note history, are not in it. Markdown exports and bundles do not carry note history.
 
-After restoring an older database on a gateway that pushes notes to an upstream (`gw upstream`), every link is marked "restored: reconcile before pushing" and sends nothing (not even a dry run's notes or the automatic push), because what was sent after the backup is not known to the restored database and a push would create those notes there again. Compare with the upstream, then clear the mark per link with `gw upstream push <project> --upstream <name> --after-restore` (see the upstream chapter of `usage.md`). Two files copied back by hand together cannot be detected: check `gw upstream status` yourself.
+After restoring an older database on a gateway that pushes notes to an upstream (`gw upstream`), every link is marked "restored: reconcile before pushing" and sends nothing (not even a dry run's notes or the automatic push), because what was sent after the backup is not known to the restored database and a push would create those notes there again. Compare with the upstream, then clear the mark per link with `gw upstream push <project> --upstream <name> --after-restore` (see the upstream chapter of `usage.md`). A database copied back by hand is not detected: create `core.restored` in the core folder before starting the gateway (see the upstream chapter of `usage.md`).
 
 ### Going back to 0.7.0
 

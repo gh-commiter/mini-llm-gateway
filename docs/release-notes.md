@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Fixed
-- Upstream push after a restore: restoring an OLDER local database no longer lets the gateway push edited notes as second copies. Every upstream link of a restored database (`gw core restore`, a database behind `core.state`, or `backup.sh --restore` of a Docker deployment) is marked "restored: reconcile before pushing" and sends and creates nothing (manual, automatic, `--dry-run` reports it, submit and publish alike) until the link is removed or the owner runs `gw upstream push <project> --upstream <name> --after-restore` (it asks first, is audited and clears that link only). `gw upstream status` and the upstreams panel show the state. Reconcile (matching the notes the upstream already has) is not in this version. Two files copied back by hand together are not detected.
+- Upstream push after a restore: restoring an OLDER local database no longer lets the gateway push edited notes as second copies. Every upstream link of a restored database (`gw core restore`, or `backup.sh --restore` of a Docker deployment, which leaves a `core.restored` file that the gateway consumes at its next start) is marked "restored: reconcile before pushing" and sends and creates nothing (manual, automatic, `--dry-run` reports it, submit and publish alike) until the link is removed or the owner runs `gw upstream push <project> --upstream <name> --after-restore` (it asks first, is audited and clears that link only). `gw upstream status` and the upstreams panel show the state. Reconcile (matching the notes the upstream already has) is not in this version. A database copied back by hand is not detected (an epoch gap proves nothing): create `core.restored` in the core folder before starting; see `docs/usage.md`.
 
 ## 0.9.1
 
