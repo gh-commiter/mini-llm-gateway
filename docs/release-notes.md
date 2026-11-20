@@ -12,7 +12,7 @@
 
 ### Known problems
 - After such a skipped push, later pushes and `gw upstream status` say only "unchanged" for a note whose text the upstream rejected; the rejection and its reason are shown once, by the push that found it.
-- A replay is recognised by the state the upstream reports for the submission; an upstream older than 0.7.21 that reports no state is treated as before.
+- A replay is recognised by the state the upstream reports for the submission; an answer that names no state is treated as a new submission, as before.
 - Reconcile between real machines and in the Mac app's window is still not proven; publish-mode links, team links, `--all` and `--after-restore` were not part of the container proof. The known problems of 0.9.4 and 0.9.3 apply.
 
 ## 0.9.4
