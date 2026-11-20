@@ -26,9 +26,11 @@ Run these commands in order (choose the host bind address and protect it with th
    git clone https://github.com/gh-commiter/mini-llm-gateway
    cd mini-llm-gateway/deploy/docker
    ```
-2. Save the release and bind address in `.env`:
+2. Save the release and bind address in `.env`. `MINIGW_VERSION` is the number of the newest **stable** release, as the
+   [latest release](https://github.com/gh-commiter/mini-llm-gateway/releases/latest) page names it (without the `v`; at the time of
+   writing 0.9.0). Do not copy an older number from a guide, and do not take a beta (a pre-release) for a team server:
    ```sh
-   printf "MINIGW_VERSION=0.8.0\nMINIGW_BIND=127.0.0.1\n" > .env
+   printf "MINIGW_VERSION=<newest stable, for example 0.9.0>\nMINIGW_BIND=127.0.0.1\n" > .env
    ```
    Replace loopback with your server address to admit other computers. `MINIGW_PORT` defaults to 8765.
 3. Build and start:
@@ -273,6 +275,14 @@ page (certificates, HTTPS login, forged `Origin`, wrong-password lockout, routes
 `backup.sh --stop`, a restore into a second isolated project and a comparison of users, bindings, roles, notes with their
 history, search, provider configuration and the gateway identity; at the end a scan of the container logs for every credential the run created.
 `--provider-url` adds a provider (the key is asked without echo on a terminal, or read from `--provider-key-file`, a file of yours with mode 600).
+`--identities --client <minigw>` runs a different set of stages instead of the simulated devices: five REAL clients (the `minigw` you name, five
+config folders, five device keys, connecting through `127.0.0.1` only) bound to a reader, a developer (through a team assignment), an admin, a
+member of another team, and a device that is allowed but bound to nobody. With random sentinel notes it checks what each role reads (list, search,
+read) and writes, that a private note stays with its author and the admins, that a team note is seen by the team roster only, that a denied
+device, a removed team role and a removed roster entry lose access at once, and that a wrong token and an unbound device are refused with the
+product's message. `--local-image <tag>` uses an existing local image (tagged privately, nothing downloaded, **no signature check**) instead of
+building the release. Every check is `ok`, `FAIL` or `SKIP`, the report says whether the host is Linux (uname), and a SKIP (for example: the host
+is not Linux, so a Linux server is not proven; or no `--client`) makes the exit code non-zero unless `--allow-skip` (or `ALLOW_SKIP=1`) is given.
 The devices are simulated: clients run from a second container of the same image on the Compose network. A step that cannot
 run is a FAIL with the reason. These steps are not run and print `TODO(operator)` with the exact commands: remote settings
 without `--admin`, the provider without `--provider-url`, one model request (it needs Claude Code), a real Mac and a real
@@ -293,7 +303,7 @@ says what remains or could not be checked (the marker and working directory stay
 a command line: the generated remote page password goes to a mode-600 file in the working directory (its path is printed), the
 session header goes to curl through a private config file.
 The report `rehearsal-report-<run id>.md` in the current directory lists versions, the image, the source filter that was
-used, one row per step (`ok`, `FAIL`, `TODO`) with seconds, the access matrix and the operator's commands; the last lines say
+used, one row per step (`ok`, `FAIL`, `SKIP`, `TODO`) with seconds, the access matrix and the operator's commands; the last lines say
 how the cleanup ended and give the verdict. Only the detail text is sanitized (host and user names, paths, addresses, the admin name,
 the provider URL and every credential of the run are replaced), never the verdict columns, and the report is not written if a
 credential value would be in it. The exit code is 0 only when no step FAILED and the cleanup, if requested, succeeded; every
