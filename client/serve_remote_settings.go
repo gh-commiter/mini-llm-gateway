@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -338,9 +339,13 @@ func remoteRevisionNumber(raw json.RawMessage) bool {
 // long texts, on either side, are reviewed on the server. The core still compares the review hash inside its write
 // transaction, and the hash covers the replaced note's revision and text, so nothing can change between this read and the write.
 func (s *server) remoteKBAcceptRefusal(id string, body []byte) string {
-	status, obj := s.adminDo("GET", "/kb/submissions/"+id, nil)
-	m, ok := obj.(map[string]any)
-	if status != 200 || !ok {
+	// An in-process read without the kb.owner.read audit: this answer never leaves the gateway (the page's own GET, which returns the text, audits).
+	n, e := strconv.ParseInt(id, 10, 64)
+	if e != nil {
+		return ""
+	}
+	status, m := s.api.PeekSubmission(context.Background(), n)
+	if status != 200 || m == nil {
 		return "" // not found, no database: the core answers the same way
 	}
 	// The body must match what is replaced, before the limiter and the core: a replacement names the revision shown (a

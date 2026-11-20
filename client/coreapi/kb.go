@@ -2,6 +2,7 @@ package coreapi
 
 import (
 	"context"
+	"encoding/json"
 	"minigw/core"
 	"net/url"
 	"strconv"
@@ -293,6 +294,25 @@ func (a *API) adminSubmissionPage(ctx context.Context, st *core.Store, vs []core
 		next = vs[len(vs)-1].ID
 	}
 	return resp(200, map[string]any{"submissions": out, "next": next})
+}
+
+// PeekSubmission: the owner's review read of a submission as the admin route shows it, WITHOUT the kb.owner.read audit: for the
+// gateway's own checks (the remote accept refusal), whose answer never leaves the process. 0 = not found or no database.
+func (a *API) PeekSubmission(ctx context.Context, id int64) (int, map[string]any) {
+	st := a.store()
+	if st == nil {
+		return 0, nil
+	}
+	v, e := st.PeekSubmission(ctx, id)
+	if e != nil {
+		return 404, nil
+	}
+	r := a.adminSubmission(ctx, st, v)
+	var out map[string]any
+	if r.Status != 200 || json.Unmarshal(r.Body, &out) != nil {
+		return 0, nil
+	}
+	return 200, out
 }
 
 func (a *API) adminSubmission(ctx context.Context, st *core.Store, v core.Submission) Response {

@@ -589,6 +589,12 @@ func (s *Store) readSubmission(ctx context.Context, p Principal, project, id int
 	return
 }
 
+// PeekSubmission is the owner's review read WITHOUT the kb.owner.read audit row, for the gateway's own checks whose answer never
+// leaves the process (the remote accept refusal). A read that RETURNS the text to a person goes through GetSubmission.
+func (s *Store) PeekSubmission(ctx context.Context, id int64) (Submission, error) {
+	return s.readSubmission(ctx, Principal{}, 0, id, true)
+}
+
 // auditPrivateTarget: the owner's review read of a replacement carries the replaced note's current text; when that note is
 // private it is an owner read of private text like GET kb/notes/{id} and the history reads, with the same audit row
 // (kb.owner.read: the note id and the project or team, never the text; once per read; lists carry no body and write none).

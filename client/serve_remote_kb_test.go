@@ -664,3 +664,49 @@ func TestRemoteKBRefusalLimiterIsIndependent(t *testing.T) {
 		t.Fatal("after the window", w.Code)
 	}
 }
+
+// A remote accept or reject of a replacement of a PRIVATE note writes the decision's audit rows only: the gateway's own refusal check
+// reads the submission without the kb.owner.read row (no text leaves the process); the page's read, which returns the text, writes one.
+func TestRemoteDecisionOfAPrivateReplacementWritesNoOwnerReadRow(t *testing.T) {
+	k := newKBRemote(t)
+	reads := func() int { return k.count(`SELECT COUNT(*) FROM audit_events WHERE action='kb.owner.read'`) }
+	n, _, err := k.cf.s.core.CreateNote(t0, k.ana, k.pid, "priv-note", core.NoteInput{Class: core.Private, Title: "Secret", Body: "secret text"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repl := func(key string) int64 {
+		v, _, e := k.cf.s.core.Submit(t0, k.ana, k.pid, key, core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Private, Title: "Secret", Body: "replacement"}, Replaces: n.ID, Revision: n.Revision})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return v.ID
+	}
+	a := repl("priv-a")
+	read := k.read(a) // the page's read returns the private current text: one owner-read row
+	if reads() != 1 {
+		t.Fatalf("the returning read wrote %d owner-read rows", reads())
+	}
+	if w := k.acceptAt(a, read.ReviewHash, read.CurrentRevision); w.Code != 200 {
+		t.Fatal("accept", w.Code, w.Body.String())
+	}
+	if reads() != 1 {
+		t.Fatal("a remote accept wrote an owner-read row")
+	}
+	cur, e := k.cf.s.core.GetNote(t0, k.ana, k.pid, n.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	b, _, e := k.cf.s.core.Submit(t0, k.ana, k.pid, "priv-b", core.SubmissionInput{NoteInput: core.NoteInput{Class: core.Private, Title: "Secret", Body: "second"}, Replaces: n.ID, Revision: cur.Revision})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if w := k.reject(b.ID, "no"); w.Code != 200 {
+		t.Fatal("reject", w.Code, w.Body.String())
+	}
+	if reads() != 1 {
+		t.Fatal("a remote reject wrote an owner-read row")
+	}
+	if k.count(`SELECT COUNT(*) FROM audit_events WHERE action IN ('kb.accepted','kb.rejected')`) != 2 {
+		t.Fatal("the decisions' own audit rows are not there")
+	}
+}
