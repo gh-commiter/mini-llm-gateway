@@ -622,7 +622,15 @@ func TestUpstreamAutoPushBetweenTwoGateways(t *testing.T) {
 		t.Fatal(out)
 	}
 	// the notes that were already there go by themselves (switching auto on marks what is unsent)
-	waitUntil(t, "the first automatic push", 10*time.Second, func() bool { n, _ := f.remoteSubmissions(); return n == 2 })
+	var firstSeen atomic.Int64 // what the upstream held when the wait below gave up (the gate's bwrap step, 0.9.8: timed out once with no number)
+	firstSeen.Store(-1)
+	t.Cleanup(func() {
+		if t.Failed() {
+			out, err := f.cmd(coreOpts{}, "status", "shop")
+			t.Logf("first automatic push: the upstream last showed %d submissions (want 2); status now (err %v):\n%s", firstSeen.Load(), err, out)
+		}
+	})
+	waitUntil(t, "the first automatic push", 10*time.Second, func() bool { n, _ := f.remoteSubmissions(); firstSeen.Store(int64(n)); return n == 2 })
 	// the upstream has both submissions a moment before the local run has written its receipts and cleared the dirty mark: wait for the
 	// run to end (on Linux the status was once read in between: "1 of 2 notes would go ... dirty since")
 	var st string
