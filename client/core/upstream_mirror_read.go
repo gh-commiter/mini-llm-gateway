@@ -169,7 +169,8 @@ type mirrorEntry struct {
 // mirrorSQL: the statement of mirrorRows (its last argument, the LIMIT, is added by the caller). The inner selection reads no text: the
 // visibility (scope, reading on, fresh, the link's accepted classes and sources), the receipts of our own pushes (a hub copy whose remote
 // id we recorded is left out while it is the content we sent (a receipt with a content hash: decided by the caller, from the hash; an older
-// receipt without one: while its revision is not past the one we recorded); a hub copy that differs is shown, with the local note it
+// receipt without one: while its revision is not past the one we recorded; a submission receipt that names the hub note, #173: the same rule once
+// a base is recorded (remote_rev>0), hidden at every revision only while it has none); a hub copy that differs is shown, with the local note it
 // differs from) and the order; only the rows it keeps have their text and the end of their body read.
 func mirrorSQL(now time.Time, scope []readable, match, cond string, cargs []any, text string) (string, []any) {
 	var parts []string
@@ -191,7 +192,7 @@ func mirrorSQL(now time.Time, scope []readable, match, cond string, cargs []any,
  WHERE l.read=1 AND l.last_pull_ok>? AND m.class IN ('structure','data') AND (` + strings.Join(parts, " OR ") + `)
  AND instr(','||l.read_classes||',', ','||m.class||',')>0
  AND (lower(m.source_label)=lower(CASE WHEN l.remote_team=1 THEN 'team:' ELSE 'project:' END||l.remote) OR instr(','||l.read_sources||',', ','||m.source_label||',')>0)
- AND NOT EXISTS (SELECT 1 FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content='' AND (s.remote_sub>0 OR s.remote_rev<=0 OR m.remote_rev<=s.remote_rev))
+ AND NOT EXISTS (SELECT 1 FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content='' AND (s.remote_rev<=0 OR m.remote_rev<=s.remote_rev))
  AND ` + cond + ` ORDER BY m.updated DESC,m.id LIMIT ?)
  SELECT m.id,m.project_id,m.upstream,m.source_label,m.class,m.kind,m.title,` + text + `,m.remote_rev,m.updated,h.ok,
  coalesce((SELECT s.note_id FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content='' AND s.remote_rev>0 AND m.remote_rev>s.remote_rev ORDER BY s.note_id LIMIT 1),0),

@@ -84,8 +84,8 @@ func TestMirrorShowsAHubCopyThatMovedAwayFromOurPush(t *testing.T) {
 	}
 }
 
-// A copy that moved on the hub is shown even when it still ends with our trailer; a submit-mode receipt that names the accepted note (no
-// baseline) keeps hiding it whatever the revision of the hub's copy.
+// A copy that moved on the hub is shown even when it still ends with our trailer; a submit-mode receipt that names the accepted note and has
+// NO baseline keeps hiding it whatever the revision of the hub's copy (with a baseline: TestMirrorSubmissionReceiptWithABaseFollowsTheRevision).
 func TestMirrorMovedCopyIgnoresTheTrailerSubmitModeKeepsIt(t *testing.T) {
 	f := newFx(t)
 	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
@@ -107,5 +107,41 @@ func TestMirrorMovedCopyIgnoresTheTrailerSubmitModeKeepsIt(t *testing.T) {
 	ids := f.search("ana", fk, "orbit")
 	if !hasID(ids, moved) || hasID(ids, submitted) {
 		t.Fatal(ids, moved, submitted)
+	}
+}
+
+// #173: a submission receipt that names the accepted hub note AND records a base (remote_rev>0) follows the revision like a publish receipt: the
+// hub's copy is hidden while it is at the base, shown with the "differs" line once a reviewer rewrote it; with no base it keeps hiding.
+func TestMirrorSubmissionReceiptWithABaseFollowsTheRevision(t *testing.T) {
+	f := newFx(t)
+	f.ok(f.AddUpstream(ctx, "hub", "hub.example:8765"))
+	fk := f.pid["fakture"]
+	readingLink(f, fk, 0, "shop")
+	local := f.mk("ana", "fakture", Structure)
+	hubCopy := rawMirror(f, fk, "hub", 40, Structure, KindFinding, "project:shop", "orbit accepted", "the reviewer's text") // revision 3
+	receipt := func(base int64) {
+		f.t.Helper()
+		f.ok(f.write(ctx, func(tx *sql.Tx) error {
+			_, e := tx.Exec(`INSERT OR REPLACE INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent,remote_rev) VALUES(?,'hub',?,'h',1,5,40,1,?)`, fk, local.ID, base)
+			return e
+		}))
+	}
+	shown := func() bool { return hasID(f.search("ana", fk, "orbit"), hubCopy) }
+	receipt(3) // base = the hub's revision: hidden
+	if shown() {
+		t.Fatal("the hub's copy at the base revision is shown")
+	}
+	receipt(2) // the hub's copy moved on after our base: shown, with the line
+	if !shown() {
+		t.Fatal("a reviewer's rewrite of an accepted submission stays hidden")
+	}
+	n, e := f.GetNote(ctx, f.p("ana"), fk, hubCopy)
+	f.ok(e)
+	if !strings.Contains(n.Body, "[differs from the local note "+strconv.FormatInt(local.ID, 10)+":") {
+		t.Fatalf("%q", n.Body)
+	}
+	receipt(0) // no base recorded: hidden at every revision
+	if shown() {
+		t.Fatal("a receipt without a base shows the hub's copy")
 	}
 }
