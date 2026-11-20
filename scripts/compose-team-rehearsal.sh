@@ -371,6 +371,7 @@ stage_boot() {
   [ "$UP" = 1 ] || { bad 3.bootstrap "not run: the gateway did not come up"; return; }
   TOKEN=$(gw token 2>/dev/null | grep -o 'mgw-[A-Za-z0-9_-]*#[A-Za-z0-9_-]*' | head -n 1)
   [ -n "$TOKEN" ] || { bad 3.token "gw token printed no connect line"; return; }
+  printf '%s\n' "$TOKEN" >>"$WORK/patterns"
   ok 3.token "owner CLI: gw token printed the connect line (not shown here)"
   bo=
   for t in rh-team; do ensure team "$t" >/dev/null 2>&1 || bo="$bo team $t"; done
@@ -507,7 +508,10 @@ stage_flow() {
 # 6. Remote web settings (--admin)
 # ====================================================================================================
 CA=
-req() { curl -sS --max-time 15 --cacert "$CA" --resolve "$ANAME:$APORT:127.0.0.1" -o "$WORK/body" -D "$WORK/head" -w '%{http_code}' "$@" 2>"$WORK/err" || true; }
+# curl connects to the address the rehearsal published on (a wildcard bind is reached through loopback); the session header comes from a private config file
+reqx() { cfg=$1; shift; curl -sS --max-time 15 --cacert "$CA" --resolve "$ANAME:$APORT:$CURLADDR" -K "$cfg" -o "$WORK/body" -D "$WORK/head" -w '%{http_code}' "$@" 2>"$WORK/err" || true; }
+req() { reqx "$WORK/curl.cfg" "$@"; }    # with the session
+reqn() { reqx /dev/null "$@"; }          # without
 jfind() { # the id of the first object whose JSON text contains $1
   python3 -c '
 import json,sys
@@ -522,7 +526,7 @@ walk(json.load(sys.stdin))' "$1"
 }
 login() { # password origin -> HTTP code, body in $WORK/body
   printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps({"password": sys.stdin.read()}))' |
-    req -X POST -H "Origin: $2" -H 'Content-Type: application/json' -H 'X-Minigw-Remote-Request: 1' --data-binary @- "$URL/minigw/settings/login"
+    reqn -X POST -H "Origin: $2" -H 'Content-Type: application/json' -H 'X-Minigw-Remote-Request: 1' --data-binary @- "$URL/minigw/settings/login"
 }
 stage_admin() {
   if [ "$ADMIN" != 1 ]; then
@@ -536,19 +540,31 @@ EOF
   fi
   [ "$FLOW" = 1 ] || { bad 6.remote "not run: the knowledge flow did not complete"; return; }
   URL=https://$ANAME:$APORT; CERTS=$WORK/certs
+  case $BIND in 0.0.0.0|'') CURLADDR=127.0.0.1;; *) CURLADDR=$BIND;; esac
+  : >"$WORK/curl.cfg"
   if [ -n "$PWFILE" ]; then PW=$(head -n 1 "$PWFILE" 2>/dev/null); [ -n "$PW" ] || { bad 6.password "the password file is empty or unreadable"; return; }
+  elif [ -s "$WORK/admin-password" ]; then PW=$(head -n 1 "$WORK/admin-password")
   else
     PW=$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')
-    { printf 'Remote page password for this rehearsal (shown once, not stored in the report): %s\n' "$PW" >/dev/tty; } 2>/dev/null || printf 'Remote page password for this rehearsal (shown once, not stored in the report): %s\n' "$PW" >&2
+    # a private file, never the terminal or a job log; the operator reads it from there if needed
+    ( set -C; printf '%s\n' "$PW" >"$WORK/admin-password" ) || { bad 6.password "cannot store the generated password"; return; }
+    echo "The generated remote page password is in $WORK/admin-password (mode 600); it is deleted with the working directory"
   fi
-  ( cd "$DEPLOY" && sh admin-certs.sh link "$CERTS" --origin "$URL" >"$WORK/link.out" 2>&1 && sh admin-certs.sh browser "$CERTS" "$ANAME" >"$WORK/browser.out" 2>&1 ) || { bad 6.certs "admin-certs.sh failed: $(tailc "$(cat "$WORK/link.out" "$WORK/browser.out" 2>/dev/null)")"; return; }
-  if grep -qi 'PRIVATE KEY' "$WORK/link.out" "$WORK/browser.out"; then bad 6.certs "admin-certs.sh printed a key"; return; fi
-  if [ "$(uname -s)" = Linux ] && [ "$(id -u)" != 0 ]; then
-    if ! { sudo -n chown 10001:10001 "$CERTS/gateway" "$CERTS"/gateway/* && sudo -n chown 65532:65532 "$CERTS/proxy" "$CERTS"/proxy/*; } >/dev/null 2>&1; then
-      bad 6.certs "the certificate folders must belong to uid 10001 (gateway/) and 65532 (proxy/): run the rehearsal as root or allow sudo (docs/docker.md, step 1 of the remote settings)"; return; fi
+  printf '%s\n' "$PW" >>"$WORK/patterns"
+  certs_all=1
+  for f in ca/link-ca.pem ca/browser-ca.pem gateway/gateway.pem gateway/gateway.key proxy/proxy-client.pem proxy/proxy-client.key proxy/browser.pem proxy/browser.key; do [ -f "$CERTS/$f" ] || certs_all=0; done
+  if [ "$REUSE" = 1 ] && [ $certs_all = 1 ] && openssl x509 -in "$CERTS/proxy/browser.pem" -noout -checkend 86400 >/dev/null 2>&1; then
+    CA=$CERTS/ca/browser-ca.pem; ok 6.certs "reusing the certificates of this run's working directory (still valid)"
+  else
+    ( cd "$DEPLOY" && sh admin-certs.sh link "$CERTS" --origin "$URL" >"$WORK/link.out" 2>&1 && sh admin-certs.sh browser "$CERTS" "$ANAME" >"$WORK/browser.out" 2>&1 ) || { bad 6.certs "admin-certs.sh failed: $(tailc "$(cat "$WORK/link.out" "$WORK/browser.out" 2>/dev/null)")"; return; }
+    if grep -qi 'PRIVATE KEY' "$WORK/link.out" "$WORK/browser.out"; then bad 6.certs "admin-certs.sh printed a key"; return; fi
+    if [ "$(uname -s)" = Linux ] && [ "$(id -u)" != 0 ]; then
+      if ! { sudo -n chown 10001:10001 "$CERTS/gateway" "$CERTS"/gateway/* && sudo -n chown 65532:65532 "$CERTS/proxy" "$CERTS"/proxy/*; } >/dev/null 2>&1; then
+        bad 6.certs "the certificate folders must belong to uid 10001 (gateway/) and 65532 (proxy/): run the rehearsal as root or allow sudo (docs/docker.md, step 1 of the remote settings)"; return; fi
+    fi
+    CA=$CERTS/ca/browser-ca.pem
+    ok 6.certs "admin-certs.sh link and browser created the certificates (private CA, name-constrained browser CA for $ANAME), no key printed"
   fi
-  CA=$CERTS/ca/browser-ca.pem
-  ok 6.certs "admin-certs.sh link and browser created the certificates (private CA, name-constrained browser CA for $ANAME), no key printed"
   printf '%s\n' "$PW" | gw settings password >/dev/null 2>&1 || { bad 6.password "gw settings password failed"; return; }
   # the remoteSettings block of docs/docker.md, step 3 (allowedSourceCIDRs open: on this host the page's source address is the Docker gateway)
   dc exec -T minigw cat /var/lib/minigw/config/serve.json >"$WORK/serve.in" 2>/dev/null &&
@@ -561,66 +577,69 @@ json.dump(c,open(sys.argv[3],"w"),indent=1)' "$WORK/serve.in" "$URL" "$WORK/serv
   OVERLAY=compose.yaml:compose.admin.yaml; use_project "$PROJ" "$PORT"
   uo=$(dc up -d 2>&1) || { bad 6.proxy "docker compose up with compose.admin.yaml: $(tailc "$uo")"; return; }
   wait_healthy || { bad 6.proxy "gateway not healthy after enabling the admin profile"; return; }
-  i=0; c=000; while [ $i -lt 30 ]; do c=$(req "$URL/minigw/settings"); [ "$c" = 200 ] && break; sleep 2; i=$((i + 1)); done
+  i=0; c=000; while [ $i -lt 30 ]; do c=$(reqn "$URL/minigw/settings"); [ "$c" = 200 ] && break; sleep 2; i=$((i + 1)); done
   if [ "$c" = 200 ] && grep -qi password "$WORK/body"; then ok 6.page "the login page loads over HTTPS with the browser CA"; else bad 6.page "the login page answered $c: $(tailc "$(cat "$WORK/err")")"; return; fi
   grep -qi '^strict-transport-security: max-age=' "$WORK/head" && ok 6.hsts "HSTS header present" || bad 6.hsts "no HSTS header"
   # a forged Origin never gets a session
   c=$(login "$PW" https://evil.example)
-  if [ "$c" != 200 ] && ! grep -q '"session"' "$WORK/body"; then ok 6.origin "login with the right password and a forged Origin refused ($c)"; else bad 6.origin "forged Origin answered $c"; fi
+  if [ "$c" = 403 ] && ! grep -q '"session"' "$WORK/body"; then ok 6.origin "login with the right password and a forged Origin: 403, no session"; else bad 6.origin "forged Origin: expected exactly 403 and no session, got '$c' (000 = no answer from the proxy)"; fi
   c=$(login "$PW" "$URL")
   S=$(sed -n 's/.*"session": *"\([0-9a-f]*\)".*/\1/p' "$WORK/body")
   if [ "$c" = 200 ] && [ -n "$S" ]; then ok 6.login "login with the password over HTTPS gives a session"; else bad 6.login "login answered $c"; return; fi
-  SH="X-Minigw-Remote-Session: $S"
-  c=$(req "$URL/minigw/admin/v1/providers"); [ "$c" = 401 ] && ok 6.nosession "an allowed route without a session: 401" || bad 6.nosession "no-session request answered $c"
+  printf 'header = "X-Minigw-Remote-Session: %s"\n' "$S" >"$WORK/curl.cfg"; printf '%s\n' "$S" >>"$WORK/patterns"   # the session goes through a private curl config, never an argument
+  c=$(reqn "$URL/minigw/admin/v1/providers"); [ "$c" = 401 ] && ok 6.nosession "an allowed route without a session: 401" || bad 6.nosession "an allowed route without a session: expected 401, got '$c'"
   # routes outside the allow-list must be refused at the proxy
   rb=0
   for p in /minigw/admin/v1/status /minigw/admin/v1/core/projects /minigw/settings/link /v1/models /minigw/admin/v1/kb/notes /minigw/admin/v1/projects/1/grants; do
-    c=$(req -H "$SH" "$URL$p"); [ "$c" = 404 ] || { rb=1; echo "  $p answered $c"; }
+    c=$(req "$URL$p"); { [ "$c" = 404 ] && grep -q 'Not found' "$WORK/body"; } || { rb=1; echo "  $p answered '$c'"; }
   done
-  c=$(req -X DELETE -H 'Origin: '"$URL" -H "$SH" "$URL/minigw/admin/v1/kb/submissions/1"); [ "$c" = 404 ] || { rb=1; echo "  DELETE kb/submissions/1 answered $c"; }
-  c=$(req --path-as-is -H "$SH" "$URL/minigw/admin/v1/..%2fstatus"); [ "$c" = 404 ] || { rb=1; echo "  unclean path answered $c"; }
+  c=$(req -X DELETE -H "Origin: $URL" "$URL/minigw/admin/v1/kb/submissions/1"); { [ "$c" = 404 ] && grep -q 'Not found' "$WORK/body"; } || { rb=1; echo "  DELETE kb/submissions/1 answered '$c'"; }
+  c=$(req --path-as-is "$URL/minigw/admin/v1/..%2fstatus"); { [ "$c" = 404 ] && grep -q 'Not found' "$WORK/body"; } || { rb=1; echo "  unclean path answered '$c'"; }
   [ $rb = 0 ] && ok 6.allowlist "routes outside the allow-list (status, core, link, inference, notes, grants, DELETE, unclean path) answer 404" || bad 6.allowlist "a route outside the allow-list was not refused"
   # the Team read-only page's JSON routes
   tb=0
   for pair in users:rh-reader bindings:$DEV_rh_developer teams:rh-team projects:rh-p1; do
     p=${pair%%:*}; want=${pair#*:}
-    c=$(req -H "$SH" "$URL/minigw/admin/v1/$p"); { [ "$c" = 200 ] && grep -qF -- "$want" "$WORK/body"; } || { tb=1; echo "  GET $p answered $c"; }
+    c=$(req "$URL/minigw/admin/v1/$p"); { [ "$c" = 200 ] && grep -qF -- "$want" "$WORK/body"; } || { tb=1; echo "  GET $p answered $c"; }
   done
-  c=$(req -H "$SH" "$URL/minigw/admin/v1/teams"); TID=$(jfind rh-team <"$WORK/body")
-  c=$(req -H "$SH" "$URL/minigw/admin/v1/projects"); PID=$(jfind rh-p1 <"$WORK/body")
+  c=$(req "$URL/minigw/admin/v1/teams"); TID=$(jfind rh-team <"$WORK/body")
+  c=$(req "$URL/minigw/admin/v1/projects"); PID=$(jfind rh-p1 <"$WORK/body")
   case ${TID:-x}:${PID:-x} in *[!0-9:]*|:*|*:) tb=1; echo "  team/project id not found";; esac
   if [ $tb = 0 ]; then
     for pair in teams/$TID:rh-reader teams/$TID/assignments:rh-developer projects/$PID/members:rh-developer; do
       p=${pair%%:*}; want=${pair#*:}
-      c=$(req -H "$SH" "$URL/minigw/admin/v1/$p"); { [ "$c" = 200 ] && grep -qF -- "$want" "$WORK/body"; } || { tb=1; echo "  GET $p answered $c"; }
-      c=$(req -X POST -H "Origin: $URL" -H "$SH" -d '{}' "$URL/minigw/admin/v1/$p"); [ "$c" = 404 ] || { tb=1; echo "  POST $p answered $c"; }
+      c=$(req "$URL/minigw/admin/v1/$p"); { [ "$c" = 200 ] && grep -qF -- "$want" "$WORK/body"; } || { tb=1; echo "  GET $p answered $c"; }
+      c=$(req -X POST -H "Origin: $URL" -d '{}' "$URL/minigw/admin/v1/$p"); [ "$c" = 404 ] || { tb=1; echo "  POST $p answered $c"; }
     done
   fi
   [ $tb = 0 ] && ok 6.team "Team read-only routes: users, bindings, teams, projects, a team, its assignments and a project's members answer 200 with the data; a write answers 404" || bad 6.team "a Team read-only route failed"
   # Review: list, read, reject
   KB=$URL/minigw/admin/v1/kb/submissions
-  c=$(req -H "$SH" "$KB"); lw=0
+  c=$(req "$KB"); lw=0
   { [ "$c" = 200 ] && grep -qF -- "W-$W1" "$WORK/body" && grep -qF -- "W-$W2" "$WORK/body"; } || lw=1
   id1=$(jfind "W-$W1" <"$WORK/body"); id2=$(jfind "W-$W2" <"$WORK/body")
 case ${id1:-x}:${id2:-x} in *[!0-9:]*|:*|*:) lw=1;; esac
 [ $lw = 0 ] && ok 6.review.list "GET kb/submissions lists the two pending submissions" || { bad 6.review.list "the review list answered $c without both submissions"; return; }
-  c=$(req -H "$SH" "$KB/$id1")
+  c=$(req "$KB/$id1")
   if [ "$c" = 200 ] && grep -qF -- "$W1" "$WORK/body" && grep -qE '"reviewHash":"[0-9a-f]{64}"' "$WORK/body"; then ok 6.review.read "GET kb/submissions/$id1 shows the text and a review hash"; else bad 6.review.read "read answered $c"; fi
-  c=$(req -X POST -H "Origin: $URL" -H 'Content-Type: application/json' -H 'X-Minigw-Remote-Request: 1' -H "$SH" -d '{"reason":"rehearsal"}' "$KB/$id2/reject")
+  c=$(req -X POST -H "Origin: $URL" -H 'Content-Type: application/json' -H 'X-Minigw-Remote-Request: 1' -d '{"reason":"rehearsal"}' "$KB/$id2/reject")
   if [ "$c" = 200 ] && grep -qF '"state":"rejected"' "$WORK/body"; then ok 6.review.reject "POST kb/submissions/$id2/reject with a reason: rejected"; else bad 6.review.reject "reject answered $c"; fi
-  gw kb review rh-p1 2>&1 | grep -qF -- "$W2" && bad 6.review.cli "the rejected submission is still pending in the owner's review" || ok 6.review.cli "the owner's gw kb review no longer lists the rejected submission"
+  ro=$(gw kb review rh-p1 2>&1); rrc=$?
+  if [ $rrc -ne 0 ]; then bad 6.review.cli "gw kb review failed (exit $rrc): $(tailc "$ro")"
+  elif ! printf '%s' "$ro" | grep -qF -- "$W1"; then bad 6.review.cli "the owner's review does not list the submission that was only read ($W1): the listing cannot prove anything"
+  elif printf '%s' "$ro" | grep -qF -- "$W2"; then bad 6.review.cli "the rejected submission is still pending in the owner's review"
+  else ok 6.review.cli "the owner's gw kb review (exit 0) still lists the read submission and no longer the rejected one"; fi
   # where the gateway saw the browser (informational: Docker hides the browser address on Docker Desktop and rootless Docker)
   seen=$(dc exec -T minigw tail -n 20 /var/lib/minigw/config/remote-settings.audit.jsonl 2>/dev/null | sed -n 's/.*"IP":"\([^"]*\)".*/\1/p' | tail -n 1)
   case $seen in 127.*|10.*|172.1[6-9].*|172.2*|172.3[01].*|192.168.*) echo "INFO the gateway audited a private/Docker source for the login: the source filter allowedSourceCIDRs is proven only from a second machine (see TODO 9.browser)";; esac
-  # last: throttling (five wrong attempts lock the source out for 15 minutes; the sessions already made keep working)
-  codes=
-  for n in 1 2 3 4 5; do c=$(login "rehearsal-wrong-password-$n" "$URL"); codes="$codes $c"; done
+  # last: throttling (five wrong attempts lock the source out for 15 minutes; the sessions already made keep working). Exact answers:
+  # 401 for each of the first four, 401 or 429 for the fifth, 429 for the right password afterwards; 000 (no answer) never counts.
+  c1=$(login "rehearsal-wrong-password-1" "$URL"); c2=$(login "rehearsal-wrong-password-2" "$URL"); c3=$(login "rehearsal-wrong-password-3" "$URL"); c4=$(login "rehearsal-wrong-password-4" "$URL"); c5=$(login "rehearsal-wrong-password-5" "$URL")
   c=$(login "$PW" "$URL")
-  if [ "$c" != 200 ]; then ok 6.throttle "five wrong passwords (answers:$codes), then the right password is refused ($c): the source is locked out"; else bad 6.throttle "no lockout after five wrong passwords (answers:$codes, then the right one: $c)"; fi
-  # no secret in the logs of either service
-  { printf '%s\n' "$PW" "$S" "$TOKEN"; for n in 1 2 3 4 5; do printf '%s\n' "rehearsal-wrong-password-$n"; done; } >"$WORK/patterns"
-  dc logs --no-color >"$WORK/logs.txt" 2>&1
-  if grep -F -q -f "$WORK/patterns" "$WORK/logs.txt"; then bad 6.logs "a password, session or token value is in the container logs"; else ok 6.logs "the logs of the gateway and the proxy hold no password, session or token value"; fi
+  for n in 1 2 3 4 5; do printf '%s\n' "rehearsal-wrong-password-$n" >>"$WORK/patterns"; done
+  if [ "$c1$c2$c3$c4" = 401401401401 ] && { [ "$c5" = 401 ] || [ "$c5" = 429 ]; } && [ "$c" = 429 ]; then
+    ok 6.throttle "wrong passwords answered $c1 $c2 $c3 $c4 $c5, then the right password: $c (locked out)"
+  else bad 6.throttle "lockout sequence wrong: wrong passwords answered $c1 $c2 $c3 $c4 $c5 (expected 401 x4, then 401 or 429), then the right password $c (expected 429; 000 = no answer)"; fi
 }
 
 # ====================================================================================================
@@ -684,6 +703,7 @@ EOF
     printf 'API key of the provider (not shown): ' >&2; stty -echo <&3 2>/dev/null; read -r KEY <&3; stty echo <&3 2>/dev/null; printf '\n' >&2
   else read -r KEY <&3; fi
   [ -n "${KEY:-}" ] || { bad 8.provider "no API key given"; return; }
+  printf '%s\n' "$KEY" >>"$WORK/patterns"
   po=$(printf '%s\n' "$KEY" | gw provider add rehearsal "$PROVIDER" $ins 2>&1); prc=$?
   KEY=
   [ $prc -eq 0 ] || { bad 8.provider "gw provider add: $(tailc "$po")"; return; }
@@ -746,36 +766,76 @@ EOF
 # ====================================================================================================
 # 10. Report and cleanup
 # ====================================================================================================
-sanitize() {
-  python3 -I -c '
-import re,sys
-t=sys.stdin.read()
-for rep,lit in sorted(zip(sys.argv[1::2],sys.argv[2::2]),key=lambda x:-len(x[1])):
-    if len(lit)<3: continue
-    t=t.replace(lit,rep) if lit.startswith("/") else re.sub(r"(?<![A-Za-z0-9-])"+re.escape(lit)+r"(?![A-Za-z0-9-])",rep,t)
-t=re.sub(r"\b\d{1,3}(?:\.\d{1,3}){3}\b","<ip>",t)
-sys.stdout.write(t)' "<work>" "$WORK" "<deploy>" "$DEPLOY" "<home>" "${HOME:-}" "<host>" "$(hostname 2>/dev/null)" "<host>" "$(hostname -s 2>/dev/null)" "<user>" "$(id -un 2>/dev/null)"
+# ---------- the secret scan, over everything the run created, after every stage that creates one ----------
+stage_secrets() {
+  [ "$PRE" = 1 ] && [ "$UP" = 1 ] || { bad 10.logs "not run: the gateway never came up"; return; }
+  dc logs --no-color >"$WORK/logs.txt" 2>"$WORK/logs.err"; lrc=$?
+  if [ $lrc -ne 0 ] || [ ! -s "$WORK/logs.txt" ]; then bad 10.logs "the container logs could not be read (exit $lrc): $(tailc "$(cat "$WORK/logs.err")")"; return; fi
+  if ! grep -q 'minigw' "$WORK/logs.txt"; then bad 10.logs "the container logs hold no gateway line: they cannot prove anything"; return; fi
+  if grep -F -q -f "$WORK/patterns" "$WORK/logs.txt"; then bad 10.logs "a credential created by this run (admin password, session, gateway or device token, provider key, wrong-password probes) is in the container logs"
+  else ok 10.logs "the logs of the gateway$([ "$ADMIN" = 1 ] && echo ' and the proxy') ($(wc -l <"$WORK/logs.txt" | tr -d ' ') lines) hold none of the credentials this run created: admin password, session, gateway/device token, provider key, wrong-password probes (the restore project's logs are not scanned)"; fi
 }
+
+# ---------- report: only the detail text is sanitized, never the verdict columns ----------
+write_sanitizer() {
+  cat >"$WORK/san.py" <<'PYEOF'
+import re,sys
+mode,lst=sys.argv[1],sys.argv[2]
+pairs=[]
+for line in open(lst,encoding="utf-8",errors="replace"):
+    parts=line.rstrip("\n").split("\t",2)
+    if len(parts)==3 and len(parts[2])>=3: pairs.append((parts[0],parts[1],parts[2]))
+pairs.sort(key=lambda x:-len(x[2]))
+def clean(t):
+    for kind,rep,lit in pairs:
+        t=t.replace(lit,rep) if kind=="x" else re.sub(r"(?<![A-Za-z0-9-])"+re.escape(lit)+r"(?![A-Za-z0-9-])",rep,t)
+    t=re.sub(r"\b\d{1,3}(?:\.\d{1,3}){3}\b","<ip>",t)
+    t=re.sub(r"\b(?:[0-9A-Fa-f]{1,4}:){1,7}:(?:[0-9A-Fa-f]{1,4})?\b|(?<![0-9A-Za-z:])::1(?![0-9A-Za-z:])|\b(?:[0-9A-Fa-f]{1,4}:){5,7}[0-9A-Fa-f]{1,4}\b","<ip>",t)
+    return t
+if mode=="text":
+    sys.stdout.write(clean(sys.stdin.read()))
+else:
+    for line in sys.stdin:
+        f=line.rstrip("\n").split("\t",3)
+        if len(f)<4: f+=[""]*(4-len(f))
+        print("| %s | %s | %s | %s |"%(f[1],f[0],f[2],clean(f[3]).replace("|","/")))
+PYEOF
+  {
+    for h in "$(hostname 2>/dev/null)" "$(hostname -s 2>/dev/null)" "$(id -un 2>/dev/null)"; do [ -z "$h" ] || printf 'w\t<local-name>\t%s\n' "$h"; done
+    printf 'x\t<work>\t%s\nx\t<deploy>\t%s\n' "$WORK" "$DEPLOY"
+    [ -z "${HOME:-}" ] || printf 'x\t<home>\t%s\n' "$HOME"
+    [ -z "$ANAME" ] || printf 'x\t<admin-name>\t%s\n' "$ANAME"
+    [ -z "$PROVIDER" ] || printf 'x\t<provider-url>\t%s\n' "$PROVIDER"
+    while IFS= read -r l; do [ -z "$l" ] || printf 'x\t<redacted>\t%s\n' "$l"; done <"$WORK/patterns"
+  } >"$WORK/redact.lst"
+}
+san() { python3 -I "$WORK/san.py" "$1" "$WORK/redact.lst"; }
 report() {
-  REP=rehearsal-report-$RID.md
-  total=$(( $(now) - START ))
+  total=$(( $(now) - START )); t=$WORK/report.tmp; rb=0
+  write_sanitizer || rb=1
   gv=$(docker version --format '{{.Server.Version}}' 2>/dev/null); cv=$(docker compose version --short 2>/dev/null)
-  mv_=$(cl rh-developer /home/minigw/p1 --version 2>/dev/null | head -n 1)
+  mv_=$([ "$PRE" = 1 ] && cl rh-developer /home/minigw/p1 --version 2>/dev/null | head -n 1)
+  : >"$t"
   {
     printf '# Team gateway rehearsal report\n\n'
-    printf -- '- Date (UTC): %s\n- Release rehearsed: v%s (built from the GitHub release; signature, signed version and checksum verified by the image build)\n' "$RID" "$VERSION"
+    printf -- '- Run: %s\n- Release rehearsed: v%s, image %s built into the private tag minigw-rehearsal:%s (the shared tag minigw:%s was not touched); signature, signed version and checksum verified by the image build\n' "$RID" "$VERSION" "${IMGID:-not built}" "$RID" "$VERSION"
     printf -- '- Docker server: %s; Compose: %s; platform: %s\n- Client in the simulated devices: %s\n' "${gv:-unknown}" "${cv:-unknown}" "$(uname -sm)" "${mv_:-unknown}"
-    printf -- '- Project %s, ports on %s: gateway %s, remote page %s (admin profile: %s)\n- Total time: %s s\n\n' "$PROJ" "$BIND" "$PORT" "${APORT:-n/a}" "$([ "$ADMIN" = 1 ] && echo rehearsed || echo not rehearsed)" "$total"
+    printf -- '- Project %s, ports on %s: gateway %s, remote page %s (admin profile: %s)\n- Total time: %s s\n\n' "$PROJ" "$BIND" "${PORT:-n/a}" "${APORT:-n/a}" "$([ "$ADMIN" = 1 ] && echo rehearsed || echo not rehearsed)" "$total"
     printf '## What is simulated\n\nThe devices are not real computers: each is a minigw client run from a second container of the same image on the Compose network, with its own home volume and device key. They prove the server side (approval, binding, roles, notes, review). Real Mac and Windows clients, a second-machine browser and the upstream link are the operator-attended items below.\n\n'
-    printf '## Steps\n\n| Step | Result | Seconds | What |\n|---|---|---|---|\n'
-    awk -F'\t' '{gsub(/\|/,"/",$4); printf "| %s | %s | %s | %s |\n",$2,$1,$3,$4}' "$STEPS"
-    printf '\n## Access matrix\n\nlist = `note list`, search = `kb search`, read = `note read <id>`; y = the sentinel was returned.\n\n```\n'
+  } | san text >>"$t" || rb=1
+  printf '## Steps (in the order they ran)\n\n| Step | Result | Seconds | What |\n|---|---|---|---|\n' >>"$t"
+  san rows <"$STEPS" >>"$t" || rb=1
+  {
+    printf '\n## Access matrix\n\nlist = `note list`, search = `kb search`, read = `note read <id>`; y = the sentinel was returned, n = a successful answer without it, d = the product'"'"'s own refusal ("not found or not visible"), - = not asked (the folder cannot be linked).\n\n```\n'
     cat "$WORK/matrix.txt"
     printf '```\n\n## Operator-attended items\n\n'
     if [ -s "$WORK/todo.md" ]; then cat "$WORK/todo.md"; else printf 'None.\n\n'; fi
-    printf '## Result\n\n%s step(s) FAILED. %s\n' "$FAILS" "$([ "$FAILS" = 0 ] && echo 'All automated steps passed; the TODO(operator) items remain before inviting the team.' || echo 'The rehearsal failed: do not invite the team before the FAIL rows are understood.')"
-  } | sanitize >"$REP"
-  printf 'report: %s\n' "$REP"
+  } | san text >>"$t" || rb=1
+  printf '## Result\n\n%s step(s) FAILED. %s\n' "$FAILS" "$([ "$FAILS" = 0 ] && echo 'All automated steps passed; the TODO(operator) items remain before inviting the team.' || echo 'The rehearsal failed: do not invite the team before the FAIL rows are understood.')" >>"$t" || rb=1
+  if [ $rb -ne 0 ]; then bad 10.report "the report could not be built or sanitized: no report written"; return; fi
+  if grep -F -q -f "$WORK/patterns" "$t"; then bad 10.report "a credential value is in the report text: no report written"; return; fi
+  REP=rehearsal-report-$RID.md
+  if ( set -C; cat "$t" >"$REP" ) 2>/dev/null; then printf 'report: %s\n' "$REP"; else bad 10.report "cannot create $REP in the current directory (it must not exist; symlinks are never followed)"; fi
 }
 
 finish() {
@@ -801,6 +861,7 @@ stage_backup
 stage_provider
 stage_operator
 [ "$PRE" = 1 ] && use_project "$PROJ" "${PORT:-0}" 2>/dev/null
+stage_secrets
 report
 if [ "$FAILS" = 0 ]; then echo "REHEARSAL PASSED (TODO(operator) items remain)"; else echo "REHEARSAL FAILED: $FAILS step(s)"; fi
 finish
