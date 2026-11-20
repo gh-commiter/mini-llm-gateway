@@ -225,3 +225,73 @@ func TestPullDryRunLearnsNothing(t *testing.T) {
 		t.Fatalf("%+v asked %v", res, h.asked)
 	}
 }
+
+// M1: 51 pending receipts, one accepted receipt behind them, and one hub note the pull skips at every run (so the hub always lists a note the
+// mirror does not hold). Never-asked receipts go first: the accepted one is asked in the SECOND run (ceil(52/50) runs at most), and its hub copy
+// shows once from then on. The pending ones are re-asked only with the slots that are left, the least recently asked first.
+func TestPullPendingQueueDoesNotStarveTheReceiptBehindIt(t *testing.T) {
+	f, fk := readFx(t)
+	ids := receipts(f, fk, 52)
+	h := &learnHub{hub: &hub{notes: []hubNote{structNote(900, "Orbit skipped"), structNote(901, "Orbit local 52")}}, subs: map[int64][2]string{52: accepted(901)}}
+	h.hub.note = func(id int64, def string) (int, string, time.Duration) {
+		if id == 900 {
+			return 404, `{"error":{"message":"gone"}}`, 0
+		}
+		return 200, def, 0
+	}
+	for i := int64(1); i <= 51; i++ {
+		h.subs[i] = [2]string{"200", `{"state":"pending","note":0}`}
+	}
+	pull(f, fk, h.up())
+	if len(h.asked) != 50 || learnedCount(f) != 0 {
+		t.Fatalf("first run asked %d learned %d", len(h.asked), learnedCount(f))
+	}
+	h.asked = nil
+	pull(f, fk, h.up())
+	if learnedCount(f) != 1 || !hasID(f.search("ana", fk, "orbit local 52"), ids[51]) || len(f.search("ana", fk, "orbit local 52")) != 1 {
+		t.Fatalf("the accepted receipt behind 51 pending ones was not learned in the second run: asked %v", h.asked)
+	}
+	if len(h.asked) != 2+48 || h.asked[0] != 51 || h.asked[1] != 52 {
+		t.Fatalf("second run asked %v: never-asked first, then the least recently asked pending ones", h.asked)
+	}
+	// a third run rotates: the pending ones asked least recently come first, so every one gets its turn
+	h.asked = nil
+	pull(f, fk, h.up())
+	seen := map[int64]bool{}
+	for _, id := range h.asked {
+		seen[id] = true
+	}
+	if len(h.asked) != 50 || seen[51] {
+		t.Fatalf("third run asked %v", h.asked)
+	}
+}
+
+// L1: the receipt changes between the read and the write (another submission, or a note id already set): nothing is written.
+func TestPullLearningWritesOnlyToTheReceiptItRead(t *testing.T) {
+	for _, change := range []string{`remote_sub=99`, `remote_note=77`} {
+		t.Run(change, func(t *testing.T) {
+			f, fk := readFx(t)
+			ids := receipts(f, fk, 1)
+			h := &learnHub{hub: &hub{}, subs: map[int64][2]string{1: accepted(41)}}
+			h.fail = func(sub int64) (int, string, bool) {
+				f.ok(f.write(ctx, func(tx *sql.Tx) error {
+					_, e := tx.Exec(`UPDATE upstream_sent SET `+change+` WHERE note_id=?`, ids[0])
+					return e
+				}))
+				return 0, "", false
+			}
+			pull(f, fk, h.up())
+			var sub, note, rev int64
+			f.ok(f.DB().QueryRow(`SELECT remote_sub,remote_note,remote_rev FROM upstream_sent WHERE note_id=?`, ids[0]).Scan(&sub, &note, &rev))
+			wantSub, wantNote := int64(1), int64(0)
+			if change == `remote_sub=99` {
+				wantSub = 99
+			} else {
+				wantNote = 77
+			}
+			if sub != wantSub || note != wantNote || rev != 0 || learnAudits(f) != 0 {
+				t.Fatalf("receipt: sub %d note %d base %d", sub, note, rev)
+			}
+		})
+	}
+}

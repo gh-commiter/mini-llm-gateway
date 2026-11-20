@@ -811,15 +811,26 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 		defer rows.Close()
 		s.autoMu.Lock()
 		defer s.autoMu.Unlock()
-		for rows.Next() && len(todo) < maxLearn {
+		// never-asked receipts first (oldest first); the pending ones that may have changed (newHub) only fill what is left, the least recently
+		// asked first, so that a queue of pending submissions can neither starve the receipts behind it nor be asked again and again alone
+		var fresh, again []rec
+		at := map[rec]time.Time{}
+		for rows.Next() {
 			var r rec
 			if e = rows.Scan(&r.note, &r.sub); e != nil {
 				return e
 			}
-			if m, asked := s.learnAsked[key(r)]; !asked || m.pending && newHub {
-				todo = append(todo, r)
+			m, asked := s.learnAsked[key(r)]
+			switch {
+			case !asked && len(fresh) < maxLearn:
+				fresh = append(fresh, r)
+			case asked && m.pending && newHub:
+				again = append(again, r)
+				at[r] = m.at
 			}
 		}
+		sort.SliceStable(again, func(i, j int) bool { return at[again[i]].Before(at[again[j]]) })
+		todo = append(fresh, again[:min(len(again), maxLearn-len(fresh))]...)
 		return rows.Err()
 	})
 	if err != nil || len(todo) == 0 {
@@ -847,10 +858,13 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 			break
 		}
 		if a.status == 200 && sub.State == "accepted" && sub.Note > 0 {
-			if s.upstreamRecordAccepted(wctx, l.Project, l.Upstream, r.note, sub.Note, sub.Replaces, sub.Revision) != nil {
+			wrote, e := s.upstreamRecordAccepted(wctx, l.Project, l.Upstream, r.note, r.sub, sub.Note, sub.Replaces, sub.Revision)
+			if e != nil {
 				break
 			}
-			learned++
+			if wrote {
+				learned++
+			}
 			continue
 		}
 		s.autoMu.Lock()

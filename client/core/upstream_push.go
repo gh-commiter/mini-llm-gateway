@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1007,7 +1008,7 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 			line("skip", n, "the upstream already holds this exact text as submission "+strconv.FormatInt(sub.ID, 10)+", which it rejected"+upReason(sub.Reason)+": not sent again (change the note to send it anew)")
 			continue
 		case "accepted":
-			if e := s.upstreamRecordAccepted(wctx, l.Project, l.Upstream, n.ID, sub.Note, sub.Replaces, sub.Revision); e != nil {
+			if _, e := s.upstreamRecordAccepted(wctx, l.Project, l.Upstream, n.ID, 0, sub.Note, sub.Replaces, sub.Revision); e != nil {
 				return res, e
 			}
 			res.Skipped++
@@ -1055,21 +1056,35 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 func UpText(s string, n int) string { return upText(s, n) }
 
 // upstreamRecordAccepted: what a receipt learns from an ACCEPTED submission that names a note (nothing when it names none): the note's id and
-// the base. As for an earlier submission read back: a new note starts at 1, a replacement made the revision after the one it declared. The push
-// of a replayed submission and the pull's learning step (learnReceipts) both come here.
-func (s *Store) upstreamRecordAccepted(ctx context.Context, project int64, upstream string, note, remoteNote, replaces, revision int64) error {
+// the base, written in ONE transaction. As for an earlier submission read back: a new note starts at 1, a replacement made the revision after
+// the one it declared. The push of a replayed submission (guardSub 0) and the pull's learning step (learnReceipts, guardSub = the submission it
+// asked about) both come here; with guardSub the receipt must still be the one that was read (remote_sub=guardSub, remote_note=0), else nothing
+// is written. It says whether it wrote.
+func (s *Store) upstreamRecordAccepted(ctx context.Context, project int64, upstream string, note, guardSub, remoteNote, replaces, revision int64) (wrote bool, err error) {
 	if remoteNote <= 0 {
-		return nil
+		return false, nil
 	}
-	if e := s.upstreamRecordRemoteNote(ctx, project, upstream, note, remoteNote); e != nil {
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		q, args := `UPDATE upstream_sent SET remote_note=? WHERE project_id=? AND upstream=? AND note_id=?`, []any{remoteNote, project, upstream, note}
+		if guardSub > 0 {
+			q, args = q+` AND remote_sub=? AND remote_note=0`, append(args, guardSub)
+		}
+		r, e := tx.Exec(q, args...)
+		if e != nil {
+			return e
+		}
+		if n, _ := r.RowsAffected(); n == 0 {
+			return nil
+		}
+		wrote = true
+		base := int64(1)
+		if replaces > 0 {
+			base = revision + 1
+		}
+		if replaces == 0 || revision > 0 {
+			_, e = tx.Exec(`UPDATE upstream_sent SET remote_rev=? WHERE project_id=? AND upstream=? AND note_id=? AND remote_sub>0 AND remote_rev<?`, base, project, upstream, note, base)
+		}
 		return e
-	}
-	base := int64(1)
-	if replaces > 0 {
-		base = revision + 1
-	}
-	if replaces == 0 || revision > 0 {
-		return s.upstreamRecordBase(ctx, project, upstream, note, base)
-	}
-	return nil
+	})
+	return
 }
