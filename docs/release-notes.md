@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.9.10
 
 ### Changed
 - Swift tests: `BlockingTestGuard` now also fails when a production source lists the mounted volumes (`mountedVolumeURLs`, `NSWorkspace` volume listing, `getmntinfo`, `getfsstat` without `MNT_NOWAIT`). Test code only.
@@ -8,7 +8,15 @@
 
 ### Fixed
 - Mac gateway: checking the allowed folders no longer lists the caches folder under the lock of the allowed-folders list; the listing (the gateway's own hidden Scratch siblings, the input of the overlap refusal) runs once per check, fresh and outside the lock, so concurrent agent runs no longer queue behind it. What is refused is unchanged.
+- A test of the timed-out shell helper no longer counts the wait for a free task-pool thread as the helper's own time (it failed on a loaded CI runner after 18 s although the helper was done in 1.3 s); its failure message now carries the time of each phase.
 
+
+### Known problems
+- Mac gateway: a git call of worktree mode can hang past its time limit when a program it started left its process group and keeps the output open (not reproduced; every other kill of a timed-out command is bounded).
+- The time of listing the caches folder at a check of the allowed folders was measured with test folders, not on a real machine; it is still paid at every agent run, now outside the lock.
+- `team show` prints the review command with a team name in double quotes; a name that itself contains a double quote gives a wrong command to copy.
+- Swift tests on the hosted runners: a starved thread pool (16.7 s in the 0.9.9 run) made one test time out; that test now measures the helper alone. Not explained: the one time-out of `TestUpstreamAutoPushBetweenTwoGateways` in the Linux sandbox step (0.9.8).
+- The known problems of 0.9.9 and 0.9.8 apply.
 
 ## 0.9.9
 
