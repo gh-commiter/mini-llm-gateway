@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- Remote settings: accepting or rejecting a replacement of a private note no longer writes a `kb.owner.read` audit row; the gateway's own refusal check reads without it (a read that returns the private text still does).
+- The refusal for a client too old to accept a replacement now says "update minigw (0.9.0 or newer)" (no beta clause).
+- Plugin (Windows, Linux): an early exit without a verdict (no signed checksums, or the client in `bin` unreadable) puts the plugin's `bin` on PATH only when the stored `.verified` record still matches the files, by the same rule the knowledge-base hook uses. Offline, a fresh folder prints one line that says both that the installed minigw cannot be verified and that no verified one can be downloaded; the no-verdict text no longer claims "nothing verified before"; the plugin's own copy is called "the latest release this plugin has seen" when nothing was fetched in that run.
+- Docs: update every pushing gateway with or before the upstream one (`docs/usage.md`, upstream chapter).
+
 ## 0.9.0
 
 Mini Gateway 0.9.0 is a stable release. It collects the eleven beta versions 0.8.1 to 0.8.11, which stable users never saw, and follows the stable release 0.8.0. The sections below describe what 0.9.0 is, not how each beta got there. Read **Upgrading from 0.8.0** and **Known problems** before you update a gateway that other people use.

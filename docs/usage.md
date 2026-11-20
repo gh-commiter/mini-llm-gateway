@@ -1762,6 +1762,7 @@ again there. Notes deleted here, and changes of class to private, are not
 propagated; the copy there stays until it is removed there. If the upstream limits writes the push waits and goes on. Every note
 of a run is reported as `create`, `skip`, `replace`, `wait`, `conflict` or `refused` with the upstream's own text; a refusal that would apply to all
 notes (not allowed, no such project, too many pending submissions) ends the run for that link and is shown by `status`.
+Update every pushing gateway with or before the upstream one: this behaviour is the pushing gateway's, not the hub's (a gateway on 0.8.0 still sends a replacement at the upstream's newest revision and re-sends a rejected one as a new note, whatever the upstream runs).
 
 What an upstream answers is treated as data: it can make this gateway neither write a note, nor change a setting, nor call another
 host. The gateway sends nothing to itself (an upstream that is this same gateway is refused). The commands are the same on the Mac app
