@@ -77,7 +77,7 @@ func saveNoteHistory(tx *sql.Tx, id int64, in NoteInput, now time.Time, by int64
 	if err := trimNote(tx, id); err != nil {
 		return err
 	}
-	return trimProject(tx, project, id, revision)
+	return trimProject(tx, project, id, revision, by)
 }
 
 type historyRow struct{ rev, saved, by, size int64 }
@@ -107,27 +107,33 @@ func pickVictim(rows []historyRow) int {
 	return -1
 }
 
-func trimNote(tx *sql.Tx, id int64) error {
+// noteRows: the saved versions of one note by revision, and their byte total.
+func noteRows(tx *sql.Tx, id int64) ([]historyRow, int64, error) {
 	var rows []historyRow
 	var total int64
 	rs, err := tx.Query(`SELECT revision,saved,saved_by,bytes FROM note_history WHERE note_id=? ORDER BY revision`, id)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	for rs.Next() {
 		var r historyRow
 		if err := rs.Scan(&r.rev, &r.saved, &r.by, &r.size); err != nil {
 			rs.Close()
-			return err
+			return nil, 0, err
 		}
 		rows = append(rows, r)
 		total += r.size
 	}
 	if err := rs.Err(); err != nil { // before any deletion: a failed iteration must not leave a partial eviction
 		rs.Close()
-		return err
+		return nil, 0, err
 	}
-	if err := rs.Close(); err != nil {
+	return rows, total, rs.Close()
+}
+
+func trimNote(tx *sql.Tx, id int64) error {
+	rows, total, err := noteRows(tx, id)
+	if err != nil {
 		return err
 	}
 	var drop []int64
@@ -148,8 +154,12 @@ func trimNote(tx *sql.Tx, id int64) error {
 	return nil
 }
 
-// trimProject deletes the project's oldest rows (saved, note, revision) until its total fits, never the row just saved.
-func trimProject(tx *sql.Tx, project, keepID, keepRev int64) error {
+// trimProject keeps the project within its budget, never touching the row just saved (keepID, keepRev: the newest version of the
+// note being written). The order is the writer's own first, so one developer's edit loop does not evict everyone else's history:
+// 1. older versions of the note being written (the burst interiors first, then the oldest, as trimNote picks);
+// 2. versions saved by the same writer (by != 0) in other notes, oldest first, keeping each note's newest saved version;
+// 3. the project's oldest rows, as before (when the writer's own rows cannot free enough).
+func trimProject(tx *sql.Tx, project, keepID, keepRev, by int64) error {
 	var total int64
 	if err := tx.QueryRow(`SELECT coalesce((SELECT bytes FROM note_history_totals WHERE project_id=?),0)`, project).Scan(&total); err != nil {
 		return err
@@ -159,25 +169,58 @@ func trimProject(tx *sql.Tx, project, keepID, keepRev int64) error {
 	}
 	type key struct{ id, rev int64 }
 	var drop []key
-	rs, err := tx.Query(`SELECT note_id,revision,bytes FROM note_history WHERE project_id=? AND NOT (note_id=? AND revision=?) ORDER BY saved,note_id,revision`, project, keepID, keepRev)
+	gone := map[key]bool{}
+	take := func(k key, size int64) {
+		drop = append(drop, k)
+		gone[k] = true
+		total -= size
+	}
+	rows, _, err := noteRows(tx, keepID)
 	if err != nil {
 		return err
 	}
-	for rs.Next() && total > maxHistoryProjectBytes {
-		var k key
-		var size int64
-		if err := rs.Scan(&k.id, &k.rev, &size); err != nil {
+	for total > maxHistoryProjectBytes {
+		i := pickVictim(rows)
+		if i < 0 {
+			break
+		}
+		take(key{keepID, rows[i].rev}, rows[i].size)
+		rows = append(rows[:i:i], rows[i+1:]...)
+	}
+	// phases 2 and 3 read candidates in order and stop as soon as the total fits; rows already chosen are skipped
+	phase := func(q string, args ...any) error {
+		if total <= maxHistoryProjectBytes {
+			return nil
+		}
+		rs, err := tx.Query(q, args...)
+		if err != nil {
+			return err
+		}
+		for rs.Next() && total > maxHistoryProjectBytes {
+			var k key
+			var size int64
+			if err := rs.Scan(&k.id, &k.rev, &size); err != nil {
+				rs.Close()
+				return err
+			}
+			if gone[k] {
+				continue
+			}
+			take(k, size)
+		}
+		if err := rs.Err(); err != nil { // before any deletion
 			rs.Close()
 			return err
 		}
-		drop = append(drop, k)
-		total -= size
+		return rs.Close()
 	}
-	if err := rs.Err(); err != nil { // before any deletion
-		rs.Close()
-		return err
+	if by != 0 {
+		if err := phase(`SELECT h.note_id,h.revision,h.bytes FROM note_history h WHERE h.project_id=? AND h.saved_by=? AND h.note_id<>?
+ AND h.revision<(SELECT MAX(m.revision) FROM note_history m WHERE m.note_id=h.note_id) ORDER BY h.saved,h.note_id,h.revision`, project, by, keepID); err != nil {
+			return err
+		}
 	}
-	if err := rs.Close(); err != nil {
+	if err := phase(`SELECT note_id,revision,bytes FROM note_history WHERE project_id=? AND NOT (note_id=? AND revision=?) ORDER BY saved,note_id,revision`, project, keepID, keepRev); err != nil {
 		return err
 	}
 	for _, k := range drop {

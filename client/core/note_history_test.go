@@ -747,3 +747,91 @@ func TestPickVictimShortestLived(t *testing.T) {
 		}
 	}
 }
+
+func historyBytes(t *testing.T, s *Store, ids ...int64) (sum int64) {
+	t.Helper()
+	for _, id := range ids {
+		var b int64
+		if err := s.DB().QueryRow(`SELECT coalesce(sum(bytes),0) FROM note_history WHERE note_id=?`, id).Scan(&b); err != nil {
+			t.Fatal(err)
+		}
+		sum += b
+	}
+	return
+}
+
+// #164: a writer's edit loop over the project budget evicts the writer's own versions first (the note's own, then the writer's in
+// other notes, each note's newest kept) and only then the project's oldest; other people's versions survive the loop.
+func TestNoteHistoryOverBudgetEvictsTheWritersOwnFirst(t *testing.T) {
+	limitsRestored(t)
+	f := newFx(t)
+	pid := f.pid["fakture"]
+	hist := func(user string, n int) Note { // a note of this user with n saved versions of equal size
+		note := f.mk(user, "fakture", Structure)
+		for i := 0; i < n; i++ {
+			f.clock = f.clock.Add(11 * time.Minute)
+			note = f.edit(user, pid, note, fmt.Sprintf("v%04d", i))
+		}
+		return note
+	}
+	bor, fani, a2 := hist("bor", 3), hist("fani", 3), hist("ana", 3)
+	a1 := hist("ana", 1)
+	f.clock = f.clock.Add(11 * time.Minute)
+	others := historyBytes(t, f.Store, bor.ID, fani.ID)
+	var c int64
+	f.ok(f.DB().QueryRow(`SELECT max(bytes) FROM note_history`).Scan(&c))
+	check := func(label string) {
+		t.Helper()
+		if kept, sum := historyTotal(t, f.Store, pid); kept != sum {
+			t.Fatalf("%s: total %d, rows %d", label, kept, sum)
+		}
+		if historyCount(t, f.Store, bor.ID) != 3 || historyCount(t, f.Store, fani.ID) != 3 {
+			t.Fatalf("%s: another user's saved versions were evicted", label)
+		}
+	}
+	// phase 1: the loop's own note gives way; the others and the writer's other note are untouched
+	maxHistoryProjectBytes = others + historyBytes(t, f.Store, a2.ID) + 2*c
+	cur := a1
+	for i := 0; i < 20; i++ {
+		f.clock = f.clock.Add(11 * time.Minute)
+		cur = f.edit("ana", pid, cur, fmt.Sprintf("loop%02d", i))
+		check("phase 1")
+		if kept, _ := historyTotal(t, f.Store, pid); kept > maxHistoryProjectBytes {
+			t.Fatal("over budget after the write", kept)
+		}
+		if historyCount(t, f.Store, a2.ID) != 3 {
+			t.Fatal("the writer's other note was evicted before the loop's own note")
+		}
+		if got := historyRevisions(t, f.Store, a1.ID); len(got) == 0 || got[len(got)-1] != cur.Revision-1 {
+			t.Fatal("the newest saved version of the loop's note is gone", got)
+		}
+	}
+	// phase 2: the loop's note keeps only its newest; the writer's older rows in other notes go next, each note's newest stays
+	var newest2, newest1 int64
+	f.ok(f.DB().QueryRow(`SELECT bytes FROM note_history WHERE note_id=? AND revision=?`, a2.ID, a2.Revision-1).Scan(&newest2))
+	f.ok(f.DB().QueryRow(`SELECT bytes FROM note_history WHERE note_id=? AND revision=?`, a1.ID, cur.Revision-1).Scan(&newest1))
+	maxHistoryProjectBytes = others + newest2 + newest1 + 3 // the new row is as big as the loop's rows
+	f.clock = f.clock.Add(11 * time.Minute)
+	cur = f.edit("ana", pid, cur, "loop99")
+	check("phase 2")
+	if got := historyRevisions(t, f.Store, a2.ID); len(got) != 1 || got[0] != a2.Revision-1 {
+		t.Fatal("the writer's other note keeps only its newest saved version", got)
+	}
+	if got := historyRevisions(t, f.Store, a1.ID); len(got) != 1 || got[0] != cur.Revision-1 {
+		t.Fatal("the loop's note keeps only its newest saved version", got)
+	}
+	// phase 3: the writer's own cannot free enough: the project's oldest go, as before; the row just saved stays and totals agree
+	maxHistoryProjectBytes = newest1 + 3 // room for the row just saved only
+	f.clock = f.clock.Add(11 * time.Minute)
+	cur = f.edit("ana", pid, cur, "loop98")
+	check3 := historyCount(t, f.Store, bor.ID) + historyCount(t, f.Store, fani.ID)
+	if check3 != 0 {
+		t.Fatal("the project's oldest rows were not evicted when the writer's own could not free enough", check3)
+	}
+	if got := historyRevisions(t, f.Store, a1.ID); len(got) != 1 || got[0] != cur.Revision-1 {
+		t.Fatal("the row just saved was evicted", got)
+	}
+	if kept, sum := historyTotal(t, f.Store, pid); kept != sum {
+		t.Fatal("total", kept, sum)
+	}
+}
