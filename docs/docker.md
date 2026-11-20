@@ -147,7 +147,7 @@ incomplete and must not be used. Both volumes belong together. The config volume
 files: a backup is a secret. Keep it private and copy it to protected storage.
 `docker compose down` keeps volumes; `down -v` deletes all their data.
 A restore leaves a "restore pending" file (`core/core.restored`) in the config volume. The gateway reads it at its next start, marks every upstream link "restored: reconcile before pushing" in one database
-transaction (a link marked this way sends nothing until the owner compares with the upstream and runs `minigw gw upstream push <project> --upstream <name> --after-restore`) and only then removes the file. A volume
+transaction (a link marked this way sends nothing until the owner runs `minigw gw upstream reconcile <project> --upstream <name>`; `gw upstream push <project> --upstream <name> --after-restore` is the override that skips it and can create second copies) and only then removes the file. Only a gateway 0.9.2 or newer reads the file, so `backup.sh --restore` writes it only when the image to run is that new (or a local build) and says so when it does not; a backup never contains it. A volume
 copied back by some other means leaves no such file and is not detected: create it by hand before starting (command in the upstream chapter of `usage.md`).
 If a restore fails during extraction, its targets may be partially populated. Keep the backup,
 inspect the failure and remove only those failed restore volumes before retrying into empty targets.
