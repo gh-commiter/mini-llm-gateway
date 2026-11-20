@@ -1797,6 +1797,11 @@ an older upstream ("update the upstream gateway to 0.9.3 or newer") or a role th
   The CLI reads the saved ids from that listing and carries them in the decision request; `--listed <id,id,...>` can pin the displayed ids explicitly.
   The request carries those ids: unlisted ids and changed local revisions are refused. Lost pending submissions remain unknown.
 
+- **unchecked**: a private note of a `--with-private` link. The upstream never shows private notes, so nothing can be compared and no match is ever claimed.
+  Such a note blocks the mark like an unknown and needs its own named decision: `--note <id> --new` (may create a second copy on the upstream if it already has one) or `--note <id> --skip`.
+  `--all --new` and `--all --skip` do not cover unchecked notes (the listing says how many remain). A surviving receipt keeps a private note as known only as far as the receipt goes; the listing says it could not be compared.
+- **skip**: a skipped note stays listed as skipped, whatever it would be classified as now (also when its receipt is known again), and `--note <id> --new` releases it.
+
 Unmatched destination trailers are reported as **orphans**; nothing is imported or deleted. Neither titles nor similar content establish a match.
 The mark clears atomically only after a complete fresh read and decisions for every candidate and unknown, with local revisions and link settings rechecked.
 Status and blocked pushes show the reconcile command and counts from the last listing when available.
