@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### New
+- Upstream reconcile after a restore: `minigw gw upstream reconcile <project> --upstream <name>` (`--team <team>` for a team link, `--dry-run` to only look) reads the linked project on the upstream afresh and sorts every local note into known, candidate (exactly one upstream note with the trailer this gateway would have written) or unknown. The owner confirms a candidate with `--note <id> --confirm <remote id>` (equal content records the receipt; different content becomes a conflict for `gw upstream resolve --ours/--theirs`), and decides an unknown with `--note <id> --new` or `--skip` (or `--all --new|--skip` for the ids of the last listing). The restore mark of the link is cleared only when nothing is left undecided. Nothing is matched by title or similarity, no reference key is generated, and nothing on the upstream is imported or deleted. `gw upstream status`, a blocked push and the upstreams panel name the command and the counts. See `docs/usage.md`.
+
 ## 0.9.2
 
 ### Fixed
