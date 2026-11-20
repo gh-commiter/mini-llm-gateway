@@ -29,6 +29,9 @@ const (
 type ManifestSource struct {
 	ID    int64  `json:"id"`
 	Label string `json:"label"` // project:<slug> or team:<name>, as a search hit's `from`
+	// Full: the non-private classes of this source the caller may read in FULL (all notes, not only its own). Always present (maybe empty) in an
+	// answer of 0.9.3 or newer; absent (nil) from an older upstream. Reconcile treats a missing or short list as "the view may be partial".
+	Full []Class `json:"full"`
 }
 
 // ManifestNote is one note the caller could GET: ids, revision, class and kind only (no title, no body).
@@ -76,7 +79,13 @@ func (s *Store) Manifest(ctx context.Context, p Principal, project int64) (m Man
 				return err
 			}
 			use = append(use, r)
-			m.Sources = append(m.Sources, ManifestSource{ID: r.project, Label: label})
+			full := []Class{}
+			for _, c := range r.all {
+				if c != Private {
+					full = append(full, c)
+				}
+			}
+			m.Sources = append(m.Sources, ManifestSource{ID: r.project, Label: label, Full: full})
 		}
 		if len(use) == 0 {
 			return nil
@@ -248,6 +257,11 @@ func parseManifest(data []byte) (*Manifest, string) {
 	for i, x := range m.Sources {
 		if x.ID <= 0 || src[x.ID] || x.Label == "" || len(x.Label) > 200 {
 			return bad("a source")
+		}
+		for _, c := range x.Full {
+			if c != Structure && c != Data {
+				return bad("a source's full classes")
+			}
 		}
 		src[x.ID] = true
 		m.Sources[i].Label = upText(x.Label, 80)

@@ -132,6 +132,13 @@ func TestManifestByRole(t *testing.T) {
 	if count(m, fk, Structure) != 2 || count(m, fk, Data) != 0 || count(m, f.seg, Data) != 1 || count(m, f.seg, Structure) != 1 {
 		t.Fatalf("eva: %v", manifestIDs(m))
 	}
+	// the source says which classes the caller reads in full: a reader's home project lists structure only (its data notes are not in the answer)
+	if m.Sources[0].Full == nil || len(m.Sources[0].Full) != 1 || m.Sources[0].Full[0] != Structure {
+		t.Fatalf("eva full: %v", m.Sources[0].Full)
+	}
+	if ma, e := f.Manifest(ctx, f.p("ana"), fk); e != nil || len(ma.Sources[0].Full) != 2 {
+		t.Fatalf("ana full: %v %v", ma.Sources[0].Full, e)
+	}
 	// developer of fakture off the team roster: no segment source at all
 	m, err = f.Manifest(ctx, f.p("bor"), fk)
 	f.ok(err)
