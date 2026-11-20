@@ -177,6 +177,8 @@ c.commit()" || fail 'note fixture'
       python3 -c 'import sys,tarfile; n=tarfile.open(sys.argv[1]).getnames(); assert "./core/core.db" in n and "./core/core.restored" not in n' $marked/config.tar || fail 'a backup carries core.restored'
       docker compose up -d --no-build || fail 'restored up'
       healthy $COMPOSE_PROJECT_NAME || fail 'restored health'
+      # the start consumed the restore pending file (marking the links of the database, none here)
+      [[ -z $(modes ${COMPOSE_PROJECT_NAME}_config | grep -F ' ./core/core.restored') ]] || fail 'core.restored survived the first start'
       [[ $(identity_hash) == $identity ]] || fail 'restored identity'
       docker compose exec -T minigw minigw gw user list | grep -q backup-user || fail 'restored users'
       docker compose exec -T minigw minigw gw project list | grep -q backup-project || fail 'restored project'

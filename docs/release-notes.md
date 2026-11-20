@@ -5,6 +5,7 @@
 ### Fixed
 - Docker: `backup.sh` no longer lets `core/core.restored` travel in a backup, and a restore never keeps the archive's copy (it writes its own). `backup.sh --restore` writes the file only when the image to run is a build of this tree or version 0.9.2 or newer, and prints one line when it does not (a gateway older than 0.9.2 would ignore it, and it would mark every link at the first start of a newer one). The Compose test checks that a backup made while the file exists does not contain it. The matching known problem of 0.9.3 is gone with this fix.
 - Docs: `install.md` (Going back) and `docker.md` name `gw upstream reconcile` as the way out of a restored link, and `--after-restore` as the override that can create second copies.
+- Proof: the Compose test now starts the gateway after `backup.sh --restore` and checks that `core.restored` is gone (the start consumed it). A Go test checks the two start-up log lines that say how many links were marked and paused. NOT proven in a container: the marking of a real upstream link (the test deployment has no upstream) and `gw upstream status` / `reconcile --dry-run` after such a start.
 - The `minigw` cask caveats say the connect step is for the first time only (#159). The text lives in `Casks/minigw.rb`; this repository has no generator for it.
 
 ## 0.9.3

@@ -407,3 +407,42 @@ func TestHardLinkedCoreFileRefusesOpenAndLaunch(t *testing.T) {
 	}
 	st.Close()
 }
+
+// A raw restore (backup.sh --restore) leaves core.restored: the start consumes it, says how many links it paused, and removes it.
+func TestStartConsumesRestorePendingAndLogsThePausedLinks(t *testing.T) {
+	s, _ := testServer(t, nil)
+	s.openCore()
+	if s.core == nil {
+		t.Fatalf("core: %v", s.coreErr)
+	}
+	p, err := s.core.CreateProject(t0, "shop", "Shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.core.AddUpstream(t0, "hub", "hub.example:8765"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.core.LinkUpstream(t0, p.ID, 0, "hub", "shop", "", false); err != nil {
+		t.Fatal(err)
+	}
+	s.core.Close()
+	sentinel := filepath.Join(s.cfgDir, coreDirName, "core.restored")
+	if err := os.WriteFile(sentinel, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logs strings.Builder
+	s.log.SetOutput(&logs)
+	s.openCore()
+	t.Cleanup(s.closeCore)
+	if s.core == nil {
+		t.Fatalf("reopen: %v", s.coreErr)
+	}
+	for _, want := range []string{"restore pending file found: 1 upstream links marked restored", "1 upstream links are marked restored; automatic pushes to them are paused"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("log lacks %q: %q", want, logs.String())
+		}
+	}
+	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+		t.Fatal("core.restored was not consumed")
+	}
+}
