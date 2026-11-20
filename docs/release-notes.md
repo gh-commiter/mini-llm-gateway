@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Added
+- A reviewer sees that submissions wait: `minigw project show` and (with the plugin's hooks on) the start of a Claude Code session print `N submissions wait for your review in <project>: minigw kb review <project>` when the caller may review the project and some are pending (never their own, never an archived project). The review list `GET /minigw/v1/projects/<id>/kb/review` carries `waiting` (all pending submissions of that project or team, decided by the same check as the list: a caller who may not review gets the list's 404, no count). Only the count and the project name are printed, never a title or text. The hook asks the gateway for at most 2 s and prints nothing on a timeout; this is the hook's first network call (docs/usage.md). The plugin's `notes` skill text mentions the line (the plugin version is not bumped here).
+
 ## 0.9.7
 
 ### Fixed

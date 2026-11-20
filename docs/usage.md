@@ -1411,6 +1411,14 @@ The gateway owner is not the only reviewer: an admin of a project reviews its su
 are reviewed by whoever may write them (an admin of one of the team's projects who is on the team's roster). Anyone else
 sees nothing of the review: the answer is the "not found" of a project they cannot see.
 
+Submissions that wait are not silent for a reviewer. `minigw project show` in a folder linked to a project, `minigw project list` and
+(with the hooks of the plugin on, see "Hand findings in from a session") the start of a Claude Code session print
+`N submissions wait for your review in <project>: minigw kb review <project>` (`1 submission waits ...` for one) when you may review
+there and something waits (never your own submission, never an archived project). The count comes from the review list's own
+answer (`GET /minigw/v1/projects/<id>/kb/review` carries `waiting`, the number of pending submissions of that project or team,
+not only of the first page), so it is decided by the same check as the list: someone who may not review gets the "not found" of the list and prints
+nothing, the same as for a project without submissions. For a team's own notes ask the list for the team (`minigw kb review --team <team>`).
+
 **Four eyes.** Nobody reviews their own submission: another admin of the project or the gateway owner does. A project
 with a single admin therefore leaves that admin's submissions for the owner (or a second admin). Accepting also needs
 what the reviewer could write themselves (the class, and the note a replacement changes). The published note keeps the
@@ -1849,14 +1857,17 @@ minigw kb hooks status [<project>]
 
 Without a project, the folder you run it in must be linked (`minigw project link`); with a slug, it is a project that one of
 your folders on this computer is linked to. The switch is per project, per gateway and per user, and it is stored only on this
-computer in `kb-hooks.json` next to `projects.json` (mode 0600, never inside a repository). These commands make no network call
+computer in `kb-hooks.json` next to `projects.json` (mode 0600, never inside a repository). `hooks on|off|status` make no network call
 and need no project role. `off` stops the hooks without uninstalling the plugin; uninstalling the plugin removes the entries.
 
 What the hooks do, in a folder linked to a project with hooks on (`minigw kb hook start|compact|stop|end`, called by the plugin
 and not meant to be typed):
 
 - At the start of a session (and after `resume`, `clear` and `compact`) they tell the model that the folder is linked to a
-  project with a shared knowledge base and how to search it (`minigw kb search`).
+  project with a shared knowledge base and how to search it (`minigw kb search`). When you may review the project's submissions
+  and some wait, one more line says how many and which command lists them (`minigw kb review <project>`): only the count and the
+  project name, never a title or a text. It asks the gateway once, for at most 2 seconds; when the gateway does not answer in
+  time (or you may not review) nothing is printed and the session starts as before.
 - Before a compaction they ask the summary to include up to three one-line candidates (decisions, pitfalls, recurring
   questions) or the line `KB: nothing new`; after the compaction they ask the model once to hand them in.
 - When the model stops after a **commit** was made in the folder during the session, and nothing was handed in yet, they ask

@@ -74,7 +74,8 @@ type projectEnv struct {
 	gateway  func() string                          // the default profile's gateway id, "" = not connected
 	gitState func(dir string) (head, status string) // HEAD and the status hash of the linked folder
 	now      func() time.Time
-	tty      func() bool // kb accept: is stdin a terminal; nil = ask the real one
+	hookConn func() (connection, bool) // the session start's connection to the gateway; nil = the default profile's
+	tty      func() bool               // kb accept: is stdin a terminal; nil = ask the real one
 }
 
 // projectMain, noteMain and usageMain are the entry points of main().
@@ -539,7 +540,7 @@ func (e *projectEnv) unlink() error {
 }
 
 func (e *projectEnv) show() error {
-	_, gw := e.connect()
+	c, gw := e.connect()
 	st, err := e.state3()
 	if err != nil {
 		return err
@@ -564,6 +565,11 @@ func (e *projectEnv) show() error {
 			e.say(fmt.Sprintf("hint:     %s says %s but the link is %s: runs here are refused; run minigw project unlink, link again or remove the hint", hintFile, res.Hint, res.Link.Slug))
 		} else {
 			e.say("hint:     " + hintFile + " agrees")
+		}
+	}
+	if res.State != noLink && res.State != linkHintDiff { // a reviewer's count; nothing for anyone else or when the gateway does not answer
+		if n := e.reviewWaiting(c, res.Link.Project, hookWaitLimit); n > 0 {
+			e.say(waitingLine(n, clean(res.Link.Slug)))
 		}
 	}
 	e.say("gateway: " + gw)

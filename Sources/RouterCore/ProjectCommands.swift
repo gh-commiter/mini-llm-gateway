@@ -78,6 +78,8 @@ public final class ProjectEnv {
     public var gitState: ((String) -> (head: String, status: String))?  // HEAD and the status hash of the linked folder
     public var now: (() -> Date)?
     public var gitTimeout: TimeInterval?  // seconds for both git calls of a hook, nil = 2
+    public var hookConn: (() -> ProjectConn?)?  // the session start's connection to the gateway (nil result: none, never an exit)
+    public var waitLimit: TimeInterval?  // seconds the gateway is waited for at a session start, nil = 2
 
     public init(connect: @escaping () -> (ProjectConn, String), state: String, cwd: String, stdin: @escaping () -> Data,
                 out: @escaping (String) -> Void, err: @escaping (String) -> Void, agent: Bool, runConn: ProjectConn? = nil,
@@ -327,7 +329,7 @@ public final class ProjectEnv {
     }
 
     private func show() throws {
-        let (_, gw) = connect()
+        let (c, gw) = connect()
         let st = try loadState()
         let res = try Projects.resolve(st, gateway: gw, cwd: cwd)
         say("folder:   " + res.realPath)
@@ -347,6 +349,9 @@ public final class ProjectEnv {
             } else {
                 say("hint:     " + Projects.hintFile + " agrees")
             }
+        }
+        if res.state == .ok, case let n = reviewWaiting(c, res.link.project, limit: waitLimit ?? 2), n > 0 {  // a reviewer's count; nothing for anyone else
+            say(Self.waitingLine(n, ProjectText.clean(res.link.slug)))
         }
         say("gateway: " + gw)
     }

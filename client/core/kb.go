@@ -782,25 +782,30 @@ func reviewable(tx *sql.Tx, p Principal, project, id int64) (Submission, error) 
 	return v, nil
 }
 
+// reviewScope: the projects and team segments a review read of project (0 = every one p reviews now) covers; the one place
+// ListReview and ReviewWaiting get their authorization from. Not allowed for project: the same 404 as for one p cannot see.
+func reviewScope(tx *sql.Tx, p Principal, project int64) ([]int64, error) {
+	if project != 0 {
+		if e := reviewAccess(tx, p, project); e != nil {
+			return nil, e
+		}
+		return []int64{project}, nil
+	}
+	if e := checkPrincipal(tx, p); e != nil {
+		return nil, e
+	}
+	return reviewedProjects(tx, p)
+}
+
 // ListReview lists the pending submissions p may review (never p's own): of project, or with project 0 of every
 // project and team that p reviews now (the others, archived ones too, are left out without a word).
 func (s *Store) ListReview(ctx context.Context, p Principal, project, after int64) (out []Submission, err error) {
 	out = []Submission{}
 	lim := s.rate(p.UserID, false)
 	err = s.read(ctx, func(tx *sql.Tx) error {
-		projects := []int64{project}
-		if project != 0 {
-			if e := reviewAccess(tx, p, project); e != nil {
-				return e
-			}
-		} else {
-			if e := checkPrincipal(tx, p); e != nil {
-				return e
-			}
-			var e error
-			if projects, e = reviewedProjects(tx, p); e != nil {
-				return e
-			}
+		projects, e := reviewScope(tx, p, project)
+		if e != nil {
+			return e
 		}
 		if lim != nil {
 			return lim
@@ -825,6 +830,30 @@ func (s *Store) ListReview(ctx context.Context, p Principal, project, after int6
 			out = append(out, v)
 		}
 		return rows.Err()
+	})
+	return
+}
+
+// ReviewWaiting counts the pending submissions ListReview would list for p (all pages, never p's own). Its authorization is
+// reviewScope's: a caller who may not review project gets the error ListReview gives, so no count and no hint that any exist.
+func (s *Store) ReviewWaiting(ctx context.Context, p Principal, project int64) (n int, err error) {
+	lim := s.rate(p.UserID, false)
+	err = s.read(ctx, func(tx *sql.Tx) error {
+		projects, e := reviewScope(tx, p, project)
+		if e != nil {
+			return e
+		}
+		if lim != nil {
+			return lim
+		}
+		if len(projects) == 0 {
+			return nil
+		}
+		args := []any{p.UserID}
+		for _, id := range projects {
+			args = append(args, id)
+		}
+		return tx.QueryRow(`SELECT COUNT(*) FROM kb_submissions WHERE state='pending' AND user_id<>? AND project_id IN (`+marks(len(projects))+`)`, args...).Scan(&n)
 	})
 	return
 }
