@@ -164,6 +164,7 @@ public final class CoreHelper: @unchecked Sendable {
     private var ready = false                 // set after ensure-owner and reconcile: project routes are served only now
     private var stopping = false, finished = false, fatal: CoreError?
     private var nextID: UInt64 = 0
+    private var inFlight = 0  // requests using the current helper's descriptors (guarded by cond)
     /// Why the upstream lane is down (nil = it works). A lane that failed is closed and NOT replaced while the helper runs, and the helper is
     /// NOT restarted for it: the first connection is healthy and the core keeps serving. The upstream routes answer 503 with this reason
     /// until the next helper start, which makes a new lane.
@@ -279,7 +280,9 @@ public final class CoreHelper: @unchecked Sendable {
         if lane, let why = laneBroken { cond.unlock(); return Self.laneDown(why) }
         nextID += 1
         let id = nextID
+        inFlight += 1  // the supervisor closes this helper's descriptors only after every request that holds them has returned
         cond.unlock()
+        defer { cond.lock(); inFlight -= 1; cond.broadcast(); cond.unlock() }
         guard let fd = lane ? c.laneFd : c.fd else { return Self.laneDown("no connection for upstream calls") }
         do {
             setTimeout(fd, requestTimeout)
@@ -313,7 +316,7 @@ public final class CoreHelper: @unchecked Sendable {
                 return Self.laneDown("\(error)")
             }
             // the stream state is unknown: end this helper, the supervisor starts a new one
-            cond.lock(); lastFailure = "\(error)"; ready = false; kill(c.pid, SIGKILL); cond.unlock()
+            cond.lock(); lastFailure = "\(error)"; ready = false; if conn?.pid == c.pid { kill(c.pid, SIGKILL) }; cond.unlock()  // not a pid that was already reaped
             Self.log.error("helper request failed, restarting it: \(error.localizedDescription, privacy: .public)")
             return .unavailable
         }
@@ -428,7 +431,12 @@ public final class CoreHelper: @unchecked Sendable {
                 } catch { kill(p.pid, SIGKILL) }
                 var status: Int32 = 0
                 waitpid(p.pid, &status, 0)  // blocks until exit: crash, kill or EOF after stop()
-                cond.lock(); conn = nil; ready = false; spawned = false; startingNote = ""; lastExit = status; close(p.fd); if let l = p.laneFd { close(l) }; cond.broadcast(); cond.unlock()
+                // The helper is gone. A request still reading or writing these descriptors (it took them under the lock and uses them outside it) must return first:
+                // a closed number is reused by the next socket of the process, and the request would then read or write that one. shutdown wakes it at once.
+                cond.lock(); conn = nil; ready = false; spawned = false; startingNote = ""; lastExit = status
+                shutdown(p.fd, SHUT_RDWR); if let l = p.laneFd { shutdown(l, SHUT_RDWR) }
+                while inFlight > 0 { cond.wait() }
+                close(p.fd); if let l = p.laneFd { close(l) }; cond.broadcast(); cond.unlock()
             } catch {
                 cond.lock(); lastFailure = "\(error)"; cond.unlock()
             }
