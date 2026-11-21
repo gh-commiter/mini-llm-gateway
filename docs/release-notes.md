@@ -1,5 +1,84 @@
 # Release notes
 
+## Unreleased
+
+Mini Gateway 0.10.0 is a stable release. It collects the fourteen beta versions 0.9.1 to 0.9.14, which stable users never saw, and follows the stable release 0.9.0. The sections below describe what 0.10.0 is, not how each beta got there. Read **Upgrading from 0.9.0** and **Known problems** before you update a gateway that other people use.
+
+### New
+**Upstream gateways after a restore**
+- When a gateway's own database is restored from an older backup (`gw core restore`, or `backup.sh --restore` of a Docker Compose gateway), every upstream link is marked "restored: reconcile before pushing". A marked link sends nothing, by hand or automatically, and creates no second copies of notes. `gw upstream status`, a blocked push and the Upstream gateways panel say so.
+- `minigw gw upstream reconcile <project> --upstream <name>` (`--team <team>` for a team link, `--dry-run` to only look) is the way out. It reads the linked project on the upstream afresh and sorts every local note the link pushes into known (a receipt survived), candidate (exactly one upstream note ends with the trailer this gateway would have written) or unknown. The owner confirms a candidate with `--note <id> --confirm <remote id>`, and decides an unknown with `--note <id> --new` (the push may create it) or `--skip` (never pushed until `--new`); `--all --new|--skip` covers the ids of the last listing. Private notes of a `--with-private` link need their own named decision. Nothing is matched by title or similarity, and nothing on the upstream is imported or deleted. The mark is cleared only when nothing is left undecided. The upstream must be 0.9.3 or newer for this.
+- `gw upstream push <project> --upstream <name> --after-restore` is the owner's override (it asks first and is audited). It can create second copies of notes the upstream already has. Unlinking and linking again is not a clean way out: the next push would send every published note again.
+- The same mark is set when the upstream (the team server) is restored. The upstream now has a generation, a random id that each restore of its database replaces. A linked gateway that sees a new one marks every link to that upstream before it sends or learns anything, and writes an audit row. The cause is named in `gw upstream status`, in a blocked push and in the link's detail page (`restoredCause` in the Admin API). Reconcile lists the notes the restored upstream lost as unknown; `--new` sends them again. `--after-restore` is refused for such a mark.
+- A restored upstream hands out note and submission numbers again, so the gateway no longer trusts old receipts there: a new generation drops the upstream's mirror, and a pull binds a waiting receipt only to a submission whose text ends with this note's trailer and equals the text the receipt recorded.
+
+**Upstream gateways in daily use**
+- Upstream push never sends a second copy. When the upstream answers a submission with an earlier one (after a lost receipt), the push records it instead of creating a note; a rejected earlier submission is reported as skipped with the upstream's reason.
+- The upstream's rejection of a note's exact text is kept with the receipt. Later pushes say `unchanged; the upstream rejected it as submission N: <reason>; change the note to send it again`, and `gw upstream status` counts the rejected notes per link. The Upstream gateways panel's detail page lists them too. A change of the note, unlink, removing the upstream and `reconcile --note <id> --new` clear it.
+- A pull learns what became of the submissions whose receipt names no note yet (at most 50 per run, oldest first; it only reads). A note the upstream accepted is no longer shown twice, as the local note and as the upstream's copy. A hub note is hidden as "ours" only when a receipt of the link names it; when the receipt recorded the revision of our accepted text, the copy is shown again, with the `[differs from the local note ...]` line, once a reviewer rewrote it there.
+- When two links of one upstream pull at the same moment right after the upstream was restored, the pull that could store an incomplete mirror now stores nothing and says so.
+- `gw upstream reconcile` says when a private note's receipt could not be checked (the upstream's backup may hold a copy, `--new` would post a second one) and when a note was sent as a submission whose note number is not known here.
+
+**Knowledge base**
+- A reviewer is told what waits. `minigw project show` and, with the plugin's hooks on (`minigw kb hooks on`), the start of a Claude Code session print `N submissions wait for your review in <project>: minigw kb review <project>` when you may review the project and some are pending (never your own, never an archived project). `minigw team show <team>` and the same session start print `N submissions wait for your review in team <team>: minigw kb review --team <team>` for a writer of the team's notes. Only the count and the name are printed. The hook asks the gateway of the folder's profile once, for at most 2 seconds, and prints nothing on a timeout. This is the hook's first network call. The review list of the member API carries `waiting`.
+- Saved versions: when a project is over its 500 MiB history budget, the saved versions of the note being written go first, then the writer's versions in other notes, and only then the project's oldest. One member's edit loop no longer evicts other people's saved versions.
+- Reading from an upstream: the Upstream gateways panel and `GET /upstream-links/{id}` show the notes the upstream rejected (`rejectedCount`, `rejectedRows`).
+
+**Team gateway in Docker Compose**
+- `scripts/compose-team-rehearsal.sh` rehearses a team gateway in Docker Compose on the real server before the team is invited: an isolated project (own name, ports and volumes), the owner workflow, an access matrix, knowledge review and note history, optionally the remote settings page, a backup and restore into a second project, and a report with nothing secret in it. `--identities --client <minigw>` checks five real clients and device keys (reader, developer, admin, a member of another team, an allowed but unbound device) against what the docs promise; `--local-image <tag>` runs without a download. Every check is `ok`, `FAIL` or `SKIP`, and a SKIP makes the exit code non-zero unless `--allow-skip` is given. See "Rehearsal before inviting the team" in `docs/docker.md`.
+- `scripts/compose-upstream-e2e.sh` runs two gateways in containers and proves the restore path above: `backup.sh --restore`, the marked and paused link, reconcile and replacements with no second copies.
+- `backup.sh` no longer lets `core/core.restored` travel in a backup, and a restore writes the file itself only when the image to run is a build of this tree or version 0.9.2 or newer (it prints one line when it does not).
+
+### Changed
+- `docs/install.md` ("Going back") and `docs/docker.md` name `gw upstream reconcile` as the way out of a restored link and `--after-restore` as the override that can create second copies. Update every pushing gateway with or before the upstream one.
+- `docs/usage.md` says that the note class table is about project notes (a team's own notes are read by the whole roster), that linking a folder needs a role in the project, and which notes show "written by this gateway's device". `docs/team-onboarding.md` says what a client sees before approval and binding, and to use sync mode for a repository you do not trust. A grant gives permission only: to read the granted project's notes from the receiving project's folder, the owner also records `gw project depends add`. A project admin writes a team's notes only when they are also on the team's roster.
+- Wording of the refusal for a client too old to accept a replacement: "update minigw (0.9.0 or newer)".
+
+### Fixed
+- Mac gateway: a git call with a time limit could hang past it when a program started by git (hook, credential helper, filter) left the process group and kept the output open. The limit now also kills the processes that hold the output.
+- Mac gateway: a request to the project helper (`minigw-core`) could read from or write to an unrelated socket, or fail with "Bad file descriptor", when the helper exited while the request was in flight. The connections are now closed only after the requests in flight have finished.
+- Mac gateway: `GET /v1/models` (it runs `codex debug models`) and the check for `.git` folders in a reused worktree clone no longer hold a thread of the Swift concurrency pool, so a few such requests do not leave the router without a thread.
+- Mac gateway: checking the allowed folders no longer lists the caches folder under a lock, so concurrent agent runs no longer queue behind it.
+- `minigw team show` and the session-start line printed the review command with the team name unquoted or in double quotes, and a name holding `$(...)`, a backtick or `"` could run code when the printed command was pasted. A name that is not plain is now printed in single quotes. Project slugs are limited to lower-case letters, digits and `-`, so `project show` needed no change.
+- Remote settings: accepting or rejecting a replacement of a private note no longer writes a `kb.owner.read` audit row; the gateway's own refusal check reads without it.
+- Windows and Linux plugin: an early exit without a verdict (no signed checksums, or the client in `bin` unreadable) puts the plugin's `bin` on PATH only when the stored `.verified` record still matches the files. Offline, a fresh folder prints one line that says both that the installed minigw cannot be verified and that no verified one can be downloaded.
+- `scripts/compose-team-rehearsal.sh`: when the narrow source filter did not work, the rehearsal opened the remote page to all IPv4 even with `--bind` on a non-loopback address. It now stops and says why.
+- Docs: Docker bypasses the host firewall (use `DOCKER-USER`); several corrections in the gw skill, the onboarding guide and the Admin API reference.
+
+### Upgrading from 0.9.0
+- The database schema does not change: it is 26 in 0.9.0 and in 0.10.0, so no migration runs and no new snapshot is made. Going back to 0.9.0 does not need a database snapshot because of the schema. A restore of an older database is now noticed by the upstream links (see New).
+- Update clients and gateways both. Update every pushing gateway with or before the upstream one, and the upstream to 0.9.3 or newer before you reconcile against it.
+- After upgrading an upstream gateway, let every linked gateway contact it once (a push, a pull or a reconcile) before relying on restore detection (see Known problems).
+- The Claude Code plugin updates itself; its minimum client is the version of this release. The session-start hook, when switched on with `minigw kb hooks on`, now asks the gateway once for the review count (at most 2 seconds); before 0.9.8 it never used the network. If your plugin does not update in time, run `claude plugin marketplace update mini-gateway` and `claude plugin update minigw@mini-gateway`, then `/minigw:gw update`.
+- Docker Compose: take a backup with `backup.sh` before the update (see `docs/docker.md`).
+- Windows: see Known problems.
+
+### Known problems
+**Windows and Docker**
+- This release was NOT run on a real Windows computer (the test machine was not available). The Windows client, the Gateway tray and the MSI are covered only by the automated tests.
+- The team gateway deployment (Docker Compose) and its backup and restore were rehearsed on Docker Desktop only, not on a Linux server. Unproven there: the ownership of the certificate folders (container user ids), a LAN `--bind`, the documented source filter, BusyBox variants of the tools the rehearsal needs, SELinux, rootless Docker, Podman, and a real model request. The five identities mode used a locally built image.
+- `backup.sh --restore` decides by the tag of the image to run. A tag that is not a version number (a digest, `latest`) counts as new, so it writes `core.restored`; behind such a tag an older gateway ignores the file, and it stays in the volume until removed by hand.
+- Windows plugin: when the client in the plugin's `bin` cannot be read at a session start (opened exclusively by another process), that session gets no PATH entry for the plugin; the next start restores it.
+
+**Upstream gateways**
+- After upgrading the upstream gateway, let every linked gateway contact it once (a push, a pull or a reconcile) before relying on restore detection: a restore of the upstream before that first contact is not noticed.
+- Only an upstream of this release sends a generation; with an older upstream nothing is checked. Only a linked gateway of this release notices it.
+- A copy of the upstream's files put back without its restore command (`gw core restore`, `backup.sh --restore`, or the `core.restored` file made by hand) keeps the old generation and is not detected. The same holds for a database folder of this gateway copied back by hand: create `core.restored` before the start (`docs/usage.md`).
+- A marked link's push or dry run does not contact the upstream, so a second restore of the upstream is noticed by the next pull or reconcile.
+- The connection check of an upstream (the panel's probe) and `pull --dry-run` do not compare the generation.
+- A hostile upstream that changes its generation on every request writes an audit row each time and keeps reconcile from finishing; unlink and link again is the last way out.
+- When two links of one upstream pull at the same moment right after the upstream was restored, one mirror can for a short time hold a note of the old state; the next full pull corrects it.
+- Reconcile was proven in tests with two gateways on one computer and in containers, not between real machines, with a team link end to end or in the Mac app's window. An unproven binding stays restricted for good; an accepted submission does not lift it. The listing's texts and counts are English only.
+- What a pull learned about pending or unreadable submissions is kept in memory only (asked again after an hour or a restart). A receipt without a recorded revision hides the upstream's copy at every revision. The revision rule assumes that an accepted new note starts at revision 1 on the upstream.
+- A replay is recognised by the state the upstream reports for the submission; an answer that names no state is treated as a new submission.
+- Hints the client prints (for example the review command in `minigw project show` and in the session-start hook text) do not carry `--minigw-profile`: with a non-default profile add it yourself.
+- The known problems of 0.9.0 still apply, except the Windows plugin wording ones and the restore of an older local database, which are resolved here (see New).
+
+**Mac gateway**
+- The time limit of a git call ends the call only if the programs holding its output can be killed within 3 seconds; a program stuck in the kernel is not covered.
+- These still wait on a thread of the Swift concurrency pool: the listing of the caches folder and of the Scratch folder's parent at every agent run (milliseconds, unless the folder holds tens of thousands of entries), the check of who listens for Foundry Local (about a second, cached), and short waits at the end of a run and at quit. On a Mac with few cores many of them at once can delay other requests.
+- `GET /v1/models` with Codex on has no test with a real Codex catalog.
+
 ## 0.9.14
 
 ### Fixed
