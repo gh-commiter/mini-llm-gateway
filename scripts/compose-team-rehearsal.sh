@@ -731,6 +731,8 @@ EOF
     if [ "$c" = 200 ]; then SRCFILTER="restricted to the Compose admin network $subs (the narrowest setting that works with a browser on the host); this shows the filter admits the proxy path, it does NOT prove the documented LAN filter: see TODO 9.browser"; fi
   fi
   if ! case $SRCFILTER in restricted*) true;; *) false;; esac; then
+    # never open the page to all IPv4 while the ports are published beyond this host
+    case $BIND in 127.0.0.1|localhost) ;; *) bad 6.srcfilter "the subnet filter did not admit the rehearsal client or could not be read; with --bind $BIND the rehearsal will not open the remote page to all IPv4 (0.0.0.0/0): use --bind 127.0.0.1, or fix the Compose admin network subnet"; return;; esac
     write_remote '["0.0.0.0/0"]' && dc restart minigw >/dev/null 2>&1 && wait_healthy || { bad 6.config "could not apply the source filter"; return; }
   fi
   if [ -n "$subs" ]; then why="subnet $subs was refused"; else why="docker network inspect gave no usable subnet:$DQFAIL"; fi

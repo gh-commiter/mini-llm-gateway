@@ -208,7 +208,7 @@ func (e *projectEnv) team(args []string) error {
 			e.say(clean(line))
 		}
 		if t.Notes != nil {
-			e.say(clean(fmt.Sprintf("team notes: %d  (read them: minigw note list --team %s)", *t.Notes, t.Name)))
+			e.say(clean(fmt.Sprintf("team notes: %d  (read them: minigw note list --team %s)", *t.Notes, teamCmdArg(t.Name))))
 		}
 		if t.Segment != 0 && !t.Archived { // a reviewer's count of the team's own notes; nothing for anyone else or when the gateway does not answer
 			if n := e.reviewWaiting(c, t.Segment, hookWaitLimit); n > 0 {

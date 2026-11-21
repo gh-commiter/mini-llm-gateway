@@ -99,7 +99,7 @@ extension ProjectEnv {
                 let v = p.dict
                 say(ProjectText.clean("project \(v["id"]?.int ?? 0)  \(v["slug"]?.string ?? "")  \(v["name"]?.string ?? "")\(v["archived"]?.bool == true ? "  (archived)" : "")"))
             }
-            if let n = d["notes"]?.int { say(ProjectText.clean("team notes: \(n)  (read them: minigw note list --team \(d["name"]?.string ?? ""))")) }
+            if let n = d["notes"]?.int { say(ProjectText.clean("team notes: \(n)  (read them: minigw note list --team \(Self.teamCmdArg(d["name"]?.string ?? "")))")) }
             if let seg = d["segment"]?.int, seg != 0, d["archived"]?.bool != true,  // a reviewer's count of the team's own notes; nothing for anyone else
                case let n = reviewWaiting(c, seg, limit: waitLimit ?? 2), n > 0 {
                 say(Self.teamWaitingLine(n, ProjectText.clean(d["name"]?.string ?? "")))

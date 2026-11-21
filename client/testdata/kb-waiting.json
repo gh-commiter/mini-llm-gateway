@@ -7,7 +7,11 @@
   "teamLines": [
     {"n": 1, "team": "acme", "want": "1 submission waits for your review in team acme: minigw kb review --team acme"},
     {"n": 3, "team": "acme.eu-2", "want": "3 submissions wait for your review in team acme.eu-2: minigw kb review --team acme.eu-2"},
-    {"n": 2, "team": "Ops Team", "want": "2 submissions wait for your review in team Ops Team: minigw kb review --team \"Ops Team\""}
+    {"n": 2, "team": "Ops Team", "want": "2 submissions wait for your review in team Ops Team: minigw kb review --team 'Ops Team'"},
+    {"n": 1, "team": "a$(id)b", "want": "1 submission waits for your review in team a$(id)b: minigw kb review --team 'a$(id)b'"},
+    {"n": 2, "team": "a`id`b", "want": "2 submissions wait for your review in team a`id`b: minigw kb review --team 'a`id`b'"},
+    {"n": 1, "team": "a\"b", "want": "1 submission waits for your review in team a\"b: minigw kb review --team 'a\"b'"},
+    {"n": 3, "team": "it's", "want": "3 submissions wait for your review in team it's: minigw kb review --team 'it'\\''s'"}
   ],
   "teamAnswers": [
     {"name": "reviewer of the project and of one team", "body": "{\"waiting\":4,\"teams\":[{\"name\":\"acme\",\"waiting\":2},{\"name\":\"zero\",\"waiting\":0}]}", "wantN": 4, "want": ["acme:2", "zero:0"]},
