@@ -353,6 +353,8 @@ public final class CoreHelper: @unchecked Sendable {
     }
 
     /// Test hook: close the upstream lane as a failure would.
+    /// The running helper's pid and descriptors (a test checks that they stay open while a request uses them).
+    func connectionForTest() -> (pid: pid_t, fds: [Int32])? { cond.lock(); defer { cond.unlock() }; return conn.map { ($0.pid, [$0.fd] + ($0.laneFd.map { [$0] } ?? [])) } }
     func breakLaneForTest() { cond.lock(); if let l = conn?.laneFd { shutdown(l, SHUT_RDWR) }; cond.unlock() }
 
     // MARK: device revocation (docs/core-adapter.md, duty 2)

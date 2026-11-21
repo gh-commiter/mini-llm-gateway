@@ -1000,6 +1000,47 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         #expect(r.status == 200, "push answered \(r.status): \(String(decoding: r.body.prefix(300), as: UTF8.self))")  // the reason, when the lane failed (#150)
     }
 
+    /// The helper dies while a request is inside a callout: its descriptors stay open until that request has returned (a closed number is reused by the next socket
+    /// of the process, and the request would read or write that one), and are closed after it (not asserted: the number may already belong to the next helper's socket).
+    @Test(.blocking) func aHelperThatDiesDuringARequestKeepsItsDescriptorsUntilTheRequestReturns() async throws {
+        let secrets = MemorySecrets(), t = fakeUpstream()
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let ok = t.handler
+        t.handler = { c in
+            if c.method == "POST" { entered.signal(); _ = release.wait(timeout: .now() + 30) }
+            return ok(c)
+        }
+        let own = Noise.newKey().publicKey.rawRepresentation
+        let (h, _) = try await start(callouts: UpstreamHost(secrets: secrets, ownKey: { own }, ownPort: { 8765 }, transport: t, computerName: "mac"))
+        defer { release.signal(); h.stop() }
+        _ = await adm(h, "PUT", "/upstreams/hub", #"{"address":"hub.example","token":"tok#\#(Noise.base64url(Noise.newKey().publicKey.rawRepresentation))"}"#)
+        _ = await adm(h, "PUT", "/bindings/dev-A", #"{"user":1}"#)
+        _ = await adm(h, "POST", "/projects", #"{"slug":"shop","name":"Shop"}"#)
+        _ = await adm(h, "PUT", "/projects/1/members/1", #"{"role":"developer"}"#)
+        _ = await h.call(context: CoreContext(kind: .member, device: "dev-A", approved: true), request: CoreRequest(method: "POST", path: "/minigw/v1/projects/1/notes", header: ["Idempotency-Key": ["k"]], body: Data(#"{"class":"data","title":"N","body":"t"}"#.utf8)))
+        _ = await adm(h, "PUT", "/upstreams/hub/links/1", #"{"remote":"shop"}"#)
+        let conn = try #require(h.connectionForTest())
+        // the kernel's identity of each socket: an open descriptor number that was closed and handed to a new socket shows another one
+        func socketID(_ fd: Int32) -> UInt64? {
+            var info = socket_fdinfo()
+            return proc_pidfdinfo(getpid(), fd, PROC_PIDFDSOCKETINFO, &info, Int32(MemoryLayout<socket_fdinfo>.size)) == Int32(MemoryLayout<socket_fdinfo>.size) ? info.psi.soi_so : nil
+        }
+        let ids = conn.fds.map(socketID)
+        try #require(ids.allSatisfy { $0 != nil })
+        let push = Task { await self.adm(h, "POST", "/upstream-push", #"{"project":1}"#) }
+        var inCallout = false  // not a blocking wait on a pool thread: the push needs one
+        for _ in 0..<300 where !inCallout { inCallout = entered.wait(timeout: .now()) == .success; if !inCallout { try await Task.sleep(for: .milliseconds(50)) } }
+        try #require(inCallout)
+        kill(conn.pid, SIGKILL)
+        for _ in 0..<300 where h.lastExit == nil { try await Task.sleep(for: .milliseconds(20)) }  // the supervisor has reaped it and now waits for the request
+        #expect(h.lastExit != nil)
+        try await Task.sleep(for: .milliseconds(300))  // time for a (wrong) close to happen
+        #expect(conn.fds.map(socketID) == ids, "a descriptor was closed (or reused) while the request was still inside its callout")
+        release.signal()
+        let r = await push.value
+        #expect(r.status != 200, "\(r.status)")  // the helper is gone: the answer cannot be delivered
+    }
+
     /// D1: a failure of the upstream lane takes down only the lane. Requests on the first connection go on, the helper is not restarted, and
     /// the upstream routes answer a clean 503 with the reason until the next helper start.
     @Test(.blocking) func aLaneFailureNeverRestartsTheHelperOrHoldsUpTheFirstConnection() async throws {
