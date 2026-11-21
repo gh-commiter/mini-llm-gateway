@@ -100,7 +100,7 @@ func (e *projectEnv) reviewWaitingTeams(c connection, project int64, limit time.
 // the hook says nothing for any other; team show quotes it).
 var teamNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
 
-// teamCmdArg: a team name as one shell word of a command to copy: as it stands if plain, else single-quoted (a ' inside as '\'').
+// teamCmdArg: a team name as one shell word of a command to copy: as it stands if plain, else single-quoted (a ' inside as '\”).
 func teamCmdArg(team string) string {
 	if teamNameRe.MatchString(team) {
 		return team
@@ -109,7 +109,7 @@ func teamCmdArg(team string) string {
 }
 
 // teamWaitingLine: the line for a team's own notes (the same in the Swift client); team is already cleaned and, unless it is a
-// plain word, put in single quotes in the command (a ' inside as '\''), so a pasted command runs no code of the name.
+// plain word, put in single quotes in the command (a ' inside as '\”), so a pasted command runs no code of the name.
 func teamWaitingLine(n int, team string) string {
 	cmd := teamCmdArg(team)
 	if n == 1 {
