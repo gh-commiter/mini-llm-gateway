@@ -155,7 +155,8 @@ When this server is the upstream of other gateways (a team server), consuming th
 generation. Each linked gateway (0.9.13 or newer) sees it at its next contact (a push, an automatic push, a pull or reconcile), marks
 every link to this server "restored: reconcile before pushing (the upstream was restored from a backup)" and sends nothing more; its owner
 runs `minigw gw upstream reconcile <project> --upstream <name>`. What the server accepted after the backup was taken is lost here:
-reconcile lists those notes as unknown, and `--note <id> --new` (or `--all --new`) sends them again, as submissions for review. A note
+reconcile lists those notes as unknown, and `--note <id> --new` (or `--all --new`) sends them again, as submissions for review.
+`--after-restore` does not clear such a mark. A note
 number the server hands out again is never taken for one of the linked gateway's own notes. An older linked gateway does not notice
 the restore.
 If a restore fails during extraction, its targets may be partially populated. Keep the backup,

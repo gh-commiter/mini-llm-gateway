@@ -503,6 +503,10 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 		if r, blocked, err := s.restoreGate(ctx, l, label); err != nil {
 			return UpstreamPush{}, err
 		} else if blocked {
+			if strings.Contains(r.Lines[0], HubRestoredCause) { // the receipts may name other members' notes now: nothing they say is listed
+				r.DryRun = true
+				return r, nil
+			}
 			dryBlock = r.Lines[0]
 		}
 	}
@@ -517,7 +521,10 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 			return UpstreamPush{}, errPushRunning{}
 		}
 		defer mu.Unlock()
-		// The restore gate: under the link lock, before any traversal or request; the mark is set only offline or at start and cleared under this lock.
+		// The restore gate: under the link lock, before any traversal or request. A mark is set offline, at start, or by any run that sees the
+		// upstream's generation change (hubGenerationSeen, for every link of that upstream, possibly while this one runs); it is cleared under
+		// this lock. A mark set by another link's run after this gate is caught by the second gate in pushLinkRun, after resolve and before
+		// anything is sent; a run already past that point when the upstream was restored raced with the restore itself.
 		if r, blocked, err := s.restoreGate(ctx, l, label); blocked || err != nil {
 			return r, err
 		}

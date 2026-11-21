@@ -36,6 +36,7 @@ type hub struct {
 	asked     []int64                                                 // ids of the note GETs, in order
 	full      *[]string                                               // the classes the caller reads in full (nil: structure and data; empty pointer target: none)
 	noFull    bool                                                    // an older upstream: the manifest says nothing about what is read in full
+	gen       string                                                  // the upstream's generation in the project answer ("": none)
 }
 
 func (h *hub) manifestJSON() string {
@@ -83,6 +84,9 @@ func (h *hub) up() *fakeUp {
 		case c.method == "GET" && c.path == "/minigw/v1/projects/shop":
 			if h.proj != 0 {
 				return h.proj, `{"error":{"message":"project gone"}}`, 0
+			}
+			if h.gen != "" {
+				return 200, fmt.Sprintf(`{"id":7,"slug":"shop","generation":%q}`, h.gen), 0
 			}
 			return 200, `{"id":7,"slug":"shop"}`, 0
 		case c.method == "GET" && c.path == "/minigw/v1/projects/7/kb/manifest":

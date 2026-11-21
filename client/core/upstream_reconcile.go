@@ -665,7 +665,7 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 				// goes (known, not compared); without one the note is unchecked: the owner decides by name.
 				row.Private = true
 				row.Class = "unchecked"
-				if n.Sent != nil {
+				if n.Sent != nil && !strings.HasPrefix(mark, hubRestoredMark) { // after the upstream's restore the receipt may name a reused number: unchecked
 					row.Class = "known"
 				}
 				out.Notes = append(out.Notes, row)

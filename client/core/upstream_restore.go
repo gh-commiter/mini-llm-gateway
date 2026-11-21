@@ -32,6 +32,8 @@ const (
 	RestoredState = "restored: reconcile before pushing"
 	// restorePendingFile is written by `backup.sh --restore` into the restored core folder: the gateway marks its links at its next start and then removes it.
 	restorePendingFile = "core.restored"
+	// hubLastWayOut: what is left when an upstream keeps changing its generation (reconcile cannot finish against it).
+	hubLastWayOut = "if the upstream keeps changing its generation, the last way out is unlink and link again: every published note is then sent again as new"
 	// HubRestoredCause is how a status names the cause of a mark that the UPSTREAM's restore set (its generation changed, see hubGenerationSeen).
 	HubRestoredCause = "the upstream was restored from a backup"
 	// The value of such a mark starts with hubRestoredMark instead of "restored|".
@@ -215,11 +217,10 @@ func restoreBlockedCause(l UpstreamLink, label string, marked int, hub bool) str
 	if l.Team {
 		who = "--team " + strings.TrimPrefix(label, "team ")
 	}
-	cause := ""
-	if hub {
-		cause = " (" + HubRestoredCause + ")"
+	if hub { // no override: a receipt may name another member's note on the restored upstream now (ClearRestoreMark refuses it)
+		return "blocked: " + RestoredState + " (" + HubRestoredCause + "); nothing is sent (" + markedText(marked) + "; run minigw gw upstream reconcile " + who + " --upstream " + l.Upstream + "; " + hubLastWayOut + ")"
 	}
-	return "blocked: " + RestoredState + cause + "; nothing is sent (" + markedText(marked) + "; run minigw gw upstream reconcile " + who + " --upstream " + l.Upstream + "; override: minigw gw upstream push " + who + " --upstream " + l.Upstream + " --after-restore)"
+	return "blocked: " + RestoredState + "; nothing is sent (" + markedText(marked) + "; run minigw gw upstream reconcile " + who + " --upstream " + l.Upstream + "; override: minigw gw upstream push " + who + " --upstream " + l.Upstream + " --after-restore)"
 }
 
 func markedText(n int) string {
@@ -289,6 +290,13 @@ func (s *Store) ClearRestoreMark(ctx context.Context, project, team int64, upstr
 	}
 	defer mu.Unlock()
 	return s.adminWrite(ctx, "upstream.after-restore", names[0], map[string]any{"project": local}, func(tx *sql.Tx) (string, error) {
+		// A mark the UPSTREAM's restore set is not the owner's to override: its note numbers are handed out again, so a receipt may name
+		// another member's note there now, and a push would replace (publish: overwrite) it. Only reconcile clears it.
+		if _, hub, ok, e := restoredMark(tx, local, names[0]); e != nil {
+			return "", e
+		} else if ok && hub {
+			return "", ErrRefusal{"--after-restore cannot clear this mark: " + HubRestoredCause + ", and a receipt here may name another member's note there now; run minigw gw upstream reconcile for this link (--upstream " + names[0] + "); " + hubLastWayOut}
+		}
 		return "", countOne(tx.Exec(`DELETE FROM meta WHERE key=?`, restoredKey(local, names[0])))
 	})
 }

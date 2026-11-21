@@ -1,6 +1,7 @@
 package core
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -115,11 +116,12 @@ func TestHubGenerationChangeMarksTheUpstreamsLinksAndSendsNothing(t *testing.T) 
 	if r = push1(f, up, fk, true); !r.Blocked || !r.DryRun {
 		t.Fatalf("%+v", r)
 	}
-	// flips again, and back to a generation it handed out before: a marked link's push never contacts the upstream (the gate comes first),
-	// so what notices is a dry run (as here), a pull or reconcile
+	// flips again, and back to a generation it handed out before: a link the upstream's restore marked is never contacted by a push or a
+	// dry run (the gate comes first), so what notices is a pull or reconcile (here: reconcile, whose resolve comes before its manifest read)
 	for i, next := range []string{genC, genA} {
 		g = next
-		if r = push1(f, up, fk, true); !r.Blocked || up.count("POST") != posts {
+		_, _ = f.ReconcileUpstream(ctx, up, ReconcileSpec{Project: fk, Upstream: "hub"})
+		if r = push1(f, up, fk, false); !r.Blocked || up.count("POST") != posts {
 			t.Fatalf("%s: %+v", next, r)
 		}
 		if n, _ := hubRestoredAudits(f); n != 2+i || storedGen(f) != next || f.marked() != 2 {
@@ -289,5 +291,120 @@ func TestHubGenerationIsReplacedByEveryRestore(t *testing.T) {
 	f.ok(e)
 	if g3 == g2 || g3 == g1 || !validGeneration(g3) {
 		t.Fatalf("the restore pending file kept the generation: %q %q %q", g1, g2, g3)
+	}
+}
+
+// M1: the owner's override (--after-restore) clears a mark this gateway's restore set, never one the upstream's restore set.
+func TestAfterRestoreRefusesAMarkTheUpstreamsRestoreSet(t *testing.T) {
+	f, _ := upFx(t)
+	fk := f.pid["fakture"]
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop"}))
+	g := genA
+	up := genUp(&g)
+	push1(f, up, fk, true)
+	g = genB
+	r := push1(f, up, fk, false)
+	if !r.Blocked || strings.Contains(r.Lines[0], "--after-restore") || !strings.Contains(r.Lines[0], "reconcile") || !strings.Contains(r.Lines[0], "unlink and link again") {
+		t.Fatalf("%+v", r)
+	}
+	e := f.ClearRestoreMark(ctx, fk, 0, "hub")
+	if e == nil || !strings.Contains(e.Error(), "reconcile") || f.marked() != 1 {
+		t.Fatalf("%v, %d marked", e, f.marked())
+	}
+	var rows int
+	f.ok(f.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action='upstream.after-restore'`).Scan(&rows))
+	if rows != 0 {
+		t.Fatal("a refused override wrote its audit row")
+	}
+	// this gateway's own restore: the override works as before
+	f.ok(f.write(ctx, func(tx *sql.Tx) error {
+		_, e := tx.Exec(`DELETE FROM meta WHERE key=?`, restoredKey(fk, "hub"))
+		return e
+	}))
+	f.markAll()
+	if e = f.ClearRestoreMark(ctx, fk, 0, "hub"); e != nil || f.marked() != 0 {
+		t.Fatalf("%v, %d marked", e, f.marked())
+	}
+}
+
+// L4: a dry run of a link the upstream's restore marked lists nothing it would send (its receipts may name other members' notes).
+func TestBlockedDryRunAfterTheUpstreamsRestoreListsNothing(t *testing.T) {
+	f, notes := upFx(t)
+	fk := f.pid["fakture"]
+	f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop"}))
+	g := genA
+	up := genUp(&g)
+	push1(f, up, fk, false)
+	f.edit("ana", fk, notes["Structure one"], "edited")
+	g = genB
+	for i := 0; i < 2; i++ { // the run that notices, and a later one
+		if r := push1(f, up, fk, true); !r.Blocked || len(r.Lines) != 1 || r.Created+r.Replaced+r.Skipped != 0 {
+			t.Fatalf("%d: %+v", i, r)
+		}
+	}
+}
+
+// L1: after the upstream's restore a surviving receipt of a private note (never in a manifest) is not "known": it is unchecked, and the
+// mark stays until the owner decides it by name. After this gateway's own restore it stays known, as before.
+func TestReconcilePrivateReceiptAfterTheUpstreamsRestoreIsUnchecked(t *testing.T) {
+	for _, cause := range []string{"upstream", "gateway"} {
+		t.Run(cause, func(t *testing.T) {
+			f, notes := upFx(t)
+			fk := f.pid["fakture"]
+			f.ok(f.LinkUpstreamWith(ctx, LinkSpec{Project: fk, Upstream: "hub", Remote: "shop", Classes: "structure,private", WithPrivate: true}))
+			pn := notes["Private three"]
+			un := UpstreamNote{ID: pn.ID, Revision: pn.Revision, Class: pn.Class, EntryKind: pn.EntryKind, Title: pn.Title, Body: pn.Body, Author: pn.Author, Hash: upstreamHash(pn)}
+			f.ok(f.upstreamRecordPublished(ctx, fk, "hub", un, 41, 1))
+			h := &hub{}
+			if cause == "upstream" {
+				h.gen = genA
+				push1(f, h.up(), fk, true) // first contact: stores the generation
+				h.gen = genB
+				push1(f, h.up(), fk, true) // notices it
+			} else {
+				f.markAll()
+			}
+			r, e := f.ReconcileUpstream(ctx, h.up(), ReconcileSpec{Project: fk})
+			f.ok(e)
+			var row ReconcileRow
+			for _, x := range r.Notes {
+				if x.Note == pn.ID {
+					row = x
+				}
+			}
+			want := map[string]string{"upstream": "unchecked", "gateway": "known"}[cause]
+			if row.Class != want {
+				t.Fatalf("%+v", r)
+			}
+		})
+	}
+}
+
+// L2: a pull that notices the new generation starts the traversal again from the beginning, also when the earlier one stopped midway.
+func TestPullThatNoticesTheUpstreamsRestoreStartsFromTheBeginning(t *testing.T) {
+	old := maxPullFetch
+	maxPullFetch = 2
+	defer func() { maxPullFetch = old }()
+	f, fk := readFx(t)
+	h := &hub{gen: genA}
+	for i := int64(1); i <= 4; i++ {
+		h.notes = append(h.notes, structNote(i, fmt.Sprint("Plan", i)))
+	}
+	if res := pull(f, fk, h.up()); !res.More || res.Next != 2 {
+		t.Fatalf("%+v", res)
+	}
+	h.gen = genB
+	h.notes[0].rev, h.notes[0].body = 2, "after the restore"
+	res := pull(f, fk, h.up())
+	if !res.More || res.Next != 2 {
+		t.Fatalf("the traversal went on at the old cursor: %+v", res)
+	}
+	var body string
+	f.ok(f.DB().QueryRow(`SELECT body FROM upstream_mirror WHERE remote_note=1`).Scan(&body))
+	if !strings.Contains(body, "after the restore") {
+		t.Fatalf("%q", body)
+	}
+	if res = pull(f, fk, h.up()); res.More || len(mirror(f)) != 4 {
+		t.Fatalf("%+v %v", res, mirror(f))
 	}
 }

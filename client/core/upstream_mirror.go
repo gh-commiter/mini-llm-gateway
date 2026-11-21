@@ -266,8 +266,10 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 	}
 	// The upstream's generation, before anything is learned: a new one marks every link of the upstream (it was restored from a backup).
 	// A marked link still mirrors (reading sends nothing), but its receipts teach nothing: reconcile settles which hub notes are ours.
-	if _, err = s.hubGenerationSeen(wctx, l.Upstream, p.gen); err != nil {
-		return res, err
+	if newMark, e := s.hubGenerationSeen(wctx, l.Upstream, p.gen); e != nil {
+		return res, e
+	} else if newMark { // it reset the traversal in the database and dropped the mirror: this run starts that new traversal from the beginning
+		st.cursor, st.failed, st.skipped, st.skipIDs = 0, false, 0, nil
 	}
 	var marked bool
 	if err = s.read(wctx, func(tx *sql.Tx) (e error) { _, marked, e = restoredAt(tx, l.Project, l.Upstream); return }); err != nil {

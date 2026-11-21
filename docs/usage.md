@@ -1842,8 +1842,12 @@ therefore has a generation, a random id that its every restore replaces, and sen
 gateway stores it per upstream; at first contact, and with an older upstream that sends none, nothing else happens. When it differs, every
 link to that upstream is marked in one transaction BEFORE anything is sent or learned in that run (an audit row `upstream.hub-restored`
 names the upstream and the start of the old and new generation), and the upstream's mirror is dropped and fetched again by the next pull.
-`gw upstream status`, the blocked push and the link's detail page say "the upstream was restored from a backup". A marked link's push never
-contacts the upstream, so a further change is seen by a pull, a `--dry-run` or reconcile. Reconcile then works as above: a receipt whose
+`gw upstream status`, the blocked push and the link's detail page say "the upstream was restored from a backup". Such a mark has no
+override: `push --after-restore` refuses it (a receipt may name another member's note there now, and the push would replace it, or
+overwrite it on a publish link); only reconcile clears it, and when the upstream keeps changing its generation the last way out is unlink and
+link again (every published note is then sent again as new). A `--dry-run` of such a link lists nothing it would send. Neither a push nor a
+dry run of a marked link contacts the upstream, so a further change is seen by a pull or reconcile; a pull that sees it starts its traversal
+from the beginning. Reconcile then works as above: a receipt whose
 remote note is gone, or carries no trailer of ours, is unknown; so is a waiting submission that the upstream no longer holds as the one we
 sent. `--new` drops the receipt, so the next push sends the note as new (a submission for review). A generation that changes again marks
 again; nothing the upstream sends clears a mark, skips reconcile or makes this gateway send anything. A copy of the upstream's files put

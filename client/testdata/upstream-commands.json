@@ -3307,11 +3307,11 @@
     {
      "match": "POST /upstream-push",
      "status": 200,
-     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"blocked: restored: reconcile before pushing (the upstream was restored from a backup); nothing is sent (2 links of this gateway are marked; run minigw gw upstream reconcile shop --upstream hub; override: minigw gw upstream push shop --upstream hub --after-restore)\"], \"created\": 0, \"skipped\": 0, \"replaced\": 0, \"refused\": 0, \"dryRun\": false, \"project\": 3, \"team\": false, \"blocked\": true}]}"
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"blocked: restored: reconcile before pushing (the upstream was restored from a backup); nothing is sent (2 links of this gateway are marked; run minigw gw upstream reconcile shop --upstream hub; if the upstream keeps changing its generation, the last way out is unlink and link again: every published note is then sent again as new)\"], \"created\": 0, \"skipped\": 0, \"replaced\": 0, \"refused\": 0, \"dryRun\": false, \"project\": 3, \"team\": false, \"blocked\": true}]}"
     }
    ],
    "want": {
-    "out": "shop -> hub (shop)\n  blocked: restored: reconcile before pushing (the upstream was restored from a backup); nothing is sent (2 links of this gateway are marked; run minigw gw upstream reconcile shop --upstream hub; override: minigw gw upstream push shop --upstream hub --after-restore)\n  created 0, replaced 0, skipped 0, refused 0\n",
+    "out": "shop -> hub (shop)\n  blocked: restored: reconcile before pushing (the upstream was restored from a backup); nothing is sent (2 links of this gateway are marked; run minigw gw upstream reconcile shop --upstream hub; if the upstream keeps changing its generation, the last way out is unlink and link again: every published note is then sent again as new)\n  created 0, replaced 0, skipped 0, refused 0\n",
     "err": "",
     "exit": 0,
     "requests": [

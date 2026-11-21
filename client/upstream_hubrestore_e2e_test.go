@@ -158,13 +158,13 @@ func TestUpstreamPullAfterTheHubIsRestoredShowsAColleaguesNote(t *testing.T) {
 	_, err = c.UpdateNote(t0, p, project, cur.ID, cur.Revision, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "edited after the hub's restore"})
 	f.must(err)
 	dry, err := f.cmd(coreOpts{dryRun: true}, "push", "shop")
-	// (a blocked dry run still lists what would go: that is not a replacement; only an unblocked one would be)
-	replaces := strings.Contains(dry, fmt.Sprintf("replaces the note %d", ours)) && !strings.Contains(dry, "blocked: ")
+	replaces := strings.Contains(dry, fmt.Sprintf("replaces the note %d", ours))
 	if !shown || replaces || err != nil {
 		t.Fatalf("B: the colleague's note (hub id %d) is shown after the pull: %t; the dry run of an edit replaces it: %t: %q %v", ours, shown, replaces, dry, err)
 	}
-	if !strings.Contains(dry, "blocked: ") {
-		t.Fatalf("the dry run is not blocked: %q", dry)
+	// blocked with the hub's cause, and nothing listed that it would send: its receipts may name other members' notes now
+	if !strings.Contains(dry, "blocked: restored: reconcile before pushing (the upstream was restored from a backup)") || !strings.Contains(dry, "would be created 0, replaced 0, skipped 0, refused 0") || strings.Count(dry, "\n") != 3 || strings.Contains(dry, "--after-restore") {
+		t.Fatalf("the dry run: %q", dry)
 	}
 
 	// the owner reconciles: our notes are unknown (the hub lost them), --all --new, push: the colleague's note is untouched, ours is new
@@ -192,5 +192,59 @@ func TestUpstreamPullAfterTheHubIsRestoredShowsAColleaguesNote(t *testing.T) {
 	}
 	if n := f.hubNotes(); n != 3 {
 		t.Fatalf("the hub has %d notes", n)
+	}
+}
+
+// M1: on a publish link the owner's override must not clear a mark the hub's restore set: the stale receipt names the colleague's note
+// (same id, same revision) and the push would overwrite it. The override is refused and names reconcile; the colleague's note stays.
+func TestAfterRestoreIsRefusedWhenTheHubWasRestored(t *testing.T) {
+	f := newUpFx(t, core.Developer)
+	f.add("hub")
+	f.allow()
+	p, project, notes := f.seed()
+	c := f.local.core
+	if out, err := f.cmd(coreOpts{mode: "publish"}, "link", "shop", "hub"); err != nil {
+		t.Fatal(out, err)
+	}
+	bak := filepath.Join(t.TempDir(), "hub-before-the-push.db")
+	f.must(f.remote.core.Backup(t0, bak))
+	if out, err := f.cmd(coreOpts{}, "push", "shop"); err != nil || f.hubNotes() != 2 {
+		t.Fatal(out, err, f.hubNotes())
+	}
+	inv := notes["Invoice numbering"]
+	var ours int64
+	f.must(c.DB().QueryRow(`SELECT remote_note FROM upstream_sent WHERE note_id=?`, inv.ID).Scan(&ours))
+	f.restoreHub(bak)
+	rc := f.remote.core
+	bob, err := rc.CreateUser(t0, "bob")
+	f.must(err)
+	f.must(rc.SetMember(t0, f.rproj, bob.ID, core.Developer))
+	f.must(rc.SetBinding(t0, "dev-bob", bob.ID))
+	bp, err := rc.Principal(t0, "dev-bob", true)
+	f.must(err)
+	theirs, _, err := rc.CreateNote(t0, bp, f.rproj, "bob-1", core.NoteInput{Class: core.Structure, Title: "Colleague checklist", Body: "the colleague's own text"})
+	f.must(err)
+	if theirs.ID != ours {
+		t.Fatalf("no reuse: %d, receipt %d", theirs.ID, ours)
+	}
+	cur, err := c.GetNote(t0, p, project, inv.ID)
+	f.must(err)
+	_, err = c.UpdateNote(t0, p, project, cur.ID, cur.Revision, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "our edit after the hub's restore"})
+	f.must(err)
+	if out, err := f.cmd(coreOpts{}, "push", "shop"); err != nil || !strings.Contains(out, "(the upstream was restored from a backup)") || strings.Contains(out, "--after-restore") {
+		t.Fatalf("%q %v", out, err)
+	}
+	out, err := f.cmd(coreOpts{afterRestore: true, yes: true}, "push", "shop")
+	if err == nil || !strings.Contains(err.Error(), "reconcile") {
+		t.Fatalf("the override was not refused: %q %v", out, err)
+	}
+	var body string
+	var rev int64
+	f.must(rc.DB().QueryRow(`SELECT body, revision FROM notes WHERE id=?`, theirs.ID).Scan(&body, &rev))
+	if body != "the colleague's own text" || rev != 1 {
+		t.Fatalf("the colleague's note was overwritten: %q revision %d", body, rev)
+	}
+	if st, _ := f.cmd(coreOpts{}, "status", "shop"); !strings.Contains(st, "the upstream was restored from a backup") {
+		t.Fatalf("the refused override cleared the mark: %s", st)
 	}
 }
