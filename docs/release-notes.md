@@ -67,7 +67,7 @@ Mini Gateway 0.10.0 is a stable release. It collects the fourteen beta versions 
 - A marked link's push or dry run does not contact the upstream, so a second restore of the upstream is noticed by the next pull or reconcile.
 - The connection check of an upstream (the panel's probe) and `pull --dry-run` do not compare the generation.
 - A hostile upstream that changes its generation on every request writes an audit row each time and keeps reconcile from finishing; unlink and link again is the last way out.
-- When two links of one upstream pull at the same moment right after the upstream was restored, one mirror can for a short time hold a note of the old state; the next full pull corrects it.
+- When two links of one upstream pull at the same moment right after the upstream was restored, one mirror can keep a note of the old state; it is corrected when that note changes on the upstream, or by unlinking and linking again.
 - Reconcile was proven in tests with two gateways on one computer and in containers, not between real machines, with a team link after a restore or in the Mac app's window. An unproven binding stays restricted for good; an accepted submission does not lift it. The listing's texts and counts are English only.
 - What a pull learned about pending or unreadable submissions is kept in memory only (asked again after an hour or a restart). A receipt without a recorded revision hides the upstream's copy at every revision. The revision rule assumes that an accepted new note starts at revision 1 on the upstream.
 - A replay is recognised by the state the upstream reports for the submission; an answer that names no state is treated as a new submission.
