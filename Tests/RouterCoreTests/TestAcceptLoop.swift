@@ -25,7 +25,7 @@ final class TestAcceptLoop: @unchecked Sendable {
         return (known[e] ?? "errno \(e)") + " (" + String(cString: strerror(e)) + ")"
     }
 
-    private struct State { var stopped = false; var ended: Int32?; var logged = Set<Int32>() }
+    private struct State { var stopped = false; var ended: Int32?; var logged = Set<Int32>(); var wakeOpen = false }
     private let state = Mutex(State())
     private let finished = DispatchGroup()
     private var wake: [Int32] = [-1, -1]
@@ -51,9 +51,14 @@ final class TestAcceptLoop: @unchecked Sendable {
     /// take that other test's connections or socket.
     @discardableResult
     func stop() -> Bool {
-        state.withLock { $0.stopped = true }
+        // The write and the loop's close of the pipe exclude each other (the same lock, and the loop clears wakeOpen before it closes): a second stop(), or a stop() after the loop ended on its
+        // own, must not write to a number that is closed, or already handed to the next socket of another test (found 2026-11-21 with a close() interposer: stop() twice wrote EBADF/into strangers).
         var wrote = "no wake-up pipe"
-        if wake[1] >= 0 { var b: UInt8 = 1; wrote = write(wake[1], &b, 1) == 1 ? "wake-up byte written" : "wake-up write failed with \(Self.name(errno))" }
+        state.withLock { s in
+            s.stopped = true
+            guard s.wakeOpen else { wrote = wake[1] >= 0 ? "wake-up pipe already closed" : wrote; return }
+            var b: UInt8 = 1; wrote = write(wake[1], &b, 1) == 1 ? "wake-up byte written" : "wake-up write failed with \(Self.name(errno))"
+        }
         let closed = finished.wait(timeout: .now() + 2) == .success
         stopNote.withLock { $0 = "stop: \(wrote), loop \(closed ? "ended" : "STILL RUNNING after 2 s")" + (state.withLock { $0.ended }.map { " (ended on \(Self.name($0)))" } ?? "") }
         return closed
@@ -70,8 +75,9 @@ final class TestAcceptLoop: @unchecked Sendable {
         let (wakeRead, wakeWrite) = (wake[0], wake[1])
         _ = fcntl(listener, F_SETFL, fcntl(listener, F_GETFL) | O_NONBLOCK)
         finished.enter()
+        state.withLock { $0.wakeOpen = true }
         Thread { [self] in
-            defer { close(listener); close(wakeRead); close(wakeWrite); finished.leave() }
+            defer { state.withLock { $0.wakeOpen = false }; close(listener); close(wakeRead); close(wakeWrite); finished.leave() }
             var fds = [pollfd(fd: listener, events: Int16(POLLIN), revents: 0), pollfd(fd: wakeRead, events: Int16(POLLIN), revents: 0)]
             while !state.withLock({ $0.stopped }) {
                 if poll(&fds, 2, -1) < 0 { if errno == EINTR { continue } else { end(errno); return } }
