@@ -63,6 +63,10 @@ import Testing
     let hub = ShareHub()
     #expect(try await hub.syncCopies(root, device: "local").count == Sync.maxCopies - 1)
     ShareHub.removeLeftovers(owner: owner)
+    // syncCopies above started the same cleanup on a Task.detached: whichever of the two removes a folder, the other one skips it (and its marker), so the marker of the folder
+    // the detached one removed (and that folder) may go a moment after this call returns (seen once: the marker still there). Wait for it, at most 10 s.
+    func leftover() -> Bool { [left, leftRO, owner.appendingPathComponent("0123456789abcdef.used")].contains { fm.fileExists(atPath: $0.path) } }
+    for _ in 0..<500 where leftover() { try await Task.sleep(for: .milliseconds(20)) }
     #expect(!fm.fileExists(atPath: left.path) && !fm.fileExists(atPath: leftRO.path))
     #expect(!fm.fileExists(atPath: owner.appendingPathComponent("0123456789abcdef.used").path))
     #expect(fm.fileExists(atPath: decoy.path))
