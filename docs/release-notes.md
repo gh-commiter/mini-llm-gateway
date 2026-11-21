@@ -1,5 +1,14 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- `minigw team show` and the session-start line printed `minigw kb review --team "<name>"` (and `note list --team <name>`) with the team name unquoted or in double quotes; a name holding `$(...)`, a backtick or `"` could run code when the printed command was pasted. A name that is not plain is now printed in single quotes (a `'` inside as `'\''`), the same on the Mac and in the Go client; plain names print as before. Project slugs are limited to lower-case letters, digits and `-`, so `project show` needed no change.
+- `scripts/compose-team-rehearsal.sh`: when the narrow source filter did not work, the rehearsal opened the remote page to all IPv4 even with `--bind` on a non-loopback address. It now stops with a failure that says why; with `--bind 127.0.0.1` it behaves as before.
+
+### Changed
+- Documentation and skill corrections: Docker bypasses the host firewall (use `DOCKER-USER`), upstream reading and pulling in the gw skill, rejected notes, the team waiting line, `--version` for `gw kb accept` without a terminal, the review-waiting lines in the onboarding guide, the link, push and review fields in the admin API reference, and the wording of four Slovenian panel strings.
+
 ## 0.9.12
 
 ### Fixed
