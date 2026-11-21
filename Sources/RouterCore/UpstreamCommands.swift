@@ -186,6 +186,11 @@ extension AdminCommands {
             else if pos.count != 2 { throw usage }
             if o.afterRestore {
                 if o.dryRun || body.count < 2 { throw fail("push --after-restore names one project or --team, and is not a dry run") }
+                let st = try request("GET", "/upstreams" + (body["team"] != nil ? "?team=\(body["team"]!)" : "?project=\(body["project"]!)")) // the server refuses a mark of the upstream's restore: said before the warning
+                let marked = (st["links"]?.array ?? []).map { $0.dict }.filter { $0["restored"]?.string != nil && (o.upstream.isEmpty || $0["upstream"]?.string == o.upstream) }
+                if marked.count == 1, marked[0]["restoredCause"]?.string == "upstream" {
+                    throw fail("--after-restore cannot clear this mark: the upstream was restored from a backup, and a receipt here may name another member's note there now; run minigw gw upstream reconcile for this link (--upstream " + (marked[0]["upstream"]?.string ?? "") + "); if the upstream keeps changing its generation, the last way out is unlink and link again: every published note is then sent again as new")
+                }
                 say("Pushing without reconciling can create second copies on the upstream: notes it already has from before the restore are sent again as new notes.")
                 if !o.yes {
                     if !isTerminal() { throw fail("push --after-restore: confirm in a terminal, or add --yes") }

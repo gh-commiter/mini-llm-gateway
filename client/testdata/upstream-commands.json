@@ -3347,6 +3347,11 @@
      "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}]}"
     },
     {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"links\": []}"
+    },
+    {
      "match": "POST /upstream-push",
      "status": 200,
      "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"note 7 \\\"Layout\\\": created\"], \"created\": 1, \"skipped\": 0, \"replaced\": 0, \"refused\": 0, \"dryRun\": false, \"project\": 3, \"team\": false, \"blocked\": false}]}"
@@ -3363,9 +3368,56 @@
       ""
      ],
      [
+      "GET",
+      "/upstreams?project=3",
+      ""
+     ],
+     [
       "POST",
       "/upstream-push",
       "{\"afterRestore\":true,\"dryRun\":false,\"project\":3,\"upstream\":\"hub\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "push after restore refused for a mark the upstream restore set",
+   "args": [
+    "upstream",
+    "push",
+    "shop"
+   ],
+   "opts": {
+    "afterRestore": true,
+    "yes": true,
+    "upstream": "hub"
+   },
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}]}"
+    },
+    {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"links\": [{\"Project\": 3, \"Upstream\": \"hub\", \"Restored\": \"2026-01-02T03:04:05Z\", \"RestoredCause\": \"upstream\"}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: --after-restore cannot clear this mark: the upstream was restored from a backup, and a receipt here may name another member's note there now; run minigw gw upstream reconcile for this link (--upstream hub); if the upstream keeps changing its generation, the last way out is unlink and link again: every published note is then sent again as new\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstreams?project=3",
+      ""
      ]
     ]
    }
@@ -3389,6 +3441,11 @@
      "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}]}"
     },
     {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"links\": []}"
+    },
+    {
      "match": "POST /upstream-push",
      "status": 200,
      "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"note 7 \\\"Layout\\\": created\"], \"created\": 1, \"skipped\": 0, \"replaced\": 0, \"refused\": 0, \"dryRun\": false, \"project\": 3, \"team\": false, \"blocked\": false}]}"
@@ -3402,6 +3459,11 @@
      [
       "GET",
       "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstreams?project=3",
       ""
      ],
      [
@@ -3429,6 +3491,11 @@
      "match": "GET /projects",
      "status": 200,
      "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}]}"
+    },
+    {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"links\": []}"
     }
    ],
    "want": {
@@ -3439,6 +3506,11 @@
      [
       "GET",
       "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstreams?project=3",
       ""
      ]
     ]
@@ -3459,6 +3531,11 @@
      "match": "GET /projects",
      "status": 200,
      "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}]}"
+    },
+    {
+     "match": "GET /upstreams?project=3",
+     "status": 200,
+     "body": "{\"links\": []}"
     }
    ],
    "want": {
@@ -3469,6 +3546,11 @@
      [
       "GET",
       "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/upstreams?project=3",
       ""
      ]
     ]
@@ -3707,9 +3789,9 @@
     "shop"
    ],
    "opts": {
-    "reconcileAll": true,
-    "reconcileSkip": true,
     "reconcileListed": "7,8",
+    "reconcileSkip": true,
+    "reconcileAll": true,
     "upstream": "hub"
    },
    "responses": [
@@ -3750,8 +3832,8 @@
     "shop"
    ],
    "opts": {
-    "reconcileAll": true,
     "reconcileSkip": true,
+    "reconcileAll": true,
     "upstream": "hub"
    },
    "responses": [
@@ -3802,8 +3884,8 @@
    ],
    "opts": {
     "team": "Engineering",
-    "upstream": "hub",
-    "dryRun": true
+    "dryRun": true,
+    "upstream": "hub"
    },
    "responses": [
     {

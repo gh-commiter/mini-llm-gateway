@@ -376,6 +376,9 @@ func TestReconcilePrivateReceiptAfterTheUpstreamsRestoreIsUnchecked(t *testing.T
 			if row.Class != want {
 				t.Fatalf("%+v", r)
 			}
+			if lines := strings.Join(r.Lines, "\n"); strings.Contains(lines, "remote 0") || (cause == "upstream") != strings.Contains(lines, "may still hold a copy, and --new would post a second one") {
+				t.Fatalf("%q", lines)
+			}
 		})
 	}
 }

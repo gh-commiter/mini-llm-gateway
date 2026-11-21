@@ -976,7 +976,13 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 		case row.Class == "unknown" && row.Info != "":
 			out.Lines = append(out.Lines, fmt.Sprintf("unknown note %d (revision %d), several upstream notes carry its trailer (bind one with --note %d --confirm <remote id>): %s", row.Note, row.Revision, row.Note, row.Info))
 		case row.Private && row.Class == "known":
-			out.Lines = append(out.Lines, fmt.Sprintf("known note %d (revision %d), remote %d; private note: the receipt could not be compared with the upstream", row.Note, row.Revision, row.Remote))
+			out.Lines = append(out.Lines, fmt.Sprintf("known note %d (revision %d); private note: the receipt could not be compared with the upstream", row.Note, row.Revision))
+		case row.Class == "unchecked":
+			out.Lines = append(out.Lines, fmt.Sprintf("unchecked note %d (revision %d); private note: the upstream's backup may still hold a copy, and --new would post a second one", row.Note, row.Revision))
+		case row.Class == "known" && row.Remote == 0:
+			out.Lines = append(out.Lines, fmt.Sprintf("known note %d (revision %d), sent as a submission (its note number on the upstream is not known here)", row.Note, row.Revision))
+		case row.Remote == 0:
+			out.Lines = append(out.Lines, fmt.Sprintf("%s note %d (revision %d)", row.Class, row.Note, row.Revision))
 		default:
 			out.Lines = append(out.Lines, fmt.Sprintf("%s note %d (revision %d), remote %d", row.Class, row.Note, row.Revision, row.Remote))
 		}

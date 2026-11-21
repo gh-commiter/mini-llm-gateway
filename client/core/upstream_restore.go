@@ -295,10 +295,15 @@ func (s *Store) ClearRestoreMark(ctx context.Context, project, team int64, upstr
 		if _, hub, ok, e := restoredMark(tx, local, names[0]); e != nil {
 			return "", e
 		} else if ok && hub {
-			return "", ErrRefusal{"--after-restore cannot clear this mark: " + HubRestoredCause + ", and a receipt here may name another member's note there now; run minigw gw upstream reconcile for this link (--upstream " + names[0] + "); " + hubLastWayOut}
+			return "", ErrRefusal{AfterRestoreHubRefusal(names[0])}
 		}
 		return "", countOne(tx.Exec(`DELETE FROM meta WHERE key=?`, restoredKey(local, names[0])))
 	})
+}
+
+// AfterRestoreHubRefusal is the text of the refusal of --after-restore for a mark the upstream's restore set (the client says it before its warning).
+func AfterRestoreHubRefusal(upstream string) string {
+	return "--after-restore cannot clear this mark: " + HubRestoredCause + ", and a receipt here may name another member's note there now; run minigw gw upstream reconcile for this link (--upstream " + upstream + "); " + hubLastWayOut
 }
 
 // MarkedLinks is how many upstream links carry the restore mark now (a start-up log line and the restore command's report).

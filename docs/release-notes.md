@@ -1,5 +1,16 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Upstream gateways: when two links of one upstream pulled at the same moment and the upstream had just been restored, one pull could store a mirror that lacked the first notes of the upstream until the next full pull. That pull now stores nothing and says so; the next one starts again from the beginning.
+- `gw upstream reconcile`: a private note whose receipt could not be checked now says that the upstream's backup may still hold a copy and that `--new` would post a second one.
+- `gw upstream reconcile`: a note known only through a submission of ours no longer prints `remote 0`; it says it was sent as a submission and that its note number on the upstream is not known here.
+- `gw upstream push --after-restore` on a link the upstream's own restore marked now refuses at once, without first printing the warning about second copies (Go client and Mac app).
+
+### Known problems
+- After upgrading the upstream gateway to 0.9.13 or newer, let every linked gateway contact it once (a push, a pull or a reconcile) before relying on restore detection: a restore of the upstream before that first contact is not noticed.
+
 ## 0.9.13
 
 ### Fixed

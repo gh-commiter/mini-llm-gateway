@@ -299,6 +299,9 @@ func TestReconcileKeepsSurvivingReceipts(t *testing.T) {
 			if !r.Cleared || r.Notes[0].Class != "known" {
 				t.Fatal(r)
 			}
+			if lines := strings.Join(r.Lines, "\n"); strings.Contains(lines, "remote 0") || pending && !strings.Contains(lines, "sent as a submission") {
+				t.Fatalf("a receipt that knows no note number printed a misleading remote id: %q", lines)
+			}
 			var after string
 			f.ok(f.DB().QueryRow(`SELECT hash||'|'||revision||'|'||remote_sub||'|'||remote_note||'|'||sent||'|'||remote_rev||'|'||sent_content FROM upstream_sent`).Scan(&after))
 			if before != after {

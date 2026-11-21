@@ -406,6 +406,15 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 			if u.dryRun || len(body) < 2 {
 				fail("push --after-restore names one project or --team, and is not a dry run")
 			}
+			var st struct{ Links []upLink }
+			q := "?project=" + fmt.Sprint(body["project"]) // the server refuses a mark of the upstream's restore: said before the warning
+			if body["team"] != nil {
+				q = "?team=" + fmt.Sprint(body["team"])
+			}
+			a.do("GET", "/upstreams"+q, nil, &st)
+			if hub := hubMarkedLink(st.Links, u.upstream); hub != "" {
+				fail(core.AfterRestoreHubRefusal(hub))
+			}
 			say(afterRestoreWarning)
 			if !u.yes {
 				if !adminTerminal() {
@@ -593,6 +602,23 @@ func upstreamPullPrint(p upPull) {
 
 // afterRestoreWarning is printed before the override clears a link's restore mark.
 const afterRestoreWarning = "Pushing without reconciling can create second copies on the upstream: notes it already has from before the restore are sent again as new notes."
+
+// hubMarkedLink: the name of the one restored link (of the named upstream, when one is named) whose mark the upstream's restore set; "" otherwise.
+func hubMarkedLink(links []upLink, upstream string) string {
+	n, hub := 0, ""
+	for _, l := range links {
+		if l.Restored != nil && (upstream == "" || l.Upstream == upstream) {
+			n++
+			if l.RestoredCause == "upstream" {
+				hub = l.Upstream
+			}
+		}
+	}
+	if n == 1 {
+		return hub
+	}
+	return ""
+}
 
 // upstreamAfterRestoreCmd is the command that clears the mark of the link l.
 func upstreamAfterRestoreCmd(l upLink) string {
