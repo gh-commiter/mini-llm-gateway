@@ -961,6 +961,15 @@
         "no": "builtin.upstreams.section.links.column.restoredblocked.no"
        },
        {
+        "field": "restoredCause",
+        "kind": "enum",
+        "label": "builtin.upstreams.section.links.column.restoredcause",
+        "values": {
+         "gateway": "builtin.upstreams.section.links.column.restoredcause.gateway",
+         "upstream": "builtin.upstreams.section.links.column.restoredcause.upstream"
+        }
+       },
+       {
         "field": "reconcileState",
         "kind": "text",
         "label": "builtin.upstreams.section.links.column.reconcile"

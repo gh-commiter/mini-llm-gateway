@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -30,6 +32,14 @@ const (
 	RestoredState = "restored: reconcile before pushing"
 	// restorePendingFile is written by `backup.sh --restore` into the restored core folder: the gateway marks its links at its next start and then removes it.
 	restorePendingFile = "core.restored"
+	// HubRestoredCause is how a status names the cause of a mark that the UPSTREAM's restore set (its generation changed, see hubGenerationSeen).
+	HubRestoredCause = "the upstream was restored from a backup"
+	// The value of such a mark starts with hubRestoredMark instead of "restored|".
+	hubRestoredMark = "hub-restored|"
+	// hubGenKey: this gateway's own generation as an upstream (a random id, replaced by every restore of this database).
+	hubGenKey = "hub_generation"
+	// hubSeenPrefix + upstream: the generation that upstream handed out last (the linked gateway's side).
+	hubSeenPrefix = "upstream_generation|"
 )
 
 // restoredSQL is true for a link of upstream_links that carries the mark (the gate of the automatic selection).
@@ -58,16 +68,116 @@ func markRestored(tx *sql.Tx, now time.Time) error {
 func restoredAt(q interface {
 	QueryRow(string, ...any) *sql.Row
 }, project int64, upstream string) (t time.Time, ok bool, err error) {
+	t, _, ok, err = restoredMark(q, project, upstream)
+	return
+}
+
+// restoredMark: restoredAt, and whether the upstream's restore set the mark (hub) rather than a restore of this gateway.
+func restoredMark(q interface {
+	QueryRow(string, ...any) *sql.Row
+}, project int64, upstream string) (t time.Time, hub, ok bool, err error) {
 	var v string
 	switch e := q.QueryRow(`SELECT value FROM meta WHERE key=?`, restoredKey(project, upstream)).Scan(&v); e {
 	case nil:
 	case sql.ErrNoRows:
-		return t, false, nil
+		return t, false, false, nil
 	default:
-		return t, false, e
+		return t, false, false, e
 	}
-	n, _ := strconv.ParseInt(strings.TrimPrefix(v, "restored|"), 10, 64)
-	return fromMs(n), true, nil
+	hub = strings.HasPrefix(v, hubRestoredMark)
+	_, at, _ := strings.Cut(v, "|")
+	n, _ := strconv.ParseInt(at, 10, 64)
+	return fromMs(n), hub, true, nil
+}
+
+// newHubGeneration gives this database a new generation as an upstream. Every restore calls it (stamp, consumeRestorePending): a restored
+// backup holds the generation of its time, and a linked gateway must see one it never saw before.
+func newHubGeneration(tx *sql.Tx) error {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return err
+	}
+	return setMeta(tx, hubGenKey, hex.EncodeToString(b))
+}
+
+// HubGeneration is this gateway's generation as an upstream: what its project and team answers hand out to linked gateways (created at the
+// first use, replaced by every restore). It is not a secret and identifies nothing else.
+func (s *Store) HubGeneration(ctx context.Context) (string, error) {
+	var g string
+	get := func(tx *sql.Tx) error {
+		if e := tx.QueryRow(`SELECT value FROM meta WHERE key=?`, hubGenKey).Scan(&g); e != sql.ErrNoRows {
+			return e
+		}
+		return nil
+	}
+	if err := s.read(ctx, get); err != nil || g != "" {
+		return g, err
+	}
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		if e := get(tx); e != nil || g != "" {
+			return e
+		}
+		if e := newHubGeneration(tx); e != nil {
+			return e
+		}
+		return get(tx)
+	})
+	return g, err
+}
+
+// validGeneration: what is taken of an upstream's generation (DATA): 16 to 64 lowercase hex digits; anything else counts as none sent.
+func validGeneration(g string) bool {
+	if len(g) < 16 || len(g) > 64 {
+		return false
+	}
+	for _, r := range g {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// hubGenerationSeen compares the generation an upstream just handed out (gen; "" or malformed: an older upstream, nothing is checked) with
+// the one stored for it. The first one is stored and nothing else happens. A different one means the upstream went back in time (restored
+// from a backup): in ONE transaction every link of that upstream is marked (the mark's value names that cause; an earlier mark of a link is
+// replaced, so a listing or decision made before is void), the traversals start again, the upstream's mirror is dropped, the new generation
+// is stored and an audit row is written. Nothing is cleared or
+// sent here: a changed generation only ever adds marks. It says whether it marked.
+func (s *Store) hubGenerationSeen(ctx context.Context, upstream, gen string) (marked bool, err error) {
+	if !validGeneration(gen) {
+		return false, nil
+	}
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		var old string
+		switch e := tx.QueryRow(`SELECT value FROM meta WHERE key=?`, hubSeenPrefix+upstream).Scan(&old); {
+		case e == sql.ErrNoRows:
+			return setMeta(tx, hubSeenPrefix+upstream, gen)
+		case e != nil:
+			return e
+		case old == gen:
+			return nil
+		}
+		r, e := tx.Exec(`INSERT INTO meta(key,value) SELECT '`+restoredPrefix+`'||project_id||'|'||upstream, ? FROM upstream_links WHERE upstream=? ON CONFLICT(key) DO UPDATE SET value=excluded.value`, hubRestoredMark+strconv.FormatInt(ms(s.now()), 10), upstream)
+		if e != nil {
+			return e
+		}
+		n, _ := r.RowsAffected()
+		if _, e = tx.Exec(`UPDATE upstream_links SET push_cursor=0, push_generation=0, push_failed=0, pull_cursor=0, pull_failed=0, pull_skipped=0, pull_skipped_ids='' WHERE upstream=?`, upstream); e != nil {
+			return e
+		}
+		// The mirror is keyed by the upstream's note numbers and revisions, which the restored upstream hands out again: a row could stand for
+		// another note now and would never be fetched again. It is dropped; the next pull (this one, when a pull noticed) fetches everything.
+		if e = purgeUpstreamMirror(tx, upstream); e != nil {
+			return e
+		}
+		if e = setMeta(tx, hubSeenPrefix+upstream, gen); e != nil {
+			return e
+		}
+		marked = true
+		return Audit(tx, "gateway", "upstream.hub-restored", upstream, map[string]any{"old": old[:min(8, len(old))], "new": gen[:8], "links": n})
+	})
+	return marked, err
 }
 
 // consumeRestorePending: the sentinel of a raw restore (backup.sh --restore) marks the links in one transaction, and only then is removed
@@ -79,7 +189,12 @@ func (s *Store) consumeRestorePending(ctx context.Context) error {
 	} else if err != nil { // cannot tell whether a restore is pending: the start fails closed rather than pushing from a possibly restored database
 		return fmt.Errorf("the restore pending file cannot be checked: %w", err)
 	}
-	if err := s.write(ctx, func(tx *sql.Tx) error { return markRestored(tx, s.now()) }); err != nil {
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		if e := markRestored(tx, s.now()); e != nil {
+			return e
+		}
+		return newHubGeneration(tx)
+	}); err != nil {
 		return err
 	}
 	s.sentinelMarked, _ = markedLinks(ctx, s.db)
@@ -91,11 +206,20 @@ func (s *Store) consumeRestorePending(ctx context.Context) error {
 
 // restoreBlockedLine is the one line a blocked push reports (and the first line of a dry run's lines).
 func restoreBlockedLine(l UpstreamLink, label string, marked int) string {
+	return restoreBlockedCause(l, label, marked, false)
+}
+
+// restoreBlockedCause is restoreBlockedLine with the cause of the mark (hub: the upstream was restored).
+func restoreBlockedCause(l UpstreamLink, label string, marked int, hub bool) string {
 	who := label
 	if l.Team {
 		who = "--team " + strings.TrimPrefix(label, "team ")
 	}
-	return "blocked: " + RestoredState + "; nothing is sent (" + markedText(marked) + "; run minigw gw upstream reconcile " + who + " --upstream " + l.Upstream + "; override: minigw gw upstream push " + who + " --upstream " + l.Upstream + " --after-restore)"
+	cause := ""
+	if hub {
+		cause = " (" + HubRestoredCause + ")"
+	}
+	return "blocked: " + RestoredState + cause + "; nothing is sent (" + markedText(marked) + "; run minigw gw upstream reconcile " + who + " --upstream " + l.Upstream + "; override: minigw gw upstream push " + who + " --upstream " + l.Upstream + " --after-restore)"
 }
 
 func markedText(n int) string {
@@ -107,10 +231,10 @@ func markedText(n int) string {
 
 // restoreGate says whether the link is marked and, if so, the report of a push that sends nothing.
 func (s *Store) restoreGate(ctx context.Context, l UpstreamLink, label string) (UpstreamPush, bool, error) {
-	var ok bool
+	var ok, hub bool
 	var marked int
 	err := s.read(ctx, func(tx *sql.Tx) (e error) {
-		if _, ok, e = restoredAt(tx, l.Project, l.Upstream); e != nil || !ok {
+		if _, hub, ok, e = restoredMark(tx, l.Project, l.Upstream); e != nil || !ok {
 			return
 		}
 		return tx.QueryRow(`SELECT count(*) FROM meta WHERE substr(key,1,?)=?`, len(restoredPrefix), restoredPrefix).Scan(&marked)
@@ -118,7 +242,7 @@ func (s *Store) restoreGate(ctx context.Context, l UpstreamLink, label string) (
 	if err != nil || !ok {
 		return UpstreamPush{}, false, err
 	}
-	return UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, Project: l.Project, Team: l.Team, Blocked: true, Lines: []string{restoreBlockedLine(l, label, marked) + s.reconcileCountsText(ctx, l)}}, true, nil
+	return UpstreamPush{Label: label, Upstream: l.Upstream, Remote: l.Remote, Project: l.Project, Team: l.Team, Blocked: true, Lines: []string{restoreBlockedCause(l, label, marked, hub) + s.reconcileCountsText(ctx, l)}}, true, nil
 }
 
 // ClearRestoreMark is the owner's override (push --after-restore): it clears the mark of ONE link (the upstream is named, or the project

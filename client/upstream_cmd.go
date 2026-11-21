@@ -39,6 +39,7 @@ type upLink struct {
 	LastError       string
 	ReconcileCounts *core.ReconcileCounts
 	Restored        *time.Time
+	RestoredCause   string
 	Label           string
 	Pending         int
 	Total           int
@@ -262,7 +263,11 @@ func upstreamCommand(a *adminClient, pos []string, o coreOpts) {
 		for _, l := range r.Links {
 			say(clean(upstreamLinkLine(l)))
 			if l.Restored != nil {
-				say(clean("  " + core.RestoredState + " (since " + l.Restored.Local().Format("2006-01-02 15:04") + "): nothing is sent from this link; run " + upstreamReconcileCmd(l) + upstreamReconcileCounts(l.ReconcileCounts)))
+				cause := ""
+				if l.RestoredCause == "upstream" {
+					cause = core.HubRestoredCause + ", "
+				}
+				say(clean("  " + core.RestoredState + " (" + cause + "since " + l.Restored.Local().Format("2006-01-02 15:04") + "): nothing is sent from this link; run " + upstreamReconcileCmd(l) + upstreamReconcileCounts(l.ReconcileCounts)))
 			}
 			if s := upstreamSyncLine(l); s != "" {
 				say(clean("  " + s))

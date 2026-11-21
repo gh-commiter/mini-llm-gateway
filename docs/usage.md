@@ -1778,7 +1778,8 @@ its destination (only a first link uses the local name). After restoring an olde
 **marked "restored: reconcile before pushing"**: what was sent after that backup is not known to the restored database, so a push would create it
 again there. A marked link sends and creates nothing: not a manual push, not the automatic push (its timer skips the link without back-off, and the
 pending work waits), not `--dry-run` (it still lists what would go and says the link is blocked), whether the link submits or publishes. Pulling is not
-blocked. `gw upstream status` shows the state and since when, and a blocked push prints one line and "created 0, replaced 0" (exit code 0: nothing was sent, and
+blocked, but while a link is marked its pull learns nothing about earlier submissions and a receipt alone hides no hub note (the hub's copy of
+a note of ours may show next to the local note until reconcile settles it). `gw upstream status` shows the state and since when, and a blocked push prints one line and "created 0, replaced 0" (exit code 0: nothing was sent, and
 a script sees no failure; read the line). The mark is cleared when the link is removed (`unlink`, or removing the upstream) and by the owner's override
 `minigw gw upstream push <project> --upstream <name> --after-restore` (`--team <team>` for a team link): it first says that pushing without reconciling can
 create second copies on the upstream, asks for a "y" in a terminal (or takes `--yes` without one), writes an audit row (the owner, the link and the time, no note text), clears the mark
@@ -1834,6 +1835,19 @@ The complete read has transport, time and size limits; exceeding any limit chang
 the number of notes (at most 15 minutes), and an exhausted budget or a slow request says how many notes were read of how many and asks you to run it again; it is never reported as the upstream being down.
 When the upstream limits reads, reconcile waits and goes on within the budget (the waits are reported in the answer). A large project is read once, by the listing; a named decision
 (`--note`, `--all`) reads only the upstream's manifest, which must still equal the one the listing was made from (any added, removed or changed note refuses it with "list again"), and the one note it binds. Restore overrides keep their existing behavior.
+
+**The upstream restored from a backup.** The upstream can go back in time too (its owner restored it): the notes it accepted after its
+backup are gone there, and it hands out note and submission numbers again that a receipt here may name. Every upstream (0.9.13 or newer)
+therefore has a generation, a random id that its every restore replaces, and sends it with the first answer of a push or a pull. This
+gateway stores it per upstream; at first contact, and with an older upstream that sends none, nothing else happens. When it differs, every
+link to that upstream is marked in one transaction BEFORE anything is sent or learned in that run (an audit row `upstream.hub-restored`
+names the upstream and the start of the old and new generation), and the upstream's mirror is dropped and fetched again by the next pull.
+`gw upstream status`, the blocked push and the link's detail page say "the upstream was restored from a backup". A marked link's push never
+contacts the upstream, so a further change is seen by a pull, a `--dry-run` or reconcile. Reconcile then works as above: a receipt whose
+remote note is gone, or carries no trailer of ours, is unknown; so is a waiting submission that the upstream no longer holds as the one we
+sent. `--new` drops the receipt, so the next push sends the note as new (a submission for review). A generation that changes again marks
+again; nothing the upstream sends clears a mark, skips reconcile or makes this gateway send anything. A copy of the upstream's files put
+back without its restore command keeps the old generation and is not detected.
 
 Two things mark the links, both exact: `gw core restore` (also the Mac app's restore) and a file named `core.restored` in the core folder (the one that holds `core.db`), which `backup.sh --restore` of a Docker deployment writes and the gateway consumes at its next start (it marks the links in one database transaction, then removes the file).
 Nothing else is guessed: a database that is simply copied back, with or without `core.state`, is **not detected** (an epoch gap between the two files proves nothing, and an older database with the same epoch shows none). After such a copy, create the file by hand BEFORE you start the gateway: in a plain folder `touch <core folder>/core.restored` as the account that runs the gateway and `chmod 600` it (Windows: create an empty file of that name); for a Compose volume

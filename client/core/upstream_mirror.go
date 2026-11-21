@@ -264,6 +264,20 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 	case why != "":
 		return record(why)
 	}
+	// The upstream's generation, before anything is learned: a new one marks every link of the upstream (it was restored from a backup).
+	// A marked link still mirrors (reading sends nothing), but its receipts teach nothing: reconcile settles which hub notes are ours.
+	if _, err = s.hubGenerationSeen(wctx, l.Upstream, p.gen); err != nil {
+		return res, err
+	}
+	var marked bool
+	if err = s.read(wctx, func(tx *sql.Tx) (e error) { _, marked, e = restoredAt(tx, l.Project, l.Upstream); return }); err != nil {
+		return res, err
+	}
+	if marked {
+		if r, blocked, e := s.restoreGate(wctx, l, label); e == nil && blocked {
+			res.Lines = append(res.Lines, r.Lines...)
+		}
+	}
 	a := get("/minigw/v1/projects/" + strconv.FormatInt(remote, 10) + "/kb/manifest")
 	switch {
 	case p.more:
@@ -320,7 +334,9 @@ func (s *Store) pullRun(ctx context.Context, tr UpstreamTransport, l UpstreamLin
 			break
 		}
 	}
-	s.learnReceipts(wctx, rctx, p, get, l, label, remote, newHub)
+	if !marked {
+		s.learnReceipts(wctx, rctx, p, get, l, label, remote, newHub)
+	}
 	var skipNote []string
 	// The room the mirror has for NEW notes, known before anything is fetched: a full mirror ends the traversal ("mirror full") instead of
 	// fetching and discarding notes run after run.
@@ -792,7 +808,10 @@ type learnMark struct {
 // (newHub): a submission can only have become a hub note that was not there before, so a note accepted between two pulls is learned in the
 // pull that finds it, before it is shown.
 func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(string) upAnswer, l UpstreamLink, label string, remote int64, newHub bool) {
-	type rec struct{ note, sub int64 }
+	type rec struct {
+		note, sub    int64
+		hash, author string
+	}
 	now := s.now()
 	key := func(r rec) string { return fmt.Sprintf("%d|%s|%d|%d", l.Project, l.Upstream, r.note, r.sub) }
 	var todo []rec
@@ -804,7 +823,7 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 	}
 	s.autoMu.Unlock()
 	err := s.read(wctx, func(tx *sql.Tx) error {
-		rows, e := tx.Query(`SELECT note_id,remote_sub FROM upstream_sent WHERE project_id=? AND upstream=? AND remote_sub>0 AND remote_note=0 AND NOT EXISTS(SELECT 1 FROM meta WHERE key='upstream_reconcile|'||project_id||'|'||upstream||'|rejected|'||note_id AND substr(value,1,length(remote_sub||'|'))=remote_sub||'|') ORDER BY sent,note_id`, l.Project, l.Upstream)
+		rows, e := tx.Query(`SELECT s.note_id,s.remote_sub,s.hash,coalesce(u.name,'') FROM upstream_sent s LEFT JOIN notes n ON n.id=s.note_id LEFT JOIN users u ON u.id=n.author_id WHERE s.project_id=? AND s.upstream=? AND s.remote_sub>0 AND s.remote_note=0 AND NOT EXISTS(SELECT 1 FROM meta WHERE key='upstream_reconcile|'||s.project_id||'|'||s.upstream||'|rejected|'||s.note_id AND substr(value,1,length(s.remote_sub||'|'))=s.remote_sub||'|') ORDER BY s.sent,s.note_id`, l.Project, l.Upstream)
 		if e != nil {
 			return e
 		}
@@ -817,7 +836,7 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 		at := map[rec]time.Time{}
 		for rows.Next() {
 			var r rec
-			if e = rows.Scan(&r.note, &r.sub); e != nil {
+			if e = rows.Scan(&r.note, &r.sub, &r.hash, &r.author); e != nil {
 				return e
 			}
 			m, asked := s.learnAsked[key(r)]
@@ -836,6 +855,10 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 	if err != nil || len(todo) == 0 {
 		return
 	}
+	secret, err := s.upstreamKey(wctx)
+	if err != nil {
+		return
+	}
 	learned := 0
 	for _, r := range todo {
 		if rctx.Err() != nil {
@@ -850,6 +873,7 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 			break
 		}
 		var sub struct {
+			upNote
 			State, Reason      string
 			Note               int64
 			Replaces, Revision int64
@@ -857,7 +881,10 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 		if a.status == 200 && json.Unmarshal(a.data, &sub) != nil { // an answer that cannot be read: not decided, tried again at the next pull
 			break
 		}
-		if a.status == 200 && sub.State == "accepted" && sub.Note > 0 {
+		// Only the submission WE sent teaches the receipt: its text ends with this note's trailer and is the text the receipt recorded (the
+		// content hash). A submission with the same number that is not that one (a restored hub hands numbers out again) binds nothing.
+		ours := sub.upNote.sameAs(r.hash, upstreamRef(secret, l.Upstream, l.Project, r.note), trailerAuthor(r.author), r.sub) == 1
+		if a.status == 200 && sub.State == "accepted" && sub.Note > 0 && ours {
 			wrote, e := s.upstreamRecordAccepted(wctx, l.Project, l.Upstream, r.note, r.sub, sub.Note, sub.Replaces, sub.Revision)
 			if e != nil {
 				break
@@ -867,7 +894,7 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 			}
 			continue
 		}
-		if a.status == 200 && sub.State == "rejected" { // kept durably (status, later pushes); then it is not asked about again at all
+		if a.status == 200 && sub.State == "rejected" && ours { // kept durably (status, later pushes); then it is not asked about again at all
 			if wrote, e := s.upstreamRecordRejected(wctx, l.Project, l.Upstream, r.note, r.sub, sub.Reason); e != nil {
 				break
 			} else if wrote {

@@ -3226,6 +3226,33 @@
    }
   },
   {
+   "name": "status restored upstream",
+   "args": [
+    "upstream",
+    "status"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /upstreams",
+     "status": 200,
+     "body": "{\"upstreams\": [], \"links\": [{\"project\": 3, \"team\": false, \"upstream\": \"hub\", \"remote\": \"shop\", \"classes\": [\"structure\", \"data\"], \"withPrivate\": false, \"label\": \"shop\", \"pending\": 2, \"total\": 3, \"restored\": \"2026-11-20T09:15:00Z\", \"restoredCause\": \"upstream\"}, {\"project\": 4, \"team\": false, \"upstream\": \"hub\", \"remote\": \"web\", \"classes\": [\"structure\"], \"withPrivate\": false, \"label\": \"web\", \"pending\": 0, \"total\": 1, \"restored\": \"2026-11-20T09:15:00Z\", \"restoredCause\": \"gateway\"}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop): 2 of 3 notes would go, never pushed, classes structure,data, manual\n  restored: reconcile before pushing (the upstream was restored from a backup, since 2026-11-20 09:15): nothing is sent from this link; run minigw gw upstream reconcile shop --upstream hub\n  read: off\nweb -> hub (web): 0 of 1 notes would go, never pushed, classes structure, manual\n  restored: reconcile before pushing (since 2026-11-20 09:15): nothing is sent from this link; run minigw gw upstream reconcile web --upstream hub\n  read: off\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/upstreams",
+      ""
+     ]
+    ]
+   }
+  },
+  {
    "name": "push blocked",
    "args": [
     "upstream",
@@ -3247,6 +3274,44 @@
    ],
    "want": {
     "out": "shop -> hub (shop)\n  blocked: restored: reconcile before pushing; nothing is sent (2 links of this gateway are marked; run minigw gw upstream reconcile shop --upstream hub)\n  created 0, replaced 0, skipped 0, refused 0\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/upstream-push",
+      "{\"dryRun\":false,\"project\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "push blocked upstream restored",
+   "args": [
+    "upstream",
+    "push",
+    "shop"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\": [{\"ID\": 3, \"Slug\": \"shop\", \"Name\": \"Shop\", \"Archived\": false}]}"
+    },
+    {
+     "match": "POST /upstream-push",
+     "status": 200,
+     "body": "{\"pushes\": [{\"label\": \"shop\", \"upstream\": \"hub\", \"remote\": \"shop\", \"lines\": [\"blocked: restored: reconcile before pushing (the upstream was restored from a backup); nothing is sent (2 links of this gateway are marked; run minigw gw upstream reconcile shop --upstream hub; override: minigw gw upstream push shop --upstream hub --after-restore)\"], \"created\": 0, \"skipped\": 0, \"replaced\": 0, \"refused\": 0, \"dryRun\": false, \"project\": 3, \"team\": false, \"blocked\": true}]}"
+    }
+   ],
+   "want": {
+    "out": "shop -> hub (shop)\n  blocked: restored: reconcile before pushing (the upstream was restored from a backup); nothing is sent (2 links of this gateway are marked; run minigw gw upstream reconcile shop --upstream hub; override: minigw gw upstream push shop --upstream hub --after-restore)\n  created 0, replaced 0, skipped 0, refused 0\n",
     "err": "",
     "exit": 0,
     "requests": [

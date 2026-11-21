@@ -130,7 +130,8 @@ extension AdminCommands {
                 let d = l.dict
                 say(clean(Self.upstreamLinkLine(d, zone)))
                 if let t = d["restored"]?.string.flatMap(ProjectText.parseTime) {
-                    say(clean("  restored: reconcile before pushing (since " + ProjectText.stamp(t, zone) + "): nothing is sent from this link; run " + Self.upstreamReconcileCmd(d) + Self.upstreamReconcileCounts(d)))
+                    let cause = d["restoredCause"]?.string == "upstream" ? "the upstream was restored from a backup, " : ""
+                    say(clean("  restored: reconcile before pushing (" + cause + "since " + ProjectText.stamp(t, zone) + "): nothing is sent from this link; run " + Self.upstreamReconcileCmd(d) + Self.upstreamReconcileCounts(d)))
                 }
                 if let s = Self.upstreamSyncLine(d, zone) { say(clean("  " + s)) }
                 say(clean("  " + Self.upstreamReadLine(d, zone)))

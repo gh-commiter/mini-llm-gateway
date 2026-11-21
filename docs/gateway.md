@@ -591,7 +591,9 @@ appears in the database, a backup, the log, an API answer or an argument. Each r
 (Noise, the upstream's key pinned), so there is no local listener to borrow; redirects are not followed and an answer is read up to 8
 MiB (up to 1 MiB of it is parsed). The routes are the owner's (`/upstreams`, `/upstream-push`, `/upstream-auto`, `/upstream-reconcile`, `/upstream-resolve`, admin-api.md); the push uses only the
 upstream's existing member routes (`GET /minigw/v1/projects/<slug>`, `GET /minigw/v1/teams`, `POST .../kb/submissions` with an
-idempotency key, `GET` of a submission and of a note to learn what exists). The panel for it is a later step.
+idempotency key, `GET` of a submission and of a note to learn what exists). The answers of `GET /minigw/v1/projects/<slug>` and
+`GET /minigw/v1/teams` carry the upstream's `generation` (16 hex digits, replaced by every restore of its database; not in the project
+list or a team's detail): the pushing gateway compares it per upstream and marks its links when it changes (usage.md, upstream chapter). The panel for it is a later step.
 
 Publish mode on the Mac: the app admits `POST /notes` and `PUT /notes/{id}` on an upstream for the helper (it cannot see link modes), so it allows them for every upstream, also one with only submit-mode links. What is enforced today is the core's own rule (those two requests are sent only for a link in publish mode) and the role of the device on the upstream; a compromised helper could still write notes directly as far as that role allows. Bind the device of a submit-only gateway to a role that cannot write notes there.
 

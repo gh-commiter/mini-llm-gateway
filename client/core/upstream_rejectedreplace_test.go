@@ -2,6 +2,7 @@ package core
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -38,7 +39,20 @@ func newHubFake() *hubFake {
 			return 201, fmt.Sprintf(`{"id":%d,"state":"pending"}`, h.next), 0
 		case c.method == "GET" && sscan(c.path, "/minigw/v1/projects/7/kb/submissions/%d", &id):
 			if s, ok := h.subs[id]; ok {
-				return 200, fmt.Sprintf(s, id), 0
+				answer := fmt.Sprintf(s, id)
+				if id <= len(h.posts) { // a real hub answers a submission with the text it received
+					var v map[string]any
+					if json.Unmarshal([]byte(answer), &v) == nil {
+						for _, k := range []string{"class", "title", "body", "entryKind"} {
+							if x, has := h.posts[id-1].body[k]; has {
+								v[k] = x
+							}
+						}
+						b, _ := json.Marshal(v)
+						answer = string(b)
+					}
+				}
+				return 200, answer, 0
 			}
 		case c.method == "GET" && sscan(c.path, "/minigw/v1/projects/7/notes/%d", &id):
 			if r := h.notes[id]; r > 0 {

@@ -36,13 +36,16 @@ type ProjectJSON struct {
 	Granted  []core.Class            `json:"granted"`
 	Origins  []core.MembershipOrigin `json:"origins,omitempty"`
 	Pending  int                     `json:"pendingReview,omitempty"` // project list, admins only: submissions waiting for their review
+	// Generation: the gateway's generation as an upstream (core.HubGeneration), in the answer of GET /projects/{slug} only: a linked
+	// gateway compares it before it pushes or pulls; a new one means this gateway was restored from a backup.
+	Generation string `json:"generation,omitempty"`
 }
 
 func toProject(p core.Project) ProjectJSON {
 	if p.Granted == nil {
 		p.Granted = []core.Class{}
 	}
-	return ProjectJSON{p.ID, p.Slug, p.Name, p.Archived, p.Role, p.Granted, p.Origins, p.Pending}
+	return ProjectJSON{p.ID, p.Slug, p.Name, p.Archived, p.Role, p.Granted, p.Origins, p.Pending, ""}
 }
 
 type NoteJSON struct {
@@ -327,7 +330,11 @@ func (a *API) projectRoute(ctx context.Context, st *core.Store, p core.Principal
 		if err != nil {
 			return a.errResponse(err)
 		}
-		return resp(200, toProject(pr))
+		j := toProject(pr)
+		if j.Generation, err = st.HubGeneration(ctx); err != nil {
+			return a.errResponse(err)
+		}
+		return resp(200, j)
 	case len(seg) == 2 && seg[1] == "sessions" && r.Method == "GET":
 		return a.sessionRoute(ctx, st, p, seg[0], q, false)
 	case len(seg) == 2 && seg[1] == "link-check" && r.Method == "POST":

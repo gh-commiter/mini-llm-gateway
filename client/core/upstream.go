@@ -175,7 +175,7 @@ func (s *Store) RemoveUpstream(ctx context.Context, name string) error {
 		if e := purgeUpstreamMirror(tx, name); e != nil {
 			return "", e
 		}
-		for _, q := range []string{`DELETE FROM meta WHERE key IN (SELECT '` + restoredPrefix + `'||project_id||'|'||upstream FROM upstream_links WHERE upstream=?)`, `DELETE FROM upstream_sent WHERE upstream=?`, `DELETE FROM upstream_links WHERE upstream=?`} {
+		for _, q := range []string{`DELETE FROM meta WHERE key IN (SELECT '` + restoredPrefix + `'||project_id||'|'||upstream FROM upstream_links WHERE upstream=?)`, `DELETE FROM meta WHERE key='` + hubSeenPrefix + `'||?`, `DELETE FROM upstream_sent WHERE upstream=?`, `DELETE FROM upstream_links WHERE upstream=?`} {
 			if _, e := tx.Exec(q, name); e != nil {
 				return "", e
 			}
@@ -290,6 +290,8 @@ type UpstreamLinkInfo struct {
 	Label           string           `json:"label"`   // the project's short name, or "team <name>"
 	Pending         int              `json:"pending"` // notes that a push would send now (new or changed)
 	Total           int              `json:"total"`   // published notes the link covers
+	// RestoredCause: with Restored, "gateway" (this gateway's database was restored) or "upstream" (the upstream was: its generation changed).
+	RestoredCause string `json:"restoredCause,omitempty"`
 	// Foreign: published notes that arrived from another gateway (they end with its trailer): never pushed onward, not in Total.
 	Foreign int `json:"foreign,omitempty"`
 	// Held: notes the owner skipped during reconcile: held across edits, never pushed until `reconcile --note <id> --new`.
@@ -1062,10 +1064,13 @@ func (s *Store) UpstreamLinks(ctx context.Context, project, team int64) (out []U
 				return e
 			}
 			info := UpstreamLinkInfo{UpstreamLink: l, Label: label, Total: scan.Total, Pending: scan.Pending, Foreign: scan.Foreign, Held: scan.Held, Restricted: scan.Restricted, Waiting: scan.Waiting, Rejected: scan.RejectedN, RejectedNotes: scan.Rejected}
-			if at, ok, e := restoredAt(tx, l.Project, l.Upstream); e != nil {
+			if at, hub, ok, e := restoredMark(tx, l.Project, l.Upstream); e != nil {
 				return e
 			} else if ok {
-				info.Restored = &at
+				info.Restored, info.RestoredCause = &at, "gateway"
+				if hub {
+					info.RestoredCause = "upstream"
+				}
 				info.ReconcileCounts = reconcileCounts(tx, l)
 			}
 			if e := readInfo(tx, ms(s.now()), &info); e != nil {

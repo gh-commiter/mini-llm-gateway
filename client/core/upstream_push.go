@@ -112,6 +112,7 @@ type pusher struct {
 	wait    time.Duration // for how long
 	status  int           // the HTTP status of the last call (0: no usable answer)
 	big     bool          // the last call's answer was over maxUpstreamAnswer
+	gen     string        // the upstream's generation as resolve read it ("": an older upstream sends none)
 }
 
 type upAnswer struct {
@@ -352,14 +353,16 @@ func (p *pusher) resolve(l UpstreamLink) (int64, string) {
 			return 0, refusal(a)
 		}
 		var ts []struct {
-			Name    string
-			Segment int64
+			Name       string
+			Segment    int64
+			Generation string
 		}
 		if json.Unmarshal(a.data, &ts) != nil {
 			return 0, "the upstream's list of teams is not readable"
 		}
 		for _, t := range ts {
 			if strings.EqualFold(t.Name, l.Remote) {
+				p.gen = t.Generation
 				if _, ok := SegmentTeam(t.Segment); !ok {
 					return 0, "the upstream named no notes of team " + l.Remote
 				}
@@ -381,12 +384,14 @@ func (p *pusher) resolve(l UpstreamLink) (int64, string) {
 		return 0, refusal(a)
 	}
 	var pr struct {
-		ID   int64
-		Slug string
+		ID         int64
+		Slug       string
+		Generation string
 	}
 	if json.Unmarshal(a.data, &pr) != nil || pr.ID <= 0 || !strings.EqualFold(pr.Slug, l.Remote) {
 		return 0, "the upstream answered for another project than " + upText(l.Remote, 64)
 	}
+	p.gen = pr.Generation
 	return pr.ID, ""
 }
 
@@ -524,6 +529,9 @@ func (s *Store) pushLink(ctx context.Context, tr UpstreamTransport, l UpstreamLi
 	if dryBlock != "" {
 		res.Blocked, res.Lines = true, append([]string{dryBlock}, res.Lines...)
 	}
+	if res.Blocked && !dry { // marked during the run (the upstream's generation changed): nothing was sent, the outbox waits as for any marked link
+		return res, err
+	}
 	if err == nil && !dry && !res.archived { // the outbox: cleared by a success, a back-off after a failure
 		err = s.afterRun(context.WithoutCancel(ctx), l, res)
 	}
@@ -606,6 +614,18 @@ func (s *Store) pushLinkRun(ctx context.Context, tr UpstreamTransport, l Upstrea
 	}
 	if why != "" {
 		return stop(why)
+	}
+	// The upstream's generation, before anything is sent: a new one marks every link of the upstream (it was restored). The gate is asked
+	// again in any case: another link's run may have marked this one since this run passed it.
+	newMark, err := s.hubGenerationSeen(wctx, l.Upstream, p.gen)
+	if err != nil {
+		return res, err
+	}
+	if !dry || newMark {
+		if r, blocked, e := s.restoreGate(wctx, l, label); e != nil || blocked {
+			r.DryRun = dry
+			return r, e
+		}
 	}
 	line := func(action string, n UpstreamNote, detail string) {
 		l := action + " " + strconv.FormatInt(n.ID, 10) + " " + upText(n.Title, 80)

@@ -166,6 +166,10 @@ type mirrorEntry struct {
 	differs      int64 // the hub's copy of a note we sent, changed there since: the local note it differs from
 }
 
+// mirrorUnmarked: a receipt counts for the mirror only while its link carries no restore mark: after a restore (of this gateway or of the
+// upstream, whose note numbers may now name another member's note) a receipt alone proves nothing; reconcile settles it.
+const mirrorUnmarked = `NOT EXISTS(SELECT 1 FROM meta WHERE key='` + restoredPrefix + `'||m.project_id||'|'||m.upstream)`
+
 // mirrorSQL: the statement of mirrorRows (its last argument, the LIMIT, is added by the caller). The inner selection reads no text: the
 // visibility (scope, reading on, fresh, the link's accepted classes and sources), the receipts of our own pushes (a hub copy whose remote
 // id we recorded is left out while it is the content we sent (a receipt with a content hash: decided by the caller, from the hash; an older
@@ -192,13 +196,13 @@ func mirrorSQL(now time.Time, scope []readable, match, cond string, cargs []any,
  WHERE l.read=1 AND l.last_pull_ok>? AND m.class IN ('structure','data') AND (` + strings.Join(parts, " OR ") + `)
  AND instr(','||l.read_classes||',', ','||m.class||',')>0
  AND (lower(m.source_label)=lower(CASE WHEN l.remote_team=1 THEN 'team:' ELSE 'project:' END||l.remote) OR instr(','||l.read_sources||',', ','||m.source_label||',')>0)
- AND NOT EXISTS (SELECT 1 FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content='' AND (s.remote_rev<=0 OR m.remote_rev<=s.remote_rev))
+ AND NOT EXISTS (SELECT 1 FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND ` + mirrorUnmarked + ` AND s.sent_content='' AND (s.remote_rev<=0 OR m.remote_rev<=s.remote_rev))
  AND ` + cond + ` ORDER BY m.updated DESC,m.id LIMIT ?)
  SELECT m.id,m.project_id,m.upstream,m.source_label,m.class,m.kind,m.title,` + text + `,m.remote_rev,m.updated,h.ok,
- coalesce((SELECT s.note_id FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content='' AND s.remote_rev>0 AND m.remote_rev>s.remote_rev ORDER BY s.note_id LIMIT 1),0),
- coalesce((SELECT s.note_id FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content<>'' ORDER BY s.note_id LIMIT 1),0),
- coalesce((SELECT s.sent_content FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content<>'' ORDER BY s.note_id LIMIT 1),''),
- CASE WHEN EXISTS (SELECT 1 FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND s.sent_content<>'') THEN m.body ELSE '' END
+ coalesce((SELECT s.note_id FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND ` + mirrorUnmarked + ` AND s.sent_content='' AND s.remote_rev>0 AND m.remote_rev>s.remote_rev ORDER BY s.note_id LIMIT 1),0),
+ coalesce((SELECT s.note_id FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND ` + mirrorUnmarked + ` AND s.sent_content<>'' ORDER BY s.note_id LIMIT 1),0),
+ coalesce((SELECT s.sent_content FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND ` + mirrorUnmarked + ` AND s.sent_content<>'' ORDER BY s.note_id LIMIT 1),''),
+ CASE WHEN EXISTS (SELECT 1 FROM upstream_sent s WHERE s.project_id=m.project_id AND s.upstream=m.upstream AND s.remote_note=m.remote_note AND s.remote_note>0 AND ` + mirrorUnmarked + ` AND s.sent_content<>'') THEN m.body ELSE '' END
  FROM hits h JOIN upstream_mirror m ON m.id=h.id ORDER BY m.updated DESC,m.id`
 	return q, append(args, cargs...)
 }

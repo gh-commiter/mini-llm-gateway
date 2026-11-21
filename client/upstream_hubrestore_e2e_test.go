@@ -110,7 +110,10 @@ func TestUpstreamPullAfterTheHubIsRestoredShowsAColleaguesNote(t *testing.T) {
 	p, project, notes := f.seed()
 	c := f.local.core
 	f.must(func() error { _, err := f.cmd(coreOpts{}, "link", "shop", "hub"); return err }())
-	f.must(func() error { _, err := f.cmd(coreOpts{read: true, acceptReach: true}, "link", "shop", "hub"); return err }())
+	f.must(func() error {
+		_, err := f.cmd(coreOpts{read: true, acceptReach: true}, "link", "shop", "hub")
+		return err
+	}())
 	bak := filepath.Join(t.TempDir(), "hub-before-the-push.db")
 	f.must(f.remote.core.Backup(t0, bak))
 	if out, err := f.cmd(coreOpts{}, "push", "shop"); err != nil || !strings.Contains(out, "created 2") {
@@ -155,7 +158,8 @@ func TestUpstreamPullAfterTheHubIsRestoredShowsAColleaguesNote(t *testing.T) {
 	_, err = c.UpdateNote(t0, p, project, cur.ID, cur.Revision, core.NoteInput{Class: core.Structure, Title: "Invoice numbering", Body: "edited after the hub's restore"})
 	f.must(err)
 	dry, err := f.cmd(coreOpts{dryRun: true}, "push", "shop")
-	replaces := strings.Contains(dry, fmt.Sprintf("replaces the note %d", ours))
+	// (a blocked dry run still lists what would go: that is not a replacement; only an unblocked one would be)
+	replaces := strings.Contains(dry, fmt.Sprintf("replaces the note %d", ours)) && !strings.Contains(dry, "blocked: ")
 	if !shown || replaces || err != nil {
 		t.Fatalf("B: the colleague's note (hub id %d) is shown after the pull: %t; the dry run of an edit replaces it: %t: %q %v", ours, shown, replaces, dry, err)
 	}
@@ -171,7 +175,7 @@ func TestUpstreamPullAfterTheHubIsRestoredShowsAColleaguesNote(t *testing.T) {
 	if out, err = f.cmd(coreOpts{reconcileAll: true, reconcileNew: true}, "reconcile", "shop"); err != nil || !strings.Contains(out, "restored mark cleared: true") {
 		t.Fatalf("reconcile --all --new: %q %v", out, err)
 	}
-	if out, err = f.cmd(coreOpts{}, "push", "shop"); err != nil || !strings.Contains(out, "created 2") || strings.Contains(out, "replace") {
+	if out, err = f.cmd(coreOpts{}, "push", "shop"); err != nil || !strings.Contains(out, "created 2, replaced 0") || strings.Contains(out, "replaces the note") {
 		t.Fatalf("push after reconcile: %q %v", out, err)
 	}
 	var replaced int

@@ -286,6 +286,9 @@ func TestReconcileKeepsSurvivingReceipts(t *testing.T) {
 			if pending {
 				h.notes = nil
 				f.ok(f.upstreamRecordSent(ctx, project, "hub", n, 9, 0))
+				nt, e := f.GetNote(ctx, f.p("ana"), project, n.ID)
+				f.ok(e)
+				registerSubmitted(t, 9, ourSubmission(f, project, nt)) // the hub still holds that submission, pending
 			} else {
 				f.ok(f.upstreamRecordPublished(ctx, project, "hub", n, 41, 1))
 			}

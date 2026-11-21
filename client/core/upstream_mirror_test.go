@@ -107,6 +107,11 @@ func (h *hub) up() *fakeUp {
 				return h.note(id, def)
 			}
 			return st, def, 0
+		case c.method == "GET" && strings.HasPrefix(c.path, "/minigw/v1/projects/7/kb/submissions/"): // a registered submission is pending
+			id, _ := strconv.ParseInt(strings.TrimPrefix(c.path, "/minigw/v1/projects/7/kb/submissions/"), 10, 64)
+			if _, ok := submitted[id]; ok {
+				return 200, withSubmitted(id, fmt.Sprintf(`{"id":%d,"state":"pending","note":0}`, id)), 0
+			}
 		}
 		return 404, `{"error":{"message":"not found"}}`, 0
 	}}

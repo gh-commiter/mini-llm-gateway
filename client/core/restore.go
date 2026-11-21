@@ -466,6 +466,11 @@ func stamp(ctx context.Context, path string, st state, src string) error {
 		tx.Rollback()
 		return err
 	}
+	// As an upstream, the restored database is older than what linked gateways saw: a new generation makes them mark their links (hubGenerationSeen).
+	if err = newHubGeneration(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
 	if err = Audit(tx, "core", "restore", filepath.Base(src), map[string]any{"epoch": st.Epoch}); err != nil {
 		tx.Rollback()
 		return err

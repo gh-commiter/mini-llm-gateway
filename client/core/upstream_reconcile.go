@@ -314,6 +314,10 @@ func (c *reconcileSession) resolve() (int64, error) {
 	if why != "" {
 		return 0, ErrRefusal{why}
 	}
+	// A new generation marks the link (again): the mark's value changes, so the transaction that applies this run refuses with "list again".
+	if _, e := c.p.s.hubGenerationSeen(context.WithoutCancel(c.rctx), c.l.Upstream, c.p.gen); e != nil {
+		return 0, e
+	}
 	c.remote = remote
 	return remote, nil
 }
@@ -678,8 +682,23 @@ func (s *Store) ReconcileUpstream(ctx context.Context, tr UpstreamTransport, r R
 				}
 			}
 			if n.Sent != nil && n.Sent.RemoteNote == 0 && n.Sent.RemoteSub > 0 {
-				// Pending submissions are not manifest notes. Keep their waiting receipts.
-				row.Class = "known"
+				// Pending submissions are not manifest notes. A waiting receipt is known only while the upstream still holds that submission as
+				// the one we sent (our trailer, the text the receipt recorded); gone (a restored upstream), or another one with the same number:
+				// unknown, the owner decides (--new drops the receipt).
+				a, e := sess.get(fmt.Sprintf("/minigw/v1/projects/%d/kb/submissions/%d", sess.remote, n.Sent.RemoteSub))
+				if e != nil {
+					return out, e
+				}
+				var sub upNote
+				switch {
+				case a.status == 200 && json.Unmarshal(a.data, &sub) == nil:
+					if sub.sameAs(n.Sent.Hash, ref, trailerAuthor(n.Author), n.Sent.RemoteSub) == 1 {
+						row.Class = "known"
+					}
+				case a.status == 404:
+				default:
+					return out, ErrRefusal{"reconcile: the submission of a waiting note cannot be read (" + refusal(a) + "); nothing was changed: run it again"}
+				}
 			} else if n.Sent != nil {
 				for _, id := range matches {
 					if id == n.Sent.RemoteNote {

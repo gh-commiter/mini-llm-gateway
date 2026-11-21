@@ -1,5 +1,19 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Upstream gateways: when the team server (the upstream) was restored from a backup, the notes it had accepted after that backup were gone there, but every linked gateway kept its receipts and said "unchanged since the last push" for them forever; `gw upstream status` showed nothing wrong. The upstream now has a generation (a random id that each of its restores replaces) and sends it with the first answer of a push or a pull. A linked gateway that sees a new one marks every link to that upstream "restored: reconcile before pushing (the upstream was restored from a backup)" before it sends or learns anything, writes an audit row and sends nothing more until its owner runs `gw upstream reconcile`. Reconcile lists the lost notes as unknown; `--new` sends them again. Status, a blocked push and the link's detail page in the Upstream gateways panel name the cause.
+- Upstream gateways: a restored upstream hands out note and submission numbers again. A colleague's new note there could get a number one of our receipts named: the mirror hid it as ours, the next edit of our note would have been sent as a replacement of the colleague's note, and the pull could bind a waiting receipt to someone else's submission. A new generation now drops the upstream's mirror (the next pull fetches it again); while a link is marked, a receipt alone hides no hub note and the pull learns nothing; reconcile treats a waiting submission the upstream no longer holds as ours as unknown. The pull binds a waiting receipt only to a submission whose text ends with this note's trailer and is the text the receipt recorded, for an upstream of any version.
+
+### Known problems
+- Only an upstream with this change sends a generation; with an older upstream nothing is checked (as before). Only a linked gateway with this change notices it.
+- A copy of the upstream's files put back without its restore command (`gw core restore`, `backup.sh --restore`, or the `core.restored` file made by hand) keeps the old generation and is not detected.
+- A marked link's push does not contact the upstream, so a second restore of the upstream is noticed by the next pull, `push --dry-run` or reconcile, not by a push.
+- The connection check of an upstream (the panel's probe, `GET /upstreams/{name}/probe`) and `pull --dry-run` do not compare the generation (they send and learn nothing).
+- A blocked `push --dry-run` still lists what would go by the old receipts ("would replace 1"); nothing is sent.
+- Proven by tests with two real gateways on one machine (a project link, submit mode) and by core tests with a scripted upstream (publish mode, the automatic push, a team list answer on the upstream's side). Not run against a Docker team server or with a team link end to end.
+
 ## 0.9.12
 
 ### Fixed

@@ -2,6 +2,7 @@ package core
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,6 +31,9 @@ func (h *learnHub) up() *fakeUp {
 			}
 			if s, ok := h.subs[id]; ok {
 				st, _ := strconv.Atoi(s[0])
+				if st == 200 {
+					return st, withSubmitted(id, s[1]), 0
+				}
 				return st, s[1], 0
 			}
 			return 404, `{"error":{"message":"not found"}}`, 0
@@ -37,6 +41,43 @@ func (h *learnHub) up() *fakeUp {
 		st, b, _, _ := inner.Do(ctx, "hub", c.method, c.path, nil, nil)
 		return st, string(b), 0
 	}}
+}
+
+// submitted is the fake hubs' memory of the text each submission carried (sub id -> class, title, body, entryKind): a real hub answers a
+// submission with it, and the learning step binds a receipt only to the submission whose text is ours. receipts() registers what it records.
+var submitted = map[int64]map[string]any{}
+
+func registerSubmitted(t *testing.T, sub int64, fields map[string]any) {
+	submitted[sub] = fields
+	t.Cleanup(func() { delete(submitted, sub) })
+}
+
+// withSubmitted adds the registered text of submission id to a 200 answer (fields the answer has itself win).
+func withSubmitted(id int64, answer string) string {
+	fields, ok := submitted[id]
+	if !ok {
+		return answer
+	}
+	var v map[string]any
+	if json.Unmarshal([]byte(answer), &v) != nil {
+		return answer
+	}
+	for k, x := range fields {
+		if _, has := v[k]; !has {
+			v[k] = x
+		}
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+// ourSubmission: the fields of the text a push of n sends as a submission (body with this gateway's trailer).
+func ourSubmission(f *fx, project int64, n Note) map[string]any {
+	f.t.Helper()
+	secret, e := f.upstreamKey(ctx)
+	f.ok(e)
+	p := pusher{secret: secret, up: "hub"}
+	return map[string]any{"class": n.Class, "title": n.Title, "entryKind": n.EntryKind, "body": n.Body + p.trailer(project, UpstreamNote{ID: n.ID, Author: n.Author}, 0)}
 }
 
 func accepted(note int64) [2]string {
@@ -53,9 +94,10 @@ func receipts(f *fx, fk int64, n int) (ids []int64) {
 		f.ok(e)
 		ids = append(ids, nt.ID)
 		f.ok(f.write(ctx, func(tx *sql.Tx) error {
-			_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,'hub',?,'h',1,?,0,?)`, fk, nt.ID, i, ms(f.clock))
+			_, e := tx.Exec(`INSERT INTO upstream_sent(project_id,upstream,note_id,hash,revision,remote_sub,remote_note,sent) VALUES(?,'hub',?,?,1,?,0,?)`, fk, nt.ID, upstreamHash(nt), i, ms(f.clock))
 			return e
 		}))
+		registerSubmitted(f.t, int64(i), ourSubmission(f, fk, nt))
 	}
 	return
 }

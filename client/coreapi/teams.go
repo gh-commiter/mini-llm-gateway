@@ -20,6 +20,8 @@ type TeamJSON struct {
 	Path     string `json:"path"`
 	// Segment is the id of the team's own notes: the notes, search and submission routes take it as a project id.
 	Segment int64 `json:"segment"`
+	// Generation: as ProjectJSON's, in the team list only (where a linked gateway finds its team's notes).
+	Generation string `json:"generation,omitempty"`
 }
 
 type TeamMemberJSON struct {
@@ -36,7 +38,7 @@ type TeamDetailJSON struct {
 }
 
 func toTeam(t core.Team) TeamJSON {
-	return TeamJSON{t.ID, t.Name, t.Archived, t.Path, core.TeamSegment(t.ID)}
+	return TeamJSON{t.ID, t.Name, t.Archived, t.Path, core.TeamSegment(t.ID), ""}
 }
 func teamMembers(ms []core.TeamMember) []TeamMemberJSON {
 	out := []TeamMemberJSON{}
@@ -67,9 +69,15 @@ func (a *API) teamRoute(ctx context.Context, st *core.Store, p core.Principal, r
 		if err != nil {
 			return a.errResponse(err)
 		}
+		gen, err := st.HubGeneration(ctx)
+		if err != nil {
+			return a.errResponse(err)
+		}
 		out := []TeamJSON{}
 		for _, t := range ts {
-			out = append(out, toTeam(t))
+			j := toTeam(t)
+			j.Generation = gen
+			out = append(out, j)
 		}
 		return resp(200, out)
 	}

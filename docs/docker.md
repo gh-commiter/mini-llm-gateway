@@ -151,6 +151,13 @@ files: a backup is a secret. Keep it private and copy it to protected storage.
 A restore leaves a "restore pending" file (`core/core.restored`) in the config volume. The gateway reads it at its next start, marks every upstream link "restored: reconcile before pushing" in one database
 transaction (a link marked this way sends nothing until the owner runs `minigw gw upstream reconcile <project> --upstream <name>`; `gw upstream push <project> --upstream <name> --after-restore` is the override that skips it and can create second copies) and only then removes the file. Only a gateway 0.9.2 or newer reads the file, so `backup.sh --restore` writes it only when the image to run is that new (or a local build) and says so when it does not; a backup never contains it. A volume
 copied back by some other means leaves no such file and is not detected: create it by hand before starting (command in the upstream chapter of `usage.md`).
+When this server is the upstream of other gateways (a team server), consuming that file also gives the server a new
+generation. Each linked gateway (0.9.13 or newer) sees it at its next contact (a push, an automatic push, a pull or reconcile), marks
+every link to this server "restored: reconcile before pushing (the upstream was restored from a backup)" and sends nothing more; its owner
+runs `minigw gw upstream reconcile <project> --upstream <name>`. What the server accepted after the backup was taken is lost here:
+reconcile lists those notes as unknown, and `--note <id> --new` (or `--all --new`) sends them again, as submissions for review. A note
+number the server hands out again is never taken for one of the linked gateway's own notes. An older linked gateway does not notice
+the restore.
 If a restore fails during extraction, its targets may be partially populated. Keep the backup,
 inspect the failure and remove only those failed restore volumes before retrying into empty targets.
 
