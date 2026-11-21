@@ -91,19 +91,25 @@ public enum Worktree {
         // L2: časovnik pred pisanjem vhoda in branjem izhoda (oba čakata na git)
         // #109: lastna nit, ne DispatchQueue.global(): pod obremenitvijo (vzporedni zagoni, zasedeni delavci) blok tam začne
         // z zamudo desetih sekund in git z visečim podprocesom teče čez omejitev.
-        let done = OSAllocatedUnfairLock(initialState: false), finished = DispatchSemaphore(value: 0)
+        let done = OSAllocatedUnfairLock(initialState: false), finished = DispatchSemaphore(value: 0), timerEnded = DispatchSemaphore(value: 0)
+        // #176: not closeOnDealloc: the timer thread uses this descriptor (killTree finds the holders of the pipe) until `timerEnded`.
+        let reader = FileHandle(fileDescriptor: o[0], closeOnDealloc: false)
         if let timeout {
             Thread { [pid] in
-                if finished.wait(timeout: .now() + timeout) == .timedOut { done.withLock { if !$0 { _ = kill(-pid, SIGKILL) } } }
+                // killTree (bounded) also kills the descendants that left the group (setsid) and keep the output open: the read below ends.
+                if finished.wait(timeout: .now() + timeout) == .timedOut { done.withLock { if !$0 { Native.killTree(pid, pipes: [reader]) } } }
+                timerEnded.signal()
             }.start()
         }
         let w = FileHandle(fileDescriptor: i[1], closeOnDealloc: true)
         if let input { try? w.write(contentsOf: input) }
         try? w.close()
-        let data = FileHandle(fileDescriptor: o[0], closeOnDealloc: true).readDataToEndOfFile()
+        let data = reader.readDataToEndOfFile()
         var st: Int32 = 0
         while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
         done.withLock { $0 = true }; finished.signal()
+        if timeout != nil { timerEnded.wait() }
+        close(o[0])
         let status = st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f)
         let out = String(decoding: data, as: UTF8.self)
         return (status, trim ? out.trimmingCharacters(in: .whitespacesAndNewlines) : out)

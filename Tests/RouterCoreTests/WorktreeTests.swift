@@ -986,6 +986,25 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(r.status != 0 && ContinuousClock.now - start < .seconds(300))  // ends by its 1 s limit, not at the 600 s sleep
 }
 
+/// #176: a descendant of git that left the process group (setsid) and keeps the output open must not hold `Worktree.run` past its timeout.
+@Test(.blocking) func gatewayGitTimeoutEndsWhenASetsidChildHoldsTheOutput() async throws {
+    let mark = "minigw-gitkill-" + UUID().uuidString
+    let script = "perl -MPOSIX -e 'POSIX::setsid(); $0 = \"\(mark)\"; sleep 60' & sleep 60"
+    let start = ContinuousClock.now
+    let r = Worktree.run(["-c", "alias.hang=!" + script, "hang"], timeout: 1)
+    #expect(ContinuousClock.now - start < .seconds(10) && r.status == 137)  // SIGKILL as before; ends within seconds, not at the 60 s sleep
+    var leftStatus: Int32 = 0
+    for _ in 0..<200 {
+        let left = Process()
+        left.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep"); left.arguments = ["-f", mark]; left.standardOutput = FileHandle.nullDevice
+        try left.run(); left.waitUntilExit()
+        leftStatus = left.terminationStatus
+        if leftStatus == 1 { break }
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    #expect(leftStatus == 1)  // the setsid child is gone
+}
+
 /// #16: posnetek vzame nove datoteke, ne pa prezrtih (.gitignore, .git/info/exclude); #10: brez commita ga ni.
 @Test(.blocking) func worktreeSnapshotSkipsIgnoredFilesAndNeedsACommit() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("wt-" + UUID().uuidString)

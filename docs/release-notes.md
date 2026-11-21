@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- Mac gateway: a git call with a time limit (`Worktree.run`) could hang past it when a program started by git (hook, credential helper, filter) left the process group and kept git's output open; the limit killed only the group and the read of the output never ended. The limit now also kills the processes that hold the output (as every other kill does), so the call returns within seconds with the same result as before (exit status 137).
+
 ## 0.9.11
 
 ### Fixed
