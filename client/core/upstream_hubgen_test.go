@@ -408,3 +408,38 @@ func TestPullThatNoticesTheUpstreamsRestoreStartsFromTheBeginning(t *testing.T) 
 		t.Fatalf("%+v %v", res, mirror(f))
 	}
 }
+
+// Two links of one upstream pull at once: the other link's run noticed the restore (reset this link's cursor, dropped the mirror) while this
+// run held the old cursor. This run must store nothing; the next traversal then fetches everything.
+func TestPullOverARestoreNoticedByAnotherLinkStoresNothing(t *testing.T) {
+	old := maxPullFetch
+	maxPullFetch = 2
+	defer func() { maxPullFetch = old }()
+	f, fk := readFx(t)
+	h := &hub{gen: genA}
+	for i := int64(1); i <= 4; i++ {
+		h.notes = append(h.notes, structNote(i, fmt.Sprint("Plan", i)))
+	}
+	if res := pull(f, fk, h.up()); !res.More || res.Next != 2 {
+		t.Fatalf("%+v", res)
+	}
+	fired := false
+	h.note = func(id int64, def string) (int, string, time.Duration) {
+		if id == 3 && !fired {
+			fired = true
+			_, e := f.hubGenerationSeen(ctx, "hub", genB) // what the other link's run does
+			f.ok(e)
+		}
+		return 200, def, 0
+	}
+	if res := pull(f, fk, h.up()); res.More || len(mirror(f)) != 0 {
+		t.Fatalf("the run stored its result over the reset: %+v %v", res, mirror(f))
+	}
+	h.note = nil
+	for i := 0; i < 3 && len(mirror(f)) < 4; i++ {
+		pull(f, fk, h.up())
+	}
+	if len(mirror(f)) != 4 {
+		t.Fatalf("%v", mirror(f))
+	}
+}

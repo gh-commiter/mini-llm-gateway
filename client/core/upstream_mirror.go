@@ -511,9 +511,12 @@ fetch:
 
 	err = s.write(wctx, func(tx *sql.Tx) error {
 		var on, rteam int
-		var acc int64
+		var acc, curNow int64
 		var reach, rremote, rcls, rsrc string
-		switch e := tx.QueryRow(`SELECT read,read_accepted,read_reach,remote,remote_team,read_classes,read_sources FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&on, &acc, &reach, &rremote, &rteam, &rcls, &rsrc); {
+		switch e := tx.QueryRow(`SELECT read,read_accepted,read_reach,remote,remote_team,read_classes,read_sources,pull_cursor FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&on, &acc, &reach, &rremote, &rteam, &rcls, &rsrc, &curNow); {
+		case e == nil && curNow == 0 && st.cursor > 0: // another link of the upstream noticed its restore meanwhile: this run holds a cursor and skips of the old traversal
+			res.outcome, res.Stopped, res.More, res.Next, fetched = "skip", "the upstream was restored during the pull: nothing was stored, pull again", false, 0, nil
+			return nil
 		case e == sql.ErrNoRows || e == nil && (on == 0 || acc != st.accepted || reach != st.reach || rremote != st.remote || rteam != st.remoteTeam || reach != reachOf(l.Upstream, rremote, rteam, rcls, rsrc)): // the link was changed: what was fetched belongs to another reach
 			res.outcome, res.Stopped, res.More, res.Next, fetched = "skip", "the link was removed or its reading changed during the pull: nothing was stored", false, 0, nil
 			return nil
