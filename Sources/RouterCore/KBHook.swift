@@ -28,10 +28,15 @@ extension ProjectEnv {
         return u.allSatisfy { ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 90) || ($0 >= 97 && $0 <= 122) || $0 == 46 || $0 == 95 || $0 == 45 }
     }
 
+    /// A team name as one shell word of a command to copy: as it stands if plain, else single-quoted (a ' inside as '\'').
+    static func teamCmdArg(_ team: String) -> String {
+        isPlainTeamName(team) ? team : "'" + team.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     /// The line for a team's own notes (the same in the Go client); team is already cleaned and, unless it is a plain word, put in
-    /// double quotes in the command.
+    /// single quotes in the command (a ' inside as '\''), so a pasted command runs no code of the name.
     static func teamWaitingLine(_ n: Int, _ team: String) -> String {
-        let cmd = isPlainTeamName(team) ? team : "\"" + team + "\""
+        let cmd = teamCmdArg(team)
         return n == 1 ? "1 submission waits for your review in team \(team): minigw kb review --team \(cmd)"
             : "\(n) submissions wait for your review in team \(team): minigw kb review --team \(cmd)"
     }

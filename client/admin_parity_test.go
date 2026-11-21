@@ -225,8 +225,8 @@ func TestUsageReportParity(t *testing.T) {
 	}
 }
 
-// The upstream commands (minigw gw upstream ...): client/testdata/upstream-commands.json. The Go gateway only for now (the Mac app's
-// gateway does not support upstreams yet).
+// The upstream commands (minigw gw upstream ...): client/testdata/upstream-commands.json. The Mac app's Swift commands assert the same
+// fixture (Tests/RouterCoreTests/UpstreamTests.swift); this test runs the Go side.
 func TestUpstreamCommandParity(t *testing.T) {
 	var fx struct {
 		Cases []*admCase `json:"cases"`

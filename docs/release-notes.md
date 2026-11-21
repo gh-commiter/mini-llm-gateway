@@ -1,10 +1,15 @@
 # Release notes
 
-## Unreleased
+## 0.9.13
 
 ### Fixed
 - Upstream gateways: when the team server (the upstream) was restored from a backup, the notes it had accepted after that backup were gone there, but every linked gateway kept its receipts and said "unchanged since the last push" for them forever; `gw upstream status` showed nothing wrong. The upstream now has a generation (a random id that each of its restores replaces) and sends it with the first answer of a push or a pull. A linked gateway that sees a new one marks every link to that upstream "restored: reconcile before pushing (the upstream was restored from a backup)" before it sends or learns anything, writes an audit row and sends nothing more until its owner runs `gw upstream reconcile`. Reconcile lists the lost notes as unknown; `--new` sends them again. Status, a blocked push and the link's detail page in the Upstream gateways panel name the cause. `push --after-restore` refuses such a mark (a receipt may name another member's note on the restored upstream); a blocked dry run of such a link lists nothing it would send.
 - Upstream gateways: a restored upstream hands out note and submission numbers again. A colleague's new note there could get a number one of our receipts named: the mirror hid it as ours, the next edit of our note would have been sent as a replacement of the colleague's note, and the pull could bind a waiting receipt to someone else's submission. A new generation now drops the upstream's mirror (the next pull fetches it again); while a link is marked, a receipt alone hides no hub note and the pull learns nothing; reconcile treats a waiting submission the upstream no longer holds as ours as unknown. The pull binds a waiting receipt only to a submission whose text ends with this note's trailer and is the text the receipt recorded, for an upstream of any version.
+- `minigw team show` and the session-start line printed `minigw kb review --team "<name>"` (and `note list --team <name>`) with the team name unquoted or in double quotes; a name holding `$(...)`, a backtick or `"` could run code when the printed command was pasted. A name that is not plain is now printed in single quotes (a `'` inside as `'\''`), the same on the Mac and in the Go client; plain names print as before. Project slugs are limited to lower-case letters, digits and `-`, so `project show` needed no change.
+- `scripts/compose-team-rehearsal.sh`: when the narrow source filter did not work, the rehearsal opened the remote page to all IPv4 even with `--bind` on a non-loopback address. It now stops with a failure that says why; with `--bind 127.0.0.1` it behaves as before.
+
+### Changed
+- Documentation and skill corrections: Docker bypasses the host firewall (use `DOCKER-USER`), upstream reading and pulling in the gw skill, rejected notes, the team waiting line, `--version` for `gw kb accept` without a terminal, the review-waiting lines in the onboarding guide, the link, push and review fields in the admin API reference, and the wording of four Slovenian panel strings.
 
 ### Known problems
 - Only an upstream with this change sends a generation; with an older upstream nothing is checked (as before). Only a linked gateway with this change notices it.
@@ -13,6 +18,7 @@
 - A hostile upstream that changes its generation on every request writes an audit row each time (no bound), and keeps reconcile from finishing; unlink and link again is the last way out.
 - The connection check of an upstream (the panel's probe, `GET /upstreams/{name}/probe`) and `pull --dry-run` do not compare the generation (they send and learn nothing).
 - Proven by tests with two real gateways on one machine (a project link, submit mode) and by core tests with a scripted upstream (publish mode, the automatic push, a team list answer on the upstream's side). Not run against a Docker team server or with a team link end to end.
+- The known problems of 0.9.12 apply.
 
 ## 0.9.12
 

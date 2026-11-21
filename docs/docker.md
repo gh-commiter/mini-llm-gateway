@@ -32,7 +32,9 @@ Run these commands in order (choose the host bind address and protect it with th
    ```sh
    printf "MINIGW_VERSION=<newest stable, for example 0.9.0>\nMINIGW_BIND=127.0.0.1\n" > .env
    ```
-   Replace loopback with your server address to admit other computers. `MINIGW_PORT` defaults to 8765.
+   Replace loopback with your server address to admit other computers. `MINIGW_PORT` defaults to 8765. Docker publishes ports ahead of
+   `ufw` and `firewalld` rules, so a host firewall rule on 8765 alone does not hold: filter in the `DOCKER-USER` chain as described in
+   the admin proxy section below, or at the network firewall.
 3. Build and start:
    ```sh
    docker compose up -d --build
