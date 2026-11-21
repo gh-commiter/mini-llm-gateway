@@ -87,7 +87,7 @@ func noteHistoryCommand(sub, path string, id, revision int64, hasRevision bool, 
 		case strings.HasPrefix(path, "/kb/"):
 			return fmt.Errorf("revision %d is the current text, not a saved version", revision)
 		}
-		return fmt.Errorf("revision %d is the current text: minigw note read %d", revision, id)
+		return fmt.Errorf("revision %d is the current text: %s note read %d", revision, mgCmd(), id)
 	}
 	data, err = request("GET", path+"/history/"+strconv.FormatInt(revision, 10), nil)
 	if err != nil {

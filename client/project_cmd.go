@@ -432,9 +432,9 @@ func (e *projectEnv) project(args []string) error {
 				line += "  (linked here)"
 			}
 			if p.Pending == 1 {
-				line += "  (1 submission waits for review: minigw kb review " + p.Slug + ")"
+				line += "  (1 submission waits for review: " + mgCmd() + " kb review " + p.Slug + ")"
 			} else if p.Pending > 1 {
-				line += fmt.Sprintf("  (%d submissions wait for review: minigw kb review %s)", p.Pending, p.Slug)
+				line += fmt.Sprintf("  (%d submissions wait for review: %s kb review %s)", p.Pending, mgCmd(), p.Slug)
 			}
 			e.say(clean(line))
 		}
@@ -481,7 +481,7 @@ func (e *projectEnv) link(slug string) error {
 	}
 	for _, l := range st.Links {
 		if l.Gateway == gw && sameProjectPath(real, l.Path) { // a deeper folder may be linked on its own; the same one not twice
-			return fmt.Errorf("this folder is already linked to %s: run minigw project unlink first", l.Slug)
+			return fmt.Errorf("this folder is already linked to %s: run %s project unlink first", l.Slug, mgCmd())
 		}
 	}
 	if slug == "" {
@@ -554,7 +554,7 @@ func (e *projectEnv) show() error {
 	case noLink:
 		e.say("project:  none (not linked)")
 		if res.Hint != "" {
-			e.say(fmt.Sprintf("hint:     %s in %s suggests project %s; run minigw project link %s", hintFile, res.HintDir, res.Hint, res.Hint))
+			e.say(fmt.Sprintf("hint:     %s in %s suggests project %s; run %s project link %s", hintFile, res.HintDir, res.Hint, mgCmd(), res.Hint))
 		}
 	default:
 		e.say(fmt.Sprintf("project:  %s (id %d)", res.Link.Slug, res.Link.Project))
@@ -562,7 +562,7 @@ func (e *projectEnv) show() error {
 		if res.Hint == "" {
 			e.say("hint:     no " + hintFile + " in the linked folder")
 		} else if res.State == linkHintDiff {
-			e.say(fmt.Sprintf("hint:     %s says %s but the link is %s: runs here are refused; run minigw project unlink, link again or remove the hint", hintFile, res.Hint, res.Link.Slug))
+			e.say(fmt.Sprintf("hint:     %s says %s but the link is %s: runs here are refused; run %s project unlink, link again or remove the hint", hintFile, res.Hint, res.Link.Slug, mgCmd()))
 		} else {
 			e.say("hint:     " + hintFile + " agrees")
 		}
@@ -578,9 +578,9 @@ func (e *projectEnv) show() error {
 
 func notLinkedMessage(res projectResolution) string {
 	if res.Hint != "" {
-		return fmt.Sprintf("this folder suggests project %s (%s); run minigw project link %s", res.Hint, hintFile, res.Hint)
+		return fmt.Sprintf("this folder suggests project %s (%s); run %s project link %s", res.Hint, hintFile, mgCmd(), res.Hint)
 	}
-	return "this folder is not linked to a project: run minigw project link <slug>"
+	return "this folder is not linked to a project: run " + mgCmd() + " project link <slug>"
 }
 
 // linkedProject is the project of the current folder for the note commands; --project only confirms it.
@@ -830,7 +830,7 @@ func (e *projectEnv) note(args []string) error {
 			e.say("no notes")
 		}
 		if pg.Next != "" {
-			e.say("more: minigw note list --after " + pg.Next)
+			e.say("more: " + mgCmd() + " note list --after " + pg.Next)
 		}
 	case "read":
 		data, err := one("GET", nil, nil)
@@ -888,7 +888,7 @@ func (e *projectEnv) note(args []string) error {
 			e.sleep(time.Second)
 		}
 		if st == 0 {
-			return fmt.Errorf("no answer from the gateway: the note may have been created; repeat with --key %s (safe: no duplicate), or check with minigw note list", k)
+			return fmt.Errorf("no answer from the gateway: the note may have been created; repeat with --key %s (safe: no duplicate), or check with %s note list", k, mgCmd())
 		}
 		if st != 201 {
 			return gatewayError(st, data, h)
@@ -1104,7 +1104,7 @@ func (e *projectEnv) folderRemote(dir string) (string, error) {
 
 // findByRemote asks the gateway which of the caller's projects is registered for the folder's origin.
 func (e *projectEnv) findByRemote(c connection, dir string) (string, error) {
-	const hint = "; run minigw project link <slug>"
+	hint := "; run " + mgCmd() + " project link <slug>"
 	raw, err := e.folderRemote(dir)
 	if err != nil {
 		return "", errors.New(err.Error() + hint)

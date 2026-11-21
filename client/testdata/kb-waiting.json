@@ -1,4 +1,8 @@
 {
+  "profileLines": [
+    {"n": 1, "slug": "shop", "profile": "win", "want": "1 submission waits for your review in shop: minigw --minigw-profile win kb review shop"},
+    {"n": 2, "slug": "shop", "profile": "my gw", "want": "2 submissions wait for your review in shop: minigw --minigw-profile 'my gw' kb review shop"}
+  ],
   "lines": [
     {"n": 1, "slug": "shop", "want": "1 submission waits for your review in shop: minigw kb review shop"},
     {"n": 2, "slug": "acme-shop", "want": "2 submissions wait for your review in acme-shop: minigw kb review acme-shop"},

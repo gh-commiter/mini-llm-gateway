@@ -125,6 +125,15 @@ func fail(s string, code ...int) {
 	exitFn(1)
 }
 
+// mgCmd is the client's name in a command a message tells the user to run: a non-default profile of this run (--minigw-profile,
+// MINIGW_PROFILE or model@profile) is carried, so the hinted command reaches the same gateway.
+func mgCmd() string {
+	if profileFlag == "" {
+		return "minigw"
+	}
+	return "minigw --minigw-profile " + teamCmdArg(profileFlag)
+}
+
 // requireProfile: profil tega ukaza (--minigw-profile ali privzeti).
 func requireProfile() profile {
 	ps := loadProfiles()
@@ -567,7 +576,7 @@ func main() {
 			saveProfile(name, c)
 			e, _ := m["error"].(map[string]any)
 			msg, _ := e["message"].(string)
-			fail("gateway at " + c.URL + " refused this device: " + oneLine(msg) + "\nthen run minigw connect again")
+			fail("gateway at " + c.URL + " refused this device: " + oneLine(msg) + "\nthe profile is saved: after the device is approved on the gateway, run the same minigw connect again to finish")
 		case st == 426:
 			fail("gateway at " + c.URL + " needs an encrypted connection: copy the token again (it includes the gateway key)")
 		case st == 0 && c.isLocal():
@@ -676,7 +685,7 @@ func main() {
 		}
 		say("minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (" + storeName + "; - = stdin)\n" +
 			"minigw reconnect [--name P] [--token T|-]  new token for profile P; address, gateway key and device stay\n" +
-			"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P (the device key stays)\n" +
+			"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P; disconnect without --name removes the DEFAULT profile (the device key stays)\n" +
 			"minigw running [--json]                    your requests that run on the gateway now: model, folder, time, steps, last step\n" +
 			"minigw profiles [default P]                list profiles, or pick the default (its models also without @P)\n" +
 			"minigw --minigw-profile P …                 use only profile P for this command\n" +

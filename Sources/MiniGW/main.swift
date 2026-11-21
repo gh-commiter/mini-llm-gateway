@@ -973,7 +973,7 @@ case "connect":
     case 403:  // naprava še ni dovoljena (minigw serve): ključ naprave ostane, da ga prehod lahko doda
         saveProfile(name, c)
         let msg = (body?["error"] as? [String: Any])?["message"] as? String ?? ""
-        fail("gateway at \(c.url) refused this device: \(oneLine(msg))\nthen run minigw connect again")
+        fail("gateway at \(c.url) refused this device: \(oneLine(msg))\nthe profile is saved: after the device is approved on the gateway, run the same minigw connect again to finish")
     case 426: fail("gateway at \(c.url) needs an encrypted connection: copy the token again (it includes the gateway key)")
     case 0: fail(c.isLocal ? "cannot reach \(c.url)" : "cannot reach \(c.url), or the gateway key does not match (copy the token again)")
     default: fail("gateway at \(c.url) answered HTTP \(status)")
@@ -1053,7 +1053,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         say("""
         minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (Keychain; - = stdin)
         minigw reconnect [--name P] [--token T|-]  new token for profile P; address, gateway key and device stay
-        minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P (the device key stays)
+        minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P; disconnect without --name removes the DEFAULT profile (the device key stays)
         minigw profiles [default P]                list profiles, or pick the default (its models also without @P)
         minigw --minigw-profile P …                 use only profile P for this command
         minigw share add|remove [folder] | list    share a system or hidden folder itself (contents are always shared)
@@ -1111,6 +1111,7 @@ if agentConn() == nil {  // --model …@profil: ves zagon s tem prehodom, kot --
         profileFlag = p; args = mp.args
     }
 }
+ProjectEnv.hintProfile = profileFlag ?? ""  // the commands a message suggests carry the profile of this run
 do {  // #119: model brez pripone profila (modelProfile zgoraj); shranjena nastavitev mape samo za branje šteje kot --minigw-ro (SharedFolders.mode)
     let entry = savedShare(FileManager.default.currentDirectoryPath)
     toolsPlan = Profiles.toolsFor(model: Profiles.modelArg(args), flag: toolsFlag,

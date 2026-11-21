@@ -1113,7 +1113,7 @@ minigw profiles                                     # list; * marks the default
 minigw profiles default mini                        # its models also appear without a suffix
 minigw --model claude-cli-opus@win -p "…"           # <model>@<profile> runs on that gateway
 minigw --minigw-profile win …                       # this command uses only that gateway
-minigw disconnect --name win
+minigw disconnect --name win                       # without --name it disconnects the DEFAULT profile
 ```
 
 - The connection you had before profiles is the profile `default`. Nothing changes while it is the only one.

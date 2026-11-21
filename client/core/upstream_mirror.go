@@ -514,7 +514,7 @@ fetch:
 		var acc, curNow int64
 		var reach, rremote, rcls, rsrc string
 		switch e := tx.QueryRow(`SELECT read,read_accepted,read_reach,remote,remote_team,read_classes,read_sources,pull_cursor FROM upstream_links WHERE project_id=? AND upstream=?`, l.Project, l.Upstream).Scan(&on, &acc, &reach, &rremote, &rteam, &rcls, &rsrc, &curNow); {
-		case e == nil && curNow == 0 && st.cursor > 0: // another link of the upstream noticed its restore meanwhile: this run holds a cursor and skips of the old traversal
+		case e == nil && (curNow == 0 && st.cursor > 0 || genMoved(tx, l.Upstream, p.gen)): // another link of the upstream noticed its restore meanwhile: this run holds a cursor and skips of the old traversal
 			res.outcome, res.Stopped, res.More, res.Next, fetched = "skip", "the upstream was restored during the pull: nothing was stored, pull again", false, 0, nil
 			return nil
 		case e == sql.ErrNoRows || e == nil && (on == 0 || acc != st.accepted || reach != st.reach || rremote != st.remote || rteam != st.remoteTeam || reach != reachOf(l.Upstream, rremote, rteam, rcls, rsrc)): // the link was changed: what was fetched belongs to another reach
@@ -918,4 +918,11 @@ func (s *Store) learnReceipts(wctx, rctx context.Context, p *pusher, get func(st
 			return Audit(tx, "gateway", "upstream.mirror-learn", l.Upstream, map[string]any{"project": label, "learned": learned, "candidates": len(todo)})
 		})
 	}
+}
+
+// genMoved: the generation stored for the upstream differs from the one this run saw (another link noticed a restore meanwhile and purged
+// the mirror, even when this run began at cursor 0). No stored one yet, or none sent: nothing moved.
+func genMoved(tx *sql.Tx, upstream, gen string) bool {
+	var cur string
+	return validGeneration(gen) && tx.QueryRow(`SELECT value FROM meta WHERE key=?`, hubSeenPrefix+upstream).Scan(&cur) == nil && cur != gen
 }

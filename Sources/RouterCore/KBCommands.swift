@@ -145,7 +145,7 @@ extension ProjectEnv {
                 r = send(c, "POST", "\(Self.apiProjects)/\(project)/kb/submissions", ["Idempotency-Key": key], payload)
                 if r.status != 0 { break }; sleep(1)
             }
-            if r.status == 0 { throw ProjectError("no answer from the gateway; repeat with --key \(key) (safe: no duplicate), or check with minigw kb submissions") }
+            if r.status == 0 { throw ProjectError("no answer from the gateway; repeat with --key \(key) (safe: no duplicate), or check with \(ProjectEnv.mg) kb submissions") }
             guard r.status == 201 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
             recordSubmitted(gw, project)
             if fl.bool("json") { say(ProjectText.jsonText(ProjectText.trim(String(decoding: r.data, as: UTF8.self)))) }
@@ -282,7 +282,7 @@ extension ProjectEnv {
     static func savedLine(_ v: JDict, team: String, owner: Bool) -> String {
         let rev = v["currentRevision"]?.int ?? 0, id = v["replaces"]?.int ?? 0
         var scope = team.isEmpty ? "" : " --team " + team
-        var show = "minigw note history", restore = "minigw note restore"
+        var show = ProjectEnv.mg + " note history", restore = ProjectEnv.mg + " note restore"
         if owner { (show, restore, scope) = ("minigw gw kb history", "minigw gw kb restore", "") }
         return ProjectText.clean("the previous text of note \(id) is saved as revision \(rev): \(show) \(id)\(scope) shows it, \(restore) \(id) --revision \(rev)\(scope) puts it back")
     }
@@ -379,8 +379,8 @@ extension ProjectEnv {
         for h in hits { say(searchLine(h.dict)) }
         if let note = JSONValue.parse(r.data)?.dict["note"]?.string, !note.isEmpty { say(ProjectText.clean(note)) }  // the hub's hits were left out
         if hits.isEmpty { say("no hits") }
-        else if !fl.string("team").isEmpty { say("read a team's note with: minigw note read <id> --team " + ProjectText.clean(fl.string("team"))) }
-        else if pos.count == 2 { say("read a note of project " + ProjectText.clean(pos[0]) + " from a folder linked to it: minigw note read <id>") }
+        else if !fl.string("team").isEmpty { say("read a team's note with: " + ProjectEnv.mg + " note read <id> --team " + ProjectText.clean(fl.string("team"))) }
+        else if pos.count == 2 { say("read a note of project " + ProjectText.clean(pos[0]) + " from a folder linked to it: " + ProjectEnv.mg + " note read <id>") }
     }
 }
 

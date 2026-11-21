@@ -57,7 +57,7 @@ extension ProjectEnv {
         if revision == cur.revision {
             if sub == "restore" { throw ProjectError("revision \(revision) is the current text: nothing to restore") }
             if path.hasPrefix("/kb/") { throw ProjectError("revision \(revision) is the current text, not a saved version") }
-            throw ProjectError("revision \(revision) is the current text: minigw note read \(id)")
+            throw ProjectError("revision \(revision) is the current text: \(ProjectEnv.mg) note read \(id)")
         }
         let data = try request("GET", path + "/history/" + String(revision), nil)
         if sub == "history" && asJSON { json(data); return }

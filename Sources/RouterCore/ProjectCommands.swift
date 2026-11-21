@@ -276,8 +276,8 @@ public final class ProjectEnv {
                 if p["archived"]?.bool == true { line += "  (archived)" }
                 if let h = here, h.state != .none, h.link.project == p["id"]?.int ?? 0 { line += "  (linked here)" }
                 let pending = p["pendingReview"]?.int ?? 0
-                if pending == 1 { line += "  (1 submission waits for review: minigw kb review \(p["slug"]?.string ?? ""))" }
-                else if pending > 1 { line += "  (\(pending) submissions wait for review: minigw kb review \(p["slug"]?.string ?? ""))" }
+                if pending == 1 { line += "  (1 submission waits for review: \(ProjectEnv.mg) kb review \(p["slug"]?.string ?? ""))" }
+                else if pending > 1 { line += "  (\(pending) submissions wait for review: \(ProjectEnv.mg) kb review \(p["slug"]?.string ?? ""))" }
                 say(ProjectText.clean(line))
             }
             if list.isEmpty { say("no projects: ask the gateway owner to add you to one") }
@@ -301,7 +301,7 @@ public final class ProjectEnv {
         var st = try loadState()
         let real = try Projects.realFolder(cwd)
         for l in st.links where l.gateway == gw && Projects.samePath(real, l.path) {  // a deeper folder may be linked on its own; the same one not twice
-            throw ProjectError("this folder is already linked to \(l.slug): run minigw project unlink first")
+            throw ProjectError("this folder is already linked to \(l.slug): run \(ProjectEnv.mg) project unlink first")
         }
         if slug.isEmpty { slug = try findByRemote(c, real) }
         let r = request(c, "POST", Self.apiProjects + "/" + ProjectText.pathEscape(slug) + "/link-check")
@@ -337,7 +337,7 @@ public final class ProjectEnv {
         case .none:
             say("project:  none (not linked)")
             if !res.hint.isEmpty {
-                say("hint:     \(Projects.hintFile) in \(res.hintDir) suggests project \(res.hint); run minigw project link \(res.hint)")
+                say("hint:     \(Projects.hintFile) in \(res.hintDir) suggests project \(res.hint); run \(ProjectEnv.mg) project link \(res.hint)")
             }
         default:
             say("project:  \(res.link.slug) (id \(res.link.project))")
@@ -345,7 +345,7 @@ public final class ProjectEnv {
             if res.hint.isEmpty {
                 say("hint:     no " + Projects.hintFile + " in the linked folder")
             } else if res.state == .hintDiff {
-                say("hint:     \(Projects.hintFile) says \(res.hint) but the link is \(res.link.slug): runs here are refused; run minigw project unlink, link again or remove the hint")
+                say("hint:     \(Projects.hintFile) says \(res.hint) but the link is \(res.link.slug): runs here are refused; run \(ProjectEnv.mg) project unlink, link again or remove the hint")
             } else {
                 say("hint:     " + Projects.hintFile + " agrees")
             }
@@ -492,7 +492,7 @@ public final class ProjectEnv {
                 say(ProjectText.clean("\(ProjectText.pad(String(n.id), 6)) \(ProjectText.pad(n.cls, 9)) r\(ProjectText.pad(String(n.revision), 3)) \(stamp(n.updated))  \(ProjectText.pad(n.author, 12)) \(ProjectText.oneLine(n.title))\(n.editor.isEmpty ? "" : "  (edited: \(n.editor))")"))
             }
             if notes.isEmpty { say("no notes") }
-            if let next = pg["next"]?.string, !next.isEmpty { say("more: minigw note list --after " + next) }
+            if let next = pg["next"]?.string, !next.isEmpty { say("more: \(ProjectEnv.mg) note list --after " + next) }
         case "read":
             emit(try one("GET")) { n in
                 let body = n.body ?? ""
@@ -519,7 +519,7 @@ public final class ProjectEnv {
                 self.sleep(1)
             }
             if r.status == 0 {
-                throw ProjectError("no answer from the gateway: the note may have been created; repeat with --key \(k) (safe: no duplicate), or check with minigw note list")
+                throw ProjectError("no answer from the gateway: the note may have been created; repeat with --key \(k) (safe: no duplicate), or check with \(ProjectEnv.mg) note list")
             }
             guard r.status == 201 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
             emit(r.data) { n in say("note \(n.id) created (\(n.cls), revision \(n.revision))") }

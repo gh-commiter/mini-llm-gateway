@@ -18,6 +18,10 @@ type waitingFixture struct {
 		N          int
 		Slug, Want string
 	}
+	ProfileLines []struct {
+		N                   int
+		Slug, Profile, Want string
+	}
 	TeamLines []struct {
 		N          int
 		Team, Want string
@@ -45,6 +49,14 @@ func TestWaitingFixture(t *testing.T) {
 			t.Errorf("%d %s: %q", l.N, l.Slug, g)
 		}
 	}
+	defer func() { profileFlag = "" }()
+	for _, l := range f.ProfileLines {
+		profileFlag = l.Profile
+		if g := waitingLine(l.N, l.Slug); g != l.Want {
+			t.Errorf("%d %s@%s: %q", l.N, l.Slug, l.Profile, g)
+		}
+	}
+	profileFlag = ""
 	for _, l := range f.TeamLines {
 		if g := teamWaitingLine(l.N, l.Team); g != l.Want {
 			t.Errorf("%d %s: %q", l.N, l.Team, g)

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- A pull from an upstream gateway no longer writes its notes into the mirror when another link of the same upstream noticed a restore of the upstream while the pull ran. It stores nothing and says to pull again.
+- When a run uses a profile other than the default, the commands the client suggests (`minigw kb review`, `minigw note list`, `minigw project link` and the like, also in the session-start text of the hook) now carry `--minigw-profile <name>`, so they reach the same gateway.
+- `minigw` help and the usage guide now say that `minigw disconnect` without `--name` disconnects the default profile.
+- The first `minigw connect` to a gateway that does not know the device yet still ends with an error, and now says that the profile is saved and that running the same `minigw connect` again after the approval finishes it.
+
 ## 0.10.0
 
 Mini Gateway 0.10.0 is a stable release. It collects the fourteen beta versions 0.9.1 to 0.9.14, which stable users never saw, and follows the stable release 0.9.0. The sections below describe what 0.10.0 is, not how each beta got there. Read **Upgrading from 0.9.0** and **Known problems** before you update a gateway that other people use.

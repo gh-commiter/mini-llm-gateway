@@ -399,6 +399,12 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         for l in f["lines"] as! [[String: Any]] {
             #expect(ProjectEnv.waitingLine(l["n"] as! Int, l["slug"] as! String) == l["want"] as! String)
         }
+        defer { ProjectEnv.hintProfile = "" }
+        for l in f["profileLines"] as! [[String: Any]] {
+            ProjectEnv.hintProfile = l["profile"] as! String
+            #expect(ProjectEnv.waitingLine(l["n"] as! Int, l["slug"] as! String) == l["want"] as! String)
+        }
+        ProjectEnv.hintProfile = ""
         for l in f["teamLines"] as! [[String: Any]] {
             #expect(ProjectEnv.teamWaitingLine(l["n"] as! Int, l["team"] as! String) == l["want"] as! String)
         }

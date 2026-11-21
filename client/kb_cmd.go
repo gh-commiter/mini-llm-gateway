@@ -255,7 +255,7 @@ func (e *projectEnv) kb(args []string) error {
 		payload, _ := json.Marshal(fields)
 		st, b, h := e.push(c, base, k, payload)
 		if st == 0 {
-			return fmt.Errorf("no answer from the gateway; repeat with --key %s (safe: no duplicate), or check with minigw kb submissions", k)
+			return fmt.Errorf("no answer from the gateway; repeat with --key %s (safe: no duplicate), or check with %s kb submissions", k, mgCmd())
 		}
 		if st != 201 {
 			return gatewayError(st, b, h)
@@ -520,7 +520,7 @@ func savedLine(v core.Submission, team string, owner bool) string {
 	if team != "" {
 		scope = " --team " + team
 	}
-	show, restore := "minigw note history", "minigw note restore"
+	show, restore := mgCmd()+" note history", mgCmd()+" note restore"
 	if owner {
 		show, restore, scope = "minigw gw kb history", "minigw gw kb restore", ""
 	}
@@ -820,9 +820,9 @@ func (e *projectEnv) kbSearch(args []string) error {
 	if len(pg.Hits) == 0 {
 		e.say("no hits")
 	} else if *team != "" {
-		e.say("read a team's note with: minigw note read <id> --team " + clean(*team)) // the folder's own project cannot read it
+		e.say("read a team's note with: " + mgCmd() + " note read <id> --team " + clean(*team)) // the folder's own project cannot read it
 	} else if len(pos) == 2 {
-		e.say("read a note of project " + clean(pos[0]) + " from a folder linked to it: minigw note read <id>")
+		e.say("read a note of project " + clean(pos[0]) + " from a folder linked to it: " + mgCmd() + " note read <id>")
 	}
 	return nil
 }

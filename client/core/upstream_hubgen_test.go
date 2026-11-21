@@ -446,3 +446,31 @@ func TestPullOverARestoreNoticedByAnotherLinkStoresNothing(t *testing.T) {
 		t.Fatalf("%v", mirror(f))
 	}
 }
+
+func TestPullFromCursorZeroOverARestoreNoticedByAnotherLinkStoresNothing(t *testing.T) {
+	f, fk := readFx(t)
+	h := &hub{gen: genA}
+	for i := int64(1); i <= 3; i++ {
+		h.notes = append(h.notes, structNote(i, fmt.Sprint("Plan", i)))
+	}
+	fired := false
+	h.note = func(id int64, def string) (int, string, time.Duration) {
+		if id == 2 && !fired {
+			fired = true
+			_, e := f.hubGenerationSeen(ctx, "hub", genB) // the other link's run purges while this run holds cursor 0
+			f.ok(e)
+		}
+		return 200, def, 0
+	}
+	if res := pull(f, fk, h.up()); len(mirror(f)) != 0 {
+		t.Fatalf("the run wrote generation-A rows over the purge: %+v %v", res, mirror(f))
+	}
+	h.note = nil
+	h.gen = genB
+	for i := 0; i < 3 && len(mirror(f)) < 3; i++ {
+		pull(f, fk, h.up())
+	}
+	if len(mirror(f)) != 3 {
+		t.Fatalf("%v", mirror(f))
+	}
+}
