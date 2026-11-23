@@ -57,7 +57,9 @@ mkdir "$R/bin" "$R/release"
 BASE=https://github.com/gh-commiter/mini-llm-gateway/releases/download/v$OLD
 ASSET=minigw-linux-$ARCH
 for n in $ASSET SHA256SUMS SHA256SUMS.sig; do
-  curl -fsSL --connect-timeout 15 --max-time 180 "$BASE/$n" -o "$R/release/$n" || fail "download signed v$OLD asset $n"
+  # MINIGW_OLD_RELEASE_DIR: a kept copy of the old release's files (the release may be gone from GitHub); verified below all the same.
+  if [[ -n ${MINIGW_OLD_RELEASE_DIR:-} ]]; then cp "$MINIGW_OLD_RELEASE_DIR/$n" "$R/release/$n" || fail "copy v$OLD asset $n from MINIGW_OLD_RELEASE_DIR"
+  else curl -fsSL --connect-timeout 15 --max-time 180 "$BASE/$n" -o "$R/release/$n" || fail "download signed v$OLD asset $n (set MINIGW_OLD_RELEASE_DIR to a kept copy)"; fi
 done
 print -r -- 'minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINt++OHn+HHmR9mmA2UI+B0osuilO2GP0ddEzNp0GTrH' > "$R/release/signers"
 ssh-keygen -Y verify -f "$R/release/signers" -I minigw-release -n minigw-release -s "$R/release/SHA256SUMS.sig" < "$R/release/SHA256SUMS" || fail 'release signature'
