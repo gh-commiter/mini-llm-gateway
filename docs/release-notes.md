@@ -1,11 +1,12 @@
 # Release notes
 
-## Unreleased
+## 0.10.2
 
 ### Changed
 - Agents (Claude CLI, Codex, Grok, Copilot) and `minigw run` no longer get the gateway's whole environment. They get only what they need to start and build: `PATH`, `HOME`, user and shell, locale, time zone, temporary and `XDG_*` folders, proxy and certificate variables, toolchain folders (`JAVA_HOME`, `MAVEN_OPTS`, `GOPATH`, `CARGO_HOME`, `DEVELOPER_DIR`, …), `CLAUDE_CONFIG_DIR`, the Windows start variables, and what the gateway sets for the run. A gateway started from a shell or a service manager with tokens or provider keys in its environment no longer hands them to agents. To pass another variable: `minigw gw agents env add <NAME>` (Mac: Settings → General → Agent environment; also the settings page and `minigw gw settings`). API keys, `ANTHROPIC_*`, `CLAUDE_CODE_*`, `COPILOT_*` and GitHub tokens never pass, even when added. A build or agent that relied on another inherited variable (for example `JAVA_TOOL_OPTIONS`, `NODE_OPTIONS`, `npm_config_*`, `AWS_PROFILE`) needs it added.
 
-### Not proven
+### Known problems
+- An agent on the Mac no longer gets `SSH_AUTH_SOCK` (the Go gateway never passed it): git over SSH with an agent-held key does not work inside an agent run.
 - Windows and Linux gateways only compile with this change here; no agent was started on them. The Windows list (`SystemRoot`, `ComSpec`, `PATHEXT`, `APPDATA`, …) is the documented set, not one measured with each agent CLI.
 - No agent CLI was run against a real login with the reduced environment in this step (the tests use fake agents); the Mac Claude CLI ran with an even smaller list before (its restricted mode).
 
