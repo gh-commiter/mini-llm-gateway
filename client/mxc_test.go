@@ -175,6 +175,10 @@ func useFakeWxc(t *testing.T) (string, string) {
 	log := filepath.Join(t.TempDir(), "req.json")
 	t.Setenv("MINIGW_TEST_FAKE_WXC", "1")
 	t.Setenv("MINIGW_TEST_WXC_LOG", log)
+	// #125: the fake wxc-exec is this test program started with the agent environment (the allowlist): its switches must pass
+	savedBase := agentEnvBase
+	agentEnvBase = append(slices.Clone(agentEnvBase), "MINIGW_TEST_FAKE_WXC", "MINIGW_TEST_WXC_LOG", "MINIGW_TEST_MAIN")
+	t.Cleanup(func() { agentEnvBase = savedBase })
 	return exe, log
 }
 

@@ -96,6 +96,9 @@ type serveConfig struct {
 
 	// 0.6.0 (review A4): the Claude quota probe (`claude -p /usage`) is off unless the owner turns it on.
 	ClaudeQuotaProbe bool `json:"claudeQuotaProbe,omitempty"`
+
+	// #125: names of the gateway's environment variables that agents get besides the base list (agentenv.go); the denylist still applies.
+	AgentEnv []string `json:"agentEnv,omitempty"`
 }
 
 // folderRecord: the final path and identity of an allowed folder: a stable volume id (Linux statfs f_fsid, Windows volume

@@ -691,7 +691,7 @@ func mxcProbe(wxc, minigw, scratch, cfgDir string) (why, detail string, loopOK b
 			}
 		}
 	}()
-	m := agentMounts{cfgDir: cfgDir, hide: scratch, rw: []string{dir}, temp: dir, cwd: dir, cmdEnv: agentEnv(os.Environ()),
+	m := agentMounts{cfgDir: cfgDir, hide: scratch, rw: []string{dir}, temp: dir, cwd: dir, cmdEnv: agentEnvFor(os.Environ(), nil),
 		noNet: true, loopback: true}
 	name, args, done, err := mxcWrap(wxc, minigw, []string{mxcProbeCmd, dir, filepath.Join(cfgDir, "admin.secret"), ln.Addr().String()}, m)
 	if err != nil {

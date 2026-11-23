@@ -506,7 +506,7 @@ func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir, scratch string,
 	defer cancel()
 	os.MkdirAll(copilotCacheDir(), 0o700)
 	os.MkdirAll(home, 0o700)
-	env := append(agentEnv(os.Environ()), "COPILOT_HOME="+home, "COPILOT_AUTO_UPDATE=false")
+	env := append(agentEnvFor(os.Environ(), nil), "COPILOT_HOME="+home, "COPILOT_AUTO_UPDATE=false") // copilot --version: base list only
 	name, args, done, err := agentWrap(exe, []string{"--version"}, agentMounts{cfgDir: cfgDir, rw: []string{copilotCacheDir(), home, cwd}, hide: scratch, tmps: tmps, noNet: true,
 		cmdEnv: env, cwd: cwd})
 	if err != nil {
@@ -1164,32 +1164,6 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	})
 }
 
-// agentEnv: okolje za Codex in Grok: brez spremenljivk, ki bi notranji CLI usmerile nazaj v ta router, in brez
-// vtičnic agentov ključev in seje D-Bus (N2: SSH, GPG, GNOME Keyring, Secret Service), brez žetonov GitHub in vseh
-// COPILOT_* (COPILOT_ALLOW_ALL, COPILOT_PROVIDER_API_KEY_COMMAND …); CODEX_HOME, GROK_HOME in COPILOT_HOME nastavi
-// runAgentProcess, žeton Copilot runAgent.
-func agentEnv(env []string) []string {
-	var out []string
-	for _, e := range env {
-		name, _, _ := strings.Cut(e, "=")
-		name = strings.ToUpper(name)             // Windows: imena spremenljivk brez razlike med velikimi in malimi črkami
-		if strings.HasSuffix(name, "_API_KEY") { // #68: noben podedovan ključ API (le izrecno nastavljen, agentKeyEnv)
-			continue
-		}
-		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
-			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE",
-			"GH_TOKEN", "GITHUB_TOKEN", "SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", // #67: oznake peskovnika
-			"MINIGW_DEPS", "MINIGW_NETWORK_OFF",
-			// #68: ključi API iz okolja prehoda nikoli do agenta (obračun API); le izrecno nastavljen (agentKeyEnv)
-			"OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}, name) || strings.HasPrefix(name, "COPILOT_") ||
-			strings.HasPrefix(name, "GITHUB_COPILOT_") { // M1: GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS (… _WORKSPACE_MCP, _EXTENSIONS) naloži hooke repozitorija
-			continue
-		}
-		out = append(out, e)
-	}
-	return out
-}
-
 // agentAuthFiles: datoteke v pravi mapi CLI, na katere kaže stanje naprave (prijava, nastavitve, zaklep osvežitve).
 func agentAuthFiles(k agentKind) (real string, names []string) {
 	home, _ := os.UserHomeDir()
@@ -1438,7 +1412,7 @@ func (s *server) procSlot(w http.ResponseWriter, r *req) int {
 }
 
 func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args []string, m agentMounts, dir, stdin string, onLine func([]byte)) error {
-	env := append(agentEnv(os.Environ()), m.env...)
+	env := append(agentEnvFor(os.Environ(), s.conf().AgentEnv), m.env...) // #125: allowlist, then the run's own variables
 	if runtime.GOOS == "windows" && m.state == "" && m.envVar == "CODEX_HOME" {
 		if home := os.Getenv("CODEX_HOME"); home != "" {
 			env = append(env, "CODEX_HOME="+home)

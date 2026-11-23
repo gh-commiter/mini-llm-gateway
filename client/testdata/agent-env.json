@@ -1,0 +1,34 @@
+{
+  "comment": "#125: the environment of an agent run (claude, codex, grok, copilot, minigw run) is built from an allowlist: these base names and prefixes plus the owner's agentEnv names, then the denylist on top (a denied name never passes, even when the owner adds it). Names compare without regard to case (as on Windows). Asserted by client/agentenv_test.go (agentEnvBase, agentEnvDeny...) and Tests/RouterCoreTests/AgentEnvTests.swift (AgentEnv): change both with this file.",
+  "baseNames": [
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "TZ", "TMPDIR", "TMP", "TEMP",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    "JAVA_HOME", "MAVEN_HOME", "M2_HOME", "MAVEN_OPTS", "GOPATH", "GOROOT", "GOMODCACHE", "GOCACHE", "GOFLAGS", "GOPROXY",
+    "CARGO_HOME", "RUSTUP_HOME", "NVM_DIR", "PNPM_HOME", "PYENV_ROOT", "VIRTUAL_ENV", "ANDROID_HOME", "DOTNET_ROOT", "DEVELOPER_DIR", "SDKROOT",
+    "CLAUDE_CONFIG_DIR",
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    "PROGRAMW6432", "COMMONPROGRAMW6432", "NUMBER_OF_PROCESSORS", "OS", "USERNAME", "USERDOMAIN", "COMPUTERNAME", "PUBLIC", "PSMODULEPATH"
+  ],
+  "basePrefixes": ["LC_", "XDG_", "PROGRAMFILES", "COMMONPROGRAMFILES", "PROCESSOR_"],
+  "denyNames": [
+    "CLAUDECODE", "DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME",
+    "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE", "GH_TOKEN", "GITHUB_TOKEN",
+    "SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "MINIGW_DEPS", "MINIGW_NETWORK_OFF",
+    "OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"
+  ],
+  "denyPrefixes": ["ANTHROPIC_", "CLAUDE_CODE_", "COPILOT_", "GITHUB_COPILOT_"],
+  "denySuffixes": ["_API_KEY"],
+  "maxNames": 64,
+  "validate": [
+    {"names": [], "want": [], "error": ""},
+    {"names": ["MGTEST_SECRET", "_X1", "MGTEST_SECRET"], "want": ["MGTEST_SECRET", "_X1"], "error": ""},
+    {"names": ["1ABC"], "error": "agentEnv: \"1ABC\" is not a variable name (letters, digits and _, not starting with a digit)"},
+    {"names": ["A-B"], "error": "agentEnv: \"A-B\" is not a variable name (letters, digits and _, not starting with a digit)"},
+    {"names": [""], "error": "agentEnv: \"\" is not a variable name (letters, digits and _, not starting with a digit)"},
+    {"names": ["FOO_API_KEY"], "error": "agentEnv: FOO_API_KEY is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
+    {"names": ["anthropic_base_url"], "error": "agentEnv: anthropic_base_url is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
+    {"names": ["GH_TOKEN"], "error": "agentEnv: GH_TOKEN is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"}
+  ],
+  "tooMany": "agentEnv: at most 64 names"
+}

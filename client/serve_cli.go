@@ -1314,7 +1314,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	unpinned := false // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
 	// brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
-	cmdEnv := append(append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1")
+	cmdEnv := append(append(append(agentEnvFor(os.Environ(), s.conf().AgentEnv), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1")
 	if worktreeEnv == nil && runtime.GOOS != "windows" && s.conf().AllowLocalTools { // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
 		cmdEnv = append(slices.DeleteFunc(cmdEnv, func(e string) bool { return strings.HasPrefix(strings.ToUpper(e), "GIT_") }), sandboxGitEnv...)
 	}

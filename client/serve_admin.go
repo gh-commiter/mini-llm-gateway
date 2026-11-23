@@ -884,6 +884,39 @@ func (s *server) adminDoCtx(ctx context.Context, method, uri string, body []byte
 		}
 		return 200, map[string]any{"models": append([]agentModel{}, models...)}
 	case "GET agents/{}", "PATCH agents/{}":
+		if arg == "env" { // #125: {"names": [...]} replaces the list, {"add": n} or {"remove": n} changes one name (as Admin.swift)
+			if method == "PATCH" {
+				var b struct {
+					Names       *[]string `json:"names"`
+					Add, Remove *string
+				}
+				if json.Unmarshal(body, &b) != nil || len(slices.DeleteFunc([]bool{b.Names != nil, b.Add != nil, b.Remove != nil}, func(set bool) bool { return !set })) != 1 {
+					return fail(400, "bad JSON body (one of names, add, remove)")
+				}
+				if err := s.update(func(c *serveConfig) error {
+					l := slices.Clone(c.AgentEnv)
+					switch {
+					case b.Names != nil:
+						l = *b.Names
+					case b.Add != nil:
+						l = append(l, *b.Add)
+					case !slices.Contains(l, *b.Remove):
+						return errors.New("agentEnv: " + *b.Remove + " is not in the list")
+					default:
+						l = slices.DeleteFunc(l, func(n string) bool { return n == *b.Remove })
+					}
+					v, why := validAgentEnv(l)
+					if why != "" {
+						return errors.New(why)
+					}
+					c.AgentEnv = v
+					return nil
+				}); err != nil {
+					return fail(400, err.Error())
+				}
+			}
+			return 200, map[string]any{"names": append([]string{}, s.conf().AgentEnv...)}
+		}
 		if k, ok := map[string]agentKind{"codex": codexKind, "grok": grokKind, "copilot": copilotKind}[arg]; ok {
 			return s.agentAPI(method, k, body)
 		}
