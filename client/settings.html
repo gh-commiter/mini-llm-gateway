@@ -342,6 +342,9 @@ const S = {
   localToolsWin: ["Every Claude Code tool, including commands: on Windows this needs “Allow commands without a sandbox”.",
     "Vsa orodja Claude Code, tudi ukazi: na Windows to zahteva »Dovoli ukaze brez peskovnika«."],
   permissionMode: ["Permission mode", "Način dovoljenj"], settingSources: ["Setting sources", "Viri nastavitev"],
+  agentEnv: ["Agent environment", "Okolje agentov"], agentEnvVars: ["Extra variables", "Dodatne spremenljivke"],
+  agentEnvHelp: ["Agents get only what they need to start and build (PATH, HOME, user, shell, locale, proxies, certificates, temporary and toolchain folders) and the variables named here, separated by commas. API keys, tokens and sign-in variables never pass, even when named here.",
+    "Agenti dobijo le, kar potrebujejo za zagon in gradnjo (PATH, HOME, uporabnik, lupina, jezikovne nastavitve, posredniki, certifikati, začasne mape in mape orodij), ter spremenljivke, naštete tukaj, ločene z vejicami. Ključi API, žetoni in spremenljivke prijave ne gredo nikoli naprej, tudi če so naštete tukaj."],
   settingSourcesHelp: ["Empty = none. project/local load settings and hooks from the client's folder, which then run on this computer; their env settings also change the agent's environment (for example its git or temporary folders).",
     "Prazno = brez. project/local naložita nastavitve in hooke iz mape odjemalca, ki tedaj tečejo na tem računalniku; njihove nastavitve env spremenijo tudi okolje agenta (na primer njegov git ali začasne mape)."],
   noTools: ["No tools found (is claude installed and signed in?)", "Ni najdenih orodij (je claude nameščen in prijavljen?)"],
@@ -2330,10 +2333,10 @@ const pages = {
   },
 
   async claude() {
-    const [c, st] = await Promise.all([api("GET", "/agents/claude"), api("GET", "/status")]);
+    const [c, st, ae] = await Promise.all([api("GET", "/agents/claude"), api("GET", "/status"), api("GET", "/agents/env")]);
     shownClaude = JSON.stringify(c);
     const win = st.os === "windows";
-    const n0 = note(), n1 = note(), n2 = note(), n4 = note(t("cliHint"));
+    const n0 = note(), n1 = note(), n2 = note(), n3 = note(), n4 = note(t("cliHint"));
     const patch = body => api("PATCH", "/agents/claude", body);
     const on = new Set((c.tools || "").split(",").filter(Boolean));
     const path = el("input", {type: "text", value: c.path, placeholder: c.exe || (win ? "C:\\Users\\you\\.local\\bin\\claude.exe" : "/usr/local/bin/claude")});
@@ -2352,6 +2355,8 @@ const pages = {
     const cmdLocked = win && !box && !c.allowUnsandboxedBash;
     const sources = el("input", {type: "text", value: c.settingSources, placeholder: t("none")});
     autosave(sources, n2, v => patch({settingSources: v}));
+    const envNames = el("input", {type: "text", value: (ae.names || []).join(", "), placeholder: t("none")});  // #125
+    autosave(envNames, n3, v => api("PATCH", "/agents/env", {names: v.split(/[\s,]+/).filter(Boolean)}));
     const mode = el("select", {}, ...["dontAsk", "acceptEdits", "auto", "plan"].map(m => el("option", {value: m, textContent: m, selected: c.permissionMode === m})));
     mode.addEventListener("change", () => save(n2, () => patch({permissionMode: mode.value})));
 
@@ -2407,6 +2412,7 @@ const pages = {
         workRow(c, patch, n2),
         row(labelSub(t("askOthers"), t("askOthersClaudeHelp")), toggle(c.askOthers, v => save(n2, () => patch({askOthers: v})), !c.allowLocalTools))),
       n2,
+      section(t("agentEnv")), group(row(labelSub(t("agentEnvVars"), t("agentEnvHelp")), envNames)), n3,
       ...toolsPart,
       section(t("cliTool")),
       group(row(labelSub("minigw", st.installDir ? t("installedAt", st.installDir) : t("notInstalled")),

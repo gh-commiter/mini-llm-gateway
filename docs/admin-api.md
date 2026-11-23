@@ -182,6 +182,8 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /providers/{name}/models?filter=text` | – | `{"models": [Model]}`; filter: part of `model`, any case |
 | `POST /providers/{name}/models` | `{"all"?: bool, "enable"?: [id or model], "disable"?: [id or model]}` | `{"models": [Model], "changed": [Model]}` |
 | `GET /agents/claude` | – | Claude |
+| `GET /agents/env` | – | `{"names": [string]}` (#125): the variables of the gateway's environment that agents get besides the base list (`client/testdata/agent-env.json`) |
+| `PATCH /agents/env` | one of `{"names": [string]}`, `{"add": string}`, `{"remove": string}` | `{"names"}`. A name matches `[A-Za-z_][A-Za-z0-9_]*`, at most 64; a name of the denylist (`*_API_KEY`, `ANTHROPIC_*`, `GH_TOKEN`, …) is refused (400). Not on the remote settings listener |
 | `GET /agents/claude/tools` | – | `{"tools": [string]}`: the tools of this Claude Code (for the exclude table with local tools) |
 | `PATCH /agents/claude` | any of `{"path", "tools", "allowUnsandboxedBash", "acceptAgentsCanReadNotes", "token", "apiKey"}` | Claude. `acceptAgentsCanReadNotes` (Go gateway, 0.6.0): the owner accepts that agents without a sandbox can read all project notes, so the core opens on a Windows or Linux gateway without a sandbox (a restart applies it; the Mac has no such field: its agents are sandboxed). `tools` without "Allow local tools" refuses `Task`, MCP tools and the like (400); on the Mac also `Bash` |
 | `GET /general` | – | General |

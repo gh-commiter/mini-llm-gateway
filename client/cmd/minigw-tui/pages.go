@@ -530,6 +530,14 @@ func agents(u *ui) ([]row, error) {
 		rows = append(rows, tog("May ask other models of this gateway", yes(a, "askOthers"), func(v bool) (string, error) { return p(map[string]any{"askOthers": v}) }))
 	}
 
+	if e, err := u.call("GET", "/agents/env", nil); err == nil { // #125 (an older gateway: 404, no rows)
+		rows = append(rows, hdr("Agent environment"),
+			ed("Extra variables (comma-separated)", strings.Join(strs(e, "names"), ", "), func(v string) (string, error) {
+				return u.save("PATCH", "/agents/env", map[string]any{"names": csv(v)})
+			}),
+			inf("  Agents get the base list (PATH, HOME, proxies…) and these;", ""), inf("  API keys, tokens and sign-in variables never pass.", ""))
+	}
+
 	if f, err := u.call("GET", "/foundry", nil); err == nil {
 		p := patch("/foundry")
 		state := "not installed"

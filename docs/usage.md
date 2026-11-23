@@ -138,6 +138,16 @@ until the gateway owner turns them on. Grok is not supported on the Mac gateway 
 gateway answers 400 "Grok is not supported on the Mac gateway. Use another agent, or Grok through minigw serve on Windows or
 Linux." See [gateway.md → Settings](gateway.md#settings).
 
+An agent does not get the gateway's whole environment, only what it needs to start and build: `PATH`, `HOME`, user and
+shell, `LANG`/`LC_*`, `TZ`, temporary folders, `XDG_*`, proxy variables, certificate variables (`SSL_CERT_FILE`,
+`NODE_EXTRA_CA_CERTS`, …), toolchain folders (`JAVA_HOME`, `MAVEN_OPTS`, `GOPATH`, `CARGO_HOME`, `DEVELOPER_DIR`, …),
+`CLAUDE_CONFIG_DIR`, and on Windows what a process needs to start (`SystemRoot`, `USERPROFILE`, `APPDATA`, …). The full
+list is `client/testdata/agent-env.json`. The same holds for `minigw run`. The gateway owner can name more variables:
+`minigw gw agents env add <NAME>` (`remove <NAME>`; no argument lists them), or Settings → General → Agent environment on
+the Mac, or Agents → Agent environment in `minigw gw settings` and on the settings page. API keys (`*_API_KEY`),
+`ANTHROPIC_*`, `CLAUDE_CODE_*`, `COPILOT_*`, `GH_TOKEN`, `GITHUB_TOKEN`, key agent sockets and the gateway's own run
+variables never pass, even when named.
+
 ### Watching a long run
 
 While an agent works, `minigw -p` prints each of its steps on stderr as it happens (`minigw: · read_file src/a.go`;
