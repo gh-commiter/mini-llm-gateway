@@ -900,7 +900,7 @@ extension Router {
             return await error(500, "api_error", "minigw run: cannot link its temporary folders in Scratch", rid: rid, writer: writer)
         }
         defer { if !keep { Native.unlinkRunDirs(links) } }
-        let env = Native.runEnv(ProcessInfo.processInfo.environment, runTmp: runTmp, suffix: suffix)
+        let env = Native.runEnv(AgentEnv.environment(owner: AgentEnv.names(config.agentEnv)), runTmp: runTmp, suffix: suffix)  // #125: the allowlist
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }

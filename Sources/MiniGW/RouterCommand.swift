@@ -476,7 +476,7 @@ func routerCommand(_ argv: [String]) {
         let argv = [tui, "--minigw", me].map { strdup($0) } + [nil]
         execv(tui, argv)
         fail("cannot start \(tui): \(String(cString: strerror(errno)))")
-    case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage", "usage-events", "project-sessions", "quota", "upstream", "labels":  // 0.6.0: the owner's commands of the project database
+    case "user", "bind", "project", "team", "kb", "member", "grant", "core", "usage", "usage-events", "project-sessions", "quota", "upstream", "labels", "agents":  // 0.6.0: the owner's commands of the project database
         let cmd = AdminCommands(call: { method, path, body in
             // labels eval runs up to 500 examples (six samples each); the gateway stops it after 30 minutes
             let (status, data) = a.raw(method, Router.adminPrefix + path, body, proof: true, timeout: path == "/usage/labels/eval" ? 2400 : 60)

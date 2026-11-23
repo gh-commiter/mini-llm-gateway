@@ -381,7 +381,7 @@ extension Router {
         }
         let write = cfg.write && !readOnly  // #81 H1: brez ukazov (ukaz bi prebral prijavo iz Keychaina); shranjen true ne velja
         if agent && write && cfg.commands, let s = req.header("x-claude-mini-session") { await Self.shares.note(session: s, Copilot.noCommands) }
-        let base = ProcessInfo.processInfo.environment
+        let base = AgentEnv.environment(owner: AgentEnv.names(config.agentEnv))  // #125: the allowlist; Copilot.environment filters on top
         let root = tree?.root ?? cwd
         // R9: mapa seje ne sme vsebovati paketa copilot (orodje write bi ga spremenilo za naslednji zagon brez peskovnika).
         let homes = Set([NSHomeDirectory(), Sync.real(URL(fileURLWithPath: NSHomeDirectory()))?.path ?? NSHomeDirectory()])

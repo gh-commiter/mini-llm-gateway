@@ -66,6 +66,7 @@ public final class AdminCommands {
           minigw gw labels eval --file <examples.jsonl> [--show-errors]   check the label model against your hand-labelled examples (one JSON object per line: text, phase, activity; at most 500 lines, 1 MiB); stores nothing
           minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
           minigw gw quota --history [--days N] [--provider P] [--json]   recorded probes (default 7 days; no probe)
+          minigw gw agents env [add <NAME> | remove <NAME>]   variables of the gateway's environment that agents get besides PATH, HOME, locale, proxies, certificates and toolchain folders; API keys, tokens and sign-in variables never pass
         (<user> and <project>: the name or slug, or the number.)
         """
 
@@ -304,6 +305,12 @@ public final class AdminCommands {
             addLabelFilters(&q, o)
             addLabelSource(&q, o)
             printUsage(try request("GET", "/usage/events" + ProjectText.query(q)))
+        case "agents":  // #125
+            guard pos.count >= 2, pos[1] == "env", pos.count == 2 || pos.count == 4 && (pos[2] == "add" || pos[2] == "remove") else { throw usage }
+            let r = pos.count == 4 ? try request("PATCH", "/agents/env", [pos[2]: pos[3]]) : try request("GET", "/agents/env")
+            let names = (r["names"]?.array ?? []).compactMap(\.string)
+            say(names.isEmpty ? "agentEnv: none (agents get only the base list; minigw gw agents env add <NAME> adds a variable)"
+                : clean("agentEnv: " + names.joined(separator: ", ")))
         case "quota":
             try need(1, 1)
             if o.history {

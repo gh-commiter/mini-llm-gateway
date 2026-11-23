@@ -373,6 +373,17 @@ struct SettingsView: View {
                 Text("Agents in worktree mode (minigw --minigw-work=worktree) work in a git clone on this Mac: Claude CLI with Bash in Claude Code's sandbox, Codex in its own sandbox. They write only to the clone and, under the Scratch folder, to its dependencies folder (repositories they create, CMake, SwiftPM), the project's Maven repository and build caches. These switches let their builds download (Maven, SwiftPM, git clone); Codex can read all your files, so its network is off by default.").font(.caption).foregroundStyle(.secondary)
             }
             Section {
+                TextField("Extra variables", text: $draft.agentEnv, prompt: Text(verbatim: "JFROG_URL, MY_PROFILE"))
+                if let why = AgentEnv.validate(AgentEnv.names(draft.agentEnv)).error {
+                    Text(verbatim: why).font(.caption).foregroundStyle(.red)
+                }
+            } header: {
+                Text("Agent environment")
+            } footer: {
+                Text("Agents and minigw run get only what they need to start and build (PATH, HOME, user, shell, locale, proxies, certificates, temporary and toolchain folders) and the variables named here, separated by commas. API keys, tokens and sign-in variables never pass, even when named here.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
                 TextField("Allowed commands", text: $draft.runCommands)
                 ForEach($draft.devices) { $d in
                     Toggle(isOn: $d.run) { Text(verbatim: d.name) }

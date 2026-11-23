@@ -33,6 +33,8 @@ import Testing
     static let allowed: [(file: String, test: String, why: String)] = [
         ("NonLoopbackListenerGuardTests.swift", "noTestSourceListensOrBindsOutsideLoopbackWithoutAReason", "the scan names connect( as text in a string literal; the test reads files and blocks on nothing"),
         ("NonLoopbackListenerGuardTests.swift", "plantedExamplesAreCaughtAndDataIsNot", "the planted examples are string literals; the test blocks on nothing"),
+        ("AgentEnvTests.swift", "environmentForEveryKind", "Native.runEnv only builds a dictionary; it starts no process"),
+        ("AgentEnvTests.swift", "everyStartUsesTheAllowlist", "Native.runEnv( is text in a string literal; the test reads files and blocks on nothing"),
     ]
 
     static func strip(_ text: String) -> String {

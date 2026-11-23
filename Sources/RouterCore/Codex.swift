@@ -212,7 +212,7 @@ public enum Codex {
         return o["thread_id"] as? String
     }
 
-    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL, env extra: [String: String] = [:], dirs: [String] = [], checked: AllowedFolders.Checked = .init(),
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL, env extra: [String: String] = [:], owner: [String] = [], base: [String: String] = ProcessInfo.processInfo.environment, dirs: [String] = [], checked: AllowedFolders.Checked = .init(),
                     stopNested: @escaping @Sendable () -> Void = {},
                     started: @escaping @Sendable (pid_t) -> Void = { _ in },
                     onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> (String, String?) {
@@ -223,8 +223,8 @@ public enum Codex {
                 p.executableURL = URL(fileURLWithPath: exe)
                 p.arguments = args
                 p.currentDirectoryURL = cwd
-                p.environment = ProcessInfo.processInfo.environment  // brez agenta ključev SSH; #67: harness ni v peskovniku
-                    .filter { $0.key != "SSH_AUTH_SOCK" && !Worktree.sandboxMarkers.contains($0.key) }.merging(extra) { $1 }
+                // #125: the allowlist (no SSH key agent; #67: no sandbox markers: the harness is not in the sandbox), then the run's own variables
+                p.environment = AgentEnv.environment(base, owner: owner).merging(extra) { $1 }
                 let input = Pipe(), errors = Pipe()
                 let events = Pipe()
                 p.standardInput = input
@@ -383,6 +383,8 @@ extension Router {
             projectAuth = (home, real)  // from here the home is released by the defer above
             Self.linkProjectAuth(home: home, real: real)
             codexEnv["CODEX_HOME"] = home.path
+        } else if let h = ProcessInfo.processInfo.environment["CODEX_HOME"], !h.isEmpty {
+            codexEnv["CODEX_HOME"] = h  // #125: the user's own Codex folder (its login), set on purpose after the allowlist, as before
         }
         let existing = agent ? await Self.codexSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil
         if existing != nil { prompt = last.text }
@@ -398,7 +400,7 @@ extension Router {
             self.dispatched("codex")  // the agent process starts (usage event)
             defer { if let projectAuth { Self.restoreProjectAuth(home: projectAuth.home, real: projectAuth.real, since: runStart) } }
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
-                                                         env: codexEnv, dirs: await Self.shares.runDirs(), checked: checked, stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity, scratch = config.scratchURL.path] s in
+                                                         env: codexEnv, owner: AgentEnv.names(config.agentEnv), dirs: await Self.shares.runDirs(), checked: checked, stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity, scratch = config.scratchURL.path] s in
                 onActivity(.step(id: rid, text: RunningRegistry.relStep(s, dir: cwd.path, scratch: scratch)))  // #131: relative to the shared folder
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb

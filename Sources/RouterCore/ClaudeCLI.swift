@@ -950,7 +950,7 @@ extension Router {
         p.executableURL = URL(fileURLWithPath: launch.0)
         p.arguments = launch.1
         p.currentDirectoryURL = cwd
-        var env = ProcessInfo.processInfo.environment
+        var env = AgentEnv.environment(owner: AgentEnv.names(config.agentEnv))  // #125: the allowlist, then what the gateway sets below
         for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || Worktree.sandboxMarkers.contains(k) {
             env[k] = nil  // sicer bi notranji claude klical nazaj ta router; #67: harness ni v peskovniku
         }

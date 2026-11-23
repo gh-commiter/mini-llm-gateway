@@ -469,6 +469,7 @@ extension Router {
             case "codex": return (200, await codexInfo(c.codex))
             case "copilot": return (200, await copilotInfo(c.copilot))
             case "grok": throw AdminError(400, Grok.notSupported)
+            case "env": return (200, ["names": AgentEnv.names(c.agentEnv)])  // #125
             default: throw AdminError(404, "no agent \(arg)")
             }
         case "GET agents/{}/tools":
@@ -533,6 +534,21 @@ extension Router {
 
         case "PATCH agents/{}":
             switch arg {
+            case "env":  // #125: {"names": [...]} replaces the list, {"add": n} or {"remove": n} changes one name (as minigw serve)
+                let b = try AdminBody(body, ["names", "add", "remove"])
+                let names = try b.strings("names"), add = try b.string("add"), remove = try b.string("remove")
+                guard [names != nil, add != nil, remove != nil].filter({ $0 }).count == 1 else { throw AdminError(400, "bad JSON body (one of names, add, remove)") }
+                let saved = try await hooks.update { c in
+                    var l = AgentEnv.names(c.agentEnv)
+                    if let names { l = names } else if let add { l.append(add) } else if let remove {
+                        guard l.contains(remove) else { throw AdminError(400, "agentEnv: \(remove) is not in the list") }
+                        l.removeAll { $0 == remove }
+                    }
+                    let v = AgentEnv.validate(l)
+                    if let e = v.error { throw AdminError(400, e) }
+                    c.agentEnv = v.names.joined(separator: ", ")
+                }
+                return (200, ["names": AgentEnv.names(saved.agentEnv)])
             case "claude":
                 let b = try AdminBody(body, ["enabled", "path", "tools", "folders", "allowLocalTools", "disabledTools", "permissionMode", "settingSources", "askOthers", "work"])
                 let mode = try b.string("permissionMode"), sources = try b.string("settingSources").map { $0.replacingOccurrences(of: " ", with: "") }
