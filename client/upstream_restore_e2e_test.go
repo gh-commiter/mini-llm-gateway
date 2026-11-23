@@ -77,7 +77,7 @@ func TestUpstreamPushAfterARestoreBetweenTwoGateways(t *testing.T) {
 
 	// automatic: the link is switched to auto (an ordinary edit: it keeps the mark); the timer must send nothing, however many times it looks
 	f.local.core.SetAutoTiming(core.AutoTiming{Debounce: 100 * time.Millisecond, MaxWait: time.Second, BackoffBase: 100 * time.Millisecond, BackoffMax: 500 * time.Millisecond})
-	f.local.autoTick.Store(int64(30 * time.Millisecond))
+	fastAutoTick(f.local)
 	if _, err := f.cmd(coreOpts{auto: true}, "link", "shop", "hub"); err != nil {
 		t.Fatal(err)
 	}

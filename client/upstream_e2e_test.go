@@ -615,7 +615,7 @@ func TestUpstreamAutoPushBetweenTwoGateways(t *testing.T) {
 	// timing: a quarter of a second quiet, the loop looks every 30 ms
 	timing := core.AutoTiming{Debounce: 300 * time.Millisecond, MaxWait: 5 * time.Second, BackoffBase: 250 * time.Millisecond, BackoffMax: time.Second}
 	f.local.core.SetAutoTiming(timing)
-	f.local.autoTick.Store(int64(30 * time.Millisecond))
+	fastAutoTick(f.local)
 	out, err := f.cmd(coreOpts{auto: true}, "link", "shop", "hub")
 	f.must(err)
 	if !strings.Contains(out, "changes are sent automatically") {
@@ -923,4 +923,13 @@ func TestUpstreamPublishedNoteComesBackOnceThenDiffers(t *testing.T) {
 	if !strings.Contains(n.Body, "[differs from the local note "+fmt.Sprint(notes["Invoice numbering"].ID)+":") || !strings.Contains(n.Body, "> THEIR invoice text") {
 		t.Fatalf("%q", n.Body)
 	}
+}
+
+// fastAutoTick: the automatic loop looks every 30 ms. The loop is restarted, because it is already asleep for its first default
+// look (ten seconds after the gateway started): a test that waits ten seconds from a later moment lost that race whenever its
+// set-up was fast (#184).
+func fastAutoTick(s *server) {
+	s.stopUpstreamAuto()
+	s.autoTick.Store(int64(30 * time.Millisecond))
+	s.startUpstreamAuto()
 }

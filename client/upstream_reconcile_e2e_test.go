@@ -54,7 +54,7 @@ func TestUpstreamReconcileAfterRestoreBetweenTwoGateways(t *testing.T) {
 	f.must(err)
 	// Give the real automatic lane several opportunities while marked.
 	f.local.core.SetAutoTiming(core.AutoTiming{Debounce: 100 * time.Millisecond, MaxWait: time.Second, BackoffBase: 100 * time.Millisecond, BackoffMax: 500 * time.Millisecond})
-	f.local.autoTick.Store(int64(30 * time.Millisecond))
+	fastAutoTick(f.local)
 	_, err = f.cmd(coreOpts{auto: true, class: "structure"}, "link", "shop", "hub")
 	f.must(err)
 	time.Sleep(1500 * time.Millisecond)
