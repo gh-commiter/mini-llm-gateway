@@ -3,11 +3,26 @@ import Foundation
 extension AdminCommands {
     func teamID(_ ref: String) throws -> Int64 {
         let n = Int64(ref) ?? 0
-        for t in try request("GET", "/teams")["teams"]?.array ?? [] {
-            let d = t.dict
-            if n > 0 && (d["id"]?.int ?? 0) == n || n <= 0 && (d["name"]?.string ?? "").caseInsensitiveCompare(ref) == .orderedSame { return d["id"]?.int ?? 0 }
+        let teams = try request("GET", "/teams")["teams"]?.array ?? []
+        if n > 0 {
+            if let t = teams.first(where: { ($0.dict["id"]?.int ?? 0) == n }) { return t.dict["id"]?.int ?? 0 }
+        } else {
+            let (id, ambiguous) = Self.teamByName(teams, ref)
+            if ambiguous { throw fail("several teams match " + GoText.quote(ref) + ": use the team number (minigw gw team list)") }
+            if id != 0 { return id }
         }
         throw fail("no team " + GoText.quote(ref) + " (minigw gw team list)")
+    }
+
+    /// Go's teamByName: an exact name wins; else the one case-insensitive match; several are ambiguous.
+    static func teamByName(_ teams: [JSONValue], _ ref: String) -> (id: Int64, ambiguous: Bool) {
+        if let t = teams.first(where: { $0.dict["name"]?.string == ref }) { return (t.dict["id"]?.int ?? 0, false) }
+        var id: Int64 = 0
+        for t in teams where (t.dict["name"]?.string ?? "").caseInsensitiveCompare(ref) == .orderedSame {
+            if id != 0 { return (0, true) }
+            id = t.dict["id"]?.int ?? 0
+        }
+        return (id, false)
     }
 
     func team(_ pos: [String]) throws {
@@ -76,8 +91,10 @@ extension ProjectEnv {
                 let r = send(c, "GET", path + "?archived=1", [:], nil)
                 guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
                 guard case .arr(let teams)? = JSONValue.parse(r.data) else { throw Self.malformed }
-                guard let t = teams.first(where: { ($0.dict["name"]?.string ?? "").caseInsensitiveCompare(ref) == .orderedSame }) else { throw Self.gatewayError(404, Data(), nil) }
-                ref = String(t.dict["id"]?.int ?? 0)
+                let (id, ambiguous) = AdminCommands.teamByName(teams, ref)
+                if ambiguous { throw ProjectError("several teams match " + GoText.quote(ref) + ": use the team number (minigw team list)") }
+                if id == 0 { throw Self.gatewayError(404, Data(), nil) }
+                ref = String(id)
             }
             path += "/" + ProjectText.pathEscape(ref)
         }

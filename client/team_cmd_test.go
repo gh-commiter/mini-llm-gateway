@@ -67,7 +67,7 @@ func TestTeamCommands(t *testing.T) {
 				msg = err.Error()
 			}
 			wantCalls := 1
-			if c.Lookup != "" {
+			if c.Lookup != "" && c.Error == "" { // a refused lookup stops after the one list call
 				wantCalls++
 			}
 			if out.String() != c.Out || msg != c.Error || calls != wantCalls {

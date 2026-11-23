@@ -1,5 +1,15 @@
 # Release notes
 
+## 0.10.3
+
+### Fixed
+- A team name that differs only in non-ASCII letter case (or folds together, like the three Greek sigmas) no longer resolves to "the first" team in `minigw gw team ...` and `minigw team show`. An exact name wins; otherwise one match is used; several matches are refused with "several teams match ...: use the team number". The Mac and Go clients print the same.
+
+### Known problems
+- The gateway database still enforces team-name uniqueness only for ASCII case (`COLLATE NOCASE`), so `σ` and `ς` can both exist. A unique normalized name key needs a schema migration (a new column and index plus a one-time rename of existing clashes); it is left open on purpose. Until then, use the team number for such names.
+- A missing and an invisible note still run slightly different queries (the same status and body, but timing is not proven identical). Putting visibility into the metadata query touches the note read path; no practical oracle is known.
+- Already fixed since the 0.7.x reviews and only re-checked here: restore validation of memberships and team assignments, the clear answer for `member remove` of a team-only member, the restore text, the unarchive note in `docs/usage.md`, control characters in names, Swift rejecting malformed team answers, and no `grok` in the Mac CLI discovery list.
+
 ## 0.10.2
 
 ### Changed

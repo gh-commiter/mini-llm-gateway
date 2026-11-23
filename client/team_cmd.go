@@ -47,13 +47,38 @@ func teamID(a *adminClient, ref string) int64 {
 	var r struct{ Teams []cliTeam }
 	a.do("GET", "/teams", nil, &r)
 	n, _ := strconv.ParseInt(ref, 10, 64)
-	for _, t := range r.Teams {
-		if n > 0 && t.ID == n || n <= 0 && strings.EqualFold(t.Name, ref) {
-			return t.ID
+	if n > 0 {
+		for _, t := range r.Teams {
+			if t.ID == n {
+				return t.ID
+			}
 		}
+	} else if id, ambiguous := teamByName(r.Teams, ref); ambiguous {
+		fail("several teams match " + strconv.Quote(ref) + ": use the team number (minigw gw team list)")
+	} else if id != 0 {
+		return id
 	}
 	fail("no team " + strconv.Quote(ref) + " (minigw gw team list)")
 	return 0
+}
+
+// teamByName: an exact name wins; else the one case-insensitive match. SQLite folds only ASCII, so names that differ in
+// non-ASCII case (or fold together, like the three sigmas) can coexist; several such matches are ambiguous, never "the first".
+func teamByName(teams []cliTeam, ref string) (id int64, ambiguous bool) {
+	for _, t := range teams {
+		if t.Name == ref {
+			return t.ID, false
+		}
+	}
+	for _, t := range teams {
+		if strings.EqualFold(t.Name, ref) {
+			if id != 0 {
+				return 0, true
+			}
+			id = t.ID
+		}
+	}
+	return id, false
 }
 
 func teamAdmin(a *adminClient, pos []string) {
@@ -159,16 +184,14 @@ func (e *projectEnv) team(args []string) error {
 			if err := json.Unmarshal(data, &teams); err != nil {
 				return err
 			}
-			ref = ""
-			for _, t := range teams {
-				if strings.EqualFold(t.Name, pos[1]) {
-					ref = strconv.FormatInt(t.ID, 10)
-					break
-				}
+			id, ambiguous := teamByName(teams, pos[1])
+			if ambiguous {
+				return errors.New("several teams match " + strconv.Quote(pos[1]) + ": use the team number (minigw team list)")
 			}
-			if ref == "" {
+			if id == 0 {
 				return gatewayError(404, nil, nil)
 			}
+			ref = strconv.FormatInt(id, 10)
 		}
 		path += "/" + url.PathEscape(ref)
 	}

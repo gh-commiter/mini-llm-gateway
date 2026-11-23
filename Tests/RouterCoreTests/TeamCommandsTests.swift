@@ -48,7 +48,7 @@ import Testing
             catch let e as ProjectError { err = e.message }
             #expect(out == c["out"] as! String)
             #expect(err == (c["error"] as? String ?? ""))
-            #expect(calls == (c["lookup"] == nil ? 1 : 2))
+            #expect(calls == (c["lookup"] == nil ? 1 : (c["error"] == nil ? 2 : 1)))  // a refused lookup stops after the list call
         }
     }
 

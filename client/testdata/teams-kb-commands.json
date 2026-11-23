@@ -703,6 +703,72 @@
       "opts": {
         "explain": true
       }
+    },
+    {
+      "name": "team name: several case-insensitive matches are refused",
+      "args": [
+        "team",
+        "access",
+        "list",
+        "Σ"
+      ],
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"σ\"},{\"id\":2,\"name\":\"ς\"}]}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "minigw: several teams match \"Σ\": use the team number (minigw gw team list)\n",
+        "exit": 1,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "team name: an exact name wins",
+      "args": [
+        "team",
+        "access",
+        "list",
+        "ς"
+      ],
+      "responses": [
+        {
+          "match": "GET /teams",
+          "status": 200,
+          "body": "{\"teams\":[{\"id\":1,\"name\":\"σ\"},{\"id\":2,\"name\":\"ς\"}]}"
+        },
+        {
+          "match": "GET /teams/2/assignments",
+          "status": 200,
+          "body": "{\"assignments\":[]}"
+        }
+      ],
+      "want": {
+        "out": "",
+        "err": "",
+        "exit": 0,
+        "requests": [
+          [
+            "GET",
+            "/teams",
+            ""
+          ],
+          [
+            "GET",
+            "/teams/2/assignments",
+            ""
+          ]
+        ]
+      }
     }
   ],
   "member": [
@@ -825,6 +891,19 @@
       "out": "1  Engineering\nteam notes: 0  (read them: minigw note list --team Engineering)\n",
       "status": 200,
       "path": "/minigw/v1/teams/1"
+    },
+    {
+      "name": "show: several case-insensitive matches are refused",
+      "args": [
+        "show",
+        "Σ"
+      ],
+      "lookup": "[{\"id\":1,\"name\":\"σ\"},{\"id\":2,\"name\":\"ς\"}]",
+      "body": "",
+      "out": "",
+      "error": "several teams match \"Σ\": use the team number (minigw team list)",
+      "status": 200,
+      "path": ""
     }
   ],
   "projects": [
