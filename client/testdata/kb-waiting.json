@@ -1,7 +1,7 @@
 {
   "profileLines": [
-    {"n": 1, "slug": "shop", "profile": "win", "want": "1 submission waits for your review in shop: minigw --minigw-profile win kb review shop"},
-    {"n": 2, "slug": "shop", "profile": "my gw", "want": "2 submissions wait for your review in shop: minigw --minigw-profile 'my gw' kb review shop"}
+    {"n": 1, "slug": "shop", "profile": "win", "want": "1 submission waits for your review in shop: minigw kb review shop --minigw-profile win"},
+    {"n": 2, "slug": "shop", "profile": "my gw", "want": "2 submissions wait for your review in shop: minigw kb review shop --minigw-profile 'my gw'"}
   ],
   "lines": [
     {"n": 1, "slug": "shop", "want": "1 submission waits for your review in shop: minigw kb review shop"},
@@ -15,7 +15,9 @@
     {"n": 1, "team": "a$(id)b", "want": "1 submission waits for your review in team a$(id)b: minigw kb review --team 'a$(id)b'"},
     {"n": 2, "team": "a`id`b", "want": "2 submissions wait for your review in team a`id`b: minigw kb review --team 'a`id`b'"},
     {"n": 1, "team": "a\"b", "want": "1 submission waits for your review in team a\"b: minigw kb review --team 'a\"b'"},
-    {"n": 3, "team": "it's", "want": "3 submissions wait for your review in team it's: minigw kb review --team 'it'\\''s'"}
+    {"n": 3, "team": "it's", "want": "3 submissions wait for your review in team it's: minigw kb review --team 'it'\\''s'"},
+    {"n": 2, "team": "acme", "profile": "win", "want": "2 submissions wait for your review in team acme: minigw kb review --team acme --minigw-profile win"},
+    {"n": 1, "team": "Ops Team", "profile": "win", "want": "1 submission waits for your review in team Ops Team: minigw kb review --team 'Ops Team' --minigw-profile win"}
   ],
   "teamAnswers": [
     {"name": "reviewer of the project and of one team", "body": "{\"waiting\":4,\"teams\":[{\"name\":\"acme\",\"waiting\":2},{\"name\":\"zero\",\"waiting\":0}]}", "wantN": 4, "want": ["acme:2", "zero:0"]},

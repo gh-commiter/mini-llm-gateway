@@ -1893,6 +1893,19 @@ your folders on this computer is linked to. The switch is per project, per gatew
 computer in `kb-hooks.json` next to `projects.json` (mode 0600, never inside a repository). `hooks on|off|status` make no network call
 and need no project role. `off` stops the hooks without uninstalling the plugin; uninstalling the plugin removes the entries.
 
+Profiles: `kb hooks on` records the profile it ran with (`minigw kb hooks on --minigw-profile work`, or with `MINIGW_PROFILE=work`
+set), and the hooks then reach the project through that profile, whatever profile the Claude Code session itself would use. The
+commands they suggest carry it after their words, for example `minigw kb search "<words>" --minigw-profile work` and
+`minigw kb submit shop --kind finding --minigw-profile work -`: inside Claude Code an allow rule such as `Bash(minigw kb search:*)`
+(and the `notes` skill's pre-allowed `minigw kb search *`) matches only a command that starts with those words, so the forms
+`minigw --minigw-profile work kb search ...` and `MINIGW_PROFILE=work minigw kb search ...` would ask for approval (in `claude -p`:
+be refused). For the default profile, or the profile `MINIGW_PROFILE` names for the session, the commands stay plain. `kb hooks status`
+names a profile that is not the default one (`kb hooks: on for project shop through profile work`). A project has one entry per
+gateway: `kb hooks on` through another profile of the same gateway replaces the entry and says so (`... (it was on through profile
+home: replaced)`). When the profile is later removed, or now connects to another gateway, the hooks are silent for that project
+until you run `kb hooks on` again. A folder linked to projects on two gateways with hooks on for both: the entry switched on first
+wins, and the session hears only of that project. Entries written before 0.10.4 have no profile and mean the default profile.
+
 What the hooks do, in a folder linked to a project with hooks on (`minigw kb hook start|compact|stop|end`, called by the plugin
 and not meant to be typed):
 
@@ -1908,7 +1921,8 @@ and not meant to be typed):
   hand in" is the normal answer and the model is told to give it when nothing is new.
 
 What they do not do: they do not ask at the end of a session (Claude Code gives a hook no way to talk to the model then), they
-never read or send the transcript, they never block a compaction, and they make no network call themselves. They add no
+never read or send the transcript, they never block a compaction, and apart from the one request for the reviewers' count at a
+session start (at most 2 seconds, only with the hooks on for that folder's project) they make no network call themselves. They add no
 permission of their own, but be exact about what you approve: each `minigw kb submit` the model runs goes through Claude Code's
 normal Bash prompt unless you allow-listed `minigw` commands, and then there is no prompt. While the plugin's `notes` skill is
 active, `minigw kb search *` is pre-allowed, so the words of a search (the model's candidate text) reach the gateway without a
@@ -1932,3 +1946,6 @@ user's config folder), mode 0600:
 - `kb-submitted.json`: when `minigw kb submit` last succeeded for a project (a manual submit counts as a hand-in too).
 
 Hooks inside an agent run of the gateway do nothing. Hand-in requires the gateway to be reachable when the model submits.
+The first Claude Code session after the plugin installs or updates its `minigw` prints no hook line: the plugin's install step
+and the hook start at the same time, and the hook runs the client only once the install step has verified it (`bin/.verified`).
+From the next session on the hooks work.

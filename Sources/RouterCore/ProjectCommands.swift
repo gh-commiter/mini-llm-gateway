@@ -74,11 +74,15 @@ public final class ProjectEnv {
     /// Test seam, per instance so that parallel tests do not interfere: runs after the export destination is opened and checked; nil in production.
     public var exportHook: (() -> Void)?
     /// kb hooks (KBHook.swift), per instance so that parallel tests do not interfere; nil = the real thing.
-    public var gateway: (() -> String)?  // the default profile's gateway id, "" = not connected
+    public var gateway: (() -> String)?  // this run's profile's gateway id, "" = not connected
+    public var profile: (() -> String)?  // this run's profile as kb-hooks.json records it, "" = the default one; nil = hintProfile
+    /// A profile recorded in kb-hooks.json ("" = the default one): its gateway id ("" = no such profile, never an exit) and the name a
+    /// suggested command must carry ("" when a plain minigw reaches it); nil = no profile is found.
+    public var hookProfile: ((String) -> (gw: String, arg: String))?
     public var gitState: ((String) -> (head: String, status: String))?  // HEAD and the status hash of the linked folder
     public var now: (() -> Date)?
     public var gitTimeout: TimeInterval?  // seconds for both git calls of a hook, nil = 2
-    public var hookConn: (() -> ProjectConn?)?  // the session start's connection to the gateway (nil result: none, never an exit)
+    public var hookConn: ((String) -> ProjectConn?)?  // the session start's connection through a recorded profile (nil result: none, never an exit)
     public var waitLimit: TimeInterval?  // seconds the gateway is waited for at a session start, nil = 2
 
     public init(connect: @escaping () -> (ProjectConn, String), state: String, cwd: String, stdin: @escaping () -> Data,
@@ -351,7 +355,7 @@ public final class ProjectEnv {
             }
         }
         if res.state == .ok, case let n = reviewWaiting(c, res.link.project, limit: waitLimit ?? 2), n > 0 {  // a reviewer's count; nothing for anyone else
-            say(Self.waitingLine(n, ProjectText.clean(res.link.slug)))
+            say(Self.waitingLine(n, ProjectText.clean(res.link.slug), profile: Self.hintProfile))
         }
         say("gateway: " + gw)
     }

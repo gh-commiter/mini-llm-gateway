@@ -71,11 +71,13 @@ type projectEnv struct {
 	sleep   func(time.Duration)
 	origin  func(dir string) string // the raw remote.origin.url of the folder's repository, "" = none; nil = ask git
 	// kb hooks (kb_hook.go), per instance so that parallel tests do not interfere; nil = the real thing
-	gateway  func() string                          // the default profile's gateway id, "" = not connected
-	gitState func(dir string) (head, status string) // HEAD and the status hash of the linked folder
-	now      func() time.Time
-	hookConn func() (connection, bool) // the session start's connection to the gateway; nil = the default profile's
-	tty      func() bool               // kb accept: is stdin a terminal; nil = ask the real one
+	gateway     func() string                          // this run's profile's gateway id, "" = not connected
+	profile     func() string                          // this run's profile as kb-hooks.json records it, "" = the default one
+	hookProfile func(name string) (gw, arg string)     // a recorded profile's gateway id and the name commands carry (hookProfileOf)
+	gitState    func(dir string) (head, status string) // HEAD and the status hash of the linked folder
+	now         func() time.Time
+	hookConn    func(profile string) (connection, bool) // the session start's connection through a recorded profile
+	tty         func() bool                             // kb accept: is stdin a terminal; nil = ask the real one
 }
 
 // projectMain, noteMain and usageMain are the entry points of main().
@@ -569,7 +571,7 @@ func (e *projectEnv) show() error {
 	}
 	if res.State != noLink && res.State != linkHintDiff { // a reviewer's count; nothing for anyone else or when the gateway does not answer
 		if n := e.reviewWaiting(c, res.Link.Project, hookWaitLimit); n > 0 {
-			e.say(waitingLine(n, clean(res.Link.Slug)))
+			e.say(waitingLine(n, clean(res.Link.Slug), profileFlag))
 		}
 	}
 	e.say("gateway: " + gw)

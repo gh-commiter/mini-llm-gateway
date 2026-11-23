@@ -1,5 +1,23 @@
 # Release notes
 
+## 0.10.4
+
+### Fixed
+- The Claude Code plugin's knowledge-base hooks now work for a folder linked through a profile other than the default one. `minigw kb hooks on` records the profile it ran with, and the session start, the reviewers' line and the hand-in request reach the project through that profile. Before, only the default profile was used: such a folder got no hook line at all, unless `MINIGW_PROFILE` was set for the whole Claude Code session.
+- The commands the hooks suggest for such a profile carry it after their words (`minigw kb search "<words>" --minigw-profile work`, `minigw kb submit shop --kind finding --minigw-profile work -`). Claude Code's allow rules such as `Bash(minigw kb search:*)` match only a command that starts with those words; the old form `minigw --minigw-profile work kb ...` (and `MINIGW_PROFILE=work minigw ...`) asked for approval, and `claude -p` refused it.
+- The docs no longer say the hooks make no network call: the session start asks the gateway once, for at most 2 seconds, for the reviewers' count. They also say that the first session after the plugin installs or updates its `minigw` prints no hook line.
+
+### Changed
+- `minigw kb hooks status` names the profile when it is not the default one. `minigw kb hooks on` through another profile of the same gateway replaces the entry and says so ("(it was on through profile home: replaced)").
+- The line "N submissions wait for your review in <project>: ..." of `minigw project show`, `minigw team show` and the session start puts `--minigw-profile <name>` after the command too.
+- A folder linked to projects on two gateways, with hooks on for both: the entry switched on first wins. Entries written before 0.10.4 have no profile and mean the default profile; a profile that is gone or now connects to another gateway leaves the hooks silent until `kb hooks on` is run again.
+
+### Known problems
+- Not proven in a real interactive Claude Code session with a second profile: the suggested forms were checked with `claude -p` and an allow rule `Bash(minigw kb search:*)` (the form with the flag after the words ran; the other two forms were refused), and the hooks themselves with tests on fake gateways and profiles.
+- The Mac client's lookup of the recorded profile in the Keychain is not covered by a test (the shared fixture covers the hook's choice with injected profiles; the Go client's lookup is tested against real profile files).
+- Other hints of the client (for example `minigw project link`, `minigw note list` in error messages) still put `--minigw-profile <name>` before the command: they are meant for a terminal, where both forms work.
+- The first session after the plugin installs or updates its `minigw` still prints no hook line (documented, not changed).
+
 ## 0.10.3
 
 ### Fixed

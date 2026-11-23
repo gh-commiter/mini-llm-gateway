@@ -35,12 +35,19 @@ func newHookWorld(t *testing.T, stdin string) *hookWorld {
 	w.e = &projectEnv{
 		state: filepath.Join(w.cfg, "projects.json"), cwd: w.work, in: strings.NewReader(stdin), out: w.out, err: w.errOut,
 		gateway: func() string { return "gw1" },
+		profile: func() string { return "" },
 		now:     func() time.Time { return time.Unix(1000000, 0) },
 		do: func(connection, string, string, map[string]string, []byte) (int, []byte, http.Header) {
 			w.calls++
 			t.Error("a hook must not call the gateway")
 			return 599, nil, nil
 		},
+	}
+	w.e.hookProfile = func(name string) (string, string) { // only the default profile, the run's own gateway
+		if name == "" {
+			return w.e.gateway(), ""
+		}
+		return "", ""
 	}
 	return w
 }
@@ -66,11 +73,12 @@ func (w *hookWorld) write(t *testing.T, rel string, v any) {
 
 func TestKBHookFixture(t *testing.T) {
 	var f struct {
-		Gateway string
-		Project int64
-		Slug    string
-		Now     int64
-		Cases   []struct {
+		Gateway  string
+		Project  int64
+		Slug     string
+		Now      int64
+		Profiles []struct{ Name, Gateway, Arg string }
+		Cases    []struct {
 			Name, Event string
 			Hint        string
 			LinkSlug    string
@@ -78,6 +86,9 @@ func TestKBHookFixture(t *testing.T) {
 			StdinRaw    *string
 			StdinPad    int
 			Enabled     bool
+			Profile     string
+			Entries     []hookEnabled
+			Links       []projectLink
 			Linked      bool
 			Marker      *hookMarker
 			Submitted   int64
@@ -104,6 +115,17 @@ func TestKBHookFixture(t *testing.T) {
 				return c.Git.Head, c.Git.Status
 			}
 			w.e.agent = c.Agent
+			w.e.hookProfile = func(name string) (string, string) {
+				for _, p := range f.Profiles {
+					if p.Name == name {
+						return p.Gateway, p.Arg
+					}
+				}
+				return "", ""
+			}
+			for _, l := range c.Links {
+				w.link(t, l.Gateway, l.Project, l.Slug)
+			}
 			if c.Linked {
 				slug := f.Slug
 				if c.LinkSlug != "" {
@@ -115,7 +137,11 @@ func TestKBHookFixture(t *testing.T) {
 				os.WriteFile(filepath.Join(w.work, hintFile), []byte(c.Hint+"\n"), 0o644)
 			}
 			if c.Enabled {
-				w.write(t, "kb-hooks.json", hookSettings{Version: 1, Enabled: []hookEnabled{{f.Gateway, f.Project}}})
+				entries := c.Entries
+				if entries == nil {
+					entries = []hookEnabled{{f.Gateway, f.Project, c.Profile}}
+				}
+				w.write(t, "kb-hooks.json", hookSettings{Version: 1, Enabled: entries})
 			}
 			session := c.Want.Session
 			if session == "" {
@@ -184,7 +210,7 @@ func TestKBHookFixture(t *testing.T) {
 func TestKBHookPrune(t *testing.T) {
 	w := newHookWorld(t, "")
 	w.link(t, "gw1", 7, "acme-shop")
-	w.write(t, "kb-hooks.json", hookSettings{1, []hookEnabled{{"gw1", 7}}})
+	w.write(t, "kb-hooks.json", hookSettings{1, []hookEnabled{{"gw1", 7, ""}}})
 	w.e.gitState = func(string) (string, string) { return "h", "s" }
 	const day, now = 24 * 3600, 5000000
 	w.e.now = func() time.Time { return time.Unix(now, 0) }
@@ -253,7 +279,7 @@ func TestKBHooksOnOffStatus(t *testing.T) {
 	want([]string{"status", "web"}, "kb hooks: on for project web\n")
 	want([]string{"status"}, "kb hooks: off for project acme-shop\n")
 	set := loadHookSettings(filepath.Join(w.cfg, "kb-hooks.json"))
-	if !reflect.DeepEqual(set, hookSettings{1, []hookEnabled{{"gw1", 8}}}) {
+	if !reflect.DeepEqual(set, hookSettings{1, []hookEnabled{{"gw1", 8, ""}}}) {
 		t.Fatalf("%+v", set)
 	}
 	if fi, _ := os.Stat(filepath.Join(w.cfg, "kb-hooks.json")); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
@@ -435,38 +461,48 @@ func TestKBHookReadsNothingWhenNotEnabled(t *testing.T) {
 }
 
 // M2: the command in the hand-in request, parsed and run through the real argument parser with the text on stdin.
+// #185: through another profile the commands carry --minigw-profile after their words and before the final - (main takes the flag
+// out wherever it is, TestHookProfileFlagAfterTheCommand); here it is taken out the same way.
 func TestHookRequestCommandsWork(t *testing.T) {
-	text := strings.ReplaceAll(hookRequestText, "<slug>", "acme-shop")
-	cmds := regexp.MustCompile("`(minigw kb submit [^`]*)`").FindAllStringSubmatch(text, -1)
-	if len(cmds) != 2 {
-		t.Fatalf("%d commands in the request", len(cmds))
-	}
-	for i, kind := range []string{"finding", "faq"} {
-		var args []string
-		for _, m := range regexp.MustCompile(`"([^"]*)"|(\S+)`).FindAllStringSubmatch(cmds[i][1], -1) {
-			args = append(args, m[1]+m[2])
+	for _, profile := range []string{"", "p2"} {
+		text := hookText(hookRequestText, "acme-shop", profile)
+		cmds := regexp.MustCompile("`(minigw kb submit [^`]*)`").FindAllStringSubmatch(text, -1)
+		if len(cmds) != 2 {
+			t.Fatalf("%d commands in the request", len(cmds))
 		}
-		args = slices.Replace(args, 0, 1) // minigw
-		if args[0] != "kb" {
-			t.Fatal(args)
-		}
-		w := newHookWorld(t, "the text on stdin\n")
-		w.e.connect = func() (connection, string) { return connection{}, "gw1" }
-		w.e.sleep = func(time.Duration) {}
-		var sent map[string]any
-		w.e.do = func(_ connection, method, path string, h map[string]string, b []byte) (int, []byte, http.Header) {
-			if method == "GET" {
-				return 200, []byte(`{"id":7}`), nil
+		for i, kind := range []string{"finding", "faq"} {
+			var args []string
+			for _, m := range regexp.MustCompile(`"([^"]*)"|(\S+)`).FindAllStringSubmatch(cmds[i][1], -1) {
+				args = append(args, m[1]+m[2])
 			}
-			h["Idempotency-Key"] = ""
-			json.Unmarshal(b, &sent)
-			return 201, []byte(`{"id":1,"project":7,"state":"pending","class":"data","title":"t"}`), nil
-		}
-		if err := w.e.kb(args[1:]); err != nil {
-			t.Fatalf("%v: %v", args, err)
-		}
-		if sent["entryKind"] != kind || sent["body"] != "the text on stdin\n" || sent["title"] == "" || w.out.String() != "submission 1 pending\n" {
-			t.Fatalf("%v: %v %q", args, sent, w.out.String())
+			args = slices.Replace(args, 0, 1) // minigw
+			if args[0] != "kb" || !strings.HasPrefix(cmds[i][1], "minigw kb submit acme-shop --kind "+kind) || args[len(args)-1] != "-" {
+				t.Fatal(args)
+			}
+			if profile != "" {
+				if !slices.Equal(args[len(args)-3:len(args)-1], []string{"--minigw-profile", profile}) {
+					t.Fatalf("the profile is not before the final -: %v", args)
+				}
+				args = slices.Delete(args, len(args)-3, len(args)-1)
+			}
+			w := newHookWorld(t, "the text on stdin\n")
+			w.e.connect = func() (connection, string) { return connection{}, "gw1" }
+			w.e.sleep = func(time.Duration) {}
+			var sent map[string]any
+			w.e.do = func(_ connection, method, path string, h map[string]string, b []byte) (int, []byte, http.Header) {
+				if method == "GET" {
+					return 200, []byte(`{"id":7}`), nil
+				}
+				h["Idempotency-Key"] = ""
+				json.Unmarshal(b, &sent)
+				return 201, []byte(`{"id":1,"project":7,"state":"pending","class":"data","title":"t"}`), nil
+			}
+			if err := w.e.kb(args[1:]); err != nil {
+				t.Fatalf("%v: %v", args, err)
+			}
+			if sent["entryKind"] != kind || sent["body"] != "the text on stdin\n" || sent["title"] == "" || w.out.String() != "submission 1 pending\n" {
+				t.Fatalf("%v: %v %q", args, sent, w.out.String())
+			}
 		}
 	}
 }
@@ -492,4 +528,32 @@ func TestHookRequestHasNoShellExpandablePlaceholder(t *testing.T) {
 func hookStdin(session, cwd string) string {
 	b, _ := json.Marshal(map[string]string{"session_id": session, "cwd": cwd})
 	return string(b)
+}
+
+// #185: kb hooks on records the run's profile; on through another profile (to the same gateway) replaces the entry and says so;
+// status names a profile that is not the default one. The steps and the file are shared with the Swift client (testdata/kb-hook.json).
+func TestKBHooksOnThroughAnotherProfile(t *testing.T) {
+	var f struct {
+		OnSequence []struct {
+			Profile string
+			Args    []string
+			Want    string
+		}
+		OnFile string
+	}
+	if err := json.Unmarshal(srcFile(t, "testdata/kb-hook.json"), &f); err != nil || len(f.OnSequence) == 0 {
+		t.Fatal(err)
+	}
+	w := newHookWorld(t, "")
+	w.link(t, "gw1", 7, "acme-shop")
+	for i, s := range f.OnSequence {
+		w.e.profile = func() string { return s.Profile }
+		w.out.Reset()
+		if err := w.e.kb(append([]string{"hooks"}, s.Args...)); err != nil || w.out.String() != s.Want+"\n" {
+			t.Fatalf("step %d %v as %q: %q %v", i, s.Args, s.Profile, w.out.String(), err)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(w.cfg, "kb-hooks.json")); string(b) != f.OnFile {
+		t.Fatalf("kb-hooks.json:\n%s", b)
+	}
 }

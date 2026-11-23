@@ -235,7 +235,7 @@ func (e *projectEnv) team(args []string) error {
 		}
 		if t.Segment != 0 && !t.Archived { // a reviewer's count of the team's own notes; nothing for anyone else or when the gateway does not answer
 			if n := e.reviewWaiting(c, t.Segment, hookWaitLimit); n > 0 {
-				e.say(teamWaitingLine(n, clean(t.Name)))
+				e.say(teamWaitingLine(n, clean(t.Name), profileFlag))
 			}
 		}
 	}

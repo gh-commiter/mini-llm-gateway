@@ -52,7 +52,7 @@ The same things are in the Settings window of the Mac app and on the settings pa
    minigw kb submit shop --kind faq --title "How do I ...?" answer.md
    ```
    `private` is visible to you and the project admins only. Never put secrets, customer data or personal data in a note.
-6. Claude Code: `minigw kb mcp --project shop --print-config` prints a configuration for the read-only tools `kb_search` and `note_read`; review it and add it to your MCP configuration yourself. Optional: `minigw kb hooks on shop` makes a session ask, after a commit or a compaction, to hand in up to three short entries. It is off by default and `minigw kb hooks off` stops it.
+6. Claude Code: `minigw kb mcp --project shop --print-config` prints a configuration for the read-only tools `kb_search` and `note_read`; review it and add it to your MCP configuration yourself. Optional: `minigw kb hooks on shop` makes a session ask, after a commit or a compaction, to hand in up to three short entries. It is off by default and `minigw kb hooks off` stops it. Run it with the profile the project is on (`--minigw-profile <name>`): the hooks remember it and their suggested commands carry it. The first session after the plugin installs or updates prints no hook line.
 7. Usage labels: add `--minigw-phase`, `--minigw-activity` or `--minigw-task` to a run (or `MINIGW_PHASE`, `MINIGW_ACTIVITY`, `MINIGW_TASK`) so that `minigw usage` and the owner's `minigw gw usage --by phase|activity|task` say what the run was for.
 
 ## What is new and little tried

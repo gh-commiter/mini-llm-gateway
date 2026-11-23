@@ -32,8 +32,21 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
             return ProjectHTTP.send(c, method, path, headers, body, clientInfo: clientInfo)
         })
     env.gateway = { loadProfiles().first.map { Projects.gatewayID(url: $0.conn.url, key: $0.conn.key) } ?? "" }  // kb hooks: no profile is not an error
-    env.hookConn = {  // the session start: the default profile's connection, never an exit
-        guard agent == nil, let p = loadProfiles().first, case .success(let c) = routeResult(p) else { return nil }
+    env.profile = {  // kb hooks on records the run's profile, "" for the default one
+        guard let f = profileFlag, f != defaultName(profileNames()) else { return "" }
+        return f
+    }
+    // kb hook: a profile recorded in kb-hooks.json ("" = the default one), never an exit (a profile that cannot be read is no profile)
+    func recorded(_ name: String) -> (name: String, conn: Connection, def: String)? {
+        let def = defaultName(profileNames()), n = name.isEmpty ? def : name
+        return loadProfile(n, skip: true).map { (n, $0, def) }
+    }
+    env.hookProfile = { name in
+        guard let p = recorded(name) else { return ("", "") }
+        return (Projects.gatewayID(url: p.conn.url, key: p.conn.key), p.name == (profileFlag ?? p.def) ? "" : p.name)
+    }
+    env.hookConn = { name in  // the session start: the recorded profile's connection, never an exit
+        guard agent == nil, let p = recorded(name), case .success(let c) = routeResult(Profile(name: p.name, conn: p.conn)) else { return nil }
         return ProjectConn(url: c.url, token: c.token)
     }
     do {

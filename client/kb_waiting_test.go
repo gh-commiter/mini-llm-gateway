@@ -23,8 +23,8 @@ type waitingFixture struct {
 		Slug, Profile, Want string
 	}
 	TeamLines []struct {
-		N          int
-		Team, Want string
+		N                   int
+		Team, Profile, Want string
 	}
 	TeamAnswers []struct {
 		Name, Body string
@@ -45,20 +45,17 @@ func TestWaitingFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, l := range f.Lines {
-		if g := waitingLine(l.N, l.Slug); g != l.Want {
+		if g := waitingLine(l.N, l.Slug, ""); g != l.Want {
 			t.Errorf("%d %s: %q", l.N, l.Slug, g)
 		}
 	}
-	defer func() { profileFlag = "" }()
 	for _, l := range f.ProfileLines {
-		profileFlag = l.Profile
-		if g := waitingLine(l.N, l.Slug); g != l.Want {
+		if g := waitingLine(l.N, l.Slug, l.Profile); g != l.Want {
 			t.Errorf("%d %s@%s: %q", l.N, l.Slug, l.Profile, g)
 		}
 	}
-	profileFlag = ""
 	for _, l := range f.TeamLines {
-		if g := teamWaitingLine(l.N, l.Team); g != l.Want {
+		if g := teamWaitingLine(l.N, l.Team, l.Profile); g != l.Want {
 			t.Errorf("%d %s: %q", l.N, l.Team, g)
 		}
 	}
@@ -101,11 +98,12 @@ func TestWaitingSeenOnlyByReviewers(t *testing.T) {
 		e, o, _ := c.env(user, dir, fmt.Sprintf(`{"session_id":"s-%s","cwd":%q}`, user, dir))
 		conn, _ := e.connect()
 		e.gateway = func() string { return "gw-test" }
-		e.hookConn = func() (connection, bool) { return conn, true }
+		e.hookProfile = func(string) (string, string) { return "gw-test", "" }
+		e.hookConn = func(string) (connection, bool) { return conn, true }
 		e.gitState = func(string) (string, string) { return "", "" }
 		if optIn {
 			c.f.t.Helper()
-			e.saveHookSettings(hookSettings{Enabled: []hookEnabled{{"gw-test", pid}}})
+			e.saveHookSettings(hookSettings{Enabled: []hookEnabled{{"gw-test", pid, ""}}})
 		}
 		if err := e.kb([]string{"hook", "start"}); err != nil {
 			t.Fatal(err)
@@ -148,12 +146,12 @@ func TestWaitingSeenOnlyByReviewers(t *testing.T) {
 func TestWaitingHookTimeoutPrintsNothing(t *testing.T) {
 	w := newHookWorld(t, "")
 	w.link(t, "gw1", 7, "acme-shop")
-	w.write(t, "kb-hooks.json", hookSettings{1, []hookEnabled{{"gw1", 7}}})
+	w.write(t, "kb-hooks.json", hookSettings{1, []hookEnabled{{"gw1", 7, ""}}})
 	w.e.gitState = func(string) (string, string) { return "h", "s" }
 	w.e.in = strings.NewReader(hookStdin("s1", w.work))
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	w.e.hookConn = func() (connection, bool) { return connection{}, true }
+	w.e.hookConn = func(string) (connection, bool) { return connection{}, true }
 	w.e.do = func(connection, string, string, map[string]string, []byte) (int, []byte, http.Header) {
 		<-release
 		return 200, []byte(`{"waiting":4}`), nil
@@ -210,9 +208,10 @@ func TestTeamWaitingSeenOnlyByReviewers(t *testing.T) {
 		e, o, _ := c.env(user, dir, fmt.Sprintf(`{"session_id":"s-%s","cwd":%q}`, user, dir))
 		conn, _ := e.connect()
 		e.gateway = func() string { return "gw-test" }
-		e.hookConn = func() (connection, bool) { return conn, true }
+		e.hookProfile = func(string) (string, string) { return "gw-test", "" }
+		e.hookConn = func(string) (connection, bool) { return conn, true }
 		e.gitState = func(string) (string, string) { return "", "" }
-		e.saveHookSettings(hookSettings{Enabled: []hookEnabled{{"gw-test", pid}}})
+		e.saveHookSettings(hookSettings{Enabled: []hookEnabled{{"gw-test", pid, ""}}})
 		if err := e.kb([]string{"hook", "start"}); err != nil {
 			t.Fatal(err)
 		}

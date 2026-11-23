@@ -22,6 +22,8 @@ private final class HookWorld: @unchecked Sendable {
                          stdin: { stdin }, out: { [unowned self] in self.out += $0 }, err: { [unowned self] in self.err += $0 }, agent: false,
                          send: { [unowned self] _, _, _, _, _ in self.calls += 1; return ProjectReply(status: 599) }, sleep: { _ in })
         env.gateway = { "gw1" }
+        env.profile = { "" }
+        env.hookProfile = { [unowned self] name in name.isEmpty ? (self.env.gateway?() ?? "", "") : ("", "") }  // only the default profile, the run's own gateway
         env.now = { Date(timeIntervalSince1970: 1_000_000) }
     }
 
@@ -69,9 +71,14 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
                 return (git["head"]!, git["status"]!)
             }
             w.env.agent = c["agent"] as! Bool
+            let profiles = f["profiles"] as! [[String: String]]
+            w.env.hookProfile = { name in profiles.first { $0["name"] == name }.map { ($0["gateway"]!, $0["arg"]!) } ?? ("", "") }
+            for l in c["links"] as? [[String: Any]] ?? [] { try w.link(l["gateway"] as! String, (l["project"] as! NSNumber).int64Value, l["slug"] as! String) }
             if c["linked"] as! Bool { try w.link(gateway, project, c["linkSlug"] as? String ?? slug) }
             if let hint = c["hint"] as? String { try Data((hint + "\n").utf8).write(to: URL(fileURLWithPath: w.work + "/.minigw-project")) }
-            if c["enabled"] as! Bool { try w.write("kb-hooks.json", ["version": 1, "enabled": [["gateway": gateway, "project": project]]]) }
+            if c["enabled"] as! Bool {
+                try w.write("kb-hooks.json", ["version": 1, "enabled": c["entries"] ?? [["gateway": gateway, "project": project, "profile": c["profile"] as? String ?? ""]]])
+            }
             let session = want["session"] as? String ?? "s1"
             if let m = c["marker"] as? [String: Any] { try w.write("kb-hook/\(session).json", m) }
             if let t = c["submitted"] as? Int, t != 0 { try w.write("kb-submitted.json", ["version": 1, "submitted": [["gateway": gateway, "project": project, "time": t]]]) }
@@ -196,6 +203,24 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         w.env.gateway = { "gw1" }
         w.env.agent = true
         do { _ = try run("status"); Issue.record("agent") } catch { #expect(String(describing: error) == ProjectEnv.agentRefusal) }
+    }
+
+    /// #185: kb hooks on records the run's profile; on through another profile (to the same gateway) replaces the entry and says so; status
+    /// names a profile that is not the default one. The steps and the file are shared with the Go client (client/testdata/kb-hook.json).
+    @Test func hooksOnThroughAnotherProfile() throws {
+        let f = try JSONSerialization.jsonObject(with: Data(contentsOf: repoRoot.appendingPathComponent("client/testdata/kb-hook.json"))) as! [String: Any]
+        let steps = f["onSequence"] as! [[String: Any]]
+        #expect(!steps.isEmpty)
+        let w = try HookWorld()
+        try w.link("gw1", 7, "acme-shop")
+        for (i, step) in steps.enumerated() {
+            let p = step["profile"] as! String
+            w.env.profile = { p }
+            w.out = ""
+            try w.env.kb(["hooks"] + (step["args"] as! [String]))
+            #expect(w.out == (step["want"] as! String) + "\n", "step \(i)")
+        }
+        #expect(String(decoding: try Data(contentsOf: URL(fileURLWithPath: w.cfg + "/kb-hooks.json")), as: UTF8.self) == f["onFile"] as! String)
     }
 
     @Test func submitRecordsOnlyA201() throws {
@@ -361,18 +386,24 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         }
     }
 
-    /// The command in the hand-in request, parsed and run through the real argument parser with the text on stdin.
+    /// The command in the hand-in request, parsed and run through the real argument parser with the text on stdin. #185: through another
+    /// profile the commands carry --minigw-profile before the final - (the executable takes the flag out wherever it is; here it is taken out the same way).
     @Test func theCommandsOfTheRequestWork() throws {
-        let text = ProjectEnv.hookRequestText.replacingOccurrences(of: "<slug>", with: "acme-shop")
+        for profile in ["", "p2"] {
+        let text = ProjectEnv.hookText(ProjectEnv.hookRequestText, slug: "acme-shop", profile: profile)
         let re = try NSRegularExpression(pattern: "`(minigw kb submit [^`]*)`")
         let cmds = re.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { String(text[Range($0.range(at: 1), in: text)!]) }
         #expect(cmds.count == 2)
         for (cmd, kind) in zip(cmds, ["finding", "faq"]) {
             let tok = try NSRegularExpression(pattern: #""([^"]*)"|(\S+)"#)
-            let args = tok.matches(in: cmd, range: NSRange(cmd.startIndex..., in: cmd)).map { m -> String in
+            var args = tok.matches(in: cmd, range: NSRange(cmd.startIndex..., in: cmd)).map { m -> String in
                 String(cmd[Range(m.range(at: m.range(at: 1).location != NSNotFound ? 1 : 2), in: cmd)!])
             }
-            #expect(args[0] == "minigw" && args[1] == "kb")
+            #expect(args[0] == "minigw" && args[1] == "kb" && cmd.hasPrefix("minigw kb submit acme-shop --kind " + kind) && args.last == "-")
+            if !profile.isEmpty {
+                #expect(Array(args[(args.count - 3)..<(args.count - 1)]) == ["--minigw-profile", profile])
+                args.removeSubrange((args.count - 3)..<(args.count - 1))
+            }
             let w = try HookWorld(stdin: Data("the text on stdin\n".utf8))
             var sent: [String: Any] = [:]
             w.env.send = { _, method, _, _, body in
@@ -383,6 +414,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
             try w.env.kb(Array(args.dropFirst(2)))
             #expect(sent["entryKind"] as? String == kind && sent["body"] as? String == "the text on stdin\n" && !(sent["title"] as? String ?? "").isEmpty)
             #expect(w.out == "submission 1 pending\n")
+        }
         }
     }
 }
@@ -397,16 +429,13 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
     @Test func sharedFixture() async throws {
         let f = try fixture()
         for l in f["lines"] as! [[String: Any]] {
-            #expect(ProjectEnv.waitingLine(l["n"] as! Int, l["slug"] as! String) == l["want"] as! String)
+            #expect(ProjectEnv.waitingLine(l["n"] as! Int, l["slug"] as! String, profile: "") == l["want"] as! String)
         }
-        defer { ProjectEnv.hintProfile = "" }
         for l in f["profileLines"] as! [[String: Any]] {
-            ProjectEnv.hintProfile = l["profile"] as! String
-            #expect(ProjectEnv.waitingLine(l["n"] as! Int, l["slug"] as! String) == l["want"] as! String)
+            #expect(ProjectEnv.waitingLine(l["n"] as! Int, l["slug"] as! String, profile: l["profile"] as! String) == l["want"] as! String)
         }
-        ProjectEnv.hintProfile = ""
         for l in f["teamLines"] as! [[String: Any]] {
-            #expect(ProjectEnv.teamWaitingLine(l["n"] as! Int, l["team"] as! String) == l["want"] as! String)
+            #expect(ProjectEnv.teamWaitingLine(l["n"] as! Int, l["team"] as! String, profile: l["profile"] as? String ?? "") == l["want"] as! String)
         }
         for a in f["teamAnswers"] as! [[String: Any]] {
             let w = try HookWorld()
@@ -445,7 +474,7 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         w.env.stdin = { input }
         w.env.gitState = { _ in ("h", "s") }
         if optIn { try w.write("kb-hooks.json", ["version": 1, "enabled": [["gateway": "gw1", "project": 7]]]) }
-        w.env.hookConn = { ProjectConn(url: "", token: "") }
+        w.env.hookConn = { _ in ProjectConn(url: "", token: "") }
         w.env.waitLimit = 0.1
         w.env.send = { _, _, _, _, _ in
             gate?.wait()
