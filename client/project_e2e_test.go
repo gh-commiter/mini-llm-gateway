@@ -390,3 +390,19 @@ func TestMemberRoutesRefuseAnAgentDescendant(t *testing.T) { // review L7
 	_, err = c.run("ana", dir, "", "usage")
 	wantErr(t, err, "no project access")
 }
+
+// #190: a folder name with a newline and an ESC cannot forge a line or steer the terminal in `project show` (the hint folder, the linked folder).
+func TestProjectShowCleansFolderNames(t *testing.T) {
+	c := newClientFx(t)
+	dir := folder(t, t.TempDir(), "evil\nproject:  forged\x1b[2J")
+	hint(t, dir, "fakture")
+	check := func(o string) {
+		t.Helper()
+		if strings.ContainsAny(o, "\x1b") || strings.Contains(o, "\nproject:  forged") || !strings.Contains(o, "evil project:  forged[2J") {
+			t.Fatalf("show: %q", o)
+		}
+	}
+	check(c.must("ana", dir, "", "project", "show"))
+	c.must("ana", dir, "", "project", "link", "fakture")
+	check(c.must("ana", folder(t, dir, "src"), "", "project", "show"))
+}

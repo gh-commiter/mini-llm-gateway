@@ -411,6 +411,20 @@ final class ProjectStore: @unchecked Sendable {
         }
     }
 
+    /// #190: a folder name with a newline and an ESC cannot forge a line or steer the terminal in `project show` (the hint folder, the linked folder).
+    @Test func showCleansFolderNames() throws {
+        let s = try Session()
+        let evil = "evil\nproject:  forged\u{1B}[2J"
+        try mkdir(s.root + "/" + evil + "/src")
+        try "fakture\n".write(toFile: s.root + "/" + evil + "/" + Projects.hintFile, atomically: true, encoding: .utf8)
+        func check(_ o: String) {
+            #expect(!o.contains("\u{1B}") && !o.contains("\nproject:  forged") && o.contains("evil project:  forged[2J"), "\(o)")
+        }
+        check(s.run(["project", "show"], cwd: evil).out)
+        _ = s.run(["project", "link", "fakture"], cwd: evil)
+        check(s.run(["project", "show"], cwd: evil + "/src").out)
+    }
+
     @Test func linkPushListReadEditRemoveUnlink() throws {
         let s = try Session()
         #expect(s.run(["note", "list"]).error.contains("not linked"))

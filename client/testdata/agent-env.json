@@ -16,9 +16,10 @@
     "CLAUDECODE", "DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME",
     "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE", "GH_TOKEN", "GITHUB_TOKEN",
     "SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "MINIGW_DEPS", "MINIGW_NETWORK_OFF",
-    "OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"
+    "OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+    "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "CLAUDE_ENV_FILE", "BASH_ENV", "ENV"
   ],
-  "denyPrefixes": ["ANTHROPIC_", "CLAUDE_CODE_", "COPILOT_", "GITHUB_COPILOT_"],
+  "denyPrefixes": ["ANTHROPIC_", "CLAUDE_CODE_", "COPILOT_", "GITHUB_COPILOT_", "MINIGW_"],
   "denySuffixes": ["_API_KEY"],
   "maxNames": 64,
   "validate": [
@@ -29,7 +30,14 @@
     {"names": [""], "error": "agentEnv: \"\" is not a variable name (letters, digits and _, not starting with a digit)"},
     {"names": ["FOO_API_KEY"], "error": "agentEnv: FOO_API_KEY is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
     {"names": ["anthropic_base_url"], "error": "agentEnv: anthropic_base_url is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
-    {"names": ["GH_TOKEN"], "error": "agentEnv: GH_TOKEN is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"}
+    {"names": ["GH_TOKEN"], "error": "agentEnv: GH_TOKEN is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
+    {"names": ["minigw_anything"], "error": "agentEnv: minigw_anything is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
+    {"names": ["MINIGW_SHARE"], "error": "agentEnv: MINIGW_SHARE is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
+    {"names": ["GH_ENTERPRISE_TOKEN"], "error": "agentEnv: GH_ENTERPRISE_TOKEN is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
+    {"names": ["github_enterprise_token"], "error": "agentEnv: github_enterprise_token is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
+    {"names": ["CLAUDE_ENV_FILE"], "error": "agentEnv: CLAUDE_ENV_FILE is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
+    {"names": ["BASH_ENV"], "error": "agentEnv: BASH_ENV is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"},
+    {"names": ["ENV"], "error": "agentEnv: ENV is never passed to agents (API keys, tokens, sign-in, sandbox and gateway variables)"}
   ],
   "tooMany": "agentEnv: at most 64 names",
   "notBase": ["GRADLE_OPTS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "NODE_OPTIONS", "npm_config_registry", "PIP_INDEX_URL", "GIT_SSL_CAINFO", "AWS_PROFILE", "KUBECONFIG"],

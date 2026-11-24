@@ -69,6 +69,14 @@ import Testing
         #expect(run["MGTEST_SECRET"] == nil && run["AWS_SECRET_ACCESS_KEY"] == nil && run["HTTPS_PROXY"] != nil)
     }
 
+    /// #189: a hand-edited config must not pass these names either: they are dropped at run time, whatever the case.
+    @Test func deniedOwnerNamesAreDroppedAtRunTime() {
+        let env = ["MINIGW_SHARE": "x", "minigw_other": "x", "GH_ENTERPRISE_TOKEN": "x", "GITHUB_ENTERPRISE_TOKEN": "x", "CLAUDE_ENV_FILE": "x",
+                   "BASH_ENV": "x", "ENV": "x", "PATH": "/usr/bin"]
+        let owner = ["MINIGW_SHARE", "MINIGW_OTHER", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "CLAUDE_ENV_FILE", "BASH_ENV", "ENV"]
+        #expect(Set(AgentEnv.environment(env, owner: owner).keys) == ["PATH"])
+    }
+
     /// The real start of Codex (Codex.run): the process gets the filtered environment and the run's own variables after it.
     @Test func codexRunGetsTheFilteredEnvironment() async throws {
         let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("ae-" + UUID().uuidString)

@@ -237,3 +237,12 @@ func TestAgentEnvSettingRoundTrip(t *testing.T) {
 		t.Errorf("serve.json: %q %v", c.AgentEnv, err)
 	}
 }
+
+// #189: a hand-edited config must not pass these names either: they are dropped at run time, whatever the case.
+func TestAgentEnvForDropsDeniedOwnerNames(t *testing.T) {
+	env := []string{"MINIGW_SHARE=x", "minigw_other=x", "GH_ENTERPRISE_TOKEN=x", "GITHUB_ENTERPRISE_TOKEN=x", "CLAUDE_ENV_FILE=x", "BASH_ENV=x", "ENV=x", "PATH=/usr/bin"}
+	owner := []string{"MINIGW_SHARE", "MINIGW_OTHER", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "CLAUDE_ENV_FILE", "BASH_ENV", "ENV"}
+	if got := agentEnvNames(agentEnvFor(env, owner)); !slices.Equal(got, []string{"PATH"}) {
+		t.Errorf("%q", got)
+	}
+}

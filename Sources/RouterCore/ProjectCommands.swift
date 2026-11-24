@@ -337,17 +337,17 @@ public final class ProjectEnv {
         let (c, gw) = connect()
         let st = try loadState()
         let res = try Projects.resolve(st, gateway: gw, cwd: cwd)
-        say("folder:   " + res.realPath)
+        say("folder:   " + ProjectText.oneLine(res.realPath))
         switch res.state {
         case .none:
             say("project:  none (not linked)")
             if !res.hint.isEmpty {
-                say("hint:     \(Projects.hintFile) in \(res.hintDir) suggests project \(res.hint); run \(ProjectEnv.mg) project link \(res.hint)")
+                say("hint:     \(Projects.hintFile) in \(ProjectText.oneLine(res.hintDir)) suggests project \(res.hint); run \(ProjectEnv.mg) project link \(res.hint)")
             }
             if let h = linkedThrough(st, gw) { say("hint:     " + h) }
         default:
             say("project:  \(res.link.slug) (id \(res.link.project))")
-            say("linked:   " + res.link.path + " (the nearest linked folder above or at this one)")
+            say("linked:   " + ProjectText.oneLine(res.link.path) + " (the nearest linked folder above or at this one)")
             if res.hint.isEmpty {
                 say("hint:     no " + Projects.hintFile + " in the linked folder")
             } else if res.state == .hintDiff {

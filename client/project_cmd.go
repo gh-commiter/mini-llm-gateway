@@ -552,19 +552,19 @@ func (e *projectEnv) show() error {
 	if err != nil {
 		return err
 	}
-	e.say("folder:   " + res.RealPath)
+	e.say("folder:   " + oneLine(res.RealPath))
 	switch res.State {
 	case noLink:
 		e.say("project:  none (not linked)")
 		if res.Hint != "" {
-			e.say(fmt.Sprintf("hint:     %s in %s suggests project %s; run %s project link %s", hintFile, res.HintDir, res.Hint, mgCmd(), res.Hint))
+			e.say(fmt.Sprintf("hint:     %s in %s suggests project %s; run %s project link %s", hintFile, oneLine(res.HintDir), res.Hint, mgCmd(), res.Hint))
 		}
 		if h := e.linkedThrough(st, gw); h != "" {
 			e.say("hint:     " + h)
 		}
 	default:
 		e.say(fmt.Sprintf("project:  %s (id %d)", res.Link.Slug, res.Link.Project))
-		e.say("linked:   " + res.Link.Path + " (the nearest linked folder above or at this one)")
+		e.say("linked:   " + oneLine(res.Link.Path) + " (the nearest linked folder above or at this one)")
 		if res.Hint == "" {
 			e.say("hint:     no " + hintFile + " in the linked folder")
 		} else if res.State == linkHintDiff {
