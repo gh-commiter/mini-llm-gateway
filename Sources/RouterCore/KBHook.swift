@@ -163,7 +163,10 @@ extension ProjectEnv {
         if agent { throw ProjectError(Self.agentRefusal) }
         guard (1...2).contains(args.count), ["on", "off", "status"].contains(args[0]) else { throw ProjectError("usage: minigw kb hooks on|off|status [<project>]") }
         let gw = gateway?() ?? ""
-        if gw.isEmpty { throw ProjectError(Self.hookNotConnected) }
+        if gw.isEmpty {
+            if args == ["status"], let st = try? loadState(), let line = goneHooksLine(st, cwd) { say(line); return }
+            throw ProjectError(Self.hookNotConnected)
+        }
         let st = try loadState()
         let link: ProjectLink
         if args.count == 2 {
@@ -175,7 +178,9 @@ extension ProjectEnv {
         } else {
             let res = try Projects.resolve(st, gateway: gw, cwd: cwd)
             switch res.state {
-            case .none: throw ProjectError(Self.notLinkedMessage(res))
+            case .none:
+                if args[0] == "status", let line = goneHooksLine(st, cwd) { say(line); return }
+                throw ProjectError(notLinkedText(res, st, gw))
             case .hintDiff: throw ProjectError(Projects.hintDiffMessage(res))
             case .ok: break
             }
@@ -185,7 +190,11 @@ extension ProjectEnv {
         let i = list.firstIndex { $0.gateway == gw && $0.project == link.project }
         var msg = "kb hooks \(args[0]) for project \(link.slug)"
         switch args[0] {
-        case "status": say(i.map { "kb hooks: on for project " + link.slug + Self.throughProfile(list[$0].profile) } ?? "kb hooks: off for project " + link.slug); return
+        case "status":
+            if let i { say("kb hooks: on for project " + link.slug + Self.throughProfile(list[i].profile)) }
+            else if args.count == 1, let line = goneHooksLine(st, cwd) { say(line) }
+            else { say("kb hooks: off for project " + link.slug) }
+            return
         case "on":  // one entry per gateway's project: switched on through another profile (to the same gateway), the new one replaces it
             let p = profile?() ?? Self.hintProfile
             msg += Self.throughProfile(p)
@@ -352,7 +361,12 @@ extension ProjectEnv {
             found = (r, g, a, h.profile)
             break
         }
-        guard let (res, gw, arg, prof) = found else { return }
+        guard let (res, gw, arg, prof) = found else {
+            if args[0] == "start", let line = goneHooksLine(st, cwdIn) {  // switched on through a profile that is gone: one line for the user, nothing for the model
+                self.say("{\"systemMessage\":\"" + line.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"}")
+            }
+            return
+        }
         let slug = res.link.slug, project = res.link.project
         func say(_ s: String) { self.say(Self.hookText(s, slug: slug, profile: arg)) }
         if args[0] == "end" { unlink(hookDir + "/" + id + ".json"); return }
@@ -390,6 +404,38 @@ extension ProjectEnv {
                 }
             }
         }
+    }
+
+    /// notLinkedMessage and, when local files know the folder is linked through another profile, the way out (the same in the Go client).
+    func notLinkedText(_ res: Projects.Resolution, _ st: ProjectState, _ gw: String) -> String {
+        Self.notLinkedMessage(res) + (linkedThrough(st, gw).map { "\n" + $0 } ?? "")
+    }
+
+    /// When this folder is linked under the gateway of another saved profile than the one this run reaches, the line that names the way out
+    /// (nil = nothing local says so). Only local files: no request, and no gateway is asked.
+    func linkedThrough(_ st: ProjectState, _ gw: String) -> String? {
+        if agent || runConn != nil { return nil }
+        let set = state.isEmpty ? [] : loadHookSettings()
+        var name = ""
+        for p in profileGateways?() ?? [] where !p.gw.isEmpty && p.gw != gw && Profiles.valid(p.name) {
+            guard let r = try? Projects.resolve(st, gateway: p.gw, cwd: cwd), r.state == .ok else { continue }
+            if let h = set.first(where: { $0.gateway == p.gw && $0.project == r.link.project }), (h.profile.isEmpty ? (profileGateways?().first?.name ?? "") : h.profile) == p.name { name = p.name; break }  // the profile the hooks were switched on with wins
+            if name.isEmpty { name = p.name }
+        }
+        return name.isEmpty ? nil : "this folder is linked through profile \(name): add --minigw-profile \(Self.teamCmdArg(name)) after the command words"
+    }
+
+    /// Hooks of this folder were switched on through a profile that is gone or no longer reaches the recorded gateway (the folder is
+    /// linked under that gateway): the line that says so (nil = none). Local files only; no fallback to any other profile.
+    func goneHooksLine(_ st: ProjectState, _ cwd: String) -> String? {
+        if state.isEmpty { return nil }
+        for h in loadHookSettings() where h.profile.isEmpty || Profiles.valid(h.profile) {
+            if let (g, _) = hookProfile?(h.profile), g == h.gateway { continue }
+            if let r = try? Projects.resolve(st, gateway: h.gateway, cwd: cwd), r.state == .ok, r.link.project == h.project {
+                return "KB hooks of this folder were switched on through " + (h.profile.isEmpty ? "the default profile" : "profile " + h.profile) + ", which is gone: run minigw kb hooks on again"
+            }
+        }
+        return nil
     }
 
     static func notLinkedMessage(_ res: Projects.Resolution) -> String {

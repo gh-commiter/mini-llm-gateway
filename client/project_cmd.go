@@ -78,6 +78,7 @@ type projectEnv struct {
 	now         func() time.Time
 	hookConn    func(profile string) (connection, bool) // the session start's connection through a recorded profile
 	tty         func() bool                             // kb accept: is stdin a terminal; nil = ask the real one
+	profileGWs  func() []profileGW                      // every saved profile and its gateway id, for the hints (profilesOf); nil = the real ones
 }
 
 // projectMain, noteMain and usageMain are the entry points of main().
@@ -558,6 +559,9 @@ func (e *projectEnv) show() error {
 		if res.Hint != "" {
 			e.say(fmt.Sprintf("hint:     %s in %s suggests project %s; run %s project link %s", hintFile, res.HintDir, res.Hint, mgCmd(), res.Hint))
 		}
+		if h := e.linkedThrough(st, gw); h != "" {
+			e.say("hint:     " + h)
+		}
 	default:
 		e.say(fmt.Sprintf("project:  %s (id %d)", res.Link.Slug, res.Link.Project))
 		e.say("linked:   " + res.Link.Path + " (the nearest linked folder above or at this one)")
@@ -598,7 +602,7 @@ func (e *projectEnv) linkedProject(flagSlug string) (connection, projectLink, er
 	}
 	switch res.State {
 	case noLink:
-		return c, projectLink{}, errors.New(notLinkedMessage(res))
+		return c, projectLink{}, errors.New(e.notLinkedText(res, st, gw))
 	case linkHintDiff:
 		return c, projectLink{}, errors.New(hintDiffMessage(res))
 	}

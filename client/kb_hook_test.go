@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"minigw/core"
 )
 
 type hookWorld struct {
@@ -555,5 +557,120 @@ func TestKBHooksOnThroughAnotherProfile(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(w.cfg, "kb-hooks.json")); string(b) != f.OnFile {
 		t.Fatalf("kb-hooks.json:\n%s", b)
+	}
+}
+
+// 0.10.5 (#186): the hints that come from local files only (shared with the Swift client: testdata/kb-hook-hints.json).
+type hintFixture struct {
+	Hint, NotLinked, Gone, GoneDefault, GoneStart, Run string
+	Profiles                                           []profileGW
+	Accept                                             []struct {
+		Answer map[string]any
+		Out    string
+	}
+}
+
+func hintWorld(t *testing.T, recorded string) (*hookWorld, hintFixture) {
+	t.Helper()
+	var f hintFixture
+	if err := json.Unmarshal(srcFile(t, "testdata/kb-hook-hints.json"), &f); err != nil {
+		t.Fatal(err)
+	}
+	w := newHookWorld(t, "")
+	w.e.gateway = func() string { return f.Run }
+	w.e.connect = func() (connection, string) { return connection{}, f.Run }
+	w.e.profileGWs = func() []profileGW { return f.Profiles }
+	w.e.gitState = func(string) (string, string) { return "", "" }
+	w.e.hookProfile = func(name string) (string, string) {
+		for _, p := range f.Profiles {
+			if p.Name == name || name == "" && p.Name == "default" {
+				return p.Gateway, name
+			}
+		}
+		return "", ""
+	}
+	w.link(t, "gw1", 7, "acme-shop")
+	if recorded != "-" {
+		w.write(t, "kb-hooks.json", map[string]any{"version": 1, "enabled": []map[string]any{{"gateway": "gw1", "project": 7, "profile": recorded}}})
+	}
+	return w, f
+}
+
+// A folder linked under another profile's gateway: every command that ends in "not linked" adds the way out; nothing local = today's text.
+func TestNotLinkedNamesTheProfileOfTheLink(t *testing.T) {
+	for _, recorded := range []string{"p2", "-"} { // recorded in kb-hooks.json, and linked only
+		w, f := hintWorld(t, recorded)
+		for _, args := range [][]string{{"hooks", "status"}, {"search", "x"}} {
+			err := w.e.kb(args)
+			if want := f.NotLinked + "\n" + f.Hint; err == nil || err.Error() != want {
+				t.Errorf("%v (%s): %v", args, recorded, err)
+			}
+		}
+		w.out.Reset()
+		if err := w.e.project([]string{"show"}); err != nil || !strings.Contains(w.out.String(), "hint:     "+f.Hint+"\n") {
+			t.Errorf("show (%s): %q %v", recorded, w.out.String(), err)
+		}
+		if w.calls != 0 {
+			t.Errorf("%d requests", w.calls)
+		}
+	}
+	// nothing says so: the folder is linked under no saved profile's gateway, or the other profile is the run's own
+	w, f := hintWorld(t, "-")
+	w.e.profileGWs = func() []profileGW { return []profileGW{{"default", "gw9"}} }
+	if err := w.e.kb([]string{"hooks", "status"}); err == nil || err.Error() != f.NotLinked {
+		t.Errorf("no profile reaches the link: %v", err)
+	}
+	w, f = hintWorld(t, "-")
+	w.e.cwd = t.TempDir()
+	if err := w.e.kb([]string{"search", "x"}); err == nil || err.Error() != f.NotLinked {
+		t.Errorf("another folder: %v", err)
+	}
+}
+
+// Hooks recorded through a profile that is gone (or that moved to another gateway): the start says so to the user (JSON systemMessage,
+// nothing for the model), the stop and the other events stay silent, status says the same, exit 0 and no request to any gateway.
+func TestHooksThroughAGoneProfile(t *testing.T) {
+	w, f := hintWorld(t, "p3")
+	for _, c := range []struct{ event, want string }{{"start", f.GoneStart}, {"stop", ""}, {"compact", ""}, {"end", ""}} {
+		w.out.Reset()
+		w.e.in = strings.NewReader(hookStdin("s1", w.work))
+		if err := w.e.kb([]string{"hook", c.event}); err != nil || w.out.String() != c.want {
+			t.Errorf("%s: %q %v", c.event, w.out.String(), err)
+		}
+	}
+	w.out.Reset()
+	if err := w.e.kb([]string{"hooks", "status"}); err != nil || w.out.String() != f.Gone+"\n" {
+		t.Errorf("status: %q %v", w.out.String(), err)
+	}
+	w, f = hintWorld(t, "") // recorded through the default profile, which now reaches gw9
+	w.out.Reset()
+	if err := w.e.kb([]string{"hooks", "status"}); err != nil || w.out.String() != f.GoneDefault+"\n" {
+		t.Errorf("default: %q %v", w.out.String(), err)
+	}
+	w, _ = hintWorld(t, "p2") // the profile is there: not gone
+	w.out.Reset()
+	w.e.in = strings.NewReader(hookStdin("s1", w.work))
+	w.e.hookConn = func(string) (connection, bool) { return connection{}, false }
+	if err := w.e.kb([]string{"hook", "start"}); err != nil || strings.Contains(w.out.String(), "systemMessage") {
+		t.Errorf("not gone: %q %v", w.out.String(), err)
+	}
+	if w.calls != 0 {
+		t.Errorf("%d requests", w.calls)
+	}
+}
+
+// The answer of an accept names the note; an answer without it (an older gateway) prints the old text.
+func TestSubmissionResultNamesTheNote(t *testing.T) {
+	var f hintFixture
+	if err := json.Unmarshal(srcFile(t, "testdata/kb-hook-hints.json"), &f); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.Accept {
+		b, _ := json.Marshal(c.Answer)
+		var v core.Submission
+		json.Unmarshal(b, &v)
+		if got := submissionResult(v); got != c.Out {
+			t.Errorf("%s: %q", b, got)
+		}
 	}
 }

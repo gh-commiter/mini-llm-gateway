@@ -67,7 +67,10 @@ extension ProjectEnv {
             say(why.isEmpty ? "an earlier submission with this title was rejected (no reason given)" : ProjectText.clean("an earlier submission with this title was rejected: " + why))
         }
     }
-    static func submissionResult(_ d: JDict) -> String { "submission \(d["id"]?.int ?? 0) \(d["state"]?.string ?? "")" }
+    static func submissionResult(_ d: JDict) -> String {
+        if d["state"]?.string == "accepted", let n = d["note"]?.int, n > 0 { return "submission \(d["id"]?.int ?? 0) accepted as note \(n)" }  // a gateway before 0.10.5 sends no note: the old text
+        return "submission \(d["id"]?.int ?? 0) \(d["state"]?.string ?? "")"
+    }
 
     static func kbJSON(_ value: Any) -> String {
         if let d = value as? [String: Any] { return "{" + d.keys.sorted().map { GoJSON.string($0) + ":" + kbJSON(d[$0]!) }.joined(separator: ",") + "}" }

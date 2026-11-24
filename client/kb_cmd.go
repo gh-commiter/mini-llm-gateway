@@ -142,6 +142,9 @@ func (e *projectEnv) rejectedHint(c connection, project int64, title string) {
 }
 
 func submissionResult(v core.Submission) string {
+	if v.State == "accepted" && v.NoteID > 0 { // names the note the submission became (a gateway before 0.10.5 sends none: the old text)
+		return fmt.Sprintf("submission %d accepted as note %d", v.ID, v.NoteID)
+	}
 	return fmt.Sprintf("submission %d %s", v.ID, v.State)
 }
 

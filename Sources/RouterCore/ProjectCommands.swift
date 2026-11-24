@@ -83,6 +83,7 @@ public final class ProjectEnv {
     public var now: (() -> Date)?
     public var gitTimeout: TimeInterval?  // seconds for both git calls of a hook, nil = 2
     public var hookConn: ((String) -> ProjectConn?)?  // the session start's connection through a recorded profile (nil result: none, never an exit)
+    public var profileGateways: (() -> [(name: String, gw: String)])?  // every saved profile (the default first) and its gateway id, for the hints; nil = none
     public var waitLimit: TimeInterval?  // seconds the gateway is waited for at a session start, nil = 2
 
     public init(connect: @escaping () -> (ProjectConn, String), state: String, cwd: String, stdin: @escaping () -> Data,
@@ -343,6 +344,7 @@ public final class ProjectEnv {
             if !res.hint.isEmpty {
                 say("hint:     \(Projects.hintFile) in \(res.hintDir) suggests project \(res.hint); run \(ProjectEnv.mg) project link \(res.hint)")
             }
+            if let h = linkedThrough(st, gw) { say("hint:     " + h) }
         default:
             say("project:  \(res.link.slug) (id \(res.link.project))")
             say("linked:   " + res.link.path + " (the nearest linked folder above or at this one)")
@@ -366,7 +368,7 @@ public final class ProjectEnv {
         let st = try loadState()
         let res = try Projects.resolve(st, gateway: gw, cwd: cwd)
         switch res.state {
-        case .none: throw ProjectError(Self.notLinkedMessage(res))
+        case .none: throw ProjectError(notLinkedText(res, st, gw))
         case .hintDiff: throw ProjectError(Projects.hintDiffMessage(res))
         case .ok: break
         }

@@ -291,6 +291,14 @@ func (e *projectEnv) kbHooks(args []string) error {
 	}
 	gw := e.hookGateway()
 	if gw == "" {
+		if args[0] == "status" && len(args) == 1 {
+			if st, err := e.state3(); err == nil {
+				if line := e.goneHooksLine(st, e.cwd); line != "" {
+					e.say(line)
+					return nil
+				}
+			}
+		}
 		return errors.New(hookNotConnected)
 	}
 	st, err := e.state3()
@@ -311,7 +319,13 @@ func (e *projectEnv) kbHooks(args []string) error {
 		}
 		switch res.State {
 		case noLink:
-			return errors.New(notLinkedMessage(res))
+			if args[0] == "status" {
+				if line := e.goneHooksLine(st, e.cwd); line != "" {
+					e.say(line)
+					return nil
+				}
+			}
+			return errors.New(e.notLinkedText(res, st, gw))
 		case linkHintDiff:
 			return errors.New(hintDiffMessage(res))
 		}
@@ -324,6 +338,8 @@ func (e *projectEnv) kbHooks(args []string) error {
 	case "status":
 		if i >= 0 {
 			e.say("kb hooks: on for project " + link.Slug + throughProfile(set.Enabled[i].Profile))
+		} else if line := e.goneHooksLine(st, e.cwd); len(args) == 1 && line != "" {
+			e.say(line)
 		} else {
 			e.say("kb hooks: off for project " + link.Slug)
 		}
@@ -526,6 +542,17 @@ func (e *projectEnv) kbHook(args []string) error {
 		}
 	}
 	if gw == "" {
+		if args[0] == "start" { // hooks that were switched on through a profile that is gone: one line for the user, nothing for the model
+			if line := e.goneHooksLine(st, in.Cwd); line != "" {
+				var b bytes.Buffer
+				enc := json.NewEncoder(&b)
+				enc.SetEscapeHTML(false)
+				enc.Encode(struct {
+					SystemMessage string `json:"systemMessage"`
+				}{line})
+				fmt.Fprint(e.out, b.String())
+			}
+		}
 		return nil
 	}
 	slug, project, id := res.Link.Slug, res.Link.Project, in.SessionID
@@ -587,4 +614,83 @@ func (e *projectEnv) kbHook(args []string) error {
 		}
 	}
 	return nil
+}
+
+// profileGW: a saved profile and the id of its gateway.
+type profileGW struct{ Name, Gateway string }
+
+// profilesOf: every saved profile (the default first) with its gateway id, from the files only; never a request, never an exit.
+func (e *projectEnv) profilesOf() []profileGW {
+	if e.profileGWs != nil {
+		return e.profileGWs()
+	}
+	names := profileNames()
+	def := defaultName(names)
+	var out []profileGW
+	for _, n := range slices.Concat([]string{def}, names) {
+		if c := loadProfile(n); c != nil && !slices.ContainsFunc(out, func(p profileGW) bool { return p.Name == n }) {
+			out = append(out, profileGW{n, gatewayID(*c)})
+		}
+	}
+	return out
+}
+
+// linkedThrough: when this folder is linked under the gateway of another saved profile than the one this run reaches, the line
+// that names the way out ("" = nothing local says so). Only local files: no request, and no gateway is asked.
+func (e *projectEnv) linkedThrough(st projectState, gw string) string {
+	if e.agent || e.runConn != nil {
+		return ""
+	}
+	var set hookSettings
+	if e.state != "" {
+		set = loadHookSettings(e.hookSettingsPath())
+	}
+	def := defaultName(profileNames())
+	name := ""
+	for _, p := range e.profilesOf() {
+		if p.Gateway == "" || p.Gateway == gw || !validProfile(p.Name) {
+			continue
+		}
+		r, err := projectFor(st, p.Gateway, e.cwd)
+		if err != nil || r.State != linkOK {
+			continue
+		}
+		if i := set.find(p.Gateway, r.Link.Project); i >= 0 && cmp.Or(set.Enabled[i].Profile, def) == p.Name { // the profile the hooks were switched on with wins
+			name = p.Name
+			break
+		}
+		name = cmp.Or(name, p.Name)
+	}
+	if name == "" {
+		return ""
+	}
+	return "this folder is linked through profile " + name + ": add --minigw-profile " + teamCmdArg(name) + " after the command words"
+}
+
+// notLinkedText: notLinkedMessage and, when local files know the folder is linked through another profile, the way out.
+func (e *projectEnv) notLinkedText(res projectResolution, st projectState, gw string) string {
+	if h := e.linkedThrough(st, gw); h != "" {
+		return notLinkedMessage(res) + "\n" + h
+	}
+	return notLinkedMessage(res)
+}
+
+// goneHooksLine: hooks of this folder were switched on through a profile that is gone or no longer reaches the recorded gateway
+// (the folder is linked under that gateway): the line that says so ("" = none). Local files only; no fallback to any other profile.
+func (e *projectEnv) goneHooksLine(st projectState, cwd string) string {
+	if e.state == "" {
+		return ""
+	}
+	for _, h := range loadHookSettings(e.hookSettingsPath()).Enabled {
+		if h.Profile != "" && !validProfile(h.Profile) {
+			continue
+		}
+		if g, _ := e.hookProfileOf(h.Profile); g == h.Gateway {
+			continue
+		}
+		if r, err := projectFor(st, h.Gateway, cwd); err == nil && r.State == linkOK && r.Link.Project == h.Project {
+			return "KB hooks of this folder were switched on through " + cmp.Or(strings.TrimPrefix(throughProfile(h.Profile), " through "), "the default profile") + ", which is gone: run minigw kb hooks on again"
+		}
+	}
+	return ""
 }

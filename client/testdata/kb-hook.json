@@ -1832,7 +1832,7 @@
    "profile": "env"
   },
   {
-   "name": "start through a profile that is gone is silent",
+   "name": "start through a profile that is gone says so to the user, nothing for the model",
    "event": "start",
    "stdin": {
     "session_id": "s1",
@@ -1850,13 +1850,13 @@
    },
    "agent": false,
    "want": {
-    "stdout": "",
+    "stdout": "{\"systemMessage\":\"KB hooks of this folder were switched on through profile gone, which is gone: run minigw kb hooks on again\"}\n",
     "marker": null
    },
    "profile": "gone"
   },
   {
-   "name": "start through a profile that now names another gateway is silent",
+   "name": "start through a profile that now names another gateway says so to the user, nothing for the model",
    "event": "start",
    "stdin": {
     "session_id": "s1",
@@ -1874,7 +1874,7 @@
    },
    "agent": false,
    "want": {
-    "stdout": "",
+    "stdout": "{\"systemMessage\":\"KB hooks of this folder were switched on through profile moved, which is gone: run minigw kb hooks on again\"}\n",
     "marker": null
    },
    "profile": "moved"

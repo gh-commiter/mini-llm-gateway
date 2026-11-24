@@ -45,6 +45,12 @@ func projectCommand(_ kind: String, _ args: [String]) -> Never {
         guard let p = recorded(name) else { return ("", "") }
         return (Projects.gatewayID(url: p.conn.url, key: p.conn.key), p.name == (profileFlag ?? p.def) ? "" : p.name)
     }
+    env.profileGateways = {  // the hints: every saved profile (the default first) with its gateway id, from the files only
+        let def = defaultName(profileNames())
+        return ([def] + profileNames()).reduce(into: [(name: String, gw: String)]()) { out, n in
+            if !out.contains(where: { $0.name == n }), let c = loadProfile(n, skip: true) { out.append((n, Projects.gatewayID(url: c.url, key: c.key))) }
+        }
+    }
     env.hookConn = { name in  // the session start: the recorded profile's connection, never an exit
         guard agent == nil, let p = recorded(name), case .success(let c) = routeResult(Profile(name: p.name, conn: p.conn)) else { return nil }
         return ProjectConn(url: c.url, token: c.token)

@@ -521,3 +521,80 @@ private func mode(_ p: String) -> mode_t { var s = stat(); return stat(p, &s) ==
         #expect(!w.out.contains("wait"))
     }
 }
+
+/// 0.10.5 (#186): the hints that come from local files only, the same cases as the Go client (client/testdata/kb-hook-hints.json).
+@Suite struct KBHookHintTests {
+    private func fixture() throws -> [String: Any] {
+        try JSONSerialization.jsonObject(with: Data(contentsOf: repoRoot.appendingPathComponent("client/testdata/kb-hook-hints.json"))) as! [String: Any]
+    }
+
+    private func world(_ f: [String: Any], recorded: String?, stdin: Data = Data()) throws -> (HookWorld, Counter) {
+        let w = try HookWorld(stdin: stdin)
+        let sent = Counter()
+        let profiles = (f["profiles"] as! [[String: String]]).map { (name: $0["name"]!, gw: $0["gateway"]!) }
+        w.env.gateway = { f["run"] as? String ?? "" }
+        w.env.connect = { (ProjectConn(url: "", token: ""), f["run"] as! String) }
+        w.env.send = { _, _, _, _, _ in sent.n += 1; return ProjectReply(status: 599) }
+        w.env.profileGateways = { profiles }
+        w.env.gitState = { _ in ("", "") }
+        w.env.hookProfile = { name in profiles.first { $0.name == name || (name.isEmpty && $0.name == "default") }.map { ($0.gw, name) } ?? ("", "") }
+        try w.link("gw1", 7, "acme-shop")
+        if let recorded { try w.write("kb-hooks.json", ["version": 1, "enabled": [["gateway": "gw1", "project": 7, "profile": recorded]]]) }
+        return (w, sent)
+    }
+
+    private final class Counter: @unchecked Sendable { var n = 0 }
+
+    private func message(_ body: () throws -> Void) -> String? {
+        do { try body(); return nil } catch { return (error as? ProjectError)?.message ?? "\(error)" }
+    }
+
+    @Test func notLinkedNamesTheProfileOfTheLink() throws {
+        let f = try fixture()
+        let hint = f["hint"] as! String, plain = f["notLinked"] as! String
+        for recorded in ["p2", nil] as [String?] {
+            let (w, sent) = try world(f, recorded: recorded)
+            #expect(message { try w.env.kb(["hooks", "status"]) } == plain + "\n" + hint)
+            #expect(message { try w.env.kb(["search", "x"]) } == plain + "\n" + hint)
+            w.out = ""
+            try w.env.project(["show"])
+            #expect(w.out.contains("hint:     " + hint + "\n"))
+            #expect(sent.n == 0)
+        }
+        var (w, _) = try world(f, recorded: nil)  // the only other profile is the run's own
+        w.env.profileGateways = { [(name: "default", gw: "gw9")] }
+        #expect(message { try w.env.kb(["hooks", "status"]) } == plain)
+        (w, _) = try world(f, recorded: nil)  // another folder
+        w.env.cwd = NSTemporaryDirectory()
+        #expect(message { try w.env.kb(["search", "x"]) } == plain)
+    }
+
+    @Test func hooksThroughAGoneProfile() throws {
+        let f = try fixture()
+        for (event, want) in [("start", f["goneStart"] as! String), ("stop", ""), ("compact", ""), ("end", "")] {
+            let (w, sent) = try world(f, recorded: "p3")
+            w.env.stdin = { try! JSONSerialization.data(withJSONObject: ["session_id": "s1", "cwd": w.work]) }
+            w.env.kbHook([event])
+            #expect(w.out == want, "\(event)")
+            #expect(sent.n == 0)
+        }
+        var (w, _) = try world(f, recorded: "p3")
+        try w.env.kb(["hooks", "status"])
+        #expect(w.out == (f["gone"] as! String) + "\n")
+        (w, _) = try world(f, recorded: "")
+        try w.env.kb(["hooks", "status"])
+        #expect(w.out == (f["goneDefault"] as! String) + "\n")
+        (w, _) = try world(f, recorded: "p2")  // the profile is there
+        w.env.hookConn = { _ in nil }
+        w.env.stdin = { try! JSONSerialization.data(withJSONObject: ["session_id": "s1", "cwd": w.work]) }
+        w.env.kbHook(["start"])
+        #expect(!w.out.contains("systemMessage"))
+    }
+
+    @Test func acceptNamesTheNote() throws {
+        for c in try fixture()["accept"] as! [[String: Any]] {
+            let d = JSONValue.parse(try JSONSerialization.data(withJSONObject: c["answer"]!))?.dict ?? JDict()
+            #expect(ProjectEnv.submissionResult(d) == c["out"] as! String)
+        }
+    }
+}

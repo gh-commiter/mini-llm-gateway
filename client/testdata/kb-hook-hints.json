@@ -1,0 +1,18 @@
+{
+  "hint": "this folder is linked through profile p2: add --minigw-profile p2 after the command words",
+  "notLinked": "this folder is not linked to a project: run minigw project link <slug>",
+  "gone": "KB hooks of this folder were switched on through profile p3, which is gone: run minigw kb hooks on again",
+  "goneDefault": "KB hooks of this folder were switched on through the default profile, which is gone: run minigw kb hooks on again",
+  "goneStart": "{\"systemMessage\":\"KB hooks of this folder were switched on through profile p3, which is gone: run minigw kb hooks on again\"}\n",
+  "run": "gw9",
+  "profiles": [
+    {"name": "default", "gateway": "gw9"},
+    {"name": "p2", "gateway": "gw1"}
+  ],
+  "accept": [
+    {"answer": {"id": 5, "state": "accepted", "note": 8}, "out": "submission 5 accepted as note 8"},
+    {"answer": {"id": 5, "state": "accepted"}, "out": "submission 5 accepted"},
+    {"answer": {"id": 5, "state": "rejected", "note": 8}, "out": "submission 5 rejected"},
+    {"answer": {"id": 6, "state": "pending", "note": 0}, "out": "submission 6 pending"}
+  ]
+}

@@ -1,5 +1,19 @@
 # Release notes
 
+## 0.10.5
+
+### Fixed
+- A folder linked (or with hooks on) through another profile than the one a command runs with now says so. `minigw kb hooks status`, `minigw kb search`, `minigw kb submit` and the other commands that ended in "this folder is not linked to a project" add the line "this folder is linked through profile work: add --minigw-profile work after the command words", and `minigw project show` adds it as a `hint:` line. It comes only from the files on this computer (the saved links and profiles, and `kb-hooks.json`): no request is made and no gateway is asked. When the files say nothing, the text is unchanged.
+- Hooks that were switched on through a profile that is gone (disconnected, renamed) or that now reaches another gateway are no longer silent about it. The session start shows the user one line, "KB hooks of this folder were switched on through profile work, which is gone: run minigw kb hooks on again" (a `systemMessage` of the hook, so the model does not see it), and `minigw kb hooks status` prints the same line. The other events stay silent, the exit status is 0, and there is still no fallback to another profile or the default gateway.
+- `minigw kb accept` (members), `minigw gw kb accept` (owner) and a submission that is accepted at once now say which note it became: "submission 5 accepted as note 8". A gateway that sends no note number gets the old text "submission 5 accepted".
+
+### Known problems
+- Not proven in a real interactive Claude Code session: that Claude Code shows the start hook's `systemMessage` to the user (it is the documented hook output field; checked here only by what the client prints).
+- The line for a gone profile says "which is gone" also when the profile still exists but now reaches another gateway.
+- The "linked through profile" hint looks only at links whose gateway one saved profile reaches; with several such profiles the one `kb-hooks.json` records wins, otherwise the first (the default first).
+- The Mac executable's wiring of the profile list (`Sources/MiniGW/Project.swift`, Keychain lookup) is not covered by a test; the shared fixture covers the texts with injected profiles.
+- The panels and the Mac app show no accept result as text; nothing changed there.
+
 ## 0.10.4
 
 ### Fixed
