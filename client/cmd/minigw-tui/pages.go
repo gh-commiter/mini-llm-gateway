@@ -535,7 +535,7 @@ func agents(u *ui) ([]row, error) {
 			ed("Extra variables (comma-separated)", strings.Join(strs(e, "names"), ", "), func(v string) (string, error) {
 				return u.save("PATCH", "/agents/env", map[string]any{"names": csv(v)})
 			}),
-			inf("  Agents get the base list (PATH, HOME, proxies…) and these;", ""), inf("  API keys, tokens and sign-in variables never pass.", ""))
+			inf("  Agents get the base list (PATH, HOME, proxies…) and these;", ""), inf("  *_API_KEY and sign-in names are refused; any other name", ""), inf("  passes with its value, secrets included.", ""))
 	}
 
 	if f, err := u.call("GET", "/foundry", nil); err == nil {

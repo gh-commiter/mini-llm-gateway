@@ -146,7 +146,9 @@ list is `client/testdata/agent-env.json`. The same holds for `minigw run`. The g
 `minigw gw agents env add <NAME>` (`remove <NAME>`; no argument lists them), or Settings → General → Agent environment on
 the Mac, or Agents → Agent environment in `minigw gw settings` and on the settings page. API keys (`*_API_KEY`),
 `ANTHROPIC_*`, `CLAUDE_CODE_*`, `COPILOT_*`, `GH_TOKEN`, `GITHUB_TOKEN`, key agent sockets and the gateway's own run
-variables never pass, even when named.
+variables are refused, even when named. Any other name the owner adds passes with its value, secrets included (`NPM_TOKEN`,
+`AWS_SECRET_ACCESS_KEY` …): every agent gets it. A proxy or `GOPROXY` address with a user and password in it
+(`http://user:pass@proxy`) reaches every agent too.
 
 ### Watching a long run
 

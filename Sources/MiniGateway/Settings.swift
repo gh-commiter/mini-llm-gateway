@@ -380,7 +380,7 @@ struct SettingsView: View {
             } header: {
                 Text("Agent environment")
             } footer: {
-                Text("Agents and minigw run get only what they need to start and build (PATH, HOME, user, shell, locale, proxies, certificates, temporary and toolchain folders) and the variables named here, separated by commas. API keys, tokens and sign-in variables never pass, even when named here.")
+                Text("Agents and minigw run get only what they need to start and build (PATH, HOME, user, shell, locale, proxies, certificates, temporary and toolchain folders) and the variables named here, separated by commas. API keys (…_API_KEY), the Claude, Copilot and GitHub sign-in variables and the gateway's own are always refused; any other name added here reaches every agent with its value, secrets included.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
