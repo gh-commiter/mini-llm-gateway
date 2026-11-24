@@ -1875,9 +1875,15 @@ const pages = {
     ];
   },
   async general() {
-    const [st, g, d] = await Promise.all([api("GET", "/status"), api("GET", "/general"), api("GET", "/devices")]);
+    const [st, g, d, ae] = await Promise.all([api("GET", "/status"), api("GET", "/general"), api("GET", "/devices"), api("GET", "/agents/env")]);
     const win = st.os === "windows";
-    const n1 = note(), n2 = note(t("auto")), n3 = note(), n4 = note(t("scratchHint")), n5 = note();
+    const n1 = note(), n2 = note(t("auto")), n3 = note(), n4 = note(t("scratchHint")), n5 = note(), n7 = note();
+    const envNames = el("input", {type: "text", value: (ae.names || []).join(", "), placeholder: t("none")});  // #125
+    const envUnset = el("div", {class: "note"});  // D: names the gateway's environment does not hold (an older gateway sends none)
+    const showUnset = r => { envUnset.textContent = (r.unset || []).length ? t("agentEnvUnset", r.unset.join(", ")) : ""; };
+    showUnset(ae);
+    autosave(envNames, n7, async v => showUnset(await api("PATCH", "/agents/env", {names: v.split(/[\s,]+/).filter(Boolean)})));
+
     const field = (key, value, placeholder, number) => {
       const i = el("input", {type: number ? "number" : "text", value, placeholder: placeholder || ""});
       autosave(i, n2, v => api("PATCH", "/general", {[key]: number ? Number(v) : v}), r => t(r.restartRequired ? "restart" : "saved"));
@@ -1942,6 +1948,7 @@ const pages = {
       section(t("worktreeMode")),
       group(row(t("worktreeNetwork"), toggle(g.worktreeNetwork, v => save(n6, () => api("PATCH", "/general", {worktreeNetwork: v}))))),
       n6,
+      section(t("agentEnv")), group(row(labelSub(t("agentEnvVars"), t("agentEnvHelp")), envNames)), envUnset, n7,  // N2: next to Worktree mode, as on the Mac
       section(t("status")),
       group(
         row(t("router"), el("span", {class: "value"}, el("span", {class: "dot" + (st.running ? " ok" : "")}), t("runningOn", st.port))),
@@ -2334,10 +2341,10 @@ const pages = {
   },
 
   async claude() {
-    const [c, st, ae] = await Promise.all([api("GET", "/agents/claude"), api("GET", "/status"), api("GET", "/agents/env")]);
+    const [c, st] = await Promise.all([api("GET", "/agents/claude"), api("GET", "/status")]);
     shownClaude = JSON.stringify(c);
     const win = st.os === "windows";
-    const n0 = note(), n1 = note(), n2 = note(), n3 = note(), n4 = note(t("cliHint"));
+    const n0 = note(), n1 = note(), n2 = note(), n4 = note(t("cliHint"));
     const patch = body => api("PATCH", "/agents/claude", body);
     const on = new Set((c.tools || "").split(",").filter(Boolean));
     const path = el("input", {type: "text", value: c.path, placeholder: c.exe || (win ? "C:\\Users\\you\\.local\\bin\\claude.exe" : "/usr/local/bin/claude")});
@@ -2356,11 +2363,6 @@ const pages = {
     const cmdLocked = win && !box && !c.allowUnsandboxedBash;
     const sources = el("input", {type: "text", value: c.settingSources, placeholder: t("none")});
     autosave(sources, n2, v => patch({settingSources: v}));
-    const envNames = el("input", {type: "text", value: (ae.names || []).join(", "), placeholder: t("none")});  // #125
-    const envUnset = el("div", {class: "note"});  // D: names the gateway's environment does not hold (an older gateway sends none)
-    const showUnset = r => { envUnset.textContent = (r.unset || []).length ? t("agentEnvUnset", r.unset.join(", ")) : ""; };
-    showUnset(ae);
-    autosave(envNames, n3, async v => showUnset(await api("PATCH", "/agents/env", {names: v.split(/[\s,]+/).filter(Boolean)})));
     const mode = el("select", {}, ...["dontAsk", "acceptEdits", "auto", "plan"].map(m => el("option", {value: m, textContent: m, selected: c.permissionMode === m})));
     mode.addEventListener("change", () => save(n2, () => patch({permissionMode: mode.value})));
 
@@ -2416,7 +2418,6 @@ const pages = {
         workRow(c, patch, n2),
         row(labelSub(t("askOthers"), t("askOthersClaudeHelp")), toggle(c.askOthers, v => save(n2, () => patch({askOthers: v})), !c.allowLocalTools))),
       n2,
-      section(t("agentEnv")), group(row(labelSub(t("agentEnvVars"), t("agentEnvHelp")), envNames)), envUnset, n3,
       ...toolsPart,
       section(t("cliTool")),
       group(row(labelSub("minigw", st.installDir ? t("installedAt", st.installDir) : t("notInstalled")),

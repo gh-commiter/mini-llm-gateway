@@ -98,6 +98,7 @@ public final class AdminCommands {
     func request(_ method: String, _ path: String, _ body: [String: Any]? = nil) throws -> JDict {
         let r = call(method, path, body.map { Data(ProjectEnv.kbJSON($0).utf8) })
         guard r.status != 0 else { throw fail("lost the connection to Mini Gateway") }
+        if r.status == 404 || r.status == 405, path == "/agents/env" { throw fail("minigw gw agents env needs gateway 0.10.2 or newer") }  // N8: a gateway older than 0.10.2 ("no agent env")
         if r.status >= 300 { throw fail(clean(JSONValue.parse(r.data)?.dict["error"]?.dict["message"]?.string ?? "")) }
         return JSONValue.parse(r.data)?.dict ?? JDict()
     }

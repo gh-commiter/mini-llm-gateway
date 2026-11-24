@@ -4553,6 +4553,33 @@
    }
   },
   {
+   "name": "agents env older gateway",
+   "args": [
+    "agents",
+    "env"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /agents/env",
+     "status": 404,
+     "body": "{\"error\":{\"message\":\"no agent env\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw agents env needs gateway 0.10.2 or newer\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/agents/env",
+      ""
+     ]
+    ]
+   }
+  },
+  {
    "name": "agents env list",
    "args": [
     "agents",

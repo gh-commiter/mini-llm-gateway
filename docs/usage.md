@@ -143,8 +143,9 @@ shell, `LANG`/`LC_*`, `TZ`, temporary folders, `XDG_*`, proxy variables, certifi
 `NODE_EXTRA_CA_CERTS`, …), toolchain folders (`JAVA_HOME`, `MAVEN_OPTS`, `GOPATH`, `CARGO_HOME`, `DEVELOPER_DIR`, …),
 `CLAUDE_CONFIG_DIR`, and on Windows what a process needs to start (`SystemRoot`, `USERPROFILE`, `APPDATA`, …). The full
 list is `client/testdata/agent-env.json`. The same holds for `minigw run`. The gateway owner can name more variables:
-`minigw gw agents env add <NAME>` (`remove <NAME>`; no argument lists them), or Settings → General → Agent environment on
-the Mac, or Agents → Agent environment in `minigw gw settings` and on the settings page. API keys (`*_API_KEY`),
+`minigw gw agents env add <NAME>` (`remove <NAME>`; no argument lists them; needs gateway 0.10.2 or newer), or Settings →
+General → Agent environment on the Mac, General → Agent environment on the settings page, or Agents → Agent environment
+in `minigw gw settings`. API keys (`*_API_KEY`),
 `ANTHROPIC_*`, `CLAUDE_CODE_*`, `COPILOT_*`, `GH_TOKEN`, `GITHUB_TOKEN`, key agent sockets and the gateway's own run
 variables are refused, even when named. Any other name the owner adds passes with its value, secrets included (`NPM_TOKEN`,
 `AWS_SECRET_ACCESS_KEY` …): every agent gets it. A proxy or `GOPROXY` address with a user and password in it
@@ -265,8 +266,9 @@ WebDAV). The agent changes your files in place and, in a git repository, can com
 `git branch`, `git checkout`, `git stash`, `git tag`, `git merge` of a local branch). Writes to other
 [protected paths](how-it-works.md#protected-paths) are refused: the agent cannot change `.git/config`, hooks,
 attributes, alternates, a rebase in progress, or the folder's Claude Code settings. The agent program itself (Claude
-CLI, Codex) sees no repository in the folder, only its commands do, so a filter or diff program in the folder's git
-configuration never runs outside the sandbox (since 0.10.8). Use worktree mode when you want
+CLI, with or without "Allow local tools", and Codex) sees no repository in the folder, only its commands do, so a filter
+or diff program in the folder's git configuration never runs outside the sandbox (since 0.10.8; Claude CLI without local
+tools since 0.10.9). Use worktree mode when you want
 the agent to work on a separate copy and bring its work back as a branch. A git repository still gets worktree mode by
 default; direct is only what you ask for. See [Git in direct mode](how-it-works.md#protected-paths).
 
@@ -450,6 +452,9 @@ Notes:
   writable folder.
 - Agents that may not write (Codex, Copilot or Grok with writing off) only read in the clone and bring back no branch.
 - Grok with writing on is refused in worktree mode (Windows and Linux gateways): "rerun with minigw --minigw-work=sync …".
+  In sync mode on a Linux gateway Grok's own process sees no repository (since 0.10.8), and neither do its shell commands:
+  git there finds the folder's repository only as `env -u GIT_DIR git …` (for example `env -u GIT_DIR git status`); the
+  gateway tells Grok so in its instructions.
 - Agents write only under the Scratch folder: the clone, `$MINIGW_DEPS` (repositories they create, CMake, SwiftPM,
   DerivedData, Cargo, Gradle, the Go build cache, temporary files), the project's Maven repository and the shared
   download caches (Go modules, npm, pip). Not `/tmp`, never your `~/.m2` settings, plugins or SwiftPM configuration.
@@ -1912,8 +1917,9 @@ commands they suggest carry it after their words, for example `minigw kb search 
 be refused). For the default profile, or the profile `MINIGW_PROFILE` names for the session, the commands stay plain. `kb hooks status`
 names a profile that is not the default one (`kb hooks: on for project shop through profile work`). A project has one entry per
 gateway: `kb hooks on` through another profile of the same gateway replaces the entry and says so (`... (it was on through profile
-home: replaced)`). When the profile is later removed, or now connects to another gateway, the hooks are silent for that project
-until you run `kb hooks on` again. A folder linked to projects on two gateways with hooks on for both: the entry switched on first
+home: replaced)`). When the profile is later removed, or now connects to another gateway, the session start and `kb hooks status`
+say so in one line ("KB hooks of this folder were switched on through profile work, which is gone: run minigw kb hooks on again")
+and the hooks do nothing else for that project until you run `kb hooks on` again. A folder linked to projects on two gateways with hooks on for both: the entry switched on first
 wins, and the session hears only of that project. Entries written before 0.10.4 have no profile and mean the default profile.
 
 What the hooks do, in a folder linked to a project with hooks on (`minigw kb hook start|compact|stop|end`, called by the plugin

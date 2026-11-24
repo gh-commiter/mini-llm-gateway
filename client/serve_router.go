@@ -252,6 +252,9 @@ func (a *adminClient) do(method, path string, body, out any) int {
 			if hint := a.olderNoteHistory(path); hint != "" {
 				fail(hint)
 			}
+			if path == "/agents/env" { // N8: a gateway older than 0.10.2 ("no agent env")
+				fail("minigw gw agents env needs gateway 0.10.2 or newer")
+			}
 		}
 		fail(clean(e.Error.Message))
 	}
