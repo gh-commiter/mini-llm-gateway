@@ -48,7 +48,7 @@ Mini Gateway 0.11.0 is a stable release. It collects the ten beta versions 0.10.
 
 ### Known problems
 **This release**
-- This release was NOT run on a real Windows computer (waived again). Windows is covered only by the automated tests in CI. Docker Compose is still rehearsed on Docker Desktop only, not on a Linux server (carried over from 0.10.0).
+- This release was not run on a real Windows computer. Windows is covered only by the automated tests in CI. Docker Compose is still rehearsed on Docker Desktop only, not on a Linux server (carried over from 0.10.0).
 - The agent environment lists were not measured with each agent CLI on Windows or Linux, and no agent ran against a real login with the reduced environment (the tests use fake agents). The Windows list is the documented set. Windows and Linux gateways only compile with the change of the environment here.
 - The change that hides the git repository from the agent programs was not proven end to end with the real programs: that Claude Code runs `CLAUDE_ENV_FILE` ahead of every Bash command in a real `-p` run inside its sandbox (read from Claude Code 2.1.322 and checked with a stand-in program), and that Codex's commands drop the variables (checked with `codex sandbox` 0.167.1, not with a real `codex exec` session). The Claude CLI without local tools fix was checked with a trap repository and a stand-in program, not with a real session with the system sandbox off.
 - Claude Code versions that do not read `CLAUDE_ENV_FILE` do not give Claude CLI's commands their repository on the Mac gateway: in direct or sync mode, its git commands do not find the repository there.
