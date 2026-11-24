@@ -36,14 +36,14 @@ func agentHTTP(_ c: Connection, _ method: String, _ path: String, body: Data? = 
     }
     var out = Data((head + "\r\n").utf8) + (body ?? Data())
     while !out.isEmpty {
-        let n = out.withUnsafeBytes { b in Sock.retry { write(fd, b.baseAddress, b.count) } }
+        let n = out.withUnsafeBytes { b in Sock.write(fd, b.baseAddress!, b.count) }
         guard n > 0 else { return false }
         out = out.dropFirst(n)
     }
     var buf = [UInt8](repeating: 0, count: 64 << 10)
     var pending = Data(), headDone = false
     while true {
-        let n = Sock.retry { read(fd, &buf, buf.count) }
+        let n = Sock.read(fd, &buf, buf.count)
         guard n > 0 else { break }
         if headDone { onData(Data(buf[0..<n])); continue }
         pending.append(contentsOf: buf[0..<n])

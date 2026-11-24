@@ -528,49 +528,23 @@ private func setTimeout(_ fd: Int32, _ seconds: Double) {
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 }
 
-/// #177: the helper's sockets are never waited on inside a read or a write. macOS marks a socket "draining" for good when ANY descriptor of it is
-/// closed while someone holds that descriptor: also a child's short-lived copy (every posix_spawn copies the parent's descriptors before exec
-/// drops them) while any process inspects the child's sockets (PeerProcess.pids on every admin request, lsof). From then on every blocking read or
-/// write that has to wait fails with EBADF although our descriptor is open and fine. poll and calls on an O_NONBLOCK socket are not affected
-/// (MSG_DONTWAIT is not enough: a send larger than the free buffer still fails with EBADF).
-/// The wait is limited by the socket's SO_RCVTIMEO / SO_SNDTIMEO (setTimeout); none set = no limit.
-private func socketWait(_ fd: Int32, _ events: Int16, _ option: Int32) throws {
-    var tv = timeval(), len = socklen_t(MemoryLayout<timeval>.size)
-    getsockopt(fd, SOL_SOCKET, option, &tv, &len)
-    let ms = tv.tv_sec == 0 && tv.tv_usec == 0 ? -1 : Int32(min(tv.tv_sec, 86_400)) * 1000 + tv.tv_usec / 1000
-    var p = pollfd(fd: fd, events: events, revents: 0)
-    while true {
-        let r = poll(&p, 1, ms)
-        if r > 0 { return }
-        if r == 0 { throw CoreError.unavailable(events == Int16(POLLIN) ? "helper timed out" : "write: \(String(cString: strerror(EAGAIN)))") }
-        if errno != EINTR { throw CoreError.unavailable("poll: \(String(cString: strerror(errno)))") }
-    }
-}
-
-private func nonBlocking(_ fd: Int32) {
-    let fl = fcntl(fd, F_GETFL)
-    if fl >= 0 && fl & O_NONBLOCK == 0 { _ = fcntl(fd, F_SETFL, fl | O_NONBLOCK) }
-}
-
+/// #177: the helper's sockets are never waited on inside a read or a write (Sock.read / Sock.write: why there). The wait is limited by the
+/// socket's SO_RCVTIMEO / SO_SNDTIMEO (setTimeout); none set = no limit.
 func writeAll(_ fd: Int32, _ d: Data) throws {
-    nonBlocking(fd)
     var off = 0
     while off < d.count {
-        try socketWait(fd, Int16(POLLOUT), SO_SNDTIMEO)
-        let n = d.withUnsafeBytes { send(fd, $0.baseAddress! + off, d.count - off, 0) }  // send: EPIPE as an error, not SIGPIPE
-        if n <= 0 { if n < 0 && (errno == EINTR || errno == EAGAIN) { continue }; throw CoreError.unavailable("write: \(String(cString: strerror(errno)))") }
+        let n = d.withUnsafeBytes { Sock.write(fd, $0.baseAddress! + off, d.count - off) }
+        if n <= 0 { throw CoreError.unavailable("write: \(String(cString: strerror(errno)))") }
         off += n
     }
 }
 
 func readExactly(_ fd: Int32, _ count: Int) throws -> Data {
-    nonBlocking(fd)
     var buf = [UInt8](repeating: 0, count: count), off = 0
     while off < count {
-        try socketWait(fd, Int16(POLLIN), SO_RCVTIMEO)
-        let n = buf.withUnsafeMutableBytes { recv(fd, $0.baseAddress! + off, count - off, 0) }
+        let n = buf.withUnsafeMutableBytes { Sock.read(fd, $0.baseAddress! + off, count - off) }
         if n == 0 { throw CoreError.unavailable("helper closed the connection") }
-        if n < 0 { if errno == EINTR || errno == EAGAIN { continue }; throw CoreError.unavailable("read: \(String(cString: strerror(errno)))") }
+        if n < 0 { throw CoreError.unavailable(errno == EAGAIN ? "helper timed out" : "read: \(String(cString: strerror(errno)))") }
         off += n
     }
     return Data(buf)

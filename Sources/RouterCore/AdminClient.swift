@@ -48,7 +48,7 @@ public struct AdminClient: Sendable {
             d.withUnsafeBytes { b in
                 var off = 0
                 while off < b.count {
-                    let n = Sock.retry { write(fd, b.baseAddress! + off, b.count - off) }
+                    let n = Sock.write(fd, b.baseAddress! + off, b.count - off)
                     if n <= 0 { return false }
                     off += n
                 }
@@ -59,7 +59,7 @@ public struct AdminClient: Sendable {
         func recv() -> Data? {
             var buf = [UInt8](repeating: 0, count: 64 << 10)
             errno = 0
-            let n = Sock.retry { read(fd, &buf, buf.count) }
+            let n = Sock.read(fd, &buf, buf.count)
             peerClosed = n == 0
             return n > 0 ? Data(buf[0..<n]) : nil
         }
