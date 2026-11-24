@@ -304,6 +304,20 @@ func trimFinalPrefix(s string) string {
 	return strings.TrimPrefix(s, `\\?\`)
 }
 
+// agentHarnessGitEnv (#187): the git variables of the Codex and Grok harness in direct and sync mode (outside the worktree; the Claude CLI harness's too,
+// claudeHarnessGitEnv). The harness runs git itself outside its sandbox in the client's folder: it has NO repository, as Copilot's (#81). The commands get it
+// back where the harness can tell them apart: Codex through codexHarnessExclude, Claude CLI through CLAUDE_ENV_FILE; Grok cannot, its commands are told to
+// run `env -u GIT_DIR git` (grokGitNote). Windows: Grok and Claude CLI run in the MXC box (or with no sandbox at all), so only Codex gets it there.
+func agentHarnessGitEnv(dir string) []string {
+	return []string{"GIT_DIR=" + os.DevNull, "GIT_CEILING_DIRECTORIES=" + filepath.Dir(dir)}
+}
+
+// codexHarnessExclude (#187): the agent's commands do not inherit the harness's agentHarnessGitEnv (as Codex.treeProfile on the Mac).
+var codexHarnessExclude = []string{"-c", `shell_environment_policy.exclude=["GIT_DIR","GIT_CEILING_DIRECTORIES"]`}
+
+// grokGitNote (#187): Grok's commands inherit the harness's agentHarnessGitEnv.
+const grokGitNote = "In this run the folder's git repository is hidden from Grok's own process: run git in shell commands as `env -u GIT_DIR git …` (for example `env -u GIT_DIR git status`)."
+
 // codexTreeProfile (#40, kot Codex.treeProfile na Macu): v klonu profil dovoljenj Codex namesto workspace-write, ki
 // .git vsake pisljive mape zaklene v celoti (commit ni mogoč): .git vsakega klona pisljiv razen nastavitev, hookov,
 // info, commondir in preusmeritev (git harnessa jih bere zunaj peskovnika). Ukazi agenta: PATH z ovojem in brez
@@ -848,6 +862,8 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	}
 	if k.name == "grok" && agent && !(ac.canWrite(k) && !readOnly) { // #121
 		note += "\n\n" + grokNoShellNote
+	} else if k.name == "grok" && agent && !treeRun && runtime.GOOS != "windows" { // #187
+		note += "\n\n" + grokGitNote
 	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	checked := s.checkedAgentFolders(c, dir)
@@ -1077,6 +1093,10 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				cgits, cpath, cdeny = gits, agentPath(gw), scratchPaths(s.cfgDir) // #83
 			}
 			args := codexArgs(dir, append(extra, deps...), agent, out, model, write, ac.Network, resume, cgits, cpath, cdeny)
+			if !inTree { // #187: the harness has no repository, its commands have the folder's
+				m.env = append(m.env, agentHarnessGitEnv(dir)...)
+				args = append(append(args[:len(args)-1:len(args)-1], codexHarnessExclude...), "-")
+			}
 			if runtime.GOOS == "windows" { // #68: nikoli namestitev z UAC iz teka prehoda
 				if why := codexSandboxProblem(); why != "" {
 					return "", errors.New(why)
@@ -1112,6 +1132,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				return "", err
 			}
 			args := grokArgs(dir, pf, s.cfgDir, agent, model, write, resume)
+			if !inTree && runtime.GOOS != "windows" { // #187: the harness has no repository (grokGitNote)
+				m.env = append(m.env, agentHarnessGitEnv(dir)...)
+			}
 			var answer, failure string
 			var cancelledEnd bool
 			var stderrTail string

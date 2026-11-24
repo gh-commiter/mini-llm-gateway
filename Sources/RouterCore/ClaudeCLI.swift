@@ -293,6 +293,16 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         return env
     }
 
+    /// #187: the git environment of the Claude CLI harness in direct and sync mode with local tools. The harness is not under a sandbox there and runs git itself
+    /// (`git status` at start) in the client's folder, whose `.git/config` and attributes the client writes (filter.*.clean, diff.external, textconv, gpg.program …):
+    /// the harness has NO repository (GIT_DIR=/dev/null, no search above the folder), as Copilot's. Its Bash gets the repository back through `envFile`
+    /// (CLAUDE_ENV_FILE: Claude Code reads it and runs it ahead of every Bash command, never for its own git), so the agent's git works as before, under the sandbox.
+    static func harnessGitEnv(mount: Bool, cwd: URL, envFile: String) -> [String: String] {
+        sandboxGitEnv(mount: mount).merging(["GIT_DIR": "/dev/null", "GIT_CEILING_DIRECTORIES": cwd.deletingLastPathComponent().path, "CLAUDE_ENV_FILE": envFile]) { $1 }
+    }
+    /// What `envFile` holds: the Bash commands find the folder's repository as before #187.
+    static let bashGitEnvScript = "unset GIT_DIR GIT_CEILING_DIRECTORIES\n"
+
     /// M4: .git, ki ga bere git lastnika: nastavitve, hooki, atributi in preusmeritve na drug gitdir (commondir,
     /// povezani worktree-ji z gitdir, commondir in config.worktree).
     static let gitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees"]
@@ -922,6 +932,8 @@ extension Router {
         var confinedTmp: URL?
         var confinedPath: String?
         var keepTmp = false  // the tree could not be stopped: the folder stays for the start-up cleanup
+        var envFileToRemove: URL?  // #187: CLAUDE_ENV_FILE of the run
+        defer { if let f = envFileToRemove { try? FileManager.default.removeItem(at: f) } }
         defer { if let t = confinedTmp, !keepTmp { try? FileManager.default.removeItem(at: t) } }
         if restricted {
             let tmpBase = config.scratch("tmp")
@@ -967,7 +979,13 @@ extension Router {
             env["CLAUDE_CODE_TMPDIR"] = link
             env["MINIGW_NETWORK_OFF"] = Worktree.networkOff("claude", config)  // #67: ovoj git
         } else if agent, cfg.allowLocalTools {  // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
-            env = env.filter { !$0.key.hasPrefix("GIT_") }.merging(ClaudeCLIConfig.sandboxGitEnv(mount: directGit)) { $1 }
+            // #187: the harness gets no repository, its Bash gets it back through this file (a gateway file under Scratch/tmp, gone with the run)
+            let envFile = config.scratch("tmp").appendingPathComponent("claude-env-\(rid).sh")
+            guard (try? Data(ClaudeCLIConfig.bashGitEnvScript.utf8).write(to: envFile, options: .withoutOverwriting)) != nil else {
+                return await error(503, "api_error", "Cannot prepare the git environment of Claude CLI's commands: start a new conversation", rid: rid, writer: writer)
+            }
+            envFileToRemove = envFile
+            env = env.filter { !$0.key.hasPrefix("GIT_") }.merging(ClaudeCLIConfig.harnessGitEnv(mount: directGit, cwd: cwd, envFile: envFile.path)) { $1 }
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"

@@ -50,12 +50,15 @@ func aClaudeAgentCommitsInADirectModeFolderAndCannotPlantAHook(identity: Bool) a
     let project = base.appendingPathComponent("proj"), bin = base.appendingPathComponent("bin")
     for d in [project, bin] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
     defer { try? FileManager.default.removeItem(at: base) }
+    #expect(sh("git init -q", project.path).status == 0)  // #187: the folder is a repository
     let exe = bin.appendingPathComponent("claude")
     try Data("""
         #!/bin/sh
         [ "$1" = --version ] && { echo '2.1.0 (Claude Code)'; exit 0; }
         cat > /dev/null
         env | grep '^GIT_' | sort > env.txt
+        git rev-parse --show-toplevel > harness-git.txt 2>&1 || echo "no repository" >> harness-git.txt
+        (. "$CLAUDE_ENV_FILE"; git rev-parse --show-toplevel) > bash-git.txt 2>&1
         echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
         echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
 
@@ -71,6 +74,11 @@ func aClaudeAgentCommitsInADirectModeFolderAndCannotPlantAHook(identity: Bool) a
     #expect(w.status == 200, "\(w.text.prefix(300))")
     let env = (try? String(contentsOf: project.appendingPathComponent("env.txt"), encoding: .utf8)) ?? ""
     #expect(env.contains("GIT_CONFIG_GLOBAL=/dev/null") && env.contains("GIT_CONFIG_NOSYSTEM=1") && env.contains("GIT_CONFIG_KEY_0=core.hooksPath") && env.contains("GIT_CONFIG_VALUE_0=/dev/null"), "\(env)")
+    // #187: the harness has no repository (GIT_DIR=/dev/null), its Bash (CLAUDE_ENV_FILE ahead of each command) finds the folder's own
+    #expect(env.contains("GIT_DIR=/dev/null\n") && env.contains("GIT_CEILING_DIRECTORIES=" + base.path + "\n"), "\(env)")
+    let harness = (try? String(contentsOf: project.appendingPathComponent("harness-git.txt"), encoding: .utf8)) ?? ""
+    let bash = (try? String(contentsOf: project.appendingPathComponent("bash-git.txt"), encoding: .utf8)) ?? ""
+    #expect(harness.contains("no repository") && bash == project.path + "\n", "harness: \(harness) bash: \(bash)")
     // the sandbox settings: the folder's own `.git` is closed for the shell, except in the session folder of a direct-mode mount whose `.git` is a real directory
     func deny(_ dir: URL, directGit: Bool, extra: [String] = []) throws -> [String] {
         var cfg = ClaudeCLIConfig(); cfg.allowLocalTools = true

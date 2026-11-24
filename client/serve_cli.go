@@ -267,6 +267,17 @@ var sandboxGitEnv = []string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSY
 	"GIT_CONFIG_KEY_0=core.hooksPath", "GIT_CONFIG_VALUE_0=" + os.DevNull, "GIT_CONFIG_KEY_1=core.excludesFile", "GIT_CONFIG_VALUE_1=" + os.DevNull,
 	"GIT_CONFIG_KEY_2=core.attributesFile", "GIT_CONFIG_VALUE_2=" + os.DevNull, "GIT_CONFIG_KEY_3=core.fsmonitor", "GIT_CONFIG_VALUE_3=false"}
 
+// claudeHarnessGitEnv (#187): the git environment of the Claude CLI harness in direct and sync mode with local tools (as ClaudeCLIConfig.harnessGitEnv on the
+// Mac). The harness is not under a sandbox there and runs git itself (git status at start) in the client's folder, whose .git/config and attributes the client
+// writes (filter.*.clean, diff.external, textconv, gpg.program …): it has NO repository (GIT_DIR=/dev/null, no search above the folder), as Copilot's. Its Bash
+// gets the repository back through envFile (CLAUDE_ENV_FILE: Claude Code runs it ahead of every Bash command, never for its own git), under the sandbox.
+func claudeHarnessGitEnv(dir, envFile string) []string {
+	return append(append(slices.Clone(sandboxGitEnv), agentHarnessGitEnv(dir)...), "CLAUDE_ENV_FILE="+envFile) // agentHarnessGitEnv: serve_agents.go
+}
+
+// bashGitEnvScript: what CLAUDE_ENV_FILE holds (the Bash commands find the folder's repository as before #187).
+const bashGitEnvScript = "unset GIT_DIR GIT_CEILING_DIRECTORIES\n"
+
 // withCaseVariants (M1): NTFS and the default APFS compare names without case, so `sub/.GIT/config` is the repository's config; a rule glob names `.git`, `.claude` and git's own
 // closed names in one case. Every rule that names one of them is also given in a form that matches any case (`[gG][iI][tT]`, gitignore-style classes), added to the
 // rule, never instead of it: where the matcher already ignores case, or does not take classes, the original keeps working as before.
@@ -1316,7 +1327,18 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	// brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmdEnv := append(append(append(agentEnvFor(os.Environ(), s.conf().AgentEnv), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1")
 	if worktreeEnv == nil && runtime.GOOS != "windows" && s.conf().AllowLocalTools { // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
-		cmdEnv = append(slices.DeleteFunc(cmdEnv, func(e string) bool { return strings.HasPrefix(strings.ToUpper(e), "GIT_") }), sandboxGitEnv...)
+		f, err := os.CreateTemp(s.conf().scratch("tmp"), "claude-env-*.sh") // #187: the Bash's git environment (the harness has no repository)
+		if err == nil {
+			_, err = f.WriteString(bashGitEnvScript)
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+			defer os.Remove(f.Name())
+		}
+		if err != nil {
+			return writeError(w, r.rid, 503, "Cannot prepare the git environment of Claude CLI's commands: "+err.Error())
+		}
+		cmdEnv = append(slices.DeleteFunc(cmdEnv, func(e string) bool { return strings.HasPrefix(strings.ToUpper(e), "GIT_") }), claudeHarnessGitEnv(dir, f.Name())...)
 	}
 	if p := envGet(worktreeEnv, "PATH"); p != "" && envGet(runEnv, "PATH") != "" { // askOnPath in ovoj git (#68): oba na PATH
 		cmdEnv = envSet(cmdEnv, "PATH", filepath.Dir(minigwExe())+string(os.PathListSeparator)+p)

@@ -168,11 +168,19 @@ public enum Codex {
         let table = fs.keys.sorted().map { q($0) + "=\"" + fs[$0]! + "\"" }.joined(separator: ",")
         let base = ["-c", #"default_permissions="minigw""#, "-c", "permissions.minigw.filesystem={" + table + "}",
                     "-c", "permissions.minigw.network.enabled=\(network)"]
-        guard !gits.isEmpty else { return base }
+        guard !gits.isEmpty else { return base + ["-c", #"shell_environment_policy.exclude=["GIT_DIR","GIT_CEILING_DIRECTORIES"]"#] }  // #187: the harness's own (Codex.directEnv), not the commands'
         return base + [
                 "-c", #"shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]"#, "-c", "shell_environment_policy.set.PATH=" + q(path),
                 "-c", "shell_environment_policy.set.GIT_CEILING_DIRECTORIES=" + q(URL(fileURLWithPath: gits[0]).deletingLastPathComponent().deletingLastPathComponent().path),
                 "-c", #"shell_environment_policy.set.MINIGW_SANDBOXED="1""#]  // #67: le ukazi (v peskovniku), ne harness
+    }
+
+    /// The environment of the Codex harness in direct and sync mode (outside the worktree). #187: the harness runs git itself outside its sandbox in the client's
+    /// folder (whose `.git/config` and attributes the client writes): it has NO repository (GIT_DIR=/dev/null, no search above the folder), as Copilot's; the agent's
+    /// commands get the repository back (`shell_environment_policy.exclude` in treeProfile), under Codex's sandbox.
+    static func directEnv(tmp: URL, cwd: URL) -> [String: String] {
+        ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path, "xcrun_nocache": "1",
+         "GIT_DIR": "/dev/null", "GIT_CEILING_DIRECTORIES": cwd.deletingLastPathComponent().path]
     }
 
     struct Failure: Error { let message: String }
@@ -366,7 +374,7 @@ extension Router {
             else { treeEnv?["MINIGW_NETWORK_OFF"] = Worktree.networkOff("codex", config) }
         }
         var codexEnv = (treeEnv
-            ?? ["TMPDIR": privateTmp.path + "/", "CLANG_MODULE_CACHE_PATH": privateTmp.appendingPathComponent("ModuleCache").path, "xcrun_nocache": "1"])
+            ?? Codex.directEnv(tmp: privateTmp, cwd: cwd))
             .merging(run?.env ?? [:]) { $1 }
         // Nadaljevanje niti Codex (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
         guard let scope = await conversationScope("agent", Self.agentScopeFields("codex", req, cwd: cwd), project: Self.reqState?.project) else {
