@@ -256,7 +256,9 @@ Limits are in [how-it-works.md → Limits](how-it-works.md#limits).
 WebDAV). The agent changes your files in place and, in a git repository, can commit there (`git add`, `git commit`,
 `git branch`, `git checkout`, `git stash`, `git tag`, `git merge` of a local branch). Writes to other
 [protected paths](how-it-works.md#protected-paths) are refused: the agent cannot change `.git/config`, hooks,
-attributes, alternates, a rebase in progress, or the folder's Claude Code settings. Use worktree mode when you want
+attributes, alternates, a rebase in progress, or the folder's Claude Code settings. The agent program itself (Claude
+CLI, Codex) sees no repository in the folder, only its commands do, so a filter or diff program in the folder's git
+configuration never runs outside the sandbox (since 0.10.8). Use worktree mode when you want
 the agent to work on a separate copy and bring its work back as a branch. A git repository still gets worktree mode by
 default; direct is only what you ask for. See [Git in direct mode](how-it-works.md#protected-paths).
 

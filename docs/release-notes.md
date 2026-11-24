@@ -1,5 +1,21 @@
 # Release notes
 
+## 0.10.8
+
+### Security
+- In direct mode on the Mac gateway, a client's folder could make the gateway run a command outside every sandbox (#187). With "Allow local tools" on for Claude CLI, or with Codex, the agent program itself (not its sandboxed commands) runs git in the folder, and git follows the folder's own `.git/config` and attributes: a `filter.<name>.clean`, `diff.external`, `diff.<name>.textconv`, `gpg.program` or an included config file written by the client (or by a cloned hostile repository) ran as the gateway user, next to Scratch, tokens and other devices' folders. The agent programs (Claude CLI, Codex, and Grok on Windows and Linux gateways) now see no git repository at all outside worktree mode, as Copilot already did; the agent's own commands still work in the folder's repository under their sandbox. Sync mode never copies `.git`, so there a client could not plant this, but a repository the agent made in the copy is covered the same way. Worktree mode was not affected.
+
+### Changed
+- In direct and sync mode, Claude CLI and Codex no longer read the folder's git state for themselves (the branch and recent commits Claude Code puts into its own context at start, Codex's git information about the session). Git in the agent's commands works as before.
+- Grok (Windows and Linux gateways, sync mode): git in its shell commands finds a repository only when run as `env -u GIT_DIR git …`; the gateway tells Grok so in its instructions. Grok cannot give its commands another environment than its own.
+- The tests that check every git start of the product for its guard now flag every program started through a variable until it is listed, read all of the sources (subfolders too), and no longer accept a comment that names the guard.
+
+### Known problems
+- Not proven end to end with the real programs: that Claude Code runs `CLAUDE_ENV_FILE` ahead of every Bash command in a `-p` run inside its sandbox (read from Claude Code 2.1.322 itself and checked with a stand-in program, not with a real session), and that Codex's agent commands drop the variables (checked with `codex sandbox` 0.167.1, which applies the same setting, not with a real `codex exec` session).
+- Which git commands the agent programs actually run was not measured; the fix does not depend on it (they see no repository), but a program that removes `GIT_DIR` from its own git's environment would see the folder's repository again.
+- The Windows gateway: Claude CLI and Grok run in the MXC box there (or with no sandbox at all), so their git is not changed; Codex, which runs outside the box, gets the change. Not run on Windows.
+- The Linux gateway's change was tested on macOS with the same code; not run on Linux.
+
 ## 0.10.7
 
 ### Fixed
