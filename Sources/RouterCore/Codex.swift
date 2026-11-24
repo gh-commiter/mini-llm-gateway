@@ -239,7 +239,10 @@ public enum Codex {
                 p.standardOutput = events
                 p.standardError = errors
                 var stderr = Data()
-                let errReader = Thread { stderr = errors.fileHandleForReading.readDataToEndOfFile() }  // ne blokira pipe
+                // ne blokira pipe. A semaphore, not Thread.isExecuting: that is false until the thread really starts, so a
+                // codex that failed at once could be reported without its stderr.
+                let errDone = DispatchSemaphore(value: 0)
+                let errReader = Thread { stderr = errors.fileHandleForReading.readDataToEndOfFile(); errDone.signal() }
                 // #73: 2 s po koncu codex drevo (tudi vnuk s cevjo) ven, da se branje spodaj konča
                 let pipes = [events.fileHandleForReading, errors.fileHandleForReading]
                 p.terminationHandler = { p in
@@ -266,7 +269,7 @@ public enum Codex {
                         buf = Data(buf[(nl + 1)...])
                     }
                 }
-                while errReader.isExecuting { usleep(10_000) }
+                errDone.wait()
                 p.waitUntilExit()
                 // #73: finalize (syncBack) le, ko drevesa ni več
                 stopNested()  // vprašani agenti se končajo urejeno, ne s SIGKILL (kot ClaudeCLI)

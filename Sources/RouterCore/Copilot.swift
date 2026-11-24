@@ -263,8 +263,10 @@ public enum Copilot {
             let (answer, stderr) = await offPool { () -> (String, Data) in
                 final class Box: @unchecked Sendable { var data = Data() }
                 let stderr = Box()
-                let errReader = Thread { stderr.data = err.readDataToEndOfFile() }
-                errReader.start()
+                // A semaphore, not Thread.isExecuting: that is false until the thread really starts, so a copilot that
+                // failed at once could be reported without its stderr (a limit then looked like a plain failure).
+                let errDone = DispatchSemaphore(value: 0)
+                Thread { stderr.data = err.readDataToEndOfFile(); errDone.signal() }.start()
                 var buf = Data(), answer = "", skipping = false
                 while case let chunk = out.availableData, !chunk.isEmpty {
                     buf.append(chunk)
@@ -280,7 +282,7 @@ public enum Copilot {
                     if buf.count > maxLine { buf.removeAll(); skipping = true }  // predolga vrstica: do naslednje nove vrstice
                 }
                 if !skipping, let t = event(buf).text { answer = t }
-                while errReader.isExecuting { usleep(10_000) }
+                errDone.wait()
                 return (answer, stderr.data)
             }
             let code = await exit.wait()

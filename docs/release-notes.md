@@ -1,5 +1,14 @@
 # Release notes
 
+## 0.10.10
+
+### Fixed
+- Mac gateway: when Codex or Copilot failed right after starting, the gateway could, rarely (seen once, on a busy machine), miss what the agent wrote about the failure. A usage or rate limit was then answered as a plain failure (502 "exited with 1") instead of the limit answer (429). The gateway now always waits for that text. Found by a test that failed once in CI; the fix is by reading, the rare case itself was not reproduced on demand.
+
+### Known problems
+- The lost-failure-text case was seen once in CI and fixed by reading; it was not reproduced on demand, so the fix is not proven against the real case.
+- Unchanged from 0.10.9: not proven end to end with the real programs (Claude Code's `CLAUDE_ENV_FILE` in a real `-p` session, a real `codex exec` session); the Windows gateway was not run on Windows.
+
 ## 0.10.9
 
 ### Security
