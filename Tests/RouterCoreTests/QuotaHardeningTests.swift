@@ -182,7 +182,7 @@ private final class SocketServer: @unchecked Sendable {
             Thread {
                 var buf = [UInt8](repeating: 0, count: 4096), got = Data()
                 while got.range(of: Data("\r\n\r\n".utf8)) == nil {
-                    let n = read(c, &buf, buf.count)
+                    let n = Sock.read(c, &buf, buf.count)
                     if n <= 0 { break }
                     got.append(buf, count: n)
                 }
@@ -220,7 +220,7 @@ private final class Served: @unchecked Sendable {
                 wrote += chunk
             }
             var one: UInt8 = 0
-            served.finish(wrote: wrote, closed: read(c, &one, 1) <= 0)  // the client's close, not the rest of the body
+            served.finish(wrote: wrote, closed: Sock.read(c, &one, 1) <= 0)  // the client's close, not the rest of the body
         }
         defer { server.stop() }
         let t0 = Date()
@@ -308,7 +308,7 @@ private extension SocketServer {
     static func raw(_ c: Int32, _ d: Data) -> Bool {
         d.withUnsafeBytes { b in
             var off = 0
-            while off < b.count { let n = write(c, b.baseAddress! + off, b.count - off); if n <= 0 { return false }; off += n }
+            while off < b.count { let n = Sock.write(c, b.baseAddress! + off, b.count - off); if n <= 0 { return false }; off += n }
             return true
         }
     }

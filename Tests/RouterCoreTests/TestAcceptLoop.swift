@@ -1,6 +1,7 @@
 import Foundation
 import Synchronization
 import Testing
+@testable import RouterCore
 
 /// #150: the accept loop of a test's own loopback server. A failed accept(2) is not the end of the server: a client that aborted a queued
 /// connection (ECONNABORTED), a signal (EINTR) or a moment without descriptors (EMFILE) used to end the loop for good, the listening socket stayed
@@ -85,8 +86,7 @@ final class TestAcceptLoop: @unchecked Sendable {
                 if fds[0].revents & Int16(POLLNVAL | POLLERR) != 0 { end(EBADF); return }
                 if fds[0].revents & Int16(POLLIN) == 0 { continue }
                 let c = accept(listener, nil, nil)
-                if c >= 0 {
-                    _ = fcntl(c, F_SETFL, fcntl(c, F_GETFL) & ~O_NONBLOCK)  // (an accepted socket may inherit the listener's flag)
+                if c >= 0 {  // non-blocking, as the listener (#177): the handlers use Sock.read / Sock.write / sendAll
                     handle(c); continue
                 }
                 let e = errno
@@ -104,6 +104,16 @@ final class TestAcceptLoop: @unchecked Sendable {
     private func end(_ e: Int32) {
         state.withLock { $0.ended = e }
         Issue.record("\(label): the accept loop ended on \(Self.name(e)) although the test did not stop the server")
+    }
+}
+
+/// #177: all of `d` through Sock.write (a test server's socket may be "draining": a blocking write that waits fails with EBADF there).
+@discardableResult
+func sendAll(_ c: Int32, _ d: Data) -> Bool {
+    d.withUnsafeBytes { b in
+        var off = 0
+        while off < b.count { let n = Sock.write(c, b.baseAddress! + off, b.count - off); if n <= 0 { return false }; off += n }
+        return true
     }
 }
 

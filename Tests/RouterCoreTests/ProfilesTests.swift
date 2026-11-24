@@ -172,12 +172,11 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     #expect(withUnsafePointer(to: &la) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(l, $0, n) } } == 0, "bind \(port): \(errno)")
     listen(l, 4)
     Thread {
-        let c = accept(l, nil, nil)
+        let c = Sock.accept(l)
         guard c >= 0 else { return }
         var b = [UInt8](repeating: 0, count: 4096)
-        _ = read(c, &b, b.count)
-        let ok = Array("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".utf8)
-        _ = write(c, ok, ok.count)
+        _ = Sock.read(c, &b, b.count)
+        sendAll(c, Data("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".utf8))
         close(c)
     }.start()
     let m = ProfileMux(targets: [.init(name: "mini", url: "http://127.0.0.1:\(port)", token: "t")])

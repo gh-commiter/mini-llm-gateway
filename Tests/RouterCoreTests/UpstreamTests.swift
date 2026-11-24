@@ -637,17 +637,17 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))  // a client that gave up must not kill the test process
         var buf = [UInt8](repeating: 0, count: 65536), hs = Data()
         while hs.count < 4 + Noise.handshakeLength {
-            let k = read(c, &buf, min(buf.count, 4 + Noise.handshakeLength - hs.count))
+            let k = Sock.read(c, &buf, min(buf.count, 4 + Noise.handshakeLength - hs.count))
             if k <= 0 { return }
             hs += buf[0..<k]
         }
         guard let (r, session) = try? Noise.respond(Data(hs.dropFirst(4)), key: key, suite: .aesGCM) else { return }
-        _ = r.withUnsafeBytes { write(c, $0.baseAddress, $0.count) }
+        sendAll(c, r)
         var raw = Data(), plain = Data(), deviceDone = false
         while true {
             if !deviceDone, case .device(let d) = Noise.readDevice(&plain, hash: session.hash) { lock.withLock { _devices.append(d) }; deviceDone = true }
             if deviceDone, plain.range(of: Data("\r\n\r\n".utf8)) != nil { break }
-            let k = read(c, &buf, buf.count)
+            let k = Sock.read(c, &buf, buf.count)
             if k <= 0 { return }
             raw += buf[0..<k]
             if let p = try? Noise.unframe(&raw, session.receive) { plain += p }
@@ -657,13 +657,13 @@ final class ScriptedNoiseServer: @unchecked Sendable {
         if trickle > 0 {
             for b in reply(head) {
                 let one = Noise.frames(Data([b]), session.send)
-                if one.withUnsafeBytes({ write(c, $0.baseAddress, $0.count) }) <= 0 { return }
+                if !sendAll(c, one) { return }
                 Thread.sleep(forTimeInterval: trickle)
             }
             return
         }
         let out = Noise.frames(reply(head), session.send)
-        _ = out.withUnsafeBytes { write(c, $0.baseAddress, $0.count) }
+        sendAll(c, out)
     }
 }
 

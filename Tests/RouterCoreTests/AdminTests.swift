@@ -200,20 +200,20 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         defer { close(fd) }
         let key = Noise.newKey()
         Thread {
-            let c = Sock.retry { accept(fd, nil, nil) }
+            let c = Sock.accept(fd)
             guard c >= 0 else { return }
             defer { close(c) }
             var received = 0, buf = [UInt8](repeating: 0, count: 4 + Noise.handshakeLength)
             while received < buf.count {
                 let remaining = buf.count - received
-                let n = Sock.retry { Darwin.read(c, &buf, remaining) }
+                let n = Sock.read(c, &buf, remaining)
                 if n <= 0 { return }
                 received += n
             }
             guard let (reply, _) = try? Noise.respond(Data(buf.dropFirst(4)), key: key, suite: .aesGCM) else { return }
-            _ = reply.withUnsafeBytes { b in Sock.retry { write(c, b.baseAddress, b.count) } }
+            sendAll(c, reply)
             var rest = [UInt8](repeating: 0, count: 65536)
-            _ = Sock.retry { Darwin.read(c, &rest, rest.count) }  // take the request first: closing with it unread would be a reset, not a clean close
+            _ = Sock.read(c, &rest, rest.count)  // take the request first: closing with it unread would be a reset, not a clean close
         }.start()
         let client = AdminClient(port: port, routerKey: key.publicKey.rawRepresentation)
         let result = await offPool { client.attempt("GET", "/health/live", nil, timeout: 5) }
@@ -224,18 +224,18 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         let (fd, port) = listener()
         defer { close(fd) }
         Thread {
-            let c = Sock.retry { accept(fd, nil, nil) }
+            let c = Sock.accept(fd)
             guard c >= 0 else { return }
             defer { close(c) }
             var received = 0, buf = [UInt8](repeating: 0, count: 4 + Noise.handshakeLength)
             while received < buf.count {
                 let remaining = buf.count - received
-                let n = Sock.retry { Darwin.read(c, &buf, remaining) }
+                let n = Sock.read(c, &buf, remaining)
                 if n <= 0 { return }
                 received += n
             }
             let reply = Data(repeating: 0, count: Noise.handshakeLength)
-            _ = reply.withUnsafeBytes { b in Sock.retry { write(c, b.baseAddress, b.count) } }
+            sendAll(c, reply)
         }.start()
         let client = AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation)
         let result = await offPool { client.attempt("GET", "/health/live", nil, timeout: 5) }
@@ -257,19 +257,19 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         let got = Received()
         // Lastna nit, ne DispatchQueue.global(): pod obremenitvijo (vzporedni testi) blok tam začne prepozno.
         Thread {
-            let c = Sock.retry { accept(l, nil, nil) }
+            let c = Sock.accept(l)
             defer { close(c) }
             func read(_ n: Int) -> Data {
                 var d = Data(), buf = [UInt8](repeating: 0, count: 65536)
-                while d.count < n { let k = Sock.retry { Darwin.read(c, &buf, min(buf.count, n - d.count)) }; if k <= 0 { break }; d += buf[0..<k] }
+                while d.count < n { let k = Sock.read(c, &buf, min(buf.count, n - d.count)); if k <= 0 { break }; d += buf[0..<k] }
                 return d
             }
             let msg = read(4 + Noise.handshakeLength)
             guard let (reply, session) = try? Noise.respond(Data(msg.dropFirst(4)), key: fakeKey, suite: .aesGCM) else { return }
-            _ = reply.withUnsafeBytes { b in Sock.retry { write(c, b.baseAddress, b.count) } }
+            sendAll(c, reply)
             var raw = Data(), plain = Data(), buf = [UInt8](repeating: 0, count: 65536)
             while !String(decoding: plain, as: UTF8.self).contains("\r\n\r\n") {
-                let k = Sock.retry { Darwin.read(c, &buf, buf.count) }
+                let k = Sock.read(c, &buf, buf.count)
                 if k <= 0 { break }
                 raw += buf[0..<k]
                 if let p = try? Noise.unframe(&raw, session.receive) { plain += p }

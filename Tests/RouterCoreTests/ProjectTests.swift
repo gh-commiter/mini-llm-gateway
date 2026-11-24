@@ -301,15 +301,11 @@ final class ProjectFakeGateway: @unchecked Sendable {
                 let resp = handler(req)
                 var head = "HTTP/1.1 \(resp.status) X\r\nContent-Length: \(resp.body.utf8.count)\r\nConnection: close\r\n"
                 for (k, v) in resp.headers { head += "\(k): \(v)\r\n" }
-                var out = Data((head + "\r\n" + resp.body).utf8)
-                while !out.isEmpty {
-                    let n = out.withUnsafeBytes { write(c, $0.baseAddress, $0.count) }
-                    if n <= 0 { return }
-                    out = out.dropFirst(n)
-                }
+                let out = Data((head + "\r\n" + resp.body).utf8)
+                sendAll(c, out)
                 return
             }
-            let k = read(c, &tmp, tmp.count)
+            let k = Sock.read(c, &tmp, tmp.count)
             if k <= 0 { return }
             buf += tmp[0..<k]
         }
@@ -553,20 +549,20 @@ private final class Captured: @unchecked Sendable {
         defer { close(s) }
         let got = Captured()
         Thread {
-            let c = accept(s, nil, nil)
+            let c = Sock.accept(s)
             defer { close(c) }
             var buf = [UInt8](repeating: 0, count: 65536)
             var hs = Data()
             while hs.count < 4 + Noise.handshakeLength {
-                let k = read(c, &buf, min(buf.count, 4 + Noise.handshakeLength - hs.count))
+                let k = Sock.read(c, &buf, min(buf.count, 4 + Noise.handshakeLength - hs.count))
                 if k <= 0 { return }
                 hs += buf[0..<k]
             }
             guard let (reply, session) = try? Noise.respond(Data(hs.dropFirst(4)), key: key) else { return }
-            _ = reply.withUnsafeBytes { write(c, $0.baseAddress, $0.count) }
+            sendAll(c, reply)
             var raw = Data(), plain = Data()
             while !String(decoding: plain, as: UTF8.self).contains("\r\n\r\n") {
-                let k = read(c, &buf, buf.count)
+                let k = Sock.read(c, &buf, buf.count)
                 if k <= 0 { break }
                 raw += buf[0..<k]
                 if let p = try? Noise.unframe(&raw, session.receive) { plain += p }

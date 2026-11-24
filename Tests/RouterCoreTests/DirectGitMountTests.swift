@@ -83,7 +83,7 @@ private final class DAVLoopback: @unchecked Sendable {
         while true {
             switch HTTPParser.parse(buf) {
             case .needMore:
-                let n = read(c, &chunk, chunk.count)
+                let n = Sock.read(c, &chunk, chunk.count)
                 if n <= 0 { return }
                 buf.append(contentsOf: chunk[0..<n])
             case .error(let s, _):
@@ -103,7 +103,7 @@ private final class DAVLoopback: @unchecked Sendable {
     private func send(_ c: Int32, _ data: Data) {
         data.withUnsafeBytes { p in
             var off = 0
-            while off < data.count { let n = write(c, p.baseAddress! + off, data.count - off); if n <= 0 { return }; off += n }
+            while off < data.count { let n = Sock.write(c, p.baseAddress! + off, data.count - off); if n <= 0 { return }; off += n }
         }
     }
 }
