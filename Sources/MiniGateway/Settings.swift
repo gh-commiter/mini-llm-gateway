@@ -162,6 +162,9 @@ struct SettingsView: View {
     private struct PendingApply: Equatable { let draft: RouterConfig; let claudeOK: Bool }
 
     /// #111 (T1): the Claude CLI settings cannot run as they are (RouterConfig.guardClaude): the other panes still save, this says so in the window.
+    /// D: the listed names the gateway's (this app's) environment does not hold.
+    private var unsetEnv: [String] { AgentEnv.unset(AgentEnv.names(draft.agentEnv)) }
+
     private var claudeAttention: Bool { draft.claudeCLI.enabled && draft.claudeCLI.restrictedProblem(mode: false) != nil }
 
     /// Uveljavi osnutek (skupaj z morebitnimi spremembami od drugod); neveljaven vklopljen claude ga zadrži.
@@ -170,12 +173,15 @@ struct SettingsView: View {
         // Tik pred uveljavitvijo še enkrat združi: sprememba skrbniškega API v istem koraku glavne niti ostane.
         let merged = RouterConfig.merge(draft: draft, old: base, new: state.config)
         // #111: only the Claude CLI fields are held back (the stored ones stay) while they cannot run; everything else is applied
-        let (toApply, attention) = RouterConfig.guardClaude(draft: merged, stored: state.config)
+        let (guarded, attention) = RouterConfig.guardClaude(draft: merged, stored: state.config)
+        var toApply = guarded
+        toApply.agentEnv = AgentEnv.saved(merged.agentEnv, stored: state.config.agentEnv)  // D: an invalid entry (A;B) is not saved, as in the admin API
         guard toApply != state.config else { return }
         state.apply(toApply)
         base = toApply
         draft = toApply
         if attention { draft.claudeCLI = merged.claudeCLI }  // what the user typed stays in the pane
+        draft.agentEnv = merged.agentEnv
     }
 
     var body: some View {
@@ -376,6 +382,8 @@ struct SettingsView: View {
                 TextField("Extra variables", text: $draft.agentEnv, prompt: Text(verbatim: "JFROG_URL, MY_PROFILE"))
                 if let why = AgentEnv.validate(AgentEnv.names(draft.agentEnv)).error {
                     Text(verbatim: why).font(.caption).foregroundStyle(.red)
+                } else if !unsetEnv.isEmpty {  // D: the app (started by launchd) does not have them
+                    Text("Not set in the gateway's environment, so agents do not get them: \(unsetEnv.joined(separator: ", "))").font(.caption).foregroundStyle(.secondary)
                 }
             } header: {
                 Text("Agent environment")

@@ -915,7 +915,8 @@ func (s *server) adminDoCtx(ctx context.Context, method, uri string, body []byte
 					return fail(400, err.Error())
 				}
 			}
-			return 200, map[string]any{"names": append([]string{}, s.conf().AgentEnv...)}
+			names := append([]string{}, s.conf().AgentEnv...)
+			return 200, map[string]any{"names": names, "unset": agentEnvUnset(names, os.Environ())} // D: a name the gateway's environment does not hold reaches no agent
 		}
 		if k, ok := map[string]agentKind{"codex": codexKind, "grok": grokKind, "copilot": copilotKind}[arg]; ok {
 			return s.agentAPI(method, k, body)

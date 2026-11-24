@@ -150,6 +150,12 @@ variables are refused, even when named. Any other name the owner adds passes wit
 `AWS_SECRET_ACCESS_KEY` …): every agent gets it. A proxy or `GOPROXY` address with a user and password in it
 (`http://user:pass@proxy`) reaches every agent too.
 
+A name passes only when the gateway's own environment holds it: `minigw gw agents env`, Settings and the settings page
+mark a listed name that is not set there with "(not set in the gateway's environment)". On the Mac the app is started by
+launchd and does not have the variables of your shell (`.zshrc`, `.zprofile`): a variable set only there is not set in
+the gateway's environment. On Linux and Windows the gateway has the environment it was started with (the terminal, the
+service manager or the Gateway tray).
+
 ### Watching a long run
 
 While an agent works, `minigw -p` prints each of its steps on stderr as it happens (`minigw: · read_file src/a.go`;

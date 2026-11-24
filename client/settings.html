@@ -343,6 +343,7 @@ const S = {
     "Vsa orodja Claude Code, tudi ukazi: na Windows to zahteva »Dovoli ukaze brez peskovnika«."],
   permissionMode: ["Permission mode", "Način dovoljenj"], settingSources: ["Setting sources", "Viri nastavitev"],
   agentEnv: ["Agent environment", "Okolje agentov"], agentEnvVars: ["Extra variables", "Dodatne spremenljivke"],
+  agentEnvUnset: ["Not set in the gateway's environment, so agents do not get them: %s", "Ni nastavljeno v okolju prehoda, zato jih agenti ne dobijo: %s"],
   agentEnvHelp: ["Agents and minigw run get only what they need to start and build (PATH, HOME, user, shell, locale, proxies, certificates, temporary and toolchain folders) and the variables named here, separated by commas. API keys (…_API_KEY), the Claude, Copilot and GitHub sign-in variables and the gateway's own are always refused; any other name added here reaches every agent with its value, secrets included.",
     "Agenti in minigw run dobijo le, kar potrebujejo za zagon in gradnjo (PATH, HOME, uporabnik, lupina, jezikovne nastavitve, posredniki, certifikati, začasne mape in mape orodij), ter spremenljivke, naštete tukaj, ločene z vejicami. Ključi API (…_API_KEY), spremenljivke prijave Claude, Copilot in GitHub ter spremenljivke prehoda so vedno zavrnjene; vsako drugo tu dodano ime dobijo vsi agenti z vrednostjo vred, tudi če je skrivnost."],
   settingSourcesHelp: ["Empty = none. project/local load settings and hooks from the client's folder, which then run on this computer; their env settings also change the agent's environment (for example its git or temporary folders).",
@@ -2356,7 +2357,10 @@ const pages = {
     const sources = el("input", {type: "text", value: c.settingSources, placeholder: t("none")});
     autosave(sources, n2, v => patch({settingSources: v}));
     const envNames = el("input", {type: "text", value: (ae.names || []).join(", "), placeholder: t("none")});  // #125
-    autosave(envNames, n3, v => api("PATCH", "/agents/env", {names: v.split(/[\s,]+/).filter(Boolean)}));
+    const envUnset = el("div", {class: "note"});  // D: names the gateway's environment does not hold (an older gateway sends none)
+    const showUnset = r => { envUnset.textContent = (r.unset || []).length ? t("agentEnvUnset", r.unset.join(", ")) : ""; };
+    showUnset(ae);
+    autosave(envNames, n3, async v => showUnset(await api("PATCH", "/agents/env", {names: v.split(/[\s,]+/).filter(Boolean)})));
     const mode = el("select", {}, ...["dontAsk", "acceptEdits", "auto", "plan"].map(m => el("option", {value: m, textContent: m, selected: c.permissionMode === m})));
     mode.addEventListener("change", () => save(n2, () => patch({permissionMode: mode.value})));
 
@@ -2412,7 +2416,7 @@ const pages = {
         workRow(c, patch, n2),
         row(labelSub(t("askOthers"), t("askOthersClaudeHelp")), toggle(c.askOthers, v => save(n2, () => patch({askOthers: v})), !c.allowLocalTools))),
       n2,
-      section(t("agentEnv")), group(row(labelSub(t("agentEnvVars"), t("agentEnvHelp")), envNames)), n3,
+      section(t("agentEnv")), group(row(labelSub(t("agentEnvVars"), t("agentEnvHelp")), envNames)), envUnset, n3,
       ...toolsPart,
       section(t("cliTool")),
       group(row(labelSub("minigw", st.installDir ? t("installedAt", st.installDir) : t("notInstalled")),

@@ -6,10 +6,13 @@ import Testing
 @Suite struct AgentEnvTests {
     struct Fixture: Decodable {
         struct Case: Decodable { var names: [String]; var want: [String]?; var error: String }
+        struct Unset: Decodable { var env: [String: String]; var names, want: [String] }
         var baseNames, basePrefixes, denyNames, denyPrefixes, denySuffixes: [String]
         var maxNames: Int
         var validate: [Case]
         var tooMany: String
+        var notBase: [String]
+        var unset: [Unset]
     }
     static let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     static func fixture() throws -> Fixture {
@@ -40,6 +43,17 @@ import Testing
         #expect(AgentEnv.validate(Array(many.prefix(f.maxNames))).error == nil)
         #expect(AgentEnv.validate(many).error == f.tooMany)
         #expect(AgentEnv.names(" A, B  C,,") == ["A", "B", "C"])
+    }
+
+    /// D: the owner's names the gateway's environment does not hold (GET agents/env "unset"), what the base list must not hold, and what Settings stores.
+    @Test func unsetNamesAndBaseLimits() throws {
+        let f = try Self.fixture()
+        for c in f.unset { #expect(AgentEnv.unset(c.names, env: c.env) == c.want, "\(c.names)") }
+        for n in f.notBase { #expect(AgentEnv.environment([n: "1"], owner: []).isEmpty, "\(n)") }
+        for n in ["GOPRIVATE", "GONOSUMDB", "GONOPROXY", "GRADLE_USER_HOME", "NVM_HOME", "NVM_SYMLINK"] { #expect(AgentEnv.environment([n: "1"], owner: []).count == 1, "\(n)") }
+        #expect(AgentEnv.saved("A;B", stored: "OLD") == "OLD")  // Settings: an invalid entry is not saved
+        #expect(AgentEnv.saved("A, B", stored: "OLD") == "A, B")
+        #expect(AgentEnv.saved("FOO_API_KEY", stored: "") == "")
     }
 
     /// Claude CLI, Codex, Copilot and minigw run all start from AgentEnv.environment (everyStartUsesTheAllowlist).
@@ -102,6 +116,8 @@ import Testing
             ("PATCH", #"{"add":"A","remove":"B"}"#, 400, "bad JSON body"),
             ("PATCH", "{}", 400, "bad JSON body"),
             ("PATCH", #"{"names":["X","Y"]}"#, 200, #""names":["X","Y"]"#),
+            ("PATCH", #"{"names":["Z"]}"#, 200, #""names":["Z"]"#),
+            ("PATCH", #"{"names":["PATH","Z"]}"#, 200, #""unset":["Z"]"#),  // D: PATH is set, Z is not
             ("PATCH", #"{"names":["Z"]}"#, 200, #""names":["Z"]"#),
         ] {
             let w = await admin(r, method, "/agents/env", body: body)

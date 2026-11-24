@@ -4563,11 +4563,11 @@
     {
      "match": "GET /agents/env",
      "status": 200,
-     "body": "{\"names\":[\"MGTEST_SECRET\",\"JFROG_URL\\u001b[31m\"]}"
+     "body": "{\"names\":[\"MGTEST_SECRET\",\"JFROG_URL\\u001b[31m\"],\"unset\":[\"MGTEST_SECRET\"]}"
     }
    ],
    "want": {
-    "out": "agentEnv: MGTEST_SECRET, JFROG_URL[31m\n",
+    "out": "agentEnv: MGTEST_SECRET (not set in the gateway's environment), JFROG_URL[31m\n",
     "err": "",
     "exit": 0,
     "requests": [
@@ -4604,6 +4604,35 @@
       "PATCH",
       "/agents/env",
       "{\"add\":\"MGTEST_SECRET\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "agents env add not set",
+   "args": [
+    "agents",
+    "env",
+    "add",
+    "AWS_PROFILE"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "PATCH /agents/env",
+     "status": 200,
+     "body": "{\"names\":[\"MGTEST_SECRET\",\"AWS_PROFILE\"],\"unset\":[\"AWS_PROFILE\"]}"
+    }
+   ],
+   "want": {
+    "out": "agentEnv: MGTEST_SECRET, AWS_PROFILE (not set in the gateway's environment)\nagentEnv: AWS_PROFILE is saved but not set in the gateway's environment: agents get it once the gateway is started with it\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "PATCH",
+      "/agents/env",
+      "{\"add\":\"AWS_PROFILE\"}"
      ]
     ]
    }

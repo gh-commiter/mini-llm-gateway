@@ -23,6 +23,11 @@ type agentEnvFixture struct {
 		Error       string
 	}
 	TooMany string
+	NotBase []string // D: they load code or carry credentials: only the owner names them
+	Unset   []struct {
+		Env         map[string]string
+		Names, Want []string
+	}
 }
 
 func loadAgentEnvFixture(t *testing.T) agentEnvFixture {
@@ -171,6 +176,30 @@ func TestEveryAgentStartUsesTheAllowlist(t *testing.T) {
 	}
 }
 
+// D: the owner's names the gateway's environment does not hold (GET /agents/env "unset"), and what the base list must not hold.
+func TestAgentEnvUnset(t *testing.T) {
+	f := loadAgentEnvFixture(t)
+	for _, c := range f.Unset {
+		var env []string
+		for k, v := range c.Env {
+			env = append(env, k+"="+v)
+		}
+		if got := agentEnvUnset(c.Names, env); !slices.Equal(got, c.Want) {
+			t.Errorf("%q in %q: %q, want %q", c.Names, env, got, c.Want)
+		}
+	}
+	for _, n := range f.NotBase {
+		if got := agentEnvFor([]string{n + "=1"}, nil); len(got) != 0 {
+			t.Errorf("%s passes without the owner: %q", n, got)
+		}
+	}
+	for _, n := range []string{"GOPRIVATE", "GONOSUMDB", "GONOPROXY", "GRADLE_USER_HOME", "NVM_HOME", "NVM_SYMLINK"} {
+		if got := agentEnvFor([]string{n + "=1"}, nil); len(got) != 1 {
+			t.Errorf("%s does not pass: %q", n, got)
+		}
+	}
+}
+
 // The setting: add, remove, replace and validation through the admin API (gw agents env, the settings page, the TUI); serve.json keeps it.
 func TestAgentEnvSettingRoundTrip(t *testing.T) {
 	s, _ := testServer(t, nil)
@@ -184,19 +213,21 @@ func TestAgentEnvSettingRoundTrip(t *testing.T) {
 		status       int
 		want         string
 	}{
-		{"GET", "", 200, `{"names":[]}`},
-		{"PATCH", `{"add":"MGTEST_SECRET"}`, 200, `{"names":["MGTEST_SECRET"]}`},
-		{"PATCH", `{"add":"OTHER"}`, 200, `{"names":["MGTEST_SECRET","OTHER"]}`},
-		{"PATCH", `{"add":"MGTEST_SECRET"}`, 200, `{"names":["MGTEST_SECRET","OTHER"]}`},
+		{"GET", "", 200, `{"names":[],"unset":[]}`},
+		{"PATCH", `{"add":"MGTEST_SECRET"}`, 200, `{"names":["MGTEST_SECRET"],"unset":["MGTEST_SECRET"]}`},
+		{"PATCH", `{"add":"PATH"}`, 200, `{"names":["MGTEST_SECRET","PATH"],"unset":["MGTEST_SECRET"]}`}, // D: PATH is set, MGTEST_SECRET is not
+		{"PATCH", `{"remove":"PATH"}`, 200, `{"names":["MGTEST_SECRET"],"unset":["MGTEST_SECRET"]}`},
+		{"PATCH", `{"add":"OTHER"}`, 200, `{"names":["MGTEST_SECRET","OTHER"],"unset":["MGTEST_SECRET","OTHER"]}`},
+		{"PATCH", `{"add":"MGTEST_SECRET"}`, 200, `{"names":["MGTEST_SECRET","OTHER"],"unset":["MGTEST_SECRET","OTHER"]}`},
 		{"PATCH", `{"add":"FOO_API_KEY"}`, 400, "is never passed to agents"},
 		{"PATCH", `{"add":"1X"}`, 400, "is not a variable name"},
 		{"PATCH", `{"remove":"NOPE"}`, 400, "agentEnv: NOPE is not in the list"},
-		{"PATCH", `{"remove":"OTHER"}`, 200, `{"names":["MGTEST_SECRET"]}`},
+		{"PATCH", `{"remove":"OTHER"}`, 200, `{"names":["MGTEST_SECRET"],"unset":["MGTEST_SECRET"]}`},
 		{"PATCH", `{"add":"A","remove":"B"}`, 400, "bad JSON body"},
 		{"PATCH", `{}`, 400, "bad JSON body"},
-		{"PATCH", `{"names":["X","Y"]}`, 200, `{"names":["X","Y"]}`},
-		{"PATCH", `{"names":[]}`, 200, `{"names":[]}`},
-		{"PATCH", `{"names":["Z"]}`, 200, `{"names":["Z"]}`},
+		{"PATCH", `{"names":["X","Y"]}`, 200, `{"names":["X","Y"],"unset":["X","Y"]}`},
+		{"PATCH", `{"names":[]}`, 200, `{"names":[],"unset":[]}`},
+		{"PATCH", `{"names":["Z"]}`, 200, `{"names":["Z"],"unset":["Z"]}`},
 	} {
 		if st, b := do(c.method, c.body); st != c.status || !strings.Contains(b, c.want) {
 			t.Errorf("%s %s: %d %s, want %d %s", c.method, c.body, st, b, c.status, c.want)

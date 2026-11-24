@@ -440,7 +440,7 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		if len(pos) < 2 || pos[1] != "env" || len(pos) != 2 && (len(pos) != 4 || pos[2] != "add" && pos[2] != "remove") {
 			fail(strings.TrimSpace(coreHelp))
 		}
-		var r struct{ Names []string }
+		var r struct{ Names, Unset []string }
 		if len(pos) == 4 {
 			a.do("PATCH", "/agents/env", map[string]any{pos[2]: pos[3]}, &r)
 		} else {
@@ -449,7 +449,16 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		if len(r.Names) == 0 {
 			say("agentEnv: none (agents get only the base list; minigw gw agents env add <NAME> adds a variable)")
 		} else {
-			say(clean("agentEnv: " + strings.Join(r.Names, ", ")))
+			marked := slices.Clone(r.Names)
+			for i, n := range marked {
+				if slices.Contains(r.Unset, n) {
+					marked[i] += " (not set in the gateway's environment)"
+				}
+			}
+			say(clean("agentEnv: " + strings.Join(marked, ", ")))
+		}
+		if len(pos) == 4 && pos[2] == "add" && slices.Contains(r.Unset, pos[3]) { // D: saved, but agents get it only once the gateway starts with it
+			say(clean("agentEnv: " + pos[3] + " is saved but not set in the gateway's environment: agents get it once the gateway is started with it"))
 		}
 	case "quota":
 		need(1, 1)

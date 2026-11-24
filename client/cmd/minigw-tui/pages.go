@@ -536,6 +536,9 @@ func agents(u *ui) ([]row, error) {
 				return u.save("PATCH", "/agents/env", map[string]any{"names": csv(v)})
 			}),
 			inf("  Agents get the base list (PATH, HOME, proxies…) and these;", ""), inf("  *_API_KEY and sign-in names are refused; any other name", ""), inf("  passes with its value, secrets included.", ""))
+		if u := strs(e, "unset"); len(u) > 0 { // D: an older gateway sends none
+			rows = append(rows, inf("  Not set in the gateway's environment: "+strings.Join(u, ", "), ""))
+		}
 	}
 
 	if f, err := u.call("GET", "/foundry", nil); err == nil {

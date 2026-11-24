@@ -308,9 +308,12 @@ public final class AdminCommands {
         case "agents":  // #125
             guard pos.count >= 2, pos[1] == "env", pos.count == 2 || pos.count == 4 && (pos[2] == "add" || pos[2] == "remove") else { throw usage }
             let r = pos.count == 4 ? try request("PATCH", "/agents/env", [pos[2]: pos[3]]) : try request("GET", "/agents/env")
-            let names = (r["names"]?.array ?? []).compactMap(\.string)
+            let names = (r["names"]?.array ?? []).compactMap(\.string), unset = (r["unset"]?.array ?? []).compactMap(\.string)  // D: an older gateway sends no "unset"
             say(names.isEmpty ? "agentEnv: none (agents get only the base list; minigw gw agents env add <NAME> adds a variable)"
-                : clean("agentEnv: " + names.joined(separator: ", ")))
+                : clean("agentEnv: " + names.map { unset.contains($0) ? $0 + " (not set in the gateway's environment)" : $0 }.joined(separator: ", ")))
+            if pos.count == 4, pos[2] == "add", unset.contains(pos[3]) {
+                say(clean("agentEnv: " + pos[3] + " is saved but not set in the gateway's environment: agents get it once the gateway is started with it"))
+            }
         case "quota":
             try need(1, 1)
             if o.history {

@@ -11,6 +11,7 @@ public enum AgentEnv {
         "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
         "JAVA_HOME", "MAVEN_HOME", "M2_HOME", "MAVEN_OPTS", "GOPATH", "GOROOT", "GOMODCACHE", "GOCACHE", "GOFLAGS", "GOPROXY",
         "CARGO_HOME", "RUSTUP_HOME", "NVM_DIR", "PNPM_HOME", "PYENV_ROOT", "VIRTUAL_ENV", "ANDROID_HOME", "DOTNET_ROOT", "DEVELOPER_DIR", "SDKROOT",
+        "GOPRIVATE", "GONOSUMDB", "GONOPROXY", "GRADLE_USER_HOME", "NVM_HOME", "NVM_SYMLINK",  // folders and module routing (no code loading, no credentials)
         "CLAUDE_CONFIG_DIR",  // claude's login folder when the user moved it; without it the agent is "not logged in"
         // Windows (the Go gateway): what a process needs to start and find the user's folders
         "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
@@ -45,6 +46,17 @@ public enum AgentEnv {
     /// The names in the Settings field (`RouterConfig.agentEnv`: separated by commas or spaces).
     public static func names(_ field: String) -> [String] {
         field.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+    }
+
+    /// The owner's names that `env` (the gateway's own environment) does not hold: they reach no agent (GET agents/env "unset"; Go's agentEnvUnset).
+    public static func unset(_ names: [String], env: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
+        let have = Set(env.keys.map { $0.uppercased() })
+        return names.filter { !have.contains($0.uppercased()) }
+    }
+
+    /// What Settings stores for the field: the typed text when it is valid, else the stored one (an invalid entry is not saved, as in the admin API).
+    public static func saved(_ typed: String, stored: String) -> String {
+        validate(names(typed)).error == nil ? typed : stored
     }
 
     /// The owner's names, checked (as validAgentEnv in Go); duplicates are dropped. On failure the reason (the same text in Go).

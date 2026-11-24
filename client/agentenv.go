@@ -17,6 +17,7 @@ var agentEnvBase = []string{
 	"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
 	"JAVA_HOME", "MAVEN_HOME", "M2_HOME", "MAVEN_OPTS", "GOPATH", "GOROOT", "GOMODCACHE", "GOCACHE", "GOFLAGS", "GOPROXY",
 	"CARGO_HOME", "RUSTUP_HOME", "NVM_DIR", "PNPM_HOME", "PYENV_ROOT", "VIRTUAL_ENV", "ANDROID_HOME", "DOTNET_ROOT", "DEVELOPER_DIR", "SDKROOT",
+	"GOPRIVATE", "GONOSUMDB", "GONOPROXY", "GRADLE_USER_HOME", "NVM_HOME", "NVM_SYMLINK", // folders and module routing (no code loading, no credentials)
 	"CLAUDE_CONFIG_DIR", // claude's login folder when the user moved it (the quota probe passes it too); without it the agent is "not logged in"
 	// Windows: what a process needs to start and find the user's folders (ProgramW6432: the 64-bit Program Files a 32-bit process sees)
 	"SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
@@ -76,6 +77,17 @@ func agentEnvFor(env, owner []string) []string {
 		}
 	}
 	return agentEnv(out)
+}
+
+// agentEnvUnset: the owner's names that env (the gateway's own environment) does not hold: they reach no agent (GET /agents/env "unset").
+func agentEnvUnset(names, env []string) []string {
+	out := []string{}
+	for _, n := range names {
+		if !slices.ContainsFunc(env, func(e string) bool { k, _, _ := strings.Cut(e, "="); return strings.EqualFold(k, n) }) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // validAgentEnv: the owner's names, checked (as AgentEnv.validate on the Mac); duplicates are dropped.
