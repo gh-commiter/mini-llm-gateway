@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+- The project core no longer goes down at random with "read: Bad file descriptor" (#177). macOS marks a socket as draining for good when a copy of it is closed while another process looks at that copy (a child that the gateway starts briefly holds copies of the gateway's sockets, and the gateway's own admin check, lsof or a monitoring tool look at the sockets of every process); after that every read or write on the socket that has to wait fails with EBADF, although the gateway's own descriptor is open. The app's connections to the core helper now wait with poll and read and write without blocking, which that state does not affect; the time limits are unchanged.
+
 ## 0.10.5
 
 ### Fixed
