@@ -1,5 +1,27 @@
 # Release notes
 
+## 0.10.9
+
+### Security
+- Claude CLI with "Allow local tools" off, in direct or sync mode, still let Claude Code itself see the folder's git repository. On the Mac that run is normally under the system sandbox, which stops it from running git at all; but when the sandbox self-check had failed (Settings and `minigw gw status` then say "runs without the system sandbox"), Claude Code's own git could follow a `.git/config` written by the client and run a command as the gateway user (the #187 problem of 0.10.8, in a case 0.10.8 did not cover). On a Linux or macOS `minigw serve` gateway the same run had no sandbox around Claude Code at all. Now every direct and sync Claude CLI run hides the repository from Claude Code itself, with local tools on or off, on both gateways. Nothing changes for you: a run without local tools has no commands, so its git was never needed. Not reproduced with a real Claude Code run (found by reading).
+- The file that gives Claude CLI's commands their repository back (Mac gateway) now has a random name and can be read only by the gateway user.
+- The agent environment help (Settings, the settings page, the TUI, `minigw gw` help, the gw skill) said tokens and sign-in variables never pass. Only API keys (`*_API_KEY`), the Claude, Copilot and GitHub sign-in variables and the gateway's own variables are refused; any other name you add (`NPM_TOKEN`, `AWS_SECRET_ACCESS_KEY` …) reaches every agent with its value. The help now says that. A proxy address with a user and password in it reaches every agent too (docs/usage.md).
+
+### Fixed
+- Mac Settings no longer saves an invalid Agent environment entry (for example `A;B`); it keeps the last valid list, as `minigw gw agents env` does.
+- `minigw gw agents env` against a gateway older than 0.10.2 says "minigw gw agents env needs gateway 0.10.2 or newer" instead of "no agent env".
+- Docs: a removed profile's KB hooks are not silent (the session start says so since 0.10.5); Grok's `env -u GIT_DIR git` in Linux sync mode; the places of the Agent environment setting.
+
+### Changed
+- Agents get six more variables of the gateway's environment without being named: `GOPRIVATE`, `GONOSUMDB`, `GONOPROXY`, `GRADLE_USER_HOME`, `NVM_HOME`, `NVM_SYMLINK` (folders and module routing). Variables that load code or carry credentials (`GRADLE_OPTS`, `JAVA_TOOL_OPTIONS`, `NODE_OPTIONS`, `npm_config_*`, `PIP_*`, `AWS_*`, `KUBECONFIG` …) still need `minigw gw agents env add <NAME>`.
+- A listed name that the gateway's own environment does not hold (so no agent gets it) is marked "(not set in the gateway's environment)" in `minigw gw agents env`, Mac Settings, the settings page and the TUI; `add` says so in one line and still saves the name. On the Mac the app is started by launchd and does not have the variables of your shell.
+- The settings page shows Agent environment on the General page, next to Worktree mode, as the Mac does.
+
+### Known problems
+- The local-tools-off fix was checked with the trap repository and a stand-in Claude program, not with a real Claude Code session with the system sandbox off.
+- Still not proven end to end with the real programs (from 0.10.8): Claude Code's `CLAUDE_ENV_FILE` in a real `-p` session, and a real `codex exec` session.
+- The Windows gateway: Claude CLI and Grok run in the MXC box there, so their git is not changed. Not run on Windows; the Linux gateway's change was tested on macOS with the same code, not on Linux.
+
 ## 0.10.8
 
 ### Security
