@@ -769,6 +769,8 @@ func TestPullSlowUpstreamEndsTheCallWithoutStoringHalfARun(t *testing.T) {
 		t.Fatalf("%+v", l)
 	}
 	// the local gateway is not stalled while a pull waits: another write goes through (the network wait holds no database transaction)
+	// this pull must wait on hold alone: with the 50 ms call timeout a slow machine ended it before the second pull below asked
+	pullCallTimeout, pullRunTimeout = time.Minute, time.Minute
 	blocking2 := &slowUp{inner: h.up(), slowPath: "/kb/manifest", hold: make(chan struct{})}
 	done := make(chan UpstreamPull, 1)
 	go func() {
