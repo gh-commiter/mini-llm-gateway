@@ -108,28 +108,92 @@ import Testing
     }
 }
 
-/// Every place of the product that starts git carries the shared guard (Worktree.noExecPins/noExecEnv or the named watch and hook
-/// guards) near the invocation. A new git call elsewhere fails here: add the guard, or list it with the reason it needs none.
+/// Every place of the product that starts a process, or names git, is either a start of a literal program other than git, or listed below;
+/// a listed git start carries its guard in CODE (comments do not count) near the call. A new start through a variable (`executableURL = …exe`,
+/// `posix_spawn(&pid, exe`, `execv(x`) fails until it is listed with what it starts; a listed entry that matches nothing fails too. All of Sources/.
+/// Not covered by this scan: a program name built at run time that reaches a listed generic helper (Worktree.run, Native.run, Native.spawnGroup,
+/// Shares.run, Codex.run …) without a git name in the code (`"git"`, `…/git"`, `Worktree.git`, `? git`); git inside a shell command string
+/// (`sh -c "git …"`); starts through APIs outside the pattern (NSWorkspace, AppleScript); git that a started program runs itself: the agent
+/// harnesses (Claude CLI, Codex, Copilot), covered by the environment tests in HarnessGitTrapTests.swift, not by a scan.
 @Suite struct GitInvocationScan {
+    struct Site { let file, snippet, guardName, why: String }
+    static let sites: [Site] = [
+        // git, with its guard
+        Site(file: "Worktree.swift", snippet: "sandbox == nil ? git", guardName: "noExecPins", why: "run(): the one place that runs git for the router and the client"),
+        Site(file: "Worktree.swift", snippet: "posix_spawn(&pid, exe", guardName: "gitArgs", why: "run(): its spawn of the guarded arguments (noExecPins: the entry above)"),
+        Site(file: "KBHook.swift", snippet: #"Profiles.executable("git""#, guardName: "gitGuardEnv", why: "hook state: rev-parse and ls-files with the agent guard environment"),
+        Site(file: "KBHook.swift", snippet: "fileURLWithPath: exe)", guardName: "gitGuardEnv", why: "hook state: its spawn"),
+        Site(file: "ProjectIdentity.swift", snippet: #"Profiles.executable("git""#, guardName: "noExecPins", why: "origin lookup: config --local --get"),
+        // names git, starts nothing
+        Site(file: "Worktree.swift", snippet: #"+ "/usr/bin/git""#, guardName: "", why: "finds the real git (not the xcrun shim)"),
+        Site(file: "Worktree.swift", snippet: #"?? "/usr/bin/git""#, guardName: "", why: "finds the real git (not the xcrun shim)"),
+        Site(file: "Worktree.swift", snippet: #"appendingPathComponent("git")"#, guardName: "", why: "the gitexec wrapper file"),
+        Site(file: "Worktree.swift", snippet: #"n != "git""#, guardName: "", why: "the gitexec exec-path links"),
+        Site(file: "Worktree.swift", snippet: #"(real + "/git")"#, guardName: "", why: "the gitexec wrapper script's text"),
+        Site(file: "Worktree.swift", snippet: #"real: real + "/git")"#, guardName: "", why: "the gitexec PATH wrapper script's text"),
+        Site(file: "Worktree.swift", snippet: #"(allow process-exec* (literal \(q(git)))"#, guardName: "", why: "a Seatbelt rule that lets the sandbox run git"),
+        // starts through a variable that is not git
+        Site(file: "CLITool.swift", snippet: "executableURL = helper", guardName: "", why: "the app's helper tool"),
+        Site(file: "CLITool.swift", snippet: "fileURLWithPath: shell)", guardName: "", why: "the user's shell"),
+        Site(file: "ClaudeSeatbelt.swift", snippet: "fileURLWithPath: exe)", guardName: "", why: "the Claude CLI self-check"),
+        Site(file: "CoreHelper.swift", snippet: "posix_spawn(&pid, binary.path", guardName: "", why: "the core helper"),
+        Site(file: "Shares.swift", snippet: "fileURLWithPath: exe)", guardName: "", why: "Shares.run: mount tools"),
+        Site(file: "Native.swift", snippet: "fileURLWithPath: argv[0])", guardName: "", why: "Native.run: system tools"),
+        Site(file: "Native.swift", snippet: "posix_spawn(&pid, exe", guardName: "", why: "Native.spawnGroup: the agent CLIs (their git: HarnessGitTrapTests)"),
+        Site(file: "Foundry.swift", snippet: "fileURLWithPath: exe)", guardName: "", why: "Foundry Local CLI"),
+        Site(file: "Codex.swift", snippet: "fileURLWithPath: exe)", guardName: "", why: "Codex (its git: Codex.directEnv, HarnessGitTrapTests)"),
+        Site(file: "ClaudeCLI.swift", snippet: "fileURLWithPath: path)", guardName: "", why: "claude --version"),
+        Site(file: "ClaudeCLI.swift", snippet: "fileURLWithPath: exe)", guardName: "", why: "claude tool list"),
+        Site(file: "ClaudeCLI.swift", snippet: "fileURLWithPath: shell)", guardName: "", why: "the login shell's PATH"),
+        Site(file: "ClaudeCLI.swift", snippet: "fileURLWithPath: launch.0)", guardName: "", why: "Claude CLI (its git: ClaudeCLIConfig.harnessGitEnv, HarnessGitTrapTests)"),
+        Site(file: "RouterCommand.swift", snippet: "execv(tui, argv)", guardName: "", why: "the TUI"),
+        Site(file: "RouterCommand.swift", snippet: "execv(helper, argv)", guardName: "", why: "the helper"),
+        Site(file: "PluginCommand.swift", snippet: "fileURLWithPath: exe)", guardName: "", why: "claude plugin commands"),
+        Site(file: "main.swift", snippet: "execv(claudeExe, argv)", guardName: "", why: "minigw runs claude"),
+        Site(file: "main.swift", snippet: "posix_spawn(&pid, $0", guardName: "", why: "minigw runs claude"),
+    ]
+
+    /// The line without its `//` comment (a `//` inside a string literal stays).
+    static func codeOnly(_ l: String) -> String {
+        var inString = false, prev: Character = " ", out = ""
+        for c in l {
+            if inString { if c == "\"" && prev != "\\" { inString = false } }
+            else if c == "\"" { inString = true }
+            else if c == "/" && prev == "/" { return String(out.dropLast()) }
+            out.append(c); prev = c == "\\" && prev == "\\" ? " " : c
+        }
+        return out
+    }
+
+    @Test func theScanIgnoresComments() {
+        #expect(Self.codeOnly("let x = 1 // noExecPins") == "let x = 1 ")
+        #expect(Self.codeOnly(#"let s = "a//b" // c"#) == #"let s = "a//b" "#)
+    }
+
     @Test func everyGitInvocationCarriesAGuard() throws {
         let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
-        let allowed: [String: String] = [  // file -> the guard that must appear near the invocation
-            "Worktree.swift": "noExecPins",  // run(): the one place that runs git for the router and the client
-            "KBHook.swift": "gitGuardEnv",  // hook state: rev-parse and ls-files with the agent guard environment
-            "ProjectIdentity.swift": "noExecPins",  // origin lookup: config --local --get
-        ]
-        let invocation = try NSRegularExpression(pattern: #"executable\("git"|sandbox == nil \? git|fileURLWithPath: Worktree\.git"#)
-        var found = 0
+        let spawn = try NSRegularExpression(pattern: #"executableURL\s*=|launchPath\s*=|\bposix_spawnp?\(|\bexecv[pe]?\(|\bProcess\.run\(|\bNSTask\b"#)
+        let literal = try NSRegularExpression(pattern: #"(?:executableURL\s*=\s*URL\(fileURLWithPath:|posix_spawnp?\(&\w+,|execvp?\()\s*"[^"]*""#)
+        let gitName = try NSRegularExpression(pattern: #""git"|/git"|Worktree\.git\b|\? git\b"#)
+        func count(_ r: NSRegularExpression, _ l: String) -> Int { r.numberOfMatches(in: l, range: NSRange(l.startIndex..., in: l)) }
+        var used = Set<Int>(), found = 0
         for case let url as URL in FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)! where url.pathExtension == "swift" {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            let lines = text.components(separatedBy: "\n")
-            for (i, line) in lines.enumerated() where invocation.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil {
+            let code = try String(contentsOf: url, encoding: .utf8).components(separatedBy: "\n").map(Self.codeOnly)
+            for (i, line) in code.enumerated() {
+                let named = count(gitName, line) > 0, started = count(spawn, line) > count(literal, line)  // a literal path with /git" is named
+                guard named || started else { continue }
                 found += 1
-                let guardName = allowed[url.lastPathComponent]
-                let window = lines[max(0, i - 25)..<min(lines.count, i + 12)].joined(separator: "\n")
-                #expect(guardName != nil && window.contains(guardName!), "\(url.lastPathComponent):\(i + 1) starts git without a listed guard near it: \(line.trimmingCharacters(in: .whitespaces))")
+                let file = url.lastPathComponent
+                guard let k = Self.sites.indices.first(where: { Self.sites[$0].file == file && line.contains(Self.sites[$0].snippet) }) else {
+                    Issue.record("\(file):\(i + 1) starts a program through a variable, or names git, and is not listed: \(line.trimmingCharacters(in: .whitespaces))")
+                    continue
+                }
+                used.insert(k)
+                let g = Self.sites[k].guardName, window = code[max(0, i - 25)..<min(code.count, i + 12)].joined(separator: "\n")
+                #expect(g.isEmpty || window.contains(g), "\(file):\(i + 1) starts git without \(g) in the code near it: \(line.trimmingCharacters(in: .whitespaces))")
             }
         }
         #expect(found >= 3, "the scan found no git invocations: the pattern is stale")
+        for (k, s) in Self.sites.enumerated() where !used.contains(k) { Issue.record("stale entry: \(s.file) \(s.snippet) matches nothing") }
     }
 }

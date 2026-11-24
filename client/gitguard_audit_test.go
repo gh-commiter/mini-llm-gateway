@@ -250,46 +250,146 @@ func TestAuditOriginToplevelAndQueries(t *testing.T) {
 	h.must("gitHasCommit", false)
 }
 
-// Every place of the product that starts git must carry the shared guard (gitNoExecPins/gitNoExecEnv, gitGuardPins, or the
-// gitWatch and hook guards named below) near the invocation. A new git call elsewhere fails here: add the guard, or list it
-// with the reason it needs none.
+// Every place of the product that starts a process, or names git, is either a start with a literal program other than git, or listed
+// below; a listed git start must carry its guard in CODE (comments do not count) near the call. A new start through a variable
+// (command(exe, …)) fails here until it is listed with what it starts and why; a listed entry that matches nothing fails too.
+// All .go files under client/ (subpackages too), not the tests.
+// Not covered by this scan: a program name built at run time and passed through a helper that is not listed as a start site (the
+// helpers are: command, commandContext, consoleCommand, exec.Command(Context), exec.Cmd{…}, os.StartProcess, syscall.ForkExec/Exec);
+// git inside a shell command string ("sh -c 'git …'"); git that a started program runs itself: the harness of an agent (Claude CLI,
+// Codex, Grok, Copilot), covered by the environment tests in harness_git_trap_test.go, not by a scan.
 func TestEveryGitInvocationCarriesAGuard(t *testing.T) {
-	type site struct{ file, guard, why string }
-	allowed := []site{
-		{"gitwatch.go", "gitWatchPins", "the git watch: its own pins and env (asserted against git-watch-pins.json and the Swift watch)"},
-		{"kb_hook.go", "gitGuardEnv", "hook state: rev-parse and ls-files with the agent guard environment and no filter-running command"},
-		{"project_cmd.go", "gitNoExecPins", "origin lookup: config --local --get"},
-		{"worktree.go", "gitNoExecPins", "client side: the user's repository"},
-		{"serve_worktree.go", "gitGuardPins", "gateway side: mirror and clone, gateway-owned configuration"},
+	type site struct{ file, snippet, guard, why string }
+	sites := []site{
+		// git, with its guard
+		{"gitwatch.go", `commandContext(ctx, "git"`, "gitWatchPins", "the git watch: its own pins and env (asserted against git-watch-pins.json and the Swift watch)"},
+		{"kb_hook.go", `commandContext(ctx, "git"`, "gitGuardEnv", "hook state: rev-parse and ls-files with the agent guard environment and no filter-running command"},
+		{"project_cmd.go", `commandContext(ctx, "git"`, "gitNoExecPins", "origin lookup: config --local --get"},
+		{"worktree.go", `command("git"`, "gitNoExecPins", "client side: the user's repository"},
+		{"worktree.go", `commandContext(ctx, "git"`, "gitNoExecPins", "client side: the user's repository"},
+		{"serve_worktree.go", `commandContext(ctx, name, argv...)`, "gitGuardPins", "gateway side (gitRunBox): mirror and clone, gateway-owned configuration"},
+		{"serve_worktree.go", `command(exe, "--exec-path")`, "", "git --exec-path only: reads no repository and no configuration"},
+		{"gitwrap.go", `command(real, args...)`, "", "Windows gitWrapMain: the agent's own git inside the MXC box, as its own command (by design)"},
+		// names git, starts nothing
+		{"serve_worktree.go", `exec.LookPath("git")`, "", "the path of git; its starts are the gitRunBox and --exec-path entries"},
+		{"serve_worktree.go", `filepath.Join(real, "git")`, "", "the gitExecWrap wrapper script's text"},
+		{"serve_worktree.go", `filepath.Join(dir, "git")`, "", "the gitExecWrap wrapper file"},
+		{"serve_worktree.go", `filepath.Join(dir, "bin", "git")`, "", "the gitExecWrap PATH wrapper file"},
+		{"serve_worktree.go", `e.Name() != "git"`, "", "the gitExecWrap exec-path links"},
+		{"gitwrap.go", `"git.exe")`, "", "the Windows wrapper's file name"},
+		{"mxc.go", `"git.exe"))`, "", "finds Git for Windows' folder"},
+		{"core/identity.go", `"git":`, "", "a URL scheme"},
+		// starts through a variable that is not git
+		{"proc.go", `exec.Command(name, args...)`, "", "the command and consoleCommand wrappers: their callers are scanned"},
+		{"proc.go", `exec.CommandContext(ctx, name, args...)`, "", "the commandContext wrapper: its callers are scanned"},
+		{"serve_quota.go", `commandContext(ctx, exe[0], probeArgs(exe)...)`, "", "the quota probe of an agent CLI"},
+		{"serve_cli.go", `commandContext(ctx, name, cargs...)`, "", "Claude CLI (its own git: claudeHarnessGitEnv, harness_git_trap_test.go)"},
+		{"serve_agents.go", `commandContext(ctx, exe, args...)`, "", "agentCatalog: an agent CLI's model list"},
+		{"serve_agents.go", `commandContext(ctx, name, args...)`, "", "copilotPrepare and runAgentProcess: the agent CLIs (their git: agentHarnessGitEnv, harness_git_trap_test.go)"},
+		{"serve_tray.go", `commandContext(ctx, filepath.Join(filepath.Dir(exe), "minigw.exe")`, "", "the tray starts minigw"},
+		{"mxc.go", `commandContext(ctx, name, args...)`, "", "the MXC box launcher"},
+		{"finalize_linux.go", `command(p, "--ro-bind"`, "", "bwrap probe"},
+		{"peer_linux.go", `syscall.ForkExec(exe, args`, "", "the peer starts its own child"},
+		{"peer_windows.go", `exec.Cmd{Path: cmd.Path`, "", "rebuilds a command already listed at its start (same program)"},
+		{"serve_router.go", `consoleCommand(tui, `, "", "the TUI"},
+		{"peer_linux.go", `command(p, append(bwrapArgs(`, "", "bwrap probe"},
+		{"peer_linux.go", `command(bw, "--dev-bind"`, "", "bwrap probes"},
+		{"secretstore_other.go", `command(tool, `, "", "secret-tool"},
+		{"plugin.go", `command(c, "--version")`, "", "claude --version"},
+		{"store_other.go", `command(tool, "search"`, "", "secret-tool"},
+		{"serve_install.go", `command(name, args...)`, "", "the service manager (replaced by the tests)"},
+		{"serve_install.go", `command(exe, "--version")`, "", "an installed minigw or agent --version"},
+		{"copilotlogin.go", `commandContext(ctx, exe, args...)`, "", "busctl or dbus-send"},
+		{"copilotlogin.go", `command(lookPath("xdg-dbus-proxy")`, "", "xdg-dbus-proxy"},
+		{"serve_admin.go", `commandContext(ctx, exe[0], append(exe[1:]`, "", "the Claude CLI self-test and --version"},
+		{"tray_windows.go", `command(exe, "--app="+url)`, "", "the browser"},
+		{"foundry.go", `commandContext(ctx, exe, args...)`, "", "Foundry Local CLI"},
+		{"store_windows.go", `command(exe, args...)`, "", "startProcessDetached: the tray"},
+		{"cmd/minigw-tui/main.go", `exec.Command(u.minigw`, "", "the TUI runs minigw"},
 	}
-	call := regexp.MustCompile(`(?:commandContext|command|exec\.Command|exec\.CommandContext)\(\s*(?:ctx,\s*)?(?:"git"|name\b|exe\b)`)
-	files, _ := filepath.Glob("*.go")
+	spawn := regexp.MustCompile(`\b(?:commandContext|command|consoleCommand|exec\.Command|exec\.CommandContext|os\.StartProcess|syscall\.ForkExec|syscall\.Exec)\(\s*(?:ctx,\s*|context\.\w+\(\),\s*)?(.)|exec\.Cmd\{()`)
+	wrapperDecl := regexp.MustCompile(`^func (?:command|commandContext|consoleCommand)\(`)
+	gitName := regexp.MustCompile(`"git(?:\.exe)?"|/git"`)
+	var files []string
+	filepath.WalkDir(".", func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go") && !strings.Contains(p, "testdata") {
+			files = append(files, filepath.ToSlash(p))
+		}
+		return nil
+	})
 	if len(files) == 0 {
 		t.Skip("needs the client/ source tree; not in the suite exe")
 	}
+	used := map[int]bool{}
 	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
 		b, _ := os.ReadFile(f)
 		lines := strings.Split(string(b), "\n")
+		code := make([]string, len(lines))
 		for i, l := range lines {
-			if strings.HasPrefix(strings.TrimSpace(l), "//") || !call.MatchString(l) || !(strings.Contains(l, `"git"`) || strings.Contains(l, "exe") || strings.Contains(l, "name, argv")) {
-				continue
+			code[i] = codeOnly(l)
+		}
+		for i, l := range code {
+			if wrapperDecl.MatchString(l) {
+				continue // the wrappers' own declarations
 			}
-			if !strings.Contains(l, `"git"`) && !(f == "serve_worktree.go" && strings.Contains(l, "name, argv")) {
+			listed := false
+			for _, m := range spawn.FindAllStringSubmatch(l, -1) {
+				if m[1] == `"` && !strings.Contains(l, `"git"`) && !strings.Contains(l, `"git.exe"`) {
+					continue // a literal program that is not git
+				}
+				listed = true
+			}
+			if !listed && !gitName.MatchString(l) {
 				continue
 			}
 			ok := false
-			for _, s := range allowed {
-				if s.file == f {
-					lo, hi := max(0, i-25), min(len(lines), i+8)
-					ok = strings.Contains(strings.Join(lines[lo:hi], "\n"), s.guard)
+			for k, s := range sites {
+				if s.file != f || !strings.Contains(l, s.snippet) {
+					continue
 				}
+				used[k] = true
+				window := strings.Join(code[max(0, i-25):min(len(code), i+12)], "\n")
+				if ok = s.guard == "" || strings.Contains(window, s.guard); !ok {
+					t.Errorf("%s:%d starts git without %s in the code near it: %s", f, i+1, s.guard, strings.TrimSpace(l))
+					ok = true // reported
+				}
+				break
 			}
 			if !ok {
-				t.Errorf("%s:%d starts git without a listed guard near it: %s", f, i+1, strings.TrimSpace(l))
+				t.Errorf("%s:%d starts a program through a variable, or names git, and is not listed: %s", f, i+1, strings.TrimSpace(l))
 			}
 		}
+	}
+	for k, s := range sites {
+		if !used[k] {
+			t.Errorf("stale entry: %s %q matches nothing", s.file, s.snippet)
+		}
+	}
+}
+
+// codeOnly: the line without its // comment (a // inside a string literal stays).
+func codeOnly(l string) string {
+	in, raw := false, false
+	for i := 0; i < len(l); i++ {
+		switch c := l[i]; {
+		case raw:
+			raw = c != '`'
+		case in && c == '\\':
+			i++
+		case c == '"':
+			in = !in
+		case !in && c == '`':
+			raw = true
+		case !in && c == '/' && i+1 < len(l) && l[i+1] == '/':
+			return l[:i]
+		}
+	}
+	return l
+}
+
+// The scan is not satisfied by a comment that names the guard, and catches a start through a variable.
+func TestGitScanHelpers(t *testing.T) {
+	if codeOnly(`x := 1 // gitGuardPins`) != "x := 1 " || codeOnly(`s := "a//b" // c`) != `s := "a//b" ` || codeOnly("r := `a//b` // c") != "r := `a//b` " {
+		t.Fatal("codeOnly")
 	}
 }
