@@ -45,7 +45,7 @@ func aClaudeAgentCommitsInADirectModeFolderAndCannotPlantAHook(identity: Bool) a
 
 /// The launch of a sandboxed agent run (fake claude): git gets no user and system configuration (the sandbox hides ~/.gitconfig, which git treats as fatal) and no
 /// inherited GIT_* variable; the sandbox's denyWrite closes nested `.git` entries but not the folder's own `.git`, which a commit writes (a real run: index.lock refused).
-@Test func aSandboxedAgentRunGetsASafeGitEnvironment() async throws {
+@Test(.blocking) func aSandboxedAgentRunGetsASafeGitEnvironment() async throws {
     let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("mgw-direct-git-env-" + UUID().uuidString.lowercased(), isDirectory: true)
     let project = base.appendingPathComponent("proj"), bin = base.appendingPathComponent("bin")
     for d in [project, bin] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }

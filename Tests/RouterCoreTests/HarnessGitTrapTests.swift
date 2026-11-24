@@ -88,7 +88,7 @@ struct TrapRepo {
 }
 
 /// The traps work (control): git with no protection runs them; otherwise the checks below would prove nothing.
-@Test func theGitTrapsFireWithoutProtection() throws {
+@Test(.blocking) func theGitTrapsFireWithoutProtection() throws {
     let t = try TrapRepo(); defer { t.cleanup() }
     let f = t.fired([:])
     let all = Set(f.values.joined())
@@ -96,7 +96,7 @@ struct TrapRepo {
 }
 
 /// #187: the Claude CLI harness of a direct-mode (mount) and a sync-mode run with local tools runs nothing from the client's repository.
-@Test(arguments: [true, false]) func theClaudeHarnessRunsNothingFromTheClientsRepository(mount: Bool) throws {
+@Test(.blocking, arguments: [true, false]) func theClaudeHarnessRunsNothingFromTheClientsRepository(mount: Bool) throws {
     let t = try TrapRepo(); defer { t.cleanup() }
     let env = ClaudeCLIConfig.harnessGitEnv(mount: mount, cwd: t.repo, envFile: t.base.appendingPathComponent("env.sh").path)
     let f = t.fired(env)
@@ -104,7 +104,7 @@ struct TrapRepo {
 }
 
 /// #187: the Codex harness of a direct or sync run (the same environment in both) runs nothing from the client's repository.
-@Test func theCodexHarnessRunsNothingFromTheClientsRepository() throws {
+@Test(.blocking) func theCodexHarnessRunsNothingFromTheClientsRepository() throws {
     let t = try TrapRepo(); defer { t.cleanup() }
     let f = t.fired(Codex.directEnv(tmp: t.base.appendingPathComponent("tmp"), cwd: t.repo))
     #expect(f.isEmpty, "traps fired: \(f)")
@@ -112,7 +112,7 @@ struct TrapRepo {
 
 /// #187: the agent's Bash (Claude Code runs CLAUDE_ENV_FILE ahead of each command) and Codex's commands (shell_environment_policy) find the folder's repository as
 /// before; only the harness has none. The Bash's git runs under the agent's sandbox (not tested here).
-@Test func theAgentsCommandsKeepTheFoldersRepository() throws {
+@Test(.blocking) func theAgentsCommandsKeepTheFoldersRepository() throws {
     let t = try TrapRepo(); defer { t.cleanup() }
     let file = t.base.appendingPathComponent("env.sh")
     try Data(ClaudeCLIConfig.bashGitEnvScript.utf8).write(to: file)
