@@ -1,9 +1,14 @@
 # Release notes
 
-## Unreleased
+## 0.10.6
 
 ### Fixed
 - The project core no longer goes down at random with "read: Bad file descriptor" (#177). macOS marks a socket as draining for good when a copy of it is closed while another process looks at that copy (a child that the gateway starts briefly holds copies of the gateway's sockets, and the gateway's own admin check, lsof or a monitoring tool look at the sockets of every process); after that every read or write on the socket that has to wait fails with EBADF, although the gateway's own descriptor is open. The app's connections to the core helper now wait with poll and read and write without blocking, which that state does not affect; the time limits are unchanged.
+
+### Known problems
+- Only the app's connections to the core helper are protected. Other blocking socket reads and writes of the Mac gateway and of `minigw` (the admin connection of `minigw gw`, the router's own sockets) can still fail the same way; none of them was seen failing outside the test suite.
+- How a started child's copy of the socket comes to be closed under an inspecting process is inferred from counts in small test programs (2 in 2000 and 12 in 3000 with an inspector, 0 in 2000 without), not read from the system's source.
+- Checked on this macOS version only. Windows and Linux gateways are a different program and are not affected by this change.
 
 ## 0.10.5
 
