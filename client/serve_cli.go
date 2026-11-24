@@ -271,8 +271,13 @@ var sandboxGitEnv = []string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSY
 // Mac). The harness is not under a sandbox there and runs git itself (git status at start) in the client's folder, whose .git/config and attributes the client
 // writes (filter.*.clean, diff.external, textconv, gpg.program …): it has NO repository (GIT_DIR=/dev/null, no search above the folder), as Copilot's. Its Bash
 // gets the repository back through envFile (CLAUDE_ENV_FILE: Claude Code runs it ahead of every Bash command, never for its own git), under the sandbox.
+// M1: local tools off too (no Bash there: envFile "", no CLAUDE_ENV_FILE).
 func claudeHarnessGitEnv(dir, envFile string) []string {
-	return append(append(slices.Clone(sandboxGitEnv), agentHarnessGitEnv(dir)...), "CLAUDE_ENV_FILE="+envFile) // agentHarnessGitEnv: serve_agents.go
+	env := append(slices.Clone(sandboxGitEnv), agentHarnessGitEnv(dir)...) // agentHarnessGitEnv: serve_agents.go
+	if envFile == "" {
+		return env
+	}
+	return append(env, "CLAUDE_ENV_FILE="+envFile)
 }
 
 // bashGitEnvScript: what CLAUDE_ENV_FILE holds (the Bash commands find the folder's repository as before #187).
@@ -1326,19 +1331,23 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	unpinned := false // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
 	// brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmdEnv := append(append(append(agentEnvFor(os.Environ(), s.conf().AgentEnv), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1")
-	if worktreeEnv == nil && runtime.GOOS != "windows" && s.conf().AllowLocalTools { // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
-		f, err := os.CreateTemp(s.conf().scratch("tmp"), "claude-env-*.sh") // #187: the Bash's git environment (the harness has no repository)
-		if err == nil {
-			_, err = f.WriteString(bashGitEnvScript)
-			if cerr := f.Close(); err == nil {
-				err = cerr
+	if worktreeEnv == nil && runtime.GOOS != "windows" { // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
+		envFile := "" // M1: local tools off (no Bash): the harness has no repository all the same, no file
+		if s.conf().AllowLocalTools {
+			f, err := os.CreateTemp(s.conf().scratch("tmp"), "claude-env-*.sh") // #187: the Bash's git environment (the harness has no repository)
+			if err == nil {
+				_, err = f.WriteString(bashGitEnvScript)
+				if cerr := f.Close(); err == nil {
+					err = cerr
+				}
+				defer os.Remove(f.Name())
 			}
-			defer os.Remove(f.Name())
+			if err != nil {
+				return writeError(w, r.rid, 503, "Cannot prepare the git environment of Claude CLI's commands: "+err.Error())
+			}
+			envFile = f.Name()
 		}
-		if err != nil {
-			return writeError(w, r.rid, 503, "Cannot prepare the git environment of Claude CLI's commands: "+err.Error())
-		}
-		cmdEnv = append(slices.DeleteFunc(cmdEnv, func(e string) bool { return strings.HasPrefix(strings.ToUpper(e), "GIT_") }), claudeHarnessGitEnv(dir, f.Name())...)
+		cmdEnv = append(slices.DeleteFunc(cmdEnv, func(e string) bool { return strings.HasPrefix(strings.ToUpper(e), "GIT_") }), claudeHarnessGitEnv(dir, envFile)...)
 	}
 	if p := envGet(worktreeEnv, "PATH"); p != "" && envGet(runEnv, "PATH") != "" { // askOnPath in ovoj git (#68): oba na PATH
 		cmdEnv = envSet(cmdEnv, "PATH", filepath.Dir(minigwExe())+string(os.PathListSeparator)+p)

@@ -103,6 +103,18 @@ struct TrapRepo {
     #expect(f.isEmpty, "mount=\(mount): traps fired: \(f)")
 }
 
+/// #187, M1: a direct or sync run without local tools (no Bash, no env file) runs nothing from the client's repository either: under the Seatbelt (its environment
+/// allow list) and without it (a failed self-check runs on the tool rules alone).
+@Test(.blocking, arguments: [true, false]) func theRestrictedClaudeHarnessRunsNothingFromTheClientsRepository(seatbelt: Bool) throws {
+    let t = try TrapRepo(); defer { t.cleanup() }
+    var env = ClaudeCLIConfig.harnessEnv(["PATH": TrapRepo.path, "HOME": t.base.appendingPathComponent("home").path, "GIT_DIR": t.repo.appendingPathComponent(".git").path],
+                                         mount: true, cwd: t.repo, envFile: nil)
+    if seatbelt { env = ClaudeSeatbelt.confinedEnvironment(env, tmp: t.base.path) }
+    #expect(env["CLAUDE_ENV_FILE"] == nil && env["GIT_DIR"] == "/dev/null", "seatbelt=\(seatbelt): \(env)")
+    let f = t.fired(env)
+    #expect(f.isEmpty, "seatbelt=\(seatbelt): traps fired: \(f)")
+}
+
 /// #187: the Codex harness of a direct or sync run (the same environment in both) runs nothing from the client's repository.
 @Test(.blocking) func theCodexHarnessRunsNothingFromTheClientsRepository() throws {
     let t = try TrapRepo(); defer { t.cleanup() }

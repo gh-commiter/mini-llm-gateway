@@ -128,6 +128,7 @@ public actor ClaudeSeatbelt {
     /// what the gateway sets for claude itself, and claude's temp folder (`CLAUDE_CODE_TMPDIR`) and TMPDIR as the run's private folder. USER is needed: without it the Keychain login is not found
     /// (measured: "Not logged in").
     static let envAllowed: Set<String> = ["HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "TERM", "TZ", "CLAUDE_CODE_DISABLE_FILE_MENTIONS",
+                                          "GIT_DIR", "GIT_CEILING_DIRECTORIES",  // #187, M1: the harness has no repository (ClaudeCLIConfig.harnessEnv)
                                           "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy"]
     static func confinedEnvironment(_ env: [String: String], tmp: String) -> [String: String] {
         var out = env.filter { envAllowed.contains($0.key) || $0.key.hasPrefix("LC_") }

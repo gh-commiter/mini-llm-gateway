@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -121,9 +122,10 @@ func TestGitTrapsFireWithoutProtection(t *testing.T) {
 func TestAgentHarnessRunsNothingFromTheClientsRepository(t *testing.T) {
 	tr := newTrapRepo(t)
 	for name, env := range map[string][]string{
-		"claude": claudeHarnessGitEnv(tr.repo, filepath.Join(tr.base, "env.sh")),
-		"codex":  agentHarnessGitEnv(tr.repo),
-		"grok":   agentHarnessGitEnv(tr.repo),
+		"claude":           claudeHarnessGitEnv(tr.repo, filepath.Join(tr.base, "env.sh")),
+		"claude, no tools": claudeHarnessGitEnv(tr.repo, ""), // M1
+		"codex":            agentHarnessGitEnv(tr.repo),
+		"grok":             agentHarnessGitEnv(tr.repo),
 	} {
 		if f := tr.fired(env); len(f) > 0 {
 			t.Errorf("%s: traps fired: %v", name, f)
@@ -166,42 +168,55 @@ var fakeHarnessGitEnv = fake("harness-git-env", func(p fakeParams, args []string
 	fakeClaudeDone(1)
 })
 
-// #187: the launch of a sync-mode Claude CLI run with local tools (fake claude): the harness gets GIT_DIR=/dev/null and a CLAUDE_ENV_FILE that gives its Bash
-// the folder's repository back; the file is gone after the run.
+// #187: the launch of a sync-mode Claude CLI run (fake claude): the harness gets GIT_DIR=/dev/null; with local tools a CLAUDE_ENV_FILE gives its Bash the
+// folder's repository back and is gone after the run; without local tools (M1: no Bash) the harness has no repository all the same and gets no file.
 func TestServeSyncClaudeHarnessHasNoRepository(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the Windows gateway: see the note in agentHarnessGitEnv")
 	}
-	tmp := t.TempDir()
-	envFile := filepath.Join(tmp, "env")
-	fake := fakeCLI(t, tmp, "claude", fakeHarnessGitEnv, fakeParams{"env": envFile})
-	s, _ := testServer(t, func(c *serveConfig) { c.Claude, c.AllowLocalTools = fake, true })
-	c := startLoopback(t, s)
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "src.txt"), []byte("x\n"), 0o644)
-	sc := &shareClient{c: c, session: "sid1", root: dir, sync: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
-	if !sc.register() {
-		t.Fatal("register failed: " + sc.refusal)
-	}
-	sc.start(2)
-	defer sc.unregister()
-	h := map[string]string{"x-claude-mini-session": "sid1", "x-claude-mini-cwd": dir, "content-type": "application/json"}
-	if st, data := call(c, "POST", "/v1/messages", h, []byte(`{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`), 30*time.Second); st != 200 {
-		t.Fatalf("messages: %d %s", st, data)
-	}
-	env, _ := os.ReadFile(envFile)
-	lines := strings.Split(string(env), "\n")
-	if !slices.Contains(lines, "GIT_DIR="+os.DevNull) || !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "GIT_CEILING_DIRECTORIES=/") }) {
-		t.Fatalf("the harness has a repository: %q", env)
-	}
-	if script, _ := os.ReadFile(envFile + ".script"); string(script) != bashGitEnvScript {
-		t.Fatalf("CLAUDE_ENV_FILE: %q", script)
-	}
-	for _, l := range lines {
-		if f, ok := strings.CutPrefix(l, "CLAUDE_ENV_FILE="); ok {
-			if _, err := os.Stat(f); err == nil {
-				t.Errorf("%s stayed after the run", f)
+	for _, localTools := range []bool{true, false} {
+		t.Run(fmt.Sprintf("localTools=%v", localTools), func(t *testing.T) {
+			tmp := t.TempDir()
+			envFile := filepath.Join(tmp, "env")
+			fake := fakeCLI(t, tmp, "claude", fakeHarnessGitEnv, fakeParams{"env": envFile})
+			s, _ := testServer(t, func(c *serveConfig) { c.Claude, c.AllowLocalTools = fake, localTools })
+			c := startLoopback(t, s)
+			dir := t.TempDir()
+			os.WriteFile(filepath.Join(dir, "src.txt"), []byte("x\n"), 0o644)
+			sc := &shareClient{c: c, session: "sid1", root: dir, sync: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+			if !sc.register() {
+				t.Fatal("register failed: " + sc.refusal)
 			}
-		}
+			sc.start(2)
+			defer sc.unregister()
+			h := map[string]string{"x-claude-mini-session": "sid1", "x-claude-mini-cwd": dir, "content-type": "application/json"}
+			if st, data := call(c, "POST", "/v1/messages", h, []byte(`{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`), 30*time.Second); st != 200 {
+				t.Fatalf("messages: %d %s", st, data)
+			}
+			env, _ := os.ReadFile(envFile)
+			lines := strings.Split(string(env), "\n")
+			if !slices.Contains(lines, "GIT_DIR="+os.DevNull) || !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "GIT_CEILING_DIRECTORIES=/") }) {
+				t.Fatalf("the harness has a repository: %q", env)
+			}
+			want := ""
+			if localTools {
+				want = bashGitEnvScript
+			}
+			if script, _ := os.ReadFile(envFile + ".script"); string(script) != want {
+				t.Fatalf("CLAUDE_ENV_FILE: %q", script)
+			}
+			hasFile := false
+			for _, l := range lines {
+				if f, ok := strings.CutPrefix(l, "CLAUDE_ENV_FILE="); ok {
+					hasFile = true
+					if _, err := os.Stat(f); err == nil {
+						t.Errorf("%s stayed after the run", f)
+					}
+				}
+			}
+			if hasFile != localTools {
+				t.Errorf("CLAUDE_ENV_FILE given: %v", hasFile)
+			}
+		})
 	}
 }

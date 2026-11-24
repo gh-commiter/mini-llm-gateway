@@ -300,6 +300,13 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     static func harnessGitEnv(mount: Bool, cwd: URL, envFile: String) -> [String: String] {
         sandboxGitEnv(mount: mount).merging(["GIT_DIR": "/dev/null", "GIT_CEILING_DIRECTORIES": cwd.deletingLastPathComponent().path, "CLAUDE_ENV_FILE": envFile]) { $1 }
     }
+    /// #187 (M1: local tools off too, where the Seatbelt self-check may have failed): the environment of every direct or sync agent run's harness. `envFile` nil: local
+    /// tools off, no Bash, so no file and no CLAUDE_ENV_FILE.
+    static func harnessEnv(_ env: [String: String], mount: Bool, cwd: URL, envFile: String?) -> [String: String] {
+        var git = harnessGitEnv(mount: mount, cwd: cwd, envFile: envFile ?? "")
+        if envFile == nil { git["CLAUDE_ENV_FILE"] = nil }
+        return env.filter { !$0.key.hasPrefix("GIT_") }.merging(git) { $1 }
+    }
     /// What `envFile` holds: the Bash commands find the folder's repository as before #187.
     static let bashGitEnvScript = "unset GIT_DIR GIT_CEILING_DIRECTORIES\n"
 
@@ -978,14 +985,16 @@ extension Router {
             }
             env["CLAUDE_CODE_TMPDIR"] = link
             env["MINIGW_NETWORK_OFF"] = Worktree.networkOff("claude", config)  // #67: ovoj git
-        } else if agent, cfg.allowLocalTools {  // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
-            // #187: the harness gets no repository, its Bash gets it back through this file (a gateway file under Scratch/tmp, gone with the run)
-            let envFile = config.scratch("tmp").appendingPathComponent("claude-env-\(rid).sh")
-            guard (try? Data(ClaudeCLIConfig.bashGitEnvScript.utf8).write(to: envFile, options: .withoutOverwriting)) != nil else {
-                return await error(503, "api_error", "Cannot prepare the git environment of Claude CLI's commands: start a new conversation", rid: rid, writer: writer)
+        } else if agent {  // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
+            // #187: the harness gets no repository (M1: with local tools off too), its Bash gets it back through this file (a gateway file under Scratch/tmp, gone with the run)
+            if cfg.allowLocalTools {
+                let envFile = config.scratch("tmp").appendingPathComponent("claude-env-\(rid).sh")
+                guard (try? Data(ClaudeCLIConfig.bashGitEnvScript.utf8).write(to: envFile, options: .withoutOverwriting)) != nil else {
+                    return await error(503, "api_error", "Cannot prepare the git environment of Claude CLI's commands: start a new conversation", rid: rid, writer: writer)
+                }
+                envFileToRemove = envFile
             }
-            envFileToRemove = envFile
-            env = env.filter { !$0.key.hasPrefix("GIT_") }.merging(ClaudeCLIConfig.harnessGitEnv(mount: directGit, cwd: cwd, envFile: envFile.path)) { $1 }
+            env = ClaudeCLIConfig.harnessEnv(env, mount: directGit, cwd: cwd, envFile: envFileToRemove?.path)
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"
