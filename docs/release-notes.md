@@ -1,5 +1,18 @@
 # Release notes
 
+## 0.10.7
+
+### Fixed
+- `minigw gw` and the other admin commands, and `minigw -p` inside a gateway agent, no longer fail at random with "Bad file descriptor" (#177, the second part). Their connections to the gateway now connect, wait, read and write without blocking, as the app's connections to the core helper do since 0.10.6; a socket that macOS has marked as draining works normally that way. The time limits are unchanged.
+- The test suite's own small servers accept, read and write the same way, so a marked socket no longer fails a test at random with "Bad file descriptor".
+
+### Known problems
+- The router's listener, its connections, the Noise proxy, agent runs, upstream connections and the provider requests use Network.framework or URLSession, which do not block inside a read or a write. They were not changed and are expected to be unaffected, but that was not tested with a marked socket.
+- The gateway still causes the mark: its check of which local process connected (every admin request) looks at the sockets of every process, also of a child it has just started. That check decides whether a peer is the user's own process and was left as it is. Starting children with POSIX_SPAWN_CLOEXEC_DEFAULT does not prevent the mark (counted in a small test program: 4 of 300 with it, 1 of 300 with close-on-exec on the sockets).
+- A marked listener was only made on purpose in a test; a mark that reaches a listener of the gateway in real use was not seen. The gateway's own listeners are Network.framework ones.
+- Connecting a socket that is already marked was not tested (the connect now waits with poll, which the mark does not affect).
+- Checked on this macOS version only. Windows and Linux gateways are a different program and are not affected by this change.
+
 ## 0.10.6
 
 ### Fixed
