@@ -110,7 +110,7 @@ func TestGitTrapsFireWithoutProtection(t *testing.T) {
 			all[x] = true
 		}
 	}
-	for _, trap := range []string{"filter.clean", "diff.external", "diff.textconv", "gpg.program", "include.textconv"} {
+	for _, trap := range []string{"filter.clean", "diff.external", "diff.textconv", "gpg.program", "include.filter.clean"} /* include.textconv fires with the Mac's git, not with the Linux image's */ {
 		if !all[trap] {
 			t.Errorf("%s never fired: %v", trap, f)
 		}
