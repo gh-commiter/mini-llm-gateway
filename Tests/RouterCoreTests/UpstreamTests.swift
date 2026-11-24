@@ -583,7 +583,8 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
             cases.append(Data(v))
         }
         #expect(cases.count > 5000)
-        let started = Date()
+        // No wall-clock bound: the operations count below is the linear-time proof. A "< 30 s" check failed on a 3-core runner (68 s) with
+        // the whole suite in parallel, while every operations bound held.
         for c in cases {
             var r = UpstreamHTTPReader(cap: cap)
             var out = UpstreamReadOutcome.needMore, i = 0
@@ -592,7 +593,6 @@ final class FakeTransport: UpstreamTransport, @unchecked Sendable {
             if case .done(let a) = out { #expect(a.body.count <= cap && (100...599).contains(a.status)) }
             #expect(r.operations <= 12 * c.count + 2000, "operations \(r.operations) for \(c.count) bytes")
         }
-        #expect(Date().timeIntervalSince(started) < 30)
     }
 }
 
