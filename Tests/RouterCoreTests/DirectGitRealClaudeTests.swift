@@ -59,6 +59,7 @@ func aClaudeAgentCommitsInADirectModeFolderAndCannotPlantAHook(identity: Bool) a
         env | grep '^GIT_' | sort > env.txt
         git rev-parse --show-toplevel > harness-git.txt 2>&1 || echo "no repository" >> harness-git.txt
         (. "$CLAUDE_ENV_FILE"; git rev-parse --show-toplevel) > bash-git.txt 2>&1
+        stat -f '%Lp %N' "$CLAUDE_ENV_FILE" > env-file.txt
         echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
         echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
 
@@ -79,6 +80,9 @@ func aClaudeAgentCommitsInADirectModeFolderAndCannotPlantAHook(identity: Bool) a
     let harness = (try? String(contentsOf: project.appendingPathComponent("harness-git.txt"), encoding: .utf8)) ?? ""
     let bash = (try? String(contentsOf: project.appendingPathComponent("bash-git.txt"), encoding: .utf8)) ?? ""
     #expect(harness.contains("no repository") && bash == project.path + "\n", "harness: \(harness) bash: \(bash)")
+    // L3: the file has a random part in its name and is the gateway user's alone
+    let envFile = ((try? String(contentsOf: project.appendingPathComponent("env-file.txt"), encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    #expect(envFile.hasPrefix("600 ") && envFile.range(of: #"/claude-env-[^/]+-[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\.sh$"#, options: .regularExpression) != nil, "\(envFile)")
     // the sandbox settings: the folder's own `.git` is closed for the shell, except in the session folder of a direct-mode mount whose `.git` is a real directory
     func deny(_ dir: URL, directGit: Bool, extra: [String] = []) throws -> [String] {
         var cfg = ClaudeCLIConfig(); cfg.allowLocalTools = true

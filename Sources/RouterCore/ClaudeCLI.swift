@@ -988,11 +988,15 @@ extension Router {
         } else if agent {  // direct and sync: Bash runs in the sandbox without the home folder (git cannot read ~/.gitconfig)
             // #187: the harness gets no repository (M1: with local tools off too), its Bash gets it back through this file (a gateway file under Scratch/tmp, gone with the run)
             if cfg.allowLocalTools {
-                let envFile = config.scratch("tmp").appendingPathComponent("claude-env-\(rid).sh")
-                guard (try? Data(ClaudeCLIConfig.bashGitEnvScript.utf8).write(to: envFile, options: .withoutOverwriting)) != nil else {
+                // L3: a random name, mode 0600, never over an existing file or link (O_EXCL, as .withoutOverwriting)
+                let envFile = config.scratch("tmp").appendingPathComponent("claude-env-\(rid)-\(UUID().uuidString).sh")
+                let fd = Darwin.open(envFile.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+                let script = Data(ClaudeCLIConfig.bashGitEnvScript.utf8)
+                let wrote = fd >= 0 && script.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) } == script.count
+                if fd >= 0 { Darwin.close(fd); envFileToRemove = envFile }
+                guard wrote else {
                     return await error(503, "api_error", "Cannot prepare the git environment of Claude CLI's commands: start a new conversation", rid: rid, writer: writer)
                 }
-                envFileToRemove = envFile
             }
             env = ClaudeCLIConfig.harnessEnv(env, mount: directGit, cwd: cwd, envFile: envFileToRemove?.path)
         }
