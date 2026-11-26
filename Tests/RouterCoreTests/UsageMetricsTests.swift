@@ -166,7 +166,9 @@ private final class SpendingLimitUpstream: URLProtocol, @unchecked Sendable {
     for _ in 0..<100 {
         let response = await helper.call(context: .admin, request: CoreRequest(method: "GET", path: "/usage/events"))
         rows = ((try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any])?["days"] as? [[String: Any]] ?? []
-        if rows.count == cases.count { break }
+        // A row appears with an event's start; its token counts come with the event's end. Wait for the last case's end,
+        // not only for the row (the gate of 0.11.0 once read the row of "agent-counts" before its end was stored).
+        if rows.count == cases.count, rows.first(where: { $0["model"] as? String == "agent-counts" })?["tokensIn"] as? Int == 4 { break }
         try await Task.sleep(for: .milliseconds(20))
     }
     #expect(rows.count == cases.count)
