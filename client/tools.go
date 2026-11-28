@@ -81,9 +81,10 @@ func takeTools(args []string) (rest []string, value, errMsg string) {
 	return rest, value, ""
 }
 
-// isAgentID: model, ki ga prehod zagotovo vodi kot agenta: claude-cli-…, claude-codex|grok|copilot[-…] (točno kot shadowsCLI
-// na prehodu: model ponudnika s takim imenom se skrije, zato ni dvoumnosti; velike črke niso agent). Širši isAgentModel
-// (HasPrefix) bi »claude-codexa« iz LiteLLM štel za agenta in pustil lokalni claude brez omejitve.
+// isAgentID: the name rule for a model the gateway runs as an agent: claude-cli-…, claude-codex|grok|copilot[-…]; capital letters are no agent.
+// The Go gateway hides a provider model with such a name (shadowsCLI), so it is never listed as a provider model and the name decides. The Mac
+// gateway does not hide it (it serves a provider's "claude-grok-4.7", the Grok agent is not supported there), so toolsFor lets the gateway's
+// /v1/models list overrule this rule. The wider isAgentModel (HasPrefix) would count LiteLLM's "claude-codexa" as an agent.
 func isAgentID(m string) bool {
 	if strings.HasPrefix(m, "claude-cli-") {
 		return true
@@ -114,18 +115,23 @@ func toolsLevelRefusal(level, cap, provider, model string) string {
 	return "--minigw-tools=" + level + " is not allowed for " + model + ": the gateway allows " + cap + " at most. The owner of the gateway can allow it with: minigw gw provider tools " + provider + " " + level + " [--model " + model + "]"
 }
 
-// toolsFor: orodja modela (model brez pripone profila, "" = ni --model): "" = brez omejitve. --minigw-ro (readOnly: tudi
+// toolsFor: orodja modela (model brez pripone profila, "" = ni --model): "" = brez omejitve. listed(model) = the gateway lists the model as a
+// provider model (minigw_provider in /v1/models); it is asked only when the name looks like an agent, and then a provider model is no agent. --minigw-ro (readOnly: tudi
 // shranjena nastavitev mape) pomeni read za vse, kar ni zagotovo agent, tudi brez znanega modela (privzeti model, ki ga
 // določa gateway: omejitev na agentu ne škodi, njegova orodja tečejo na prehodu); izrecno --minigw-tools velja povsod
 // razen za agenta, ki je omejen na prehodu (--minigw-ro). ANTHROPIC_MODEL ne šteje: minigw ga claude ne preda (#7).
-func toolsFor(model, flag string, readOnly bool) (tools, errMsg string) {
-	if flag != "" && isAgentID(model) {
+func toolsFor(model, flag string, readOnly bool, listed func(string) bool) (tools, errMsg string) {
+	if flag == "" && !readOnly {
+		return "", ""
+	}
+	agent := isAgentID(model) && !listed(model)
+	if flag != "" && agent {
 		return "", "--minigw-tools is not available for " + model + ": agents are limited on the gateway, use --minigw-ro"
 	}
 	if flag == "edit" && readOnly {
 		return "", "--minigw-tools=edit cannot be combined with --minigw-ro (the folder is read-only)"
 	}
-	if flag == "" && readOnly && !isAgentID(model) {
+	if flag == "" && readOnly && !agent {
 		return "read", ""
 	}
 	return flag, ""
@@ -261,4 +267,10 @@ func editRefusal(list map[string]any, model string) string {
 		provider = "<provider>"
 	}
 	return toolsLevelRefusal("edit", cap, provider, model)
+}
+
+// providerListed: the gateway's /v1/models answer lists the model with a provider (minigw_provider), so it is a provider model whatever its name.
+func providerListed(list map[string]any, model string) bool {
+	_, provider, found := toolsCapOf(list, model)
+	return found && provider != ""
 }

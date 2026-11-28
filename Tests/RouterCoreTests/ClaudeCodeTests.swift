@@ -117,7 +117,7 @@ struct ClaudeCodeCases: Decodable {
 /// #119: isti primeri kot Go (client/testdata/minigw-tools-cases.json, client/claudecode_test.go TestMinigwTools).
 struct ToolsCases: Decodable {
     struct Parse: Decodable { let args: [String]; let rest: [String]?; let value: String; let error: String }
-    struct Plan: Decodable { let model: String; let flag: String; let ro: Bool; let tools: String; let error: String }
+    struct Plan: Decodable { let model: String; let flag: String; let ro: Bool; let listed: Bool?; let tools: String; let error: String }
     struct Out: Decodable { let tools: String; let args: [String]; let out: [String] }
     struct Line: Decodable { let tools: String; let line: String }
     struct FolderRo: Decodable { let model: String; let flag: String; let flagRo: Bool; let savedRo: Bool; let tools: String }
@@ -132,7 +132,7 @@ struct ToolsCases: Decodable {
         #expect(r.rest == (p.rest ?? []) && (r.value ?? "") == p.value && (r.error ?? "") == p.error, "parse \(p.args)")
     }
     for p in c.plan {
-        let r = Profiles.toolsFor(model: p.model, flag: p.flag.isEmpty ? nil : p.flag, readOnly: p.ro)
+        let r = Profiles.toolsFor(model: p.model, flag: p.flag.isEmpty ? nil : p.flag, readOnly: p.ro, listed: { _ in p.listed ?? false })
         #expect((r.tools ?? "") == p.tools && (r.error ?? "") == p.error, "plan \(p)")
     }
     for p in c.claudeArgs { #expect(Profiles.toolsArgs(p.tools, args: p.args) == p.out, "args \(p)") }

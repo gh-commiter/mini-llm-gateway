@@ -760,7 +760,19 @@ func main() {
 	if agentConn() == nil { // #119: po workMode (shranjena nastavitev mape samo za branje šteje) in po modelProfile (brez pripone profila)
 		args = modelProfile(args, profileNames())
 	}
-	tools, toolsErr := toolsFor(modelArg(args), toolsFlag, readOnly)
+	var models map[string]any // /v1/models of the default profile's gateway, fetched at most once, only when needed
+	fetchModels := func(c connection) map[string]any {
+		if models == nil {
+			if st, m := getJSON(c, "/v1/models"); st == 200 {
+				models = m
+			}
+		}
+		return models
+	}
+	tools, toolsErr := toolsFor(modelArg(args), toolsFlag, readOnly, func(m string) bool { // only for a name that looks like an agent
+		ps := loadProfiles()
+		return len(ps) > 0 && providerListed(fetchModels(route(ps[0])), m)
+	})
 	if toolsErr != "" {
 		fail(toolsErr)
 	}
@@ -791,11 +803,7 @@ func main() {
 	}
 	c := route(ps[0])
 	if tools == "edit" { // the gateway's owner sets the highest level per model (minigw gw provider tools); the gateway checks it again per request
-		var list map[string]any
-		if st, m := getJSON(c, "/v1/models"); st == 200 {
-			list = m
-		}
-		if msg := editRefusal(list, modelArg(args)); msg != "" {
+		if msg := editRefusal(fetchModels(c), modelArg(args)); msg != "" {
 			fail(msg)
 		}
 	}

@@ -301,6 +301,7 @@ type toolsCases struct {
 	Plan []struct {
 		Model, Flag string
 		Ro          bool
+		Listed      bool // the gateway lists the model as a provider model (#193)
 		Tools       string
 		Error       string
 	}
@@ -339,7 +340,7 @@ func TestMinigwTools(t *testing.T) {
 		}
 	}
 	for _, p := range c.Plan {
-		if tools, msg := toolsFor(p.Model, p.Flag, p.Ro); tools != p.Tools || msg != p.Error {
+		if tools, msg := toolsFor(p.Model, p.Flag, p.Ro, func(string) bool { return p.Listed }); tools != p.Tools || msg != p.Error {
 			t.Errorf("plan %+v: got %q %q", p, tools, msg)
 		}
 	}
@@ -355,7 +356,7 @@ func TestMinigwTools(t *testing.T) {
 	}
 	for _, p := range c.FolderRo { // R3: shranjena nastavitev mape samo za branje šteje kot --minigw-ro (workMode)
 		_, ro := workMode("", &sharedFolder{ReadOnly: p.SavedRo}, p.FlagRo)
-		if tools, msg := toolsFor(p.Model, p.Flag, ro); tools != p.Tools || msg != "" {
+		if tools, msg := toolsFor(p.Model, p.Flag, ro, func(string) bool { return false }); tools != p.Tools || msg != "" {
 			t.Errorf("folderRo %+v: got %q %q", p, tools, msg)
 		}
 	}

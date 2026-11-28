@@ -229,6 +229,32 @@
    "list": null,
    "model": "grok-4",
    "refusal": "--minigw-tools=edit: cannot read from the gateway which tools grok-4 may get"
+  },
+  {
+   "list": {
+    "data": [
+     {
+      "id": "claude-grok-4.7",
+      "minigw_tools": "edit",
+      "minigw_provider": "xAI"
+     }
+    ]
+   },
+   "model": "claude-grok-4.7",
+   "refusal": ""
+  },
+  {
+   "list": {
+    "data": [
+     {
+      "id": "claude-grok-4.7",
+      "minigw_tools": "read",
+      "minigw_provider": "xAI"
+     }
+    ]
+   },
+   "model": "claude-grok-4.7",
+   "refusal": "--minigw-tools=edit is not allowed for claude-grok-4.7: the gateway allows read at most. The owner of the gateway can allow it with: minigw gw provider tools xAI edit [--model claude-grok-4.7]"
   }
  ]
 }

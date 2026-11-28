@@ -514,6 +514,12 @@ public enum Profiles {
         return ["\(name)  tools: \(tools)"] + models.keys.sorted().map { "  \($0)  tools: \(models[$0] ?? "")" }
     }
 
+    /// The /v1/models answer lists the model with a provider (minigw_provider): a provider model whatever its name (like Go providerListed).
+    public static func providerListed(list: [String: Any]?, model: String) -> Bool {
+        let m = (list?["data"] as? [[String: Any]])?.first { ($0["id"] as? String).map { $0 == model || $0 == "claude-" + model } ?? false }
+        return !((m?["minigw_provider"] as? String) ?? "").isEmpty
+    }
+
     /// Zakaj --minigw-tools=edit ne sme teči; nil = sme. list: odgovor /v1/models (nil = prehod ni odgovoril); kot Go editRefusal.
     public static func editRefusal(list: [String: Any]?, model: String) -> String? {
         if model.isEmpty { return "--minigw-tools=edit needs --model: the gateway sets the highest tool level per model" }
@@ -545,20 +551,24 @@ public enum Profiles {
         return (rest, value, nil)
     }
 
-    /// Model, ki ga prehod zagotovo vodi kot agenta (kot Go isAgentID): claude-cli-…, claude-codex|grok|copilot[-…]; model ponudnika s takim
-    /// imenom se na prehodu skrije. Velike črke in »claude-codexa« niso agent.
+    /// The name rule for a model the gateway runs as an agent (like Go isAgentID): claude-cli-…, claude-codex|grok|copilot[-…]; capital letters and
+    /// "claude-codexa" are no agent. This gateway does not hide a provider model with such a name (it serves a provider's "claude-grok-4.7"; the
+    /// Grok agent is not supported here), so toolsFor lets the gateway's /v1/models list overrule the name; the Go gateway hides it, so it is never listed.
     static func isAgentID(_ m: String) -> Bool {
         m.hasPrefix("claude-cli-") || ["claude-codex", "claude-grok", "claude-copilot"].contains { m == $0 || m.hasPrefix($0 + "-") }
     }
 
     /// Orodja modela (model brez pripone profila, "" = ni --model); nil = brez omejitve (kot Go toolsFor). readOnly vključuje shranjeno
     /// nastavitev mape; --minigw-ro pomeni read za vse, kar ni zagotovo agent, tudi brez znanega modela.
-    public static func toolsFor(model: String, flag: String?, readOnly: Bool) -> (tools: String?, error: String?) {
-        if flag != nil, isAgentID(model) {
+    /// listed(model): the gateway lists the model as a provider model (minigw_provider); asked only when the name looks like an agent (#193).
+    public static func toolsFor(model: String, flag: String?, readOnly: Bool, listed: (String) -> Bool = { _ in false }) -> (tools: String?, error: String?) {
+        if flag == nil, !readOnly { return (nil, nil) }
+        let agent = isAgentID(model) && !listed(model)
+        if flag != nil, agent {
             return (nil, "--minigw-tools is not available for \(model): agents are limited on the gateway, use --minigw-ro")
         }
         if flag == "edit", readOnly { return (nil, "--minigw-tools=edit cannot be combined with --minigw-ro (the folder is read-only)") }
-        if flag == nil, readOnly, !isAgentID(model) { return ("read", nil) }
+        if flag == nil, readOnly, !agent { return ("read", nil) }
         return (flag, nil)
     }
 

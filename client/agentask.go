@@ -82,7 +82,7 @@ func agentAsk(c *connection, args []string, toolsFlag string) {
 	if model == "" {
 		fail(`usage: minigw -p --model <id> "question"   (minigw models lists the models)`)
 	}
-	if _, e := toolsFor(model, toolsFlag, false); e != "" {
+	if _, e := toolsFor(model, toolsFlag, false, func(string) bool { return false }); e != "" {
 		fail(e)
 	}
 	q := strings.Join(words, " ")

@@ -128,6 +128,102 @@
  ],
  "plan": [
   {
+   "model": "claude-grok-4.7",
+   "flag": "edit",
+   "ro": false,
+   "listed": true,
+   "tools": "edit",
+   "error": ""
+  },
+  {
+   "model": "claude-grok-4.7",
+   "flag": "",
+   "ro": true,
+   "listed": true,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "claude-grok-4.7",
+   "flag": "none",
+   "ro": false,
+   "listed": true,
+   "tools": "none",
+   "error": ""
+  },
+  {
+   "model": "claude-grok-4.7",
+   "flag": "edit",
+   "ro": true,
+   "listed": true,
+   "tools": "",
+   "error": "--minigw-tools=edit cannot be combined with --minigw-ro (the folder is read-only)"
+  },
+  {
+   "model": "claude-codex-x",
+   "flag": "edit",
+   "ro": false,
+   "listed": true,
+   "tools": "edit",
+   "error": ""
+  },
+  {
+   "model": "claude-codex-x",
+   "flag": "",
+   "ro": true,
+   "listed": true,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "claude-codex-x",
+   "flag": "none",
+   "ro": false,
+   "listed": true,
+   "tools": "none",
+   "error": ""
+  },
+  {
+   "model": "claude-codex-x",
+   "flag": "edit",
+   "ro": true,
+   "listed": true,
+   "tools": "",
+   "error": "--minigw-tools=edit cannot be combined with --minigw-ro (the folder is read-only)"
+  },
+  {
+   "model": "claude-copilot-x",
+   "flag": "edit",
+   "ro": false,
+   "listed": true,
+   "tools": "edit",
+   "error": ""
+  },
+  {
+   "model": "claude-copilot-x",
+   "flag": "",
+   "ro": true,
+   "listed": true,
+   "tools": "read",
+   "error": ""
+  },
+  {
+   "model": "claude-copilot-x",
+   "flag": "none",
+   "ro": false,
+   "listed": true,
+   "tools": "none",
+   "error": ""
+  },
+  {
+   "model": "claude-copilot-x",
+   "flag": "edit",
+   "ro": true,
+   "listed": true,
+   "tools": "",
+   "error": "--minigw-tools=edit cannot be combined with --minigw-ro (the folder is read-only)"
+  },
+  {
    "model": "litellm-gpt",
    "flag": "",
    "ro": false,

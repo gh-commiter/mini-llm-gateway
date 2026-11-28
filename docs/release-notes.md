@@ -6,6 +6,9 @@
 - Agent environment: the owner could add names such as `BASH_ENV`, `ENV`, `CLAUDE_ENV_FILE` (a script the shell or Claude Code runs at start), the GitHub enterprise tokens or a `MINIGW_*` variable of the gateway to what agents receive, although the refusal says tokens, sign-in, sandbox and gateway variables are never passed. These names, and every name starting with `MINIGW_`, are now refused, on the Mac and in the Go gateway, also when a hand-edited config holds them. The variables the gateway sets for a run itself are not affected.
 - `minigw project show` printed the hint folder and the linked folder as they are, so a folder name with a newline or terminal control characters could forge a line of the output (or one in the model's context). Both are now printed on one line without control characters.
 
+### Fixed
+- On the Mac gateway, an xAI model such as `claude-grok-4.7` was treated by the minigw client as the Grok agent only because of its name. `--minigw-tools=edit` was refused with "agents are limited on the gateway" although the owner allowed `edit` for that provider, and `--minigw-ro` alone did not give it the tool level `read`. The client now asks the gateway's model list: a model the gateway lists as a provider's model gets the provider's tool levels, whatever its name (the same for names that start like `claude-codex` or `claude-copilot`). Real agents are limited as before. (#193)
+
 ## 0.11.0
 
 Mini Gateway 0.11.0 is a stable release. It collects the ten beta versions 0.10.1 to 0.10.10, which stable users never saw, and follows the stable release 0.10.0. The sections below describe what 0.11.0 is, not how each beta got there. Read **Upgrading from 0.10.0** and **Known problems** before you update a gateway that other people use.

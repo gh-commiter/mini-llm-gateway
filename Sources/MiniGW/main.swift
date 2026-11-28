@@ -1112,10 +1112,19 @@ if agentConn() == nil {  // --model …@profil: ves zagon s tem prehodom, kot --
     }
 }
 ProjectEnv.hintProfile = profileFlag ?? ""  // the commands a message suggests carry the profile of this run
+var modelsList: [String: Any]?  // /v1/models of the default profile's gateway, fetched at most once, only when needed
+func fetchModels(_ c: Connection) -> [String: Any]? {
+    if modelsList == nil { let (st, l) = get(c, "/v1/models"); if st == 200 { modelsList = l } }
+    return modelsList
+}
 do {  // #119: model brez pripone profila (modelProfile zgoraj); shranjena nastavitev mape samo za branje šteje kot --minigw-ro (SharedFolders.mode)
     let entry = savedShare(FileManager.default.currentDirectoryPath)
     toolsPlan = Profiles.toolsFor(model: Profiles.modelArg(args), flag: toolsFlag,
-                                  readOnly: SharedFolders.mode(flag: workFlag, saved: entry, readOnly: readOnly).readOnly)
+                                  readOnly: SharedFolders.mode(flag: workFlag, saved: entry, readOnly: readOnly).readOnly,
+                                  listed: { m in  // only for a name that looks like an agent
+                                      let ps = loadProfiles()
+                                      return !ps.isEmpty && Profiles.providerListed(list: fetchModels(route(ps[0])), model: m)
+                                  })
     if let e = toolsPlan.error { fail(e) }
     if toolsPlan.tools != nil, let f = Profiles.toolsWiden(args) {
         fail("\(f) is not accepted together with --minigw-tools (or --minigw-ro for a provider model): it could widen the tools of the model")
@@ -1131,8 +1140,7 @@ do {  // 0.6.0: the project of this folder; the proxy sets it on every request a
 } catch { fail((error as? ProjectError)?.message ?? "\(error)") }
 let c = route(profiles[0])
 if toolsPlan.tools == "edit" {  // the gateway's owner sets the highest level per model (minigw gw provider tools); the gateway checks it again per request
-    let (st, list) = get(c, "/v1/models")
-    if let msg = Profiles.editRefusal(list: st == 200 ? list : nil, model: Profiles.modelArg(args)) { fail(msg) }
+    if let msg = Profiles.editRefusal(list: fetchModels(c), model: Profiles.modelArg(args)) { fail(msg) }
 }
 proxyProject = ""  // only the default profile's gateway knows this project id; other profiles' proxies never send it
 let promptGuard = Profiles.promptGuard(args, env: ProcessInfo.processInfo.environment, stdinTerminal: isatty(0) == 1)  // pred #7 (CLAUDECODE)
