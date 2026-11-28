@@ -77,7 +77,7 @@ func fakeCLI(t *testing.T, dir, name, behaviour string, p fakeParams) string {
 // fakeMain (TestMain): ta proces je lažni program, če ima ob sebi stransko datoteko. Brez nje, a z drugimi *.fake v
 // isti mapi (lažni program, ki svoje ne najde), glasno izhod 97: nikoli testi namesto vedenja (L1).
 func fakeMain() {
-	if v := os.Getenv("MINIGW_TEST_FAKE_SLEEP"); v != "" { // vnuk, ki drži stdout (fakeOrphan)
+	if v := os.Getenv("MGTEST_FAKE_SLEEP"); v != "" { // vnuk, ki drži stdout (fakeOrphan)
 		d, _ := time.ParseDuration(v)
 		time.Sleep(d)
 		os.Exit(0)
@@ -189,7 +189,7 @@ var fakeSelf string
 // (Windows: tekoč program ali mapa cwd se ne da izbrisati).
 func fakeOrphan(d string) {
 	c := exec.Command(fakeSelf)
-	c.Dir, c.Env, c.Stdout = filepath.Dir(fakeSelf), append(os.Environ(), "MINIGW_TEST_FAKE_SLEEP="+d), os.Stdout
+	c.Dir, c.Env, c.Stdout = filepath.Dir(fakeSelf), append(os.Environ(), "MGTEST_FAKE_SLEEP="+d), os.Stdout
 	c.Start()
 }
 

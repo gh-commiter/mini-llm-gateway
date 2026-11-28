@@ -167,7 +167,7 @@ func TestContinueSession(t *testing.T) {
 }
 
 // fakeClaudeMain: testni program kot »claude« (kopija z imenom claude): »--parent prog args…« požene minigw kot otrok
-// claude (prednik, ne CLAUDECODE); sicer je to claude, ki ga zažene minigw: zapiše argumente v MINIGW_TEST_CLAUDE_LOG.
+// claude (prednik, ne CLAUDECODE); sicer je to claude, ki ga zažene minigw: zapiše argumente v MGTEST_CLAUDE_LOG.
 func fakeClaudeMain() {
 	if len(os.Args) > 2 && os.Args[1] == "--parent" {
 		cmd := exec.Command(os.Args[2], os.Args[3:]...)
@@ -181,15 +181,15 @@ func fakeClaudeMain() {
 		}
 		os.Exit(0)
 	}
-	os.WriteFile(os.Getenv("MINIGW_TEST_CLAUDE_LOG"), []byte(strings.Join(os.Args[1:], " ")), 0o600)
+	os.WriteFile(os.Getenv("MGTEST_CLAUDE_LOG"), []byte(strings.Join(os.Args[1:], " ")), 0o600)
 	if h := os.Getenv("ANTHROPIC_CUSTOM_HEADERS"); h != "" { // what the gateway would receive with every request
-		os.WriteFile(os.Getenv("MINIGW_TEST_CLAUDE_LOG")+".headers", []byte(h), 0o600)
+		os.WriteFile(os.Getenv("MGTEST_CLAUDE_LOG")+".headers", []byte(h), 0o600)
 	}
-	if code := os.Getenv("MINIGW_TEST_CLAUDE_EXIT"); code != "" {
+	if code := os.Getenv("MGTEST_CLAUDE_EXIT"); code != "" {
 		n, _ := strconv.Atoi(code)
 		os.Exit(n)
 	}
-	if s := os.Getenv("MINIGW_TEST_CLAUDE_SIGNAL"); s != "" { // L-b: claude se konča s signalom (TERM) ali se ustavi (STOP)
+	if s := os.Getenv("MGTEST_CLAUDE_SIGNAL"); s != "" { // L-b: claude se konča s signalom (TERM) ali se ustavi (STOP)
 		p, _ := os.FindProcess(os.Getpid())
 		if s == "STOP" && fakeStop != nil {
 			fakeStop()
@@ -224,7 +224,7 @@ func minigwCmd(dir, log string, env []string, args ...string) *exec.Cmd {
 	cmd := exec.Command(os.Args[0], args...)
 	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		return strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(strings.ToUpper(kv), "PATH=")
-	}), append(env, "MINIGW_TEST_MAIN=1", "MINIGW_ALLOW_UNSAFE_FLAGS=1", "MINIGW_TEST_CLAUDE_LOG="+log, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))...)
+	}), append(env, "MGTEST_MAIN=1", "MINIGW_ALLOW_UNSAFE_FLAGS=1", "MGTEST_CLAUDE_LOG="+log, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))...)
 	return cmd
 }
 
@@ -234,7 +234,7 @@ func TestClaudeSignalExit(t *testing.T) {
 		t.Skip("Windows has no signals")
 	}
 	dir, log := fakeClaudeDir(t)
-	err := minigwCmd(dir, log, []string{"MINIGW_TEST_CLAUDE_SIGNAL=TERM"}, "-h").Run()
+	err := minigwCmd(dir, log, []string{"MGTEST_CLAUDE_SIGNAL=TERM"}, "-h").Run()
 	ee, ok := err.(*exec.ExitError)
 	if !ok {
 		t.Fatalf("minigw: %v", err)
@@ -265,7 +265,7 @@ func TestClaudeAncestorRefusesBeforeClaude(t *testing.T) {
 		}
 		cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
 			return strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(kv, "MINIGW_ALLOW_UNSAFE_FLAGS=") || strings.HasPrefix(strings.ToUpper(kv), "PATH=")
-		}), append(extra, "MINIGW_TEST_MAIN=1", "MINIGW_TEST_CLAUDE_LOG="+log, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))...)
+		}), append(extra, "MGTEST_MAIN=1", "MGTEST_CLAUDE_LOG="+log, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))...)
 		os.Remove(log)
 		out, err := cmd.CombinedOutput()
 		if err != nil {

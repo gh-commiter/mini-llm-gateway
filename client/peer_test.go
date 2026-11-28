@@ -70,7 +70,7 @@ func TestMain(m *testing.M) {
 	if strings.HasPrefix(strings.ToLower(filepath.Base(os.Args[0])), "claude") { // #79: lažni claude (TestClaudeAncestorRefusesBeforeClaude)
 		fakeClaudeMain()
 	}
-	if os.Getenv("MINIGW_TEST_FAKE_WXC") == "1" { // #68: lažni wxc-exec (mxc_test.go)
+	if os.Getenv("MGTEST_FAKE_WXC") == "1" { // #68: lažni wxc-exec (mxc_test.go)
 		fakeWxcMain()
 	}
 	if isGitWrap() { // #68: kopija testnega programa kot git.exe (TestGitWrapExec)
@@ -79,7 +79,7 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == agentReaperCmd {
 		agentReaperMain(os.Args[2:])
 	}
-	if os.Getenv("MINIGW_TEST_INIT") == "1" { // #52: PID 1 žanje (initReaper), otrok pusti osirotelega vnuka
+	if os.Getenv("MGTEST_INIT") == "1" { // #52: PID 1 žanje (initReaper), otrok pusti osirotelega vnuka
 		initReaper()
 		if _, err := os.ReadFile("/proc/1/environ"); err == nil && os.Getuid() != 0 { // M1: PID 1 ni dumpable (root ga bere vseeno)
 			fmt.Println("/proc/1/environ is readable")
@@ -96,13 +96,13 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	if f := os.Getenv("MINIGW_TEST_FDS"); f != "" { // #80: datoteka, odprta pri zaprtem fd 2, ne dobi diagnostike (fds_unix_test.go)
+	if f := os.Getenv("MGTEST_FDS"); f != "" { // #80: datoteka, odprta pri zaprtem fd 2, ne dobi diagnostike (fds_unix_test.go)
 		h, _ := os.Create(f)
 		fmt.Fprintln(os.Stderr, "minigw: diagnostic")
 		h.Close()
 		os.Exit(0)
 	}
-	if os.Getenv("MINIGW_TEST_MAIN") == "1" { // testi poženejo sam ukaz minigw
+	if os.Getenv("MGTEST_MAIN") == "1" { // testi poženejo sam ukaz minigw
 		os.Args = append([]string{"minigw"}, os.Args[1:]...)
 		main()
 		os.Exit(0)

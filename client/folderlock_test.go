@@ -105,7 +105,7 @@ func TestFolderLockAcrossProcesses(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "f.txt"), []byte("x"), 0o644)
 	cmd := exec.Command(os.Args[0], "-test.run=^TestFolderLockHelper$")
-	cmd.Env = append(os.Environ(), "MINIGW_TEST_LOCK_ROOT="+root, "MINIGW_TEST_LOCK_DIR="+folderLockDir)
+	cmd.Env = append(os.Environ(), "MGTEST_LOCK_ROOT="+root, "MGTEST_LOCK_DIR="+folderLockDir)
 	stdout, _ := cmd.StdoutPipe()
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -132,11 +132,11 @@ func TestFolderLockAcrossProcesses(t *testing.T) {
 
 // Pomočnik TestFolderLockAcrossProcesses: druga seja, ki drži izključni zaklep mape.
 func TestFolderLockHelper(t *testing.T) {
-	root := os.Getenv("MINIGW_TEST_LOCK_ROOT")
+	root := os.Getenv("MGTEST_LOCK_ROOT")
 	if root == "" {
 		t.Skip("helper process only")
 	}
-	folderLockDir = os.Getenv("MINIGW_TEST_LOCK_DIR")
+	folderLockDir = os.Getenv("MGTEST_LOCK_DIR")
 	if (&shareClient{root: root}).lockFolder(true, folderLockWait) == nil {
 		os.Exit(1)
 	}

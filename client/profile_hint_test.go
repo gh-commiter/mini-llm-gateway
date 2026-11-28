@@ -48,7 +48,7 @@ func TestMinigwProfileEnvironment(t *testing.T) {
 	}
 	run := func(env []string, args ...string) string {
 		cmd := exec.Command(os.Args[0], args...)
-		cmd.Env = append(os.Environ(), append([]string{"MINIGW_TEST_MAIN=1", "HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "APPDATA=" + home, "USERPROFILE=" + home}, env...)...)
+		cmd.Env = append(os.Environ(), append([]string{"MGTEST_MAIN=1", "HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "APPDATA=" + home, "USERPROFILE=" + home}, env...)...)
 		out, _ := cmd.CombinedOutput()
 		return string(out)
 	}
@@ -100,7 +100,7 @@ func TestHookProfileFlagAfterTheCommand(t *testing.T) {
 	home := t.TempDir()
 	run := func(args ...string) string {
 		cmd := exec.Command(os.Args[0], args...)
-		cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "APPDATA="+home, "USERPROFILE="+home, "CLAUDECODE=1")
+		cmd.Env = append(os.Environ(), "MGTEST_MAIN=1", "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "APPDATA="+home, "USERPROFILE="+home, "CLAUDECODE=1")
 		cmd.Stdin = strings.NewReader("text\n")
 		out, _ := cmd.CombinedOutput()
 		return string(out)

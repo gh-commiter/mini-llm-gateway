@@ -93,7 +93,7 @@ func TestInitReaperReapsOrphans(t *testing.T) {
 	}
 	exe, _ := os.Executable()
 	cmd := exec.Command(bw, "--unshare-pid", "--as-pid-1", "--dev-bind", "/", "/", "--proc", "/proc", exe)
-	cmd.Env = append(os.Environ(), "MINIGW_TEST_INIT=1")
+	cmd.Env = append(os.Environ(), "MGTEST_INIT=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}

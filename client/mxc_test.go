@@ -17,14 +17,14 @@ import (
 	"testing"
 )
 
-// fakeWxcMain: lažni wxc-exec (testni program z MINIGW_TEST_FAKE_WXC=1): zahtevo shrani (MINIGW_TEST_WXC_LOG), nato
+// fakeWxcMain: lažni wxc-exec (testni program z MGTEST_FAKE_WXC=1): zahtevo shrani (MGTEST_WXC_LOG), nato
 // commandLine požene brez peskovnika z dano mapo in okoljem; stdin, stdout in izhod gredo skozi.
 func fakeWxcMain() {
 	b, err := os.ReadFile(os.Args[1])
 	if err != nil {
 		os.Exit(90)
 	}
-	if p := os.Getenv("MINIGW_TEST_WXC_LOG"); p != "" {
+	if p := os.Getenv("MGTEST_WXC_LOG"); p != "" {
 		os.WriteFile(p, b, 0o600)
 	}
 	var req mxcRequest
@@ -34,7 +34,7 @@ func fakeWxcMain() {
 	argv := winSplit(req.Process.CommandLine)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = req.Process.Cwd
-	cmd.Env = slices.DeleteFunc(slices.Clone(req.Process.Env), func(kv string) bool { return strings.HasPrefix(kv, "MINIGW_TEST_FAKE_WXC=") })
+	cmd.Env = slices.DeleteFunc(slices.Clone(req.Process.Env), func(kv string) bool { return strings.HasPrefix(kv, "MGTEST_FAKE_WXC=") })
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		if e, ok := err.(*exec.ExitError); ok {
@@ -173,11 +173,11 @@ func useFakeWxc(t *testing.T) (string, string) {
 	wxcHashes[runtime.GOARCH] = hex.EncodeToString(sum[:])
 	t.Cleanup(func() { wxcHashes[runtime.GOARCH] = old })
 	log := filepath.Join(t.TempDir(), "req.json")
-	t.Setenv("MINIGW_TEST_FAKE_WXC", "1")
-	t.Setenv("MINIGW_TEST_WXC_LOG", log)
+	t.Setenv("MGTEST_FAKE_WXC", "1")
+	t.Setenv("MGTEST_WXC_LOG", log)
 	// #125: the fake wxc-exec is this test program started with the agent environment (the allowlist): its switches must pass
 	savedBase := agentEnvBase
-	agentEnvBase = append(slices.Clone(agentEnvBase), "MINIGW_TEST_FAKE_WXC", "MINIGW_TEST_WXC_LOG", "MINIGW_TEST_MAIN")
+	agentEnvBase = append(slices.Clone(agentEnvBase), "MGTEST_FAKE_WXC", "MGTEST_WXC_LOG", "MGTEST_MAIN")
 	t.Cleanup(func() { agentEnvBase = savedBase })
 	return exe, log
 }
@@ -252,7 +252,7 @@ func TestMXCWrapRun(t *testing.T) {
 // Preizkus ob zagonu z lažnim wxc-exec: minigw (ta program) teče kot __mxc-probe; spremenjen wxc-exec ni v redu.
 func TestMXCProbe(t *testing.T) {
 	wxc, _ := useFakeWxc(t)
-	t.Setenv("MINIGW_TEST_MAIN", "1")
+	t.Setenv("MGTEST_MAIN", "1")
 	scratch, cfg := t.TempDir(), t.TempDir()
 	if why, _, _ := mxcProbe(wxc, wxc, scratch, cfg); why != "" {
 		t.Fatalf("probe: %s", why)

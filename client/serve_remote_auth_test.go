@@ -438,7 +438,7 @@ func TestRemoteLockoutFilePrivate(t *testing.T) {
 func TestRemotePasswordCLIWhileStopped(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "serve.json")
 	cmd := exec.Command(os.Args[0], "gw", "settings", "password", "--config", config)
-	cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "MINIGW_AGENT_URL=", "MINIGW_AGENT_AUTH_FILE=", "HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(), "MINIGW_REMOTE_PASSWORD=wrong environment password")
+	cmd.Env = append(os.Environ(), "MGTEST_MAIN=1", "MINIGW_AGENT_URL=", "MINIGW_AGENT_AUTH_FILE=", "HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(), "MINIGW_REMOTE_PASSWORD=wrong environment password")
 	cmd.Stdin = strings.NewReader(remoteTestPassword + "\n")
 	out, err := cmd.Output()
 	if err != nil {
@@ -475,7 +475,7 @@ func TestRemotePasswordCLIOutput(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command(os.Args[0], "gw", "settings", "password", "--config", config)
-			cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "MINIGW_AGENT_URL=", "MINIGW_AGENT_AUTH_FILE=")
+			cmd.Env = append(os.Environ(), "MGTEST_MAIN=1", "MINIGW_AGENT_URL=", "MINIGW_AGENT_AUTH_FILE=")
 			cmd.Stdin = strings.NewReader(tc.password + "\n")
 			var stderr strings.Builder
 			cmd.Stderr = &stderr
@@ -509,7 +509,7 @@ func TestRemotePasswordCLIInvalidConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(os.Args[0], "gw", "settings", "password", "--config", config)
-	cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "MINIGW_AGENT_URL=", "MINIGW_AGENT_AUTH_FILE=")
+	cmd.Env = append(os.Environ(), "MGTEST_MAIN=1", "MINIGW_AGENT_URL=", "MINIGW_AGENT_AUTH_FILE=")
 	cmd.Stdin = strings.NewReader(remoteTestPassword + "\n")
 	out, err := cmd.Output()
 	if e, ok := err.(*exec.ExitError); !ok || e.ExitCode() != 1 || len(out) != 0 {

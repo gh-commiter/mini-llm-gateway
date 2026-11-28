@@ -19,7 +19,7 @@ func init() {
 // L-b: claude se ustavi (Ctrl+Z) → minigw se ustavi za njim; po SIGCONT minigw nadaljuje claude, oba končata z 0.
 func TestClaudeStopFollowed(t *testing.T) {
 	dir, log := fakeClaudeDir(t)
-	cmd := minigwCmd(dir, log, []string{"MINIGW_TEST_CLAUDE_SIGNAL=STOP"}, "-h")
+	cmd := minigwCmd(dir, log, []string{"MGTEST_CLAUDE_SIGNAL=STOP"}, "-h")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

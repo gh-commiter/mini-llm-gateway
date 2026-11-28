@@ -84,16 +84,16 @@ struct ClaudeCodeCases: Decodable {
     let parent = dir.appendingPathComponent("claude"), log = dir.appendingPathComponent("claude.log")
     try FileManager.default.createSymbolicLink(atPath: parent.path, withDestinationPath: "/bin/sh")
     let fake = bin.appendingPathComponent("claude")
-    try Data("#!/bin/sh\necho \"$@\" > \"$MINIGW_TEST_CLAUDE_LOG\"\n".utf8).write(to: fake)
+    try Data("#!/bin/sh\necho \"$@\" > \"$MGTEST_CLAUDE_LOG\"\n".utf8).write(to: fake)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
     func run(_ args: [String], extra: [String: String] = [:]) throws -> (String, Bool) {
         try? FileManager.default.removeItem(at: log)
         let p = Process(), out = Pipe()
-        p.executableURL = extra["MINIGW_TEST_DIRECT"] == nil ? parent : URL(fileURLWithPath: "/bin/sh")  // brez starša claude
+        p.executableURL = extra["MGTEST_DIRECT"] == nil ? parent : URL(fileURLWithPath: "/bin/sh")  // brez starša claude
         p.arguments = ["-c", "\"$@\"; r=$?; exit $r", "sh", minigw.path] + args
         var env = ProcessInfo.processInfo.environment.filter { $0.key != "CLAUDECODE" && $0.key != "MINIGW_ALLOW_UNSAFE_FLAGS" }
         env["PATH"] = bin.path + ":" + (env["PATH"] ?? "/usr/bin:/bin")
-        env["MINIGW_TEST_CLAUDE_LOG"] = log.path
+        env["MGTEST_CLAUDE_LOG"] = log.path
         p.environment = env.merging(extra) { $1 }
         p.standardOutput = out; p.standardError = out; p.standardInput = FileHandle.nullDevice
         try p.run()
@@ -109,7 +109,7 @@ struct ClaudeCodeCases: Decodable {
     #expect(spawned, "override: \(text)")
     // kontrola: brez prednika claude (test ne teče v Claude Code, npr. CI) minigw claude zažene
     if !Profiles.claudeCaller(ppid: getpid(), info: Profiles.procInfo, terminal: false) {
-        let (text, spawned) = try run(["-h", "--continue"], extra: ["MINIGW_TEST_DIRECT": "1"])
+        let (text, spawned) = try run(["-h", "--continue"], extra: ["MGTEST_DIRECT": "1"])
         #expect(spawned, "without a claude parent: \(text)")
     }
 }

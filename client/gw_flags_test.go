@@ -17,7 +17,7 @@ func TestGwOptionsOfTheHelpAreAccepted(t *testing.T) {
 	flagRe := regexp.MustCompile(`--([a-z][a-z-]*)`)
 	// the control: the parser does refuse an option nobody advertises
 	ctl := exec.Command(os.Args[0], "gw", "usage", "--no-such-option")
-	ctl.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "APPDATA="+home, "USERPROFILE="+home)
+	ctl.Env = append(os.Environ(), "MGTEST_MAIN=1", "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "APPDATA="+home, "USERPROFILE="+home)
 	if out, _ := ctl.CombinedOutput(); !strings.Contains(string(out), "not defined") {
 		t.Fatalf("the control option was not refused (the test would prove nothing): %s", out)
 	}
@@ -38,7 +38,7 @@ func TestGwOptionsOfTheHelpAreAccepted(t *testing.T) {
 				args = append(args, "x")
 			}
 			cmd := exec.Command(os.Args[0], args...)
-			cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "APPDATA="+home, "USERPROFILE="+home)
+			cmd.Env = append(os.Environ(), "MGTEST_MAIN=1", "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "APPDATA="+home, "USERPROFILE="+home)
 			out, _ := cmd.CombinedOutput()
 			if s := string(out); strings.Contains(s, "not defined") || strings.Contains(s, "unknown option") {
 				t.Errorf("minigw %s: the option --%s of its help is refused: %s", strings.Join(args, " "), f, strings.SplitN(s, "\n", 2)[0])

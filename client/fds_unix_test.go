@@ -16,7 +16,7 @@ func TestClosedStdFdsNotReused(t *testing.T) {
 	for _, redir := range []string{"2>&-", "0<&- 1>&- 2>&-"} {
 		f := filepath.Join(t.TempDir(), "opened")
 		cmd := exec.Command("sh", "-c", `exec "$0" `+redir, os.Args[0])
-		cmd.Env = append(os.Environ(), "MINIGW_TEST_FDS="+f)
+		cmd.Env = append(os.Environ(), "MGTEST_FDS="+f)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s: %v %s", redir, err, out)
 		}
