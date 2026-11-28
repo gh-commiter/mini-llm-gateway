@@ -124,10 +124,10 @@ clear10; winrun wdl > /dev/null; rm -f $T/win/ops; winrun wnew > /dev/null
 cmp -s $T/rel/wnew/minigw-windows-amd64.exe $GB/minigw.exe || fail "10 S5: not replaced"
 [[ "$(wc -l < $T/win/ops)" -eq 1 && "$(<$T/win/ops)" == "mv -f $GB/minigw.exe.new."*" $GB/minigw.exe" ]] || fail "10 S5: not exactly one mv onto minigw.exe: $(cat $T/win/ops)"
 nobare "10 S5"
-# S6: ubit zagon na vsakem koraku zamenjave (MGTEST_EXIT_AT): naslednji zagon brez omrežja ima overljiv odjemalec, nikoli »cannot verify«
+# S6: ubit zagon na vsakem koraku zamenjave (MINIGW_TEST_EXIT_AT): naslednji zagon brez omrežja ima overljiv odjemalec, nikoli »cannot verify«
 for step in dl prev sums sig exe; do
   clear10; winrun wdl > /dev/null
-  MGTEST_EXIT_AT=$step winrun wnew > /dev/null 2>&1 && fail "10 S6 $step: the test hook did not stop the run" || true
+  MINIGW_TEST_EXIT_AT=$step winrun wnew > /dev/null 2>&1 && fail "10 S6 $step: the test hook did not stop the run" || true
   out=$(winrun); print -r -- "$step: $out"
   [[ $out == *"connected to Mini Gateway"* && $out != *"cannot verify"* && -x $GB/minigw.exe ]] || fail "10 S6 $step: no verifiable client after a kill: $out"
   if [[ $step == exe ]]; then cmp -s $T/rel/wnew/minigw-windows-amd64.exe $GB/minigw.exe || fail "10 S6 exe: new exe missing"; else cmp -s $RELEXE $GB/minigw.exe || fail "10 S6 $step: the old exe was lost"; fi
@@ -137,8 +137,8 @@ done
 # S6b: ubit zagon na sig (trenutni par = nova izdaja, .prev = stara, exe stara), nato spet prenos, ubit na vsakem koraku: nikoli »cannot verify«
 for step in prev sums sig exe; do
   clear10; winrun wdl > /dev/null
-  MGTEST_EXIT_AT=sig winrun wnew > /dev/null 2>&1 || true
-  MGTEST_EXIT_AT=$step winrun wnew > /dev/null 2>&1 || true
+  MINIGW_TEST_EXIT_AT=sig winrun wnew > /dev/null 2>&1 || true
+  MINIGW_TEST_EXIT_AT=$step winrun wnew > /dev/null 2>&1 || true
   out=$(winrun); print -r -- "6b $step: $out"
   [[ $out == *"connected to Mini Gateway"* && $out != *"cannot verify"* && -x $GB/minigw.exe ]] || fail "10 S6b $step: a second killed update left no verifiable client: $out"
 done
