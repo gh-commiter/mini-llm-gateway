@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -195,6 +196,13 @@ func TestKillInsideMinigwClone(t *testing.T) {
 		c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if mark == "" || c.Start() != nil {
 			t.Fatalf("%s: mark %q", agent, mark)
+		}
+		// Start returns after fork: until the child's exec, /proc/<pid>/environ is still this test's own (no mark)
+		for i := 0; i < 200; i++ {
+			if b, _ := os.ReadFile("/proc/" + strconv.Itoa(c.Process.Pid) + "/environ"); strings.Contains(string(b), mark) {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 		killInside(wt)
 		done := make(chan error, 1)
